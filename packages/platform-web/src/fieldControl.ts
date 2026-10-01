@@ -12,6 +12,8 @@
 // CI job), which is the durable "detect when a field is the wrong type" guard.
 
 import type { FieldType, FieldRendererId } from "./types";
+import { asMeasure } from "@cobblr/platform-contract/measure";
+import { moneyForStorage, moneyInputText, moneyStorageOf, type MoneyFieldLike } from "@cobblr/platform-contract/money";
 
 export type FieldControl =
   | "computed" // read-only, server-resolved every read (never stored)
@@ -23,6 +25,7 @@ export type FieldControl =
   | "choice" // dropdown (has a `choices` list)
   | "checkbox" // boolean
   | "number"
+  | "money" // an amount: MoneyInput, shown through formatMoney
   | "date"
   | "url"
   | "markdown" // rich text — the Markdown editor (Write/Preview split)
@@ -42,7 +45,8 @@ export function fieldControl(def: {
   renderer?: FieldRendererId | null;
   choices?: string[] | null;
   server_managed?: boolean | null;
-}): FieldControl {
+  learns?: boolean | null;
+} & MoneyFieldLike): FieldControl {
   if (def.type === "computed") return "computed";
   if (def.server_managed) return "server-managed";
   if (def.type === "relation") return "relation";
@@ -57,10 +61,15 @@ export function fieldControl(def: {
   // and corrupts the stored type.
   if (def.type === "boolean") return "checkbox";
   if (def.renderer === "color-hex") return "color";
-  if (def.choices && def.choices.length > 0) return "choice";
+  // A text field that learns is picked from what it has used, list or not.
+  if ((def.choices && def.choices.length > 0) || (def.type === "text" && def.learns === true)) return "choice";
+  // A number whose role or unit says money is money, the same as a money field.
+  if (moneyStorageOf(def)) return "money";
   switch (def.type) {
     case "number":
       return "number";
+    case "money":
+      return "money";
     case "date":
       return "date";
     case "url":
@@ -68,6 +77,9 @@ export function fieldControl(def: {
     case "richtext":
       return "markdown";
     case "text":
+      return "text";
+    // Typed as text ("4k7", "100 nF"); the server reads it into its value.
+    case "measure":
       return "text";
     // `computed` / `relation` / `boolean` are handled by the early returns above
     // (TS narrows them out here). A NEW FieldType added to the union lands in
@@ -85,8 +97,27 @@ export function fieldControl(def: {
  *  `typeof === "number"` got nothing, and a restock from the shopping list
  *  dated no lot while the row promised one (2026-09-13). One rule, so a
  *  number field holds a number whichever door it came through. */
-export function valueFromInput(type: string, text: string): unknown {
+/** What an input shows for a stored value: a measured value as the person
+ *  typed it ("4k7"), never "[object Object]"; anything else as text. */
+export function fieldInputText(def: FieldValueDef, value: unknown): string {
+  if (value == null) return "";
+  if (def.type === "measure") return asMeasure(value)?.text ?? (typeof value === "string" ? value : "");
+  const money = moneyStorageOf(def);
+  if (money) return moneyInputText(value, money);
+  return String(value);
+}
+
+/** What the value helpers read off a field: its type, and what makes it money
+ *  (@cobblr/platform-contract/money). A field def passes as it is. */
+export type FieldValueDef = { type: string } & MoneyFieldLike;
+
+export function valueFromInput(def: FieldValueDef, text: string): unknown {
   if (text === "") return null;
+  const type = def.type;
+  // Money is stored the way its field stores it ("4,300" is 4300, or 430000
+  // in a cents column); text that is not an amount is kept, for a person to fix.
+  const money = moneyStorageOf(def);
+  if (money) return moneyForStorage(text, money) ?? text;
   if (type === "number") {
     const n = Number(text);
     return Number.isFinite(n) ? n : null;

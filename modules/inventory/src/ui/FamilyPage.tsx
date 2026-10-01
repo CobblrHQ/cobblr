@@ -15,7 +15,7 @@ import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MoreHorizontal } from "lucide-react";
-import { AmountControl, colorSwatch, PopoverLayer, Swatch, swatchFill, useConfirm, useToast } from "@cobblr/platform-web";
+import { AmountControl, colorSwatch, PopoverLayer, Swatch, swatchFill, useConfirm, useEscapeToClose, useToast } from "@cobblr/platform-web";
 import { countOf, pluralise, withArticle } from "@cobblr/platform-contract";
 import { useInventory } from "./context";
 import type { FamilyPayload, FamilyThing, FamilyType } from "./api";
@@ -335,14 +335,10 @@ function PopMenu({ label, children, size = "sm" }: { label: string; children: (c
       const t = e.target as Node;
       if (!layer.current?.contains(t) && !trigger.current?.contains(t)) setAt(null);
     };
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && setAt(null);
     document.addEventListener("pointerdown", away);
-    document.addEventListener("keydown", esc);
-    return () => {
-      document.removeEventListener("pointerdown", away);
-      document.removeEventListener("keydown", esc);
-    };
+    return () => document.removeEventListener("pointerdown", away);
   }, [at]);
+  useEscapeToClose(!!at, layer, () => setAt(null));
   const close = () => setAt(null);
   return (
     <>

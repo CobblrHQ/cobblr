@@ -147,6 +147,7 @@ export function colorWordOnly(value: string | null | undefined): string | null {
   if (!v || !colorFromText(v) || /[#\d]/.test(v)) return null;
   return v;
 }
+export const isColorWord = (word: string): boolean => COLOR_WORDS.has(word.toLowerCase());
 const colorsIn = (tokens: string[]): Set<string> =>
   new Set(tokens.filter((t) => COLOR_WORDS.has(t)).map((t) => COLOR_SYNONYM[t] ?? t));
 
@@ -220,7 +221,12 @@ export function catalogScore(
   // "X1 Extreme Gen 5" tied with the ThinkBook 4319-2NU someone actually owned.
   // Both were the wrong product, and both said so in the title. (Measured from
   // real human overrides, 2026-07-20.)
-  const qTokens = ql.split(/[^a-z0-9]+/).filter((t) => t.length >= 3);
+  // The maker's words are not what the thing is: a banner for "Custom Sheet
+  // Metal" fabrication shares three words with a printer that maker built.
+  const brandTokens = new Set((brand ?? "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
+  const allTokens = ql.split(/[^a-z0-9]+/).filter((t) => t.length >= 3);
+  const unbranded = allTokens.filter((t) => !brandTokens.has(t));
+  const qTokens = unbranded.length ? unbranded : allTokens;
   if (qTokens.length) {
     const hit = qTokens.filter((t) => tl.includes(t)).length;
     s += Math.round((hit / qTokens.length) * 6); // 0..6 by how much of the ask it names
@@ -266,6 +272,17 @@ export function catalogScore(
     if (r.width < 200) s -= 3; // tiny
   }
   return s;
+}
+
+/** A collection's name, singular, when it shares a noun with the record's
+ *  name: "3d-printers" for "Printer Black" reads "3d printer". Anything else
+ *  ("groceries" for "Tomatoes Roma") says nothing the name does not, and is
+ *  left out. */
+export function collectionNoun(name: string, collection: string | null | undefined): string {
+  const words = (collection ?? "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).map((w) => w.replace(/(?<=..)(ies)$/, "y").replace(/(?<=...)s$/, ""));
+  if (!words.length) return "";
+  const own = new Set(name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).map((w) => w.replace(/(?<=...)s$/, "")));
+  return words.some((w) => w.length >= 3 && own.has(w)) ? words.join(" ") : "";
 }
 
 /** Build an image-search query that puts the BRAND in the query, not just the
@@ -342,6 +359,11 @@ export function deriveImageQuery(opts: {
    *  member back, which is how an item its own observation called a box came
    *  home illustrated with a bottle (reported 2026-08-14). */
   observation?: string | null;
+  /** The named collection the record lives in ("3d-printers"). When it names
+   *  the record's own noun more fully ("Printer" in a "3D Printers"
+   *  collection), its words join the phrase, so the search asks for a 3D
+   *  printer and not for whatever else the maker's name is known for. */
+  collection?: string | null;
 }): string | null {
   const override = (opts.override ?? "").trim();
   if (override) return override;
@@ -358,7 +380,8 @@ export function deriveImageQuery(opts: {
   // are: Produce, Bakery, Dairy. Saying it to the search too costs nothing and
   // is the workspace's own vocabulary, not this file's opinion about food -
   // exactly how `color` and the form factor already work.
-  const category = typeof opts.fields?.category === "string" ? (opts.fields.category as string).trim() : "";
+  const category =
+    (typeof opts.fields?.category === "string" ? (opts.fields.category as string).trim() : "") || collectionNoun(name, opts.collection);
   // Last: the media word separates a book from its film, which matters more
   // than the shape of the packaging, and imageQuery drops terms already in the
   // name — so a title that says "Box" does not get told twice.

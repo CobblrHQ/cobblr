@@ -3,6 +3,7 @@ type: feature
 scope: lists
 date: 2026-09-29
 docs_target: docs/USER_GUIDE.md#3.28 Lists (`lists`, stock)
+docs_published: 2026-10-01
 ---
 Something running low can go on a shopping list without installing a bundle. An item marked low in Inventory has **Add to list** beside it: one tap puts it on the list it last went on, and the first time it asks which list (or starts one). On the Lists page you can also say yes to having running-low items added to a list you pick by themselves. That is off until you turn it on, and nothing is added or created until you ask.
 

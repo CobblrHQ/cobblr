@@ -25,6 +25,7 @@ const Report = z.object({
 });
 
 // AI-REACH: a page reporting its own dropped upload to the server log; nothing an agent does
+// ROLE: any member (whoever uploaded reports their own dropped upload; it writes one log line, never workspace data)
 uploadReportsRouter.post("/connection-lost", requireAuth, withTenant, (req, res) => {
   const body = Report.safeParse(req.body);
   if (!body.success) {

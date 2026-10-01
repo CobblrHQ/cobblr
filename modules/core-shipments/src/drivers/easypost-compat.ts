@@ -247,10 +247,19 @@ export const easypostCompatDriver: CarrierDriver = {
       // and silence would leave them with no idea why nothing is tracked.
       throw new CarrierError("the tracking service is at capacity", false, { quotaExhausted: true });
     }
+    if (res.status === 429 || res.status === 503) {
+      // Too many requests, or briefly unavailable: a bridge on somebody's
+      // machine saying "not now". Retry-After is seconds or a date.
+      const ra = res.headers.get("retry-after");
+      const secs = ra ? Number(ra) : NaN;
+      const at = ra && !Number.isFinite(secs) ? Date.parse(ra) : NaN;
+      const retryAfterMs = Number.isFinite(secs) ? secs * 1000 : Number.isFinite(at) ? Math.max(0, at - Date.now()) : null;
+      throw new CarrierError(`the tracking service is busy (HTTP ${res.status})`, true, { busy: true, retryAfterMs });
+    }
     if (!res.ok) {
       throw new CarrierError(
         `tracking API failed (HTTP ${res.status})`,
-        res.status >= 500 || res.status === 429,
+        res.status >= 500,
       );
     }
 

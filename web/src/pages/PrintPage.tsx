@@ -10,6 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Printer as PrinterIcon, Wifi, Send, Pencil, Star, Bluetooth, Activity } from "lucide-react";
 import { ApiError, api, type Printer, type PrinterInput } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { useEnabledModules } from "../lib/useEnabledModules";
 import { Modal, useToast, useConfirm, usePageTitle, printLabelOverBluetooth, connectPrinter, closePrinter, isWebBluetoothAvailable, NO_WEB_BLUETOOTH, readSerialPrinterStatus, ConnectPrinterModal, setPrinterStatus, clearPrinterStatus, type SerialPrinterIdentity, type BluetoothPrinterSettings, isLocalBridgePrinter, testLocalBridge, printerDisplayName, describeReportedMedia, usePrinterStatus, PrinterReadout, allowLocalAccess, SecretInput, AddressInput } from "@cobblr/platform-web";
 import { mmToDots, dotsToMm, mmToInch, thermalFootprint, matchProfile, type FeedType } from "@cobblr/thermal-print";
 
@@ -66,10 +67,13 @@ export function PrintPage({ embedded = false }: { embedded?: boolean } = {}) {
     }
   };
 
+  const on = useEnabledModules(activeSlug);
   const list = useQuery({
     queryKey: ["printers", activeSlug],
     queryFn: () => api.listPrinters(activeSlug),
-    enabled: !!activeSlug,
+    // The workspace's printers are Printing's; a phone's own Bluetooth printer
+    // above works without it.
+    enabled: !!activeSlug && !!on?.has("core-print"),
   });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["printers", activeSlug] });

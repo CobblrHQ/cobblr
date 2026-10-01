@@ -1,4 +1,4 @@
-import { columnSet, platform, parseSort, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
+import { columnSet, platform, withPlaceNames, parseSort, textSearchWhere, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { RecordsDB } from "../db.js";
 
@@ -20,7 +20,7 @@ export function registerRecordsResolvers(): void {
       .where("id", "=", id)
       .executeTakeFirst();
     if (!row) return null;
-    return toResolvedRecord(row);
+    return (await withPlaceNames(orgId, "records:record", [toResolvedRecord(row)]))[0]!;
   });
 
   const recordsListResolver = async (orgId: string, query: EntityListQuery, instance?: string) => {
@@ -29,10 +29,9 @@ export function registerRecordsResolvers(): void {
     const offset = query.offset ?? 0;
     let q = db.selectFrom("records_records").selectAll();
     if (instance) q = q.where("instance", "=", instance as never);
-    if (query.q) {
-      const needle = `%${query.q.toLowerCase()}%`;
-      q = q.where((eb) => eb(eb.fn("lower", ["name"]), "like", needle));
-    }
+    // A collection's own fields (a book's author, a wine's vintage) live in
+    // metadata; a search that read the name only never found them.
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "notes"], json: ["metadata"] })!);
     if (query.filter) {
       const NATIVE = columnSet<RecordsDB["records_records"]>()(["location_id"]);
       for (const [key, val] of Object.entries(query.filter)) {
@@ -84,7 +83,8 @@ export function registerRecordsResolvers(): void {
     for (const { col, dir } of order) q = q.orderBy(col as never, dir);
     if (!order.some((o) => o.col === "name")) q = q.orderBy("name", "asc");
     const rows = await q.limit(limit).offset(offset).execute();
-    return { items: rows.map((r) => toResolvedRecord(r)) };
+    // Where each one is, by name, so a search or the assistant can say it.
+    return { items: await withPlaceNames(orgId, "records:record", rows.map((r) => toResolvedRecord(r))) };
   };
   // Scoped to the default instance - same leak as inventory's base kind; see
   // the note there. A Bookshelf instance's books must not double up here.
@@ -111,7 +111,7 @@ export function registerRecordsResolvers(): void {
       .where("instance", "=", instance as never)
       .executeTakeFirst();
     if (!row) return null;
-    return toResolvedRecord(row);
+    return (await withPlaceNames(orgId, "records:record", [toResolvedRecord(row)]))[0]!;
   });
 }
 

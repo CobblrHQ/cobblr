@@ -29,6 +29,16 @@ export interface EditableCellDef {
   unit?: string | null;
   server_managed?: boolean | null;
   ref_kind?: string | null;
+  /** What makes it money (@cobblr/platform-contract/money): a native column
+   *  says how it stores money, a custom field its role or unit. */
+  money?: "cents" | "amount" | null;
+  field_role?: string | null;
+  /** A field def's own identity, when the cell edits one: lets a choice cell
+   *  offer the values already used and remember a new one (ChoiceField). */
+  entity_kind?: string;
+  bundle_id?: string | null;
+  source_module?: string | null;
+  learns?: boolean | null;
 }
 
 export type CellPlan =
@@ -39,6 +49,7 @@ export type CellPlan =
   | { kind: "person" }
   | { kind: "choice" }
   | { kind: "color" }
+  | { kind: "money" }
   | { kind: "input" };
 
 function assertNever(x: never): never {
@@ -77,6 +88,8 @@ export function cellPlan(def: EditableCellDef): CellPlan {
       return { kind: "choice" };
     case "color":
       return { kind: "color" };
+    case "money":
+      return { kind: "money" };
     case "number":
     case "date":
     case "url":

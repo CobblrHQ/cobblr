@@ -3,7 +3,7 @@ export { JsonField, evaluateJson, type JsonFieldProps, type JsonEval } from "./J
 
 export {
   PlatformWebProvider,
-  usePlatformWeb,
+  usePlatformWeb, useViewerRole,
   useFlowHost,
   type FlowComponent,
   type FlowRegistry,
@@ -51,6 +51,7 @@ export {
 export { EntityTile, TILE_GRID, TILE_TITLE, distinctSubtitle, countBadge } from "./EntityTile";
 export { ViewModeToggle, useViewMode, type ViewMode } from "./ViewModeToggle";
 export { useImageSrc } from "./useImageSrc";
+export { walkPages, type WalkedList } from "./list-pages";
 export { openAuthedFile, type OpenAuthedFileOptions } from "./openAuthedFile";
 export { FileIntake, FileIntakePanels, useFileIntake, describeLine, type IntakeLine, type FileIntakeOptions } from "./FileIntake";
 export { sendUpload, uploadErrorOf, uploadJson, UploadError, type SendUploadOptions } from "./upload-client";
@@ -61,6 +62,11 @@ export { MutationError, errorSentence } from "./MutationError";
 export { PasswordInput, SecretInput, AddressInput, NOT_A_LOGIN, type PasswordInputProps } from "./PasswordInput";
 export { NounChoiceButtons, nounChoiceHeading } from "./NounChoice";
 export { BulkActionBar } from "./BulkActionBar";
+export { SelectableTile, SELECTED_TILE, type SelectableTileProps } from "./SelectableTile";
+export { PhotoSourceBadge, AiMark } from "./PhotoSourceBadge";
+export { FooterActionPopover, type FooterActionPopoverProps } from "./FooterActionPopover";
+export { BulkTagAction } from "./BulkTagAction";
+export { PlacePickList, readRecentPlaces, noteRecentPlace, type PlaceChoice } from "./PlacePickList";
 export { CustomFieldsPanel, RelationSelect } from "./CustomFieldsPanel";
 export { TipLine, pickTip, registerTip, registeredTips, type Tip, type TipState, type TipStripProps } from "./tips";
 export { useRecordInPath, type RecordInPathOptions } from "./useRecordInPath";
@@ -74,15 +80,17 @@ export {
 } from "./feedback-source";
 export { FeedbackCard, PriorityChip, FEEDBACK_STATUSES, fbStatusLabel } from "./FeedbackCard";
 
-export { fieldControl, valueFromInput, type FieldControl } from "./fieldControl";
+export { fieldControl, fieldInputText, valueFromInput, type FieldControl, type FieldValueDef } from "./fieldControl";
+export { MoneyInput, type MoneyInputProps } from "./MoneyInput";
 export { packFields, fieldNeed, MIN_COL_PX, GAP_PX, type FieldNeed, type FieldSpace, type FieldPacking, type PackedCell, type PackOptions } from "./field-pack";
 export { FieldPack, fieldPackControlClass, type FieldPackItem } from "./FieldPack";
-export { EditField, EditSelect, FieldLabel, LabeledField, editFieldNeed, editFieldItem, editFieldText, type EditFieldProps } from "./EditField";
+export { EditField, EditSelect, FieldLabel, LabeledField, editFieldNeed, editFieldItem, editFieldText, moneyFieldItem, usedValueFieldItem, type EditFieldProps } from "./EditField";
 export { relativeTime } from "./relativeTime";
 export { FieldRenderer, boolLabel, boolTruthy, NoImage } from "./FieldRenderer";
 export {
   NOTE_SUFFIX,
   canCarryNote,
+  offersClarifier,
   isNoteKey,
   noteKey,
   noteOf,
@@ -91,9 +99,13 @@ export {
 export { Markdown, stripMarkdown } from "./Markdown";
 export { MarkdownEditor } from "./MarkdownEditor";
 export { QrCode } from "./QrCode";
+export { DocThumb, docThumbFor } from "./DocThumb";
 export {
   FilePreview,
   registerFilePreviewRenderer,
+  registerFileThumbRenderer,
+  thumbDrawerFor,
+  type ThumbDrawer,
   unregisterFilePreviewRenderer,
   useFilePreviewRegistry,
   canPreviewFile,
@@ -117,6 +129,8 @@ export { usePageTitle } from "./usePageTitle";
 export { usePageWidth, type PageWidth } from "./usePageWidth";
 export { useCreateDoor, CREATE_PARAM } from "./useCreateDoor";
 export { AskCobbAbout } from "./AskCobbAbout";
+export { ContextChip } from "./ContextChip";
+export { openDiscussion, discussionRecordOf, type DiscussionRecord } from "./open-discussion";
 export { RecordRow, recordRowMarks } from "./RecordRow";
 export { toggleRecordInContext, nounForKind, labelForSet } from "./toggle-record-context";
 export {
@@ -126,6 +140,8 @@ export {
   type ChatSelection,
   getChatSelection,
   publishRowSelection,
+  publishBarSelection,
+  clearBarSelection,
   publishTextSelection,
   clearChatSelection,
   useChatSelection,
@@ -164,6 +180,7 @@ export { PersonSelect, usePersonName, useMemberName } from "./PersonSelect";
 export { useUnits, type UseUnits } from "./useUnits";
 export { formatQuantity, formatUnit, resolveUnit, convertQuantity, unitLens, usedInUnit } from "./units";
 export { AmountControl } from "./AmountControl";
+export { StockStepper } from "./StockStepper";
 export { StickyBottomBar } from "./StickyBottomBar";
 export type {
   FieldRendererId,
@@ -258,16 +275,16 @@ export {
 export { BridgePrinterCard } from "./BridgePrinterCard";
 export { BatteryGauge, PrinterReadout, batteryTone } from "./BatteryGauge";
 export { ConnectPrinterModal, type ConnectPrinterModalProps, type ConnectPrinterInput } from "./ConnectPrinterModal";
-export { MoveToInstanceModal, type MoveToInstanceModalProps } from "./MoveToInstanceModal";
+export { MoveToInstanceModal, MoveToInstancePanel, type MoveToInstanceModalProps, type MoveToInstancePanelProps } from "./MoveToInstanceModal";
 export { AssortmentCard, type AssortmentCardProps, type AssortmentKind } from "./AssortmentCard";
 export { scrimAlpha, scrimAlphaFor, percentileLuma } from "./photo-scrim";
-export { HIDE_WHEN_OVERLAY_OPEN, OverlayFlag, useOverlayOpenFlag } from "./overlay-open";
+export { HIDE_WHEN_OVERLAY_OPEN, HIDE_WHEN_COVERED, OverlayFlag, useOverlayOpenFlag } from "./overlay-open";
 export { downloadBlob } from "./download-blob";
 export { withPngDpi, readPngDpi, isPng, crc32, dpiToPixelsPerMetre } from "./png-dpi";
 export { YIELDING_CLASS, useYieldToContent, pressableBeneath, samplePoints } from "./yield-to-content";
 export { FloatingChrome, type FloatingChromeProps, type FloatingAnchor } from "./FloatingChrome";
-export { registerBottomChrome, registerCornerChrome, stackBottomChrome, bottomClearance, layoutDockNow, BOTTOM_CHROME_HEIGHT_VAR, BOTTOM_CLEARANCE_VAR } from "./bottom-dock";
-export { useLayerStack, topLayerZ, stackedZ, isTopLayer } from "./layer-stack";
+export { registerBottomChrome, registerCornerChrome, stackBottomChrome, stackCorner, cornerSide, bottomClearance, layoutDockNow, BOTTOM_CHROME_HEIGHT_VAR, BOTTOM_CLEARANCE_VAR, CORNER_STACK, CORNER_GAP, CORNER_STACK_VAR } from "./bottom-dock";
+export { useLayerStack, topLayerZ, stackedZ, isTopLayer, inTopLayer } from "./layer-stack";
 export { useDialogFocus, tabbables } from "./useDialogFocus";
 export { DragInput, type DragInputProps } from "./DragInput";
 export { OverlayLayer, PopoverLayer, BackdropLayer, clampToViewport, POPOVER_GUTTER, OVERLAY_LAYER_CLASS, POPOVER_LAYER_CLASS, BACKDROP_LAYER_CLASS, type LayerProps, type PopoverLayerProps } from "./fixed-layers";
@@ -285,4 +302,16 @@ export { ExportCsvButton } from "./ExportCsvButton";
 export { usePhotoSuggestions, usePhotoSuggestionFor, suggestedSrcFor, pictureStateFor, PICTURE_STATE_TEXT, markShownBeside, useShownBeside } from "./photoSuggestions";
 export type { PictureState } from "./photoSuggestions";
 export type { PhotoSuggestionRow } from "./types";
+export { Lightbox, type LightboxItem, type LightboxProps, type LightboxVerb } from "./Lightbox";
+export { OverlayCloseButton } from "./OverlayCloseButton";
+export { acceptsFile, clipboardFiles, clipboardImageFiles, imageUrlFrom, payloadFromClipboard, readPastedImage, type PastedImage, type PastedPayload } from "./pastedImage";
+export { usePasteImage, pasteTargetFor, type PasteImageHandlers } from "./usePasteImage";
+export { useEscapeToClose } from "./useEscapeToClose";
+export { QueryError } from "./QueryError";
+export { missingRequired, type RequiredLike } from "./required-fields";
 export type { PlatformWire, PlatformWireInput } from "./types";
+export type { FieldValuesUsedBody, UsedValueBody } from "./types";
+export { noteWorkspaceWrite, subscribeWorkspaceWrite, refreshStockViews, STOCK_VIEW_KEYS, STOCK_LIST_KEYS, type WorkspaceWriteListener } from "./workspace-writes";
+export { ChoiceCombobox, matchChoice, orderChoices, type ChoiceComboboxProps, type ChoiceDetail, type ChoiceOption } from "./ChoiceCombobox";
+export { ChoiceField, detailOptions, type ChoiceFieldProps, type ChoiceFieldDef } from "./ChoiceField";
+export { UsedValueInput, type UsedValueInputProps } from "./UsedValueInput";

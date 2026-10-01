@@ -12,6 +12,7 @@
 import { SignJWT, jwtVerify } from "jose";
 import { env } from "../env.js";
 import { publicBaseUrl } from "./public-url.js";
+import { discordDmConfigured } from "./discord-bot-trigger.js";
 
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID || "";
 const CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET || "";
@@ -27,6 +28,14 @@ const STATE_TTL_SECONDS = 10 * 60;
 
 export function discordOAuthConfigured(): boolean {
   return Boolean(CLIENT_ID && CLIENT_SECRET && REDIRECT_URI);
+}
+
+/** Whether connecting Discord can finish on this server: the app that says
+ *  who you are, AND the bot that sends the test message proving a DM reaches
+ *  you. Either alone is a connect that starts and never completes, so every
+ *  "Connect Discord" door asks this (as `configured` on /me/discord). */
+export function discordConnectConfigured(): boolean {
+  return discordOAuthConfigured() && discordDmConfigured();
 }
 
 /** The Discord APPLICATION currently configured, as its client id.

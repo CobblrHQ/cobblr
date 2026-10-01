@@ -24,7 +24,6 @@
   "lint:camera-no-toast",
   "lint:capabilities",
   "lint:catalog-schema-complete",
-  "lint:ci-paths-mirror",
   "lint:client-fetch-mounts",
   "lint:cobb-art",
   "lint:computed-context-kind",

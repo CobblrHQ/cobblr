@@ -3,7 +3,7 @@
 // find it again (#3883); the first time, a toast points at ⊞ More apps. Per
 // device, a convenience: losing it only means being told again.
 import { useToast } from "@cobblr/platform-web";
-import { toggleNavHidden } from "./nav-order";
+import { restoreSidebar, setInSidebar, sidebarSnapshot, toggleNavHidden } from "./nav-order";
 import { useNavLayout, type NavLayout } from "./nav-mode";
 import { useIsDesktopWidth } from "./useIsDesktopWidth";
 
@@ -73,5 +73,21 @@ export function useToggleNavHidden(): (slug: string, name: string) => void {
   const say = useSayWhereItWent();
   return (slug, name) => {
     if (toggleNavHidden(slug, name)) say();
+  };
+}
+
+/** The pin on an app: into this sidebar or out of it, through the one rule
+ *  (setInSidebar), with an Undo that puts back exactly what was there. */
+export function useSidebarPin(): (slug: string, app: { label: string; names: readonly string[] }, inSidebar: boolean) => void {
+  const toast = useToast();
+  const word = navWord(useIsDesktopWidth(), useNavLayout());
+  return (slug, app, inSidebar) => {
+    const before = sidebarSnapshot(slug);
+    setInSidebar(slug, app.names, inSidebar);
+    toast.action(inSidebar ? `${app.label} is in your ${word} now.` : `${app.label} is out of your ${word}.`, {
+      actionLabel: "Undo",
+      duration: 7000,
+      onAction: () => restoreSidebar(slug, before),
+    });
   };
 }

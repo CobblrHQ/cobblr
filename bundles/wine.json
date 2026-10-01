@@ -1,7 +1,14 @@
 {
   "manifest": {
     "id": "cobblr.flagship.wine",
-    "version": "0.1.4",
+    "version": "0.1.5",
+    "releases": [
+      {
+        "version": "0.1.5",
+        "released_at": "2026-10-02",
+        "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before."
+      }
+    ],
     "released_at": "2026-09-28",
     "name": "Wine",
     "author": "Cobblr",
@@ -148,6 +155,7 @@
             "display_label": "Style",
             "type": "text",
             "position": 6,
+            "learns": true,
             "choices": [
               "Red",
               "White",
@@ -163,6 +171,7 @@
             "display_label": "{{Noun}} size",
             "type": "text",
             "position": 7,
+            "learns": false,
             "choices": [
               "187 ml",
               "375 ml",
@@ -386,6 +395,7 @@
           {
             "source_kind": "wine:item",
             "action_id": "lists:add-item",
+            "says": "Buy again on a bottle puts it on your Shopping list.",
             "trigger_type": "user-invoked",
             "label": "Buy again",
             "args": {
@@ -395,6 +405,7 @@
           {
             "source_kind": "wine:item",
             "action_id": "inventory:adjust-stock",
+            "says": "Checking a bottle off your Shopping list adds it back to the cellar.",
             "trigger_type": "event",
             "trigger_event": "lists.item.checked",
             "args": {
@@ -406,6 +417,7 @@
           {
             "source_kind": "wine:item",
             "action_id": "lists:add-item",
+            "says": "A wine you are about to run out of goes on your Shopping list.",
             "trigger_type": "event",
             "trigger_event": "inventory.stock.low",
             "args": {

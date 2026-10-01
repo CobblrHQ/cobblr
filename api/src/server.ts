@@ -11,7 +11,7 @@
 
 import { lastOrphanFilesReport } from "./platform/heal-orphan-files.js";
 import { WorkspaceNotProvisioned, WORKSPACE_NOT_CREATED_MESSAGE } from "./platform/provision-workspace.js";
-import { UnknownFieldError } from "@cobblr/platform-contract/entity-metadata";
+import { InvalidFieldValueError, UnknownFieldError } from "@cobblr/platform-contract/entity-metadata";
 import { failingResolvers } from "./platform/resolver-failures.js";
 import { oauthRouter, wellKnownRouter } from "./auth/oauth.js";
 import { pendingMigrationSummary } from "./modules/enable.js";
@@ -82,6 +82,7 @@ import { approvalRequestsRouter } from "./routes/approval-requests.js";
 import { recordMoveRouter } from "./routes/record-move.js";
 import { requireAuth } from "./auth/middleware.js";
 import { withTenant } from "./middleware/tenant.js";
+import { projectFieldScopes } from "./platform/field-scope-projection.js";
 import { resolveInstance } from "./middleware/instance.js";
 import { dispatchInstanceItems } from "./modules/mount.js";
 import { qrScanRouter } from "./routes/qr-scan.js";
@@ -460,6 +461,7 @@ export function createApp(): AppHandles {
     "/orgs/:slug/instances/:instanceName/items",
     requireAuth,
     withTenant,
+    projectFieldScopes,
     resolveInstance,
     dispatchInstanceItems,
   );
@@ -506,7 +508,7 @@ export function completeApp(app: Application): void {
       }
       // A write naming a field the kind does not have (entity-metadata.ts):
       // the caller's mistake, said with the names they could have meant.
-      if (err instanceof UnknownFieldError) {
+      if (err instanceof UnknownFieldError || err instanceof InvalidFieldValueError) {
         res.status(err.status).json(err.toJSON());
         return;
       }

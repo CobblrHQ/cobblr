@@ -6,6 +6,7 @@
 // `ai.registerEntitlementGuard` / `ai.registerProvider` pattern.
 
 import type { RequestHandler } from "express";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import type {
   AuthEmailMessage,
   AuthEmailSender,
@@ -245,4 +246,12 @@ export function listHostedPanels(): HostedPanelSummary[] {
 }
 export function getHostedPanel(id: string): HostedPanel | undefined {
   return hostedPanels.get(id);
+}
+
+/** A panel is configuration (billing, a workspace's chat integration) unless
+ *  it says otherwise, and a panel is handed no way to check the caller's role
+ *  before the kernel asks this. One the caller may not use answers exactly
+ *  like a panel that does not exist. */
+export function panelOpenTo(panel: Pick<HostedPanel, "minRole">, role: string | undefined): boolean {
+  return roleSatisfies(role, [panel.minRole ?? "admin"]);
 }

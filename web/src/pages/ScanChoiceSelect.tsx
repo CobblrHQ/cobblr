@@ -1,4 +1,4 @@
-// A dropdown field's select with one more entry: "New <field>…" (#2982).
+// A dropdown field on a scan card, through the one choice picker (#2982, #4516).
 //
 // The owner, on his phone, with the Category dropdown open: "I need to be
 // able to create a new category on the fly here." The choice list is the
@@ -17,15 +17,19 @@
 // "Hair Color" for a filament spool and the person had a free-text box but no
 // visible way to coin the right category (reported 2026-09-28) - same door,
 // same affordance table fields already had.
-import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+//
+// Since #4516 there is no "New <field>…" entry: the box is the search, and a
+// name typed that is not on the list is the value. On a field that learns it
+// becomes a choice for everyone (platform:learn-choice, the same write and the
+// same bar as the record page's picker); in `createByName` mode it is simply
+// the value, and the confirm files the item under it.
+import { useQueryClient } from "@tanstack/react-query";
+import { ChoiceCombobox, matchChoice, runAction } from "@cobblr/platform-web";
 import { api } from "../lib/api";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 
-export const NEW_CHOICE = "__new_choice__";
-
 /** May this role grow a dropdown's choices? The server's rule, mirrored so
- *  a refused viewer sees no entry. Unknown (still loading) is left to it. */
+ *  a refused viewer's typing is kept as the value without being remembered. */
 export function canGrowChoices(role: string | null | undefined): boolean {
   return !role || roleSatisfies(role, ["member"]);
 }
@@ -40,16 +44,16 @@ export function ScanChoiceSelect({
   onChange,
   canAdd,
   className,
-  dataField,
-  id,
   onAdded,
   createByName,
+  dataField,
+  id,
 }: {
   slug: string;
-  /** The table the field belongs to ("inventory:part"), for the lookup of its definition. */
+  /** The table the field belongs to ("inventory:part"). */
   entityKind: string | null;
   fieldName: string;
-  /** The field's word, for the entry: "New category…". */
+  /** The field's word ("Category"). */
   label: string;
   choices: string[];
   value: string;
@@ -57,112 +61,40 @@ export function ScanChoiceSelect({
   canAdd: boolean;
   className?: string;
   dataField?: string;
-  /** The select's id, so a title outside it can label it. */
   id?: string;
   /** The definition changed: refresh whatever lists the choices. */
   onAdded?: () => void;
-  /** The category travels by name (no field def to append to): the New… box
-   *  just selects the typed name on this row, and the confirm creates it on
-   *  file. No `listFieldDefs` / `appendFieldDefChoice` write. */
+  /** The category travels by name: a new one is just the value here, and the
+   *  confirm creates it on file. Nothing is remembered on a field. */
   createByName?: boolean;
 }) {
   const qc = useQueryClient();
-  const [draft, setDraft] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const add = useMutation({
-    mutationFn: async (name: string) => {
-      const defs = await api.listFieldDefs(slug, entityKind ?? undefined);
-      const def = defs.items.find((d) => d.name === fieldName && (!entityKind || d.entity_kind === entityKind)) ?? defs.items.find((d) => d.name === fieldName);
-      if (!def) throw new Error("This field has no definition to add to.");
-      if (!(def.choices ?? []).includes(name)) await api.appendFieldDefChoice(slug, def.id, name);
-      return name;
-    },
-    onSuccess: (name) => {
-      void qc.invalidateQueries({ queryKey: ["scan-menu", slug] });
-      void qc.invalidateQueries({ queryKey: ["platform-field-defs", slug] });
-      onAdded?.();
-      setDraft(null);
-      setError(null);
-      onChange(name);
-    },
-    onError: (e) => setError(e instanceof Error ? e.message : "Could not add it."),
-  });
-  const word = label.trim().toLowerCase() || "choice";
-  if (draft !== null) {
-    const commit = () => {
-      const v = draft.trim();
-      if (!v) return setDraft(null);
-      if (choices.includes(v) || createByName) {
-        // By name: the confirm files under this value and coins the category
-        // if it is new, so there is no field-def write to make here — just
-        // select it on this row. (Same short-circuit an already-listed value
-        // takes: nothing to append, just choose it.)
-        setDraft(null);
-        setError(null);
-        onChange(v);
-        return;
-      }
-      add.mutate(v);
-    };
-    return (
-      <div className="w-full">
-        <input
-          autoFocus
-          data-testid="new-choice"
-          data-field={dataField}
-          aria-label={`New ${word}`}
-          placeholder={`New ${word}…`}
-          value={draft}
-          disabled={add.isPending}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              commit();
-            } else if (e.key === "Escape") {
-              e.preventDefault();
-              setDraft(null);
-              setError(null);
-            }
-          }}
-          onBlur={() => {
-            if (!add.isPending && !draft.trim()) setDraft(null);
-          }}
-          className={className}
-        />
-        <div className="mt-0.5 text-[11px] text-faint">
-          {error ? <span className="text-ember-600 dark:text-ember-400">{error}</span> : add.isPending ? "Adding…" : createByName ? `Enter files this under the new ${word}. Esc backs out.` : "Enter adds it to this field for everyone. Esc backs out."}
-        </div>
-      </div>
-    );
-  }
+  const options = choices.map((c) => ({ value: c }));
+  const learn = async (name: string) => {
+    let kind = entityKind;
+    if (!kind) {
+      const defs = await api.listFieldDefs(slug);
+      kind = defs.items.find((d) => d.name === fieldName)?.entity_kind ?? null;
+    }
+    if (!kind) return;
+    // PRESS-ARGS: entity_kind, field and value come from the card's field and the name just typed.
+    await runAction(api, qc, slug, { actionId: "platform:learn-choice", entityKind: "", entityId: "", args: { entity_kind: kind, field: fieldName, value: name } });
+    void qc.invalidateQueries({ queryKey: ["scan-menu", slug] });
+    void qc.invalidateQueries({ queryKey: ["platform-field-defs", slug] });
+    onAdded?.();
+  };
   return (
-    <select
-      id={id}
-      data-field={dataField}
-      value={value}
-      onChange={(e) => {
-        const v = e.target.value;
-        if (v === NEW_CHOICE) {
-          setDraft("");
-          return;
-        }
-        onChange(v || null);
-      }}
+    <ChoiceCombobox
+      label={label}
+      value={value || null}
+      options={options}
       className={className}
-    >
-      <option value=""> - none - </option>
-      {choices.map((c) => (
-        <option key={c} value={c}>
-          {c}
-        </option>
-      ))}
-      {value && !choices.includes(value) && <option value={value}>{value}</option>}
-      {canAdd && (
-        <option value={NEW_CHOICE} data-testid="new-choice-entry">
-          New {word}…
-        </option>
-      )}
-    </select>
+      id={id}
+      dataField={dataField}
+      onCommit={(v, final) => {
+        onChange(v);
+        if (final && v && canAdd && !createByName && !matchChoice(options, v)) void learn(v).catch(() => {});
+      }}
+    />
   );
 }

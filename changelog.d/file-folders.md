@@ -3,6 +3,7 @@ type: feature
 scope: core-files
 date: 2026-09-26
 docs_target: docs/USER_GUIDE.md#3.4 Files (foundational)
+docs_published: 2026-10-01
 ---
 **Files have folders now.** Make folders inside folders on the Files page, upload straight into one, rename a file or move it with "Move to…", and find any file by name from search. Uploading a file you already have keeps the one copy and says where it is, and a folder that still holds something cannot be deleted, so tidying never loses a file.
 

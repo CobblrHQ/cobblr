@@ -202,6 +202,33 @@ connectionsRouter.post("/me/connections/test", requireAuth, async (req, res) => 
   res.json(await connectionProviders.testConnection(parsed.data.provider_id, kind, parsed.data.credentials, { userId: req.session!.id }));
 });
 
+// What a connection would be, before it is saved: a service's name, version
+// and capabilities read from its manifest, or the field its manifest gets
+// wrong. Nothing is stored. Only for a kind that prepares its connection.
+connectionsRouter.post("/me/connections/preview", requireAuth, async (req, res, next) => {
+  try {
+    const Body = z.object({ provider_id: z.string().min(1).max(80), credentials: z.record(z.unknown()) });
+    const parsed = Body.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "provider_id + credentials required" } });
+      return;
+    }
+    const provider = connectionProviders.getProvider(parsed.data.provider_id);
+    if (!provider?.prepare) {
+      res.status(400).json({ error: { code: "no_preview", message: "This kind of connection has nothing to read before it is saved." } });
+      return;
+    }
+    const prepared = await provider.prepare(parsed.data.credentials, { userId: req.session!.id });
+    if (!prepared.ok) {
+      res.status(prepared.status).json({ error: { code: prepared.code, message: prepared.message, ...(prepared.details !== undefined ? { details: prepared.details } : {}) } });
+      return;
+    }
+    res.json({ provider_id: prepared.providerId, label: prepared.label ?? null, preview: prepared.preview ?? null });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Is MY personal edge agent connected right now? Drives the transit hint in
 // the add-a-connection dialog (a bridge-transit provider routes through it).
 connectionsRouter.get("/me/edge-agent", requireAuth, async (req, res) => {
@@ -248,11 +275,21 @@ connectionsRouter.post("/me/connections", requireAuth, async (req, res, next) =>
         return;
       }
     }
+    // A kind that stores something other than what was typed (a service:
+    // its manifest's own id, read from the address) makes it here, and a
+    // manifest that does not validate stops the save naming the field.
+    const prepared = provider.prepare ? await provider.prepare(parsed.data.credentials, { userId: req.session!.id }) : null;
+    if (prepared && !prepared.ok) {
+      res.status(prepared.status).json({ error: { code: prepared.code, message: prepared.message, ...(prepared.details !== undefined ? { details: prepared.details } : {}) } });
+      return;
+    }
+    const providerId = prepared?.providerId ?? parsed.data.provider_id;
+    const credentials = prepared?.credentials ?? parsed.data.credentials;
     // The key is tested before the connection is presented as ready. A
     // rejected key is not saved unless the person says so, and then it is
     // saved as unverified, not as ready.
     // Always probed, even with no key: a bridge has none and is still testable.
-    let verification = await probeConnection(parsed.data.provider_id, provider.kind, parsed.data.credentials, req.session!.id);
+    let verification = await probeConnection(providerId, provider.kind, credentials, req.session!.id);
     if (verification?.state === "invalid" && !parsed.data.confirm_unverified) {
       res.status(409).json(unverifiedRefusal(verification));
       return;
@@ -262,7 +299,15 @@ connectionsRouter.post("/me/connections", requireAuth, async (req, res, next) =>
     // The KIND comes from the provider, never from the body: it decides which
     // resolver will later find this credential, so letting a client name it
     // would let one connection answer for a service it is not.
-    const id = await addUserCredential(req.session!.id, { ...input, kind: provider.kind, ...(verification ? { verification } : {}) });
+    const id = await addUserCredential(req.session!.id, {
+      ...input,
+      provider_id: providerId,
+      credentials,
+      ...(!input.label?.trim() && prepared?.label ? { label: prepared.label } : {}),
+      kind: provider.kind,
+      ...(verification ? { verification } : {}),
+    });
+    if (prepared?.afterSave) await prepared.afterSave(id);
     if (parsed.data.routes?.length) {
       const me = await meta.selectFrom("users").select("display_name").where("id", "=", req.session!.id).executeTakeFirst();
       await notifyOwnersOfOffers(req.session!.id, me?.display_name ?? "A member", parsed.data.routes);
@@ -302,11 +347,25 @@ connectionsRouter.patch("/me/connections/:id", requireAuth, async (req, res, nex
       res.status(404).json({ error: { code: "not_found", message: "Connection not found." } });
       return;
     }
+    // A kind that prepares its connection (a service re-reads its manifest at
+    // the new address) does so on an edit of its credentials too, and an
+    // address that now serves a different service is a different connection.
+    const kindDef = stored ? connectionProviders.providerFor(stored.provider_id, stored.kind) : null;
+    const merged = stored && parsed.data.credentials !== undefined ? { ...stored.credentials, ...parsed.data.credentials } : null;
+    const prepared = merged && kindDef?.prepare ? await kindDef.prepare(merged, { userId: req.session!.id, credentialId: id }) : null;
+    if (prepared && !prepared.ok) {
+      res.status(prepared.status).json({ error: { code: prepared.code, message: prepared.message, ...(prepared.details !== undefined ? { details: prepared.details } : {}) } });
+      return;
+    }
+    if (prepared && stored && prepared.providerId !== stored.provider_id) {
+      res.status(400).json({ error: { code: "different_service", message: `That address serves a different service (${prepared.providerId}). Add it as a new connection.` } });
+      return;
+    }
     // An edit re-probes only a key: a bridge's settings are no key, and a
     // bridge that is offline while its setting changes must not be refused
     // for it. Its Test button, and its return, re-check it.
-    const merged = stored && parsed.data.credentials !== undefined ? { ...stored.credentials, ...parsed.data.credentials } : null;
-    let verification = stored && merged && carriesCredentials(merged) ? await probeConnection(stored.provider_id, stored.kind, merged, req.session!.id, id) : null;
+    let verification =
+      stored && merged && carriesCredentials(merged) ? await probeConnection(stored.provider_id, stored.kind, prepared?.credentials ?? merged, req.session!.id, id) : null;
     // A rejected key is always refused until confirmed; an unsettled one only
     // when it would displace a key that VERIFIED. A row never verified takes
     // the new state as it is.
@@ -322,6 +381,7 @@ connectionsRouter.patch("/me/connections/:id", requireAuth, async (req, res, nex
       res.status(404).json({ error: { code: "not_found", message: "Connection not found." } });
       return;
     }
+    if (prepared?.ok && prepared.afterSave) await prepared.afterSave(id);
     if (parsed.data.routes?.length) {
       const me = await meta.selectFrom("users").select("display_name").where("id", "=", req.session!.id).executeTakeFirst();
       await notifyOwnersOfOffers(req.session!.id, me?.display_name ?? "A member", parsed.data.routes);
@@ -436,6 +496,7 @@ const ApproveBody = z.object({ active: z.boolean().optional() });
 // deliberately; an assistant must not decide that, least of all about itself.
 workspaceAiSharesRouter.post("/ai-shares/:credentialId/approve", requireAuth, withTenant, async (req, res, next) => {
   try {
+    // ROLE: the owner, checked by approveWorkspaceAiOffer
     const parsed = ApproveBody.safeParse(req.body ?? {});
     const ok = await approveWorkspaceAiOffer(
       req.session!.id,
@@ -460,6 +521,7 @@ workspaceAiSharesRouter.post("/ai-shares/:credentialId/approve", requireAuth, wi
 // deliberately; an assistant must not decide that, least of all about itself.
 workspaceAiSharesRouter.post("/ai-shares/:credentialId/reject", requireAuth, withTenant, async (req, res, next) => {
   try {
+    // ROLE: the owner, checked in the handler (not_owner)
     const ok = await rejectWorkspaceAiOffer(req.session!.id, orgId(req), req.params.credentialId!);
     if (!ok) {
       res.status(403).json({ error: { code: "not_owner", message: "Only the workspace owner can decline shared AI." } });
@@ -479,6 +541,7 @@ const ActiveBody = z.object({ credential_id: z.string().uuid().nullable() });
 // deliberately; an assistant must not decide that, least of all about itself.
 workspaceAiSharesRouter.post("/ai-shares/active", requireAuth, withTenant, async (req, res, next) => {
   try {
+    // ROLE: the owner, checked in the handler (not_owner)
     const parsed = ActiveBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "credential_id required (or null)." } });

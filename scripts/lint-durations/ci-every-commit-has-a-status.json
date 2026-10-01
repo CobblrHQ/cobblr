@@ -1,0 +1,8 @@
+{
+  "lint": "lint:ci-every-commit-has-a-status",
+  "run": "node scripts/lint-ci-every-commit-has-a-status.ts",
+  "ms": 200,
+  "recorded": "2026-10-01",
+  "source": "replaces lint:ci-paths-mirror (docs-only.yml retired)",
+  "readMB": 0.1
+}

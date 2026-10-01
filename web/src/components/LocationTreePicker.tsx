@@ -10,12 +10,12 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useQuery } from "@tanstack/react-query";
-import { Check, ChevronDown, ChevronRight, MapPin, Plus, X } from "lucide-react";
-import { api, type Location } from "../lib/api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Backpack, Check, ChevronDown, ChevronRight, MapPin, Plus, X } from "lucide-react";
+import { api, type Location, type PlaceHolder } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { QuickCreateLocation } from "./QuickCreateLocation";
-import { OverlayLayer, PopoverLayer, SearchInput } from "@cobblr/platform-web";
+import { OverlayLayer, PopoverLayer, SearchInput, useEscapeToClose, useToast } from "@cobblr/platform-web";
 
 interface Props {
   value: string | null;
@@ -35,6 +35,17 @@ interface Props {
   noneLabel?: string;
   className?: string;
   size?: "sm" | "md";
+  /** The record whose place this is. Given, the picker also offers the things
+   *  that hold things (a Backpack, a toolbox) and moves the record into one
+   *  through placement; the trigger then reads "Backpack, in Desk drawer". */
+  thing?: { kind: string; id: string };
+  /** After the record moved into, or out of, something that holds things. */
+  onPlaced?: () => void;
+  /** A destination picker (Move everything): offer the things that hold
+   *  things too, and hand the chosen one back instead of moving anything. */
+  onPickHolder?: (holder: PlaceHolder) => void;
+  /** The holder chosen through onPickHolder, shown as the selection. */
+  pickedHolder?: PlaceHolder | null;
 }
 
 // siblings: manual drag order (position), then NATURAL name (Bin 2 before Bin 10).
@@ -52,13 +63,20 @@ export function LocationTreePicker({
   noneLabel = "(no location)",
   className,
   size = "md",
+  thing,
+  onPlaced,
+  onPickHolder,
+  pickedHolder,
 }: Props) {
   const { activeSlug } = useActiveOrg();
+  const qc = useQueryClient();
+  const toast = useToast();
   const [open, setOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [cursor, setCursor] = useState<string | null>(null); // the room we've drilled into (null = top)
   const [q, setQ] = useState("");
   const trigRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const [rect, setRect] = useState<DOMRect | null>(null);
 
   const list = useQuery({
@@ -66,6 +84,44 @@ export function LocationTreePicker({
     queryFn: () => api.listLocations(activeSlug),
     enabled: !!activeSlug,
   });
+
+  // Holders are offered for a record's own place only, and not where the pick
+  // is restricted to one kind of place (a machine stands in a room).
+  const offersHolders = (!!thing || !!onPickHolder) && !kind;
+  const holders = useQuery({
+    queryKey: ["core-placement-holders", activeSlug],
+    queryFn: () => api.placementHolders(activeSlug),
+    enabled: !!activeSlug && offersHolders,
+  });
+  const where = useQuery({
+    queryKey: ["core-placement-path", activeSlug, thing?.kind, thing?.id],
+    queryFn: () => api.placementPath(activeSlug, thing!.kind, thing!.id),
+    enabled: !!activeSlug && !!thing,
+  });
+  const inside = where.data?.inside ?? null;
+  const holderRows: PlaceHolder[] = offersHolders
+    ? (holders.data?.items ?? []).filter((h) => !(thing && h.kind === thing.kind && h.id === thing.id))
+    : [];
+  const chosen = inside ?? (pickedHolder ? { kind: pickedHolder.kind, id: pickedHolder.id } : null);
+  const afterMove = () => {
+    void qc.invalidateQueries({ queryKey: ["core-placement-path", activeSlug] });
+    void qc.invalidateQueries({ queryKey: ["core-placement-holders", activeSlug] });
+    onPlaced?.();
+  };
+  const pickHolder = async (h: PlaceHolder) => {
+    setOpen(false);
+    setQ("");
+    if (onPickHolder) {
+      onPickHolder(h);
+      return;
+    }
+    try {
+      await api.placementPlace(activeSlug, { containee: thing!, container: { kind: h.kind, id: h.id } });
+      afterMove();
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
 
   const all = useMemo(() => {
     const rows = (list.data?.items ?? []).filter((i) => i.id !== excludeId);
@@ -122,21 +178,30 @@ export function LocationTreePicker({
   useEffect(() => {
     if (!open) return;
     const onMove = () => reposition();
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
     window.addEventListener("resize", onMove);
     window.addEventListener("scroll", onMove, true);
-    window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("resize", onMove);
       window.removeEventListener("scroll", onMove, true);
-      window.removeEventListener("keydown", onKey);
     };
   }, [open]);
+  useEscapeToClose(open, panelRef, () => setOpen(false));
 
-  const pick = (id: string | null) => {
-    onChange(id);
+  const pick = async (id: string | null) => {
     setOpen(false);
     setQ("");
+    // Inside a Backpack, the record has no place of its own to set: taking it
+    // out, or putting it on a shelf, is a move out of the Backpack first.
+    if (inside && thing) {
+      try {
+        await api.placementRemove(activeSlug, thing);
+      } catch (e) {
+        toast.error((e as Error).message);
+        return;
+      }
+      afterMove();
+    }
+    onChange(id);
   };
   const drill = (id: string) => {
     setCursor(id);
@@ -150,6 +215,11 @@ export function LocationTreePicker({
         .slice(0, 80)
     : childrenOf(cursor);
   const crumbs = cursor ? pathOf(cursor) : [];
+  const holderMatches = q.trim()
+    ? holderRows.filter((h) => h.title.toLowerCase().includes(q.trim().toLowerCase()))
+    : cursor === null
+      ? holderRows
+      : [];
 
   const sizeCls = size === "sm" ? "px-2 py-1 text-xs" : "px-2.5 py-1.5 text-sm";
 
@@ -168,13 +238,17 @@ export function LocationTreePicker({
     >
       <MapPin size={13} className="shrink-0 text-faint" />
       <span className="truncate flex-1 text-left">
-        {selected ? (
+        {inside ? (
+          where.data!.line
+        ) : pickedHolder ? (
+          pickedHolder.line ? `${pickedHolder.title}, in ${pickedHolder.line}` : pickedHolder.title
+        ) : selected ? (
           pathOf(selected.id).map(nameOf).join(" › ")
         ) : (
           <span className="text-faint">{placeholder}</span>
         )}
       </span>
-      {selected && (
+      {(selected || inside) && (
         <button
           type="button"
           onClick={(e) => {
@@ -182,7 +256,7 @@ export function LocationTreePicker({
             pick(null);
           }}
           className="shrink-0 text-faint hover:text-content p-0.5"
-          title="Clear location"
+          title={inside ? `Take out of ${inside.name}` : "Clear location"}
         >
           <X size={13} />
         </button>
@@ -198,6 +272,7 @@ export function LocationTreePicker({
       <>
         <OverlayLayer className="z-[60]" onClick={() => setOpen(false)} />
         <PopoverLayer
+          ref={panelRef}
           data-testid="location-tree-picker-panel"
           className="z-[61] flex flex-col overflow-hidden rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-xl"
           style={{
@@ -240,11 +315,31 @@ export function LocationTreePicker({
                 onClick={() => pick(null)}
                 className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-faint hover:bg-subtle dark:hover:bg-slate-800"
               >
-                {value === null && <Check size={13} className="shrink-0 text-accent" />}
+                {value === null && !chosen && <Check size={13} className="shrink-0 text-accent" />}
                 {noneLabel}
               </button>
             )}
-            {rows.length === 0 && <div className="px-3 py-3 text-sm text-faint">Nothing here.</div>}
+            {holderMatches.length > 0 && (
+              <div data-testid="location-picker-holders" className="border-b border-line dark:border-slate-800">
+                <div className="px-3 pt-2 pb-1 font-mono text-[10px] uppercase tracking-widest text-faint">Inside something</div>
+                {holderMatches.map((h) => {
+                  const here = chosen?.kind === h.kind && chosen.id === h.id;
+                  return (
+                    <button
+                      key={`${h.kind}:${h.id}`}
+                      type="button"
+                      onClick={() => void pickHolder(h)}
+                      className={"flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-subtle dark:hover:bg-slate-800 " + (here ? "bg-cobble-50 dark:bg-cobble-950/30" : "")}
+                    >
+                      {here ? <Check size={13} className="shrink-0 text-accent" /> : <Backpack size={13} className="shrink-0 text-faint" />}
+                      <span className="truncate">{h.title}</span>
+                      {h.line && <span className="truncate text-xs text-faint">in {h.line}</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {rows.length === 0 && holderMatches.length === 0 && <div className="px-3 py-3 text-sm text-faint">Nothing here.</div>}
             {rows.map((l) => {
               const kids = hasKids(l.id);
               const pickable = canPick(l);
@@ -254,7 +349,7 @@ export function LocationTreePicker({
                   key={l.id}
                   className={
                     "flex items-stretch hover:bg-subtle dark:hover:bg-slate-800 " +
-                    (value === l.id ? "bg-cobble-50 dark:bg-cobble-950/30" : "")
+                    (value === l.id && !inside ? "bg-cobble-50 dark:bg-cobble-950/30" : "")
                   }
                 >
                   <button
@@ -262,7 +357,7 @@ export function LocationTreePicker({
                     onClick={() => (pickable ? pick(l.id) : kids ? drill(l.id) : undefined)}
                     className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left text-sm"
                   >
-                    {value === l.id && <Check size={13} className="shrink-0 text-accent" />}
+                    {value === l.id && !inside && <Check size={13} className="shrink-0 text-accent" />}
                     <span className="truncate">
                       {nameOf(l)}
                       {l.short_name && l.short_name !== l.name && <span className="text-faint"> · {l.name}</span>}

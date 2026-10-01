@@ -54,9 +54,11 @@ export function generate(ci) {
   const pr = at(/^ {2}pull_request:\s*$/, on);
   if (pr > conc) throw new Error("ci.yml's pull_request trigger is not inside its on: block");
   if (lines.slice(on, conc).some((l) => /^ {2}push:/.test(l))) throw new Error("ci.yml must not trigger on push: main's pushes run ci-main.yml");
+  // ci.yml's pull_request path filter, when it has one (it has none since
+  // the docs-only workflow went: the selectors skip what a change cannot reach).
   const paths = [];
-  for (let i = at(/^ {4}paths-ignore:\s*$/, pr) + 1; i < conc && /^ {6}- /.test(lines[i]); i++) paths.push(lines[i]);
-  if (!paths.length) throw new Error("ci.yml's pull_request has no paths-ignore list to copy");
+  const pi = lines.findIndex((l, n) => n > pr && n < conc && /^ {4}paths-ignore:\s*$/.test(l));
+  if (pi >= 0) for (let i = pi + 1; i < conc && /^ {6}- /.test(lines[i]); i++) paths.push(lines[i]);
 
   const body = lines.slice(jobs).map((l) => {
     const m = /^( {4}runs-on: )(\S+)\s*$/.exec(l);
@@ -84,8 +86,7 @@ export function generate(ci) {
     "on:",
     "  push:",
     "    branches: [main, 'train/**']",
-    "    paths-ignore:",
-    ...paths,
+    ...(paths.length ? ["    paths-ignore:", ...paths] : []),
     "",
     "concurrency:",
     "  group: ci-main-${{ github.sha }}",

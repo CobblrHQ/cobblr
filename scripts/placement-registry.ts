@@ -90,7 +90,7 @@ export const PLACEMENT: PlacementRow[] = [
   {
     id: "generic-web-component",
     what: "a web component that works for ANY module's records",
-    keywords: ["component", "shared component", "generic", "reusable ui", "widget"],
+    keywords: ["component", "shared component", "generic", "reusable ui", "widget", "panel on every record", "record panel", "every record", "detail page section"],
     dir: "web/src/components/",
     exemplar: "web/src/components/EntityAttachments.tsx",
     why: "This layer is module-agnostic: it may not name a module's entity kind, because doing so silently excludes every module added later.",
@@ -234,9 +234,46 @@ export const PLACEMENT: PlacementRow[] = [
     notes: ["A mutating route with no action must carry `// AI-REACH: <reason>` at the route."],
   },
   {
+    id: "side-panel-door",
+    what: "a button that opens the side panel (Ask Cobb, Discussion) about a record",
+    keywords: ["side panel", "rail", "discussion tab", "discuss", "ask cobb", "open the panel", "context chip", "about a record"],
+    dir: "packages/platform-web/src/",
+    exemplar: "packages/platform-web/src/open-discussion.ts",
+    why: "The panel cannot tell which record a modal is showing (a modal leaves the URL alone), so a door says what it is about: the record goes into the one context the Ask Cobb and Discussion chips both read.",
+    lints: [],
+    notes: [
+      "Discussion: openDiscussion({ record }), record or null. Ask Cobb: publishRowSelection then cobblr:open-chat, as AskCobbAbout does.",
+    ],
+  },
+  {
+    id: "action-readback",
+    what: "what a confirm card says before an action runs: its title and the lines under it",
+    keywords: ["confirm card", "readback", "proposal card", "card wording", "planner", "plan", "what cobb proposes", "confirm"],
+    dir: "beside: the action's handler (registerPlanner next to its run handler)",
+    exemplar: "api/src/platform/platform-action-handlers.ts",
+    why: "A card reads the action's planner; with none it falls back to the action's label and its argument labels, which are written for the assistant to fill in, so a person confirming a change reads help text instead of what will happen.",
+    lints: [],
+    notes: [
+      "Say what changes in the person's words (\"Turn off the Yarn feature\"), then what stays and what goes. api/tests/a-confirm-card-reads-its-arguments-as-words.test.ts holds the fallback.",
+    ],
+  },
+  {
+    id: "outside-service-adapter",
+    what: "an adapter that talks to an outside app or service: a document library, a game library, a machine manager, any third-party API",
+    keywords: ["adapter", "outside app", "outside service", "third-party", "third party", "external api", "integration", "connect to", "sync with", "services", "library"],
+    dir: "modules/<name>/src/",
+    exemplar: "modules/core-documents/src/paperless.ts",
+    why: "A Services adapter is reached directly or through a person's bridge without knowing which: every request goes through ctx.fetch, and the credential lives in the Services connection, never in a job's input, output or log.",
+    lints: ["lint:credential-slot-kind", "lint:driver-fetch-has-timeout"],
+    notes: [
+      "Declare the capabilities in the platform contract (see @cobblr/platform-contract/documents) so a second adapter (modules/core-documents/src/romm.ts) answers the same calls.",
+      "An outside app that rings back is an api-route (the inbound webhook); a pass that matches its items to records is a sweeper.",
+    ],
+  },
+  {
     id: "api-route",
     what: "an HTTP route on a module or the kernel",
-    keywords: ["route", "endpoint", "router.get", "router.post", "express", "handler", "url", "path"],
+    keywords: ["route", "endpoint", "router.get", "router.post", "express", "handler", "url", "path", "webhook", "inbound", "doorbell", "callback"],
     dir: "modules/<name>/src/api/ or api/src/routes/",
     exemplar: "modules/core-scan/src/api/inbox.ts",
     why: "Express matches in registration order: a literal path declared after a parameter route on the same prefix is never reached, and the client gets a 400 that nothing reports (the session theme was dead this way for weeks).",
@@ -285,7 +322,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: ".forgejo/workflows/",
     exemplar: ".forgejo/workflows/ci.yml",
     why: "Forgejo keeps no job logs and parses each job on its own: a step that ships no log is unreadable after the fact, a label nobody carries never runs, and a YAML anchor across jobs invalidates the whole file.",
-    lints: ["lint:ci-sink", "lint:ci-runner-labels", "lint:ci-lanes", "lint:workflow-yaml", "lint:latest-monotonic", "lint:ci-pr-any-base", "lint:forgejo-pagination", "lint:main-runs-complete", "lint:catalog-replay", "lint:ci-exit-read-under-set-e", "lint:dockerfile-copies-ship", "lint:slot-pairs-are-wired"],
+    lints: ["lint:ci-sink", "lint:ci-runner-labels", "lint:ci-lanes", "lint:workflow-yaml", "lint:latest-monotonic", "lint:ci-pr-any-base", "lint:forgejo-pagination", "lint:main-runs-complete", "lint:catalog-replay", "lint:ci-exit-read-under-set-e", "lint:dockerfile-copies-ship", "lint:slot-pairs-are-wired", "lint:ci-every-commit-has-a-status"],
     notes: [
       "A step's log is a pipe (`| tee`): a harness that prints a child's captured output must end by process.exitCode, never process.exit(), or the failing run's log stops at 64 KiB with no failing test in it (#3167; lint:cli-flush-before-exit).",
       "The `test` and `test-full` jobs are one job in two places; edit the gate, copy its env+steps over the tracker.",
@@ -467,4 +504,22 @@ export function lintsOf(row: PlacementRow): string[] {
     .filter((l: { rows: string[] }) => l.rows.includes(row.id))
     .map((l: { name: string }) => l.name);
   return [...new Set([...row.lints, ...claimedHere])];
+}
+
+/** How well a row answers a question, in the words someone typed. */
+export function placementScore(row: PlacementRow, q: string): number {
+  const hay = `${row.id} ${row.what} ${row.keywords.join(" ")}`.toLowerCase();
+  const words = q.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+  let n = 0;
+  for (const w of words) if (hay.includes(w)) n += 1;
+  for (const k of row.keywords) if (q.toLowerCase().includes(k)) n += 2;
+  return n;
+}
+
+/** The rows that answer a question, best first. */
+export function rankPlacement(q: string): PlacementRow[] {
+  return PLACEMENT.map((r) => ({ r, n: placementScore(r, q) }))
+    .filter((x) => x.n > 0)
+    .sort((a, b) => b.n - a.n)
+    .map((x) => x.r);
 }

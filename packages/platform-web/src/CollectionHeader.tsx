@@ -68,7 +68,10 @@ export function CollectionHeader({
   return (
     <div className="border-b border-line dark:border-slate-700 pb-3 space-y-1.5" data-collection-header>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <div className="flex min-w-0 items-baseline gap-x-2" data-header-title>
+        {/* On a phone the name has the row to itself and the controls wrap
+            under it: beside a select and a search it was squeezed, and the
+            controls ran past the edge (#4390). */}
+        <div className="flex min-w-0 items-baseline gap-x-2 max-sm:basis-full" data-header-title>
           <h1 className="font-display text-2xl font-extrabold leading-9 text-content dark:text-mortar-100 page-title">{title}</h1>
           {count != null && <span className="text-xs font-mono tabular-nums text-faint dark:text-slate-500">{count}</span>}
         </div>
@@ -83,7 +86,7 @@ export function CollectionHeader({
           </div>
         )}
         {(search || actions || (kind && exportCsv)) && (
-          <div className="ml-auto flex flex-wrap items-center justify-end gap-2" data-header-controls>
+          <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2 max-sm:w-full" data-header-controls>
             {search}
             {kind && exportCsv ? <ExportCsvButton kind={kind} q={exportQuery} /> : null}
             {actions}

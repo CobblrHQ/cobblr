@@ -28,7 +28,7 @@ export function sidebarGroups(
   children: ReadonlyMap<string, readonly { name: string }[]>,
   instanceGroups: ReadonlyMap<string, { label: string; members: readonly { name: string }[] }>,
   doorNames: ReadonlySet<string>,
-  opts: { homeRow: boolean; flatLabel?: string },
+  opts: { homeRow: boolean; flatLabel?: string; placement?: Readonly<Record<string, "collections" | "tools">> },
 ): SidebarGroup[] {
   const out: SidebarGroup[] = [];
   const bucket = (label: string): SidebarGroup => {

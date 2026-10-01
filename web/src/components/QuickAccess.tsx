@@ -10,7 +10,7 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Markdown, QrCode, FloatingChrome, OverlayLayer, EntityPhoto } from "@cobblr/platform-web";
+import { CORNER_STACK, Markdown, QrCode, FloatingChrome, OverlayLayer, EntityPhoto, walkPages } from "@cobblr/platform-web";
 import { Zap, X, Pin, BookOpen } from "lucide-react";
 import { getToken } from "../lib/api";
 import { useNavModules } from "./useNavModules";
@@ -31,12 +31,19 @@ function QaImage({ path }: { path: string | null }) {
 
 async function fetchPinned(slug: string): Promise<PinnedEntry[]> {
   const token = getToken();
-  const res = await fetch(`/api/v1/orgs/${slug}/modules/knowledge/entries?pinned=1`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-  if (!res.ok) return [];
-  const data = (await res.json()) as { items?: PinnedEntry[] };
-  return data.items ?? [];
+  try {
+    const all = await walkPages<PinnedEntry>(async (offset, limit) => {
+      const res = await fetch(`/api/v1/orgs/${slug}/modules/knowledge/entries?pinned=1&limit=${limit}&offset=${offset}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error(`pinned entries: ${res.status}`);
+      const data = (await res.json()) as { items?: PinnedEntry[]; total?: number | null; complete?: boolean };
+      return { items: data.items ?? [], total: data.total, complete: data.complete };
+    });
+    return all.items;
+  } catch {
+    return [];
+  }
 }
 
 export function QuickAccess({ activeSlug }: { activeSlug: string }) {
@@ -60,14 +67,14 @@ export function QuickAccess({ activeSlug }: { activeSlug: string }) {
       <FloatingChrome
         as="button"
         anchor="corner"
+        // Its place in the corner's stack, above the feedback bubble, the
+        // Live pill and the label queue whenever they are there.
+        stack={CORNER_STACK.quickAccess}
         yieldToContent
-        // Above the feedback bubble on a phone, its own breath on a desktop
-        // (where the bubble lives in the sidebar or the corner is wider).
-        lift="var(--quick-access-lift, 5rem)"
         type="button"
         onClick={() => setOpen(true)}
         title="Quick Access - your pinned entries"
-        className={"right-4 z-[80] md:[--quick-access-lift:1.5rem] inline-flex items-center gap-1.5 rounded-full border border-cobble-400 dark:border-cobble-600 bg-surface dark:bg-slate-900 shadow-lg px-3.5 py-2 text-sm font-medium text-content dark:text-mortar-100 hover:border-accent transition"}
+        className={"right-4 z-[80] inline-flex items-center gap-1.5 rounded-full border border-cobble-400 dark:border-cobble-600 bg-surface dark:bg-slate-900 shadow-lg px-3.5 py-2 text-sm font-medium text-content dark:text-mortar-100 hover:border-accent transition"}
       >
         <Zap size={15} className="text-accent" />
         Quick Access

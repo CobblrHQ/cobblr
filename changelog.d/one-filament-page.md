@@ -3,6 +3,7 @@ type: feature
 scope: inventory
 date: 2026-09-28
 docs_target: docs/USER_GUIDE.md#3.1 Inventory
+docs_published: 2026-10-01
 ---
 Filament is one page. Each filament type is a card with its spools underneath, each with where it is, whether it is sealed or opened, and a minus and plus for what is left. The dashboard has one Filament tile, and the nav has one Filament entry. Spools that a scan left in the types table, or without a type, are put under their type when the page opens, and every spool and type shows its colour as the same swatch however the colour came in.
 

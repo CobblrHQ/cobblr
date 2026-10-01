@@ -1,4 +1,4 @@
-import { columnSet, platform, parseSort, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
+import { columnSet, platform, withPlaceNames, parseSort, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { MachinesDB } from "../db.js";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
@@ -37,7 +37,7 @@ export function registerMachinesResolvers(): void {
       .where("id", "=", id)
       .executeTakeFirst();
     if (!row) return null;
-    return toResolvedMachine(await withUnits(orgId, db, row));
+    return (await withPlaceNames(orgId, "machines:machine", [toResolvedMachine(await withUnits(orgId, db, row))]))[0]!;
   });
 
   // Shared list body — base kind (all instances) AND, with an `instance` arg,
@@ -121,7 +121,8 @@ export function registerMachinesResolvers(): void {
     const rows = await q.limit(limit).offset(offset).execute();
     // A unit is one of its parent's N, not a machine of its own: it leaves the
     // list and rides on its parent, so a count of records never counts it twice.
-    return { items: (await liftUnits(db, orgId, rows)).map((r) => toResolvedMachine(r)) };
+    // Where each one is, by name, so a search or the assistant can say it.
+    return { items: await withPlaceNames(orgId, "machines:machine", (await liftUnits(db, orgId, rows)).map((r) => toResolvedMachine(r))) };
   };
 
   // Scoped to the default instance - same leak as inventory's base kind; see
@@ -149,7 +150,7 @@ export function registerMachinesResolvers(): void {
       .where("instance", "=", instance as never)
       .executeTakeFirst();
     if (!row) return null;
-    return toResolvedMachine(await withUnits(orgId, db, row));
+    return (await withPlaceNames(orgId, "machines:machine", [toResolvedMachine(await withUnits(orgId, db, row))]))[0]!;
   });
 }
 

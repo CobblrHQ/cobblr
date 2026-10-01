@@ -180,6 +180,8 @@ export function ShipmentPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
             <div className="text-[11px] text-faint">
               {statusQ.data?.reason === "quota_exhausted"
                 ? "Your tracking service is at capacity, so Cobblr could not start following this parcel. The link above still works."
+                : statusQ.data?.reason === "busy"
+                ? "Your tracking service is busy right now; Cobblr will ask it again shortly. The link above still works."
                 : statusQ.data?.reason === "not_connected"
                 ? `${carrier.name} is not connected here, so Cobblr cannot follow this parcel. The link above still works.`
                 : statusQ.data?.reason === "no_driver"

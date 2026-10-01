@@ -23,6 +23,7 @@ import {
   summarizeKind,
 } from "./kinds.js";
 import { explainRecords } from "./field-meanings.js";
+import { asMeasure, measureMatches, measureTokens, type Measure } from "@cobblr/platform-contract/measure";
 import { CURSOR_PARAM, decodeCursor, pageEnd, type Paging } from "./paging.js";
 
 export type ToolMode = "read" | "write";
@@ -115,7 +116,38 @@ export function recordMatchesText(rec: unknown, q: string): boolean {
   } catch {
     text = String(rec);
   }
-  return textMatches(text, q);
+  const answered = answersValues(rec, text, q);
+  return answered ?? textMatches(text, q);
+}
+
+/** The measured values anywhere on a record: a measure field's value, and
+ *  each value named in its text ("Resistor 4k7"). */
+function valuesIn(x: unknown, depth = 0): Measure[] {
+  if (depth > 4 || x == null) return [];
+  if (typeof x === "string") return (measureTokens(x)?.values ?? []).map((v) => v.measure);
+  if (typeof x !== "object") return [];
+  const m = typeof (x as { value?: unknown }).value === "number" ? asMeasure(x) : null;
+  if (m) return [m];
+  return Object.values(x as Record<string, unknown>).flatMap((v) => valuesIn(v, depth + 1));
+}
+
+/** For a query that names values ("10k", "100 nF ceramic"), whether the record
+ *  answers it, by the search's own rule (valueSearchWhere): each value found
+ *  by value, or as text unless the record holds that number in another unit;
+ *  each word as text. Null when the query names no value. */
+function answersValues(rec: unknown, text: string, q: string): boolean | null {
+  const read = measureTokens(q);
+  if (!read) return null;
+  const held = valuesIn(rec);
+  const hay = text.toLowerCase();
+  return (
+    read.words.every((w) => hay.includes(w.toLowerCase())) &&
+    read.values.every(
+      (v) =>
+        held.some((h) => measureMatches(v.measure, h)) ||
+        (hay.includes(v.text.toLowerCase()) && !held.some((h) => !!h.unit && !!v.measure.unit && h.unit !== v.measure.unit && measureMatches({ ...v.measure, unit: null }, h))),
+    )
+  );
 }
 
 /** When more than one record answers to what was asked BY NAME, the answer is
@@ -139,7 +171,7 @@ function severalMatch(items: unknown[], q: string): { several_match: string } | 
  *  told what the results actually are. The server's own `q` matches beyond the
  *  name for some kinds, so "name first, other fields only if no name match"
  *  was not true; each result now says which field matched instead (#3814). */
-export const LIST_Q_MEANS = "Text filter over name and other text; each result's matched_on says which, name matches first";
+export const LIST_Q_MEANS = "Text filter over name and other text; each result's matched_on says which, name matches first. \"4k7\" finds 4.7 kΩ";
 
 /** Which field of a record a text query matched: "name" when its name does,
  *  else the first other text field that does, else null. */
@@ -148,7 +180,10 @@ export function matchedOn(rec: unknown, q: string): string | null {
   if (!needle || !rec || typeof rec !== "object") return null;
   const r = rec as Record<string, unknown>;
   const fields = (r.fields && typeof r.fields === "object" ? r.fields : r) as Record<string, unknown>;
-  const has = (v: unknown) => typeof v === "string" && textMatches(v, needle);
+  const values = measureTokens(needle)?.values ?? [];
+  const has = (v: unknown) =>
+    (typeof v === "string" && textMatches(v, needle)) ||
+    (values.length > 0 && valuesIn(v).some((h) => values.some((q) => measureMatches(q.measure, h))));
   if (has(r.title) || has(fields.name) || has(r.name)) return "name";
   const bags: Array<Record<string, unknown>> = [fields];
   if (fields.metadata && typeof fields.metadata === "object") bags.push(fields.metadata as Record<string, unknown>);
@@ -713,6 +748,19 @@ export function placementAsked(relationship: unknown): boolean {
   return !rel || rel === PLACED_IN || PLACEMENT_WORDS.test(rel);
 }
 
+/** Read tools that POST to do their reading (replan_putaway recomputes a
+ *  proposal and files nothing). A caller allowed only to look cannot send a
+ *  POST, so these are not offered to one: a tool on the list that always
+ *  refuses reads to the assistant as a broken tool. Every MCP door reads this
+ *  one set; the hosted endpoint's test derives it by running every read tool,
+ *  so a new one cannot be missed. */
+export const READ_TOOLS_THAT_POST: ReadonlySet<string> = new Set(["replan_putaway"]);
+
+/** Whether a caller that may only look can run this tool. */
+export function lookOnlyCanRun(tool: Pick<WorkspaceTool, "name" | "mode">): boolean {
+  return tool.mode !== "write" && !READ_TOOLS_THAT_POST.has(tool.name);
+}
+
 export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "take_user_to",
@@ -1117,7 +1165,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_actions",
     description:
-      "Discover the operations (actions) this workspace can run. scope 'entity': runs on one record, matched_kinds says which kinds. scope 'workspace': a config/admin operation on the whole workspace, invoked WITHOUT a record. Each carries args_schema (pass as invoke_action's args) and undoable; on a connection with no confirmation prompt only undoable ones run, and the rest refuse and say so - tell the user rather than claiming you cannot act. Optionally filter to one kind; workspace actions always included. Run one with invoke_action.",
+      "Discover the operations (actions) this workspace can run. scope 'entity': runs on one record, matched_kinds says which kinds. scope 'workspace': a config/admin operation on the whole workspace, invoked WITHOUT a record. Each carries args_schema (pass as invoke_action's args) and undoable; on a connection with no confirmation prompt only undoable ones run, and the rest refuse and say so - tell the user rather than claiming you cannot act. Optionally filter to one kind. Run one with invoke_action.",
     mode: "read",
     paging: { by: "one-call", why: "every action the workspace registers; the registry is small and whole" },
     params: {
@@ -1210,7 +1258,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "get_attention",
     description:
-      "What needs the user RIGHT NOW: the same 'needs you' feed their dashboard shows — stock that has run low, dates that are overdue or coming up in the next 30 days, and captures still waiting to be filed. Derived from the workspace's own field semantics, so it covers every tracker they have, including ones they built themselves. Reach for this FIRST on any open-ended question about their situation (\"what should I do today?\", \"anything need me?\", \"am I behind on anything?\") — it is one call and it is what they are looking at.",
+      "What needs the user RIGHT NOW: the same 'needs you' feed their dashboard shows — stock that has run low, dates that are overdue or coming up in the next 30 days, and captures still waiting to be filed, across every tracker they have. Reach for this FIRST on any open-ended question about their situation (\"what should I do today?\", \"anything need me?\", \"am I behind on anything?\") — it is one call and it is what they are looking at.",
     mode: "read",
     paging: { by: "one-call", why: "the dashboard needs-you feed: one row per kind of thing with its count and a few examples; the count is the whole answer" },
     params: {},
@@ -1528,7 +1576,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "get_workspace_setup",
     description:
-      "How this workspace is SET UP, as opposed to what it holds: its instances (the separate lists one module runs, e.g. 3D Printers and CNC both from Machines), its saved views, its automations (wires: when X happens, do Y), the apps the user built, their entity templates, and their unit vocabulary. Use for \"how is my workspace set up?\", \"what automations do I have?\", \"why did that happen by itself?\", \"what views/apps/templates do I have?\", or before proposing a change to any of them. `part` picks one area; omit it for a summary of every area at once.",
+      "How this workspace is SET UP, as opposed to what it holds: its instances (separate lists from one module), its saved views, its automations (wires: when X happens, do Y), the apps the user built, their entity templates, and their unit vocabulary. Use for \"how is my workspace set up?\", \"what automations do I have?\", or before proposing a change to any of them. `part` picks one area; omit it for a summary of every area at once.",
     mode: "read",
     paging: { by: "one-call", why: "a description of the setup, one area or a summary of all" },
     params: {
@@ -1645,7 +1693,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "get_putaway_plan",
     description:
-      "The user's live put-away situation: how many scanned items still have no home, and the CURRENT organize plan (groups, destinations, evidence, unresolved items). Use this whenever the user talks about putting things away, organizing scanned items, bins, or 'the plan': it is always fresher than anything pasted into chat. To help further, create core-locations:location records for places they describe (with their confirmation); the plan routes to real locations by evidence.",
+      "The user's live put-away situation: how many scanned items still have no home, and the CURRENT organize plan (groups, destinations, evidence, unresolved items). Use this whenever the user talks about putting things away, organizing scanned items, bins, or 'the plan'. To help further, create core-locations:location records for places they describe (with their confirmation); the plan routes to real locations by evidence.",
     mode: "read",
     paging: { by: "one-call", why: "a summary of the standing plan (first 20 groups, 15 names each); the whole plan opens in the app" },
     params: {},
@@ -1688,7 +1736,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "replan_putaway",
     description:
-      "Recompute the user's put-away plan against the CURRENT workspace. Non-destructive: it only refreshes the proposal (nothing files, the user still accepts groups). Call this ONCE after you finish creating or renaming locations for them, the open plan updates automatically. Optionally pass a hint distilling what you learned in this conversation (e.g. 'the user is organizing camping gear; the hallway closet holds electronics').",
+      "Recompute the user's put-away plan against the CURRENT workspace. It only refreshes the proposal; nothing is filed. Call this ONCE after you finish creating or renaming locations for them, the open plan updates automatically. Optionally pass a hint of what you learned (e.g. 'camping gear; the hallway closet holds electronics').",
     mode: "read",
     paging: { by: "one-call", why: "recomputes the plan; returns a status, not rows" },
     params: {
@@ -1725,9 +1773,32 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     },
   },
   {
+    name: "add_thing",
+    description:
+      "The way to add a THING the person has (a printer, a book). Runs the scan inbox's intake: duplicate check, table, fields, picture, place. Returns what it found and hints (fields still empty: ask your person). Lands in the inbox; file: true files it.",
+    mode: "write",
+    params: {
+      name: z.string(),
+      identifier: z.string().optional().describe("Barcode, ISBN or model number"),
+      url: z.string().optional(),
+      image_file_id: z.string().optional(),
+      place: z.string().optional(),
+      location_id: z.string().optional(),
+      fields: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+      quantity: z.number().optional(),
+      file: z.boolean().optional(),
+      allow_duplicate: z.boolean().optional(),
+    },
+    execute: async (api, args) => {
+      const res = await api.request("POST", "/modules/core-scan/scan/assistant", args as Record<string, unknown>);
+      if (res.status >= 400) return toolFail(apiErrorMessage(res, "the add did not go through"));
+      return toolOk(res.body);
+    },
+  },
+  {
     name: "create_record",
     description:
-      "Create ONE new record. Use the kind's EXACT field names from list_record_kinds (e.g. knowledge entries want \"title\", parts want \"name\"). Only kinds with can_create are accepted.",
+      "Create ONE new record. A physical thing the person owns: use add_thing instead. Use the kind's EXACT field names from list_record_kinds (e.g. knowledge entries want \"title\", parts want \"name\"). Only kinds with can_create are accepted.",
     mode: "write",
     params: {
       kind: z.string().describe("Entity kind id with can_create true"),
@@ -1749,7 +1820,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "create_records",
     description:
-      "Create MANY records of one kind in ONE call. Use this whenever the user asks for a SET rather than a thing - \"shelf 1 to 5 in every rack\", \"bins A through H\" - instead of calling create_record over and over: it is one round trip instead of one per record, and the person watching sees one line instead of sixty. Same field names as create_record. Up to 200 at a time. Each record is created, tracked and undoable individually, and any that clash with something already there are REPORTED back to you, not forced - say so rather than trying again.",
+      "Create MANY records of one kind in ONE call. Use this whenever the user asks for a SET rather than a thing - \"shelf 1 to 5 in every rack\", \"bins A through H\" - instead of calling create_record over and over. Same field names as create_record. Up to 200. Each is undoable on its own; any that clash with something already there are reported back, not forced: say so rather than retry.",
     mode: "write",
     params: {
       kind: z.string().describe("Entity kind id with can_create true"),
@@ -1927,6 +1998,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       files: z.record(z.string()).optional().describe("{name: file id}"),
       attach_kind: z.string().optional().describe("Attach outputs to this record's kind"),
       attach_id: z.string().optional(),
+      after: z.string().optional().describe("Run after job/print id"),
     },
     execute: async (api, args) => {
       const attach = typeof args.attach_kind === "string" && typeof args.attach_id === "string" ? { kind: args.attach_kind, id: args.attach_id } : undefined;
@@ -1938,11 +2010,19 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       });
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "the service job could not be started"));
       const job = (res.body.job ?? res.body) as { id?: string; status?: string; message?: string | null; capability?: string };
+      // "Power off after this print": the job waits for a yes either way;
+      // the trigger makes that yes arm it for when the other thing finishes.
+      let when: string | null = null;
+      if (typeof args.after === "string" && args.after.trim() && job.id && job.status === "awaiting_confirm") {
+        const t = await api.request("POST", `/services/jobs/${encodeURIComponent(job.id)}/trigger`, { after: args.after.trim() });
+        if (t.status >= 400) return toolFail(apiErrorMessage(t, "the job was started but cannot wait for that"));
+        when = ((t.body.trigger as { label?: string } | null)?.label as string | undefined) ?? null;
+      }
       return toolOk({
         job_id: job.id,
         capability: job.capability,
         status: job.status,
-        ...(job.status === "awaiting_confirm" ? { waiting_for: "the person to confirm it on its card" } : {}),
+        ...(job.status === "awaiting_confirm" ? { waiting_for: when ? `the person's yes on its card, then ${when}` : "the person to confirm it on its card" } : {}),
         ...(job.message ? { message: job.message } : {}),
       });
     },
@@ -1985,7 +2065,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_label_codes",
     description:
-      "List the workspace's label-code groups (one per kind + instance, e.g. 3D Printers under Machines). Each entry has its code prefix (the letters before the number, e.g. 'p' in p42), how many codes exist, whether it is frozen (a label was printed, so existing codes are fixed), whether its code shows inside the QR, and its group_key. Call this to find the group_key, then change it by invoking the labels:set-code action (invoke_action with no entity): pass group_key plus prefix and/or code_in_qr (the QR toggle is per group, so 3d printers can differ from cnc).",
+      "The workspace's label-code groups (one per kind + instance). Each has its prefix (the letters in p42), how many codes exist, whether it is frozen (a label was printed), whether the code shows inside the QR, and its group_key. To change a group, invoke labels:set-code with no entity: group_key plus prefix and/or code_in_qr.",
     mode: "read",
     paging: { by: "one-call", why: "one row per label-code group; a workspace has a handful" },
     params: {},

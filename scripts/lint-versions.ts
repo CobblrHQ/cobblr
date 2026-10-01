@@ -19,7 +19,7 @@
 // Run: npx tsx scripts/lint-versions.ts
 import { execSync } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
-import { BUNDLE_NON_CONTENT_KEYS } from "./lib/bundle-release-keys.js";
+import { bundleContent } from "./lib/bundle-release-keys.js";
 
 function git(cmd: string): string {
   return execSync(`git ${cmd}`, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
@@ -59,15 +59,10 @@ const violations: string[] = [];
 // installed workspace has to re-sync. Changing it must NOT force a version bump:
 // a bump would show every existing install an "update available" for a bundle the
 // operator is DEMOTING, which is backwards.
-const META = BUNDLE_NON_CONTENT_KEYS;
 function stripMeta(j: unknown): string {
   const obj = j as { manifest?: Record<string, unknown> } & Record<string, unknown>;
   const m = (obj?.manifest ?? obj) as Record<string, unknown>;
-  if (m && typeof m === "object") {
-    const c: Record<string, unknown> = { ...m };
-    for (const k of META) delete c[k];
-    return JSON.stringify(c);
-  }
+  if (m && typeof m === "object") return JSON.stringify(bundleContent(m));
   return JSON.stringify(j);
 }
 // A version bump with no notes of its own is how an update prompt came to

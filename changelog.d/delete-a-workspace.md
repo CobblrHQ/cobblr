@@ -3,6 +3,7 @@ type: feature
 scope: workspaces
 date: 2026-09-29
 docs_target: docs/USER_GUIDE.md#Multiple workspaces
+docs_published: 2026-10-01
 ---
 An owner can delete a workspace from its General settings. It goes after a two-week grace period, everyone in it sees the date, any owner can keep it until then, and a full backup taken just before it goes stays downloadable from each owner's account for 30 days.
 

@@ -11,6 +11,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { platform, type DefinedField } from "@cobblr/platform-contract";
 import { unguardCsvText } from "@cobblr/platform-contract/csv";
+import { castFieldValue } from "@cobblr/platform-contract/field-values";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireCapability } from "./util.js";
 
@@ -193,7 +194,9 @@ function ownValue(field: DefinedField, raw: string | undefined): unknown {
     return n == null ? undefined : n;
   }
   if (field.type === "boolean") return asBool(v);
-  return v;
+  // Everything else as every other door stores it: "4k7" in a measure field
+  // is 4700 Ω, a date is a day (@cobblr/platform-contract/field-values).
+  return castFieldValue(field.type, v, field.unit ?? null);
 }
 
 /** Which CSV column carries each of the table's own fields. The export writes

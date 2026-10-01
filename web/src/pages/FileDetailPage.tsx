@@ -14,6 +14,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { canPreviewFile, CustomFieldsPanel, EntityPhoto, FilePreview, useConfirm, useFilePreviewRegistry, usePageTitle, useToast } from "@cobblr/platform-web";
 import { folderPaths, formatBytes } from "../features/core-files/fileFormat";
 import { ContributedDetailPanels } from "../panels/registry";
+import { ImageLightbox } from "../components/ImageLightbox";
 
 export function FileDetailPage() {
   const { id = "" } = useParams<{ id: string }>();
@@ -23,6 +24,7 @@ export function FileDetailPage() {
   const confirm = useConfirm();
   const navigate = useNavigate();
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [viewing, setViewing] = useState(false);
   useFilePreviewRegistry();
 
   const file = useQuery({ queryKey: ["file", activeSlug, id], queryFn: () => api.getFile(activeSlug, id), enabled: !!activeSlug && !!id, retry: false });
@@ -118,11 +120,14 @@ export function FileDetailPage() {
         </button>
       </div>
 
+      {viewing && f.kind === "image" && (
+        <ImageLightbox items={[{ key: f.id, caption: f.filename, file: { slug: activeSlug, fileId: f.id } }]} index={0} onClose={() => setViewing(false)} />
+      )}
       <section aria-label="Preview" className="rounded border border-line dark:border-slate-700 bg-subtle dark:bg-slate-900/40 p-2">
         {f.kind === "image" ? (
-          <div className="relative w-full aspect-[4/3] max-h-[70vh]">
+          <button type="button" onClick={() => setViewing(true)} aria-label={`Open ${f.filename}`} className="relative block w-full aspect-[4/3] max-h-[70vh] cursor-zoom-in">
             <EntityPhoto src={api.fileRawUrl(activeSlug, f.id, "medium")} alt={f.filename} fill fit="contain" />
-          </div>
+          </button>
         ) : canPreviewFile(f.filename) ? (
           <FilePreview src={api.fileRawUrl(activeSlug, f.id, "original")} filename={f.filename} className="min-h-[50vh]" />
         ) : (

@@ -52,6 +52,7 @@ export async function editOrderLine(
     action: "order_item_updated",
     ref: { module: "purchases", entityType: "order_item", entityId: lineId },
     diff: { order_id: line.order_id, ...edit },
+    before: line,
   });
   const before = { description: line.description, qty: Number(line.qty), unit_cost: line.unit_cost == null ? null : Number(line.unit_cost) };
   return { ok: true, line: updated as unknown as Record<string, unknown>, before };

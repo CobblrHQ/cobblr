@@ -12,6 +12,7 @@
 // flow already calls (lookupBarcode, hostedIdentifyWhy), with its allowance,
 // entitlement and metering, and adds nothing of its own.
 
+import { noteIdentification } from "./activation.js";
 import { randomUUID } from "node:crypto";
 import type { BuiltInServiceDef } from "@cobblr/platform-contract/services";
 import { platform } from "@cobblr/platform-contract";
@@ -214,6 +215,12 @@ async function askConnectedFirst(
 
 /** lookupBarcode, asked of this workspace's order first. */
 export async function lookupBarcodeFor(orgId: string, code: string, deps: ConnectedFirstDeps = REAL_CONNECTED, direct = lookupBarcode): Promise<BarcodeOutcome> {
+  const out = await lookupBarcodeForUncounted(orgId, code, deps, direct);
+  if (out.outcome === "hit" || out.outcome === "miss") noteIdentification(orgId, "barcode", out.outcome === "hit");
+  return out;
+}
+
+async function lookupBarcodeForUncounted(orgId: string, code: string, deps: ConnectedFirstDeps, direct: typeof lookupBarcode): Promise<BarcodeOutcome> {
   const asked = await askConnectedFirst(orgId, "barcode.lookup", { code }, deps);
   if (!asked) return direct(code);
   const o = (asked.output ?? {}) as Record<string, unknown>;
@@ -239,6 +246,17 @@ export async function identifyWhyFor(
   opts: Parameters<typeof hostedIdentifyWhy>[0] & { mimeType?: string },
   deps: ConnectedFirstDeps = REAL_CONNECTED,
   direct = hostedIdentifyWhy,
+): ReturnType<typeof hostedIdentifyWhy> {
+  const out = await identifyWhyForUncounted(opts, deps, direct);
+  const kind = (out.answer as { kind?: unknown } | null)?.kind;
+  if (typeof kind === "string") noteIdentification(opts.orgId, "vision", kind !== "unidentifiable");
+  return out;
+}
+
+async function identifyWhyForUncounted(
+  opts: Parameters<typeof hostedIdentifyWhy>[0] & { mimeType?: string },
+  deps: ConnectedFirstDeps,
+  direct: typeof hostedIdentifyWhy,
 ): ReturnType<typeof hostedIdentifyWhy> {
   const asked = await askConnectedFirst(
     opts.orgId,

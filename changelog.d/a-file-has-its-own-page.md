@@ -3,6 +3,7 @@ type: feature
 scope: files
 date: 2026-09-30
 docs_target: docs/USER_GUIDE.md#3.4 Files (foundational)
+docs_published: 2026-10-01
 ---
 A file now has its own page: a link to a file from search, a tag, a view or Cobb opens it, with a preview, the records it is attached to, and rename, move, open and delete.
 

@@ -29,16 +29,21 @@ import {
   type PlatformServices,
 } from "@cobblr/platform-contract";
 import {
+  SERVICE_DEADLINE_FLOOR_MS,
+  SERVICE_MAX_HANDOFFS,
   SERVICE_POLL_MAX_S,
   ServicesNotReadyError,
   TERMINAL_JOB_STATUSES,
   isServiceCapabilityId,
   strongerEffect,
+  adapterGroupOf,
+  type AdapterFetch,
   type BuiltInServiceDef,
   type RemoteServiceJob,
   type ServiceCapabilityDecl,
   type ServiceCapabilityView,
   type ServiceChainStep,
+  type ServiceConnectionHolder,
   type ServiceDoor,
   type ServiceEffect,
   type ServiceError,
@@ -55,7 +60,7 @@ import { validateAgainst } from "./service-schema.js";
 
 // ── Storage ─────────────────────────────────────────────────────────────
 
-interface JobsTable {
+export interface JobsTable {
   id: string;
   capability: string;
   capability_version: number;
@@ -81,6 +86,12 @@ interface JobsTable {
   service_version: string | null;
   manifest_version: string | null;
   poll_errors: number;
+  /** The live attempt: raised when the job is handed on. Every poller write
+   *  is bound to it, so a replaced attempt's late answer changes nothing. */
+  attempt: number;
+  retry_of: string | null;
+  skipped_by: string | null;
+  skipped_at: Date | null;
   last_progress_at: Date | null;
   stalled_at: Date | null;
   deadline_at: Date | null;
@@ -137,6 +148,13 @@ export interface ServiceConnectionPort {
   /** One signed hop, direct or through the owner's bridge. `path` is under
    *  the manifest's api.base_path. */
   fetch(credentialId: string, req: { method: string; path: string; body?: Uint8Array | string; headers?: Record<string, string> }): Promise<ServiceHopResponse>;
+  /** An adapter connection's way to its program (its base_url, direct or
+   *  through its owner's bridge), handed to the built-in as `ctx.fetch`.
+   *  Null when the row is gone or is not an adapter's. */
+  adapterFetch?(credentialId: string): Promise<AdapterFetch | null>;
+  /** Every connection that answers a capability in this workspace, with its
+   *  owner and whether it is shared (PlatformServices.connectionsFor). */
+  holders?(orgId: string, capability: string): Promise<ServiceConnectionHolder[]>;
 }
 
 let port: ServiceConnectionPort | null = null;
@@ -200,6 +218,18 @@ export function setServiceConfirm(c: ServiceConfirm): void {
   confirmImpl = c;
 }
 
+/** The supervisor's side of platform().services (service-supervisor.ts),
+ *  registered at boot. */
+export interface ServiceSupervisorHooks {
+  run: PlatformServices["run"];
+  raiseStuck: PlatformServices["raiseStuck"];
+  settleStuck: PlatformServices["settleStuck"];
+}
+let supervisor: ServiceSupervisorHooks | null = null;
+export function setServiceSupervisor(s: ServiceSupervisorHooks): void {
+  supervisor = s;
+}
+
 // ── Built-ins ───────────────────────────────────────────────────────────
 
 const builtIns = new Map<string, BuiltInServiceDef>();
@@ -253,10 +283,11 @@ async function routesFor(orgId: string, userId: string | null, capability: strin
     const conns = port ? await port.chainFor(orgId, userId, capability, pinnedConn ? { via: pinnedConn } : undefined) : [];
     for (const c of conns) {
       if (c.adapter) {
-        // An adapter's connection: the built-in answers, with its own
-        // declaration, on the settings of this connection.
-        const def = builtIns.get(c.adapter);
-        if (def?.connection && def.capability.id === capability) {
+        // An adapter's connection: the built-in of its group that does this
+        // capability answers, with its own declaration, on the settings of
+        // this connection.
+        const def = [...builtIns.values()].find((b) => b.connection && adapterGroupOf(b) === c.adapter && b.capability.id === capability);
+        if (def) {
           out.push({ step: { source: "connection", credential_id: c.credentialId, label: c.label || def.name, scope: c.scope }, decl: def.capability, manifest: null, connection: c, builtIn: def });
         }
         continue;
@@ -325,14 +356,18 @@ export function readingStatsFor(orgId: string): ReadingStat[] {
   return [...readingStats.entries()].filter(([k]) => k.startsWith(`${orgId}|`)).map(([, v]) => v);
 }
 
-async function runEphemeral(orgId: string, def: BuiltInServiceDef, input: unknown): Promise<ServiceJobRef> {
+async function runEphemeral(orgId: string, def: BuiltInServiceDef, input: unknown, connectionId: string | null): Promise<ServiceJobRef> {
   const id = `${EPHEMERAL_PREFIX}${crypto.randomUUID()}`;
   const started = new Date().toISOString();
   let status: ServiceJobStatus = "done";
   let output: unknown = null;
   let error: ServiceError | null = null;
   try {
-    const result = await def.run({ orgId, jobId: id, input, files: {}, progress: async () => {} });
+    // An adapter reads on the settings of the connection it was routed to,
+    // exactly as its job would; a reading is no reason to run without them.
+    const adapter = def.connection ? await adapterContext(def, connectionId) : {};
+    if (adapter === null) throw new Error(`the ${def.connection!.title} connection this was sent to is no longer here`);
+    const result = await def.run({ orgId, jobId: id, input, files: {}, progress: async () => {}, ...adapter });
     const check = validateAgainst(def.capability.output_schema, undefined, result.output);
     if (!check.ok) {
       status = "failed";
@@ -344,7 +379,7 @@ async function runEphemeral(orgId: string, def: BuiltInServiceDef, input: unknow
   }
   const now = new Date().toISOString();
   const job: ServiceJob = {
-    id, capability: def.capability.id, connection_id: null, built_in: def.id, status, progress: 1, message: null, needs: null,
+    id, capability: def.capability.id, connection_id: connectionId, built_in: def.id, status, progress: 1, message: null, needs: null,
     input, output, files: [], error, origin: "module", requested_by: null, confirmed_by: null, caused_by_job: null, hop: 0,
     attach_to: null, service_version: null, created_at: started, updated_at: now,
   };
@@ -371,8 +406,14 @@ async function readJob(orgId: string, jobId: string): Promise<ServiceJob | null>
   return toJob(row as JobsTable, files as JobFilesTable[]);
 }
 
-export async function emit(orgId: string, job: { id: string; capability: string; status: ServiceJobStatus; caused_by_job: string | null; hop: number }): Promise<void> {
-  const payload = { orgId, jobId: job.id, capability: job.capability, status: job.status, causedByJob: job.caused_by_job, hop: job.hop };
+export async function emit(orgId: string, job: { id: string; capability: string; status: ServiceJobStatus; caused_by_job: string | null; hop: number; attach_to?: unknown; output?: unknown }): Promise<void> {
+  // The record the job was for, when it was for one: a wire on these events
+  // that acts on that record reads it here (a job is not a record itself).
+  const attachTo = attachToOf(job.attach_to);
+  const payload = { orgId, jobId: job.id, capability: job.capability, status: job.status, causedByJob: job.caused_by_job, hop: job.hop, ...(attachTo ? { attachTo } : {}),
+    // What a finished job answered, schema-checked already: the next step's
+    // input reads it as {{event.output.<field>}}.
+    ...(job.status === "done" && job.output != null ? { output: job.output } : {}) };
   try {
     await platform().events.emit("services.job.updated", payload);
     if (job.status === "done") await platform().events.emit("services.job.done", payload);
@@ -381,6 +422,13 @@ export async function emit(orgId: string, job: { id: string; capability: string;
   } catch (err) {
     console.warn(`[services] job ${job.id}: event not emitted: ${(err as Error).message}`);
   }
+}
+
+function attachToOf(raw: unknown): { kind: string; id: string } | null {
+  const v = typeof raw === "string" ? (() => { try { return JSON.parse(raw) as unknown; } catch { return null; } })() : raw;
+  if (!v || typeof v !== "object") return null;
+  const { kind, id } = v as { kind?: unknown; id?: unknown };
+  return typeof kind === "string" && typeof id === "string" ? { kind, id } : null;
 }
 
 // ── invoke ──────────────────────────────────────────────────────────────
@@ -457,7 +505,7 @@ export async function invokeAs(
     !req.causedByJob &&
     verdict.status === "queued"
   ) {
-    return runEphemeral(orgId, route.builtIn, req.input ?? null);
+    return runEphemeral(orgId, route.builtIn, req.input ?? null, route.connection?.credentialId ?? null);
   }
 
   const target = route.connection ? `c:${route.connection.credentialId}` : `b:${route.builtIn!.id}`;
@@ -530,7 +578,38 @@ async function runInline(orgId: string, jobId: string): Promise<ServiceJobRef | 
 /** Hand a queued job to the poller. Idempotent: one poll chain per job. The
  *  confirm (S2) calls this after it moves a job out of awaiting_confirm. */
 export async function startQueuedJob(orgId: string, jobId: string, runAt?: Date): Promise<void> {
-  await platform().queue.enqueue({ orgId, queue: POLL_QUEUE, payload: { jobId }, idempotencyKey: `services.job:${jobId}`, maxAttempts: 5, ...(runAt ? { runAt } : {}) });
+  const db = await tdb(orgId);
+  const row = (await db.selectFrom("core_services_jobs").selectAll().where("id", "=", jobId).executeTakeFirst()) as JobsTable | undefined;
+  if (!row) return;
+  // The clock starts when the work does: time spent waiting for a person's
+  // yes or answer never counts against a service.
+  const budget = await deadlineBudgetMs(row);
+  await db
+    .updateTable("core_services_jobs")
+    .set({ deadline_at: budget == null ? null : new Date(Date.now() + budget), stalled_at: null, last_progress_at: new Date() } as never)
+    .where("id", "=", jobId)
+    .where("attempt", "=", row.attempt)
+    .execute();
+  await platform().queue.enqueue({ orgId, queue: POLL_QUEUE, payload: { jobId, gen: row.attempt }, idempotencyKey: `services.job:${jobId}:g${row.attempt}`, maxAttempts: 5, ...(runAt ? { runAt } : {}) });
+}
+
+/** The declaration of whoever answers this job now. */
+async function declOf(row: Pick<JobsTable, "built_in" | "connection_id" | "capability">): Promise<{ decl: ServiceCapabilityDecl | Omit<ServiceCapabilityDecl, "options_endpoint">; label: string } | null> {
+  if (row.built_in) {
+    const b = builtIns.get(row.built_in);
+    return b ? { decl: b.capability, label: b.name } : null;
+  }
+  const conn = row.connection_id && port ? await port.byId(row.connection_id) : null;
+  const decl = conn?.manifest.capabilities.find((c) => c.id === row.capability);
+  return conn && decl ? { decl, label: conn.label || conn.manifest.name } : null;
+}
+
+/** How long a job may run: 3x what its capability says it typically takes,
+ *  never under the floor. Null when the capability does not say; then only
+ *  the no-change rule applies. */
+async function deadlineBudgetMs(row: JobsTable): Promise<number | null> {
+  const t = (await declOf(row))?.decl.typical_seconds;
+  return typeof t === "number" && t > 0 ? Math.max(SERVICE_DEADLINE_FLOOR_MS, 3 * t * 1000) : null;
 }
 
 // ── The poller ──────────────────────────────────────────────────────────
@@ -539,7 +618,10 @@ const POLL_QUEUE = "services.poll";
 /** How long a job that waits on a person is looked at again. */
 const NEEDS_INPUT_POLL_S = 900;
 
-async function update(orgId: string, jobId: string, patch: Partial<Record<keyof JobsTable, unknown>>): Promise<JobsTable> {
+/** Write to a job. `gen` binds the write to one attempt and `live` to a job
+ *  that has not finished: a write from an attempt the supervisor replaced, or
+ *  one landing after a cancel, matches no row and returns null. */
+async function update(orgId: string, jobId: string, patch: Partial<Record<keyof JobsTable, unknown>>, guard?: { gen?: number; live?: boolean }): Promise<JobsTable | null> {
   const db = await tdb(orgId);
   const set: Record<string, unknown> = { updated_at: new Date() };
   for (const [k, v] of Object.entries(patch)) {
@@ -552,13 +634,21 @@ async function update(orgId: string, jobId: string, patch: Partial<Record<keyof 
   if ("status" in patch) moved.push(sql`status is distinct from ${patch.status as string}`);
   if ("progress" in patch) moved.push(sql`progress is distinct from ${(patch.progress as number | null) ?? null}::real`);
   if ("message" in patch) moved.push(sql`message is distinct from ${(patch.message as string | null) ?? null}`);
-  if (moved.length) set.last_progress_at = sql`case when ${sql.join(moved, sql` or `)} then now() else last_progress_at end`;
-  return (await db.updateTable("core_services_jobs").set(set as never).where("id", "=", jobId).returningAll().executeTakeFirstOrThrow()) as JobsTable;
+  if (moved.length) {
+    const any = sql.join(moved, sql` or `);
+    set.last_progress_at = sql`case when ${any} then now() else last_progress_at end`;
+    // A job that moved is no longer stalled.
+    if (!("stalled_at" in patch)) set.stalled_at = sql`case when ${any} then null else stalled_at end`;
+  }
+  let q = db.updateTable("core_services_jobs").set(set as never).where("id", "=", jobId);
+  if (guard?.gen !== undefined) q = q.where("attempt", "=", guard.gen);
+  if (guard?.live) q = q.where("status", "not in", ["done", "failed", "cancelled"]);
+  return ((await q.returningAll().executeTakeFirst()) as JobsTable | undefined) ?? null;
 }
 
 async function finish(orgId: string, row: JobsTable, status: "done" | "failed" | "cancelled", patch: Partial<Record<keyof JobsTable, unknown>>): Promise<void> {
-  const next = await update(orgId, row.id, { ...patch, status, finished_at: new Date() });
-  await emit(orgId, next);
+  const next = await update(orgId, row.id, { ...patch, status, finished_at: new Date() }, { gen: row.attempt, live: true });
+  if (next) await emit(orgId, next);
 }
 
 const failure = (code: ServiceError["code"], message: string, retryable = false): ServiceError => ({ code, message, retryable });
@@ -584,15 +674,12 @@ async function runBuiltIn(orgId: string, row: JobsTable): Promise<void> {
   const def = builtIns.get(row.built_in ?? "");
   if (!def) return finish(orgId, row, "failed", { error: failure("internal", "that built-in service is no longer here") });
   // An adapter runs on the settings of the connection the job was sent to.
-  let config: Record<string, string> | undefined;
-  if (def.connection) {
-    const c = row.connection_id && port?.configFor ? await port.configFor(row.connection_id) : null;
-    if (!c) return finish(orgId, row, "failed", { error: failure("internal", `the ${def.connection.title} connection this job was sent to is no longer here`) });
-    config = c;
-  }
+  const adapter = def.connection ? await adapterContext(def, row.connection_id) : {};
+  if (adapter === null) return finish(orgId, row, "failed", { error: failure("internal", `the ${def.connection!.title} connection this job was sent to is no longer here`) });
   const db = await tdb(orgId);
   const files = await db.selectFrom("core_services_job_files").select(["name", "file_id"]).where("job_id", "=", row.id).where("direction", "=", "in").execute();
-  const running = await update(orgId, row.id, { status: "running" });
+  const running = await update(orgId, row.id, { status: "running" }, { gen: row.attempt, live: true });
+  if (!running) return;
   await emit(orgId, running);
   try {
     const result = await def.run({
@@ -600,9 +687,9 @@ async function runBuiltIn(orgId: string, row: JobsTable): Promise<void> {
       jobId: row.id,
       input: row.input,
       files: Object.fromEntries(files.map((f) => [f.name, f.file_id])),
-      ...(config ? { config, connectionId: row.connection_id! } : {}),
+      ...adapter,
       progress: async (fraction, message) => {
-        await update(orgId, row.id, { progress: Math.max(0, Math.min(1, fraction)), ...(message ? { message } : {}) });
+        await update(orgId, row.id, { progress: Math.max(0, Math.min(1, fraction)), ...(message ? { message } : {}) }, { gen: row.attempt, live: true });
       },
     });
     const check = validateAgainst(def.capability.output_schema, undefined, result.output);
@@ -612,6 +699,16 @@ async function runBuiltIn(orgId: string, row: JobsTable): Promise<void> {
   } catch (err) {
     await finish(orgId, running, "failed", { error: failure("internal", (err as Error).message.slice(0, 300)) });
   }
+}
+
+/** What an adapter runs with: its connection's settings and its one way to
+ *  its program. Null when that connection is gone. */
+async function adapterContext(def: BuiltInServiceDef, connectionId: string | null): Promise<{ config: Record<string, string>; connectionId: string; fetch?: AdapterFetch } | null> {
+  if (!def.connection || !connectionId || !port?.configFor) return null;
+  const config = await port.configFor(connectionId);
+  if (!config) return null;
+  const fetch = port.adapterFetch ? await port.adapterFetch(connectionId) : null;
+  return { config, connectionId, ...(fetch ? { fetch } : {}) };
 }
 
 async function recordOutputs(orgId: string, row: JobsTable, outs: Array<{ name: string; fileId: string; sha256?: string }>): Promise<void> {
@@ -668,7 +765,8 @@ async function submitRemote(orgId: string, row: JobsTable, conn: ServiceConnecti
     await finish(orgId, row, "failed", { error: failure("internal", "the service accepted the job but named no job id") });
     return null;
   }
-  const next = await update(orgId, row.id, { remote_job_id: ans.job_id, status: ans.status === "queued" ? "queued" : "running", poll_errors: 0 });
+  const next = await update(orgId, row.id, { remote_job_id: ans.job_id, status: ans.status === "queued" ? "queued" : "running", poll_errors: 0 }, { gen: row.attempt, live: true });
+  if (!next) return null;
   await emit(orgId, next);
   return { next: Math.max(1, Math.min(SERVICE_POLL_MAX_S, ans.poll_after_s ?? 2)) };
 }
@@ -681,10 +779,12 @@ class RetryableHop extends Error {
 
 /** One step of a job. Returns the seconds until the next, or null when the
  *  job needs nothing more from the poller. */
-async function step(orgId: string, jobId: string, attempt: number): Promise<number | null> {
+async function step(orgId: string, jobId: string, attempt: number, gen?: number): Promise<number | null> {
   const db = await tdb(orgId);
   const row = (await db.selectFrom("core_services_jobs").selectAll().where("id", "=", jobId).executeTakeFirst()) as JobsTable | undefined;
   if (!row || TERMINAL_JOB_STATUSES.has(row.status) || row.status === "awaiting_confirm") return null;
+  // A poll chain from an attempt the supervisor replaced ends here.
+  if (gen !== undefined && row.attempt !== gen) return null;
   if (row.built_in) {
     await runBuiltIn(orgId, row);
     return null;
@@ -726,6 +826,7 @@ async function step(orgId: string, jobId: string, attempt: number): Promise<numb
                 poll_errors: row.poll_errors + 1,
               }
             : { connection_id: null, built_in: nextRoute.builtIn!.id, poll_errors: row.poll_errors + 1 },
+          { gen: row.attempt, live: true },
         );
         return 1;
       }
@@ -735,7 +836,7 @@ async function step(orgId: string, jobId: string, attempt: number): Promise<numb
       await finish(orgId, row, "failed", { error: err.err, poll_errors: errors });
       return null;
     }
-    await update(orgId, row.id, { poll_errors: errors });
+    if (!(await update(orgId, row.id, { poll_errors: errors }, { gen: row.attempt, live: true }))) return null;
     return Math.min(SERVICE_POLL_MAX_S, 2 ** errors);
   }
 }
@@ -778,7 +879,8 @@ async function absorb(orgId: string, row: JobsTable, conn: ServiceConnectionRef,
   }
   const status: ServiceJobStatus = job.status === "needs_input" ? "needs_input" : job.status === "queued" ? "queued" : "running";
   const needs = status === "needs_input" ? await keepNeedsFiles(orgId, row, conn, job.needs ?? null) : null;
-  const next = await update(orgId, row.id, { ...common, status, needs });
+  const next = await update(orgId, row.id, { ...common, status, needs }, { gen: row.attempt, live: true });
+  if (!next) return null;
   if (next.status !== row.status || next.progress !== row.progress) await emit(orgId, next);
   if (status === "needs_input") return NEEDS_INPUT_POLL_S;
   return Math.min(SERVICE_POLL_MAX_S, Math.max(2, 2 ** Math.min(attempt, 6)));
@@ -807,6 +909,177 @@ async function keepNeedsFiles(orgId: string, row: JobsTable, conn: ServiceConnec
     files[name] = written ? { ...f, file_id: written.fileId } : { ...f };
   }
   return { ...needs, files };
+}
+
+// ── The supervisor's hands (service-supervisor.ts decides when) ─────────
+
+/** Try a stalled job again, once, where it is: a poll now, outside the
+ *  chain's own schedule. Marks it stalled so the next look can tell whether
+ *  the nudge moved it. */
+export async function nudgeStalled(orgId: string, jobId: string, now: Date): Promise<void> {
+  const db = await tdb(orgId);
+  const row = (await db.selectFrom("core_services_jobs").selectAll().where("id", "=", jobId).executeTakeFirst()) as JobsTable | undefined;
+  if (!row || !["queued", "running"].includes(row.status)) return;
+  await db.updateTable("core_services_jobs").set({ stalled_at: now } as never).where("id", "=", jobId).where("attempt", "=", row.attempt).execute();
+  // A built-in runs in this process: polling it again would run it twice.
+  if (row.built_in) return;
+  await platform().queue.enqueue({ orgId, queue: POLL_QUEUE, payload: { jobId, gen: row.attempt, step: 0 }, idempotencyKey: `services.job:${jobId}:g${row.attempt}:nudge:${now.getTime()}`, maxAttempts: 1 });
+}
+
+/** A stalled job, given up on where it is: handed to the next in the order
+ *  (never a pinned one, never one that acts in the world or spends, whose yes
+ *  was for this service; at most SERVICE_MAX_HANDOFFS times), else failed with
+ *  error `stalled`. The old attempt's late answer changes nothing. */
+export async function handOn(orgId: string, jobId: string, why: string): Promise<"handed_on" | "failed" | null> {
+  const db = await tdb(orgId);
+  const row = (await db.selectFrom("core_services_jobs").selectAll().where("id", "=", jobId).executeTakeFirst()) as JobsTable | undefined;
+  if (!row || !["queued", "running"].includes(row.status)) return null;
+  const here = await declOf(row);
+  const label = here?.label ?? "the service";
+  const routes = await routesFor(orgId, row.requested_by, row.capability);
+  const at = routes.findIndex((r) => (r.connection?.credentialId ?? null) === row.connection_id && (r.builtIn?.id ?? null) === row.built_in);
+  const nextRoute = at >= 0 ? routes[at + 1] : undefined;
+  const effect = here?.decl.effect ?? "physical";
+  if (nextRoute && !row.pinned && effect === "none" && row.attempt < SERVICE_MAX_HANDOFFS) {
+    if (row.connection_id && row.remote_job_id && port) {
+      await port.fetch(row.connection_id, { method: "POST", path: `/jobs/${encodeURIComponent(row.remote_job_id)}/cancel` }).catch(() => null);
+    }
+    const next = await update(
+      orgId,
+      row.id,
+      {
+        connection_id: nextRoute.connection?.credentialId ?? null,
+        built_in: nextRoute.builtIn?.id ?? null,
+        manifest_version: nextRoute.connection?.manifestVersion ?? null,
+        remote_job_id: null,
+        status: "queued",
+        progress: null,
+        message: `Handed on to ${nextRoute.step.label}: ${label} ${why}.`,
+        poll_errors: 0,
+        attempt: row.attempt + 1,
+        stalled_at: null,
+      },
+      { gen: row.attempt, live: true },
+    );
+    if (!next) return null;
+    await emit(orgId, next);
+    await startQueuedJob(orgId, row.id);
+    return "handed_on";
+  }
+  // Acting in the world: stop watching, but never tell the service to stop a
+  // thing a person may be standing next to.
+  if (effect === "none" && row.connection_id && row.remote_job_id && port) {
+    await port.fetch(row.connection_id, { method: "POST", path: `/jobs/${encodeURIComponent(row.remote_job_id)}/cancel` }).catch(() => null);
+  }
+  const reason =
+    effect === "none"
+      ? `${label} ${why}, and there was no one else to hand it to.`
+      : `${label} ${why}. It may still be going there; Cobblr stopped waiting for it.`;
+  await finish(orgId, row, "failed", { error: failure("stalled", reason), message: reason, stalled_at: row.stalled_at ?? new Date() });
+  return "failed";
+}
+
+/** A person's Retry: the same call again as a new job, beside the one that
+ *  failed (nothing leaves a terminal state). For something that acts in the
+ *  world, the press is that person's yes: the new job is confirmed as them,
+ *  under the same rule as any confirm. */
+export async function retryJob(orgId: string, jobId: string, userId: string): Promise<ServiceJobRef> {
+  const db = await tdb(orgId);
+  const row = (await db.selectFrom("core_services_jobs").selectAll().where("id", "=", jobId).executeTakeFirst()) as JobsTable | undefined;
+  if (!row) throw new ServiceRefusal("bad_request", "There is no such job here.");
+  if (row.status !== "failed" && row.status !== "cancelled") throw new ServiceRefusal("bad_request", `This step is ${row.status.replace("_", " ")}, not stopped: there is nothing to retry.`);
+  const already = await db.selectFrom("core_services_jobs").select(["id", "status"]).where("retry_of", "=", row.id).orderBy("created_at", "desc").executeTakeFirst();
+  if (already && !TERMINAL_JOB_STATUSES.has(already.status)) return { id: already.id, status: already.status };
+  const files = await db.selectFrom("core_services_job_files").select(["name", "file_id"]).where("job_id", "=", row.id).where("direction", "=", "in").execute();
+  const tries = await db.selectFrom("core_services_jobs").select((eb) => eb.fn.countAll<string>().as("n")).where("retry_of", "=", row.id).executeTakeFirstOrThrow();
+  const ref = await invokeAs(
+    { origin: "person", userId },
+    {
+      orgId,
+      capability: row.capability,
+      input: row.input,
+      ...(files.length ? { files: Object.fromEntries(files.map((f) => [f.name, f.file_id])) } : {}),
+      ...(row.caused_by_job ? { causedByJob: row.caused_by_job } : {}),
+      ...(attachToOf(row.attach_to) ? { attachTo: attachToOf(row.attach_to)! } : {}),
+      idempotencyKey: `retry:${row.id}:${Number(tries.n)}`,
+    },
+  );
+  await db.updateTable("core_services_jobs").set({ retry_of: row.id } as never).where("id", "=", ref.id).execute();
+  if (ref.status === "awaiting_confirm") {
+    await confirmImpl(orgId, ref.id, userId);
+    return { id: ref.id, status: "queued" };
+  }
+  return ref;
+}
+
+/** Whether a step can be skipped: its answer can be absent, because the
+ *  capability promises no field in it. */
+export async function skippable(orgId: string, jobId: string): Promise<boolean> {
+  const db = await tdb(orgId);
+  const row = (await db.selectFrom("core_services_jobs").selectAll().where("id", "=", jobId).executeTakeFirst()) as JobsTable | undefined;
+  if (!row || (row.status !== "failed" && row.status !== "cancelled") || row.skipped_at) return false;
+  const schema = (await declOf(row))?.decl.output_schema as { required?: unknown[] } | undefined;
+  return !!schema && !(Array.isArray(schema.required) && schema.required.length > 0);
+}
+
+/** A person's Skip: the step stays failed, and the run goes on without its
+ *  answer: `services.job.skipped`, then `services.job.done` with `skipped`. */
+export async function skipJob(orgId: string, jobId: string, userId: string): Promise<void> {
+  if (!(await skippable(orgId, jobId))) throw new ServiceRefusal("bad_request", "This step cannot be skipped: what comes after it needs its answer.");
+  const db = await tdb(orgId);
+  const row = (await db
+    .updateTable("core_services_jobs")
+    .set({ skipped_by: userId, skipped_at: new Date(), updated_at: new Date() } as never)
+    .where("id", "=", jobId)
+    .where("skipped_at", "is", null)
+    .returningAll()
+    .executeTakeFirst()) as JobsTable | undefined;
+  if (!row) return;
+  const attachTo = attachToOf(row.attach_to);
+  const payload = { orgId, jobId: row.id, capability: row.capability, status: "done", causedByJob: row.caused_by_job, hop: row.hop, skipped: true, ...(attachTo ? { attachTo } : {}) };
+  await platform().events.emit("services.job.skipped", payload);
+  await platform().events.emit("services.job.done", payload);
+}
+
+/** Every job in the chain `jobId` belongs to, from the one that started it. */
+export async function runRows(orgId: string, jobId: string): Promise<JobsTable[]> {
+  const db = await tdb(orgId);
+  // Up to the job that started it (a retry of the first step leads back to
+  // the step it retried), then down every job that followed from there.
+  const { rows } = await sql<JobsTable>`
+    with recursive up(id, parent, depth) as (
+      select id, coalesce(caused_by_job, retry_of), 0 from core_services_jobs where id = ${jobId}
+      union all
+      select j.id, coalesce(j.caused_by_job, j.retry_of), up.depth + 1 from core_services_jobs j join up on j.id = up.parent where up.depth < 64
+    ),
+    down(id, depth) as (
+      select id, 0 from up where parent is null
+      union all
+      select j.id, down.depth + 1 from core_services_jobs j join down on j.caused_by_job = down.id or (j.caused_by_job is null and j.retry_of = down.id) where down.depth < 64
+    )
+    select distinct j.* from core_services_jobs j join down on down.id = j.id
+    order by j.created_at`.execute(db);
+  return rows;
+}
+
+/** The jobs that started the most recent runs here (no cause, not a retry). */
+export async function recentRunRoots(orgId: string, limit: number): Promise<string[]> {
+  const db = await tdb(orgId);
+  const rows = await db
+    .selectFrom("core_services_jobs")
+    .select("id")
+    .where("caused_by_job", "is", null)
+    .where("retry_of", "is", null)
+    .orderBy("updated_at", "desc")
+    .limit(limit)
+    .execute();
+  return rows.map((r) => r.id);
+}
+
+/** Who answers a job, as the run shows it. */
+export async function answererOf(row: Pick<JobsTable, "built_in" | "connection_id" | "capability">): Promise<{ label: string; title: string } | null> {
+  const d = await declOf(row);
+  return d ? { label: d.label, title: d.decl.title } : null;
 }
 
 // ── Retention ───────────────────────────────────────────────────────────
@@ -864,11 +1137,12 @@ export function registerServicesWorker(): void {
     const jobId = String(q.payload.jobId ?? "");
     if (!jobId) return;
     const attempt = Number(q.payload.step ?? 0);
-    const next = await step(q.orgId, jobId, attempt);
+    const gen = Number(q.payload.gen ?? 0);
+    const next = await step(q.orgId, jobId, attempt, gen);
     if (next != null) {
       // The next step is its own queue row, so the one running now finishes and
       // a restart finds exactly one waiting.
-      await platform().queue.enqueue({ orgId: q.orgId, queue: POLL_QUEUE, payload: { jobId, step: attempt + 1 }, idempotencyKey: `services.job:${jobId}:${attempt + 1}`, runAt: new Date(Date.now() + next * 1000), maxAttempts: 5 });
+      await platform().queue.enqueue({ orgId: q.orgId, queue: POLL_QUEUE, payload: { jobId, gen, step: attempt + 1 }, idempotencyKey: `services.job:${jobId}:g${gen}:${attempt + 1}`, runAt: new Date(Date.now() + next * 1000), maxAttempts: 5 });
     }
   });
 }
@@ -889,7 +1163,8 @@ async function answer(orgId: string, jobId: string, input: unknown, _userId: str
   if (!row.connection_id || !row.remote_job_id || !port) throw new ServiceRefusal("bad_request", "this job cannot take an answer");
   const res = await port.fetch(row.connection_id, { method: "POST", path: `/jobs/${encodeURIComponent(row.remote_job_id)}/input`, body: JSON.stringify({ input }), headers: { "content-type": "application/json" } });
   if (res.status !== 202 && res.status !== 200) throw new ServiceRefusal("bad_request", hopError(res).message);
-  const next = await update(orgId, row.id, { status: "running", needs: null });
+  const next = await update(orgId, row.id, { status: "running", needs: null }, { gen: row.attempt, live: true });
+  if (!next) throw new ServiceRefusal("bad_request", "this job has moved on");
   await emit(orgId, next);
   await startQueuedJob(orgId, row.id);
 }
@@ -967,13 +1242,27 @@ export function createServices(): PlatformServices {
     answer,
     confirm: (orgId, jobId, userId) => confirmImpl(orgId, jobId, userId),
     cancel,
+    run: async (orgId, jobId) => {
+      if (!supervisor) throw new ServicesNotReadyError("reading a run");
+      return supervisor.run(orgId, jobId);
+    },
+    raiseStuck: async (n) => {
+      if (!supervisor) throw new ServicesNotReadyError("raising a stuck notice");
+      return supervisor.raiseStuck(n);
+    },
+    settleStuck: async (orgId, subjectId) => {
+      if (!supervisor) throw new ServicesNotReadyError("settling a stuck notice");
+      return supervisor.settleStuck(orgId, subjectId);
+    },
     adapterConfig: async (orgId, credentialId, builtInId) => {
       if (!port?.configFor) return null;
       // Only a connection this workspace can use, and only one of this adapter.
       const mine = (await port.list(orgId, null)).find((c) => c.credentialId === credentialId);
-      if (!mine || mine.adapter !== builtInId) return null;
+      const def = builtIns.get(builtInId);
+      if (!mine || !def || mine.adapter !== adapterGroupOf(def)) return null;
       return port.configFor(credentialId);
     },
+    connectionsFor: async (orgId, capability) => (port?.holders ? port.holders(orgId, capability) : []),
     registerBuiltIn: (def) => {
       if (builtIns.has(def.id)) throw new Error(`services: a built-in ${def.id} is already registered`);
       if (!isServiceCapabilityId(def.capability.id)) throw new Error(`services: ${def.id} offers "${def.capability.id}", which is not a dotted capability id`);

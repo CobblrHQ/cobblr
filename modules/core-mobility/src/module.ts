@@ -40,6 +40,7 @@ const fieldDefsFor = (kind: string) => [
     display_label: "Moves around",
     type: "text" as const,
     choices: ["fixed", "mobile"],
+    learns: false,
   },
   {
     entity_kind: kind,
@@ -53,7 +54,7 @@ const fieldDefsFor = (kind: string) => [
 
 export default defineModule({
   name: "core-mobility",
-  version: "0.1.6",
+  version: "0.1.7",
   displayName: "Mobility",
   description:
     "Give a tool or a bin a home, and see when it has wandered off and for how long, with one tap to send it back.",
@@ -127,7 +128,7 @@ export default defineModule({
         label: "Return home",
         description:
           "Snap a mobile item's current location back to its home and clear the away flag. Errors if the item is fixed or has no home set.",
-        appliesTo: { kinds: MOBILITY_KINDS.map((k) => k.kind) },
+        appliesTo: { kinds: MOBILITY_KINDS.map((k) => k.kind), requires: { traits: ["physical"] } },
         invokeHandler: "core-mobility.return-home",
         userInvokable: true,
       },

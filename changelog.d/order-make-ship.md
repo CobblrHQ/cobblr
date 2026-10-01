@@ -3,6 +3,7 @@ type: feature
 scope: sales
 date: 2026-09-29
 docs_target: docs/USER_GUIDE.md#3.26 Sales (outbound orders)
+docs_published: 2026-10-01
 ---
 A sales order can now put what it needs in to be made: "Make this" on a line plans a work order in Builds for that order, the line shows how many are made (only parts that came out good count, and the oldest order is filled first), the work order closes itself when enough are made, and the order ships what exists.
 

@@ -20,6 +20,7 @@
 // body limits sane.
 
 import { ARRIVED_BY_KEY } from "../services/photo-observation-gate.js";
+import { applySharedTitle } from "../services/shared-title.js";
 import { canonicalColourFields, type ColourFieldDef } from "../services/colour-fields.js";
 import { choicesNamedIn, identifierFromScan, type FactFieldDef } from "../services/scan-field-facts.js";
 import { ocrImageText } from "../services/ocr.js";
@@ -95,7 +96,7 @@ import { resolveNativeIdentity } from "../native-identity.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { noteScanCaptured } from "../services/activation.js";
 import { downloadCatalogImage, enrichBarcodeItem, isJunkName, STORE_CODE_NOTE } from "../services/enrich.js";
-import { intakeRow, pictureSearchAfterMatch, registerMatchRunners, rowShape, typedIdentifier } from "../services/intake.js";
+import { intakeRow, pictureSearchAfterMatch, registerMatchRunners, rowShape, typedIdentifier, type InsertValues } from "../services/intake.js";
 import { committedImagePath, commitThumbPath, itemPhotos } from "../services/committed-image.js";
 import { clampEntityName } from "../services/item-name.js";
 import { addedPhotoIntent } from "../services/crosscheck-policy.js";
@@ -124,7 +125,7 @@ import { rechoosePictureForColour, withholdContradictedPicture } from "../servic
 import { themeFromReply, themeScope, type ThemeItem } from "../services/session-theme.js";
 import { scannerQueue } from "../services/scanner-queue.js";
 import { inboxCounts, type CountRow } from "../services/inbox-counts.js";
-import { matchQuery, restampTrackedMatch, scanPlaceOf, trackedMatchStamp, trackedMatchStampAt } from "../services/tracked-stamp.js";
+import { matchQuery, restampTrackedMatch, scanPlaceOf, trackedMatchStamp, trackedMatchStampAt, type TrackedMatchStamp } from "../services/tracked-stamp.js";
 import { candidateTableOf, destinationTables, filingDestination, type DestinationRow } from "../services/destination.js";
 import {
   candidateFieldValue,
@@ -156,7 +157,7 @@ import { lineNet } from "../services/receipt-shared.js";
 import { looksLikeReceiptPhoto, routeScannedReceiptPhoto } from "../services/receipt-photo.js";
 import { readFailureFrom, readFailureHistory, readHistoryAfterSuccess } from "../services/receipt-read-state.js";
 import { cleanOrderRef, receiptDedupKey,
-  receiptContentKey, receiptSessionLabel, vendorFromLabel, type ParsedReceipt, type ParseMethod } from "../services/receipt-shared.js";
+  receiptContentKey, receiptSessionLabel, vendorFromLabel, type ParsedReceipt, type ParseMethod, type ReceiptSource } from "../services/receipt-shared.js";
 import { reportBarcodeCorrection, reportLabelConfirm, meaningfullyChanged, originOfValue, unitLotsOf } from "../services/barcode-corrections.js";
 import { claimGlanceAnswer, readContextFor, readGlanceEnabled, writeGlanceEnabled } from "../services/glance.js";
 import { normalizeBarcode, barcodeFromHint } from "../services/barcode-correction.js";
@@ -493,6 +494,11 @@ const ScanBody = z.object({
   barcode: z.string().min(4).max(64).optional(),
   source_kind: z.enum(["barcode", "photo", "url", "receipt"]).default("barcode"),
   source_url: z.string().url().max(2000).optional(),
+  /** The product's title as the person shared or pasted it with the link
+   *  (parseSharedText, @cobblr/platform-contract/shared-text). Kept as the
+   *  item's name, before and after enrichment: a shop page that blocks us
+   *  cannot take away a name the person brought. */
+  shared_title: z.string().trim().min(1).max(300).optional(),
   image_file_id: z.string().uuid().optional(),
   scan_batch_id: z.string().uuid().optional(),
   scan_area: z.string().max(200).optional(),
@@ -698,7 +704,10 @@ inboxRouter.post(
     // row's state on the first paint instead of "Identifying..." (#3017).
     const storeStamps = storeCodeInsertStamps(body.barcode);
     const token = bearer(req);
-    const arrivedBy = body.origin === "email" ? { [ARRIVED_BY_KEY]: "email" } : {};
+    const emailed = body.origin === "email" ? { [ARRIVED_BY_KEY]: "email" } : {};
+    // A title shared with the link is the person's name for the row, kept
+    // like a rename (services/shared-title.ts).
+    const arrivedBy = body.shared_title ? applySharedTitle(emailed, body.shared_title) : emailed;
     // The one intake (services/intake.ts, #3049): the insert, the shape's
     // passes in their order (the catalog chain raced inline for a barcode
     // within the budget, the photo wire, the match once a name exists), and
@@ -732,9 +741,10 @@ inboxRouter.post(
             }
           : imageHash
             ? { suggested_metadata: JSON.stringify({ image_sha256: imageHash, ...arrivedBy }) as never }
-            : body.origin
+            : Object.keys(arrivedBy).length > 0
               ? { suggested_metadata: JSON.stringify(arrivedBy) as never }
               : {}),
+        ...(body.shared_title ? { suggested_name: body.shared_title } : {}),
       },
       // Race inline enrichment against the budget. Whichever lands first
       // wins the response; the other keeps running detached.
@@ -777,6 +787,94 @@ const NoteBody = z.object({
   target_location_id: z.string().uuid().optional(),
 });
 
+/** A typed thing into the inbox: the note door's whole shaping (a place
+ *  phrase split off and resolved, a typed product code stamped as the row's
+ *  barcode, the raw text kept as the description), shared with the
+ *  assistant's door so an agent's add is shaped exactly as a person's note. */
+async function admitTypedNote(
+  req: Request,
+  o: {
+    text: string;
+    door: "note" | "assistant";
+    target_location_id?: string | null;
+    scan_batch_id?: string | null;
+    scan_area?: string | null;
+    /** Stamped on suggested_metadata beside the description. */
+    metadata?: Record<string, unknown>;
+    /** Columns the door sets beyond the note's (a photo, a code, a count). */
+    values?: Partial<InsertValues>;
+    settle?: boolean;
+  },
+) {
+  const db = tenantDb(req);
+  const ctx = tenantContext(req);
+  const session = sessionUser(req);
+
+  // Freeform capture often names the place too ("Logic analyzer in cabinet
+  // 002"). Split the location phrase off the item and resolve it against the
+  // workspace's locations, so the item lands pre-filed instead of the whole
+  // sentence becoming its name. Best-effort: any failure leaves the raw text
+  // as the name (the matchmaker still routes it).
+  let itemName = o.text;
+  let locationId: string | null = o.target_location_id ?? null;
+  let scanArea: string | null = o.scan_area ?? null;
+  if (!o.target_location_id) {
+    try {
+      const locs = await platform().entities.list(ctx.org.id, "core-locations:location", {
+        limit: 1000,
+      });
+      const lite: LocationLite[] = locs.items.map((l) => ({
+        id: String(l.id),
+        // name = the location's title role; short_name = its subtitle role.
+        name: l.title ?? String(l.fields.name ?? ""),
+        short_name: l.subtitle ?? (l.fields.short_name as string | null) ?? null,
+      }));
+      const ex = extractLocation(o.text, lite);
+      itemName = ex.itemText || o.text;
+      locationId = ex.locationId;
+      // Keep an explicit scan_area override; otherwise stamp the unresolved
+      // phrase so the location is still captured as a hint for confirm.
+      if (!scanArea && !ex.locationId && ex.locationPhrase) scanArea = ex.locationPhrase;
+    } catch (err) {
+      console.error("[core-scan] note location extraction failed:", (err as Error).message);
+    }
+  }
+
+  noteScanCaptured(ctx.org.id, session.id, "note");
+  // What was typed decides the shape (services/intake.ts, #3049): a product
+  // code takes the catalog chain like a scanned one, a model or part
+  // number ("PB287Q") goes to the web before the match, and a phrase goes
+  // straight to the matchmaker with a picture search after. The door
+  // stamps a typed product code as the row's barcode so every reader of
+  // the row (the tracked-match finder, the card) sees it as one.
+  const typed = typedIdentifier(itemName);
+  return intakeRow({
+    db,
+    orgId: ctx.org.id,
+    orgSlug: ctx.org.slug,
+    userId: session.id,
+    token: bearer(req),
+    baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
+    visitorIp: req.ip ?? null,
+    door: o.door,
+    settle: o.settle,
+    values: {
+      source_kind: "note",
+      ...(typed?.kind === "code" && !/^https?:\/\//i.test(typed.code) ? { barcode_text: typed.code } : {}),
+      ...(typed?.kind === "code" && /^https?:\/\//i.test(typed.code) ? { source_url: typed.code } : {}),
+      // The cleaned item phrase is the provisional name; the FULL raw text
+      // stays as the matchmaker's description so no extraction context is lost.
+      suggested_name: itemName.slice(0, 300),
+      suggested_metadata: JSON.stringify({ description: o.text, ...(o.metadata ?? {}) }) as never,
+      scan_batch_id: o.scan_batch_id ?? null,
+      scan_area: scanArea,
+      target_location_id: locationId,
+      created_by_user_id: session.id,
+      ...(o.values ?? {}),
+    },
+  });
+}
+
 // AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/scan/note",
@@ -785,78 +883,193 @@ inboxRouter.post(
     const parsed = NoteBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const body = parsed.data;
-
-    const db = tenantDb(req);
-    const ctx = tenantContext(req);
-    const session = sessionUser(req);
-
-    // Freeform capture often names the place too ("Logic analyzer in cabinet
-    // 002"). Split the location phrase off the item and resolve it against the
-    // workspace's locations, so the item lands pre-filed instead of the whole
-    // sentence becoming its name. Best-effort: any failure leaves the raw text
-    // as the name (the matchmaker still routes it).
-    let itemName = body.text;
-    let locationId: string | null = body.target_location_id ?? null;
-    let scanArea: string | null = body.scan_area ?? null;
-    if (!body.target_location_id) {
-      try {
-        const locs = await platform().entities.list(ctx.org.id, "core-locations:location", {
-          limit: 1000,
-        });
-        const lite: LocationLite[] = locs.items.map((l) => ({
-          id: String(l.id),
-          // name = the location's title role; short_name = its subtitle role.
-          name: l.title ?? String(l.fields.name ?? ""),
-          short_name: l.subtitle ?? (l.fields.short_name as string | null) ?? null,
-        }));
-        const ex = extractLocation(body.text, lite);
-        itemName = ex.itemText || body.text;
-        locationId = ex.locationId;
-        // Keep an explicit scan_area override; otherwise stamp the unresolved
-        // phrase so the location is still captured as a hint for confirm.
-        if (!scanArea && !ex.locationId && ex.locationPhrase) scanArea = ex.locationPhrase;
-      } catch (err) {
-        console.error("[core-scan] note location extraction failed:", (err as Error).message);
-      }
-    }
-
-    noteScanCaptured(ctx.org.id, session.id, "note");
-    // What was typed decides the shape (services/intake.ts, #3049): a product
-    // code takes the catalog chain like a scanned one, a model or part
-    // number ("PB287Q") goes to the web before the match, and a phrase goes
-    // straight to the matchmaker with a picture search after. The door
-    // stamps a typed product code as the row's barcode so every reader of
-    // the row (the tracked-match finder, the card) sees it as one.
-    const typed = typedIdentifier(itemName);
-    const token = bearer(req);
-    const admitted = await intakeRow({
-      db,
-      orgId: ctx.org.id,
-      orgSlug: ctx.org.slug,
-      userId: session.id,
-      token,
-      baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
-      visitorIp: req.ip ?? null,
+    const admitted = await admitTypedNote(req, {
+      text: body.text,
       door: "note",
-      values: {
-        source_kind: "note",
-        ...(typed?.kind === "code" && !/^https?:\/\//i.test(typed.code) ? { barcode_text: typed.code } : {}),
-        ...(typed?.kind === "code" && /^https?:\/\//i.test(typed.code) ? { source_url: typed.code } : {}),
-        // The cleaned item phrase is the provisional name; the FULL raw text
-        // stays as the matchmaker's description so no extraction context is lost.
-        suggested_name: itemName.slice(0, 300),
-        suggested_metadata: JSON.stringify({ description: body.text }) as never,
-        scan_batch_id: body.scan_batch_id ?? null,
-        scan_area: scanArea,
-        target_location_id: locationId,
-        created_by_user_id: session.id,
-      },
+      target_location_id: body.target_location_id,
+      scan_batch_id: body.scan_batch_id,
+      scan_area: body.scan_area,
     });
     // Served like every other row (#3017): the dashboard's card reads this
     // response first and shows the row's progress from it.
     res.status(201).json(await served(req, admitted.row as never));
   }),
 );
+
+// ─────────────────────────── POST /scan/assistant ────────────────────
+// An AI agent adding a thing (#4472): the add_thing tool, over MCP and in the
+// chat alike. A bare create made whatever fields the agent thought to send,
+// and a second printer beside the one already there. This door puts the
+// thing through the inbox's own intake instead, the note door's shaping and
+// the same plan: identify, the duplicate check, kind and category routing,
+// the table's fields filled, a picture, a place. It waits for that plan and
+// answers with what it found, the record already tracked, and the table's
+// fields still empty as hints the agent can ask its person about.
+//
+// Inbox first, always: the row is there with everything the intake found.
+// The agent then files it in this call (`file: true`) through the same
+// confirm a person's Add uses, or leaves it in the inbox, marked as from the
+// assistant, for its person to look over. A thing you already have is never
+// filed as a second one unless the agent says so.
+
+const AssistantBody = z.object({
+  /** What the thing is called, as the agent knows it ("Prusa MK4"). */
+  name: z.string().trim().min(1).max(300),
+  /** A barcode, ISBN, model or part number. A product code is stamped as
+   *  the row's code, as a typed one is; anything else is kept as a note. */
+  identifier: z.string().trim().min(1).max(200).optional(),
+  /** A page about it, for the agent that found one. */
+  url: z.string().url().max(2000).optional(),
+  /** A photo uploaded first through core-files. */
+  image_file_id: z.string().uuid().optional(),
+  /** Where it is, in words ("in the garage") or as a place's id. */
+  place: z.string().trim().min(1).max(200).optional(),
+  location_id: z.string().uuid().optional(),
+  /** Field values the agent already knows, by the table's field names. */
+  fields: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+  quantity: z.number().positive().max(1_000_000).optional(),
+  /** File it now. Absent or false: it stays in the inbox for its person. */
+  file: z.boolean().optional(),
+  /** File it even though the workspace already tracks the same thing. */
+  allow_duplicate: z.boolean().optional(),
+});
+
+// AI-TOOL: add_thing
+// UI-REACH: an agent's door; a person adds the same way through the scanner's note, code and camera doors
+inboxRouter.post(
+  "/scan/assistant",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = AssistantBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const body = parsed.data;
+    const token = bearer(req);
+    if (!token) {
+      res.status(401).json({ error: { code: "no_auth", message: "Bearer token required" } });
+      return;
+    }
+    const ctx = tenantContext(req);
+    const db = tenantDb(req);
+    const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+    const authHeaders = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+    // A product code is the row's code (the catalog chain reads it); any
+    // other identifier stays with the description for the match to read.
+    const code = body.identifier ? typedIdentifier(body.identifier) : null;
+    const asCode = code?.kind === "code" ? code.code : null;
+    const admitted = await admitTypedNote(req, {
+      text: body.place && !body.location_id ? `${body.name} in ${body.place}` : body.name,
+      door: "assistant",
+      target_location_id: body.location_id ?? null,
+      metadata: {
+        arrived_by: "assistant",
+        ...(body.identifier && !asCode ? { identifier: body.identifier } : {}),
+      },
+      values: {
+        ...(asCode && !/^https?:\/\//i.test(asCode) ? { barcode_text: asCode } : {}),
+        ...(body.url ? { source_url: body.url } : {}),
+        ...(body.image_file_id ? { image_file_id: body.image_file_id } : {}),
+        ...(body.quantity != null ? { quantity: body.quantity } : {}),
+      },
+      settle: true,
+    });
+    const itemId = admitted.row.id;
+
+    // What the agent already knows rides as the person's own values do
+    // (services/user-fields.ts), through the same edit a person makes, so the
+    // card, File and confirm all read them over the intake's.
+    if (body.fields && Object.keys(body.fields).length) {
+      await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-scan/inbox/${itemId}`, {
+        method: "PATCH",
+        headers: authHeaders,
+        body: JSON.stringify({ fields: body.fields }),
+      }).catch((err) => console.error(`[core-scan] assistant add ${itemId}: fields not kept:`, (err as Error).message));
+    }
+
+    const fresh = await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", itemId).executeTakeFirstOrThrow();
+    const row = await served(req, fresh as never);
+    const tables = await destinationTablesFor(req);
+    const found = whatTheIntakeFound(row as never, tables, admitted.inline === "timeout");
+
+    let filed: { entity_id: string | null; entity_kind: string | null } | null = null;
+    let notFiled: string | null = null;
+    if (body.file) {
+      if (found.already_have && !body.allow_duplicate) {
+        notFiled = `already tracked as "${found.already_have.title}"; left in the inbox`;
+      } else {
+        const canInstall = roleSatisfies((req as unknown as { tenant?: { role: string } }).tenant?.role as "owner", ["owner", "admin"]);
+        const door = { baseUrl, slug: ctx.org.slug, authHeaders, canInstall, tables };
+        const outcome = await fileThroughConfirm(door, new BundleInstaller(door), withPersonName(fresh as never) as never, body.location_id ?? null);
+        if (outcome.ok) filed = { entity_id: outcome.entity_id, entity_kind: outcome.entity_kind };
+        else notFiled = outcome.reason;
+      }
+    }
+
+    res.status(201).json({
+      ...found,
+      filed,
+      not_filed_because: notFiled,
+      next: nextForTheAgent(found, filed, notFiled, !!body.file),
+    });
+  }),
+);
+
+/** What the intake found on one row, for the agent that asked: the record
+ *  already tracked, where it goes, the fields filled, the picture, the place,
+ *  and the table's fields still empty. Read from the served row, the one the
+ *  card reads, so the agent hears what a person would see. */
+function whatTheIntakeFound(
+  row: Record<string, unknown>,
+  tables: readonly ScanResolverTable[],
+  stillIdentifying: boolean,
+) {
+  const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
+  const stamp = (meta.tracked_match ?? null) as TrackedMatchStamp | null;
+  const cands = Array.isArray(row.suggested_candidates) ? (row.suggested_candidates as Array<Record<string, unknown>>) : [];
+  const top = cands[0] ?? null;
+  const dest = (row.resolved_destination ?? null) as { module: string; instance: string | null; kind: string | null; label: string | null } | null;
+  const fields = (top?.fields ?? {}) as Record<string, unknown>;
+  const table = dest
+    ? tables.find((t) => (t as { module_name?: string }).module_name === dest.module && ((t as { instance?: string | null }).instance ?? null) === (dest.instance ?? null))
+    : undefined;
+  const filled = (v: unknown) => v != null && !(typeof v === "string" && !v.trim());
+  const hints = ((table?.fields ?? []) as Array<{ name: string; label: string }>)
+    .filter((f) => !filled(fields[f.name]))
+    .map((f) => ({ name: f.name, label: f.label }));
+  return {
+    item_id: String(row.id),
+    name: (row.suggested_name as string | null) ?? null,
+    from: "assistant" as const,
+    already_have: stamp
+      ? { kind: stamp.kind, id: stamp.id, title: stamp.title, instance: stamp.instance, matched_by: stamp.matched_by, of: stamp.of }
+      : null,
+    goes_to: dest ? { module: dest.module, instance: dest.instance, kind: dest.kind, label: dest.label } : null,
+    category: (top?.category as string | null | undefined) ?? null,
+    fields,
+    picture: (row.image_file_id as string | null) ?? (row.catalog_image_file_id as string | null) ?? (row.catalog_image_url as string | null) ?? null,
+    place: { location_id: (row.target_location_id as string | null) ?? null, said: (row.scan_area as string | null) ?? null },
+    hints,
+    still_identifying: stillIdentifying,
+    needs_review: !!row.needs_review,
+    review_reason: (row.review_reason as string | null | undefined) ?? null,
+  };
+}
+
+/** One sentence the agent can act on. */
+function nextForTheAgent(
+  found: ReturnType<typeof whatTheIntakeFound>,
+  filed: { entity_id: string | null } | null,
+  notFiled: string | null,
+  askedToFile: boolean,
+): string {
+  if (filed) return found.hints.length ? `Filed. Still empty: ${found.hints.map((h) => h.label).join(", ")}. Ask your person, then update the record.` : "Filed.";
+  if (found.already_have && !filed) return `Already tracked as "${found.already_have.title}". Tell your person; add to it instead, or file again with allow_duplicate if it really is a second one.`;
+  if (askedToFile && notFiled) return `Not filed: ${notFiled}. It is in the inbox for your person.`;
+  if (found.still_identifying) return "In the inbox; the photo is still being identified. Read it again with get_scan_item.";
+  return found.hints.length
+    ? `In the inbox for your person. Still empty: ${found.hints.map((h) => h.label).join(", ")}. Ask, then file it with add_thing's file option or let them file it.`
+    : "In the inbox for your person, ready to file.";
+}
 
 // ─────────────────────────── POST /scan/receipt ────────────────────
 // Upload-a-receipt intake: a receipt PDF (or a photo of one) is parsed by
@@ -877,6 +1090,8 @@ async function materializeReceiptLines(opts: {
   batchId: string | null;
   receipt: ParsedReceipt;
   method: ParseMethod;
+  /** What was read: a scanned PDF's lines say they came from its page image. */
+  source?: ReceiptSource;
   token: string | null;
   baseUrl: string;
   /** The receipt_group_id to stamp. Supplied by the parse route so the order it
@@ -893,6 +1108,7 @@ async function materializeReceiptLines(opts: {
     receipt_date: opts.receipt.date,
     receipt_currency: opts.receipt.currency,
     parse_method: opts.method,
+    ...(opts.source ? { receipt_source: opts.source } : {}),
     // Provenance: what this purchase WAS, beyond the line's own description.
     // Kept as components rather than one "price", because a receipt carries
     // several numbers that all look like the price and picking one is how the
@@ -1224,6 +1440,7 @@ inboxRouter.post(
       batchId,
       receipt,
       method,
+      source: result.source,
       token: bearer(req),
       baseUrl: receiptBaseUrl,
       groupId: receiptGroupId,
@@ -1416,6 +1633,7 @@ inboxRouter.post(
       batchId: batch.id,
       receipt,
       method,
+      source: result.source,
       token: bearer(req),
       baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
     });
@@ -2273,6 +2491,10 @@ export const ConfirmBody = z.object({
    *  "bad request body" (reported 2026-08-03). */
   name: z.string().min(1).max(2000).optional(),
   location_id: z.string().uuid().optional(),
+  /** File it inside a thing that holds things (a Backpack) rather than a
+   *  place. Stamped on the item as its container, so the commit places the
+   *  new record inside it, the way a scan into an active container does. */
+  container: z.object({ kind: z.string().min(1).max(120), id: z.string().min(1).max(200) }).optional(),
   /** Quantity override. Falls back to the inbox row's quantity. The same
    *  rule as the stepper's, from the same place (services/filed-quantity.ts):
    *  a count from one, never zero (#3088). */
@@ -2365,9 +2587,14 @@ inboxRouter.post(
     // ATOMIC CLAIM — two confirms racing (File-all vs a manual tap, or two
     // devices) both passed the read-guard above and both created the entity.
     // A compare-and-set on status makes the loser take the same 409 here.
+    const into = parsed.data.container ?? null;
     const claim = await db
       .updateTable("core_scan_inbox_items")
-      .set({ status: "resolved", updated_at: new Date() })
+      .set({
+        status: "resolved",
+        updated_at: new Date(),
+        ...(into ? { target_container_kind: into.kind, target_container_id: into.id, target_location_id: null } : {}),
+      })
       .where("id", "=", id)
       .where("status", "=", row.status)
       .returning(["id"])
@@ -2377,6 +2604,11 @@ inboxRouter.post(
         error: { code: "already_resolved", message: "This item was already confirmed." },
       });
       return;
+    }
+    if (into) {
+      row.target_container_kind = into.kind;
+      row.target_container_id = into.id;
+      row.target_location_id = null;
     }
     // Any failure or early validation bail AFTER the claim releases it (the
     // target_entity_id guard keeps a stamped success safe) — one hook covers
@@ -2402,7 +2634,10 @@ inboxRouter.post(
       parsed.data.target_kind,
       (meta as { entity_type?: unknown }).entity_type,
     );
-    const kindKey = `${target.module}:${target.kind}`;
+    // A collection's kind arrives whole ("groceries:item"): prefixing the
+    // module again made "inventory:groceries:item", a kind nothing reads, so a
+    // record filed into a container was placed where no lookup could find it.
+    const kindKey = target.kind.includes(":") ? target.kind : `${target.module}:${target.kind}`;
     // The table this files into, installed first when it is an app the
     // workspace does not have yet and the row's own candidate offers it.
     // Every door files through here, so every door installs the same way
@@ -2459,7 +2694,7 @@ inboxRouter.post(
     // route had its own copy of that rule since a vehicle hit "assets:vehicles:item
     // is not a scan target"; attach and the bin adjust had none.)
     const scanTarget = (
-      await scanTargetOf(ctx.org.id, target.kind.includes(":") ? target.kind : kindKey, instance, target.module)
+      await scanTargetOf(ctx.org.id, kindKey, instance, target.module)
     )?.scannable;
     if (!scanTarget) {
       res.status(400).json({
@@ -7299,6 +7534,8 @@ const AutofileBody = z.object({
   /** On confirm: where the "filed as new" pile goes. The per-item confirm
    *  takes the same key; the sheet defaults it to the session's scan area. */
   location_id: z.string().nullish(),
+  /** Or a thing that holds things (a Backpack): the new ones go inside it. */
+  container: z.object({ kind: z.string().min(1).max(120), id: z.string().min(1).max(200) }).nullish(),
 });
 
 // AI-REACH: exempt — a bulk write over the whole pending inbox. An agent should
@@ -7442,7 +7679,10 @@ inboxRouter.post(
           // naming one here would hardcode another module's identity into
           // core-scan, which is what module isolation forbids.
           if (!row) throw new Error("candidate lost its destination");
-          const outcome = await fileThroughConfirm(door, installer, row, parsed.data.location_id ?? null, { quantity: plan.qty });
+          const outcome = await fileThroughConfirm(door, installer, row, parsed.data.location_id ?? null, {
+            quantity: plan.qty,
+            ...(parsed.data.container ? { container: parsed.data.container } : {}),
+          });
           if (!outcome.ok) throw new Error(outcome.reason);
           created++;
         }

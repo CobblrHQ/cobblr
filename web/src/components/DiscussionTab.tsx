@@ -26,15 +26,18 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useLater, useToast, useConfirm, relativeTime } from "@cobblr/platform-web";
+import { useLater, useToast, useConfirm, relativeTime, ContextChip, discussionRecordOf, openDiscussion } from "@cobblr/platform-web";
+import { clearChatSelection, useChatSelection } from "../lib/chat-context";
 import { api, ApiError, type DiscussionComment } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
 import { canEditComment, canResolveConversation } from "../lib/discussionPermissions";
 import { useCurrentRecord } from "../lib/useCurrentRecord";
-import { RailTabContent, openRail, useRailTab } from "./SideRail";
+import { RailTabContent, useRailTab } from "./SideRail";
 import { MentionText, useMentionPicker } from "./MentionText";
 import { workspaceRoomSource, isWorkspaceRoom } from "@cobblr/platform-contract/workspace-room";
+import { discordConnectable } from "../lib/discord-connect";
+import { useDiscordStatus } from "../lib/useDiscordStatus";
 
 /** How often the open conversation re-reads itself. There is no push channel
  *  for comments, so a message somebody else posts reaches this tab by asking
@@ -154,7 +157,28 @@ export function DiscussionTab() {
   const { activeSlug, activeOrg } = useActiveOrg();
   const { user } = useAuth();
   const selfUserId = user?.id ?? null;
-  const record = useCurrentRecord(activeSlug ?? "");
+  // WHICH RECORD. The one a door handed over (openDiscussion puts it in the
+  // context the Ask Cobb chip shows, so the two tabs are about one thing),
+  // else the record this page is, else nothing and the workspace room.
+  //
+  // The page alone was the old answer, and most record views are modals that
+  // leave the URL alone: Discuss on a bike opened the room, with no bike.
+  const chosen = discussionRecordOf(useChatSelection());
+  const pageRecord = useCurrentRecord(activeSlug ?? "");
+  const pageKey = pageRecord ? `${pageRecord.kind}/${pageRecord.id}` : null;
+  // × on the page's own record: talk in the room instead, until the page changes.
+  const [droppedPage, setDroppedPage] = useState<string | null>(null);
+  const record = useMemo(() => {
+    if (chosen) {
+      const [sourceModule, sourceType] = chosen.kind.split(":") as [string, string];
+      return { kind: chosen.kind, id: chosen.id, sourceModule, sourceType };
+    }
+    return pageRecord && droppedPage !== pageKey ? pageRecord : null;
+  }, [chosen?.kind, chosen?.id, pageRecord, droppedPage, pageKey]);
+  const dropRecord = () => {
+    clearChatSelection();
+    setDroppedPage(pageKey);
+  };
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
@@ -214,6 +238,8 @@ export function DiscussionTab() {
     staleTime: 60_000,
     retry: false,
   });
+
+  const recordLabel = (chosen?.id === record?.id ? chosen?.label : undefined) ?? subject.data?.title ?? "…";
 
   const conv = useQuery({
     queryKey: ["discussion", activeSlug, src?.source_module, src?.source_type, src?.source_id],
@@ -331,7 +357,8 @@ export function DiscussionTab() {
     staleTime: 10 * 60_000,
     retry: false,
   });
-  const showDiscordNudge = !nudgeHidden && commsPrefs.data?.discord_verified === false;
+  const discord = useDiscordStatus(active && !nudgeHidden);
+  const showDiscordNudge = !nudgeHidden && discordConnectable(discord.data) && commsPrefs.data?.discord_verified === false;
 
 
   // Opening the tab IS reading it. Marking read on open rather than behind a
@@ -548,9 +575,9 @@ export function DiscussionTab() {
             {/* The room is not ABOUT anything, so it does not claim to be. It
                 says where you are talking, which is the useful fact when the
                 same tab is a record thread one moment and the room the next. */}
-            <span className="shrink-0 opacity-70">{record ? "About:" : "In:"}</span>
+            <span className="shrink-0 opacity-70">In:</span>
             <span className="truncate">
-              {record ? (subject.data?.title ?? "…") : (activeOrg?.name ?? "this workspace")}
+              {record ? recordLabel : (activeOrg?.name ?? "this workspace")}
             </span>
           </span>
           {resolved && (
@@ -774,6 +801,13 @@ export function DiscussionTab() {
               </button>
             </div>
           )}
+          {/* The record this message will be about, the same chip Ask Cobb
+              shows. × talks in the workspace room instead. */}
+          {record && (
+            <div className="mb-2">
+              <ContextChip label={recordLabel} onRemove={dropRecord} />
+            </div>
+          )}
           {mention.element}
           <div className="flex items-end gap-2">
             {/* The placeholder is OURS, not the textarea's. iOS Safari renders a
@@ -853,6 +887,21 @@ export function DiscussionPreview({
   compact?: boolean;
 }) {
   const { activeSlug } = useActiveOrg();
+  const qc = useQueryClient();
+  // The record goes WITH the door: most record views are modals that leave
+  // the URL alone, so the tab cannot work out from the page which record it
+  // is about. Its name comes from the same cached lookup the chips use.
+  const discuss = async () => {
+    const kind = `${sourceModule}:${sourceType}`;
+    const found = await qc
+      .fetchQuery({
+        queryKey: ["entity", activeSlug, kind, sourceId],
+        queryFn: () => api.lookupEntity(activeSlug, kind, sourceId),
+        staleTime: 60_000,
+      })
+      .catch(() => null);
+    openDiscussion({ record: { kind, id: sourceId, label: found?.title || "This record" } });
+  };
   const conv = useQuery({
     queryKey: ["discussion", activeSlug, sourceModule, sourceType, sourceId],
     queryFn: () =>
@@ -886,7 +935,7 @@ export function DiscussionPreview({
     return (
       <button
         type="button"
-        onClick={() => openRail("discussion")}
+        onClick={() => void discuss()}
         className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs border border-dashed border-line dark:border-slate-600 text-muted hover:border-cobble-500 hover:text-accent transition"
       >
         <MessageSquare size={10} />
@@ -905,7 +954,7 @@ export function DiscussionPreview({
       </h3>
       <button
         type="button"
-        onClick={() => openRail("discussion")}
+        onClick={() => void discuss()}
         className="w-full text-left rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 hover:border-cobble-300 dark:hover:border-cobble-700 transition"
       >
         {latest ? (

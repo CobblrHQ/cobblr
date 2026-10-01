@@ -16,6 +16,7 @@
 // renders as-is. So existing data needs no migration.
 
 import { countWordsFor, wordForCount, type CountWords } from "@cobblr/platform-contract/plural";
+import { MEASURE_UNITS } from "@cobblr/platform-contract/measure";
 
 export type UnitCategory =
   | "count"
@@ -76,10 +77,9 @@ export const BUILTIN_UNITS: UnitDef[] = [
   { code: "hour", symbol: "h", name: "hour", plural: "hours", category: "time", factor: 3600 },
   { code: "minute", symbol: "min", name: "minute", plural: "minutes", category: "time", factor: 60 },
   { code: "day", symbol: "d", name: "day", plural: "days", category: "time", factor: 86400 },
-  // electrical — distinct dimensions (A/V/W), NOT interconvertible → no factor.
-  { code: "amp", symbol: "A", name: "amp", plural: "amps", category: "electrical" },
-  { code: "volt", symbol: "V", name: "volt", plural: "volts", category: "electrical" },
-  { code: "watt", symbol: "W", name: "watt", plural: "watts", category: "electrical" },
+  // electrical: distinct dimensions, NOT interconvertible, so no factor. The
+  // same codes a measured value carries ("4k7" is 4700 ohm), from the one list.
+  ...MEASURE_UNITS.map((u) => ({ code: u.code, symbol: u.symbol, name: u.name, plural: u.plural, category: "electrical" as const })),
   // digital — base = MB
   { code: "megabyte", symbol: "MB", name: "megabyte", plural: "megabytes", category: "digital", factor: 1 },
   { code: "gigabyte", symbol: "GB", name: "gigabyte", plural: "gigabytes", category: "digital", factor: 1000 },
@@ -115,7 +115,9 @@ export function resolveUnit(
   const q = raw.trim().toLowerCase();
   if (!q) return null;
   const all = [...BUILTIN_UNITS, ...extra];
+  // A symbol's case first: "H" is a henry and "h" an hour.
   return (
+    all.find((u) => u.symbol === raw.trim()) ??
     all.find((u) => u.symbol.toLowerCase() === q) ??
     all.find((u) => u.code.toLowerCase() === q) ??
     all.find((u) => u.name.toLowerCase() === q || u.plural.toLowerCase() === q) ??

@@ -20,7 +20,7 @@ export interface KindRec {
    *  (`<instance>:item`): endpoints are then relative to
    *  /instances/<instance_name>, not /modules/<module_name>. */
   instance_name?: string;
-  fields?: Array<{ name: string; type?: string; role?: string; required?: boolean; readOnly?: boolean; choices?: string[]; /** This workspace's word for it, when it relabels the field ("cost" shows as "Paid"). */ label?: string }>;
+  fields?: Array<{ name: string; type?: string; role?: string; required?: boolean; readOnly?: boolean; choices?: string[]; /** This workspace's word for it, when it relabels the field ("cost" shows as "Paid"). */ label?: string; /** Money, and how the column holds it. */ money?: "cents" | "amount" }>;
   /** What "the same place" means for this kind when looking for duplicates:
    *  a field name, or "workspace". Absent = this kind is never deduplicated. */
   duplicate_scope?: string | null;
@@ -41,6 +41,10 @@ export interface KindRec {
     /** Set when the field is workspace-wide (every physical thing, say)
      *  rather than defined on this kind alone. */
     scope?: string;
+    /** A number's unit ("mm", "USD"): a currency unit makes it money. */
+    unit?: string | null;
+    /** What the field means ("acquired-for" is money). */
+    field_role?: string | null;
   }>;
 }
 

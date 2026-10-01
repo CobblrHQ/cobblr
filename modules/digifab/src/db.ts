@@ -38,6 +38,10 @@ export interface DigifabJobsTable {
   material_part_id: string | null;
   material_grams: string | null;
   material_type: string | null;
+  /** The slicer's grams per filament, tool 1 first (0036). */
+  material_grams_by_tool: unknown | null;
+  /** What a completed print took off which loaded spool (0036). */
+  material_drawn: unknown | null;
   /** A build (bill-of-materials) this job produces. On send, a seeded wire fires
    *  builds:build-one to consume the build's components from inventory; the
    *  output part is credited only when the plate is judged good (#4050).
@@ -310,6 +314,7 @@ export interface DigifabDB {
   digifab_connections: DigifabConnectionsTable;
   digifab_jobs: DigifabJobsTable;
   digifab_device_links: DigifabDeviceLinksTable;
+  digifab_machine_slots: { machine_id: string; slots: Generated<number>; updated_at: Generated<Date> };
   digifab_drivers: DigifabDriversTable;
   digifab_pools: DigifabPoolsTable;
   digifab_production_runs: DigifabProductionRunsTable;

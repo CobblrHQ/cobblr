@@ -3,6 +3,7 @@ type: feature
 scope: web
 date: 2026-09-30
 docs_target: docs/USER_GUIDE.md#Guided tour
+docs_published: 2026-10-01
 ---
 On a phone browser, the dashboard now suggests putting Cobblr on your home screen, even if you skipped the tour and never scanned, and the account menu always has **Install Cobblr on this phone**. Suggestions like this come one at a time, at most one new one a day, and one you put away stays away.
 

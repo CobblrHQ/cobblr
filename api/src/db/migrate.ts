@@ -26,6 +26,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Pool, PoolClient } from "pg";
+import { likeEscape } from "@cobblr/platform-contract";
 import { findBreakingChanges, hasContractMarker } from "./migration-shape.js";
 
 export interface MigrationRunOptions {
@@ -250,7 +251,7 @@ async function fetchAppliedNames(client: PoolClient, scope: string): Promise<Set
   const prefix = `${scope}::`;
   const res = await client.query<{ name: string }>(
     "select name from migrations where name like $1 order by id",
-    [`${prefix}%`],
+    [`${likeEscape(prefix)}%`],
   );
   return new Set(res.rows.map((r) => r.name.slice(prefix.length)));
 }

@@ -18,7 +18,7 @@
 
 import { createHash } from "node:crypto";
 import { sql } from "kysely";
-import { platform, SYSTEM_VIEWER } from "@cobblr/platform-contract";
+import { fieldTypeTakesUnit, platform, SYSTEM_VIEWER } from "@cobblr/platform-contract";
 import { splitEntityKind } from "@cobblr/platform-contract/entity-kind";
 import { isStockPreviewUrl } from "@cobblr/platform-contract/stock-preview";
 import type { CoreImportDB, ImportDb } from "../db.js";
@@ -266,7 +266,7 @@ export async function prepareRun(
         display_label: f.label,
         type: f.type,
         ...(f.choices?.length ? { choices: f.choices } : {}),
-        ...(f.unit && f.type === "number" ? { unit: f.unit } : {}),
+        ...(f.unit && fieldTypeTakesUnit(f.type) ? { unit: f.unit } : {}),
         ...(f.field_role ? { field_role: f.field_role } : {}),
       });
       // Already there (a bundle brought it a moment ago, or a second sheet

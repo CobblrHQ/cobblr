@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-09-29
 docs_target: docs/USER_GUIDE.md#3.19 Digital Fabrication (`digifab`, stock)
+docs_published: 2026-10-01
 ---
 **Every print now keeps its whole history as a Make.** What was asked for, the design, the model, the slicer and its settings, the printer and the spool, and how it came out, in order, with every file in one folder. A Make can start from your own model or G-code, can be made again from any step, and shows up on the printer's and the spool's pages.
 

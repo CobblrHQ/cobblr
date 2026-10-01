@@ -13,7 +13,6 @@ import { cancelOutcome } from "../../lib/digifab-cancel";
 import { BridgeInstallMethod } from "../../components/BridgeInstallMethod";
 import { useState, useMemo, useEffect, useRef, Fragment, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2, Wifi, Printer, Send, RefreshCw, AlertTriangle, Layers, X, Ban, Camera, Pause, Play, Thermometer, Sliders, ShieldCheck } from "lucide-react";
 import { ApiError, api, fetchAuthBlobUrl, type DigifabFleet, type DigifabFleetDevice, type DigifabDeviceClass, type DigifabHistory, type DigifabDeviceDetail, type DigifabFileInfo } from "../../lib/api";
@@ -24,7 +23,7 @@ import { HomeNetworkHint } from "../../components/HomeNetworkHint";
 import { useHosted } from "../../lib/useHosted";
 import { needsBridge } from "@cobblr/platform-contract/address-reach";
 import { useActiveOrg } from "../../auth/ActiveOrgContext";
-import { useLater, Modal, useToast, useConfirm, useImageSrc, OverlayLayer, relativeTime, EntityPhoto, SecretInput, AddressInput } from "@cobblr/platform-web";
+import { useLater, Lightbox, Modal, useToast, useConfirm, useImageSrc, relativeTime, EntityPhoto, SecretInput, AddressInput } from "@cobblr/platform-web";
 import { Combobox } from "../../components/Combobox";
 import type { ModulePageTabCtx, EntityDetailPanelCtx } from "../../panels/types";
 import { capitalise, machineWords, type MachineWords } from "../../lib/machine-words";
@@ -2205,19 +2204,6 @@ function FilesPanel({ slug, connId, deviceId, onZoom, history, onOpenPrint, onRe
   );
 }
 
-// A full-screen image viewer — click anywhere to close. Portals to body so the
-// header's backdrop-blur can't trap it.
-export function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
-  return createPortal(
-    <OverlayLayer className="z-[120] bg-black/80 flex items-center justify-center p-6 cursor-zoom-out" onClick={onClose} role="dialog" aria-modal="true" aria-label="Photo">
-      {/* EXTERNAL-IMAGE-OK: the caller hands this an already-resolved URL. */}
-      {/* photo-frame: the fleet's lightbox shows the whole picture at its own shape */}
-      <img src={src} alt="" className="max-w-full max-h-full object-contain rounded shadow-2xl" />
-    </OverlayLayer>,
-    document.body,
-  );
-}
-
 // Live LAN camera — the Bambu chamber camera, grabbed frame-by-frame over the
 // bridge (one JPEG every ~3s; a refreshing still, not a stream).
 function LanCameraView({ slug, connId, deviceId, name, onZoom }: { slug: string; connId: string; deviceId: string; name: string; onZoom?: (src: string) => void }) {
@@ -2607,7 +2593,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
           </div>
         </div>
       </Modal>
-      {lightbox && <Lightbox src={lightbox} onClose={() => setLightbox(null)} />}
+      {lightbox && <Lightbox items={[{ key: lightbox, caption: "Photo", src: lightbox }]} index={0} onClose={() => setLightbox(null)} />}
       {printOpen && <PrintDetailModal item={printOpen} onClose={() => setPrintOpen(null)} onZoom={setLightbox} onReprint={(r) => { setPrintOpen(null); void askReprint(r); }} />}
     </>
   );

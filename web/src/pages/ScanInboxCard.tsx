@@ -22,7 +22,7 @@ import { Fragment, useContext, useEffect, useId, useMemo, useRef, useState, type
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, CheckCircle, ChevronDown, Download, ExternalLink, Flag, Image as ImageIcon, ImagePlus, Library, Loader2, MapPin, MoreHorizontal, Pencil, RefreshCw, RotateCcw, ScanLine, Scissors, Sparkles, X, Database } from "lucide-react";
-import { Modal, useLater, useImageSrc, EntityPhoto, useOverlayOpenFlag, useToast, colorSwatch, wantsSwatch, ColourInput, valueFromInput, PopoverLayer, BackdropLayer, FieldPack, fieldNeed, fieldControl, fieldPackControlClass, type FieldType, relativeTime, SearchInput } from "@cobblr/platform-web";
+import { Modal, useLater, useImageSrc, EntityPhoto, useOverlayOpenFlag, useToast, colorSwatch, wantsSwatch, ColourInput, valueFromInput, PopoverLayer, BackdropLayer, FieldPack, fieldNeed, fieldControl, fieldPackControlClass, type FieldType, relativeTime, SearchInput, ChoiceCombobox } from "@cobblr/platform-web";
 import { } from "../components/ScanImportModal";
 import { } from "../components/ExportInboxModal";
 import { CameraCaptureSheet } from "../components/CameraCaptureSheet";
@@ -118,6 +118,7 @@ import { ScanNameItInline as NameItInline } from "../components/ScanNameItInline
 import { LOOKUP_GAVE_UP, RECEIPT_READ_AGAIN, RECEIPT_UNREAD_SENTENCE, STORE_CODE_TITLE, RECEIPT_READ_ANYWAY, receiptAlreadyInSentence } from "@cobblr/platform-contract/scan-copy";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { withArticle } from "@cobblr/platform-contract/plural";
+import { formatStoredMoney } from "@cobblr/platform-contract/money";
 
 /** Base-kind fallback for when the scan menu can't load — the menu
  *  (GET /modules/core-scan/menu) is the real source of truth and lists
@@ -2894,7 +2895,7 @@ export function InboxCard({
                 {(item.suggested_metadata as { weight_unit?: string }).weight_unit ?? ""}
                 {typeof (item.suggested_metadata as { unit_price?: unknown }).unit_price === "number" && (
                   <span className="ml-1 font-normal opacity-90">
-                    · {(item.suggested_metadata as { unit_price: number }).unit_price.toFixed(2)}/
+                    · {formatStoredMoney((item.suggested_metadata as { unit_price: number }).unit_price, "amount")}/
                     {(item.suggested_metadata as { weight_unit?: string }).weight_unit ?? "unit"}
                   </span>
                 )}
@@ -2941,6 +2942,12 @@ export function InboxCard({
               // barcode/ISBN) must not leave a dangling leading separator — that
               // reads as "something's missing here". Never a leading/trailing dot.
               const segs: ReactNode[] = [];
+              // An agent's add (MCP or the chat's add_thing, #4472) waits here
+              // for its person; say so, so it is not mistaken for their scan.
+              // The stamp is the assistant door's (core-scan /scan/assistant).
+              if ((item.suggested_metadata as { arrived_by?: string } | null)?.arrived_by === "assistant") {
+                segs.push(<span className="text-cobble-700 dark:text-cobble-300">from your assistant</span>);
+              }
               if (item.barcode_text) {
                 // Say where it CAME FROM. "read from photo" over an emailed
                 // eBay receipt was simply untrue (reported 2026-08-31); the
@@ -5602,8 +5609,9 @@ function ConfirmForm({
               // no ScanFieldInput/choiceDoor above - yet it is the ONE field a
               // scan most often needs a NEW value for (a filament spool came
               // back "Hair Color" with no visible way to coin "Filament";
-              // reported 2026-09-28). Same "New <category>…" door table selects
-              // get, in by-name mode: the confirm creates it on file.
+              // reported 2026-09-28). The same picker table fields get, in
+              // by-name mode: a typed name is the value and the confirm creates
+              // it on file.
               <ScanChoiceSelect
                 id={`scan-${item.id}-${f.key}`}
                 slug={activeSlug}
@@ -5653,9 +5661,9 @@ function ConfirmForm({
       onChange={setChipValue}
       renderEditor={(f) => {
         // Inventory's by-name category axis has no field def, but it gets the
-        // same hosted "New category…" door table selects do - the chip's own
-        // datalist could suggest but never announced you could coin one
-        // (reported 2026-09-28). By-name mode: the confirm creates it on file.
+        // same picker table fields do - the chip's own datalist could suggest
+        // but never announced you could coin one (reported 2026-09-28).
+        // By-name mode: the confirm creates it on file.
         if (f.key === "category_axis" && f.choices?.length) {
           return (
             <ScanChoiceSelect
@@ -5675,7 +5683,7 @@ function ConfirmForm({
         }
         const def = (entry.fields ?? []).find((x) => x.name === f.key);
         if (!def) return null;
-        // A choice field is hosted too, so the chip's select carries "New <field>…" (#2982).
+        // A choice field is hosted too, so the chip edits through the one picker (#2982, #4516).
         const rich = def.type === "boolean" || wantsSwatch({ ...def, display_label: f.label } as never) || !!def.help || (!!def.choices?.length && choiceDoor.canAdd);
         if (!rich) return null;
         return (
@@ -5921,20 +5929,15 @@ function ScanFieldInput({
           className={fieldPackControlClass + " px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800"}
         />
       ) : def.choices && def.choices.length > 0 ? (
-        <select
+        <ChoiceCombobox
           id={inputId}
-          data-field={def.name}
-          value={s}
-          onChange={(e) => onChange(e.target.value || null)}
-          className={fieldPackControlClass + " px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800"}
-        >
-          <option value=""> - none - </option>
-          {def.choices.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
+          dataField={def.name}
+          label={def.display_label}
+          value={s || null}
+          options={def.choices.map((c) => ({ value: c }))}
+          onCommit={(v) => onChange(v)}
+          className={fieldPackControlClass + " text-sm"}
+        />
       ) : (
         <input
           id={inputId}
@@ -5942,7 +5945,7 @@ function ScanFieldInput({
           type={def.type === "number" ? "number" : def.type === "date" ? "date" : def.type === "url" ? "url" : "text"}
           step={def.type === "number" ? "any" : undefined}
           value={s}
-          onChange={(e) => onChange(valueFromInput(def.type, e.target.value))}
+          onChange={(e) => onChange(valueFromInput(def, e.target.value))}
           className={fieldPackControlClass + " px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800"}
         />
       )}

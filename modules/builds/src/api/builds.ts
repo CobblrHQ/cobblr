@@ -250,6 +250,8 @@ buildsRouter.patch(
     if (parsed.data.notes !== undefined) patch.notes = parsed.data.notes;
     // Custom fields MERGE into the stored bag, so saving one keeps the others.
     const set = withMetadataMerged(parsed.data.metadata !== undefined ? { ...patch, metadata: parsed.data.metadata } : patch);
+    // The row as it was: the record's history says what this edit changed (#4517).
+    const before = await db.selectFrom("builds_builds").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
     const row = await db
       .updateTable("builds_builds")
       .set(set as never)
@@ -260,6 +262,14 @@ buildsRouter.patch(
       res.status(404).json({ error: { code: "not_found", message: "build not found" } });
       return;
     }
+    await platform().activity.log({
+      orgId: tenantContext(req).org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "build_updated",
+      ref: { module: "builds", entityType: "build", entityId: row.id },
+      diff: { ...patch, ...(parsed.data.metadata !== undefined ? { metadata: parsed.data.metadata } : {}) },
+      before,
+    });
     res.json(row);
   }),
 );

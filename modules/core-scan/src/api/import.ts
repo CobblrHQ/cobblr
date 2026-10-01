@@ -955,6 +955,7 @@ importRouter.get(
         "item_count", "created_count", "replaced_count", "undone_at",
       ])
       .orderBy("created_at", "desc")
+      // list-cap-ok: the recent import runs, the ones a person undoes; not an archive
       .limit(25)
       .execute();
     res.json({ items: rows });

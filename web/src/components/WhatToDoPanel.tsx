@@ -23,19 +23,19 @@ import { useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { changeWorkspaceShape, useToast, SearchInput } from "@cobblr/platform-web";
-import { FileSpreadsheet, Camera, Sparkles, ArrowRight, Loader2, Boxes, Wand2, Plus, ChevronDown, ChevronUp, ScanLine, X, Map as MapIcon } from "lucide-react";
+import { FileSpreadsheet, Sparkles, ArrowRight, Loader2, Boxes, Wand2, Plus, ChevronDown, ChevronUp, ScanLine, X, Map as MapIcon } from "lucide-react";
 import { api } from "../lib/api";
 import { useBundleCatalog, type CatalogBundle } from "../lib/useBundleCatalog";
 import { fuzzyMatch } from "../lib/fuzzy";
 import { BundleDetailModal } from "./BundleDetailModal";
-import { PairPhoneButton } from "./PairPhoneButton";
 import { BundleSection, BundleTile, splitCatalog } from "./BundleBrowse";
 import { AiOffNotice, useAiStatus } from "./AiStatusNotice";
 import { FirstScanCard } from "./FirstScanCard";
 import { isSandboxSession } from "../lib/sandbox-session";
 import { DEMO_BARCODE } from "../lib/demo-barcode";
 import { useIsTouch } from "../lib/useIsTouch";
-import { AddPhotosTile } from "./AddPhotosTile";
+import { FreeformAdd } from "./FreeformAdd";
+import { useAddByWords } from "../lib/useAddByWords";
 import { itemEnriching } from "../pages/scan-status";
 import { useMaterializeCapture } from "../lib/useMaterializeCapture";
 import { openSheetImport } from "../lib/sheet-import";
@@ -184,7 +184,6 @@ export function WhatToDoPanel({
   // kinds all answer the same question ("what do I start with?"), so splitting
   // them across two boxes only made the user guess which one to type in.
   const [browseQ, setBrowseQ] = useState("");
-  const [addText, setAddText] = useState("");
   const [categoryName, setCategoryName] = useState(""); // col 3: a new category (named instance)
   // A no-camera desktop scans by pairing a phone (QR → phone signs in to THIS
   // workspace → its camera scans land in the inbox below); touch devices use
@@ -324,15 +323,7 @@ export function WhatToDoPanel({
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't run the sample scan"),
   });
-  const noteMut = useMutation({
-    mutationFn: (t: string) => api.scanNote(slug, t),
-    onSuccess: () => {
-      setAddText("");
-      void qc.invalidateQueries({ queryKey: ["capture-inbox", slug] });
-      toast.success("Added - finding the right home…");
-    },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't add that"),
-  });
+  const noteMut = useAddByWords(slug);
   // Setting a bundle up from a capture, the shared way (useMaterializeCapture):
   // the picker first when there is something to choose, the landing rule after.
   const materialize = useMaterializeCapture(slug);
@@ -797,40 +788,7 @@ export function WhatToDoPanel({
           {(selectedRecipe || selectedModuleObj) && (
             <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">or just add an item</div>
           )}
-          <div className="relative mb-2">
-            <Plus size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-faint dark:text-slate-500" />
-            <input
-              value={addText}
-              onChange={(e) => setAddText(e.target.value)}
-              placeholder={`e.g. ${itemPlaceholder}`}
-              className="input !pl-8 !py-1.5 text-sm"
-              onKeyDown={(e) => { if (e.key === "Enter" && addText.trim()) noteMut.mutate(addText.trim()); }}
-            />
-          </div>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              disabled={!addText.trim() || noteMut.isPending}
-              onClick={() => noteMut.mutate(addText.trim())}
-              className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-cobble-300 dark:border-cobble-700 bg-surface dark:bg-slate-900 text-content dark:text-mortar-100 text-sm font-medium px-3 py-1.5 hover:border-cobble-400 transition disabled:opacity-50"
-            >
-              {noteMut.isPending ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add it
-            </button>
-            {/* Photos already taken: the scan inbox's picker, right here
-                beside the camera (#3042). One tap, the same intake. */}
-            <AddPhotosTile
-              slug={slug}
-              className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-1.5 text-sm font-medium text-content dark:text-mortar-100 hover:border-cobble-300 dark:hover:border-cobble-700 transition disabled:opacity-60"
-              compact
-            />
-            {isTouch ? (
-              <Link data-tour="capture-scan" to="/scan/camera" title="Scan a barcode or snap a photo" className="inline-flex items-center gap-1.5 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-1.5 text-sm font-medium text-content dark:text-mortar-100 hover:border-cobble-300 dark:hover:border-cobble-700 transition">
-                <Camera size={15} /> Scan
-              </Link>
-            ) : (
-              <PairPhoneButton dataTour="capture-scan" className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-1.5 text-sm font-medium text-content dark:text-mortar-100 hover:border-cobble-300 dark:hover:border-cobble-700 transition" />
-            )}
-          </div>
+          <FreeformAdd slug={slug} placeholder={`e.g. ${itemPlaceholder}`} add={noteMut} />
           <p className="text-[11px] text-faint dark:text-slate-500 mt-2">
             {isTouch
               ? "Scan barcodes or snap photos with your camera and they file themselves. Nothing to hand? "

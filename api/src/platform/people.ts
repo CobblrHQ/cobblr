@@ -150,3 +150,11 @@ export async function linkPersonToUser(orgId: string, personId: string, userId: 
   });
   clearPeopleCache(orgId);
 }
+
+/** The account behind a People entry, when it is a current member's. The
+ *  inverse of personForUser, through the same list, so a person who has left
+ *  (membership gone) has no account to reach. */
+export async function userForPerson(orgId: string, personId: string): Promise<string | null> {
+  const person = (await listPeople(orgId)).find((p) => p.id === personId);
+  return person?.member && person.user_id ? person.user_id : null;
+}

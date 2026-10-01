@@ -3,6 +3,7 @@ type: feature
 scope: core-files
 date: 2026-09-26
 docs_target: docs/USER_GUIDE.md#3.4 Files (foundational)
+docs_published: 2026-10-01
 ---
 **Drop a whole folder of files in at once.** Pick many files, or a zip of a folder, on the Files page: a zip is unpacked into its own folders under the one you are in, a file you already have is kept once, and one summary at the end says what was stored and why anything was not.
 

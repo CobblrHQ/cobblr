@@ -4,7 +4,8 @@
 // (the workspace launcher's override theme). See web/src/lib/appTheme.ts
 // for how the tokens become CSS variables.
 
-import { DragInput, useToast } from "@cobblr/platform-web";
+import { useRef } from "react";
+import { DragInput, usePasteImage, useToast } from "@cobblr/platform-web";
 import type { AppTheme } from "../lib/api";
 
 const COLOR_FIELDS = [
@@ -32,6 +33,11 @@ export function ThemeEditor({
   // Read an uploaded logo/font as an inline data: URL (self-hosted, no
   // auth-gated file fetch). Reject oversize so the save doesn't 400 on
   // the server's length cap.
+  // A picture pasted on the logo becomes the logo, like one chosen.
+  const logoRef = useRef<HTMLDivElement>(null);
+  // The logo's paste: pictures, as its input takes (the font input beside it
+  // has no paste; a copied font is not something people paste).
+  usePasteImage(logoRef, { onFiles: ([f]) => uploadAsset(f, "logo", 500_000), accept: "image/*" });
   const uploadAsset = (file: File | undefined, key: "logo" | "font_url", maxBytes: number) => {
     if (!file) return;
     const r = new FileReader();
@@ -101,7 +107,7 @@ export function ThemeEditor({
       {/* Logo + custom font — uploaded inline (stored as data: URLs, so
           they work standalone with no auth / no CDN). */}
       <div className="flex flex-wrap gap-6 items-start pt-1 border-t border-line dark:border-slate-800">
-        <div className="flex items-center gap-3">
+        <div ref={logoRef} className="flex items-center gap-3">
           {theme?.logo ? (
             <img src={theme.logo} alt="" className="w-9 h-9 rounded object-contain border border-line dark:border-slate-700" />
           ) : (

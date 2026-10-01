@@ -1,15 +1,17 @@
 // /files — upload, list, get, delete, serve.
 
+import { notePhotoSource } from "./photo-source.js";
 import { Router } from "express";
 import { z } from "zod";
-import { platform, uploadOne } from "@cobblr/platform-contract";
+import { likeEscape, platform, uploadOne } from "@cobblr/platform-contract";
 import { uploadedFile } from "@cobblr/platform-contract/upload";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import type { CoreFilesDB, FileKind, FileVariants } from "../db.js";
 import { sql, type SelectQueryBuilder } from "kysely";
 import { decodeKeysetCursor, encodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { readVariant, readVariantBytes } from "./storage.js";
+import { classifyKind, headOfPath, readVariant, readVariantBytes } from "./storage.js";
+import { sniffType } from "@cobblr/platform-contract/sniff-type";
 import { intakeFile, resolveTarget, sameBytes } from "./intake.js";
 import { bytesUsed, QUOTA_BYTES, quotaDecision } from "./quota.js";
 import { purgeAfter, purgeFile, restoreFile, RECENTLY_DELETED_DAYS } from "../purge.js";
@@ -159,6 +161,11 @@ filesRouter.post(
     }
     const { row, stored } = taken;
     const fileId = row.id;
+    // A person's own picture: taken with the camera, or chosen from the
+    // device. Said by the page that sent it; anything else is "upload".
+    if (stored.kind === "image") {
+      await notePhotoSource(db0, fileId, { kind: readField("photo_source") === "camera" ? "camera" : "upload", at: new Date().toISOString() });
+    }
 
     // Best-effort attach if requested. If the attach row fails we
     // still return the file (so the user has the upload), with the
@@ -235,7 +242,7 @@ filesRouter.get(
       if (kind) out = out.where("kind", "=", kind as FileKind);
       if (folder === "top") out = out.where("folder_id", "is", null);
       else if (folder && /^[0-9a-f-]{36}$/i.test(folder)) out = out.where("folder_id", "=", folder);
-      if (text) out = out.where("filename", "ilike", `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+      if (text) out = out.where("filename", "ilike", `%${likeEscape(text)}%`);
       return out;
     };
     let q = db
@@ -297,6 +304,7 @@ filesRouter.get(
       .where("deleted_at", "is not", null)
       .where("same_as", "is", null)
       .orderBy("deleted_at", "desc")
+      // list-cap-ok: not paged yet, #4134
       .limit(500)
       .execute();
     res.json({
@@ -460,8 +468,31 @@ filesRouter.get(
       });
       return;
     }
-    // Variants are always JPEG for images; original keeps its source mime.
-    const rawMime = served === "original" ? row.mime_type || "application/octet-stream" : "image/jpeg";
+    // Variants are always JPEG for images; the original is what its bytes
+    // say it is. A row stored under a wrong type (a PDF claimed as text or a
+    // download) is healed here, on the read, so every file stored before the
+    // store learned to sniff is put right the first time someone opens it.
+    let rawMime = served === "original" ? row.mime_type || "application/octet-stream" : "image/jpeg";
+    // A remote driver hands the bytes over whole; read them once, for the
+    // type and for the response.
+    const remoteBytes = resolved.localPath ? null : await readVariantBytes(ctx.org.id, id, variants, served);
+    if (!resolved.localPath && !remoteBytes) {
+      res.status(404).json({ error: { code: "variant_missing", message: "not found" } });
+      return;
+    }
+    if (served === "original") {
+      const head = resolved.localPath ? await headOfPath(resolved.localPath) : remoteBytes!.subarray(0, 64);
+      const sniffed = sniffType(head);
+      if (sniffed && sniffed !== rawMime) {
+        rawMime = sniffed;
+        await db
+          .updateTable("core_files_files")
+          .set({ mime_type: sniffed, kind: classifyKind(sniffed) })
+          .where("id", "=", id)
+          .execute()
+          .catch(() => undefined);
+      }
+    }
     // Stored mime_type is attacker-controlled (taken from the upload's
     // Content-Type). Serving an SVG/HTML original inline runs it same-origin →
     // reads the localStorage JWT. Only render a short allowlist of non-scriptable
@@ -478,13 +509,8 @@ filesRouter.get(
     if (resolved.localPath) {
       res.sendFile(resolved.localPath); // local driver — fast path
     } else {
-      // Remote driver (S3/R2) — stream the bytes through.
-      const bytes = await readVariantBytes(ctx.org.id, id, variants, served);
-      if (!bytes) {
-        res.status(404).json({ error: { code: "variant_missing", message: "not found" } });
-        return;
-      }
-      res.send(bytes);
+      // Remote driver (S3/R2): the bytes read above.
+      res.send(remoteBytes);
     }
   }),
 );
@@ -508,6 +534,8 @@ filesRouter.patch(
       res.status(404).json({ error: { code: "folder_not_found", message: "That folder does not exist any more." } });
       return;
     }
+    // The file as it was: the log says what this edit changed (#4517).
+    const before = await db.selectFrom("core_files_files").select(["filename", "folder_id", "metadata"]).where("id", "=", id).executeTakeFirst();
     const row = await db
       .updateTable("core_files_files")
       .set({
@@ -529,7 +557,13 @@ filesRouter.patch(
       userId: sessionUser(req)?.id ?? null,
       action: "file_updated",
       ref: { module: "core-files", entityType: "file", entityId: id },
-      diff: { ...(parsed.data.filename !== undefined ? { name: parsed.data.filename } : {}), ...(to !== undefined ? { folder_id: to } : {}) },
+      diff: {
+        ...(parsed.data.filename !== undefined ? { name: parsed.data.filename } : {}),
+        ...(to !== undefined ? { folder_id: to } : {}),
+        ...(parsed.data.metadata !== undefined ? { metadata: parsed.data.metadata } : {}),
+      },
+      // `name` is the file's filename.
+      before: before ? { ...before, name: before.filename } : undefined,
     });
     res.json({ ...row, size_bytes: Number(row.size_bytes) });
   }),

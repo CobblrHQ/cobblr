@@ -33,6 +33,8 @@ export function isWritableCustomField(f: { type: string }): boolean {
 
 /** A native field's column name when the workspace has not renamed it. */
 export function columnLabel(name: string): string {
-  const s = name.replace(/_/g, " ");
+  // A cents column is named for what it holds, not how: "purchase_price_cents"
+  // is the "Purchase price" (shown and exported as money, never cents).
+  const s = name.replace(/_cents$/, "").replace(/_/g, " ");
   return s.charAt(0).toUpperCase() + s.slice(1);
 }

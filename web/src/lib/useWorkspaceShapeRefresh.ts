@@ -7,6 +7,7 @@
 // list of query keys that drifts from the screens reading them (#3582).
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { refreshStockViews } from "@cobblr/platform-web";
 import { subscribeAiAvailability, subscribeWorkspaceShape, subscribeWorkspaceWrite } from "./api";
 import { aiAvailabilityKeys } from "./ai-availability-keys";
 import { navCountKeys } from "../components/useNavBadges";
@@ -27,6 +28,9 @@ export function useWorkspaceShapeRefresh(): void {
     () =>
       subscribeWorkspaceWrite((slug) => {
         void qc.invalidateQueries({ queryKey: navCountKeys.all(slug) });
+        // How much there is and where it is kept: whichever client wrote, every
+        // view of stock or places reads again (#4431, #4440).
+        void refreshStockViews(qc);
       }),
     [qc],
   );

@@ -25,10 +25,13 @@ import { registerInventoryComputedContext } from "./computed-context.js";
 import { registerInventoryWriter } from "./sync-writer.js";
 import { registerCategoryWriter } from "./category-writer.js";
 import { registerReplaceClock } from "./replace-clock.js";
+import { registerInstalledParts } from "./installed.js";
 
 registerInventoryResolvers();
 registerInventoryActionHandlers();
 registerHoldingActions();
+// Parts installed in things built from them: 2 of 4 sticks in a computer.
+registerInstalledParts();
 // A consumer's lines (a pattern's yarns) drawing on stock ball by ball.
 registerTargetLineHandlers();
 registerInventoryComputedContext();

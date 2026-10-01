@@ -10,8 +10,8 @@ import { InstallThisPhoneItem } from "../tips/install-tip";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, NavLink } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { CONNECT_DISCORD_PATH } from "../lib/discord-connect";
+import { CONNECT_DISCORD_PATH, discordConnectable } from "../lib/discord-connect";
+import { useDiscordStatus } from "../lib/useDiscordStatus";
 import {
   ArrowRight,
   Bell,
@@ -45,15 +45,15 @@ import { PairPhoneButton } from "./PairPhoneButton";
 import { api, isFocused, setFocused } from "../lib/api";
 import { COMMUNITY_HEADING, CommunityLinks } from "./CommunityLinks";
 import { useMyEdgeBridge } from "../lib/useMyEdgeBridge";
-import { PopoverLayer } from "@cobblr/platform-web";
+import { PopoverLayer, useEscapeToClose } from "@cobblr/platform-web";
 
 /** Account-menu row for how Cobblr reaches you, with Discord's state beside
  *  it: the connection that sends "this is about to go off" had no door from
  *  the menu at all (the owner, 2026-09-29). Not connected goes straight to
  *  connecting. */
 function NotificationsMenuRow({ itemCls, onNavigate }: { itemCls: string; onNavigate: () => void }) {
-  const q = useQuery({ queryKey: ["discord-status"], queryFn: () => api.meDiscordStatus(), staleTime: 5 * 60_000, retry: false });
-  const offered = !!q.data?.configured;
+  const q = useDiscordStatus();
+  const offered = discordConnectable(q.data);
   const verified = !!q.data?.verified;
   return (
     <Link to={offered && !verified ? CONNECT_DISCORD_PATH : "/me/communication"} onClick={onNavigate} className={itemCls} role="menuitem">
@@ -161,16 +161,10 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
       if (btnRef.current?.contains(t) || menuRef.current?.contains(t)) return;
       setOpen(false);
     }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
     document.addEventListener("mousedown", onDocClick);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDocClick);
-      document.removeEventListener("keydown", onKey);
-    };
+    return () => document.removeEventListener("mousedown", onDocClick);
   }, [open]);
+  useEscapeToClose(open, menuRef, () => setOpen(false));
 
   if (!user) return null;
   const isAdmin = !!user.is_platform_admin;

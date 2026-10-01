@@ -8,7 +8,7 @@
 // which a Cobblr bug found on a self-hosted instance reaches the project.
 
 import { useState, useRef, useEffect } from "react";
-import { useLater, FloatingChrome } from "@cobblr/platform-web";
+import { CORNER_STACK, useLater, FloatingChrome, usePasteImage } from "@cobblr/platform-web";
 import { Modal, useToast } from "@cobblr/platform-web";
 import { Copy, ExternalLink, ImagePlus, MessageSquare, X, ChevronRight } from "lucide-react";
 import { api, type CommunityLink } from "../lib/api";
@@ -16,7 +16,6 @@ import { CommunityLinks, communityPlaceUrl } from "./CommunityLinks";
 import { environmentBlock, newIssueUrl, reportBody, type ReportInput, type ServerDiagnostics } from "../lib/bug-report";
 import { useAuth } from "../auth/AuthContext";
 import { resolveHandle } from "../auth/ActiveOrgContext";
-import { clipboardImageFiles } from "./pastedImage";
 
 const TYPES = [
   { id: "bug", label: "🐛 Bug" },
@@ -59,20 +58,6 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
   const fileInput = useRef<HTMLInputElement>(null);
   const toast = useToast();
   const { orgs, user } = useAuth();
-
-  // The floating pill owns the bottom-right corner. Reserve room above it so
-  // toasts (same corner, higher z) stack ABOVE the pill instead of overlapping
-  // it — the pill is a persistent CTA and shouldn't flicker away for a transient
-  // toast. Cleared on unmount so surfaces without the pill get the default. The
-  // sidebar-row variant isn't in that corner, so it reserves nothing.
-  useEffect(() => {
-    if (asRow) return;
-    const el = document.documentElement;
-    el.style.setProperty("--toast-safe-bottom", "4.75rem");
-    return () => {
-      el.style.removeProperty("--toast-safe-bottom");
-    };
-  }, [asRow]);
 
   // Screenshots upload to a workspace's core-files + the feedback row stores
   // that same workspace_slug (the super-admin viewer reads the bytes under it),
@@ -133,7 +118,7 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
     };
   }, [open, hosted, slug, diag]);
 
-  function addFiles(list: FileList | null) {
+  function addFiles(list: FileList | readonly File[] | null) {
     if (!list) return;
     const next: Pick[] = [];
     for (const file of Array.from(list)) {
@@ -156,25 +141,12 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
     });
   }
 
-  // Cmd/Ctrl+V while the modal is open attaches a copied screenshot — the most
-  // natural way to drop one in. Window-level (capture) because the focused
-  // element is usually the textarea; image items attach, plain text still
-  // pastes into the textarea untouched. Thumbnails in the preview strip are
-  // the confirmation that the paste landed (feedback 7298ad1c).
-  useEffect(() => {
-    if (!open || !slug) return;
-    function onPaste(e: ClipboardEvent) {
-      const files = clipboardImageFiles(e.clipboardData);
-      if (!files.length) return;
-      e.preventDefault(); // image paste is ours; text paste falls through
-      const dt = new DataTransfer();
-      files.forEach((f) => dt.items.add(f));
-      addFiles(dt.files);
-    }
-    window.addEventListener("paste", onPaste, true);
-    return () => window.removeEventListener("paste", onPaste, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, slug]);
+  // Cmd/Ctrl+V while the form is open attaches a copied screenshot, the most
+  // natural way to drop one in. Through the one paste door: the form is the
+  // layer on top, a picture attaches, and plain text still pastes into the
+  // textarea untouched. The thumbnails are the confirmation it landed.
+  const formRef = useRef<HTMLDivElement>(null);
+  usePasteImage(formRef, { enabled: open && !!slug, onFiles: (files) => addFiles(files), multiple: true });
 
   function removePick(i: number) {
     setPicks((cur) => {
@@ -300,6 +272,7 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
         <FloatingChrome
           as="button"
           anchor="corner"
+          stack={CORNER_STACK.feedback}
           yieldToContent
           type="button"
           onClick={() => setOpen(true)}
@@ -313,7 +286,7 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
       )}
 
       <Modal open={open} onClose={close} title="Send feedback" size="md">
-        <div className="space-y-3">
+        <div ref={formRef} className="space-y-3">
           <div className="flex gap-2">
             {TYPES.map((t) => (
               <button

@@ -5,7 +5,12 @@
 # download cache across builds.
 
 # ─── builder ─────────────────────────────────────────────────────────
-FROM node:22-alpine AS builder
+# Runs on the BUILD machine's platform, never the target's: its output is
+# static files (web/dist), the same bytes on every platform, and only the
+# nginx stage below is per-platform. Built for linux/arm64 the same stage ran
+# its whole Vite build under QEMU emulation, 11+ minutes of the self-host
+# publish against seconds natively (2026-10-01).
+FROM --platform=$BUILDPLATFORM node:22-alpine AS builder
 # Accepted for parity with api.Dockerfile (docker-build.yml passes it to both
 # matrix legs); the web image doesn't use it.
 ARG GIT_SHA=""

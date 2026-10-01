@@ -1,336 +1,66 @@
-// ImageLightbox — THE full-screen image viewer for the whole app. One shape
-// everywhere an image gets enlarged: the scan inbox (catalog / your photo / web
-// candidates) and any entity's Files gallery. Big image on a dark backdrop, a
-// thumbnail filmstrip under it to flip between the related shots, a caption, and
-// an optional primary action ("Use this image") for the picker context. Click
-// the image to pixel-peep (natural size, scrollable) so a plate / VIN / label
-// reads; Escape, a backdrop click, or Close dismisses; ← / → page.
-//
-// Before this there were three lookalikes — the scan catalog zoom, the image
-// search "view full size", and a one-off attachment lightbox — each drifting.
-// This is the single one they all now use (reported 2026-07-24).
-//
-// Sources are either an authed core-files reference ({ slug, fileId }, routed
-// through useImageSrc for the Bearer token) or a plain url (an already-resolved
-// blob, or an external candidate). Each thumbnail and the main image resolve
-// their own src through <Frame>, so a filmstrip of authed files is fine.
-
-import { Fragment, useEffect, useState } from "react";
-import { OverlayCloseButton } from "./OverlayCloseButton";
-import { createPortal } from "react-dom";
-
-import { useImageSrc, OverlayLayer, isShortcut } from "@cobblr/platform-web";
+// ImageLightbox: the shared Lightbox (@cobblr/platform-web) for pictures in
+// this workspace's file store. An item names a file ({ slug, fileId }) or a
+// plain URL; this turns each into the viewer's per-size URLs, and everything
+// else (stepping, swipe, "2 of 5", Esc, focus) is the one viewer's.
+import { useMemo } from "react";
+import { Lightbox, type LightboxItem as ViewerItem, type LightboxProps } from "@cobblr/platform-web";
 import { api } from "../lib/api";
-import { payloadFromClipboard, readPastedImage, type PastedImage } from "./pastedImage";
 
 export interface LightboxItem {
   key: string;
-  /** Shown under the image. */
   caption?: string;
-  /** Optional external link — the caption becomes a link to it. */
   href?: string;
-  /** Authed core-files source (preferred for attachments). */
+  /** A picture in the workspace's file store (preferred for attachments). */
   file?: { slug: string; fileId: string };
-  /** Plain full-size url (an already-resolved blob, or an external candidate). */
+  /** A plain full-size URL (a resolved blob, or a web candidate). */
   url?: string;
-  /** Plain thumbnail url; defaults to `url`. */
+  /** A plain thumbnail URL; defaults to `url`. */
   thumbUrl?: string;
-  /** Draw a divider immediately before this thumbnail.
-   *
-   *  The strip mixes two kinds of thing: images that are already YOURS (the
-   *  photo you took, the catalog image on the record) and live web search
-   *  results. Running them together makes the one image you can identify at a
-   *  glance just another tile to hunt for. The caller says where the seam is;
-   *  this component does not know what the groups mean. */
   dividerBefore?: boolean;
 }
 
-type Variant = "thumb" | "medium" | "original";
+type Verb = { label: string | ((item: LightboxItem) => string | null); busy?: boolean; onAction: (item: LightboxItem) => void };
 
-/** Resolve one item's src for a given size. Authed files route through
- *  useImageSrc; plain urls pass straight through. Always calls the hook (rules
- *  of hooks) — the file url is "" for a plain-url item, which useImageSrc
- *  treats as nothing. */
-function useItemSrc(item: LightboxItem, variant: Variant, fellBack = false): string | null {
-  const fileUrl = item.file ? api.fileRawUrl(item.file.slug, item.file.fileId, variant) : "";
-  const authed = useImageSrc(fileUrl);
-  if (item.file) return authed;
-  if (variant === "thumb") return item.thumbUrl ?? item.url ?? null;
-  // The full-size original failed to load. The thumbnail is the picture the
-  // strip is already showing, so it demonstrably works — a smaller image beats
-  // an empty viewer for a photo the user can see two inches away (2026-08-14).
-  if (fellBack) return item.thumbUrl ?? null;
-  return item.url ?? null;
-}
-
-/** A single resolved <img> (main image or a filmstrip thumb). */
-function Frame({
-  item,
-  variant,
-  className,
-  onClick,
-  onError,
-  draggable,
-}: {
-  item: LightboxItem;
-  variant: Variant;
-  className: string;
-  onClick?: (e: React.MouseEvent) => void;
-  onError?: () => void;
-  draggable?: boolean;
-}) {
-  const [fellBack, setFellBack] = useState(false);
-  useEffect(() => setFellBack(false), [item.url, item.thumbUrl]);
-  const src = useItemSrc(item, variant, fellBack);
-  if (!src) {
-    return (
-      <div className={className + " flex items-center justify-center text-white/40 text-[10px]"}>…</div>
-    );
-  }
-  // photo-frame: the lightbox shows the whole picture at its own shape; it is a viewer, not a tile
-  return (
-    <img
-      src={src}
-      alt={item.caption ?? ""}
-      className={className}
-      onClick={onClick}
-      onError={() => {
-        // One retry at the smaller size before telling anyone it failed.
-        if (!fellBack && !item.file && item.thumbUrl && item.thumbUrl !== item.url) {
-          setFellBack(true);
-          return;
-        }
-        onError?.();
-      }}
-      draggable={draggable}
-      loading="lazy"
-    />
-  );
+export function toViewerItem(it: LightboxItem): ViewerItem & { from: LightboxItem } {
+  const f = it.file;
+  return {
+    key: it.key,
+    caption: it.caption,
+    href: it.href,
+    dividerBefore: it.dividerBefore,
+    src: f ? api.fileRawUrl(f.slug, f.fileId, "medium") : it.url ?? null,
+    original: f ? api.fileRawUrl(f.slug, f.fileId, "original") : it.url ?? null,
+    thumb: f ? api.fileRawUrl(f.slug, f.fileId, "thumb") : it.thumbUrl ?? it.url ?? null,
+    from: it,
+  };
 }
 
 export function ImageLightbox({
   items,
-  index,
-  onIndex,
-  onClose,
-  searchSlot,
   action,
-  onItemError,
-  onPasteImage,
   tools,
-}: {
+  onItemError,
+  ...rest
+}: Omit<LightboxProps, "items" | "action" | "tools" | "onItemError"> & {
   items: LightboxItem[];
-  /** Index into `items` of the image on screen. */
-  index: number;
-  onIndex: (i: number) => void;
-  onClose: () => void;
-  /** Rendered at the top of the footer. For a picker that should let you refine
-   *  the search WITHOUT leaving the viewer: you are comparing candidates here,
-   *  so the control that changes which candidates exist belongs here too.
-   *
-   *  It works because the footer band swallows clicks; in a region where empty
-   *  space dismissed, a text input would be unusable. */
-  searchSlot?: React.ReactNode;
-  /** Optional primary action (e.g. "Use this image" in the search picker).
-   *  `label` may be a function of the current item — return null to hide the
-   *  button for that item (e.g. no "Use this image" on the item's own photos). */
-  action?: {
-    label: string | ((item: LightboxItem) => string | null);
-    busy?: boolean;
-    onAction: (item: LightboxItem) => void;
-  };
-  /** Called when an item's full-size fails to load (caller can drop it). */
+  action?: Verb;
+  tools?: Verb[];
   onItemError?: (item: LightboxItem) => void;
-  /** Cmd+V while the viewer is open: a picture from the clipboard, or the
-   *  address of one. The viewer is modal, so a paste here is unambiguously
-   *  about the image on screen; the CALLER decides what to do with it (upload
-   *  it, make it the catalog photo) because only it knows what the image is
-   *  for. Without this, paste did nothing at all here. */
-  onPasteImage?: (pasted: PastedImage) => void;
-  /** Secondary verbs that act on the picture being looked at (rotate, crop,
-   *  revert). `label` returns null to hide one for the current item. On a
-   *  phone these live here rather than as caption links under a thumbnail:
-   *  the viewer is where the picture is big enough to judge. */
-  tools?: Array<{
-    label: string | ((item: LightboxItem) => string | null);
-    busy?: boolean;
-    onAction: (item: LightboxItem) => void;
-  }>;
 }) {
-  const many = items.length > 1;
-  const current = items[index];
-  // Pixel-peep: fit-to-screen by default, natural size (scrollable) when zoomed.
-  const [zoomed, setZoomed] = useState(false);
-  useEffect(() => setZoomed(false), [index]);
-
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (isShortcut(e, "close")) onClose();
-      else if (isShortcut(e, "previous") && many) onIndex((index - 1 + items.length) % items.length);
-      else if (isShortcut(e, "next") && many) onIndex((index + 1) % items.length);
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [index, items.length, many, onIndex, onClose]);
-
-  // Paste, at the window, because the viewer covers the screen and nothing else
-  // can reasonably claim the gesture while it is up. A paste that carries no
-  // image is left alone: the search box in the footer still gets its text.
-  useEffect(() => {
-    if (!onPasteImage) return;
-    function onPaste(e: ClipboardEvent) {
-      const pasted = readPastedImage(payloadFromClipboard(e.clipboardData));
-      if (!pasted) return;
-      e.preventDefault();
-      onPasteImage!(pasted);
-    }
-    window.addEventListener("paste", onPaste);
-    return () => window.removeEventListener("paste", onPaste);
-  }, [onPasteImage]);
-
-  if (!current) return null;
-  const stop = (e: React.MouseEvent) => e.stopPropagation();
-
-  return createPortal(
-    <OverlayLayer
-      className="z-[130] bg-black/85 backdrop-blur-sm flex flex-col"
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Image ${index + 1} of ${items.length}`}
-    >
-      <OverlayCloseButton onClose={onClose} />
-
-      {/* Main image. Fit-to-screen, or natural-size + scroll when zoomed. */}
-      <div
-        className={
-          "flex-1 min-h-0 flex items-center justify-center " +
-          (zoomed ? "overflow-auto p-4" : "p-4 sm:p-6")
-        }
-      >
-        <Frame
-          item={current}
-          variant={zoomed ? "original" : "medium"}
-          draggable={false}
-          onClick={(e) => {
-            stop(e);
-            setZoomed((z) => !z);
-          }}
-          onError={() => onItemError?.(current)}
-          className={
-            zoomed
-              ? "max-w-none cursor-zoom-out rounded"
-              : "max-w-full max-h-full object-contain rounded shadow-2xl cursor-zoom-in"
-          }
-        />
-      </div>
-
-      {/* Footer: caption + action + filmstrip. stopPropagation so using the
-          controls doesn't dismiss the viewer. */}
-      <div
-        className="shrink-0 w-full max-w-3xl mx-auto p-4 space-y-2"
-        // Mirror of the close button's inset: without it the action row sits in
-        // the home-indicator gesture strip, where a swipe-up beats the tap.
-        style={{ paddingBottom: "max(1rem, calc(env(safe-area-inset-bottom) + 0.5rem))" }}
-        onClick={stop}
-      >
-        {searchSlot}
-        <div className="flex items-center justify-between gap-3">
-          {current.caption ? (
-            current.href ? (
-              <a
-                href={current.href}
-                target="_blank"
-                rel="noreferrer"
-                className="text-[11px] text-white/60 hover:text-white truncate"
-              >
-                {current.caption}
-              </a>
-            ) : (
-              <span className="text-[11px] text-white/60 truncate">{current.caption}</span>
-            )
-          ) : (
-            <span />
-          )}
-          <div className="flex items-center gap-2 shrink-0">
-            {many && <span className="text-[11px] text-white/40">{index + 1} / {items.length}</span>}
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-3 py-1.5 rounded-md text-sm text-white/80 hover:bg-white/10"
-            >
-              Close
-            </button>
-            {tools?.map((t, i) => {
-              const label = typeof t.label === "function" ? t.label(current) : t.label;
-              if (!label) return null;
-              return (
-                <button
-                  key={i}
-                  type="button"
-                  disabled={t.busy}
-                  onClick={() => t.onAction(current)}
-                  className="rounded-md border border-white/20 px-3 py-1.5 text-sm text-white/80 hover:bg-white/10 disabled:opacity-50"
-                >
-                  {t.busy ? "…" : label}
-                </button>
-              );
-            })}
-            {action &&
-              (() => {
-                const label = typeof action.label === "function" ? action.label(current) : action.label;
-                if (!label) return null;
-                return (
-                  <button
-                    type="button"
-                    disabled={action.busy}
-                    onClick={() => action.onAction(current)}
-                    className="rounded-md bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 px-3 py-1.5 text-sm font-medium text-white"
-                  >
-                    {action.busy ? "Saving…" : label}
-                  </button>
-                );
-              })()}
-          </div>
-        </div>
-
-        {/* Flip through the other images without leaving.
-
-            CONTAIN, not cover. These thumbnails exist to be COMPARED — you are
-            choosing which of fourteen search results is the right picture of the
-            thing. A square crop of a product shot keeps the middle band and
-            throws away the lid and the base, so a tall jar becomes an anonymous
-            stripe of label and every candidate looks alike ("mostly cropped and
-            impossible to tell that that was indeed the perfect image", reported
-            2026-08-15). Letterboxing wastes a little of a 64px tile; cropping
-            wastes the whole point of the strip. */}
-        {many && (
-          <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
-            {items.map((it, i) => (
-              <Fragment key={it.key}>
-                {it.dividerBefore && i > 0 && (
-                  <div
-                    aria-hidden
-                    className="w-px self-stretch shrink-0 bg-white/20 mx-1.5"
-                  />
-                )}
-              <button
-                type="button"
-                onClick={() => onIndex(i)}
-                title={it.caption ?? ""}
-                className={
-                  "w-16 h-16 shrink-0 rounded overflow-hidden bg-white/5 transition border-2 " +
-                  (i === index ? "border-cobble-400" : "border-transparent hover:border-white/40")
-                }
-              >
-                <Frame item={it} variant="thumb" className="w-full h-full object-contain" />
-              </button>
-              </Fragment>
-            ))}
-          </div>
-        )}
-      </div>
-    </OverlayLayer>,
-    document.body,
+  const viewerItems = useMemo(() => items.map(toViewerItem), [items]);
+  const back = (v: ViewerItem) => (v as ViewerItem & { from: LightboxItem }).from;
+  const wrap = (verb: Verb) => ({
+    busy: verb.busy,
+    label: typeof verb.label === "function" ? (v: ViewerItem) => (verb.label as (i: LightboxItem) => string | null)(back(v)) : verb.label,
+    onAction: (v: ViewerItem) => verb.onAction(back(v)),
+  });
+  return (
+    <Lightbox
+      {...rest}
+      items={viewerItems}
+      action={action && wrap(action)}
+      tools={tools?.map(wrap)}
+      onItemError={onItemError && ((v) => onItemError(back(v)))}
+    />
   );
 }

@@ -3,6 +3,7 @@ type: feature
 scope: platform
 date: 2026-09-28
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-10-01
 ---
 **Links show on both sides, on everything, once, in words.** Link a mod to the printer it is on and the printer lists it under Links ("has installed"), and a part says what uses it; parts and every other record now have **Link** too. Picking how two things are linked lists what they can link to straight away, so linking a mod to its printer and a part is six taps. The same link twice is refused and says why. The new **Printer mods** bundle is a table of mods that link to their printers ("installed on") and parts ("uses part"). New thing no longer suggests Machines for a name like "Printer mods".
 

@@ -12,6 +12,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { loadConfig } from "./config.js";
 import { CobblrClient } from "./client.js";
 import { registerTools } from "./tools.js";
+import { grantFromMe } from "./offers.js";
 
 async function main(): Promise<void> {
   const config = loadConfig(process.env);
@@ -22,14 +23,19 @@ async function main(): Promise<void> {
     version: "0.1.0",
   });
 
-  registerTools(server, client);
+  // Offer only what this token can run. An API we cannot reach yet is not a
+  // reason to refuse to start: every tool then answers with the API's own
+  // error, as it always did.
+  const grant = grantFromMe(await client.me().catch(() => null));
+  if (grant.workspace) client.pinWorkspace(grant.workspace);
+  registerTools(server, client, grant);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
   // stdout is the MCP channel — log only to stderr.
   process.stderr.write(
-    `[cobblr-mcp] ready · api=${config.baseUrl}${config.defaultOrgSlug ? ` · workspace=${config.defaultOrgSlug}` : ""}\n`,
+    `[cobblr-mcp] ready · api=${config.baseUrl}${client.defaultSlug ? ` · workspace=${client.defaultSlug}` : ""} · access=${grant.access}\n`,
   );
 }
 

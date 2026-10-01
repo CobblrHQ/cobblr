@@ -1,17 +1,18 @@
 // Edit a text field's dropdown CHOICES.
 //
 // The choices are SUGGESTIONS, never constraints: the value is stored as free
-// text, so changing the list can't orphan anything already saved, and the record
-// form's dropdown carries a "+ add new…" option that appends whatever someone
-// types back into this list. So the goal here is a good STARTING set, not an
-// exhaustive one — say that plainly rather than making people feel they have to
-// enumerate the world before they can save.
+// text, so changing the list can't orphan anything already saved, and on a
+// field that remembers new entries (LearnsToggle) whatever someone types on a
+// record lands back in this list. So the goal here is a good STARTING set, not
+// an exhaustive one — say that plainly rather than making people feel they have
+// to enumerate the world before they can save.
 //
 // Used by the /fields create form and the field detail modal, so the two can't
 // drift into two different ideas of what a choice list is.
 
 import { useState, type KeyboardEvent } from "react";
 import { X } from "lucide-react";
+import { choiceLearns } from "@cobblr/platform-contract/field-choices";
 
 interface Props {
   value: string[];
@@ -72,10 +73,38 @@ export function ChoicesInput({ value, onChange, placeholder }: Props) {
         />
       </div>
       <span className="mt-1 block text-[10px] text-faint dark:text-slate-600">
-        Enter or comma to add. These are suggestions: the record's dropdown has a
-        <span className="font-mono"> + add new</span> option, so anyone can add one
-        on the fly and it lands back in this list. Leave it empty for a plain text box.
+        Enter or comma to add. These are suggestions: on a record anyone can type a
+        value that is not on the list. Leave it empty for a plain text box.
       </span>
     </div>
+  );
+}
+
+/** "Remember new entries": a value a person types on a record becomes a choice
+ *  for the next one (undoable from the toast that says so). On by default for a
+ *  person's own field with choices; a bundle's or a module's field says so
+ *  itself (field-choices.ts holds the rule). Off, the list stays as written. */
+export function LearnsToggle({
+  def,
+  onChange,
+  disabled,
+}: {
+  def: { choices?: string[] | null; learns?: boolean | null; bundle_id?: string | null; source_module?: string | null };
+  onChange: (learns: boolean) => void;
+  disabled?: boolean;
+}) {
+  const on = choiceLearns({ type: "text", ...def });
+  return (
+    <label className="mt-2 flex items-start gap-2 text-xs text-content dark:text-mortar-100">
+      <input type="checkbox" checked={on} disabled={disabled} onChange={(e) => onChange(e.target.checked)} className="mt-0.5 accent-cobble-500" />
+      <span>
+        Remember new entries
+        <span className="block text-[10px] text-faint dark:text-slate-500">
+          {(def.choices?.length ?? 0) > 0
+            ? "A value someone types on a record is offered as a choice from then on."
+            : "Offers what has been typed before as choices, even with none listed here."}
+        </span>
+      </span>
+    </label>
   );
 }

@@ -3,6 +3,7 @@ type: feature
 scope: core-ai
 date: 2026-09-28
 docs_target: docs/USER_GUIDE.md#API tokens (for CLI / AI / automation)
+docs_published: 2026-10-01
 ---
 New **Connect an AI assistant** page under Configuration → Connections. It gives you your workspace's MCP server URL, a button that creates a token for your assistant, and a snippet to paste into Claude Code, Claude Desktop or any other MCP client. Searching Configuration for "mcp", "claude", "chatgpt", "connector" or "ai assistant" now finds it. claude.ai and ChatGPT connectors are listed as not available yet: they sign in with OAuth, which is still being built.
 

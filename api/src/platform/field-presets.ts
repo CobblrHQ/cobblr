@@ -25,27 +25,28 @@ import { PROVENANCE_FIELDS } from "@cobblr/platform-contract/provenance-fields";
 export interface PresetField {
   name: string;
   display_label: string;
-  type: "text" | "number" | "date" | "url";
+  type: "text" | "number" | "money" | "date" | "url";
   /** What this field MEANS, so the pipeline can fill it. The point of a preset. */
   field_role: FieldRole;
   help?: string;
+  /** Where to start the picker. Only ever with `learns: true` (see above). */
+  choices?: string[];
+  learns?: true;
 }
 
-// NO `choices` here, deliberately, and it is not an oversight.
+// Choices on a preset field are an OPEN list (`learns: true`), never a closed
+// one, and that is the whole condition for having them.
 //
-// `roledFactsPatch` refuses to write a value that is not in a field's choice
-// list (`if (m.unlistedChoice) continue`) - a good rule, because a pipeline
-// should not silently invent a new option for a field someone made a dropdown.
+// `roledFactsPatch` refuses to write a value that is not in a closed field's
+// choice list, which is a good rule: a pipeline should not invent an option
+// for a list someone curated. But a preset field exists to BE filled by the
+// pipeline. Measured: `acquired_from` once shipped with six closed channel-ish
+// options (Bought new, Gift, ...), a receipt named "KC Tool", and the vendor
+// was dropped on the floor while the date beside it landed fine (2026-08-22).
 //
-// But a preset field exists to BE filled by the pipeline, so a closed list on
-// one is a contradiction that discards the very fact it was created for.
-// Measured: `acquired_from` shipped with six channel-ish options (Bought new,
-// Gift, ...), a receipt named "KC Tool", and the vendor was dropped on the
-// floor while the date beside it landed fine (2026-08-22).
-//
-// A workspace can still turn any of these into a dropdown afterwards in the
-// field editor; that is their choice to make, with their own vocabulary, and
-// they will see the values already there.
+// On an open list the receipt's vendor is written as the value and simply not
+// added to the list (only a person's own typing is remembered), so the picker
+// can start with the common places without refusing the uncommon one (#4516).
 
 export interface FieldPreset {
   key: string;
@@ -70,6 +71,8 @@ export const FIELD_PRESETS: FieldPreset[] = [
         type: "text",
         field_role: PROVENANCE_FIELDS.from.field_role,
         help: "Where it came from - a shop, a marketplace, a person. A receipt fills this from the vendor it names.",
+        choices: ["Amazon", "eBay", "Facebook Marketplace", "Craigslist", "Store", "Gift", "Thrift", "Made it", "Hand-me-down"],
+        learns: true,
       },
       {
         name: PROVENANCE_FIELDS.on.name,
@@ -81,7 +84,7 @@ export const FIELD_PRESETS: FieldPreset[] = [
       {
         name: PROVENANCE_FIELDS.for.name,
         display_label: PROVENANCE_FIELDS.for.label,
-        type: "number",
+        type: "money",
         field_role: PROVENANCE_FIELDS.for.field_role,
         help: "What it cost you. A receipt fills this only when its own numbers reconciled.",
       },

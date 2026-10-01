@@ -8,6 +8,7 @@
 // the URL slug is an advanced/risky opt-in). Shared workspaces stay grouped
 // below in their persisted order.
 
+import { VERTICAL_DRAG } from "../lib/vertical-drag";
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
@@ -186,7 +187,7 @@ export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {})
           <ul className="max-h-80 overflow-y-auto">
             {owned.length > 0 && header("your workspaces", false)}
             {owned.length > 0 && (
-              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+              <DndContext {...VERTICAL_DRAG} sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
                 <SortableContext items={owned.map((o) => o.slug)} strategy={verticalListSortingStrategy}>
                   {owned.map((o) => (
                     <SortableRow
@@ -244,7 +245,7 @@ export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {})
           <ul className="max-h-80 overflow-y-auto">
             {owned.length > 0 && header("your workspaces", false)}
             {owned.length > 0 && (
-              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+              <DndContext {...VERTICAL_DRAG} sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
                 <SortableContext items={owned.map((o) => o.slug)} strategy={verticalListSortingStrategy}>
                   {owned.map((o) => (
                     <SortableRow

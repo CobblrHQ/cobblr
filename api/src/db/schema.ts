@@ -409,6 +409,10 @@ export interface UserCredentialsTable {
   auto_enable_new: Generated<boolean>;
   /** What the save's probe said about the key (connection-verification.ts). */
   verification: Generated<Record<string, unknown> | null>;
+  /** What the platform made this connection from, when a heal made it on
+   *  someone's behalf ("digifab_detectors:<id>"): making it again returns
+   *  this one. Null for a connection a person made. (20260929-157) */
+  origin_key: Generated<string | null>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -636,6 +640,14 @@ export type AuthMethod = "session" | "api_token" | "system";
 /** Sparse product telemetry — the thesis metrics (walls-hit, adoption).
  *  Best-effort writes from api/src/platform/product-events.ts; NOT an audit
  *  trail (that's activity_log). ~180-day self-pruning retention. */
+/** A workspace's count of one metric on one UTC day (migration 176). */
+export interface ProductDailyCountsTable {
+  day: Date | string;
+  org_id: string;
+  metric: string;
+  n: Generated<number>;
+}
+
 export interface ProductEventsTable {
   id: Generated<string>;
   org_id: string;
@@ -787,6 +799,15 @@ export interface NotificationAccountPrefsTable {
   channel: NotificationChannel;
   enabled: Generated<boolean>;
   updated_at: Generated<Date>;
+}
+
+/** One account email the platform sent (20260930-172). */
+export interface AccountEmailSendsTable {
+  id: Generated<string>;
+  user_id: string;
+  notification_type: string;
+  discord_invite: Generated<boolean>;
+  sent_at: Generated<Date>;
 }
 
 export interface NotificationSubscriptionsTable {
@@ -1116,6 +1137,9 @@ export interface ModuleFieldDefsTable {
    *  registry matches — so one matcher serves both. Null = per-kind (the
    *  default). See platform/field-defs.ts + docs/design-decisions/trait-scoped-fields.md. */
   applies_to: unknown | null;
+  /** Remembers what a person types as a new choice (migration 181). NULL is
+   *  the default rule in @cobblr/platform-contract/field-choices. */
+  learns: Generated<boolean | null>;
   created_at: Generated<Date>;
 }
 
@@ -1170,6 +1194,8 @@ export interface FieldOverrideBlob {
    *  (inventory's own `category`) as the table's grouping axis without a schema
    *  change, exactly as decode_role does for the VIN fields. */
   field_role?: string;
+  /** A person's own say on whether a bundle's field learns new choices. */
+  learns?: boolean;
 }
 
 /** One iCal feed token per workspace, in meta so the unauthenticated
@@ -1481,6 +1507,19 @@ export interface MetaDB {
   ai_held_changes: AiHeldChangesTable;
   service_job_cards: ServiceJobCardsTable;
   service_pending_confirms: { org_id: string; job_id: string; since: Generated<Date> };
+  service_confirm_triggers: {
+    org_id: string;
+    job_id: string;
+    event: string;
+    match_value: string;
+    label: string;
+    until: Date;
+    confirm_hash: string | null;
+    armed_by: string | null;
+    armed_at: Date | null;
+    created_at: Generated<Date>;
+  };
+  service_watched_jobs: { org_id: string; job_id: string; status: string; since: Generated<Date> };
   platform_announce_settings: PlatformAnnounceSettingsTable;
   impersonation_sessions: ImpersonationSessionsTable;
   backup_destinations: BackupDestinationsTable;
@@ -1492,11 +1531,13 @@ export interface MetaDB {
   tag_assignments: TagAssignmentsTable;
   activity_log: ActivityLogTable;
   product_events: ProductEventsTable;
+  product_daily_counts: ProductDailyCountsTable;
   bundle_snapshots: BundleSnapshotsTable;
   notifications: NotificationsTable;
   notification_subscriptions: NotificationSubscriptionsTable;
   notification_audiences: NotificationAudiencesTable;
   notification_account_prefs: NotificationAccountPrefsTable;
+  account_email_sends: AccountEmailSendsTable;
   notification_delivery_windows: NotificationDeliveryWindowsTable;
   heal_shim_runs: HealShimRunsTable;
   notification_deferred: NotificationDeferredTable;

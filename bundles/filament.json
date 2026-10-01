@@ -1,13 +1,18 @@
 {
   "manifest": {
     "id": "cobblr.flagship.filament",
-    "version": "0.8.1",
+    "version": "0.8.2",
     "name": "Filament",
     "description": "A filament type (Royal Blue PLA) says the filament once: material, colour, diameter, temperatures, whether it needs drying. Each spool picks its type and adds its own size, batch code, how much is left and its state. Each type adds up its spools and kilograms.",
     "author": "Cobblr",
     "released_at": "2026-06-17",
     "changelog": "Filament's description in the bundle list reads plainly, without capitals shouting TYPE and SPOOLS. Earlier: A filament type's fields sit under three headings, Identity, Printing and Spool, and each folds away, so a type's page reads in parts instead of one long list. A field you moved to another section stays where you put it when Filament updates. Earlier: A filament type has ONE colour field. It holds one colour, a blend or several, so a rainbow reads as a rainbow, and the separate colour swatch field is folded into it. Earlier: A scanned spool files as a spool: its type is found or made under it, and a scan never offers the table of types. The spools also know what filament is called (PLA, PETG, 1.75 mm), so a spool is not filed as generic inventory. Earlier: Scanning a spool's QR fills in everything its maker publishes: the exact colour swatch, the UPC, the nozzle and bed temperature ranges, the drying temperature, density, the empty spool weight, and the date the spool was made and its measured length. The UPC is the type's identifier, so scanning the box barcode finds the same type. Earlier: Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: Types and Spools now sit together in the navbar as one element, a quiet \"Filament\" stem with \"Types │ Spools\" links, so the two related tables read as one thing. (0.5.1: scanning a spool's QR find-or-creates its filament TYPE and links the spool automatically, a scan lands in the type→spool model instead of a flat row. 0.5.0: the TYPE defines the whole filament: colour, diameter, nozzle/bed temps and needs-drying live on the type, not re-entered per spool; a SPOOL just picks its type and carries the per-spool facts: size, batch code, remaining, state. Upgrading carries your existing temps + colour up onto the type automatically.)",
     "releases": [
+      {
+        "version": "0.8.2",
+        "released_at": "2026-10-02",
+        "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before."
+      },
       {
         "version": "0.8.1",
         "released_at": "2026-09-30",
@@ -83,6 +88,7 @@
             "type": "text",
             "position": 1,
             "section": "Identity",
+            "learns": true,
             "choices": [
               "PLA",
               "PLA+",
@@ -114,6 +120,7 @@
             "type": "text",
             "position": 3,
             "section": "Identity",
+            "learns": false,
             "choices": [
               "1.75 mm",
               "2.85 mm"
@@ -376,6 +383,7 @@
             "display_label": "Spool size",
             "type": "text",
             "position": 1,
+            "learns": true,
             "choices": [
               "0.5 kg",
               "1 kg",
@@ -401,6 +409,7 @@
             "display_label": "State",
             "type": "text",
             "position": 3,
+            "learns": false,
             "choices": [
               "sealed",
               "open",

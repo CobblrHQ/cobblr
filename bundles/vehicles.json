@@ -2,7 +2,14 @@
   "manifest": {
     "id": "cobblr.flagship.vehicles",
     "name": "Vehicles",
-    "version": "0.4.2",
+    "version": "0.4.4",
+    "releases": [
+      {
+        "version": "0.4.4",
+        "released_at": "2026-10-02",
+        "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before. Setting a service schedule offers the usual jobs (oil change, tire rotation, brake pads and more) beside the ones you have logged."
+      }
+    ],
     "description": "Your vehicles as their own table - make/model/year, VIN, mileage, plate - with service logs (oil, tires, brakes) and next-due dates on your calendar. Replaces a glovebox folder of receipts and a sticky note on the windshield.",
     "author": "Cobblr",
     "released_at": "2026-07-13",
@@ -19,6 +26,23 @@
       {
         "module": "assets",
         "instance_name": "vehicles",
+        "service_tasks": [
+          "Oil change",
+          "Oil filter",
+          "Air filter",
+          "Cabin air filter",
+          "Tire rotation",
+          "Tire pressure check",
+          "Brake pads",
+          "Brake fluid",
+          "Coolant flush",
+          "Spark plugs",
+          "Transmission fluid",
+          "Chain clean and lube",
+          "Battery check",
+          "Wiper blades",
+          "Inspection / registration"
+        ],
         "display_name": "Vehicles",
         "glyph": "🚗",
         "item_noun": "vehicle",
@@ -82,6 +106,7 @@
             "display_label": "Fuel",
             "type": "text",
             "position": 5,
+            "learns": false,
             "choices": [
               "Gas",
               "Diesel",

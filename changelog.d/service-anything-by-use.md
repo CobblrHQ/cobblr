@@ -3,6 +3,7 @@ type: feature
 scope: maintenance
 date: 2026-09-30
 docs_target: docs/USER_GUIDE.md#3.16 Maintenance
+docs_published: 2026-10-01
 ---
 **Service anything by how much it is used.** Mark a number field like Mileage or Hours run as what the thing counts, and a service schedule can come due every 5,000 miles, not only every few months.
 

@@ -16,11 +16,9 @@
 // tab's POSTs are fetch, which can set headers).
 
 import { Router } from "express";
-import type { Response } from "express";
 import { z } from "zod";
-import { SignJWT, jwtVerify } from "jose";
 import { meta } from "../db/meta.js";
-import { env } from "../env.js";
+import { openSse, signStreamTicket, verifyStreamTicket } from "../lib/event-stream.js";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { driveHub } from "../platform/drive-hub.js";
@@ -28,31 +26,12 @@ import type { DriveMode } from "../db/schema.js";
 
 export const driveRouter = Router({ mergeParams: true });
 
-const secret = () => new TextEncoder().encode(env.JWT_SECRET);
 const TICKET_AUD = "drive-tab";
-const TICKET_TTL_S = 60;
 
-async function signTicket(userId: string, orgId: string): Promise<string> {
-  const now = Math.floor(Date.now() / 1000);
-  return new SignJWT({ org: orgId })
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuer("cobblr")
-    .setAudience(TICKET_AUD)
-    .setSubject(userId)
-    .setIssuedAt(now)
-    .setExpirationTime(now + TICKET_TTL_S)
-    .sign(secret());
-}
+const signTicket = (userId: string, orgId: string) => signStreamTicket(TICKET_AUD, userId, { org: orgId });
 async function verifyTicket(ticket: string): Promise<{ userId: string; orgId: string } | null> {
-  try {
-    const { payload } = await jwtVerify(ticket, secret(), { issuer: "cobblr", audience: TICKET_AUD, algorithms: ["HS256"] });
-    if (typeof payload.sub === "string" && typeof payload.org === "string") {
-      return { userId: payload.sub, orgId: payload.org };
-    }
-    return null;
-  } catch {
-    return null;
-  }
+  const t = await verifyStreamTicket(TICKET_AUD, ticket);
+  return t && typeof t.org === "string" ? { userId: t.userId, orgId: t.org } : null;
 }
 
 async function getMode(userId: string, orgId: string): Promise<DriveMode> {
@@ -63,24 +42,6 @@ async function getMode(userId: string, orgId: string): Promise<DriveMode> {
     .where("org_id", "=", orgId)
     .executeTakeFirst();
   return (row?.mode as DriveMode | undefined) ?? "off";
-}
-
-/** Open an SSE stream and return a typed `send`. Heartbeats every 25s so proxies
- *  don't reap the idle connection; the caller wires req.on("close"). */
-function openSse(res: Response): { send: (event: string, data: unknown) => void; stop: () => void } {
-  res.writeHead(200, {
-    "content-type": "text/event-stream",
-    "cache-control": "no-cache, no-transform",
-    connection: "keep-alive",
-    "x-accel-buffering": "no",
-  });
-  res.write(": connected\n\n");
-  // SINGLE-PROCESS-SAFE: a keepalive on one open response, not a background job.
-  const hb = setInterval(() => res.write(": ping\n\n"), 25000);
-  return {
-    send: (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-    stop: () => clearInterval(hb),
-  };
 }
 
 // ── standing permission ──────────────────────────────────────────────────────
@@ -95,6 +56,7 @@ driveRouter.get("/:slug/drive/grant", requireAuth, withTenant, async (req, res, 
 const GrantBody = z.object({ mode: z.enum(["off", "navigate", "navigate_observe"]) });
 driveRouter.put("/:slug/drive/grant", requireAuth, withTenant, async (req, res, next) => {
   try {
+    // ROLE: any member (their own grant, keyed by their own id)
     const parsed = GrantBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "mode must be off | navigate | navigate_observe" } });
@@ -117,6 +79,7 @@ driveRouter.put("/:slug/drive/grant", requireAuth, withTenant, async (req, res, 
 // Mint the SSE ticket (authed) — the tab then opens the stream with it.
 driveRouter.post("/:slug/drive/tab/ticket", requireAuth, withTenant, async (req, res, next) => {
   try {
+    // ROLE: any member (their own browser tab)
     const userId = req.session!.id;
     const orgId = req.tenant!.org.id;
     if ((await getMode(userId, orgId)) === "off") {
@@ -155,6 +118,7 @@ const BrowserIdBody = z.object({ browser_id: z.string().min(1).max(120) });
 
 driveRouter.post("/:slug/drive/tab/accept", requireAuth, withTenant, async (req, res, next) => {
   try {
+    // ROLE: any member (their own browser tab)
     const parsed = BrowserIdBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "browser_id required" } });
@@ -173,6 +137,7 @@ driveRouter.post("/:slug/drive/tab/accept", requireAuth, withTenant, async (req,
 
 driveRouter.post("/:slug/drive/tab/release", requireAuth, withTenant, async (req, res, next) => {
   try {
+    // ROLE: any member (their own browser tab)
     const parsed = BrowserIdBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "browser_id required" } });
@@ -188,6 +153,7 @@ driveRouter.post("/:slug/drive/tab/release", requireAuth, withTenant, async (req
 const TelemetryBody = z.object({ browser_id: z.string().min(1).max(120), events: z.array(z.unknown()).max(200) });
 driveRouter.post("/:slug/drive/tab/telemetry", requireAuth, withTenant, async (req, res, next) => {
   try {
+    // ROLE: any member (their own browser tab)
     const parsed = TelemetryBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "bad telemetry" } });
@@ -224,6 +190,7 @@ driveRouter.get("/:slug/drive/driver/stream", requireAuth, withTenant, async (re
 // UI-REACH: the driver's side of a drive session (an MCP client); the tab being driven is the screen
 driveRouter.post("/:slug/drive/driver/request", requireAuth, withTenant, async (req, res, next) => {
   try {
+    // ROLE: any member (drives only a tab its owner granted)
     if ((await getMode(req.session!.id, req.tenant!.org.id)) === "off") {
       res.status(403).json({ error: { code: "drive_off", message: "Browser driving is off." } });
       return;
@@ -238,6 +205,7 @@ const NavigateBody = z.object({ path: z.string().min(1).max(2000) });
 // UI-REACH: the driver's side of a drive session (an MCP client); the tab being driven is the screen
 driveRouter.post("/:slug/drive/driver/navigate", requireAuth, withTenant, async (req, res, next) => {
   try {
+    // ROLE: any member (drives only a tab its owner granted)
     const parsed = NavigateBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "path required" } });
@@ -272,6 +240,7 @@ const PresentBody = z.object({
 // UI-REACH: the driver's side of a drive session (an MCP client); the tab being driven is the screen
 driveRouter.post("/:slug/drive/driver/present", requireAuth, withTenant, async (req, res, next) => {
   try {
+    // ROLE: any member (drives only a tab its owner granted)
     const parsed = PresentBody.safeParse(req.body ?? {});
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "bad present payload" } });

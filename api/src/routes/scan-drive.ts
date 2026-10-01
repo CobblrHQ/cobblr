@@ -20,6 +20,7 @@ const Body = z.object({
 
 scanDriveRouter.post("/:slug/scan-drive", requireAuth, withTenant, async (req, res, next) => {
   try {
+    // ROLE: any member (scanning is a member's work)
     const b = Body.safeParse(req.body);
     if (!b.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "code required" } });

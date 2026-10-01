@@ -137,6 +137,52 @@ schedulesRouter.get(
 );
 
 // AI-REACH: exempt a read for the schedule form (which counters a record keeps); the assistant sets schedules through core-maintenance:schedule
+// The jobs this kind of record has had, for "What needs doing": every name
+// already used on a schedule or in the service log for the kind, with how
+// often and when last, and the jobs its table ships with (a bundle's
+// `service_tasks`). The workspace's own come first in the picker, so a job
+// typed once is offered from then on without a list anyone has to keep.
+schedulesRouter.get(
+  "/names",
+  asyncHandler(async (req, res) => {
+    const q = z.object({ kind: z.string().min(1).max(160) }).safeParse(req.query);
+    if (!q.success) return badBody(res, q.error);
+    const ctx = tenantContext(req);
+    const [entityModule, entityType] = q.data.kind.includes(":") ? q.data.kind.split(":") : [q.data.kind, q.data.kind];
+    const db = tenantDb(req);
+    const used = await db
+      .selectFrom(
+        db
+          .selectFrom("core_maintenance_schedules")
+          .select(["name", sql<Date>`coalesce(last_done_at, created_at)`.as("at")])
+          .where("entity_module", "=", entityModule!)
+          .where("entity_type", "=", entityType!)
+          .unionAll(
+            db
+              .selectFrom("core_maintenance_entries")
+              .select(["name", sql<Date>`coalesce(performed_at, created_at)`.as("at")])
+              .where("entity_module", "=", entityModule!)
+              .where("entity_type", "=", entityType!),
+          )
+          .as("u"),
+      )
+      .select(["u.name", sql<number>`count(*)::int`.as("uses"), sql<Date>`max(u.at)`.as("last")])
+      .groupBy("u.name")
+      .orderBy("last", "desc")
+      // list-cap-ok: a picker's vocabulary, most recent first; the 201st job name is not one anybody scrolls to.
+      .limit(200)
+      .execute();
+    const config = await platform().instances.configOf(ctx.org.id, entityModule!).catch(() => null);
+    const shipped = Array.isArray(config?.service_tasks_default)
+      ? (config.service_tasks_default as unknown[]).filter((t): t is string => typeof t === "string")
+      : [];
+    res.json({
+      values: used.map((u) => ({ value: u.name, uses: u.uses, lastUsed: u.last ? new Date(u.last).toISOString() : null })),
+      suggested: shipped,
+    });
+  }),
+);
+
 schedulesRouter.get(
   "/counters",
   asyncHandler(async (req, res) => {

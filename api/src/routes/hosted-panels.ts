@@ -13,24 +13,36 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
-import { getHostedPanel, listHostedPanels } from "../platform/hosted-seams.js";
+import type { HostedPanel, HostedPanelContext } from "@cobblr/platform-contract";
+import { getHostedPanel, listHostedPanels, panelOpenTo } from "../platform/hosted-seams.js";
 
 export const hostedPanelsRouter = Router({ mergeParams: true });
 
-function ctxOf(req: Request): { orgId: string; userId: string; slug: string } | null {
+function ctxOf(req: Request): HostedPanelContext | null {
   const orgId = req.tenant?.org.id;
   const slug = req.tenant?.org.slug;
   const userId = req.session?.id;
-  if (!orgId || !slug || !userId) return null;
-  return { orgId, userId, slug };
+  const role = req.tenant?.role;
+  if (!orgId || !slug || !userId || !role) return null;
+  return { orgId, userId, slug, role };
+}
+
+function openPanel(req: Request, res: Response): HostedPanel | null {
+  const panel = getHostedPanel(req.params.id ?? "");
+  if (!panel || !panelOpenTo(panel, req.tenant?.role)) {
+    res.status(404).json({ error: { code: "no_panel", message: "no such panel" } });
+    return null;
+  }
+  return panel;
 }
 
 hostedPanelsRouter.get(
   "/:slug/hosted-panels",
   requireAuth,
   withTenant,
-  (_req: Request, res: Response) => {
-    res.json({ panels: listHostedPanels() });
+  (req: Request, res: Response) => {
+    const role = req.tenant?.role;
+    res.json({ panels: listHostedPanels().filter((p) => { const full = getHostedPanel(p.id); return !!full && panelOpenTo(full, role); }) });
   },
 );
 
@@ -40,11 +52,8 @@ hostedPanelsRouter.get(
   withTenant,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const panel = getHostedPanel(req.params.id ?? "");
-      if (!panel) {
-        res.status(404).json({ error: { code: "no_panel", message: "no such panel" } });
-        return;
-      }
+      const panel = openPanel(req, res);
+      if (!panel) return;
       const ctx = ctxOf(req);
       if (!ctx) {
         res.status(400).json({ error: { code: "no_org" } });
@@ -67,11 +76,9 @@ hostedPanelsRouter.post(
   withTenant,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const panel = getHostedPanel(req.params.id ?? "");
-      if (!panel) {
-        res.status(404).json({ error: { code: "no_panel", message: "no such panel" } });
-        return;
-      }
+      // ROLE: the panel's minRole, held by openPanel (admin unless the panel says otherwise)
+      const panel = openPanel(req, res);
+      if (!panel) return;
       const ctx = ctxOf(req);
       if (!ctx) {
         res.status(400).json({ error: { code: "no_org" } });

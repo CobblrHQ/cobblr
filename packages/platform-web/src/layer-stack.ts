@@ -57,6 +57,15 @@ export function isTopLayer(el: HTMLElement): boolean {
   return top?.el === el;
 }
 
+/** Is `el` inside the layer on top, or is no layer open at all (the page is
+ *  on top)? What a page-wide gesture asks before it acts on a part of the
+ *  page a dialog now covers. */
+export function inTopLayer(el: HTMLElement): boolean {
+  let top: Layer | null = null;
+  for (const l of open) if (!top || l.seq > top.seq) top = l;
+  return !top || top.el.contains(el);
+}
+
 /** Put the element in `ref` in the stack while it is mounted. Its own z-index
  *  is read from its computed style, so callers keep saying it as they do. */
 export function useLayerStack(ref: RefObject<HTMLElement | null>): void {

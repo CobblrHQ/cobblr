@@ -11,6 +11,7 @@ import { rehomeAssetsInstanceToRecords } from "../platform/rehome-instance.js";
 import { reconcileScanCategoryFields, retireScanCategoryPlaceholders } from "../platform/reconcile-scan-category.js";
 import { runAllTenantSweeps, runTenantSweep } from "../platform/tenant-sweeps.js";
 import { setSubscriberDelayForTests } from "../platform/events.js";
+import * as notifications from "../platform/notifications.js";
 import { registerHandler } from "../platform/actions.js";
 import { ActionRefusal, PLATFORM_OWNER } from "@cobblr/platform-contract";
 import { meta, metaPool } from "../db/meta.js";
@@ -174,17 +175,21 @@ testSupportRouter.post("/test-support/post-cardless-feedback", async (req, res, 
 
 // Put ONE order in the shape the old "Mark arrived" left: status arrived, its
 // lines never received. No door makes that shape any more, which is the
-// point, so the purchases arrival heal's test builds it here. Body:
-// { org_id, order_id, arrived_at? }.
+// point, so the purchases arrival heal's test builds it here. `flagged` puts
+// its lines where the heal's first version left them: stamped received and
+// put to a person. Body: { org_id, order_id, arrived_at?, flagged? }.
 testSupportRouter.post("/test-support/legacy-order-arrival", async (req, res, next) => {
   try {
-    const { org_id, order_id, arrived_at } = (req.body ?? {}) as { org_id?: string; order_id?: string; arrived_at?: string };
+    const { org_id, order_id, arrived_at, flagged } = (req.body ?? {}) as { org_id?: string; order_id?: string; arrived_at?: string; flagged?: boolean };
     if (!org_id || !order_id) {
       res.status(400).json({ error: { code: "bad_request", message: "body needs { org_id, order_id, arrived_at? }" } });
       return;
     }
     const db = await getTenantDb(org_id);
     await sql`update purchases_orders set status = 'arrived', arrived_at = ${arrived_at ?? arrivedEverywhere(new Date())}::date where id = ${order_id}`.execute(db);
+    if (flagged) {
+      await sql`update purchases_order_items set received_at = ${arrived_at ?? arrivedEverywhere(new Date())}::date, receipt_unconfirmed = true where order_id = ${order_id} and part_id is not null`.execute(db);
+    }
     res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -516,20 +521,39 @@ testSupportRouter.post("/test-support/raw-placement", async (req, res, next) => 
 // lands inside a millisecond, the case a cursor carried over JSON must
 // survive. Test-only, mounted under the same flag. Body: { org_id, user_id,
 // count, per_ms }.
+// Run one person's notification retention prune now (it otherwise runs now
+// and then as their notifications arrive).
+testSupportRouter.post("/test-support/notifications/prune", async (req, res, next) => {
+  try {
+    const userId = (req.body ?? {}).user_id;
+    if (typeof userId !== "string" || !userId) {
+      res.status(400).json({ error: { code: "bad_body", message: "user_id required" } });
+      return;
+    }
+    res.json({ pruned: await notifications.pruneRead(userId) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 testSupportRouter.post("/test-support/notifications", async (req, res, next) => {
   try {
-    const b = (req.body ?? {}) as { org_id?: string; user_id?: string; count?: number; per_ms?: number };
+    const b = (req.body ?? {}) as { org_id?: string; user_id?: string; count?: number; per_ms?: number; read_days_ago?: number; message?: string };
     const count = Math.min(Math.max(Number(b.count) || 0, 1), 1000);
     const perMs = Math.min(Math.max(Number(b.per_ms) || 1, 1), 900);
     if (!b.org_id || !b.user_id) {
       res.status(400).json({ error: { code: "bad_body", message: "org_id and user_id required" } });
       return;
     }
-    await sql`insert into notifications (org_id, user_id, event_type, message, created_at)
-              select ${b.org_id}::uuid, ${b.user_id}::uuid, 'test.paging', ('paged ' || g),
+    // read_days_ago: seeded as read that long ago (the retention prune's input).
+    const readDays = typeof b.read_days_ago === "number" && b.read_days_ago >= 0 ? b.read_days_ago : null;
+    const prefix = typeof b.message === "string" && b.message ? b.message : "paged";
+    await sql`insert into notifications (org_id, user_id, event_type, message, created_at, read_at)
+              select ${b.org_id}::uuid, ${b.user_id}::uuid, 'test.paging', (${prefix} || ' ' || g),
                      (timestamptz '2026-01-01 00:00:00+00'
                        + ((g / ${perMs}) * interval '1 millisecond')
-                       + ((g % ${perMs}) * interval '1 microsecond'))
+                       + ((g % ${perMs}) * interval '1 microsecond')),
+                     case when ${readDays}::int is null then null else now() - make_interval(days => ${readDays}::int) end
               from generate_series(1, ${count}) as g`.execute(meta);
     res.json({ ok: true, count });
   } catch (err) {

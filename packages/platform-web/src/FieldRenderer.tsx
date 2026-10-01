@@ -13,7 +13,9 @@
 // (modules/core-catalogs + api/src/routes/platform.ts + the
 // platform-contract manifest schema) — same renderer id everywhere.
 
+import { asMeasure, formatMeasure } from "@cobblr/platform-contract/measure";
 import { parseColour } from "@cobblr/platform-contract/colour";
+import { formatStoredMoney, moneyStorageOf, type MoneyStorage } from "@cobblr/platform-contract/money";
 import { Swatch } from "./Swatch";
 import { useState } from "react";
 import { Check, ExternalLink, ImageOff, X } from "lucide-react";
@@ -49,6 +51,10 @@ interface Props {
    *  rendered muted and is never part of the value: see field-note.ts for why
    *  identity has to stay the value alone. */
   note?: string | null;
+  /** How a native column holds money ("cents" | "amount"), when it does. */
+  money?: MoneyStorage | null;
+  /** The field's record role: "acquired-for" makes a number money. */
+  fieldRole?: string | null;
 }
 
 /** Whether a boolean field's stored value reads as TRUE. Beyond real booleans
@@ -82,6 +88,8 @@ export function FieldRenderer({
   unit,
   size = "inline",
   note,
+  money,
+  fieldRole,
 }: Props) {
   const clarifier = note?.trim() ? (
     <span className="text-muted dark:text-slate-400"> · {note.trim()}</span>
@@ -95,6 +103,32 @@ export function FieldRenderer({
     ) : (
       <span className="text-faint dark:text-slate-600">—</span>
     );
+  }
+  // Money, however its field holds it, reads "$4,300" (never 430000).
+  const storage = moneyStorageOf({ type, unit, money, field_role: fieldRole });
+  if (storage) {
+    const shown = formatStoredMoney(value, storage);
+    if (shown !== null) {
+      return (
+        <span className="tabular-nums" data-money="">
+          {shown}
+          {clarifier}
+        </span>
+      );
+    }
+  }
+  // A measured value shows with the prefix that reads best ("100 nF" for
+  // 1e-7 F), and what was typed on hover.
+  if (type === "measure") {
+    const m = asMeasure(value, unit ?? null);
+    if (m) {
+      return (
+        <span className="tabular-nums" title={m.text} data-measure={m.value}>
+          {formatMeasure(m)}
+          {clarifier}
+        </span>
+      );
+    }
   }
   // A number with a declared unit renders as a quantity ("12 mm"). Its own
   // component so the units hook mounts only when a consumer passed a unit.

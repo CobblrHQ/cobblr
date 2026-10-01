@@ -15,7 +15,7 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { PLACEMENT, lintsOf, registeredCommands, type PlacementRow } from "./placement-registry.js";
+import { PLACEMENT, lintsOf, rankPlacement, registeredCommands, type PlacementRow } from "./placement-registry.js";
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -41,15 +41,6 @@ function ruleOf(lintScript: string): string {
   const text = head.join(" ").trim().replace(/^(?:Guard|The rule|Rule|Lint)\s*:\s*/i, "");
   const stop = text.search(/(?<=\.)\s/);
   return (stop > 0 ? text.slice(0, stop) : text).slice(0, 200);
-}
-
-function score(row: PlacementRow, q: string): number {
-  const hay = `${row.id} ${row.what} ${row.keywords.join(" ")}`.toLowerCase();
-  const words = q.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2);
-  let n = 0;
-  for (const w of words) if (hay.includes(w)) n += 1;
-  for (const k of row.keywords) if (q.toLowerCase().includes(k)) n += 2;
-  return n;
 }
 
 function show(row: PlacementRow): void {
@@ -104,13 +95,13 @@ if (!q) {
   console.log("usage: pnpm run where \"<what you are building>\" | --path <file> | --list");
   process.exit(2);
 }
-const ranked = PLACEMENT.map((r) => ({ r, n: score(r, q) })).filter((x) => x.n > 0).sort((a, b) => b.n - a.n);
+const ranked = rankPlacement(q);
 if (!ranked.length) {
   console.log(`\n  Nothing in the map matches "${q}".`);
   console.log("  `--list` shows every kind it knows. If your case is genuinely new, add a row to");
   console.log("  scripts/placement-registry.ts — that is how the next person gets the answer for free.");
   process.exit(0);
 }
-show(ranked[0]!.r);
-for (const alt of ranked.slice(1, 3)) console.log(`\n  also possible: ${alt.r.id} → ${alt.r.dir}`);
+show(ranked[0]!);
+for (const alt of ranked.slice(1, 3)) console.log(`\n  also possible: ${alt.id} → ${alt.dir}`);
 console.log("");

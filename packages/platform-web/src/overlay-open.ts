@@ -18,7 +18,14 @@ import { useLayoutEffect } from "react";
  *  refuses a bare `fixed` outside this package, so no chrome misses it. */
 export const HIDE_WHEN_OVERLAY_OPEN = "[[data-overlay-open]_&]:hidden";
 
+/** For chrome that lives in the page's content column and so need not hide
+ *  for a side panel docked beside it on a desk (the selection bar, #4531):
+ *  it hides for an overlay that COVERS the page (a modal, a sheet), and on a
+ *  phone, where a side panel covers the page too. floating-chrome.css. */
+export const HIDE_WHEN_COVERED = "fc-yield-covered";
+
 let openOverlays = 0;
+let coveringOverlays = 0;
 
 /** Declarative form: drop `<OverlayFlag />` INSIDE the overlay's own layer.
  *  Mounting is then the condition — no `open &&` to thread through, no hook
@@ -30,18 +37,33 @@ export function OverlayFlag(): null {
   return null;
 }
 
-/** Call from any overlay while it is mounted/open. */
-export function useOverlayOpenFlag(active = true): void {
+/** Call from any overlay while it is mounted/open. A side panel says
+ *  `side`: on a desk it sits beside the page rather than over it, so chrome
+ *  in the content column (HIDE_WHEN_COVERED) stays; every other overlay
+ *  covers the page. */
+export function useOverlayOpenFlag(active = true, kind: "covering" | "side" = "covering"): void {
   useLayoutEffect(() => {
     if (!active) return;
+    const root = document.documentElement;
     openOverlays += 1;
-    document.documentElement.setAttribute("data-overlay-open", "1");
+    root.setAttribute("data-overlay-open", "1");
+    if (kind === "covering") {
+      coveringOverlays += 1;
+      root.setAttribute("data-covering-open", "1");
+    }
     return () => {
       openOverlays -= 1;
       if (openOverlays <= 0) {
         openOverlays = 0;
-        document.documentElement.removeAttribute("data-overlay-open");
+        root.removeAttribute("data-overlay-open");
+      }
+      if (kind === "covering") {
+        coveringOverlays -= 1;
+        if (coveringOverlays <= 0) {
+          coveringOverlays = 0;
+          root.removeAttribute("data-covering-open");
+        }
       }
     };
-  }, [active]);
+  }, [active, kind]);
 }

@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 import { ArrowUp } from "lucide-react";
 import { FloatingChrome } from "./FloatingChrome";
+import { CORNER_STACK } from "./bottom-dock";
 
 interface Props {
   /** Pixel scroll-Y at which the button appears. */
@@ -40,6 +41,7 @@ export function BackToTop({ threshold = 400, target }: Props = {}) {
     <FloatingChrome
       as="button"
       anchor="corner"
+      stack={CORNER_STACK.backToTop}
       lift="1.5rem"
       type="button"
       onClick={scrollTop}

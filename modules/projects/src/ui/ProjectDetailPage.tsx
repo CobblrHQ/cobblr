@@ -3,10 +3,12 @@
 // pill chips on the task row.
 
 import { useLayoutEffect, useRef, useState, type ComponentProps, type FormEvent } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, Plus, Trash2 } from "lucide-react";
-import { ContributedDetailPanels, EntityActionsBar, CustomFieldsPanel, MutationError, PresentationGate, useFieldDraft, usePageTitle, useUnits } from "@cobblr/platform-web";
+import { ArrowLeft, Check, ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react";
+import { ContributedDetailPanels, EntityActionsBar, CustomFieldsPanel, MutationError, PresentationGate, useConfirm, useFieldDraft, usePageTitle, useUnits } from "@cobblr/platform-web";
+import { describeInterval } from "@cobblr/platform-contract/interval";
+import { TaskSheet, checklistProgress, dueDay, dueState, localToday } from "./TaskSheet";
 import { useProjects } from "./context";
 import { DesignFiles } from "./DesignFiles";
 import { PatternNeedsPanel, patternNeedsKey } from "./PatternNeeds";
@@ -124,12 +126,33 @@ export function ProjectDetailPage() {
     enabled: !!id,
   });
   usePageTitle(project.data?.name ?? "Project");
+  // The open task rides in the address (?task=), so a link can land on it and
+  // the back button closes it.
+  const [params, setParams] = useSearchParams();
+  const openTaskId = params.get("task");
+  const openTask = (taskId: string | null) =>
+    setParams((p) => {
+      const next = new URLSearchParams(p);
+      if (taskId) next.set("task", taskId);
+      else next.delete("task");
+      return next;
+    });
+  const [mine, setMine] = useState(false);
   const tasks = useQuery({
-    queryKey: ["project-tasks", id],
-    queryFn: () => api.listTasks({ project_id: id }),
+    queryKey: ["project-tasks", id, mine ? "mine" : "all"],
+    queryFn: () => api.listTasks({ project_id: id, ...(mine ? { assignee: "me" } : {}) }),
     enabled: !!id,
   });
 
+  const move = useMutation({
+    mutationFn: (v: { ids: string[]; from: number; to: number }) => {
+      const ids = [...v.ids];
+      const [moved] = ids.splice(v.from, 1);
+      ids.splice(v.to, 0, moved!);
+      return api.reorderTasks(id!, ids);
+    },
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["project-tasks", id] }),
+  });
   const updateProject = useMutation({
     mutationFn: (patch: Record<string, unknown>) => api.updateProject(id!, patch),
     onSuccess: () => {
@@ -298,8 +321,24 @@ export function ProjectDetailPage() {
       )}
 
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-3">
-          // tasks
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-accent">// tasks</div>
+          <div role="group" aria-label="Whose tasks" className="flex rounded-md border border-line dark:border-slate-700 overflow-hidden text-xs">
+            {[
+              { v: false, label: "All" },
+              { v: true, label: "Mine" },
+            ].map((o) => (
+              <button
+                key={o.label}
+                type="button"
+                aria-pressed={mine === o.v}
+                onClick={() => setMine(o.v)}
+                className={"px-2 py-0.5 " + (mine === o.v ? "bg-accent text-white" : "text-muted hover:text-content")}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
         </div>
         <NewTaskInline projectId={id!} />
         {tasks.isLoading && <div className="text-xs text-faint dark:text-slate-500 mt-3">loading…</div>}
@@ -307,10 +346,19 @@ export function ProjectDetailPage() {
           <div className="text-xs text-faint dark:text-slate-500 italic mt-3">No tasks yet.</div>
         )}
         <ul className="space-y-1 mt-3">
-          {tasks.data?.items.map((t) => (
-            <TaskRow key={t.id} task={t} />
+          {(tasks.data?.items ?? []).map((t, i, all) => (
+            <TaskRow
+              key={t.id}
+              task={t}
+              onOpen={() => openTask(t.id)}
+              // Moving needs the whole list: on "Mine" some tasks are hidden.
+              onMove={mine ? undefined : (dir) => move.mutate({ ids: all.map((x) => x.id), from: i, to: i + dir })}
+              canUp={i > 0}
+              canDown={i < all.length - 1}
+            />
           ))}
         </ul>
+        <MutationError mutation={move} className="block mt-1" />
       </div>
 
       {/* Tags, discussion, and anything else contributed at every kind. Keyed
@@ -320,6 +368,7 @@ export function ProjectDetailPage() {
         target={entityKind}
         ctx={{ slug: orgSlug, entityId: project.data.id, entityTitle: project.data.name }}
       />
+      {openTaskId && <TaskSheet taskId={openTaskId} onClose={() => openTask(null)} />}
     </div>
   );
 }
@@ -424,9 +473,22 @@ function NewTaskInline({ projectId }: { projectId: string }) {
   );
 }
 
-function TaskRow({ task }: { task: Task }) {
+function TaskRow({
+  task,
+  onOpen,
+  onMove,
+  canUp,
+  canDown,
+}: {
+  task: Task;
+  onOpen: () => void;
+  onMove?: (dir: -1 | 1) => void;
+  canUp?: boolean;
+  canDown?: boolean;
+}) {
   const { api } = useProjects();
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const setStatus = useMutation({
     mutationFn: (status: TaskStatus) => api.updateTask(task.id, { status }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["project-tasks", task.project_id] }),
@@ -438,6 +500,7 @@ function TaskRow({ task }: { task: Task }) {
 
   const done = task.status === "done";
   const blocked = (task.blocked_deps ?? 0) > 0;
+  const due = dueState(task.due_date, task.status, localToday());
 
   return (
     <li className="flex flex-wrap items-center gap-2 py-1.5 group">
@@ -452,13 +515,36 @@ function TaskRow({ task }: { task: Task }) {
       >
         {done && <Check size={11} className="text-mortar-50" />}
       </button>
-      <span
+      <button
+        type="button"
+        onClick={onOpen}
         className={
-          "text-sm flex-1 min-w-0 break-words " + (done ? "line-through text-faint dark:text-slate-500" : "text-content dark:text-mortar-100")
+          "text-left text-sm flex-1 min-w-0 break-words hover:underline " + (done ? "line-through text-faint dark:text-slate-500" : "text-content dark:text-mortar-100")
         }
       >
         {task.title}
-      </span>
+      </button>
+      {(task.priority === "high" || task.priority === "urgent") && !done && (
+        <span className="text-[10px] font-mono uppercase text-ember-600 dark:text-ember-400">{task.priority}</span>
+      )}
+      {due && (
+        <span
+          data-testid="task-due"
+          className={"text-[10px] font-mono uppercase px-1.5 py-0.5 rounded " + (due === "late" ? "text-ember-600 bg-ember-50 dark:text-ember-300 dark:bg-ember-900/30" : due === "today" ? "text-accent" : "text-faint dark:text-slate-500")}
+        >
+          {due === "late" ? "late · " : due === "today" ? "today · " : ""}
+          {new Date(`${dueDay(task.due_date)}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+        </span>
+      )}
+      {task.repeat && (
+        <span data-testid="task-repeat" title={`Repeats ${describeInterval(task.repeat.every_n, task.repeat.every_unit)}`} className="text-[10px] font-mono text-muted">↻</span>
+      )}
+      {checklistProgress(task.checklist) && (
+        <span data-testid="task-checklist-progress" className="text-[10px] font-mono text-muted dark:text-slate-400">{checklistProgress(task.checklist)}</span>
+      )}
+      {task.assignee_label && (
+        <span data-testid="task-assignee" className="text-[10px] font-mono text-muted dark:text-slate-400">{task.assignee_label}</span>
+      )}
       {task.energy && (
         <span className="text-[10px] font-mono text-faint dark:text-slate-500 uppercase">{task.energy}</span>
       )}
@@ -472,8 +558,22 @@ function TaskRow({ task }: { task: Task }) {
         entityId={task.id}
         className="hover-reveal transition"
       />
+      {onMove && (
+        <span className="hover-reveal inline-flex">
+          <button type="button" aria-label={`Move ${task.title} up`} disabled={!canUp} onClick={() => onMove(-1)} className="p-0.5 text-faint hover:text-accent disabled:opacity-30">
+            <ChevronUp size={14} />
+          </button>
+          <button type="button" aria-label={`Move ${task.title} down`} disabled={!canDown} onClick={() => onMove(1)} className="p-0.5 text-faint hover:text-accent disabled:opacity-30">
+            <ChevronDown size={14} />
+          </button>
+        </span>
+      )}
       <button
-        onClick={() => remove.mutate()}
+        aria-label="Delete task"
+        onClick={async () => {
+          const ok = await confirm({ title: `Delete "${task.title}"?`, message: "This can't be undone.", confirmLabel: "Delete", destructive: true });
+          if (ok) remove.mutate();
+        }}
         className="hover-reveal text-faint dark:text-slate-600 hover:text-ember-500 transition"
       >
         <Trash2 size={13} />

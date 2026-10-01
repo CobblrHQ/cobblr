@@ -76,11 +76,14 @@ function LotsToggle({ lots }: { lots: HoldingLot[] }) {
 export function HoldingRows({
   rows,
   basePath,
+  unit,
   onSplit,
   actions,
 }: {
   rows: HoldingRow[];
   basePath: string;
+  /** The unit the item is kept in: a measured one is used by amount. */
+  unit?: string | null;
   /** Offered on a holding's row (never the card's own): make it a record of
    *  its own again. */
   onSplit?: (row: HoldingRow) => void;
@@ -106,7 +109,7 @@ export function HoldingRows({
               <span className="truncate">{r.location_name ?? "No place set"}</span>
             </Link>
             <span className="inline-flex items-center gap-1 font-mono text-[11px]">
-              <QtyStepper partId={r.id} qty={r.qty} size="sm" />
+              <QtyStepper partId={r.id} qty={r.qty} unit={unit} label={r.location_name ?? "this place"} size="sm" />
             </span>
             <span className="font-mono text-[11px] text-muted dark:text-slate-400">min {r.min_qty == null ? "—" : fmt(r.min_qty)}</span>
             {r.low && (

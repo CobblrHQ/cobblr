@@ -73,6 +73,18 @@ export interface VocabularyCapability extends Base {
 export const CAPABILITIES: Capability[] = [
   {
     kind: "owns",
+    id: "fields:choice-picker",
+    what: "a field's list of values that grows when someone types a new one: ChoiceCombobox in packages/platform-web/src/ChoiceCombobox.tsx (bound to a field by ChoiceField)",
+    why:
+      "every dropdown grew its own \"+ add new…\" option, a second box to type into and a separate \"which one\" box under it; " +
+      "five copies behaved five ways and none offered what had already been typed on other records (#4516)",
+    owner: "packages/platform-web/src/ChoiceCombobox.tsx",
+    scope: ["web/src/**/*.tsx", "packages/platform-web/src/**/*.tsx", "modules/*/src/ui/**/*.tsx"],
+    detect: /<option[^>]*>\s*[+＋]\s*[Aa]dd new|value="__add__"|"__new_choice__"|>\s*New \{?[a-zA-Z.()]*\}?…<\/option>/,
+    use: "ChoiceField for a field def (it offers the used values and learns a new one, undoably), or ChoiceCombobox for a plain list. Typing a value not on the list IS adding it; there is no add row.",
+  },
+  {
+    kind: "owns",
     id: "services:who-has-to-say-yes",
     what: "deciding whether a service job may start without a person, from the capability's declared effect and the door it came in by: serviceConsent / serviceRunsUnconfirmed in packages/platform-contract/src/service-consent.ts",
     why:
@@ -127,6 +139,22 @@ export const CAPABILITIES: Capability[] = [
     use: "addressReach(raw) or needsBridge(raw, { hosted }) from @cobblr/platform-contract/address-reach, and <HomeNetworkHint> in a form",
     except: {
       "packages/platform-web/src/local-network.test.ts": "the browser gate's own test names the addresses it must refuse",
+    },
+  },
+  {
+    kind: "owns",
+    id: "stock:one-stepper",
+    what: "the control that changes how much of a thing there is: StockStepper in packages/platform-web/src/StockStepper.tsx, which steps a counted thing by one and has a measured one (kg, m, L) typed as what was used",
+    why:
+      "each surface had its own −/+, so after a spool's page learned to take grams the parts wall's tile still took a whole kilogram " +
+      "off a spool per tap (#4030)",
+    owner: "packages/platform-web/src/StockStepper.tsx",
+    scope: ["web/src/**/*.tsx", "packages/platform-web/src/**/*.tsx", "modules/*/src/ui/**/*.tsx"],
+    detect: /aria-label=(?:"(?:Decrease|Increase) quantity"|\{`One (?:fewer|more) )/,
+    also: /stockAdjust|adjustStock|stock-adjust|onStep\b/,
+    use: "<StockStepper qty={qty} unit={unit} label={name} onStep={(delta) => …} /> (or QtyStepper, which mounts it)",
+    except: {
+      "packages/platform-web/src/AmountControl.tsx": "the measured half StockStepper hands a kg/m/L thing to; its counted mode is StockStepper's own rule",
     },
   },
   {
@@ -586,6 +614,25 @@ export const CAPABILITIES: Capability[] = [
     ],
     detect: /\.download\s*=/,
     use: "downloadBlob(blob, filename) from @cobblr/platform-web",
+  },
+  {
+    kind: "owns",
+    id: "sandbox:whose-row-it-is",
+    what:
+      "deciding whether a sandbox's row is an example it came with or something the person made: examplesOf / " +
+      "madeByThePerson in api/src/platform/trial-ledger.ts, and leaveOut in api/src/platform/take-provenance.ts",
+    why:
+      "the take decided by comparing each row's timestamp with the hand-over, and a row the platform wrote a moment " +
+      "after it (a label code for a sample part) carried that part out as the person's own; the log says who made " +
+      "a thing, a clock only says when",
+    owner: "api/src/platform/trial-ledger.ts",
+    scope: ["api/src/**/*.ts", "modules/*/src/**/*.{ts,tsx}"],
+    // Reading the hand-over instant to sort rows by it.
+    detect: /\bhandedOverAt\(/,
+    use: "examplesOf(orgId) / madeByThePerson(orgId) from api/src/platform/trial-ledger.ts",
+    except: {
+      "api/src/platform/try-sandbox-export.ts": "hands the line to the take, whose own rule (leaveOut) asks the log who made each row",
+    },
   },
   {
     kind: "owns",
@@ -1641,6 +1688,30 @@ export const CAPABILITIES: Capability[] = [
     use: "const toggleHidden = useToggleNavHidden() from web/src/lib/moreApps.ts; toggleHidden(slug, name).",
   },
   {
+    id: "discord:connect-door",
+    kind: "owns",
+    what: "Asking whether this person can connect Discord here: useDiscordStatus (web/src/lib/useDiscordStatus.ts) read through discordConnectable / doorLeadsSomewhere (web/src/lib/discord-connect.ts), which every Connect Discord door calls before it draws.",
+    why:
+      "each door read the status its own way, and three never read it at all, so a server with no Discord app or no bot " +
+      "offered a connect in five places that could only end on a page saying Discord is not set up (#4144)",
+    owner: "web/src/lib/useDiscordStatus.ts",
+    scope: ["web/src/**/*.tsx", "web/src/**/*.ts"],
+    detect: /\bmeDiscordStatus\(/,
+    use: "const discord = useDiscordStatus(); then discordConnectable(discord.data), or doorLeadsSomewhere(to, discord.data) for a link that may be the connect door.",
+  },
+  {
+    id: "purchases:order-total",
+    kind: "owns",
+    what: "What an order cost, for any spend figure: the stated total, else its lines plus shipping, as `total` from orderTotal in modules/purchases/src/order-total.ts.",
+    why:
+      "every spend figure summed total_cost, which only a receipt or a typed total fills, so a hand-entered order and every past " +
+      "purchase filled in line by line counted as nothing spent",
+    owner: "modules/purchases/src/order-total.ts",
+    scope: ["modules/*/src/**/*.ts", "modules/*/src/**/*.tsx", "web/src/**/*.tsx", "web/src/**/*.ts"],
+    detect: /sum\(\s*\w+\.total_cost|\+\s*Number\(\s*\w+\??\.total_cost|money\(\s*\w+\??\.total_cost/,
+    use: "Read `total` (served beside total_cost on orders and vendor orders); in SQL, orderTotal(alias) from modules/purchases/src/order-total.ts.",
+  },
+  {
     id: "inventory:stock-moved",
     kind: "owns",
     what: "What follows a change to a part's count: the statement line, inventory.stock.changed, and inventory.stock.low on a decrease, through stockMoved in modules/inventory/src/api/stock-moved.ts.",
@@ -1675,5 +1746,53 @@ export const CAPABILITIES: Capability[] = [
     scope: ["modules/sales/src/**/*.ts"],
     detect: /(?:insertInto|deleteFrom)\(\s*["']sales_order_items["']|(?:insert\s+into|delete\s+from)\s+sales_order_items/i,
     use: "addLine / changeLine / removeLine from modules/sales/src/order-lines.ts",
+  },
+  {
+    kind: "owns",
+    id: "sales:an-order-is-cancelled-one-way",
+    what: "setting a sales order to cancelled: cancelOrder in modules/sales/src/cancel.ts, which puts back what Fulfill took (or asks whether a shipped order came back) and writes it down",
+    why: "the status list set cancelled directly, so a cancelled order kept the stock it had taken for a sale that never happened (#4115)",
+    owner: "modules/sales/src/cancel.ts",
+    scope: ["modules/sales/src/**/*.ts"],
+    detect: /status:\s*["']cancelled["']/,
+    use: "cancelOrder(db, orgId, userId, orderId, { returned? }) from modules/sales/src/cancel.ts",
+  },
+  {
+    kind: "owns",
+    id: "tags:every-tag-write",
+    what: "writing a tag or putting one on or off a record: createTag / ensureTag / updateTag / deleteTag / attachTag / detachTag / mergeTag in modules/core-tags/src/tag-writes.ts",
+    why:
+      "the routes and the actions each had their own copy, so a rename onto a taken name answered 500, two attaches of one new tag raced " +
+      "into a 500, and only a new tag ever reached the activity log (#4115)",
+    owner: "modules/core-tags/src/tag-writes.ts",
+    scope: ["api/src/**/*.ts", "modules/*/src/**/*.ts"],
+    detect: /(?:insertInto|updateTable|deleteFrom)\(\s*["']core_tags_|\b(?:insert\s+into|update|delete\s+from)\s+core_tags_/i,
+    use: "the matching function from modules/core-tags/src/tag-writes.ts (another module: the core-tags actions, or platform().tags for a bulk writer)",
+    except: {
+      "api/src/index.ts":
+        "platform().tags, the in-process seam for bulk writers (a sheet import, a sync) that cannot import a module; they write their own " +
+        "activity entry for the batch rather than one per tag",
+      "api/src/platform/rehome-instance.ts": "a one-off move of assignments between kinds, not a tag change anyone made",
+    },
+  },
+  {
+    kind: "owns",
+    id: "ui:the-chosen-tile",
+    what: "how a chosen tile in a picker or photo grid looks (the photo in use, the current pick): SelectableTile in packages/platform-web/src/SelectableTile.tsx",
+    why:
+      "the record's photo search drew the AI's pick with a border and ring of its own and the photo in use not at all, while the scan " +
+      "inbox outlined it; the owner asked for the chosen tile to look the same everywhere (#4515)",
+    owner: "packages/platform-web/src/SelectableTile.tsx",
+    scope: ["web/src/**/*.tsx", "modules/*/src/ui/**/*.tsx", "packages/platform-web/src/**/*.tsx"],
+    // A selected-state outline or ring drawn by hand, not a focus ring.
+    detect: /(?<![:\w-])(?:outline|ring)-2\b[^"'`]*?(?<![:\w-])(?:outline|ring)-(?:accent|cobble-\d+)\b/,
+    // Only where pictures are drawn: a grid you pick a picture from.
+    also: /<img\b|<EntityPhoto\b|<EntityThumb\b/,
+    use: "<SelectableTile selected={…} topLeft={…}> from @cobblr/platform-web (badges in its corner slots)",
+    except: {
+      "web/src/features/digifab/fleet.tsx": "a printer card under a file being dragged onto it: a drop target, not a choice",
+      "web/src/pages/ViewsPage.tsx": "a card lifted while it is being dragged, not a choice",
+      "packages/platform-web/src/EntityThumb.tsx": "a suggested photo not yet accepted, drawn dashed so it never reads as chosen",
+    },
   },
 ];

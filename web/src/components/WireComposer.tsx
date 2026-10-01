@@ -5,7 +5,7 @@ import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Check } from "lucide-react";
 import { useToast } from "@cobblr/platform-web";
-import { ApiError, api, type PlatformBinding } from "../lib/api";
+import { ApiError, api, WORKSPACE_SOURCE_KIND, type ActionArgSpec, type PlatformBinding } from "../lib/api";
 import {
   TRIGGER_OPTIONS,
   WEEKDAYS,
@@ -14,6 +14,12 @@ import {
   parseRRule,
   describeWire,
   insertToken,
+  RECORDLESS_TRIGGERS,
+  SERVICE_EVENT_TOKENS,
+  buildServiceInput,
+  serviceInputFields,
+  serviceInputValues,
+  type ServiceInputField,
   type TriggerType,
   type Recurrence,
   type WireTarget,
@@ -80,8 +86,17 @@ export function WireComposer({
   // (an arg input or the template) is focused.
   const [args, setArgs] = useState<Record<string, string>>(
     ed?.args && typeof ed.args === "object"
-      ? Object.fromEntries(Object.entries(ed.args as Record<string, unknown>).map(([k, v]) => [k, String(v)]))
+      ? Object.fromEntries(
+          Object.entries(ed.args as Record<string, unknown>)
+            .filter(([, v]) => v == null || typeof v !== "object")
+            .map(([k, v]) => [k, String(v)]),
+        )
       : {},
+  );
+  // A service's input, one text value per field its schema asks for; stored
+  // on the wire as an object (the arg whose spec says `schema_from`).
+  const [serviceValues, setServiceValues] = useState<Record<string, string>>(
+    serviceInputValues((ed?.args as Record<string, unknown> | null | undefined)?.["input"]),
   );
   const activeRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const activeField = useRef<string>("__template__"); // "__template__" or an arg name
@@ -92,6 +107,9 @@ export function WireComposer({
     const caret = el?.selectionStart ?? undefined;
     if (activeField.current === "__template__") {
       setTemplate((t) => insertToken(t, fieldName, caret));
+    } else if (activeField.current.startsWith("input.")) {
+      const f = activeField.current.slice("input.".length);
+      setServiceValues((v) => ({ ...v, [f]: insertToken(v[f] ?? "", fieldName, caret) }));
     } else {
       const arg = activeField.current;
       setArgs((a) => ({ ...a, [arg]: insertToken(a[arg] ?? "", fieldName, caret) }));
@@ -99,15 +117,54 @@ export function WireComposer({
     el?.focus();
   }
 
+  // "No record": the wire acts on the workspace, once per event or tick, and
+  // offers the actions that need no record (running a service).
+  const recordless = sourceKind === WORKSPACE_SOURCE_KIND;
   const actionsForKind = useQuery({
     queryKey: ["actions-for-kind", slug, sourceKind],
     queryFn: () => api.listActions(slug, sourceKind),
-    enabled: !!slug && !!sourceKind,
+    enabled: !!slug && !!sourceKind && !recordless,
   });
+  const wireActions = useQuery({
+    queryKey: ["wire-actions", slug],
+    queryFn: () => api.listWireActions(slug),
+    enabled: !!slug && recordless,
+  });
+  const actionChoices = recordless ? wireActions.data?.items : actionsForKind.data?.items;
+  const argsSpec: Record<string, ActionArgSpec> | null | undefined = actionChoices?.find((a) => a.id === actionId)?.args_schema;
+  const pickerArg = Object.entries(argsSpec ?? {}).find(([, s]) => s.picker === "service-capability")?.[0];
+  const capabilities = useQuery({
+    queryKey: ["service-capabilities", slug],
+    queryFn: () => api.listServiceCapabilities(slug),
+    enabled: !!slug && (!!pickerArg || (triggerType === "event" && triggerEvent.startsWith("services.job."))),
+  });
+  // "After which service": the condition on event.capability, offered as a
+  // choice so a wire on a job's event does not follow every service there is.
+  const afterIdx = conditions.findIndex((c) => c.path === "event.capability" && c.op === "eq");
+  const afterCap = afterIdx >= 0 ? conditions[afterIdx]!.value : "";
+  const setAfterCap = (cap: string) =>
+    setConditions((cs) => {
+      const rest = cs.filter((_, i) => i !== afterIdx);
+      return cap ? [{ path: "event.capability", op: "eq", value: cap }, ...rest] : rest;
+    });
+  const inputFieldsFor = (spec: ActionArgSpec) => {
+    const chosen = spec.schema_from ? args[spec.schema_from] : "";
+    return serviceInputFields(capabilities.data?.items.find((c) => c.id === chosen)?.input_schema);
+  };
 
   const kind = kinds.data?.items.find((k) => k.id === sourceKind);
-  const action = actionsForKind.data?.items.find((a) => a.id === actionId);
+  const action = actionChoices?.find((a) => a.id === actionId);
   const needs = TRIGGER_OPTIONS.find((t) => t.value === triggerType)?.needs ?? "none";
+  const eventTokens = recordless && triggerType === "event" && triggerEvent.startsWith("services.job.") ? SERVICE_EVENT_TOKENS : [];
+  // Which "a record is created / updated / deleted" triggers this kind can
+  // carry: a kind that says nothing at that moment would store a wire that
+  // never runs, so the choice is offered only where it works.
+  const lifecycle = useQuery({
+    queryKey: ["wire-lifecycle", slug, sourceKind],
+    queryFn: () => api.getWireLifecycle(slug, sourceKind),
+    enabled: !!slug && !!sourceKind,
+  });
+  const lifecycleWhy = sourceKind ? lifecycle.data?.triggers[triggerType]?.why ?? null : null;
 
   const preview = describeWire({
     triggerType,
@@ -116,10 +173,18 @@ export function WireComposer({
     sourceLabel: kind?.display_name ?? "",
     actionLabel: action?.label ?? "(an action)",
     target,
+    recordless,
   });
 
-  const filledArgs = (): Record<string, string> | undefined => {
-    const out = Object.fromEntries(Object.entries(args).filter(([, v]) => v.trim() !== ""));
+  const filledArgs = (): Record<string, unknown> | undefined => {
+    const out: Record<string, unknown> = {};
+    for (const [name, v] of Object.entries(args)) {
+      if (argsSpec?.[name]?.type === "json") continue;
+      if (v.trim() !== "") out[name] = v;
+    }
+    for (const [name, spec] of Object.entries(argsSpec ?? {})) {
+      if (spec.type === "json" && spec.schema_from) out[name] = buildServiceInput(inputFieldsFor(spec), serviceValues);
+    }
     return Object.keys(out).length > 0 ? out : undefined;
   };
 
@@ -135,7 +200,7 @@ export function WireComposer({
         // null (not undefined) so editing CLEARS removed args/target, not "leave as-is".
         filter: builtFilter(),
         args: filledArgs() ?? null,
-        target: target === "self" ? "self" : target,
+        target: recordless ? "none" : target === "self" ? "self" : target,
         // Only a button has a label or a question; null clears them.
         label: triggerType === "user-invoked" && buttonLabel.trim() ? buttonLabel.trim() : null,
         ask:
@@ -156,6 +221,7 @@ export function WireComposer({
       }
       setActionId("");
       setArgs({});
+      setServiceValues({});
       setTriggerEvent("");
       setTemplate("");
       setTarget("self");
@@ -167,7 +233,10 @@ export function WireComposer({
 
   const ready =
     !!sourceKind &&
+    !lifecycleWhy &&
     !!actionId &&
+    (!recordless || RECORDLESS_TRIGGERS.includes(triggerType)) &&
+    (!pickerArg || !!args[pickerArg]) &&
     (needs !== "event" || !!triggerEvent) &&
     (needs !== "schedule" || buildRRule(recurrence).length > 0);
 
@@ -193,9 +262,15 @@ export function WireComposer({
       <div>
         <span className={L}>When…</span>
         <select value={triggerType} onChange={(e) => setTriggerType(e.target.value as TriggerType)} className="input">
-          {TRIGGER_OPTIONS.map((t) => (
-            <option key={t.value} value={t.value}>{t.label}</option>
-          ))}
+          {TRIGGER_OPTIONS.filter((t) => !recordless || RECORDLESS_TRIGGERS.includes(t.value)).map((t) => {
+            const off = !!sourceKind && lifecycle.data?.triggers[t.value]?.ok === false;
+            return (
+              <option key={t.value} value={t.value} disabled={off}>
+                {t.label}
+                {off ? " (not for these records)" : ""}
+              </option>
+            );
+          })}
         </select>
 
         {needs === "event" && (
@@ -215,6 +290,24 @@ export function WireComposer({
           </div>
         )}
 
+        {needs === "event" && triggerEvent.startsWith("services.job.") && (
+          <label className="mt-2 block">
+            <span className="block text-[11px] text-muted dark:text-slate-400 mb-0.5">After which service</span>
+            <select value={afterCap} onChange={(e) => setAfterCap(e.target.value)} className="input text-sm" data-testid="wire-after-service">
+              <option value="">any service</option>
+              {capabilities.data?.items.map((c) => (
+                <option key={c.id} value={c.id}>{c.title}</option>
+              ))}
+              {afterCap && !capabilities.data?.items.some((c) => c.id === afterCap) && <option value={afterCap}>{afterCap}</option>}
+            </select>
+          </label>
+        )}
+        {lifecycleWhy && (
+          <p className="mt-1 text-[11px] text-ember-600 dark:text-ember-400" data-testid="wire-trigger-why">
+            {lifecycleWhy}
+          </p>
+        )}
+
         {needs === "schedule" && <RecurrenceBuilder value={recurrence} onChange={setRecurrence} />}
       </div>
 
@@ -223,10 +316,16 @@ export function WireComposer({
         <span className={L}>On which records…</span>
         <select
           value={sourceKind}
-          onChange={(e) => { setSourceKind(e.target.value); setActionId(""); }}
+          onChange={(e) => {
+            const next = e.target.value;
+            setSourceKind(next);
+            setActionId("");
+            if (next === WORKSPACE_SOURCE_KIND && !RECORDLESS_TRIGGERS.includes(triggerType)) setTriggerType("event");
+          }}
           className="input"
         >
           <option value=""> - pick a kind - </option>
+          <option value={WORKSPACE_SOURCE_KIND}>No record: once, for the workspace</option>
           {kinds.data?.items.map((k) => (
             <option key={k.id} value={k.id}>{k.display_name} ({k.id})</option>
           ))}
@@ -236,9 +335,9 @@ export function WireComposer({
       {/* DO */}
       <div>
         <span className={L}>Do…</span>
-        <select value={actionId} onChange={(e) => { setActionId(e.target.value); setArgs({}); }} className="input" disabled={!sourceKind}>
+        <select value={actionId} onChange={(e) => { setActionId(e.target.value); setArgs({}); setServiceValues({}); }} className="input" disabled={!sourceKind}>
           <option value=""> - pick an action - </option>
-          {actionsForKind.data?.items.map((a) => (
+          {actionChoices?.map((a) => (
             <option key={a.id} value={a.id}>{a.label} ({a.id})</option>
           ))}
         </select>
@@ -254,7 +353,44 @@ export function WireComposer({
           <div>
             <span className={L}>With these settings</span>
             <div className="space-y-2">
-              {Object.entries(action.args_schema).map(([name, spec]) => (
+              {Object.entries(action.args_schema).map(([name, spec]) =>
+                spec.picker === "service-capability" ? (
+                  <label key={name} className="block">
+                    <span className="block text-[11px] text-muted dark:text-slate-400 mb-0.5">{spec.label}</span>
+                    <select
+                      value={args[name] ?? ""}
+                      onChange={(e) => { setArgs((a) => ({ ...a, [name]: e.target.value })); setServiceValues({}); }}
+                      className="input text-sm"
+                      data-testid="wire-service-picker"
+                    >
+                      <option value=""> - pick a service - </option>
+                      {capabilities.data?.items.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.title}
+                          {c.effect === "physical" ? " (asks a person first)" : c.effect === "spends" ? " (asks before it spends)" : ""}
+                        </option>
+                      ))}
+                      {args[name] && !capabilities.data?.items.some((c) => c.id === args[name]) && <option value={args[name]}>{args[name]}</option>}
+                    </select>
+                    {capabilities.data && capabilities.data.items.length === 0 && (
+                      <p className="mt-1 text-[11px] text-faint dark:text-slate-500">No services here yet. Add one under Connections.</p>
+                    )}
+                    {(() => {
+                      const c = capabilities.data?.items.find((x) => x.id === args[name]);
+                      return c ? <p className="mt-1 text-[11px] text-faint dark:text-slate-500">{c.summary}</p> : null;
+                    })()}
+                  </label>
+                ) : spec.type === "json" && spec.schema_from ? (
+                  <ServiceInputForm
+                    key={name}
+                    label={spec.label}
+                    fields={inputFieldsFor(spec)}
+                    chosen={!!args[spec.schema_from]}
+                    values={serviceValues}
+                    onChange={setServiceValues}
+                    onFocusField={(f, el) => { activeRef.current = el; activeField.current = `input.${f}`; }}
+                  />
+                ) : (
                 <label key={name} className="block">
                   <span className="block text-[11px] text-muted dark:text-slate-400 mb-0.5">{spec.label}</span>
                   <input
@@ -271,7 +407,8 @@ export function WireComposer({
                     className="input font-mono text-xs"
                   />
                 </label>
-              ))}
+                ),
+              )}
             </div>
           </div>
         )}
@@ -302,6 +439,7 @@ export function WireComposer({
             </div>
           </div>
         )}
+        {!recordless && (
         <div>
           <span className={L}>
             Message / template <span className="normal-case tracking-normal">(optional)</span>
@@ -316,6 +454,24 @@ export function WireComposer({
             className="input font-mono text-xs"
           />
         </div>
+        )}
+        {eventTokens.length > 0 && (
+          <div className="flex flex-wrap gap-1" data-testid="wire-event-tokens">
+            <span className="text-[10px] font-mono text-faint dark:text-slate-500 mr-1">
+              insert from the job that finished (its answer is {"{{event.output.<field>}}"}):
+            </span>
+            {eventTokens.map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => insertIntoActive(t)}
+                className="px-1.5 py-0.5 rounded bg-subtle dark:bg-slate-800 text-[10px] font-mono text-accent hover:bg-cobble-100 dark:hover:bg-cobble-800 transition"
+              >
+                {`{{${t}}}`}
+              </button>
+            ))}
+          </div>
+        )}
         {kind && kind.fields.length > 0 && (
           <div className="flex flex-wrap gap-1">
             <span className="text-[10px] font-mono text-faint dark:text-slate-500 mr-1">
@@ -398,7 +554,8 @@ export function WireComposer({
         )}
       </div>
 
-      {/* TARGET — advanced */}
+      {/* TARGET — advanced; a wire on no record has none */}
+      {!recordless && (
       <div>
         <button
           type="button"
@@ -447,6 +604,7 @@ export function WireComposer({
           </div>
         )}
       </div>
+      )}
 
       {err && <div className="text-xs text-ember-500">{err}</div>}
       <div className="flex items-center gap-2">
@@ -468,6 +626,59 @@ export function WireComposer({
         )}
       </div>
     </form>
+  );
+}
+
+/** A service's input: one box per field its schema asks for. Each takes a
+ *  literal or a {{token}}; a choice offers the service's own values. */
+function ServiceInputForm({
+  label,
+  fields,
+  chosen,
+  values,
+  onChange,
+  onFocusField,
+}: {
+  label: string;
+  fields: ServiceInputField[];
+  chosen: boolean;
+  values: Record<string, string>;
+  onChange: (v: Record<string, string>) => void;
+  onFocusField: (field: string, el: HTMLInputElement) => void;
+}) {
+  if (!chosen) return null;
+  if (fields.length === 0)
+    return <p className="text-[11px] text-faint dark:text-slate-500">This service asks for nothing more.</p>;
+  const set = (name: string, v: string) => onChange({ ...values, [name]: v });
+  return (
+    <fieldset className="space-y-2 rounded-lg border border-line dark:border-slate-700 p-3" data-testid="wire-service-input">
+      <legend className="px-1 text-[11px] text-muted dark:text-slate-400">{label}</legend>
+      {fields.map((f) => (
+        <label key={f.name} className="block">
+          <span className="block text-[11px] text-muted dark:text-slate-400 mb-0.5">
+            {f.label}
+            {f.required && <span className="text-ember-600 dark:text-ember-400"> *</span>}
+          </span>
+          {f.type === "choice" || f.type === "boolean" ? (
+            <select value={values[f.name] ?? ""} onChange={(e) => set(f.name, e.target.value)} className="input text-sm">
+              <option value="">{f.required ? " - pick one - " : "(the service's default)"}</option>
+              {(f.type === "boolean" ? ["true", "false"] : f.options ?? []).map((o) => (
+                <option key={o} value={o}>{f.type === "boolean" ? (o === "true" ? "yes" : "no") : o}</option>
+              ))}
+            </select>
+          ) : (
+            <input
+              value={values[f.name] ?? ""}
+              onChange={(e) => set(f.name, e.target.value)}
+              onFocus={(e) => onFocusField(f.name, e.currentTarget)}
+              placeholder={f.type === "number" ? "a number or {{token}}" : "a value or {{token}}"}
+              inputMode={f.type === "number" ? "decimal" : undefined}
+              className="input font-mono text-xs"
+            />
+          )}
+        </label>
+      ))}
+    </fieldset>
   );
 }
 

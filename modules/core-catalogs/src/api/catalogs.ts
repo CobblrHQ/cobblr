@@ -7,7 +7,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
-import { platform, CatalogSchemaConfig } from "@cobblr/platform-contract";
+import { platform, CatalogSchemaConfig, likeNeedle } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { catalogResolverConfigured, datasetForKind, hostedSearch, isHostedSearchable } from "../services/hosted-resolver.js";
@@ -128,7 +128,7 @@ catalogsRouter.get(
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
     const orgId = tenantContext(req).org.id;
-    const like = `%${parsed.data.q.toLowerCase()}%`;
+    const like = likeNeedle(parsed.data.q);
     const restrict = parsed.data.catalog_ids
       ?.split(",")
       .map((s) => s.trim())
@@ -368,6 +368,8 @@ catalogsRouter.patch(
     // A custom field saved on its own merges into what the catalog holds.
     if (parsed.data.metadata !== undefined)
       patch.metadata = platform().db.mergeJsonb("metadata", parsed.data.metadata);
+    // The row as it was: the catalog's history says what this edit changed (#4517).
+    const before = await db.selectFrom("core_catalogs_catalogs").selectAll().where("id", "=", id).executeTakeFirst();
     const updated = await db
       .updateTable("core_catalogs_catalogs")
       .set(patch as never)
@@ -381,6 +383,14 @@ catalogsRouter.patch(
     void platform().events.emit("core-catalogs.catalog.updated", {
       orgId: ctx.org.id,
       catalogId: id,
+    });
+    await platform().activity.log({
+      orgId: ctx.org.id,
+      userId: sessionUser(req)?.id ?? null,
+      action: "catalog_updated",
+      ref: { module: "core-catalogs", entityType: "catalog", entityId: id },
+      diff: parsed.data as Record<string, unknown>,
+      before,
     });
     res.json(updated);
   }),
@@ -806,7 +816,7 @@ catalogsRouter.get(
       query = query.where("external_id", "=", parsed.data.external_id);
     }
     if (parsed.data.q) {
-      const like = `%${parsed.data.q.toLowerCase()}%`;
+      const like = likeNeedle(parsed.data.q);
       query = query.where(
         sql<boolean>`lower(payload->>${String(titleColumn)}) like ${like}`,
       );

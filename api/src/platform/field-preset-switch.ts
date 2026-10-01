@@ -55,6 +55,7 @@ export async function turnPresetOn(orgId: string, key: string): Promise<PresetSw
       type: f.type,
       field_role: f.field_role,
       ...(f.help ? { help: f.help } : {}),
+      ...(f.choices ? { choices: f.choices, learns: f.learns ?? true } : {}),
     });
     if (result.ok) created.push(f.name);
     // A name already taken by a field this preset did not make is not an error

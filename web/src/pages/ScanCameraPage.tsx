@@ -36,7 +36,7 @@ import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, Hash, ImagePlus, Loader2, MapPin, Package, Plus, ScanLine, SkipForward, Undo2, X, Zap } from "lucide-react";
-import { useLater, LiveSurfaceProvider, Modal, usePageTitle, useOverlayOpenFlag, useLockPageScroll, useLayerStack } from "@cobblr/platform-web";
+import { useLater, LiveSurfaceProvider, Modal, usePageTitle, useOverlayOpenFlag, useLockPageScroll, useLayerStack, useEscapeToClose, usePasteImage } from "@cobblr/platform-web";
 import { classifyScanPayload, scannerIgnores, typedVerdict } from "../lib/scanPayload";
 import { doorPlan, frameFromImage, type DoorPlan } from "../lib/imageDoor";
 import { captureRoute } from "../lib/captureRoute";
@@ -1026,15 +1026,12 @@ export function ScanCameraPage() {
   // (iOS requires a gesture), so scan blips are audible by the first hit.
   useEffect(() => armScanAudio(), []);
 
+  // A surface of its own, so what opens over the camera goes above it.
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  useLayerStack(shellRef);
   // Escape closes the scanner (desktop nicety; the X is the touch path).
   // The result modal and the assign sheet own Escape while they're open.
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape" && phaseRef.current !== "result" && !assignOpen) close();
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [close, assignOpen]);
+  useEscapeToClose(phase !== "result" && !assignOpen, shellRef, close);
 
   // A decoded value → block into the result modal (dedup a stale repeat first).
   // EXCEPT Cobblr QR labels: a printed label encodes <host>/qr/<token>
@@ -2012,6 +2009,8 @@ export function ScanCameraPage() {
   // renders only where /healthz says test_doors (never production/canary).
   const { testDoors } = useDeployEnv();
   const doorInputRef = useRef<HTMLInputElement>(null);
+  // The image door takes a pasted picture too (usePasteImage).
+  usePasteImage(() => doorInputRef.current?.parentElement ?? null, { onFiles: ([f]) => f && void scanImageFile(f) });
   const scanImageFile = useCallback(
     async (file: File) => {
       if (shutterBusy) return;
@@ -2181,10 +2180,6 @@ export function ScanCameraPage() {
   useEffect(() => {
     if (!drawerVisible && !reviewItemRef.current && sheetOpenRef.current) handleSheetExpanded(false);
   }, [drawerVisible, handleSheetExpanded]);
-  // A surface of its own, so what opens over the camera goes above it.
-  const shellRef = useRef<HTMLDivElement | null>(null);
-  useLayerStack(shellRef);
-
   return createPortal(
     // The viewfinder keeps running behind every modal this page opens, so they
     // must stay CARDS on a phone rather than claiming the screen - declared

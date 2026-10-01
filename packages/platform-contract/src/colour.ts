@@ -113,11 +113,49 @@ export function filamentFieldsFromName(name: unknown): { material?: string; diam
   }
   const d = /\b(1\.75|2\.85|3(?:\.0)?)\s*mm\b/i.exec(name);
   if (d) out.diameter = `${d[1] === "3" || d[1] === "3.0" ? "2.85" : d[1]} mm`;
-  // As a WORD, the way a scan stores a colour name: the swatch draws it,
-  // and a key field keeps holding names.
-  const word = colourWordFromName(name);
-  if (word) out.color = word;
+  // As the maker's NAME for the colour, the way a scan stores it: the swatch
+  // draws its colour word, and a key field keeps holding names.
+  const phrase = colourPhraseFromName(name);
+  if (phrase) out.color = phrase;
   return out;
+}
+
+/** Words a product name puts before a colour that belong to the product
+ *  line, not the colour: "PLA Basic Jade White" is Jade White. */
+const NOT_COLOUR = new Set(["basic", "matte", "pro", "plus", "tough", "premium", "high", "speed", "hs", "hf", "filament", "kg", "mm", "g"]);
+
+/** The colour a product name gives, in the maker's own words: "Polymaker PLA
+ *  Royal Blue 1.75mm" is Royal Blue, not Blue. The last colour word, with the
+ *  words just before it that sit between it and the material or size (so a
+ *  brand at the front is never read as a shade), or that open its own
+ *  comma-separated part ("…Banana Rama, Yellow"). Null when no colour word. */
+export function colourPhraseFromName(name: unknown): string | null {
+  if (typeof name !== "string") return null;
+  const segments = name.split(",");
+  for (let si = segments.length - 1; si >= 0; si--) {
+    const seg = segments[si]!;
+    const tokens = seg.match(/[A-Za-z]+\+?|[0-9.]+/g) ?? [];
+    let at = -1;
+    for (let i = tokens.length - 1; i >= 0; i--) {
+      if (WORDS[tokens[i]!.toLowerCase()]) {
+        at = i;
+        break;
+      }
+    }
+    if (at < 0) continue;
+    const isMarker = (t: string) => /^[0-9.]+$/.test(t) || MATERIALS.some(([re]) => re.test(t)) || NOT_COLOUR.has(t.toLowerCase());
+    let from = at;
+    while (from > 0 && !isMarker(tokens[from - 1]!)) from--;
+    // Nothing marks where the colour starts and the part does not open with
+    // it: keep the colour word alone rather than swallow a brand.
+    const bounded = from === 0 ? tokens.slice(0, at).length === 0 || si > 0 : true;
+    if (!bounded) from = at;
+    return tokens
+      .slice(from, at + 1)
+      .map((t) => t[0]!.toUpperCase() + t.slice(1))
+      .join(" ");
+  }
+  return null;
 }
 
 // ── More than one colour (gradient and multi-colour filament, variegated yarn)

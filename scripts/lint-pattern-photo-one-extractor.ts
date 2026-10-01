@@ -16,7 +16,9 @@
 
 import { readFileSync } from "node:fs";
 
-/** The only file allowed to call the raw extractor: it defines it and wraps it. */
+/** The pattern policy: the page limit and the one wrapper. The raw extractor
+ *  itself lives with the file store (modules/core-files/src/api/pdf-images.ts)
+ *  and is reached through @cobblr/platform-contract/document-images. */
 const HOME = "modules/projects/src/api/pdf-images.ts";
 /** Everyone who reads images out of a pattern PDF. Add a caller here AND make it
  *  use the wrapper — an unlisted caller is a caller nobody is checking. */

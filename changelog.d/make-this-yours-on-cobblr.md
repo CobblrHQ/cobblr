@@ -3,6 +3,7 @@ type: feature
 scope: try
 date: 2026-09-26
 docs_target: docs/USER_GUIDE.md#Trials, and the sandbox
+docs_published: 2026-10-01
 ---
 A sandbox can become a real Cobblr account in one go. **Make this yours on Cobblr** sits beside Keep it on the sandbox's strip and first on the page at the end of the hour. Press it, make an account on Cobblr (or sign in), and what you added, photos included, moves into your new workspace. The sandbox then ends, so there is one copy and it is yours.
 

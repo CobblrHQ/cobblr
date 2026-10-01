@@ -8,6 +8,7 @@
 // /configuration/locations, which meant clicking any row from the
 // navbar entry bounced you into the settings shell.
 
+import { VERTICAL_DRAG } from "../lib/vertical-drag";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { readBound } from "../lib/floorplanGeometry";
@@ -507,7 +508,7 @@ export function LocationsPage() {
 
       <NewBinSheet open={binSheetOpen} onClose={() => setBinSheetOpen(false)} />
 
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+      <DndContext {...VERTICAL_DRAG} sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
         {items.length > 0 && (
           /* Search and "+ New location" share a row: the two things you came
              here to do, side by side, instead of a button row above a search

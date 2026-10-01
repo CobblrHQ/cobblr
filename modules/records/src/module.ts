@@ -8,7 +8,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "records",
-  version: "0.1.2",
+  version: "0.1.4",
   displayName: "Records",
   description:
     "A blank collection that you give its own fields: a bookshelf, a movie list, a recipe box.",
@@ -43,6 +43,10 @@ export default defineModule({
           // Where the record lives (core-locations ref) — declared so it can
           // be exposed below, mirroring assets:asset.
           { name: "location_id", type: "text" },
+          // Where it is, by name: its place, or what it is inside ("Backpack,
+          // in Desk drawer"). Derived on read, so a search or the assistant can
+          // say where it is.
+          { name: "location_name", type: "text", readOnly: true },
           // Free-form custom-field blob (bundle / user fields) — the whole
           // point of this module. Declared so it can be exposed below.
           { name: "metadata", type: "object" },
@@ -50,7 +54,7 @@ export default defineModule({
         // Public face. `metadata` (the custom-field blob) is exposed — mirrors
         // assets:asset / inventory:part — so bundle/user custom fields can
         // drive saved views, search, and the calendar.
-        exposableFields: ["name", "image_path", "metadata", "location_id"],
+        exposableFields: ["name", "image_path", "metadata", "location_id", "location_name"],
         detailRoute: "/records/{id}",
       },
     ],

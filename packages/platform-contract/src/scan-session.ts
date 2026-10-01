@@ -20,8 +20,15 @@ import type { AiFallback, ProviderErrorReason } from "./scan-fallback.js";
  *  existed, which are judged by their lines. */
 export type SessionReadState = "in_flight" | "read" | "failed" | "awaiting";
 
+/** What was given to read. A sentence about a failed read names it: a PDF is
+ *  never told to "check the picture". `scanned-pdf` is a PDF with no text,
+ *  read from the photo of the page it carries. Absent on failures recorded
+ *  before it existed, which were all read as pictures or text. */
+export type ReceiptReadSource = "photo" | "pdf" | "scanned-pdf" | "csv" | "text";
+
 export interface ReceiptReadAttempt {
   at: string;
+  source?: ReceiptReadSource;
   outcome: "read" | "failed";
   /** The parser's failure class. */
   code?: "ai_unavailable" | "no_line_items" | "unreadable";
@@ -34,6 +41,7 @@ export interface ReceiptReadAttempt {
 /** The batch's `read_failure` column: the last failure, and every attempt. */
 export interface ReceiptReadFailure {
   code: "ai_unavailable" | "no_line_items" | "unreadable";
+  source?: ReceiptReadSource;
   ai?: AiFallback;
   ai_reason?: ProviderErrorReason;
   reason: string;
@@ -70,9 +78,9 @@ export type SessionVerdict =
 
 /** The words for a failed read: what happened and what to do about it. The
  *  router's reason decides; the parser's own reasons cover the rest. */
-export function receiptReadWords(f: Pick<ReceiptReadFailure, "code" | "ai" | "ai_reason" | "reason">): { sentence: string; retry: boolean; connect: boolean } {
-  if (f.code === "no_line_items") return { sentence: "Couldn't find any line items on it. Check the picture shows the whole receipt, then read it again.", retry: true, connect: false };
-  if (f.code === "unreadable") return { sentence: "Couldn't read the file. Try a clearer picture or a PDF.", retry: true, connect: false };
+export function receiptReadWords(f: Pick<ReceiptReadFailure, "code" | "ai" | "ai_reason" | "reason" | "source">): { sentence: string; retry: boolean; connect: boolean } {
+  if (f.code === "no_line_items") return { sentence: noLineItemsWords(f.source), retry: true, connect: false };
+  if (f.code === "unreadable") return { sentence: unreadableWords(f.source), retry: f.source !== "scanned-pdf", connect: false };
   switch (f.ai) {
     case "no-provider":
       return { sentence: "Couldn't be read: no AI provider is connected. Connect one (Configuration → AI, or your own under Account), then read it again.", retry: false, connect: true };
@@ -97,6 +105,35 @@ export function receiptReadWords(f: Pick<ReceiptReadFailure, "code" | "ai" | "ai
       return { sentence: "Couldn't be read: the AI did not answer in time. Read it again.", retry: true, connect: false };
     default:
       return { sentence: `Couldn't be read: ${f.reason || "the read failed"}. Read it again.`, retry: true, connect: false };
+  }
+}
+
+/** Nothing that reads as a purchase was found: said about what was given. */
+function noLineItemsWords(source: ReceiptReadSource | undefined): string {
+  switch (source) {
+    case "scanned-pdf":
+      return "Read the scanned page in this PDF and found no line items on it. Read it again, or keep it as a file.";
+    case "pdf":
+      return "Read the text of this PDF and found no line items in it. Read it again, or keep it as a file.";
+    case "csv":
+    case "text":
+      return "Read this file and found no line items in it.";
+    default:
+      return "Couldn't find any line items on it. Check the picture shows the whole receipt, then read it again.";
+  }
+}
+
+/** The file itself could not be read: said about what was given. */
+function unreadableWords(source: ReceiptReadSource | undefined): string {
+  switch (source) {
+    case "scanned-pdf":
+      return "This PDF has no text and no scanned page in it, so there is nothing to read. Keep it as a file.";
+    case "pdf":
+      return "Couldn't open this PDF. It may be damaged or locked.";
+    case "photo":
+      return "Couldn't read this picture. Try a clearer one.";
+    default:
+      return "Couldn't read the file. Try a clearer picture or a PDF.";
   }
 }
 

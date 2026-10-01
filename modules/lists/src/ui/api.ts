@@ -2,7 +2,7 @@
 // Routes are mounted at /api/v1/orgs/:slug/modules/lists/...
 
 import { dayHere } from "@cobblr/platform-contract/day";
-import { describeUnreadableBody } from "@cobblr/platform-web";
+import { describeUnreadableBody, noteWorkspaceWrite } from "@cobblr/platform-web";
 
 export interface ListSummary {
   id: string;
@@ -96,12 +96,17 @@ export class ListsApi {
     if (body !== undefined) headers["Content-Type"] = "application/json";
     const token = this.getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
-    const res = await fetch(`/api/v1/orgs/${this.slug}/modules/lists${path}`, {
+    const url = `/api/v1/orgs/${this.slug}/modules/lists${path}`;
+    const res = await fetch(url, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    if (res.status === 204) return undefined as T;
+    const wrote = method.toUpperCase() !== "GET";
+    if (res.status === 204) {
+      if (wrote) noteWorkspaceWrite(url);
+      return undefined as T;
+    }
     let parsed: unknown;
     // TEXT first: res.json() CONSUMES the body, so once it throws the one
     // thing that says what went wrong is gone. See describeUnreadableBody.
@@ -115,6 +120,7 @@ export class ListsApi {
       const e = (parsed as { error?: { code?: string; message?: string } }).error;
       throw new ListsApiError(res.status, e?.code ?? "error", e?.message ?? `Request failed (${res.status})`);
     }
+    if (wrote) noteWorkspaceWrite(url);
     return parsed as T;
   }
 
@@ -141,6 +147,14 @@ export class ListsApi {
   }
   claimItem(id: string, claimed: boolean) {
     return this.req<ListItem>("PATCH", `/items/${id}`, { claimed });
+  }
+  /** A list's name, corrected where it is read. */
+  renameList(id: string, title: string) {
+    return this.req<ListSummary>("PATCH", `/lists/${id}`, { title });
+  }
+  /** A line's words, how many and note, corrected where they are read. */
+  updateItem(id: string, body: { title?: string; qty?: string; note?: string }) {
+    return this.req<ListItem>("PATCH", `/items/${id}`, body);
   }
   /** Save custom fields on a list; merged into what it holds. */
   setListFields(id: string, metadata: Record<string, unknown>) {

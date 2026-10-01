@@ -9,9 +9,11 @@ import { Router } from "express";
 import { tagsRouter } from "./tags.js";
 import { registerTagResolvers } from "./resolvers.js";
 import { registerTagActionHandlers } from "./action-handlers.js";
+import { registerTagWriter } from "./writer.js";
 
 registerTagResolvers();
 registerTagActionHandlers();
+registerTagWriter();
 
 const router = Router({ mergeParams: true });
 

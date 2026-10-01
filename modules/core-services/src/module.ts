@@ -15,7 +15,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-services",
-  version: "0.1.1",
+  version: "0.2.0",
   displayName: "Services",
   description:
     "The jobs of the outside services your workspace calls (design a part, slice a model): each call's input, status, answer and files, in one place every app can use.",

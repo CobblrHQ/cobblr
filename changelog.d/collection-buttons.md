@@ -3,6 +3,7 @@ type: feature
 scope: platform
 date: 2026-09-28
 docs_target: docs/USER_GUIDE.md#4.3 Wires (connecting events to actions)
+docs_published: 2026-10-01
 ---
 **A collection can put its own buttons on its records.** A button made on the Wires page, or by a bundle, can have its own name, fixed settings, and one question it asks before it runs, such as a tasting note when you open a bottle. Use one now keeps that note, dated, in the record's history, and an app's total can multiply by a count, so a value counts every unit.
 

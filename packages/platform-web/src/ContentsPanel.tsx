@@ -13,12 +13,15 @@
 // must be `containable`), so the panel appears on every physical record but only
 // accepts things that can actually go inside one.
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Package, Plus, ScanLine, X } from "lucide-react";
+import { LogOut, Package, Pencil, Plus, ScanLine, X } from "lucide-react";
 import { useToast } from "./ToastContext";
+import { useViewerRole } from "./context";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import type { PlatformResolvedEntity } from "./types";
+import { formatStoredMoney } from "@cobblr/platform-contract/money";
 
 type GetToken = () => string | null;
 
@@ -48,7 +51,7 @@ function createPathFor(k: KindRow): string | null {
 async function papi<T>(
   slug: string,
   getToken: GetToken,
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "PUT",
   path: string,
   body?: unknown,
 ): Promise<T> {
@@ -75,6 +78,11 @@ async function papi<T>(
 // tolerating the `{ trait, uncertain }` inference form — mirrors the server's
 // canBeContained gate. NEVER a hardcoded module list: the registry is what keeps
 // this panel working for every current and future module.
+function isPlaceKind(traits: Record<string, unknown> | null | undefined): boolean {
+  const v = traits?.containment;
+  return (typeof v === "string" ? v : (v as { trait?: unknown } | null | undefined)?.trait) === "container";
+}
+
 function isContainable(traits: Record<string, unknown> | null | undefined): boolean {
   const v = traits?.containment;
   if (v == null) return false;
@@ -99,6 +107,20 @@ export function assortedSummary(
   }
   if (n === 0) return null;
   return `· roughly ${total} in ${n === 1 ? "an assortment" : `${n} assortments`}`;
+}
+
+/** A thing built from parts, as /built answers it. */
+interface BuiltResp {
+  other: number | null;
+  parts: Array<{ kind: string; id: string; name: string; qty: number | null; value: number | null; value_total: number }>;
+  built: number;
+  total: number;
+  withheld: boolean;
+}
+
+/** A value in the workspace currency's main unit, as every surface shows money. */
+function money(n: number): string {
+  return formatStoredMoney(n, "amount") ?? "";
 }
 
 function contentsQuery(slug: string, getToken: GetToken, container: { kind: string; id: string }) {
@@ -127,8 +149,11 @@ export function ContentsPanel({
   slug,
   getToken,
   container,
-  title = "Contents",
+  title,
   scanIntoHref,
+  builtFrom = false,
+  takeOutPicker,
+  wordKind,
 }: {
   slug: string;
   getToken: GetToken;
@@ -137,19 +162,76 @@ export function ContentsPanel({
   /** When set, a "Scan in" link arms this container in the camera so scanned
    *  items file straight inside it (the caller builds the route). */
   scanIntoHref?: string;
+  /** A thing built from parts (a computer, a machine): parts are installed,
+   *  some of a counted part at a time, each with its value, and the total adds
+   *  them to the thing's own value (other value, not itemized). Take out sends
+   *  a part back where it came from, with undo. */
+  builtFrom?: boolean;
+  /** A place picker for "Take out to…", from the page (the panel cannot know
+   *  the places itself); it calls onPick with where the part goes. */
+  takeOutPicker?: (onPick: (to: { kind: string; id: string }) => void) => ReactNode;
+  /** The kind whose word names this panel ("Parts" for a Computers record);
+   *  a collection's kind keeps its own. Defaults to the container's kind. */
+  wordKind?: string;
 }) {
   const toast = useToast();
   const qc = useQueryClient();
   const q = contentsQuery(slug, getToken, container);
-  const key = q.queryKey;
+  // The kind's own word for what is inside ("Parts", "In the bag"), when the
+  // workspace or a bundle gave one; owners and admins rename it from here.
+  const kindForWord = wordKind ?? container.kind;
+  const wordQ = useQuery({
+    queryKey: ["contents-word", slug, kindForWord],
+    queryFn: () =>
+      papi<{ word: string | null; custom: string | null; default_word: string | null }>(
+        slug,
+        getToken,
+        "GET",
+        `/modules/core-placement/word?kind=${encodeURIComponent(kindForWord)}`,
+      ),
+    enabled: !!slug && !!kindForWord,
+    staleTime: 60_000,
+  });
+  const heading = wordQ.data?.word ?? title ?? (builtFrom ? "Built from" : "Contents");
+  const role = useViewerRole();
+  const canRename = roleSatisfies(role, ["admin"]);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const rename = useMutation({
+    mutationFn: (word: string | null) =>
+      papi<{ word: string | null }>(slug, getToken, "PUT", `/modules/core-placement/word`, { kind: kindForWord, word }),
+    onSuccess: (r) => {
+      setRenaming(null);
+      void qc.invalidateQueries({ queryKey: ["contents-word", slug, kindForWord] });
+      toast.success(r?.word ? `Every one of these now says ${r.word}` : "Back to the default word");
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
+  });
 
   const contents = useQuery(q);
   const items = contents.data?.items ?? [];
 
+  const built = useQuery({
+    queryKey: ["placement-built", slug, container.kind, container.id],
+    queryFn: () =>
+      papi<BuiltResp>(
+        slug,
+        getToken,
+        "GET",
+        `/modules/core-placement/built?container_kind=${encodeURIComponent(container.kind)}&container_id=${encodeURIComponent(container.id)}`,
+      ),
+    enabled: builtFrom && !!slug && !!container.id,
+    staleTime: 30_000,
+  });
+  const partOf = useMemo(() => new Map((built.data?.parts ?? []).map((p) => [`${p.kind}:${p.id}`, p])), [built.data]);
+  // A move changes the counts and values here, and the lists elsewhere.
+  const refresh = () => void qc.invalidateQueries();
+
   const [adding, setAdding] = useState(false);
   const [addKind, setAddKind] = useState("");
   const [addId, setAddId] = useState("");
+  const [addQty, setAddQty] = useState(1);
   const [newName, setNewName] = useState("");
+  const [takingOut, setTakingOut] = useState<string | null>(null);
 
   // Containable kinds, from the entity-kind registry's declared traits.
   const kindsQ = useQuery({
@@ -162,8 +244,10 @@ export function ContentsPanel({
     () =>
       (kindsQ.data?.items ?? [])
         .filter((k) => isContainable(k.traits))
+        // A place (a room, a shelf) is not a part anything is built from.
+        .filter((k) => !builtFrom || !isPlaceKind(k.traits))
         .map((k) => ({ kind: k.id, label: k.display_name, createPath: createPathFor(k) })),
-    [kindsQ.data],
+    [kindsQ.data, builtFrom],
   );
   const selectedKind = containeeKinds.find((k) => k.kind === addKind);
 
@@ -181,17 +265,64 @@ export function ContentsPanel({
     staleTime: 30_000,
   });
 
+  // How many of the picked thing there are: a counted part offers "how many".
+  const picked = (candidates.data?.items ?? []).find((c) => c.id === addId);
+  const pickedQty = Number(picked?.fields?.qty ?? NaN);
+  const counted = builtFrom && Number.isFinite(pickedQty) && pickedQty > 1;
+
   const place = useMutation({
     mutationFn: () =>
-      papi<void>(slug, getToken, "POST", `/modules/core-placement/place`, {
+      papi<{ placed?: { kind: string; id: string } }>(slug, getToken, "POST", `/modules/core-placement/place`, {
         containee: { kind: addKind, id: addId },
         container,
+        ...(counted && addQty < pickedQty ? { qty: addQty } : {}),
       }),
-    onSuccess: () => {
-      toast.success("Added");
+    onSuccess: (r) => {
       setAdding(false);
       setAddId("");
-      void qc.invalidateQueries({ queryKey: key });
+      setAddQty(1);
+      refresh();
+      if (!builtFrom) {
+        toast.success(`Added to ${heading}`);
+        return;
+      }
+      const placed = r?.placed ?? { kind: addKind, id: addId };
+      toast.action(counted ? `Added ${Math.min(addQty, pickedQty)} × ${picked?.title ?? "it"} to ${heading}` : `Added ${picked?.title ?? "it"} to ${heading}`, {
+        actionLabel: "Undo",
+        onAction: async () => {
+          await papi(slug, getToken, "POST", `/modules/core-placement/return-home`, { containee: placed });
+          refresh();
+        },
+        duration: 8000,
+      });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
+  });
+
+  // Take a part out: back where it came from (it joins the spares kept
+  // there), or to a place picked; Undo puts that many back in.
+  const takeOut = useMutation({
+    mutationFn: async ({ it, to }: { it: PlatformResolvedEntity; to?: { kind: string; id: string } }) => {
+      const containee = { kind: it.kind, id: it.id };
+      if (to) {
+        const r = await papi<{ placed?: { kind: string; id: string } }>(slug, getToken, "POST", `/modules/core-placement/place`, { containee, container: to });
+        return { it, placed: r?.placed ?? containee, where: null as string | null };
+      }
+      const r = await papi<{ to: { title?: string } | null; placed?: { kind: string; id: string } }>(slug, getToken, "POST", `/modules/core-placement/return-home`, { containee });
+      return { it, placed: r?.placed ?? containee, where: r?.to?.title ?? null };
+    },
+    onSuccess: ({ it, placed, where }) => {
+      setTakingOut(null);
+      refresh();
+      const n = partOf.get(`${it.kind}:${it.id}`)?.qty ?? null;
+      toast.action(where ? `Took ${it.title} out of ${heading}: it is back in ${where}` : `Took ${it.title} out of ${heading}`, {
+        actionLabel: "Undo",
+        onAction: async () => {
+          await papi(slug, getToken, "POST", `/modules/core-placement/place`, { containee: placed, container, ...(n ? { qty: n } : {}) });
+          refresh();
+        },
+        duration: 8000,
+      });
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
   });
@@ -211,10 +342,10 @@ export function ContentsPanel({
       });
     },
     onSuccess: () => {
-      toast.success("Created and added");
+      toast.success(`Created and added to ${heading}`);
       setNewName("");
       setAdding(false);
-      void qc.invalidateQueries({ queryKey: key });
+      refresh();
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
   });
@@ -226,7 +357,7 @@ export function ContentsPanel({
       }),
     onSuccess: () => {
       toast.success("Removed");
-      void qc.invalidateQueries({ queryKey: key });
+      refresh();
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
   });
@@ -236,7 +367,38 @@ export function ContentsPanel({
       <div className="flex items-center justify-between px-3 py-2 border-b border-line dark:border-slate-700">
         <div className="flex items-center gap-2 text-sm font-medium text-content dark:text-slate-200">
           <Package size={15} className="text-muted" />
-          {title}
+          {renaming !== null ? (
+            <input
+              autoFocus
+              value={renaming}
+              maxLength={40}
+              aria-label="What to call what is inside"
+              placeholder={wordQ.data?.default_word ?? "Contents"}
+              onChange={(e) => setRenaming(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") rename.mutate(renaming.trim() || null);
+                if (e.key === "Escape") {
+                  e.stopPropagation();
+                  setRenaming(null);
+                }
+              }}
+              onBlur={() => setRenaming(null)}
+              className="w-40 px-1.5 py-0.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+            />
+          ) : (
+            heading
+          )}
+          {canRename && renaming === null && (
+            <button
+              type="button"
+              onClick={() => setRenaming(wordQ.data?.custom ?? heading)}
+              className="p-0.5 text-faint hover:text-accent"
+              aria-label={`Rename ${heading}`}
+              title="Rename this for every one of these (empty puts the default back)"
+            >
+              <Pencil size={12} />
+            </button>
+          )}
           {items.length > 0 && <span className="text-xs text-faint">({items.length})</span>}
           {/* An estimate in here means the count on the left is not the story:
               "(3)" on a bin holding an assortment of fifty is technically true
@@ -260,7 +422,7 @@ export function ContentsPanel({
             onClick={() => setAdding((v) => !v)}
             className="flex items-center gap-1 text-xs text-accent hover:underline"
           >
-            <Plus size={13} /> Add
+            <Plus size={13} /> {builtFrom ? "Install" : "Add"}
           </button>
         </div>
       </div>
@@ -284,25 +446,45 @@ export function ContentsPanel({
           </select>
           <select
             value={addId}
-            onChange={(e) => setAddId(e.target.value)}
+            onChange={(e) => {
+              setAddId(e.target.value);
+              setAddQty(1);
+            }}
             className="px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900 min-w-[10rem]"
           >
             <option value="">{candidates.isLoading ? "Loading…" : "Pick an item…"}</option>
             {(candidates.data?.items ?? [])
               .filter((c) => !(c.kind === container.kind && c.id === container.id))
+              // What is already inside is not offered again (a part installed
+              // here is a record of its own, and read as a second copy).
+              .filter((c) => !items.some((it) => it.id === c.id))
               .map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.title}
                 </option>
               ))}
           </select>
+          {counted && (
+            <label className="flex items-center gap-1 text-xs text-muted">
+              <input
+                type="number"
+                min={1}
+                max={pickedQty}
+                value={addQty}
+                onChange={(e) => setAddQty(Math.max(1, Math.min(pickedQty, Math.floor(Number(e.target.value) || 1))))}
+                aria-label="How many to install"
+                className="w-16 px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+              />
+              of {pickedQty}
+            </label>
+          )}
           <button
             type="button"
             disabled={!addId || place.isPending}
             onClick={() => place.mutate()}
             className="px-2.5 py-1 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
           >
-            Add
+            {builtFrom ? "Install" : "Add"}
           </button>
           {selectedKind?.createPath && (
             <>
@@ -322,7 +504,7 @@ export function ContentsPanel({
                 onClick={() => createAndPlace.mutate()}
                 className="px-2.5 py-1 text-sm rounded border border-cobble-600 text-cobble-700 dark:text-cobble-300 hover:bg-cobble-50 dark:hover:bg-slate-800 disabled:opacity-50"
               >
-                Create &amp; add
+                {builtFrom ? "Create & install" : "Create & add"}
               </button>
             </>
           )}
@@ -333,28 +515,75 @@ export function ContentsPanel({
         <div className="px-3 py-4 text-sm text-faint">Nothing inside yet.</div>
       ) : (
         <ul className="divide-y divide-line dark:divide-slate-800">
-          {items.map((it) => (
-            <li key={`${it.kind}:${it.id}`} className="flex items-center justify-between gap-2 px-3 py-2">
-              {it.detailUrl ? (
-                <Link to={it.detailUrl} className="text-sm text-content dark:text-slate-200 hover:text-accent truncate">
-                  {it.title}
-                  {it.subtitle && <span className="text-xs text-faint"> · {it.subtitle}</span>}
-                </Link>
-              ) : (
-                <span className="text-sm text-content dark:text-slate-200 truncate">{it.title}</span>
-              )}
-              <button
-                type="button"
-                onClick={() => remove.mutate(it)}
-                className="shrink-0 p-1 text-faint hover:text-red-500"
-                aria-label={`Remove ${it.title}`}
-                title="Remove from this container"
-              >
-                <X size={14} />
-              </button>
-            </li>
-          ))}
+          {items.map((it) => {
+            const part = partOf.get(`${it.kind}:${it.id}`);
+            const key = `${it.kind}:${it.id}`;
+            return (
+              <li key={key} className="px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  {it.detailUrl ? (
+                    <Link to={it.detailUrl} className="min-w-0 text-sm text-content dark:text-slate-200 hover:text-accent truncate">
+                      {builtFrom && part?.qty != null && part.qty !== 1 && <span className="text-faint">{part.qty} × </span>}
+                      {it.title}
+                      {it.subtitle && <span className="text-xs text-faint"> · {it.subtitle}</span>}
+                    </Link>
+                  ) : (
+                    <span className="min-w-0 text-sm text-content dark:text-slate-200 truncate">{it.title}</span>
+                  )}
+                  <div className="flex shrink-0 items-center gap-1">
+                    {builtFrom && part && part.value_total > 0 && <span className="text-xs tabular-nums text-muted">{money(part.value_total)}</span>}
+                    {builtFrom ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => takeOut.mutate({ it })}
+                          disabled={takeOut.isPending}
+                          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted hover:text-accent"
+                          aria-label={`Take ${it.title} out`}
+                          title="Take it out: back where it came from"
+                        >
+                          <LogOut size={13} /> Take out
+                        </button>
+                        {takeOutPicker && (
+                          <button
+                            type="button"
+                            onClick={() => setTakingOut(takingOut === key ? null : key)}
+                            className="rounded px-1.5 py-0.5 text-xs text-muted hover:text-accent"
+                            title="Take it out to a place you pick"
+                          >
+                            to…
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => remove.mutate(it)}
+                        className="p-1 text-faint hover:text-red-500"
+                        aria-label={`Remove ${it.title}`}
+                        title="Remove from this container"
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {takingOut === key && takeOutPicker && (
+                  <div className="mt-2">{takeOutPicker((to) => takeOut.mutate({ it, to }))}</div>
+                )}
+              </li>
+            );
+          })}
         </ul>
+      )}
+      {/* Until something is installed it reads as it always did: no sum. */}
+      {builtFrom && built.data && built.data.parts.length > 0 && (
+        <div data-testid="built-value" className="flex flex-wrap items-center gap-x-3 gap-y-0.5 border-t border-line dark:border-slate-700 px-3 py-2 text-xs text-muted">
+          {built.data.other != null && <span>Other value (not itemized) {money(built.data.other)}</span>}
+          {built.data.parts.length > 0 && <span>Parts {money(built.data.built)}</span>}
+          <span className="font-medium text-content dark:text-slate-200">Total {money(built.data.total)}</span>
+          {built.data.withheld && <span className="text-faint">Some part values are not shown to you, so they are left out.</span>}
+        </div>
       )}
     </div>
   );

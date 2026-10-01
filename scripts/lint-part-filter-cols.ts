@@ -21,7 +21,13 @@ const DB = "modules/inventory/src/db.ts";
 
 // `metadata` is the CONTAINER for the other dialect, so it is the one column
 // that legitimately must not be a native filter key.
-const EXCLUDED = new Map([["metadata", "it is the container the D8 dialect reads through"]]);
+const EXCLUDED = new Map([
+  ["metadata", "it is the container the D8 dialect reads through"],
+  // Derived from the record's own text (migration 0013); a value filter reads
+  // them through measuredValueSql, never by equality.
+  ["measures", "derived readings, compared by value through measuredValueSql"],
+  ["measures_for", "bookkeeping: the key the readings were taken at"],
+]);
 
 const src = readFileSync(DB, "utf8");
 

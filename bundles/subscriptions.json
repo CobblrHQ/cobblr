@@ -2,11 +2,23 @@
   "manifest": {
     "id": "cobblr.flagship.subscriptions",
     "catalog": "extended",
-    "version": "0.2.4",
+    "version": "0.2.6",
     "name": "Subscriptions",
     "description": "Every recurring charge as its own table: cost/cycle, renewal date, payment method, grouped by category.",
     "author": "Cobblr",
-    "released_at": "2026-06-08",
+    "released_at": "2026-10-02",
+    "releases": [
+      {
+        "version": "0.2.6",
+        "released_at": "2026-10-02",
+        "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before."
+      },
+      {
+        "version": "0.2.5",
+        "released_at": "2026-10-02",
+        "notes": "Cost / cycle is a money field: it shows as $12.99 and takes 12.99 or $12.99."
+      }
+    ],
     "changelog": "Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: Dropped the computed “Plan” summary line (clutter on the form). (Now its OWN table (an inventory instance), not generic Inventory with extra columns) its own nav entry, a “New subscription” button, only the fields a bills tracker needs (stock/parts cruft hidden). Plain-language hints + a pinned “Renews next” view.",
     "requires": [
       {
@@ -28,7 +40,7 @@
             "entity_kind": "inventory:part",
             "name": "cost_per_cycle",
             "display_label": "Cost / cycle",
-            "type": "number",
+            "type": "money",
             "position": 1,
             "help": "What you're charged each billing cycle."
           },
@@ -38,6 +50,7 @@
             "display_label": "Billing cycle",
             "type": "text",
             "position": 2,
+            "learns": false,
             "choices": [
               "Weekly",
               "Monthly",
@@ -59,6 +72,7 @@
             "display_label": "Category",
             "type": "text",
             "position": 4,
+            "learns": true,
             "choices": [
               "Streaming",
               "Software",

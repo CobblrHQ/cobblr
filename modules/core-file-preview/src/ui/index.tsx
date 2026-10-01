@@ -15,13 +15,15 @@
 // Every renderer is a LAZY loader, so its libs download only when a file
 // of that type is actually previewed.
 
-import { registerFilePreviewRenderer, unregisterFilePreviewRenderer } from "@cobblr/platform-web";
+import { registerFilePreviewRenderer, registerFileThumbRenderer, unregisterFilePreviewRenderer } from "@cobblr/platform-web";
 
 // Universal — on for everyone.
 registerFilePreviewRenderer(["svg"], () => import("./renderers/SvgRenderer"));
 // A PDF is the document everyone attaches (a pattern, a manual, a receipt):
 // read in the app, every page, rather than only downloaded.
 registerFilePreviewRenderer(["pdf"], () => import("./renderers/PdfRenderer"));
+// And its first page as the thumbnail every document tile shows (<DocThumb>).
+registerFileThumbRenderer(["pdf"], () => import("./renderers/pdf-thumb"));
 
 // Fabrication formats — turned on by the host when a fabrication domain is
 // enabled. The module names the FORMATS, never the domains.

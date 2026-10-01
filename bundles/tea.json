@@ -1,7 +1,14 @@
 {
   "manifest": {
     "id": "cobblr.flagship.tea",
-    "version": "0.2.4",
+    "version": "0.2.5",
+    "releases": [
+      {
+        "version": "0.2.5",
+        "released_at": "2026-10-02",
+        "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before."
+      }
+    ],
     "released_at": "2026-09-12",
     "name": "Tea",
     "author": "Cobblr",
@@ -22,6 +29,7 @@
       {
         "source_kind": "inventory:part",
         "action_id": "lists:add-item",
+        "says": "A tea you will run out of soon goes on your Shopping list.",
         "trigger_type": "event",
         "trigger_event": "inventory.stock.predicted-low",
         "args": {
@@ -31,6 +39,7 @@
       {
         "source_kind": "inventory:part",
         "action_id": "lists:add-item",
+        "says": "A tea you usually buy again by now goes on your Shopping list.",
         "trigger_type": "event",
         "trigger_event": "core-cadence.reorder.due",
         "args": {
@@ -55,6 +64,7 @@
           {
             "source_kind": "tea:item",
             "action_id": "lists:add-item",
+            "says": "A tea running low goes on your Shopping list.",
             "trigger_type": "event",
             "trigger_event": "inventory.stock.low",
             "args": {
@@ -64,6 +74,7 @@
           {
             "source_kind": "tea:item",
             "action_id": "inventory:adjust-stock",
+            "says": "Checking a tea off your Shopping list puts it back in the cupboard.",
             "trigger_type": "event",
             "trigger_event": "lists.item.checked",
             "args": {
@@ -75,6 +86,7 @@
           {
             "source_kind": "tea:item",
             "action_id": "core-cadence:record-event",
+            "says": "Each tea you check off shows how often you buy it.",
             "trigger_type": "event",
             "trigger_event": "lists.item.checked",
             "args": {
@@ -118,6 +130,7 @@
             "display_label": "Type",
             "type": "text",
             "position": 1,
+            "learns": true,
             "choices": [
               "Black",
               "Green",
@@ -154,6 +167,7 @@
             "display_label": "Caffeine",
             "type": "text",
             "position": 4,
+            "learns": false,
             "choices": [
               "Caffeinated",
               "Decaf",

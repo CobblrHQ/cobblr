@@ -12,9 +12,10 @@ import { useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Circle, CircleDashed, FileText, Loader2, RotateCcw, Sparkles, Upload, XCircle } from "lucide-react";
-import { CustomFieldsPanel, FilePreview, Modal, SearchInput, useConfirm, useFilePreviewRegistry, usePageTitle, useToast } from "@cobblr/platform-web";
+import { CustomFieldsPanel, FilePreview, Modal, SearchInput, useConfirm, useFilePreviewRegistry, usePageTitle, usePasteImage, useToast } from "@cobblr/platform-web";
 import { api, ApiError, MAKE_STEPS, type MakeDetail, type MakeFileRole, type MakeStepName, type MakeStepRecord, type MakeSummary } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { useEnabledModules } from "../lib/useEnabledModules";
 import { openAuthedFile } from "../lib/authed-file";
 import { ServiceJobCard } from "../components/ServiceJobCard";
 import { PrintConfirmCard, PrintThisDialog } from "../features/digifab/printThis";
@@ -52,13 +53,14 @@ const nameFromFile = (filename: string) => filename.replace(/\.[^.]+$/, "").repl
 export function MakesPage() {
   usePageTitle("Makes");
   const { activeSlug } = useActiveOrg();
+  const on = useEnabledModules(activeSlug);
   const [search, setSearch] = useState("");
   const [starting, setStarting] = useState(false);
   const q = search.trim();
   const list = useQuery({
     queryKey: makeKeys.list(activeSlug, q),
     queryFn: () => api.listMakes(activeSlug, q || undefined),
-    enabled: !!activeSlug,
+    enabled: !!activeSlug && !!on?.has("digifab"),
   });
   const items = list.data?.items ?? [];
 
@@ -400,6 +402,8 @@ export function MakePage() {
 
 function FileDoor({ label, accept, busy, onFile }: { label: string; accept: string; busy: boolean; onFile: (f: File) => void }) {
   const input = useRef<HTMLInputElement>(null);
+  // A door that takes a picture takes a pasted one too (usePasteImage).
+  usePasteImage(() => input.current?.parentElement ?? null, { enabled: !busy, onFiles: ([f]) => f && onFile(f), accept });
   return (
     <>
       <button type="button" disabled={busy} onClick={() => input.current?.click()} className="inline-flex items-center gap-2 rounded border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 px-3 py-1.5 text-sm transition disabled:opacity-50">

@@ -169,6 +169,9 @@ export const SATELLITE_TABLES: SatelliteRef[] = [
   // A picture offered to one record (#3818): it follows the record, and so
   // does a No thanks.
   { table: "core_scan_record_photo_suggestions", db: "tenant", kindCol: "entity_kind", idCol: "entity_id" },
+  // The record's last photo search and the result its photo came from
+  // (#4515): they follow the record, so its panel still shows them.
+  { table: "core_scan_record_photo_searches", db: "tenant", kindCol: "entity_kind", idCol: "entity_id" },
 ];
 
 /** Kind-keyed tables that belong to the INSTANCE, not to any record, and are

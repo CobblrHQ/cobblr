@@ -187,11 +187,11 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
   useBarcodeWedge({ enabled: phase !== "ended", onScan: handleCode });
 
   const confirmCurrent = useCallback(
-    (overrideLocationId?: string) => {
+    (overrideLocationId?: string, container?: { kind: string; id: string }) => {
       const sid = sessionRef.current;
       const entry = current;
       if (!sid || !entry || entry.status !== "proposed") return;
-      const dest = overrideLocationId ?? entry.directive.location_id;
+      const dest = container ?? overrideLocationId ?? entry.directive.location_id;
       if (!dest) {
         setPickerOpen(true);
         return;
@@ -199,7 +199,8 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
       void api
         .putawayConfirm(slug, sid, {
           entry_id: entry.id,
-          ...(overrideLocationId ? { location_id: overrideLocationId } : {}),
+          // A thing that holds things (a Backpack) is a bin too.
+          ...(container ? { container } : overrideLocationId ? { location_id: overrideLocationId } : {}),
         })
         .then((r) => {
           setTape((t) => [r.entry, ...t].slice(0, 30));
@@ -640,6 +641,7 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
                   onChange={(v) => {
                     if (v) confirmCurrent(v);
                   }}
+                  onPickHolder={(h) => confirmCurrent(undefined, { kind: h.kind, id: h.id })}
                   placeholder="pick the bin it went into"
                 />
               </div>

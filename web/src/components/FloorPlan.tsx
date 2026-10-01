@@ -325,6 +325,21 @@ function PlanFor({
     enabled: !!bound,
     staleTime: 30_000,
   });
+  // A thing on the plan that holds things (a Backpack) says so: what is in it
+  // is not drawn, and without this the plan read as if it were nowhere.
+  const holders = useQuery({
+    queryKey: ["core-placement-holders", slug],
+    queryFn: () => api.placementHolders(slug),
+    enabled: !!bound,
+    staleTime: 30_000,
+  });
+  const holdsLabel = useMemo(() => {
+    const m = new Map((holders.data?.items ?? []).map((h) => [`${h.kind}:${h.id}`, h.holds]));
+    return (kind: string, id: string): string | null => {
+      const n = m.get(`${kind}:${id}`) ?? 0;
+      return n > 0 ? `holds ${n} ${n === 1 ? "thing" : "things"}` : null;
+    };
+  }, [holders.data]);
   const pins = useMemo(
     () =>
       (held.data?.items ?? []).filter(
@@ -1194,7 +1209,8 @@ function PlanFor({
         {pins.map((t) => {
           // A pin says what it is, on the plan and not only on hover: a bare
           // pin on the floor was a question nobody could answer (#4147).
-          const name = pinName(t, placeable);
+          const holds = holdsLabel(t.kind, t.id);
+          const name = holds ? `${pinName(t, placeable)} · ${holds}` : pinName(t, placeable);
           return (
           <button
             key={`pin:${t.kind}:${t.id}`}
@@ -1240,7 +1256,7 @@ function PlanFor({
                   if (href) navigate(href);
                 }
               }}
-              title={ent.name}
+              title={holdsLabel(ent.kind, ent.id) ? `${ent.name} · ${holdsLabel(ent.kind, ent.id)}` : ent.name}
               data-collides={colliding.has(key) ? "true" : undefined}
               className={`absolute rounded-md border border-cobble-500/70 dark:border-cobble-400/60 bg-cobble-50/60 dark:bg-cobble-900/30 overflow-hidden text-[10px] leading-tight px-1 py-0.5 text-content dark:text-slate-200
                 ${edit ? "cursor-move touch-none" : "cursor-pointer hover:border-accent"}
@@ -1255,6 +1271,9 @@ function PlanFor({
             >
               <RectDecor imagePath={ent.image_path} fp={ent.metadata?.floorplan as Record<string, unknown> | undefined} />
               <span className="relative">{ent.name}</span>
+              {holdsLabel(ent.kind, ent.id) && (
+                <span data-holds className="relative block text-[9px] text-faint">{holdsLabel(ent.kind, ent.id)}</span>
+              )}
               {selected && edit && (
                 <span
                   onPointerDown={(e) => startEntityDrag(e, ent, r, "resize")}

@@ -24,6 +24,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { WORKSPACE_TOOLS, mcpToolName } from "@cobblr/workspace-tools";
 import { CobblrApiError, type CobblrClient } from "./client.js";
+import { FULL_GRANT, offersOwnTool, offersWorkspaceTool, type TokenGrant } from "./offers.js";
 
 function ok(data: unknown) {
   return {
@@ -52,8 +53,16 @@ const workspaceArg = {
     ),
 };
 
-export function registerTools(server: McpServer, client: CobblrClient): void {
-  server.registerTool(
+/** Register the tools this token can run, and only those (offers.ts). */
+export function registerTools(server: McpServer, client: CobblrClient, grant: TokenGrant = FULL_GRANT): void {
+  const own = {
+    registerTool: ((name: string, ...rest: unknown[]) => {
+      if (!offersOwnTool(name, grant, client.defaultSlug)) return;
+      (server.registerTool as (...a: unknown[]) => unknown)(name, ...rest);
+    }) as McpServer["registerTool"],
+  };
+
+  own.registerTool(
     "cobblr_list_workspaces",
     {
       title: "List Cobblr workspaces",
@@ -70,7 +79,7 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
     },
   );
 
-  server.registerTool(
+  own.registerTool(
     "cobblr_list_templates",
     {
       title: "List flagship templates",
@@ -88,7 +97,7 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
     },
   );
 
-  server.registerTool(
+  own.registerTool(
     "cobblr_match_template",
     {
       title: "Match an intent to the nearest template (server-side)",
@@ -109,7 +118,7 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
     },
   );
 
-  server.registerTool(
+  own.registerTool(
     "cobblr_get_template",
     {
       title: "Get a template",
@@ -130,7 +139,7 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
     },
   );
 
-  server.registerTool(
+  own.registerTool(
     "cobblr_authoring_context",
     {
       title: "Inspect buildable context",
@@ -154,7 +163,7 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
     },
   );
 
-  server.registerTool(
+  own.registerTool(
     "cobblr_authoring_compile",
     {
       title: "Compile intent into a build draft",
@@ -191,7 +200,7 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
     },
   );
 
-  server.registerTool(
+  own.registerTool(
     "cobblr_authoring_candidate",
     {
       title: "Submit a candidate bundle manifest",
@@ -215,7 +224,7 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
     },
   );
 
-  server.registerTool(
+  own.registerTool(
     "cobblr_authoring_repair_prompt",
     {
       title: "Get a repair prompt for a rejected draft",
@@ -236,7 +245,7 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
     },
   );
 
-  server.registerTool(
+  own.registerTool(
     "cobblr_authoring_apply",
     {
       title: "Apply a validated bundle",
@@ -261,7 +270,7 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
     },
   );
 
-  server.registerTool(
+  own.registerTool(
     "cobblr_authoring_list_drafts",
     {
       title: "List build drafts",
@@ -278,7 +287,7 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
     },
   );
 
-  server.registerTool(
+  own.registerTool(
     "cobblr_authoring_get_draft",
     {
       title: "Get a build draft",
@@ -298,7 +307,7 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
     },
   );
 
-  server.registerTool(
+  own.registerTool(
     "cobblr_validate_bundle",
     {
       title: "Validate a hand-written bundle",
@@ -323,7 +332,7 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
     },
   );
 
-  server.registerTool(
+  own.registerTool(
     "cobblr_install_bundle",
     {
       title: "Install a hand-written bundle",
@@ -352,7 +361,7 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
   // Gated server-side by the user's per-workspace drive grant (off by default);
   // these tools no-op with a clear error when it's off. Drive is navigate-only —
   // it never reads or writes workspace data.
-  server.registerTool(
+  own.registerTool(
     "cobblr_drive_request_window",
     {
       title: "Ask to drive the user's open window",
@@ -370,7 +379,7 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
     },
   );
 
-  server.registerTool(
+  own.registerTool(
     "cobblr_drive_navigate",
     {
       title: "Navigate the user's driven window",
@@ -395,7 +404,7 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
     },
   );
 
-  server.registerTool(
+  own.registerTool(
     "cobblr_drive_point",
     {
       title: "Point at something in the driven window",
@@ -420,7 +429,7 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
     },
   );
 
-  server.registerTool(
+  own.registerTool(
     "cobblr_drive_observe",
     {
       title: "See what the user just did",
@@ -451,6 +460,7 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
   // ──────────────────────────────────────────────────────────────────────
 
   for (const tool of WORKSPACE_TOOLS) {
+    if (!offersWorkspaceTool(tool, grant)) continue;
     server.registerTool(
       mcpToolName(tool.name),
       {

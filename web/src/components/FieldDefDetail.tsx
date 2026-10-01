@@ -1,7 +1,9 @@
 // Click a field def → this panel expands IN PLACE under the row. Shows full
-// context (kind, type, position, origin), edits choices, and deletes via a
-// confirm. Editing the def's name / type is not supported yet — would require
-// migrating any stored values in entity metadata.
+// context (kind, type, position, origin), edits the label, whether it is
+// required, its choices and its type, and deletes via a confirm. The key
+// (`name`) does not change: it is what templates, the API and every stored
+// value are keyed on. A type change leaves stored values where they are and
+// shows first which of them would not fit the new type.
 //
 // A DRAWER, NOT A MODAL, on purpose. A modal is right for one decision you
 // finish and dismiss; this is a list you browse, opening several fields in a
@@ -10,13 +12,16 @@
 // docs/architecture/ui-conventions.md — "overlay or in place".
 
 import { useEffect, useState } from "react";
+import { withArticle } from "@cobblr/platform-contract/plural";
+import { useQuery } from "@tanstack/react-query";
 import { useBundleDetail } from "./useBundleDetail";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { Trash2, X } from "lucide-react";
 import { ApiError, api, type PlatformFieldDef } from "../lib/api";
 import { changeWorkspaceShape, useToast, useConfirm } from "@cobblr/platform-web";
-import { ChoicesInput } from "./ChoicesInput";
+import { RETYPEABLE_FIELD_TYPES } from "@cobblr/platform-contract";
+import { ChoicesInput, LearnsToggle } from "./ChoicesInput";
 
 interface Props {
   onClose: () => void;
@@ -61,6 +66,27 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
     onError: (e: unknown) =>
       toast.error(e instanceof ApiError ? e.message : "Couldn't save choices."),
   });
+
+  // Label and Required: plain edits of the definition. Type: offered where a
+  // field holds a plain value, behind a preview of what would not fit.
+  const [label, setLabel] = useState(fieldDef?.display_label ?? "");
+  useEffect(() => setLabel(fieldDef?.display_label ?? ""), [fieldDef?.id, fieldDef?.display_label]);
+  const [retypeTo, setRetypeTo] = useState<string | null>(null);
+  useEffect(() => setRetypeTo(null), [fieldDef?.id, fieldDef?.type]);
+  const patch = useMutation({
+    mutationFn: (body: Partial<PlatformFieldDef>) => changeWorkspaceShape(qc, slug, () => api.updateFieldDef(slug, fieldDef!.id, body)),
+    onSuccess: (_d, body) => {
+      if (body.type) setRetypeTo(null);
+      toast.success(body.type ? `It is ${withArticle(TYPE_WORDS[body.type] ?? body.type)} field now.` : "Saved.");
+    },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't save the field."),
+  });
+  const preview = useQuery({
+    queryKey: ["field-retype-preview", slug, fieldDef?.id, retypeTo],
+    queryFn: () => api.retypePreview(slug, fieldDef!.id, retypeTo!),
+    enabled: !!fieldDef && !!retypeTo,
+  });
+  const retypeable = !!fieldDef && RETYPEABLE.includes(fieldDef.type) && !fieldDef.bundle_id;
 
   const remove = useMutation({
     mutationFn: () => changeWorkspaceShape(qc, slug, () => api.deleteFieldDef(slug, fieldDef!.id)),
@@ -122,11 +148,39 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
             </code>
           </Row>
           <Row label="Type">
-            <span className="font-mono uppercase tracking-widest text-[10px] text-muted">
-              {fieldDef.type}
-            </span>
+            {retypeable ? (
+              <select
+                aria-label="Type"
+                value={retypeTo ?? fieldDef.type}
+                onChange={(e) => setRetypeTo(e.target.value === fieldDef.type ? null : e.target.value)}
+                className="input !py-0.5 sm:!text-xs !w-auto"
+              >
+                {RETYPEABLE.map((t) => (
+                  <option key={t} value={t}>{TYPE_WORDS[t]}</option>
+                ))}
+              </select>
+            ) : (
+              <span className="font-mono uppercase tracking-widest text-[10px] text-muted">
+                {fieldDef.type}
+              </span>
+            )}
           </Row>
-          <Row label="Required">{fieldDef.required ? "yes" : "no"}</Row>
+          <Row label="Required">
+            {fieldDef.type === "computed" ? (
+              "no"
+            ) : (
+              <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={fieldDef.required}
+                  disabled={patch.isPending}
+                  onChange={(e) => patch.mutate({ required: e.target.checked })}
+                  className="accent-cobble-500"
+                />
+                {fieldDef.required ? "yes" : "no"}
+              </label>
+            )}
+          </Row>
           <Row label="Position">{fieldDef.position}</Row>
           <Row label="Origin">
             {fieldDef.bundle_id ? (
@@ -149,6 +203,69 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
           )}
         </dl>
 
+        <div>
+          <label className="block font-mono uppercase tracking-widest text-[10px] text-faint mb-1" htmlFor={`label-${fieldDef.id}`}>
+            Label
+          </label>
+          <div className="flex gap-2">
+            <input id={`label-${fieldDef.id}`} value={label} onChange={(e) => setLabel(e.target.value)} className="input sm:!text-sm flex-1 min-w-0" />
+            {label.trim() !== fieldDef.display_label && label.trim() !== "" && (
+              <button
+                type="button"
+                onClick={() => patch.mutate({ display_label: label.trim() })}
+                disabled={patch.isPending}
+                className="shrink-0 rounded-md bg-cobble-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-cobble-500 transition disabled:opacity-50"
+              >
+                Save label
+              </button>
+            )}
+          </div>
+          <p className="mt-1 text-[10px] text-faint">The key stays <code className="font-mono">{fieldDef.name}</code>: templates, the API and saved values use it.</p>
+        </div>
+
+        {retypeTo && (
+          <div role="status" className="rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-3 text-xs text-amber-900 dark:text-amber-200 space-y-2">
+            {preview.isLoading ? (
+              <p>Reading the values it holds…</p>
+            ) : preview.data ? (
+              <>
+                <p>
+                  Change {fieldDef.display_label} to {withArticle(TYPE_WORDS[retypeTo] ?? retypeTo)} field?{" "}
+                  {preview.data.wontFit === 0
+                    ? `All ${preview.data.checked} values it holds fit.`
+                    : `${preview.data.wontFit} of ${preview.data.checked} values it holds will not fit, and stay as they are until someone changes them.`}
+                  {!preview.data.complete && preview.data.checked > 0 ? " (Only the first 5,000 records were read.)" : ""}
+                </p>
+                {preview.data.examples.length > 0 && (
+                  <ul className="list-disc pl-5">
+                    {preview.data.examples.map((e) => (
+                      <li key={e.id}>
+                        {e.title}: <code className="font-mono">{String(e.value)}</code>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {preview.data.drops.length > 0 && <p>It loses {preview.data.drops.join(" and ")}.</p>}
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => patch.mutate({ type: retypeTo as PlatformFieldDef["type"] })}
+                    disabled={patch.isPending}
+                    className="rounded-md bg-cobble-600 px-2.5 py-1 font-medium text-white hover:bg-cobble-500 transition disabled:opacity-50"
+                  >
+                    Change to {TYPE_WORDS[retypeTo]}
+                  </button>
+                  <button type="button" onClick={() => setRetypeTo(null)} className="px-2 py-1 text-muted hover:text-content">
+                    Keep it {TYPE_WORDS[fieldDef.type] ?? fieldDef.type}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <p>{preview.error instanceof ApiError ? preview.error.message : "Couldn't read the values it holds."}</p>
+            )}
+          </div>
+        )}
+
         {fieldDef.type === "text" && (
           <div>
             <div className="font-mono uppercase tracking-widest text-[10px] text-faint mb-1">
@@ -162,6 +279,7 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
               onChange={setChoices}
               placeholder="e.g. FB Marketplace, Gift, Bought new"
             />
+            <LearnsToggle def={fieldDef} disabled={patch.isPending} onChange={(on) => patch.mutate({ learns: on })} />
             {choicesDirty && (
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <button
@@ -260,3 +378,16 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
     </div>
   );
 }
+
+/** The types a field can change between (the contract's list). */
+const RETYPEABLE: readonly string[] = RETYPEABLE_FIELD_TYPES;
+const TYPE_WORDS: Record<string, string> = {
+  text: "text",
+  number: "number",
+  measure: "measured value",
+  money: "money",
+  boolean: "yes/no",
+  date: "date",
+  url: "link",
+  richtext: "rich text",
+};

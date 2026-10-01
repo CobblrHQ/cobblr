@@ -25,6 +25,7 @@ export function EditTagModal({
   onClose,
   onSaved,
   onMerged,
+  onUndone,
 }: {
   slug: string;
   tag: TagRecord;
@@ -32,6 +33,8 @@ export function EditTagModal({
   onSaved: () => void;
   /** After a merge this tag is gone: go to the one it became. */
   onMerged?: (intoId: string) => void;
+  /** After Undo on a merge, the tag is back. */
+  onUndone?: (id: string) => void;
 }) {
   const [name, setName] = useState(tag.name);
   const [color, setColor] = useState(tag.color ?? "#888888");
@@ -67,12 +70,26 @@ export function EditTagModal({
     mutationFn: (into: string) => api.mergeTag(slug, tag.id, into),
     onSuccess: (r) => {
       const n = r.moved_assignments;
-      toast.success(`Merged into "${r.merged_into.name}", moved ${n} attachment${n === 1 ? "" : "s"}`);
+      toast.action(`Merged ${tag.name} into ${r.merged_into.name}: ${n} ${n === 1 ? "record" : "records"} moved.`, {
+        actionLabel: "Undo",
+        onAction: async () => {
+          try {
+            const back = await api.restoreTag(slug, tag.id);
+            toast.success(`Put ${back.name} back on ${back.assignments} ${back.assignments === 1 ? "record" : "records"}.`);
+            onUndone?.(tag.id);
+          } catch (e) {
+            toast.error(e instanceof ApiError ? e.message : String(e));
+          }
+        },
+      });
       if (onMerged) onMerged(r.merged_into.id);
       else onSaved();
     },
-    onError: (e: unknown) =>
-      toast.error(e instanceof ApiError ? e.message : "Couldn't merge"),
+    // A refusal that can be asked for opens the blocked-action sheet itself.
+    onError: (e: unknown) => {
+      if (e instanceof ApiError && e.blocked) return;
+      toast.error(e instanceof ApiError ? e.message : "Couldn't merge");
+    },
   });
 
   return (
@@ -155,7 +172,7 @@ export function EditTagModal({
                   const target = otherTags.find((t) => t.id === mergeInto);
                   void confirm({
                     title: "Merge tag",
-                    message: `Move every attachment from "${tag.name}" to "${target?.name}", then delete "${tag.name}". This can't be undone.`,
+                    message: `Every record carrying ${tag.name} will carry ${target?.name} instead, and ${tag.name} goes. You can undo this straight after.`,
                     confirmLabel: "Merge",
                   }).then((ok) => {
                     if (ok) merge.mutate(mergeInto);

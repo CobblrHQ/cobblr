@@ -14,6 +14,8 @@ import { columnSet, arrivedEverywhere, parseSort, type EntityListQuery, type Fil
 import type { InventoryDB } from "../db.js";
 import { PART_CI_FILTER_COLS, PART_FILTER_COLS } from "../db.js";
 import { filterValues, isMulti } from "./filter-values.js";
+import { parseMeasure } from "@cobblr/platform-contract/measure";
+import { measuredValueSql } from "../measure-readings.js";
 
 // Loose on purpose: the resolver selects from `inventory_parts`, the list
 // route from `inventory_parts as p` joined to categories. Both are the same
@@ -136,14 +138,17 @@ export function applyPartFilters<Q extends PartsQuery>(
           typeof p.value === "number" ||
           (typeof p.value === "string" && /^-?[0-9]+(\.[0-9]+)?$/.test(p.value))
         ) {
-          // Custom numeric metadata field. Guard the cast so a row whose
-          // value isn't a plain number (e.g. "1 kg") is excluded, not an
-          // error. p.col is bound as a parameter (no injection); the op is
-          // whitelisted above.
+          // Custom numeric metadata field: a number, a measured value, or the
+          // reading of a text value ("100nF"). A row whose value is none of
+          // those (a word) is excluded, not an error. p.col is bound as a
+          // parameter (no injection); the op is whitelisted above.
           const num = Number(p.value);
-          q = q.where(
-            sql<boolean>`(${meta}->>${p.col}) ~ '^-?[0-9]+(\\.[0-9]+)?$' AND (${meta}->>${p.col})::numeric ${sql.raw(p.op)} ${num}`,
-          );
+          q = q.where(sql<boolean>`${measuredValueSql(t, p.col)} ${sql.raw(p.op)} ${num}`);
+        } else if (typeof p.value === "string" && !DAY.test(p.value) && parseMeasure(p.value)) {
+          // A measured value ("10k", "100 nF"): compared EXACTLY by value, in
+          // the SI number every door stores ("at least 1 µF" is >= 1e-6).
+          const num = parseMeasure(p.value)!.value;
+          q = q.where(sql<boolean>`${measuredValueSql(t, p.col)} ${sql.raw(p.op)} ${num}`);
         } else if (p.value === "today" || p.value === "now" || (typeof p.value === "string" && DAY.test(p.value))) {
           // A custom DATE field against a day: the reader's for "today" (the
           // client's, else the person's), else the literal. Compared as a
@@ -192,11 +197,10 @@ export function applyPartSort<Q extends PartsQuery>(qIn: Q, sort: string[] | und
     } else if (own.some((o) => o.col === col)) {
       // NULLS LAST in both directions: an unset field is "no answer", not the
       // smallest or largest one.
+      // A number orders numerically, and so does a measured value or the
+      // reading of a text one: 100 nF before 1 µF, not "1µF" before "100nF".
       q = q
-        .orderBy(
-          sql`case when jsonb_typeof(${meta} -> ${col}) = 'number' then (${meta} ->> ${col})::numeric end`,
-          sql.raw(`${dir} nulls last`),
-        )
+        .orderBy(measuredValueSql(t, col), sql.raw(`${dir} nulls last`))
         .orderBy(sql`${meta} ->> ${col}`, sql.raw(`${dir} nulls last`));
     }
   }

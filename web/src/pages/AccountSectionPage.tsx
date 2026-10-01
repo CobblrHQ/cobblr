@@ -13,6 +13,8 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { usePageTitle } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { accountSections, ACCOUNT_SECTION_ORDER, type AccountSection } from "../lib/account-nav";
+import { doorLeadsSomewhere } from "../lib/discord-connect";
+import { useDiscordStatus } from "../lib/useDiscordStatus";
 
 export function AccountSectionPage() {
   const { section } = useParams<{ section: string }>();
@@ -20,6 +22,7 @@ export function AccountSectionPage() {
   const known = ACCOUNT_SECTION_ORDER.includes(section as AccountSection);
   const offered = useOfferedAccountFeatures();
   const hit = accountSections({ appMode: !!activeOrg?.app_mode, offered }).find((s) => s.id === section);
+  const discord = useDiscordStatus();
 
   usePageTitle(hit?.meta.label ?? "Your account");
 
@@ -48,7 +51,7 @@ export function AccountSectionPage() {
           </h1>
           <p className="text-xs text-faint dark:text-slate-500 mt-0.5">{hit.meta.blurb}</p>
         </div>
-        {hit.meta.action && (
+        {hit.meta.action && doorLeadsSomewhere(hit.meta.action.to, discord.data) && (
           <Link
             to={hit.meta.action.to}
             className="ml-auto shrink-0 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-1.5"

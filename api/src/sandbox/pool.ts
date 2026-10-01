@@ -1164,6 +1164,7 @@ function translatePlaceholders(sqlIn: string): { translated: string; paramCount:
     }
     if (c === "?") {
       n++;
+      // MONEY-OK: a SQL placeholder ($1), not money.
       out += `$${n}`;
       i++;
       continue;

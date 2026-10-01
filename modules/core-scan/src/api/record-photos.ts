@@ -5,7 +5,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { bearer, tenantContext, tenantDb } from "../db.js";
-import { kyselyStore, putPictureOn, readAutoApply, recordHasNoPicture, searchAgain, writeAutoApply } from "../services/record-photos.js";
+import { kyselyStore, oneRowPerRecord, putPictureOn, readAutoApply, recordHasNoPicture, searchAgain, writeAutoApply } from "../services/record-photos.js";
 import { imagePathForFile, setEntityImageFile } from "../services/entity-image.js";
 
 export const recordPhotosRouter: Router = Router({ mergeParams: true });
@@ -32,7 +32,7 @@ const ListQuery = z
   })
   .refine((q) => !!q.kind || !!q.ids, { message: "kind or ids" });
 
-// GET /photo-suggestions?kind=<kind>[&ids=a,b] — the suggestions a list or a
+// GET /photo-suggestions?kind=<kind>[&ids=a,b], one row per record — the suggestions a list or a
 // record page shows: what is waiting for an answer (suggested), still being
 // looked for (queued), or looked for and not found (none), so a card can say
 // which. Answered ones are not a card's business.
@@ -44,13 +44,19 @@ recordPhotosRouter.get(
     const ids = (parsed.data.ids ?? "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 500);
     let q = tenantDb(req)
       .selectFrom("core_scan_record_photo_suggestions")
-      .select(["entity_kind", "entity_id", "status", "file_id", "query"])
+      .select(["entity_kind", "entity_id", "status", "file_id", "query", "updated_at"])
       .where("status", "in", ["suggested", "queued", "none"]);
-    if (parsed.data.kind) q = q.where("entity_kind", "=", parsed.data.kind);
-    if (ids.length) q = q.where("entity_id", "in", ids);
+    // A list asks by its kind AND names the records it shows: a record's row
+    // may sit under another kind name (a collection's item is its module's
+    // record too), and it is still this list's record.
+    const kind = parsed.data.kind;
+    if (kind && ids.length) q = q.where((eb) => eb.or([eb("entity_kind", "=", kind), eb("entity_id", "in", ids)]));
+    else if (kind) q = q.where("entity_kind", "=", kind);
+    else if (ids.length) q = q.where("entity_id", "in", ids);
+    // list-cap-ok: not paged yet, #4134
     const rows = await q.limit(500).execute();
     const slug = tenantContext(req).org.slug;
-    res.json({ items: rows.map((r) => served(slug, r)) });
+    res.json({ items: oneRowPerRecord(rows).map((r) => served(slug, r)) });
   }),
 );
 

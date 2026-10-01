@@ -37,7 +37,7 @@ export function UnconfirmedReceiptsBanner({ slug }: { slug: string }) {
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 mb-4">
         <PackageCheck className="w-5 h-5 text-amber-700 dark:text-amber-400 shrink-0" aria-hidden />
         <p className="text-sm text-content dark:text-mortar-100 flex-1 min-w-[12rem]">
-          {items.length === 1 ? "One line" : `${items.length} lines`} on orders marked arrived may not have added {items.length === 1 ? "its" : "their"} stock.
+          {items.length === 1 ? "One thing you ordered" : `${items.length} things you ordered`} may not have reached your stock when {items.length === 1 ? "it was" : "they were"} delivered.
         </p>
         <button type="button" onClick={() => setOpen(true)} className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white">
           Check them
@@ -66,7 +66,7 @@ function UnconfirmedReceiptsModal({ slug, items, onClose }: { slug: string; item
   return (
     <Modal open onClose={onClose} title="Orders to check">
       <p className="text-sm text-muted mb-3">
-        Marking an order arrived with its button, or answering "Yes, it turned up", once did not add the order to stock. For each line, say whether its stock is already counted or should be added now.
+        For a while, an order marked as delivered (with its Arrived button, or by answering "Yes, it turned up") did not add what came to your stock. For each item, say whether it is already counted or should be added now.
       </p>
       <ul className="space-y-2">
         {items.map((it) => (

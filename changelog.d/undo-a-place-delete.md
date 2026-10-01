@@ -3,6 +3,7 @@ type: feature
 scope: core-locations
 date: 2026-09-30
 docs_target: docs/USER_GUIDE.md#3.12 Locations (foundational)
+docs_published: 2026-10-01
 ---
 Deleting a place can be undone. The message after a delete has an Undo that puts back the place, every place that went with it, and each thing where it was, and Cobb's undo does the same. The delete dialog now says how many places and how many things go with it. Deleting a room or rack with places inside it is an owner's or admin's call: a member can still delete an empty shelf, and can ask for the rest.
 

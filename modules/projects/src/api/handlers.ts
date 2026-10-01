@@ -12,6 +12,7 @@ import type { ProjectsDB } from "../db.js";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 import { patternTextMatches, snippetsFor } from "./pattern-text.js";
 import { announceUnblocked, releaseDependentsOf } from "./deps.js";
+import { makeNextOccurrence } from "./repeat.js";
 
 let registered = false;
 
@@ -253,6 +254,7 @@ export function registerProjectsHandlers(): void {
     if (!updated) return { ok: true, completed: 0, reason: "missing or already done" };
     platform().events.emit("projects.task.completed", { orgId: ctx.orgId, taskId: updated.id });
     await releaseDependentsOf(ctx.orgId, db, updated.id);
+    await makeNextOccurrence(ctx.orgId, db, updated.id);
     return { ok: true, completed: 1, taskId: updated.id, was: { status: before?.status ?? "todo", completed_at: before?.completed_at ?? null } };
   });
 }

@@ -12,10 +12,10 @@
 // never re-implements manifest validation.
 
 import { Router } from "express";
-import { sql } from "kysely";
+import { sql, type ExpressionBuilder } from "kysely";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
-import { tenantContext, tenantDb, sessionUser } from "../db.js";
+import { tenantContext, tenantDb, sessionUser, type CoreAuthoringDB } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import {
   assembleContext,
@@ -39,6 +39,15 @@ function draftEvent(req: Parameters<typeof tenantContext>[0], name: "core-author
 }
 
 export const draftsRouter = Router({ mergeParams: true });
+
+/** A draft is its author's: every route that takes one by id, and the list,
+ *  reads through this, so another person's draft answers 404 exactly like one
+ *  that does not exist. A draft from before authors were recorded stays
+ *  everyone's, as it always was. */
+function yours(userId: string | null) {
+  return (eb: ExpressionBuilder<CoreAuthoringDB, "core_authoring_drafts">) =>
+    eb.or([eb("created_by", "is", null), ...(userId ? [eb("created_by", "=", userId)] : [])]);
+}
 
 interface BundlesResponse {
   status: number;
@@ -500,6 +509,7 @@ draftsRouter.post(
       .selectFrom("core_authoring_drafts")
       .selectAll()
       .where("id", "=", req.params.id!)
+      .where(yours(user?.id ?? null))
       .executeTakeFirst();
     if (!parent) {
       res.status(404).json({ error: { code: "not_found", message: "No such draft." } });
@@ -577,6 +587,7 @@ draftsRouter.post(
       // context without it, and assembleContext throws when it is missing.
       .select(["id", "task", "intent", "base_template_id"])
       .where("id", "=", req.params.id!)
+      .where(yours(sessionUser(req)?.id ?? null))
       .executeTakeFirst();
     if (!draft) {
       res.status(404).json({ error: { code: "not_found", message: "Draft not found." } });
@@ -638,6 +649,7 @@ draftsRouter.post(
       .selectFrom("core_authoring_drafts")
       .select(["compiled_prompt", "candidate", "validation"])
       .where("id", "=", req.params.id!)
+      .where(yours(sessionUser(req)?.id ?? null))
       .executeTakeFirst();
     if (!draft) {
       res.status(404).json({ error: { code: "not_found", message: "Draft not found." } });
@@ -667,6 +679,7 @@ draftsRouter.post(
       .selectFrom("core_authoring_drafts")
       .select(["id", "candidate", "seed_plan", "task"])
       .where("id", "=", req.params.id!)
+      .where(yours(sessionUser(req)?.id ?? null))
       .executeTakeFirst();
     if (!draft) {
       res.status(404).json({ error: { code: "not_found", message: "Draft not found." } });
@@ -730,7 +743,9 @@ draftsRouter.get(
     const items = await db
       .selectFrom("core_authoring_drafts")
       .select(["id", "task", "intent", "mode", "status", "created_at", "updated_at"])
+      .where(yours(sessionUser(req)?.id ?? null))
       .orderBy("created_at", "desc")
+      // list-cap-ok: not paged yet, #4134
       .limit(100)
       .execute();
     res.json({ items });
@@ -743,7 +758,7 @@ draftsRouter.get(
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const db = tenantDb(req);
-    const draft = await db.selectFrom("core_authoring_drafts").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
+    const draft = await db.selectFrom("core_authoring_drafts").selectAll().where("id", "=", req.params.id!).where(yours(sessionUser(req)?.id ?? null)).executeTakeFirst();
     if (!draft) {
       res.status(404).json({ error: { code: "not_found", message: "Draft not found." } });
       return;

@@ -8,7 +8,7 @@ import { DISPOSITIONS, DISPOSITION_LABELS } from "@cobblr/platform-contract/disp
 
 export default defineModule({
   name: "assets",
-  version: "0.4.10",
+  version: "0.5.2",
   displayName: "Assets",
   description:
     "Keep track of the things you own one at a time: tools, appliances, collections, anything worth knowing about individually.",
@@ -56,15 +56,19 @@ export default defineModule({
           },
           { name: "serial_number", type: "text" },
           { name: "purchased_at", type: "date" },
-          { name: "purchase_price_cents", type: "number" },
-          { name: "vendor", type: "text" },
+          { name: "purchase_price_cents", type: "number", money: "cents", label: "Paid" },
+          { name: "vendor", type: "text", label: "Bought from" },
           { name: "warranty_until", type: "date" },
-          { name: "last_service_at", type: "date" },
+          { name: "last_service_at", type: "date", label: "Last service" },
           { name: "image_path", type: "image-path", role: "image" },
           { name: "notes", type: "text" },
           // Where the asset lives (core-locations ref) — declared so it can be
           // exposed below, mirroring inventory:part.
           { name: "location_id", type: "text" },
+          // Where it is, by name: its place, or what it is inside ("Backpack,
+          // in Desk drawer"). Derived on read, so a search or the assistant can
+          // say where it is.
+          { name: "location_name", type: "text", readOnly: true },
           // Free-form custom-field blob (bundle / user fields). Declared so
           // it can be exposed below — mirrors inventory:part.
           { name: "metadata", type: "object" },
@@ -88,7 +92,16 @@ export default defineModule({
           // Where the asset lives — same exposure inventory:part grants; feeds
           // location-aware consumers (views, core-mobility's drift rule).
           "location_id",
+          "location_name",
+          // What was paid: exposable so the assistant and views can answer
+          // "what did the van cost", gated below like a part's cost.
+          "purchase_price_cents",
         ],
+        // Only viewers granted `assets:view-costs` see the price (admins and
+        // owners see everything), the same tier a part's cost sits behind.
+        fieldReadScopes: {
+          purchase_price_cents: "assets:view-costs",
+        },
         detailRoute: "/assets/{id}",
       },
     ],

@@ -99,13 +99,21 @@ export class CarrierError extends Error {
    *  Not retryable, and not "it did not answer": the person has to free a
    *  slot or upgrade. */
   readonly quotaExhausted: boolean;
+  /** The service said it is busy (too many requests, briefly unavailable):
+   *  ask again later, and ask nothing else of it this round. A bridge is live
+   *  work on somebody's own machine. */
+  readonly busy: boolean;
+  /** How long the service asked us to wait, when it said (Retry-After). */
+  readonly retryAfterMs: number | null;
   constructor(
     message: string,
     readonly retryable: boolean,
-    opts: { quotaExhausted?: boolean } = {},
+    opts: { quotaExhausted?: boolean; busy?: boolean; retryAfterMs?: number | null } = {},
   ) {
     super(message);
     this.name = "CarrierError";
     this.quotaExhausted = opts.quotaExhausted === true;
+    this.busy = opts.busy === true;
+    this.retryAfterMs = opts.retryAfterMs ?? null;
   }
 }

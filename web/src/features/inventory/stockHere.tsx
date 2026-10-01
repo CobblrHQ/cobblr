@@ -19,7 +19,7 @@ import { AlertTriangle } from "lucide-react";
 import { expiryPhrase, expiryState } from "@cobblr/platform-contract/expiry-grace";
 import type { Day } from "@cobblr/platform-contract/day";
 import { api, type StockPlaceRow } from "../../lib/api";
-import { StockStepper } from "../../components/StockStepper";
+import { StockStepper } from "@cobblr/platform-web";
 import { useKindLabels } from "../../lib/useKindLabels";
 import type { EntityDetailPanelCtx } from "../../panels/types";
 

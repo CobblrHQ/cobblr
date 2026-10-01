@@ -1,7 +1,7 @@
 // Thin fetch wrapper for the tracking REST surface. Auth via getToken().
 // Routes mounted at /api/v1/orgs/:slug/modules/tracking/...
 
-import { describeUnreadableBody } from "@cobblr/platform-web";
+import { describeUnreadableBody, noteWorkspaceWrite } from "@cobblr/platform-web";
 
 export type GoalDirection = "up" | "down" | "hit";
 
@@ -44,12 +44,17 @@ export class TrackingApi {
     if (body !== undefined) headers["Content-Type"] = "application/json";
     const token = this.getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
-    const res = await fetch(`/api/v1/orgs/${this.slug}/modules/tracking${path}`, {
+    const url = `/api/v1/orgs/${this.slug}/modules/tracking${path}`;
+    const res = await fetch(url, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    if (res.status === 204) return undefined as T;
+    const wrote = method.toUpperCase() !== "GET";
+    if (res.status === 204) {
+      if (wrote) noteWorkspaceWrite(url);
+      return undefined as T;
+    }
     let parsed: unknown;
     // TEXT first: res.json() CONSUMES the body, so once it throws the one
     // thing that says what went wrong is gone. See describeUnreadableBody.
@@ -63,6 +68,7 @@ export class TrackingApi {
       const e = (parsed as { error?: { code?: string; message?: string } }).error;
       throw new TrackingApiError(res.status, e?.code ?? "error", e?.message ?? `Request failed (${res.status})`);
     }
+    if (wrote) noteWorkspaceWrite(url);
     return parsed as T;
   }
 

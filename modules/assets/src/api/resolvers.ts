@@ -1,6 +1,7 @@
-import { columnSet, platform, parseSort, textSearchWhere, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
+import { columnSet, placeNames as placeNamesOf, platform, parseSort, textSearchWhere, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { AssetsDB } from "../db.js";
+import { amountOf, toCents } from "@cobblr/platform-contract/money";
 
 let registered = false;
 
@@ -56,6 +57,17 @@ export function registerAssetsResolvers(): void {
     return out;
   });
 
+  // What an asset is worth: what was paid for it. Once parts are installed
+  // in it, that is its value besides them ("other value, not itemized"), and
+  // its total adds the parts, each counted once (placement.builtValue).
+  platform().placement.registerValue("assets:asset", async (orgId, ids) => {
+    const db = (await platform().tenants.getDb(orgId)) as Kysely<AssetsDB>;
+    let q = db.selectFrom("assets_assets").select(["id", "purchase_price_cents"]).where("purchase_price_cents", "is not", null);
+    q = ids === "all" ? q.where("archived_at", "is", null) : q.where("id", "in", ids.length ? ids : ["00000000-0000-0000-0000-000000000000"]);
+    const rows = await q.execute();
+    return new Map(rows.map((r) => [r.id, amountOf(toCents(Number(r.purchase_price_cents)))]));
+  });
+
   platform().entities.registerResolver("assets:asset", async (orgId, id) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<AssetsDB>;
     const row = await db
@@ -64,7 +76,7 @@ export function registerAssetsResolvers(): void {
       .where("id", "=", id)
       .executeTakeFirst();
     if (!row) return null;
-    return toResolvedAsset(row);
+    return toResolvedAsset(row, (await placeNamesOf(orgId, "assets:asset", [row])).get(row.id) ?? null);
   });
 
   const assetsListResolver = async (orgId: string, query: EntityListQuery, instance?: string) => {
@@ -135,7 +147,8 @@ export function registerAssetsResolvers(): void {
     for (const { col, dir } of order) q = q.orderBy(col as never, dir);
     if (!order.some((o) => o.col === "name")) q = q.orderBy("name", "asc");
     const rows = await q.limit(limit).offset(offset).execute();
-    return { items: rows.map((r) => toResolvedAsset(r)) };
+    const places = await placeNamesOf(orgId, "assets:asset", rows);
+    return { items: rows.map((r) => toResolvedAsset(r, places.get(r.id) ?? null)) };
   };
   // Scoped to the default instance - same leak as inventory's base kind; see
   // the note there. A Vehicles instance's cars must not double up under Assets.
@@ -158,7 +171,7 @@ export function registerAssetsResolvers(): void {
       .where("instance", "=", instance as never)
       .executeTakeFirst();
     if (!row) return null;
-    return toResolvedAsset(row);
+    return toResolvedAsset(row, (await placeNamesOf(orgId, "assets:asset", [row])).get(row.id) ?? null);
   });
 }
 
@@ -189,7 +202,7 @@ function toResolvedAsset(row: {
   name: string;
   state: string;
   [k: string]: unknown;
-}): ResolvedEntity {
+}, locationName: string | null = null): ResolvedEntity {
   return {
     kind: "assets:asset",
     id: row.id,
@@ -198,7 +211,7 @@ function toResolvedAsset(row: {
     // Carry the photo so generic surfaces (the labels browser tiles) show it
     // instead of an initial-letter chip. Mirrors inventory's toResolvedPart.
     image_path: (row.image_path as string | null | undefined) ?? undefined,
-    fields: row as unknown as Record<string, unknown>,
+    fields: { ...(row as unknown as Record<string, unknown>), location_name: locationName },
     // Put away: it still resolves, and nothing generates work for it.
     ...(row.archived_at ? { retired: true } : {}),
   };

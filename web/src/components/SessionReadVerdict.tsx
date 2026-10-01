@@ -82,7 +82,9 @@ export function SessionReadVerdict({
       onClick={(e) => e.stopPropagation()}
     >
       <AlertTriangle size={12} className="shrink-0" />
-      <span className="min-w-0 flex-1">{verdict.sentence}</span>
+      {/* The sentence has the line to itself on a phone; beside two buttons
+          it was a column a word wide. */}
+      <span className="min-w-0 flex-1 max-sm:basis-[calc(100%-1.5rem)]">{verdict.sentence}</span>
       {verdict.connect && (
         <Link to={configureAiHref} className="shrink-0 underline underline-offset-2 hover:text-amber-950 dark:hover:text-amber-100" data-testid="session-connect-ai">
           Connect an AI provider

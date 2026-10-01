@@ -331,6 +331,7 @@ basicsRouter.get(
       .where("dismissed", "=", false)
       .orderBy("times", "desc")
       .orderBy("last_seen", "desc")
+      // list-cap-ok: the fifty most asked; a rule is written from the top of this list, and the rest are rarer questions of the same kinds
       .limit(50)
       .execute();
     res.json({ items: rows });
@@ -379,6 +380,7 @@ basicsRouter.get(
       .where("prompt", "is not", null)
       .where("undone_at", "is", null)
       .orderBy("created_at", "desc")
+      // list-cap-ok: the recent examples a suggestion is drawn from; older turns are history, not candidates
       .limit(400)
       .execute();
 

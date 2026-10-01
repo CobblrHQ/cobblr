@@ -11,6 +11,7 @@ import { platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { routeUnknownToMetadata, refuseUnknownFields, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
+import { orderTotal } from "../order-total.js";
 
 export const vendorsRouter = Router({ mergeParams: true });
 
@@ -48,7 +49,7 @@ vendorsRouter.get(
         "v.lead_time_days", "v.notes", "v.metadata", "v.created_at", "v.updated_at",
         eb.selectFrom("purchases_orders as o").select(eb.fn.countAll().as("c"))
           .whereRef("o.vendor_id", "=", "v.id").as("order_count"),
-        eb.selectFrom("purchases_orders as o").select(sql<string>`coalesce(sum(o.total_cost), 0)`.as("s"))
+        eb.selectFrom("purchases_orders as o").select(sql<string>`coalesce(sum(${orderTotal("o")}), 0)`.as("s"))
           .whereRef("o.vendor_id", "=", "v.id").as("total_spend"),
       ])
       .orderBy("v.name")
@@ -79,13 +80,14 @@ vendorsRouter.get(
       return;
     }
     const orders = await db
-      .selectFrom("purchases_orders")
-      .select(["id", "order_number", "status", "ordered_at", "expected_arrival", "arrived_at", "total_cost"])
-      .where("vendor_id", "=", id)
-      .where("instance", "=", instanceOf(req))
-      .orderBy("ordered_at", "desc")
+      .selectFrom("purchases_orders as o")
+      .select(["o.id", "o.order_number", "o.status", "o.ordered_at", "o.expected_arrival", "o.arrived_at", "o.total_cost"])
+      .select(orderTotal("o").as("total"))
+      .where("o.vendor_id", "=", id)
+      .where("o.instance", "=", instanceOf(req))
+      .orderBy("o.ordered_at", "desc")
       .execute();
-    const total_spend = orders.reduce((sum, o) => sum + (Number(o.total_cost) || 0), 0);
+    const total_spend = orders.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
     res.json({ ...vendor, orders, order_count: orders.length, total_spend });
   }),
 );
@@ -128,6 +130,8 @@ vendorsRouter.patch(
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const session = sessionUser(req);
+    // The row as it was: the log says what this edit changed (#4517).
+    const before = await db.selectFrom("purchases_vendors").selectAll().where("id", "=", id).where("instance", "=", instanceOf(req)).executeTakeFirst();
     const updated = await db
       .updateTable("purchases_vendors")
       // Custom fields MERGE into the live row (withMetadataMerged, #3625).
@@ -156,6 +160,7 @@ vendorsRouter.patch(
       action: "vendor_updated",
       ref: { module: "purchases", entityType: "vendor", entityId: id },
       diff: parsed.data,
+      before,
     });
     res.json(updated);
   }),
@@ -164,6 +169,9 @@ vendorsRouter.patch(
 vendorsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
+    // A vendor carries the spend of every order linked to it: removing it is
+    // an owner's or admin's.
+    if (!requireRole(req, res, "owner", "admin")) return;
     const id = req.params.id!;
     const db = tenantDb(req);
     const ctx = tenantContext(req);

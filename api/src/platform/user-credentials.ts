@@ -45,6 +45,8 @@ export interface UserCredentialInput {
   kind?: string;
   label?: string;
   credentials: Record<string, unknown>;
+  /** What the platform made it from, when it was made on someone's behalf. */
+  origin_key?: string;
   route_mode?: RouteMode;
   route_scope?: RouteScope;
   auto_enable_new?: boolean;
@@ -204,6 +206,7 @@ export async function addUserCredential(
       route_mode: input.route_mode ?? "my-calls",
       route_scope: scope,
       auto_enable_new: input.auto_enable_new ?? false,
+      ...(input.origin_key ? { origin_key: input.origin_key } : {}),
       ...(input.verification !== undefined ? { verification: (input.verification === null ? null : JSON.stringify(input.verification)) as unknown as Record<string, unknown> | null } : {}),
     })
     .returning("id")
@@ -312,7 +315,7 @@ export async function listUserCredentials(
   userId: string,
   /** Per-provider secrecy check (from the AI provider catalogue) so we can return
    *  non-secret field values without ever exposing a secret. Omit → no values. */
-  isSecret?: (providerId: string, key: string) => boolean,
+  isSecret?: (providerId: string, key: string, kind?: string) => boolean,
 ): Promise<UserCredentialView[]> {
   const rows = await meta
     .selectFrom("user_credentials")
@@ -358,7 +361,7 @@ export async function listUserCredentials(
     share_status: statusByCred.get(r.id) ?? {},
     verification: verificationFrom(r.verification),
     credential_keys: keysOf(r.credentials_encrypted),
-    credential_values: nonSecretValues(r.provider_id, r.credentials_encrypted, isSecret),
+    credential_values: nonSecretValues(r.provider_id, r.credentials_encrypted, isSecret ? (id, k) => isSecret(id, k, r.kind) : undefined),
     uses_edge: usesEdge(r.provider_id, r.credentials_encrypted),
     created_at: r.created_at,
     updated_at: r.updated_at,

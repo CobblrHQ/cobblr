@@ -36,6 +36,10 @@ Set via environment in your MCP client config:
 
 Nothing is persisted by this process; the token lives only in your MCP client config.
 
+The tools offered follow the token: a token held to looking is offered no writes, one held to
+changing records is not offered workspace setup, and one held to a workspace uses it as the
+default. The server reads this from `GET /me` at start (see `src/offers.ts`).
+
 ## Install in Claude Code / Claude Desktop
 
 Build it first (from the repo root): `npm run build -w @cobblr/mcp-server`.
@@ -95,6 +99,7 @@ Generated from `@cobblr/workspace-tools`, so the set matches the in-app chat:
 - **Read — escort (tier 1.5)**: `cobblr_take_user_to` — walk the user to a screen the assistant may never operate (members & invites, API tokens, backup & restore, AI providers, the wire composer, field editing), optionally prefilling the form (`prefill.*` params only pages that opt in will read). In the Cobblr app this moves the user's screen; from an external client it returns the path to hand them. Nothing is ever submitted — the page's own button, under the page's own role checks, is the consent.
 - **Read — how the workspace is SET UP, not what it holds**: `cobblr_get_workspace_setup` — its instances (the separate lists one module runs), saved views, automations (wires), the apps the user built, entity templates and custom units. `part:` picks one area; omitting it summarises all of them. Each area degrades on its own, so a module that isn't enabled drops out of the answer instead of failing the call.
 - **Services** (work a provider does: print a label, render a model, look something up): `cobblr_list_services` (what this workspace can ask for, and with `capability:` the options of one), `cobblr_invoke_service` (start a job; one that acts in the physical world waits for a person's yes on its card, whatever the caller, and `after:` can arm "do this when that job finishes"), `cobblr_get_service_job` (status, the question it is asking, and when done its output and files). Offered only when the workspace has a service to ask.
+- **Add a thing the person has** (a printer, a book, a spool): `cobblr_add_thing`, not `create_record`. It runs the scan inbox's own intake, the same one a scan gets: the duplicate check, the table and category, the table's fields filled from what the name, code or link says, a picture and a place. It answers with what it found, `already_have` when the thing is already there, and `hints` (the table's fields still empty: ask your person). It always lands in the inbox first, marked as from an assistant; `file: true` files it in the same call unless it is already there (`allow_duplicate: true` overrides).
 - **Write** (permission-checked server-side; the in-app chat routes these same writes through its Confirm gate): `cobblr_create_record`, `cobblr_create_records`, `cobblr_update_record`, `cobblr_delete_record`, `cobblr_invoke_action`. **A SET is one call**: `cobblr_create_records` takes up to 200 records of one kind ("shelf 1 to 5 in every rack") instead of a loop over `create_record` - one round trip, one line in the user's chat, one undo that puts all of them back, and anything already there is reported rather than duplicated. Configuration is written the same way: a config change registers a **workspace-scoped action** (`labels:set-code`, `core-units:add-unit`, `core-views:save-view`) and rides `invoke_action`, so it inherits the confirm gate, the permission check and the change ledger instead of needing a bespoke tool per setting.
 
 (Plus the `cobblr_drive_*` browser-driving tools — see `docs/modules/mcp-server.md`.)

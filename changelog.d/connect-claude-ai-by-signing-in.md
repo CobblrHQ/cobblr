@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-09-28
 docs_target: docs/USER_GUIDE.md#3.22 AI providers & the AI kill-switch (operator)
+docs_published: 2026-10-01
 ---
 You can now add Cobblr to claude.ai and the Claude phone apps as a connector: paste one address, sign in, and choose the one workspace it may use and whether it may only look or also make changes. Connected apps are listed on the Connect page, where Disconnect ends one at once.
 

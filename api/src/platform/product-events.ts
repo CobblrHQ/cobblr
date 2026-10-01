@@ -126,3 +126,16 @@ export function productEventsObserver(req: Request, res: Response, next: NextFun
   });
   next();
 }
+
+/** One more of `metric` in this workspace today (UTC). A single upsert, so two
+ *  api processes counting at once both land. Best-effort like the rest. */
+export function countProductMetric(e: { orgId: string; metric: string; n?: number }): void {
+  const n = Math.max(1, Math.floor(e.n ?? 1));
+  void sql`
+    insert into product_daily_counts (day, org_id, metric, n)
+    values (${utcDay()}::date, ${e.orgId}::uuid, ${e.metric}, ${n})
+    on conflict (day, org_id, metric) do update set n = product_daily_counts.n + excluded.n
+  `
+    .execute(meta)
+    .catch((err: unknown) => console.warn(`[product-events] count ${e.metric} failed:`, err instanceof Error ? err.message : err));
+}

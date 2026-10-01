@@ -3,6 +3,7 @@ type: feature
 scope: yarn
 date: 2026-09-26
 docs_target: docs/USER_GUIDE.md#3.3 Projects
+docs_published: 2026-10-01
 ---
 Yarn's Designs are now **Patterns**, and your pattern PDFs have a home. **Import patterns** takes a pile of PDFs or a zipped downloads folder: each PDF becomes a pattern with its file, its cover photo pulled out of the PDF, a zip's category folders fill in the category, and a PDF you already have is never added twice. A pattern also keeps its designer, where it came from and how hard it is, and it opens right in the app, on a phone too.
 

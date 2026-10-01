@@ -13,7 +13,8 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, Check, History, Loader2, Pencil, Trash2 } from "lucide-react";
-import { useToast } from "@cobblr/platform-web";
+import { ChoiceCombobox, useToast, type ChoiceOption } from "@cobblr/platform-web";
+import { formatStoredMoney } from "@cobblr/platform-contract/money";
 import { api, type MaintenanceIntervalUnit, type MaintenanceSchedule } from "../../lib/api";
 import type { EntityDetailPanelCtx } from "../../panels/types";
 
@@ -54,6 +55,18 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
     staleTime: 60_000,
   });
   const counters = countersQ.data?.counters ?? [];
+  // "What needs doing" offers the jobs this kind of record has had and the
+  // ones its table ships with; a job typed once is offered from then on.
+  const namesQ = useQuery({
+    queryKey: ["maintenance-names", ctx.slug, kind],
+    queryFn: () => api.maintenanceServiceNames(ctx.slug, kind),
+    enabled: !!kind,
+    staleTime: 60_000,
+  });
+  const jobOptions: ChoiceOption[] = [
+    ...(namesQ.data?.values ?? []),
+    ...(namesQ.data?.suggested ?? []).map((value) => ({ value })),
+  ];
 
   const [name, setName] = useState("");
   const [everyText, setEveryText] = useState("");
@@ -63,6 +76,7 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: key });
     void qc.invalidateQueries({ queryKey: ["attention"] });
+    void qc.invalidateQueries({ queryKey: ["maintenance-names", ctx.slug, kind] });
   };
 
   const create = useMutation({
@@ -156,6 +170,7 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
               <li key={s.id}>
                 <EditSchedule
                   schedule={s}
+                  jobs={jobOptions}
                   counters={counters}
                   input={input}
                   pending={edit.isPending}
@@ -218,7 +233,7 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
               <li key={h.id} className="flex flex-wrap gap-x-2">
                 <span className="font-medium">{h.name}</span>
                 <span className="text-muted">{h.performed_at ? new Date(h.performed_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : ""}</span>
-                {h.cost_cents != null && <span className="text-muted">{(h.cost_cents / 100).toFixed(2)}</span>}
+                {h.cost_cents != null && <span className="text-muted">{formatStoredMoney(h.cost_cents, "cents")}</span>}
                 {h.notes && <span className="text-muted italic truncate">{h.notes}</span>}
               </li>
             ))}
@@ -233,15 +248,17 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
         }}
         className="space-y-2 border-t border-line/60 dark:border-slate-700/60 pt-3"
       >
-        <label className="block space-y-1">
+        <div className="block space-y-1">
           <span className="text-xs text-muted dark:text-slate-400">What needs doing</span>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
+          <ChoiceCombobox
+            label="What needs doing"
+            value={name || null}
+            options={jobOptions}
+            onCommit={(v) => setName(v ?? "")}
+            live
             placeholder="e.g. Oil change"
-            className={`${input} w-full`}
           />
-        </label>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm text-content dark:text-slate-200">Service every</span>
           <input
@@ -286,6 +303,7 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
 
 function EditSchedule({
   schedule,
+  jobs,
   counters,
   input,
   pending,
@@ -293,6 +311,7 @@ function EditSchedule({
   onSave,
 }: {
   schedule: MaintenanceSchedule;
+  jobs: ChoiceOption[];
   counters: Array<{ key: string; label: string; value: number | null }>;
   input: string;
   pending: boolean;
@@ -313,7 +332,7 @@ function EditSchedule({
         if (ok && !pending) onSave({ name: name.trim(), n: num, unit });
       }}
     >
-      <input aria-label="What needs doing" value={name} onChange={(e) => setName(e.target.value)} className={`${input} w-full`} />
+      <ChoiceCombobox label="What needs doing" value={name || null} options={jobs} onCommit={(v) => setName(v ?? "")} live />
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm">Every</span>
         <input type="number" inputMode="decimal" min={1} aria-label="How many" value={n} onChange={(e) => setN(e.target.value)} className={`${input} w-20`} />

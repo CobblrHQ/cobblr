@@ -5,11 +5,15 @@
 // row of their own, the ones hidden here, and the ones that are off.
 //
 // A card is the app: the whole card opens it. The one other thing an app
-// needs sits in the card's corner: a pin that takes it out of (or back into)
-// this sidebar, and "Turn on" or "Ask an admin" on an app that is off.
+// needs sits in the card's corner: on every app that is on, a pin, filled
+// when the app is in this sidebar and an outline when it is not, that puts it
+// in or takes it out (setInSidebar, the same rule the sidebar's own customise
+// list uses, with an Undo); "Turn on" or "Ask an admin" on an app that is off.
+// An app that was on but had no row (Files, Machines once its collections
+// stood in for it) had no way into the sidebar from here (#4374).
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Pin, PinOff } from "lucide-react";
+import { Pin } from "lucide-react";
 import { SearchInput, usePageTitle } from "@cobblr/platform-web";
 import type { AppEntry } from "@cobblr/platform-contract/app-catalog";
 import { useAppCatalog, useModuleDoor } from "../lib/appCatalog";
@@ -17,7 +21,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { surfaceTops, useNavModules } from "../components/useNavModules";
 import { moduleIcon } from "../lib/module-icon";
 import { sidebarGroups } from "../lib/sidebarGroups";
-import { howToFindAnyApp, navWord, useToggleNavHidden } from "../lib/moreApps";
+import { howToFindAnyApp, navWord, useSidebarPin } from "../lib/moreApps";
 import { useNavLayout } from "../lib/nav-mode";
 import { useIsDesktopWidth } from "../lib/useIsDesktopWidth";
 import { QueryError } from "../components/QueryError";
@@ -38,13 +42,15 @@ function matches(a: AppEntry, q: string): boolean {
 
 const corner =
   "absolute right-2 top-2 inline-flex h-8 items-center gap-1 rounded-md px-2 text-xs font-medium transition disabled:opacity-50";
+/** The pin: a 44px target on a phone, the corner's size on a desk. */
+const pinCorner = "absolute right-1 top-1 inline-flex h-11 w-11 items-center justify-center rounded-md transition md:right-2 md:top-2 md:h-8 md:w-8";
 
 export function AllAppsPage() {
   usePageTitle("All apps");
   const { apps, loading, failed, retry } = useAppCatalog();
   const door = useModuleDoor();
   const { activeSlug, activeOrg } = useActiveOrg();
-  const toggleHidden = useToggleNavHidden();
+  const pin = useSidebarPin();
   const nav = useNavModules(activeSlug);
   const [q, setQ] = useState("");
   const desktop = useIsDesktopWidth();
@@ -53,8 +59,8 @@ export function AllAppsPage() {
   // Where each app is in the sidebar, if it is: the group it sits under.
   const groups = useMemo(() => {
     const appMode = !!activeOrg?.app_mode;
-    return sidebarGroups(surfaceTops(nav.tops, appMode), nav.childrenByParent, nav.instanceGroups, nav.doorNames, { homeRow: !appMode, flatLabel: `In your ${navNoun}` });
-  }, [nav.tops, nav.childrenByParent, nav.instanceGroups, nav.doorNames, activeOrg?.app_mode, navNoun]);
+    return sidebarGroups(surfaceTops(nav.tops, appMode), nav.childrenByParent, nav.instanceGroups, nav.doorNames, { homeRow: !appMode, flatLabel: `In your ${navNoun}`, placement: nav.placement });
+  }, [nav.tops, nav.childrenByParent, nav.instanceGroups, nav.doorNames, nav.placement, activeOrg?.app_mode, navNoun]);
   const groupOf = (a: AppEntry): string | null => groups.find((g) => g.names.includes(a.name) || g.names.includes(a.key))?.label ?? null;
   // The name the sidebar knows the app's row by, which is what hiding writes.
   const rowName = (a: AppEntry): string => (groups.some((g) => g.names.includes(a.key)) ? a.key : a.name);
@@ -98,26 +104,18 @@ export function AllAppsPage() {
             {body}
           </Link>
         )}
-        {inSidebar && (
+        {a.state !== "off" && (
           <button
             type="button"
-            onClick={() => toggleHidden(activeSlug, rowName(a))}
-            aria-label={`Take ${a.label} out of your ${navNoun}`}
-            title={`In your ${navNoun}: take it out (this device)`}
-            className={`${corner} text-accent hover:bg-subtle dark:hover:bg-slate-800`}
+            data-testid="app-pin"
+            data-pinned={inSidebar ? "" : undefined}
+            onClick={() => pin(activeSlug, { label: a.label, names: [...new Set([rowName(a), a.key, a.name])] }, !inSidebar)}
+            aria-label={inSidebar ? `Remove ${a.label} from your ${navNoun}` : `Add ${a.label} to your ${navNoun}`}
+            aria-pressed={inSidebar}
+            title={inSidebar ? `Remove from your ${navNoun}` : `Add to your ${navNoun}`}
+            className={`${pinCorner} ${inSidebar ? "text-accent" : "text-faint hover:text-accent"} hover:bg-subtle dark:hover:bg-slate-800`}
           >
-            <Pin size={14} />
-          </button>
-        )}
-        {a.state === "hidden" && (
-          <button
-            type="button"
-            onClick={() => door.showInSidebar(a)}
-            aria-label={`Put ${a.label} back in your ${navNoun}`}
-            title={`Hidden from your ${navNoun}: put it back (this device)`}
-            className={`${corner} text-faint hover:text-accent hover:bg-subtle dark:hover:bg-slate-800`}
-          >
-            <PinOff size={14} />
+            <Pin size={16} fill={inSidebar ? "currentColor" : "none"} />
           </button>
         )}
         {a.state === "off" &&

@@ -15,7 +15,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Camera, Check, Image as ImageIcon, RotateCcw, X } from "lucide-react";
-import { OverlayLayer } from "@cobblr/platform-web";
+import { OverlayLayer, usePasteImage } from "@cobblr/platform-web";
 import { acquireScannerStream } from "../lib/barcodeScanner";
 
 export function CameraCaptureSheet({
@@ -43,6 +43,8 @@ export function CameraCaptureSheet({
   const [shootError, setShootError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // No camera, or none wanted: a picture pasted on the sheet is the capture.
+  usePasteImage(() => fileRef.current?.parentElement ?? null, { onFiles: ([f]) => f && onCapture(f, { uploaded: true }), accept: "image/*,application/pdf,.csv,text/csv" });
   // Streams WE acquired (never the borrowed scanner stream) — stopped on close.
   const ownStreamRef = useRef<MediaStream | null>(null);
   const [mode, setMode] = useState<"live" | "preview" | "nocam">("live");

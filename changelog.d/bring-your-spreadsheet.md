@@ -3,6 +3,7 @@ type: feature
 scope: import
 date: 2026-09-28
 docs_target: docs/USER_GUIDE.md#Bring your spreadsheet
+docs_published: 2026-10-01
 ---
 Bring your spreadsheet: drop an Excel, LibreOffice or CSV file, or paste a Google Sheets link, and Cobblr shows exactly where every tab, column and row would go before it changes anything. Adjust what you like, import it in one go, and undo the whole import if it is not what you wanted.
 

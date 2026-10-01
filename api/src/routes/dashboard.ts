@@ -95,6 +95,7 @@ dashboardRouter.put(
         orgId: req.tenant!.org.id,
         userId: req.session!.id,
         action: "dashboard_layout_updated",
+        // history-before-ok: a workspace setting, logged as counts; no record's fields changed.
         ref: { module: null, entityType: "org", entityId: req.tenant!.org.id },
         diff: {
           widgets: parsed.data.widgets.length,

@@ -25,6 +25,7 @@ import { DriverPackages } from "../features/edge/DriverPackages";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { changeWorkspaceShape, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
 import { EdgeBridgeInstall } from "../components/EdgeBridgeInstall";
+import { useEnabledModules } from "../lib/useEnabledModules";
 import { DesktopAppCard, useDesktopApp } from "../components/DesktopAppCard";
 
 export function EdgeBridgesPage({ embedded = false }: { embedded?: boolean } = {}) {
@@ -33,6 +34,7 @@ export function EdgeBridgesPage({ embedded = false }: { embedded?: boolean } = {
   const slug = activeSlug ?? "";
   const toast = useToast();
   const qc = useQueryClient();
+  const on = useEnabledModules(slug);
 
   const status = useQuery({
     queryKey: ["edge-status", slug],
@@ -44,7 +46,8 @@ export function EdgeBridgesPage({ embedded = false }: { embedded?: boolean } = {
   const directQ = useQuery({
     queryKey: ["edge-bridges", slug],
     queryFn: () => api.listEdgeBridges(slug),
-    enabled: !!slug,
+    // Direct bridges are Digital Fabrication's; without it there are none to list.
+    enabled: !!slug && !!on?.has("digifab"),
     refetchInterval: 30_000,
   });
   const consumers = useQuery({

@@ -3,6 +3,7 @@ type: feature
 scope: yarn
 date: 2026-09-29
 docs_target: docs/USER_GUIDE.md#4. The platform layer
+docs_published: 2026-10-01
 ---
 Search now finds a pattern by the words inside its PDF: *magic ring*, *worsted* or *amigurumi* bring back every pattern that says it, with the line it is on.
 

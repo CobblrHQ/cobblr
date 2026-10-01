@@ -1,9 +1,11 @@
 // Account-level notification types for the Communication Preferences matrix
 // (Account Settings). Two tiers:
 //   • Tier 1 — critical, EMAIL-LOCKED. Never configurable; shown in the matrix
-//     as "Always email" (password reset, magic link, billing, account deletion).
-//     These ride the auth-email path, not the channel matrix — listed here only
-//     so the UI can render the locked rows honestly.
+//     as "Always email" (password reset, magic link, billing, trial ending).
+//     These ride the auth-email path, not the channel matrix, and are listed
+//     here only so the UI can render the locked rows honestly. Each names the
+//     code that sends it: a row for mail nothing sends is a promise nobody
+//     keeps (lint:notifications-are-named holds it).
 //   • Tier 2 — time-sensitive / fun, channel-configurable across in_app /
 //     discord_dm / email. These flow through notifyAccount().
 
@@ -18,10 +20,14 @@ export interface NotificationTypeDef {
 
 export const NOTIFICATION_TYPES: NotificationTypeDef[] = [
   // ── Tier 1 — always email, locked ──────────────────────────────────────────
+  // notification-sent-elsewhere: issueSignInLink (sign-in-link.ts)
   { key: "auth.magic_link", label: "Magic sign-in link", description: "Your one-tap login links.", tier: 1 },
+  // notification-sent-elsewhere: the password reset in routes/auth.ts
   { key: "auth.security", label: "Password & security", description: "Password resets and changes to how you sign in.", tier: 1 },
+  // notification-sent-elsewhere: the hosted overlay's billing email (hosted deployments only)
   { key: "billing", label: "Subscription & billing", description: "Plan, payment and billing notices.", tier: 1 },
-  { key: "account.deletion", label: "Account deletion", description: "Confirmation when an account is deleted.", tier: 1 },
+  // notification-sent-elsewhere: the trial warning in reap-trials.ts
+  { key: "account.deletion", label: "Trial ending", description: "A warning before an unused trial workspace is deleted.", tier: 1 },
   { key: "platform.account.notice", label: "Important notices", description: "Breaking changes or actions that affect your access, such as a workspace's web address changing.", tier: 1 },
   // ── Tier 2 — configurable ───────────────────────────────────────────────────
   // A row here is a promise that something sends it: a person who switches on

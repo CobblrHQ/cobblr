@@ -25,8 +25,13 @@ import { useRef, useState, type KeyboardEvent } from "react";
 import { Pencil } from "lucide-react";
 import { cellPlan, type CellPlan, type EditableCellDef } from "./cellPlan";
 import { FieldRenderer, boolTruthy, boolLabel } from "./FieldRenderer";
+import { fieldInputText } from "./fieldControl";
+import { MoneyInput } from "./MoneyInput";
+import { moneyStorageOf } from "@cobblr/platform-contract/money";
 import { RelationSelect, MemberSelect } from "./CustomFieldsPanel";
 import { PersonSelect, useMemberName, usePersonName } from "./PersonSelect";
+import { ChoiceCombobox } from "./ChoiceCombobox";
+import { ChoiceField } from "./ChoiceField";
 
 export type { EditableCellDef } from "./cellPlan";
 
@@ -113,6 +118,8 @@ export function EditableCell({
       type={def.type}
       choices={def.choices}
       unit={def.unit}
+      money={def.money}
+      fieldRole={def.field_role}
       size="inline"
       note={note}
     />
@@ -225,18 +232,38 @@ export function EditableCell({
     case "choice":
       return (
         <span onClick={(e) => e.stopPropagation()}>
-          <SelectCell
-            label={def.display_label}
-            value={value}
-            items={(def.choices ?? []).map((c) => ({ value: c, label: c }))}
-            onCommit={commit}
-            onCancel={close}
-          />
+          {def.entity_kind ? (
+            <ChoiceField def={{ ...def, entity_kind: def.entity_kind }} value={value} onCommit={commit} onCancel={close} autoFocus className="text-sm" />
+          ) : (
+            <ChoiceCombobox
+              label={def.display_label}
+              value={isBlank(value) ? null : String(value)}
+              options={(def.choices ?? []).map((c) => ({ value: c }))}
+              onCommit={(v) => commit(v)}
+              onCancel={close}
+              autoFocus
+              className="text-sm"
+            />
+          )}
         </span>
       );
     case "color":
       return (
         <ColorCell value={value} onCommit={commit} onCancel={close} label={def.display_label} />
+      );
+    case "money":
+      return (
+        <span onClick={(e) => e.stopPropagation()}>
+          <MoneyInput
+            autoFocus
+            value={value}
+            storage={moneyStorageOf(def) ?? "amount"}
+            onCommit={(v) => commit(v)}
+            onCancel={close}
+            ariaLabel={def.display_label}
+            className={"text-sm " + (align === "right" ? "justify-end" : "")}
+          />
+        </span>
       );
     case "input":
       return (
@@ -413,7 +440,7 @@ function TextCell({
   onCommit: (v: unknown) => void;
   onCancel: () => void;
 }) {
-  const initial = value == null ? "" : String(value);
+  const initial = fieldInputText(def, value);
   // What the input ACTUALLY showed at mount. A native date/number input blanks
   // a stored value it can't represent (an ISO timestamp, "3 rolls"), so the
   // no-change check must compare against this, not the stored string — else a

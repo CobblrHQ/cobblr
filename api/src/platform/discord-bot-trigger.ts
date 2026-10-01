@@ -7,6 +7,12 @@
 import { dmSummary } from "./channels/discord-card.js";
 const BOT_URL = process.env.COBBLR_DISCORD_BOT_URL || "";
 
+/** Whether a DM can be sent at all: the bot is the only thing that holds a
+ *  Discord connection. */
+export function discordDmConfigured(): boolean {
+  return Boolean(BOT_URL);
+}
+
 export interface DiscordResolvePoke {
   thread_id: string;
   /** What to post into the thread (the reporter-facing reply). */
@@ -103,6 +109,27 @@ export async function sendDiscordDm(args: {
   } catch {
     // Network error / timeout — the bot may be fine and just slow. Transient.
     return { ok: false, deliverable: false, transient: true };
+  }
+}
+
+/** Is this Discord user a member of the community server? The bot asks
+ *  Discord (the API never does). `null` is "unknown": no bot here, the bot
+ *  down or too slow, or a bot too old to know the question. Callers treat
+ *  unknown as not a member, so an invitation is shown rather than guessed away. */
+export async function discordCommunityMember(discordUserId: string): Promise<boolean | null> {
+  if (!BOT_URL) return null;
+  try {
+    const r = await fetch(`${BOT_URL.replace(/\/+$/, "")}/member`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ discord_user_id: discordUserId }),
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!r.ok) return null;
+    const d = (await r.json().catch(() => ({}))) as { ok?: unknown; member?: unknown };
+    return d.ok === true && typeof d.member === "boolean" ? d.member : null;
+  } catch {
+    return null;
   }
 }
 

@@ -1,7 +1,7 @@
 // Thin fetch wrapper for the sales REST surface + a generic part lookup (for
 // line items). Routes mount at /api/v1/orgs/:slug/modules/sales/...
 
-import { describeUnreadableBody } from "@cobblr/platform-web";
+import { describeUnreadableBody, noteWorkspaceWrite } from "@cobblr/platform-web";
 
 export type SalesOrderStatus = "draft" | "confirmed" | "fulfilled" | "shipped" | "closed" | "cancelled";
 
@@ -30,6 +30,8 @@ export interface SalesOrder {
   carrier: string | null;
   tracking_number: string | null;
   shipped_at: string | null;
+  /** When the carrier said the parcel was delivered ("Follow parcels I send"). */
+  delivered_at?: string | null;
   shipping_address: string | null;
   notes: string | null;
   /** A bundle's custom fields on the order, by field name. */
@@ -121,7 +123,24 @@ export interface Paged<T> {
   complete: boolean;
 }
 
+/** "Follow parcels I send": whether it is on, whose connection it uses, and
+ *  why the last round stopped short, if it did. */
+export interface FollowParcels {
+  on: boolean;
+  by: string | null;
+  paused_until: string | null;
+  paused_reason: "busy" | "quota_exhausted" | "not_connected" | "no_driver" | null;
+  following?: number;
+}
+
 export type OrderSort = "newest" | "oldest" | "customer" | "number";
+
+/** What a cancel did, and all an Undo needs to take it back. */
+export interface CancelAnswer {
+  ok: true;
+  from: SalesOrderStatus;
+  restocked: Array<{ line_id: string; part_id: string; qty: number }>;
+}
 
 export class SalesApiError extends Error {
   constructor(
@@ -165,12 +184,16 @@ export class SalesApi {
     return parsed as T;
   }
 
-  private req<T>(method: string, path: string, body?: unknown): Promise<T> {
-    return fetch(`/api/v1/orgs/${this.slug}/modules/sales${path}`, {
+  private async req<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const url = `/api/v1/orgs/${this.slug}/modules/sales${path}`;
+    const res = await fetch(url, {
       method,
       headers: this.headers(body !== undefined),
       body: body === undefined ? undefined : JSON.stringify(body),
-    }).then((r) => this.parse<T>(r));
+    });
+    const out = await this.parse<T>(res);
+    if (method.toUpperCase() !== "GET") noteWorkspaceWrite(url);
+    return out;
   }
 
   // orders
@@ -205,6 +228,16 @@ export class SalesApi {
     return this.req<SalesOrderItem>("POST", `/orders/${orderId}/items`, body);
   }
   removeItem(orderId: string, itemId: string) { return this.req<void>("DELETE", `/orders/${orderId}/items/${itemId}`); }
+  updateItem(orderId: string, itemId: string, body: { qty?: number; unit_price?: number | null; description?: string | null }) {
+    return this.req<SalesOrderItem>("PATCH", `/orders/${orderId}/items/${itemId}`, body);
+  }
+  /** Cancel; a shipped order answers 409 ask_returned until returned is given. */
+  cancelOrder(orderId: string, returned?: boolean) {
+    return this.req<CancelAnswer>("POST", `/orders/${orderId}/cancel`, returned === undefined ? {} : { returned });
+  }
+  reinstateOrder(orderId: string, undo: CancelAnswer) {
+    return this.req<{ ok: true }>("POST", `/orders/${orderId}/reinstate`, { from: undo.from, restocked: undo.restocked });
+  }
 
   // customers
   /** One page of customers and how many match. */
@@ -219,6 +252,11 @@ export class SalesApi {
   createCustomer(body: Partial<Customer>) { return this.req<Customer>("POST", "/customers", body); }
   updateCustomer(id: string, body: Partial<Customer>) { return this.req<Customer>("PATCH", `/customers/${id}`, body); }
   deleteCustomer(id: string) { return this.req<void>("DELETE", `/customers/${id}`); }
+
+  // following sent parcels
+  followParcels() { return this.req<FollowParcels>("GET", "/follow-parcels"); }
+  setFollowParcels(on: boolean) { return this.req<FollowParcels>("PUT", "/follow-parcels", { on }); }
+  checkParcelsNow() { return this.req<{ asked: number; delivered: number; stopped: string | null }>("POST", "/follow-parcels/check"); }
 
   /** Generic kernel entity search — inventory parts for the line-item picker. */
   async searchParts(q: string): Promise<PartOption[]> {

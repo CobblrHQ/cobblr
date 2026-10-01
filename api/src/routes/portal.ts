@@ -132,6 +132,7 @@ portalRouter.put(
         orgId: req.tenant!.org.id,
         userId: req.session!.id,
         action: "portal_config_updated",
+        // history-before-ok: a workspace setting, logged as counts; no record's fields changed.
         ref: { module: null, entityType: "org", entityId: req.tenant!.org.id },
         diff: { pinned_views: parsed.data.pinned_views.length },
       });

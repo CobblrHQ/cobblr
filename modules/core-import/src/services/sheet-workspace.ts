@@ -18,6 +18,7 @@ interface KindField {
   type?: string;
   readOnly?: boolean;
   fieldRole?: string | null;
+  money?: "cents" | "amount" | null;
 }
 
 interface KindRecordLike {
@@ -43,7 +44,7 @@ interface MenuEntry {
 function nativeFields(kind: KindRecordLike | undefined): TargetField[] {
   return (kind?.fields ?? [])
     .filter(isWritableNativeField)
-    .map((f) => ({ name: f.name, label: columnLabel(f.name), type: f.type === "url" ? "url" : (f.type ?? "text"), native: true, field_role: f.fieldRole ?? null }));
+    .map((f) => ({ name: f.name, label: columnLabel(f.name), type: f.type === "url" ? "url" : (f.type ?? "text"), native: true, field_role: f.fieldRole ?? null, money: f.money ?? null }));
 }
 
 export function instanceSlug(label: string): string {

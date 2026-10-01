@@ -16,6 +16,9 @@ import { useRef, type ReactNode } from "react";
 import { fieldNeed, type FieldNeed } from "./field-pack";
 import { fieldPackControlClass, type FieldPackItem } from "./FieldPack";
 import { useFieldDraft } from "./use-field-draft";
+import { MoneyInput } from "./MoneyInput";
+import { UsedValueInput } from "./UsedValueInput";
+import type { MoneyStorage } from "@cobblr/platform-contract/money";
 
 /** The small mono caption every field in a pack wears over its control. */
 export function FieldLabel({ children }: { children: ReactNode }) {
@@ -53,7 +56,9 @@ export interface EditFieldProps {
 /** The text an EditField shows for a value: "" for none, and a number
  *  without the zeros Postgres pads it with. */
 export function editFieldText(value: string | number | null | undefined, numeric?: boolean, type?: string): string {
-  if (value == null) return "";
+  // Blank stays blank: Number("") is 0, so an empty number field read as a 0
+  // nobody entered (an order with no total said "Total cost 0").
+  if (value == null || value === "") return "";
   // A date column arrives as a timestamp ("2026-09-20T00:00:00.000Z") and a
   // date input shows only "YYYY-MM-DD": handed the whole string it shows an
   // empty box, which reads as a date nobody set (an order's Ordered at did).
@@ -121,6 +126,23 @@ export function editFieldItem(key: string, p: EditFieldProps & { label: string }
   return { need: editFieldNeed(key, { ...p, valueLength: editFieldText(p.value, p.numeric).length }), node: <EditField {...p} /> };
 }
 
+/** A record's own text column offered from what the kind's records already
+ *  hold (a brand, a manufacturer), as a pack item labelled like EditField. */
+export function usedValueFieldItem(
+  key: string,
+  p: { label: string; kind: string; field: string; value: string | null; onCommit: (v: string | null) => void; placeholder?: string },
+): FieldPackItem {
+  return {
+    need: fieldNeed(key, { control: "choice", label: p.label, valueLength: (p.value ?? "").length }),
+    node: (
+      <div className="block min-w-0">
+        <FieldLabel>{p.label}</FieldLabel>
+        <UsedValueInput kind={p.kind} field={p.field} label={p.label} value={p.value} onCommit={p.onCommit} placeholder={p.placeholder} className={fieldPackControlClass} />
+      </div>
+    ),
+  };
+}
+
 export function EditSelect({ label, value, options, onCommit }: { label: ReactNode; value: string; options: readonly string[]; onCommit: (v: string) => void }) {
   const f = useFieldDraft(value);
   return (
@@ -144,4 +166,23 @@ export function EditSelect({ label, value, options, onCommit }: { label: ReactNo
       </select>
     </label>
   );
+}
+
+/** A record's money column as a pack item: the one MoneyInput, labelled like
+ *  every EditField beside it. `storage` is how the column holds money ("cents"
+ *  for purchase_price_cents, "amount" for a part's cost), so the form shows
+ *  "4,300" for either and writes back the shape the column keeps. */
+export function moneyFieldItem(
+  key: string,
+  p: { label: string; value: unknown; storage: MoneyStorage; onCommit: (stored: number | null) => void; placeholder?: string },
+): FieldPackItem {
+  return {
+    need: fieldNeed(key, { control: "money", label: p.label }),
+    node: (
+      <label className="block min-w-0">
+        <FieldLabel>{p.label}</FieldLabel>
+        <MoneyInput value={p.value} storage={p.storage} onCommit={p.onCommit} placeholder={p.placeholder} ariaLabel={p.label} className={fieldPackControlClass} />
+      </label>
+    ),
+  };
 }

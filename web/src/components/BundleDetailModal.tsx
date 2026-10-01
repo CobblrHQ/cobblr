@@ -36,6 +36,8 @@ import { featureChangeToast } from "../lib/featureChangeToast";
 import type { BundleConflictResolution, BundleInstallSummary } from "../lib/api";
 import { releasesBetween } from "@cobblr/platform-contract/bundle-update-tier";
 import { BundleUpdateConflicts, resolutionsFor, type ConflictChoice } from "./BundleUpdateConflicts";
+import { doorLeadsSomewhere } from "../lib/discord-connect";
+import { useDiscordStatus } from "../lib/useDiscordStatus";
 
 interface InstalledMode {
   mode: "installed";
@@ -380,6 +382,10 @@ export function BundleDetailModal(props: Props) {
       .map((i) => ({ instance: i.instance_name, table: i.display_name, of: i.noun!.of, offer: i.noun! }));
   }, [props, selectedFeatures]);
 
+  // Next steps are data (the dashboard card keeps them); whether one leads
+  // anywhere on THIS server is asked when it is drawn.
+  const discord = useDiscordStatus(open);
+
   if (props.mode === null || !open) return null;
 
   // Derive the shared rendering shape — the manifest for previews
@@ -644,7 +650,7 @@ export function BundleDetailModal(props: Props) {
     props.mode === "installed"
       ? FEATURED_BUNDLES.find((b) => b.manifest.id === props.bundle.external_id)?.next_steps
       : undefined;
-  const nextSteps: BundleNextStep[] =
+  const allNextSteps: BundleNextStep[] =
     props.mode === "featured" && props.manifest
       ? deriveNextSteps(props.manifest, props.nextSteps, selectedFeatures)
       : installedManifest
@@ -655,6 +661,7 @@ export function BundleDetailModal(props: Props) {
               label: `Go to ${m.charAt(0).toUpperCase() + m.slice(1)}`,
               module: m,
             }));
+  const nextSteps = allNextSteps.filter((s) => doorLeadsSomewhere(s.path, discord.data));
 
   // Navigate to a step's target: an explicit `path` (e.g. an instance route
   // "/instances/yarn/items") wins, else the module's own route.

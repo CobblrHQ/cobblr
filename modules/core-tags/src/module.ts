@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-tags",
-  version: "0.1.8",
+  version: "0.2.1",
   displayName: "Tags",
   description:
     "Label anything with the same tag, whatever it is, and see everything with that tag together.",
@@ -58,20 +58,45 @@ export default defineModule({
 
   dependencies: [],
 
+  // Deleting a tag takes it off every record that carries it, across the
+  // workspace: an owner's or admin's call, or a grant of this. Applying,
+  // removing and renaming stay open to members.
+  capabilities: [
+    {
+      id: "core-tags:delete-tag",
+      label: "Delete a tag",
+      description: "Delete a tag, taking it off every record that carries it. Adding, removing and renaming tags do not need this.",
+    },
+  ],
+
   exposes: {
     events: [
       "core-tags.tag.created",
+      "core-tags.tag.updated",
       "core-tags.tag.deleted",
       "core-tags.assignment.created",
       "core-tags.assignment.deleted",
     ],
     actions: [
+      // NO-PHRASING: only ever run as a merge's Undo, never asked for.
+      {
+        id: "core-tags:restore-tag",
+        label: "Put a tag back",
+        description: "The way back for a merge: the tag under its own id, on every record it was on.",
+        scope: "workspace" as const,
+        internal: true,
+        userInvokable: false,
+        invokeHandler: "core-tags.restore-tag",
+        argsSchema: {
+          tag_id: { label: "The tag to put back", type: "text" as const, required: true },
+        },
+      },
       {
         id: "core-tags:merge",
         examples: ["merge these two tags", "we have the same tag twice"],
         label: "Merge into another tag",
         description:
-          "Fold this tag into another one: everything carrying this tag ends up carrying the other, and this tag is deleted. Pass `into_tag_id`, the id of the tag to KEEP (list the tags first to get it). Irreversible, so it always confirms.",
+          "Fold this tag into another one: everything carrying this tag ends up carrying the other, and this tag is deleted. Pass `into_tag_id`, the id of the tag to KEEP (list the tags first to get it). It reaches every record carrying the tag, so it needs an owner or admin (or a grant), and Undo puts the tag back on each of them.",
         icon: "merge",
         appliesTo: { kinds: ["core-tags:tag"] },
         invokeHandler: "core-tags.merge",

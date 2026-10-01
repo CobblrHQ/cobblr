@@ -251,6 +251,9 @@ function EditExpiryModal({
     : "";
   const [dateStr, setDateStr] = useState(current);
   const [busy, setBusy] = useState(false);
+  // The records are the sharing workspace's: from the receiving side the
+  // end can only come sooner (the server holds the same rule).
+  const ownsRecords = link.source_role === "owner";
   async function save(clear: boolean) {
     setBusy(true);
     try {
@@ -287,8 +290,14 @@ function EditExpiryModal({
             // The earliest day this person may pick is THEIR today; the UTC
             // day locked out today itself all evening in the Americas (#3351).
             min={dayHere()}
+            max={!ownsRecords && current ? current : undefined}
             className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
+          {!ownsRecords && (
+            <div className="text-[11px] text-muted mt-1" data-testid="link-narrow-only">
+              {link.source_org_name} shares these records, so it sets how long. From here you can only end it sooner.
+            </div>
+          )}
           <div className="text-[11px] text-faint mt-1">
             Local time, end-of-day. Cross-workspace reads stop honouring
             the link the moment it expires.
@@ -302,14 +311,16 @@ function EditExpiryModal({
           >
             Cancel
           </button>
-          <button
-            type="button"
-            onClick={() => void save(true)}
-            disabled={busy}
-            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800 disabled:opacity-50"
-          >
-            Never expire
-          </button>
+          {(ownsRecords || !link.expires_at) && (
+            <button
+              type="button"
+              onClick={() => void save(true)}
+              disabled={busy}
+              className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800 disabled:opacity-50"
+            >
+              Never expire
+            </button>
+          )}
           <button
             type="button"
             onClick={() => void save(false)}

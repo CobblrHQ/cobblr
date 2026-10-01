@@ -36,9 +36,16 @@
 //
 // Anything else fails, unless it is in scripts/ui-reach-baseline.json: the
 // gaps that existed when the rule landed. The baseline is a WORKLIST and may
-// only shrink. A line that is now reached must be deleted (the lint says
-// which), and a new route or action cannot join it; it says which it is on the
-// day it is written.
+// only shrink; a new route or action cannot join it, it says which it is on
+// the day it is written.
+//
+// A line that is now reached is a NOTE, never a failure, and merge-pr prunes
+// it on the merge tree (`--prune`, run from lib/generated-files.mjs). It used
+// to fail, and that turned main red whenever two pull requests landed in the
+// other order: one reached a gap, the one merging second still carried its
+// line, and every pre-push in the fleet was refused over a list one line too
+// long (#4358 then #4257, 2026-09-30, seven lines). Pruning can only remove a
+// line nothing needs any more, so it never grants what the rule refuses.
 //
 // THE BOUNDARY, AND WHICH FALSE POSITIVE DREW IT. The reader matches paths by
 // their tail, since a screen builds the front from its own base
@@ -62,13 +69,14 @@
 //
 //   npx tsx scripts/lint-ui-reach.ts                    (pnpm lint ui-reach)
 //   npx tsx scripts/lint-ui-reach.ts --write-baseline   (only when the rule is first turned on)
+//   npx tsx scripts/lint-ui-reach.ts --prune            (drop reached lines; merge-pr runs it)
 import { readOnce } from "./lib/read-once.ts";
 import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { API_CLIENT, METHOD_LINE, apiClientMethods, callerCorpus, isCalled } from "./lib/api-client-methods.ts";
 import { DEVICE_WIRE_PATH, MODULES, kernelRoutes, moduleRoutes, routedModules, type MutatingRoute } from "./lib/mutating-routes.ts";
 
-const BASELINE_FILE = join("scripts", "ui-reach-baseline.json");
+const BASELINE_FILE = process.env.COBBLR_UI_REACH_BASELINE || join("scripts", "ui-reach-baseline.json");
 const PLATFORM_ACTIONS_FILE = join("api", "src", "platform", "platform-actions.ts");
 const LOOKBACK = 6;
 const SCREEN_MARK = /UI-SCREEN:\s*(\S+)/;
@@ -440,12 +448,22 @@ if (process.argv.includes("--write-baseline")) {
   process.exit(0);
 }
 
-const baseline = new Set<string>(
-  existsSync(BASELINE_FILE) ? (JSON.parse(readOnce(BASELINE_FILE)) as { gaps: string[] }).gaps : [],
-);
+const worklist = existsSync(BASELINE_FILE) ? (JSON.parse(readOnce(BASELINE_FILE)) as { _why?: string; gaps: string[] }) : { gaps: [] };
+const baseline = new Set<string>(worklist.gaps);
 const open = gaps.filter((g) => !baseline.has(g.key));
 const stillGaps = new Set(gaps.map((g) => g.key));
 const healed = [...baseline].filter((k) => !stillGaps.has(k));
+
+// Only removes: a line nothing needs any more. Never adds, so running it on a
+// merge can never let a new gap in.
+if (process.argv.includes("--prune")) {
+  if (healed.length) {
+    const keep = worklist.gaps.filter((k) => stillGaps.has(k));
+    writeFileSync(BASELINE_FILE, `${JSON.stringify({ ...worklist, gaps: keep }, null, 2)}\n`);
+    console.log(`ui-reach: pruned ${healed.length} reached line(s) from ${BASELINE_FILE}`);
+  }
+  process.exit(0);
+}
 
 let failed = false;
 if (problems.length) {
@@ -463,14 +481,15 @@ if (open.length) {
       "  // UI-REACH: <why>           when no screen should (a device's wire, a test door)\n",
   );
 }
+if (failed) process.exit(1);
 if (healed.length) {
-  failed = true;
-  console.error(
-    `✗ lint:ui-reach: ${healed.length} baseline line(s) are reached now. Delete them from ${BASELINE_FILE}, ` +
-      `so the worklist says what is left:\n${healed.map((k) => `  ${k}`).join("\n")}`,
+  // A note: merge-pr prunes these on the merge (`--prune`); failing here
+  // turned main red whenever another change reached one first.
+  console.log(
+    `  note: ${healed.length} worklist line(s) are reached now; the next merge drops them ` +
+      `(npx tsx scripts/lint-ui-reach.ts --prune does it by hand):\n${healed.map((k) => `    ${k}`).join("\n")}`,
   );
 }
-if (failed) process.exit(1);
 console.log(
   `✓ lint:ui-reach: ${routesChecked} write route(s) and ${actionsChecked} action(s), each offered by a screen or ` +
     `saying why not (${baseline.size} still on the worklist in ${BASELINE_FILE}).`,

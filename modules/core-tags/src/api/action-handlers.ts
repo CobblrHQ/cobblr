@@ -10,7 +10,9 @@
 import { sql, type Kysely } from "kysely";
 import { platform, requireActionEntity } from "@cobblr/platform-contract";
 import type { CoreTagsDB } from "../db.js";
-import { mergeTagInto } from "./tags.js";
+import { TagRestoreRefused, mergeTagKept, restoreTag } from "../tag-writes.js";
+import { countOf } from "@cobblr/platform-contract/plural";
+import { attachTag, detachTag, ensureTag } from "../tag-writes.js";
 import { splitEntityKind } from "@cobblr/platform-contract/entity-kind";
 
 let registered = false;
@@ -41,52 +43,11 @@ export function registerTagActionHandlers(): void {
     if (!src) return { ok: false, error: `no kind of record called "${entity.kind}" here` };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreTagsDB>;
 
-    // Resolve to a tag id — create on the fly if no such tag yet (the same
-    // attach-by-name behavior the /attachments route has).
-    const existing = await db
-      .selectFrom("core_tags_tags")
-      .select("id")
-      .where(sql`lower(name)`, "=", tagName.toLowerCase())
-      .executeTakeFirst();
-    const tagId =
-      existing?.id ??
-      (
-        await db
-          .insertInto("core_tags_tags")
-          .values({ name: tagName })
-          .returning("id")
-          .executeTakeFirstOrThrow()
-      ).id;
-
-    // Idempotent on (tag, entity).
-    const already = await db
-      .selectFrom("core_tags_assignments")
-      .select("id")
-      .where("tag_id", "=", tagId)
-      .where("source_module", "=", src.source_module)
-      .where("source_type", "=", src.source_type)
-      .where("source_id", "=", entity.id)
-      .executeTakeFirst();
-    if (already) return { ok: true, tag_id: tagId, attachment_id: already.id, already_tagged: true, tag_name: tagName };
-
-    const row = await db
-      .insertInto("core_tags_assignments")
-      .values({
-        tag_id: tagId,
-        source_module: src.source_module,
-        source_type: src.source_type,
-        source_id: entity.id,
-      })
-      .returning("id")
-      .executeTakeFirstOrThrow();
-    await platform().events.emit("core-tags.assignment.created", {
-      orgId: ctx.orgId,
-      tagId,
-      source_module: src.source_module,
-      source_type: src.source_type,
-      source_id: entity.id,
-    });
-    return { ok: true, tag_id: tagId, attachment_id: row.id, tag_name: tagName };
+    const w = { orgId: ctx.orgId, userId: ctx.userId };
+    const tag = await ensureTag(db, w, tagName);
+    const { row, created } = await attachTag(db, w, tag, { ...src, source_id: entity.id });
+    if (!created) return { ok: true, tag_id: tag.id, attachment_id: row.id, already_tagged: true, tag_name: tagName };
+    return { ok: true, tag_id: tag.id, attachment_id: row.id, tag_name: tagName };
   });
 
   platform().actions.registerHandler("core-tags.untag-record", async (ctx) => {
@@ -105,28 +66,30 @@ export function registerTagActionHandlers(): void {
       .executeTakeFirst();
     if (!tag) return { ok: true, removed: false, reason: `no tag named "${tagName}"` };
 
-    const row = await db
-      .deleteFrom("core_tags_assignments")
-      .where("tag_id", "=", tag.id)
-      .where("source_module", "=", src.source_module)
-      .where("source_type", "=", src.source_type)
-      .where("source_id", "=", entity.id)
-      .returning("id")
-      .executeTakeFirst();
-    if (!row) return { ok: true, removed: false, reason: "not tagged with that" , tag_name: tagName };
-    await platform().events.emit("core-tags.assignment.deleted", {
-      orgId: ctx.orgId,
-      tagId: tag.id,
-      source_module: src.source_module,
-      source_type: src.source_type,
-      source_id: entity.id,
-    });
-    return { ok: true, removed: true , tag_name: tagName };
+    const row = await detachTag(db, { orgId: ctx.orgId, userId: ctx.userId }, { tag_id: tag.id, source: { ...src, source_id: entity.id } });
+    if (!row) return { ok: true, removed: false, reason: "not tagged with that", tag_name: tagName };
+    return { ok: true, removed: true, tag_name: tagName };
   });
 
   // Merging two tags was reachable only by hand: the module had tag-record and
   // untag-record, and no way to say "these two mean the same thing". Tidying up
   // a tag list is exactly the chore someone asks for in words.
+  // Exists only as the way back for a merge (and its own way back is the
+  // merge again): the tag under its own id, on every record it was on.
+  platform().actions.registerHandler("core-tags.restore-tag", async (ctx) => {
+    const id = String((ctx.args as { tag_id?: unknown } | null)?.tag_id ?? "");
+    if (!id) return { ok: false, error: "nothing to put back" };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreTagsDB>;
+    try {
+      const back = await restoreTag(db, ctx.orgId, id, ctx.userId ?? null);
+      if (!back) return { ok: false, error: "that tag was not deleted recently enough to put back" };
+      return { ok: true, result: { tag_id: id, merged_into: back.mergedInto, note: `Put ${back.name} back on ${countOf(back.assignments, "record")}.` } };
+    } catch (e) {
+      if (e instanceof TagRestoreRefused) return { ok: false, error: e.message };
+      throw e;
+    }
+  });
+
   platform().actions.registerHandler("core-tags.merge", async (ctx) => {
     const entity = requireActionEntity(ctx);
     const args = (ctx.args ?? {}) as Record<string, unknown>;
@@ -143,18 +106,15 @@ export function registerTagActionHandlers(): void {
     if (!source) return { ok: false, error: "that tag no longer exists" };
     if (!target) return { ok: false, error: `no tag with id ${into} to merge into` };
 
-    const moved = await mergeTagInto(db as never, source.id, target.id);
-    await platform().events.emit("core-tags.tag.deleted", {
-      orgId: ctx.orgId,
-      tagId: source.id,
-      name: source.name,
-    });
+    const merged = await mergeTagKept(db, ctx.orgId, source.id, target.id, ctx.userId ?? null);
+    const moved = merged?.moved ?? 0;
     return {
       ok: true,
       result: {
         merged: source.name,
         into: target.name,
         moved_assignments: moved,
+        tag_id: source.id,
         note: `"${source.name}" is gone; everything it was on now carries "${target.name}".`,
       },
     };
@@ -164,6 +124,15 @@ export function registerTagActionHandlers(): void {
 // Tagging is undone by untagging, and the other way round. A tag that was
 // already there, or one that was not, changed nothing and hands back nothing.
 function registerUndos(): void {
+  platform().actions.registerUndo("core-tags.merge", (result) => {
+    const id = (result as { result?: { tag_id?: unknown } } | null)?.result?.tag_id;
+    return typeof id === "string" ? { action_id: "core-tags:restore-tag", args: { tag_id: id } } : null;
+  });
+  platform().actions.registerUndo("core-tags.restore-tag", (result) => {
+    const r = (result as { result?: { tag_id?: unknown; merged_into?: unknown } } | null)?.result;
+    if (typeof r?.tag_id !== "string" || typeof r.merged_into !== "string") return null;
+    return { action_id: "core-tags:merge", entity_kind: "core-tags:tag", entity_id: r.tag_id, args: { into_tag_id: r.merged_into } };
+  });
   platform().actions.registerUndo("core-tags.tag-record", (result, ctx) => {
     const r = result as { tag_name?: unknown; already_tagged?: unknown } | null;
     if (!ctx.entity || typeof r?.tag_name !== "string" || r.already_tagged) return null;

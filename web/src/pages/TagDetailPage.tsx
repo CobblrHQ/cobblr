@@ -81,12 +81,29 @@ export function TagDetailPage() {
   });
   const del = useMutation({
     mutationFn: () => api.deleteTag(activeSlug, tag!.id),
-    onSuccess: () => {
-      toast.success(`Deleted the tag ${tag!.name}.`);
+    onSuccess: (gone) => {
+      const id = tag!.id;
       refresh();
+      toast.action(`Deleted the tag ${gone.name}${gone.assignments ? `, taken off ${countOf(gone.assignments, "record")}` : ""}.`, {
+        actionLabel: "Undo",
+        onAction: async () => {
+          try {
+            const back = await api.restoreTag(activeSlug, id);
+            refresh();
+            toast.success(`Put ${back.name} back on ${countOf(back.assignments, "record")}.`);
+            navigate(`/tags/${id}`);
+          } catch (e) {
+            toast.error(e instanceof ApiError ? e.message : String(e));
+          }
+        },
+      });
       navigate("/tags");
     },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+    // A member refused opens the blocked-action sheet by itself (api.ts).
+    onError: (e) => {
+      if (e instanceof ApiError && e.blocked) return;
+      toast.error(e instanceof ApiError ? e.message : String(e));
+    },
   });
 
   if (tags.isLoading) return <div className="text-sm text-muted">Loading…</div>;
@@ -148,8 +165,8 @@ export function TagDetailPage() {
                   title: `Delete the tag ${tag.name}?`,
                   message:
                     total > 0
-                      ? `It comes off the ${countOf(total, "record")} that carry it. The records themselves stay.${children.length ? ` The tags inside it move to the top level.` : ""}`
-                      : "Nothing carries it.",
+                      ? `It comes off the ${countOf(total, "record")} that carry it. The records themselves stay.${children.length ? ` The tags inside it move to the top level.` : ""} You can undo this straight after.`
+                      : "Nothing carries it. You can undo this straight after.",
                   confirmLabel: "Delete tag",
                   destructive: true,
                 });
@@ -220,6 +237,10 @@ export function TagDetailPage() {
             refresh();
             setEditing(false);
             navigate(`/tags/${intoId}`);
+          }}
+          onUndone={(id) => {
+            refresh();
+            navigate(`/tags/${id}`);
           }}
         />
       )}

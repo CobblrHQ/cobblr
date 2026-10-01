@@ -260,6 +260,7 @@ const KeepBody = z.object({
   days: z.unknown().optional(),
 });
 
+// AI-REACH: a visitor's trial sandbox, behind the door's challenge; it belongs to the visitor
 tryRouter.post(
   "/try/keep",
   requireAuth,
@@ -324,6 +325,7 @@ tryRouter.post(
         res.status(400).json({ error: { code: r.reason, message: "This is not a sandbox workspace." } });
         return;
       }
+      trackProductEvent({ orgId: membership.org_id, userId, event: "sandbox_kept" });
       console.log(
         `[try-sandbox] kept ${membership.org_id} — now a ${days}d trial` +
           (r.emailed ? ", sign-in link sent" : ", NO EMAIL SENT (sandbox link left alive)"),
@@ -485,6 +487,7 @@ function bringUrl(link: string): string | null {
   }
 }
 
+// AI-REACH: a visitor's trial sandbox, behind the door's challenge; it belongs to the visitor
 tryRouter.post(
   "/try/take",
   requireAuth,
@@ -588,6 +591,7 @@ tryRouter.get(
 // the door, because that asks somebody to choose before either word means
 // anything. They arrive stocked, poke at real data, and clear it when they know
 // what they want their own to look like.
+// AI-REACH: a visitor's trial sandbox, behind the door's challenge; it belongs to the visitor
 tryRouter.post(
   "/try/empty",
   requireAuth,

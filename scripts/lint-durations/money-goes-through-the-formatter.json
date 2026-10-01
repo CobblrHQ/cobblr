@@ -1,0 +1,10 @@
+{
+  "lint": "lint:money-goes-through-the-formatter",
+  "run": "node scripts/lint-money-goes-through-the-formatter.ts",
+  "rows": [
+    "shared-web-primitive"
+  ],
+  "ms": 1048,
+  "recorded": "2026-10-02",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

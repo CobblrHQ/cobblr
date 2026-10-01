@@ -9,6 +9,7 @@ import type { Router, Request, Response, NextFunction } from "express";
 import type { Application } from "express";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
+import { projectFieldScopes } from "../platform/field-scope-projection.js";
 import { meta } from "../db/meta.js";
 import { listEntries } from "./registry.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
@@ -223,7 +224,9 @@ async function mountSingleEntry(app: Application, entry: ReturnType<typeof listE
   const mountPath = `/api/v1/orgs/:slug/modules/${manifest.name}`;
   // observeModuleSaves announces every create and update this module's routes
   // answer (platform/entity-saved.ts): one signal for a record, whatever door.
-  app.use(mountPath, requireAuth, withTenant, requireModuleEnabled(manifest.name), observeModuleSaves(manifest.name), router);
+  // projectFieldScopes: a field scoped to a capability never leaves in a
+  // module's answer to someone without it (platform/field-scope-projection.ts).
+  app.use(mountPath, requireAuth, withTenant, projectFieldScopes, requireModuleEnabled(manifest.name), observeModuleSaves(manifest.name), router);
   // Capture the module's primary-entity router (if exposed) so the
   // instance-items dispatcher can route /instances/:name/items to it.
   const primary = (imported as ModuleApiModule | undefined)?.primaryRouter;

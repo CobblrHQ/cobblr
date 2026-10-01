@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/inventory",
-  "version": "0.9.29",
+  "version": "0.9.35",
   "private": true,
   "type": "module",
   "main": "dist/module.js",

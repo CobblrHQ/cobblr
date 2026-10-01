@@ -149,6 +149,8 @@ export function registerActionHandlers(): void {
     const found = await resolveAssetRef(db, ref);
     if ("error" in found) return { ok: false, error: found.error, asset: ref };
 
+    // The custom fields as they were: the log says what this set changed (#4517).
+    const before = await db.selectFrom("assets_assets").select(["metadata"]).where("id", "=", found.id).executeTakeFirst();
     await db
       .updateTable("assets_assets")
       .set({
@@ -166,7 +168,8 @@ export function registerActionHandlers(): void {
       userId: ctx.userId ?? null,
       action: "asset_fields_updated",
       ref: { module: "assets", entityType: "asset", entityId: found.id },
-      diff: { via: ctx.event?.name ? "wire" : "asked", event: ctx.event?.name ?? null, updates },
+      diff: { via: ctx.event?.name ? "wire" : "asked", event: ctx.event?.name ?? null, updates, metadata: updates },
+      before,
     });
 
     return {

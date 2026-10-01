@@ -3,6 +3,7 @@ type: feature
 scope: try
 date: 2026-09-30
 docs_target: docs/USER_GUIDE.md#Taking your work out of a sandbox
+docs_published: 2026-10-01
 ---
 The email with your sandbox's work now has a Continue on Cobblr button that brings everything straight into a workspace once you sign up or sign in, pictures included, and a new workspace's first screen can take a backup file or a sandbox's link directly.
 

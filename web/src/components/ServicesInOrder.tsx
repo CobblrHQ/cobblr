@@ -2,6 +2,7 @@
 // 7 and 9): per capability, who answers first, your own connections movable,
 // and the workspace's say over whether it asks first. Absent entirely when no
 // service is connected here, which is most workspaces.
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import { useToast } from "@cobblr/platform-web";
@@ -38,7 +39,13 @@ export function ServicesInOrder() {
 
   return (
     <div className="mt-5">
-      <h3 className="text-[10px] font-mono uppercase tracking-widest text-accent">Services</h3>
+      <div className="flex items-baseline gap-2">
+        <h3 className="text-[10px] font-mono uppercase tracking-widest text-accent">Services</h3>
+        <span className="flex-1" />
+        <Link to="/services/runs" className="text-xs text-accent hover:underline">
+          Recent runs →
+        </Link>
+      </div>
       <div className="mt-1 space-y-4">
         {items.map((c) => (
           <ServiceChain key={c.id} capability={c} policy={policyOf(c.id)} canSet={canSet} slug={activeSlug} orgId={activeOrg?.id ?? null} />

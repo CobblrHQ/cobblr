@@ -15,6 +15,7 @@
 
 import { Kysely, sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { formatStoredMoney } from "@cobblr/platform-contract/money";
 
 interface SummaryRow {
   last_name: string | null;
@@ -87,7 +88,7 @@ export function registerMaintenanceContext(): void {
           next_scheduled: r.next_name ?? "",
           next_scheduled_at: r.next_scheduled_at ?? "",
           log_count: Number(r.log_count ?? 0),
-          total_cost: (cents / 100).toFixed(2),
+          total_cost: formatStoredMoney(cents, "cents") ?? "",
         };
       } catch (err) {
         // Tenant may not have the table yet (module mid-provision) — the

@@ -10,7 +10,7 @@
 //  module, bricklink-connector — it drives create-items + update-item.)
 
 import { sql, type Kysely } from "kysely";
-import { columnSet, platform, quantityWithUnit, requireActionEntity, type ActionInvokeContext } from "@cobblr/platform-contract";
+import { ActionRefusal, columnSet, platform, quantityWithUnit, requireActionEntity, type ActionInvokeContext } from "@cobblr/platform-contract";
 import type { ActionUndoStep } from "@cobblr/platform-contract/action-undo";
 import { statedQuantity } from "@cobblr/platform-contract/stated-quantity";
 import type { InventoryDB } from "../db.js";
@@ -116,9 +116,62 @@ interface AdjustStockPayload {
   // fired by digifab.print.completed passes sourceKind:"digifab:job" + the job id.
   sourceKind?: string;
   sourceId?: string;
+  /** The unit `delta` is measured in ("g" for a print's filament). Taken off
+   *  a thing kept in another unit (a spool in kg) it is converted first; a
+   *  unit that does not convert (grams off a thing counted "each") is not
+   *  applied at all, never read as that many of the thing's own unit. */
+  unit?: string;
+  /** The event happens once per source (a print draws on a spool once): a
+   *  second delivery for the same thing, source and direction changes
+   *  nothing. */
+  once?: boolean;
   /** The delta sets the count to what is actually there (a recount): the
    *  ledger line is a correction, never consumption or a purchase. */
   correction?: boolean;
+}
+
+const MEASURED = new Set(["mass", "length", "volume", "area"]);
+
+/** Refuse "one" of a thing kept in a measured unit (kg, m, L). */
+async function refuseOneOfMeasured(orgId: string, partId: string): Promise<void> {
+  const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
+  const row = await db.selectFrom("inventory_parts").select(["name", "unit"]).where("id", "=", partId).executeTakeFirst();
+  const unit = (row?.unit as string | null | undefined)?.trim();
+  if (!unit || unit.toLowerCase() === "each") return;
+  const info = await platform().units.resolve(orgId, unit);
+  if (info && MEASURED.has(info.category)) {
+    throw new ActionRefusal(`${row?.name ?? "This"} is kept in ${info.symbol || unit}, so "one" would be a whole ${info.name}. Say how much was used instead.`);
+  }
+}
+
+/** Has this source already moved this thing in this direction? */
+async function alreadyApplied(orgId: string, partId: string, sourceKind: string, sourceId: string, delta: number): Promise<boolean> {
+  const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
+  const row = await db
+    .selectFrom("inventory_consumption")
+    .select(["part_id"])
+    .where("part_id", "=", partId)
+    .where("source_kind", "=", sourceKind)
+    .where("source_id", "=", sourceId)
+    .where(sql<boolean>`sign(delta::numeric) = ${Math.sign(delta)}`)
+    .executeTakeFirst();
+  return !!row;
+}
+
+/** `delta` in the thing's own unit. A 40 g print taken off a spool kept in
+ *  kg is 0.04, never 40 (40 took a whole spool to zero). A thing in a unit
+ *  the stated one does not convert to is left alone. */
+async function inPartUnit(orgId: string, partId: string, delta: number, unit: string | undefined): Promise<{ ok: true; delta: number } | { ok: false; reason: string }> {
+  if (!unit?.trim()) return { ok: true, delta };
+  const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
+  const row = await db.selectFrom("inventory_parts").select(["unit"]).where("id", "=", partId).executeTakeFirst();
+  const own = (row?.unit as string | null | undefined)?.trim();
+  // "each" is the column's default, not a unit anyone chose: the number is
+  // taken as it comes, as it always was.
+  if (!own || own.toLowerCase() === "each" || own.toLowerCase() === unit.trim().toLowerCase()) return { ok: true, delta };
+  const converted = await platform().units.convert(orgId, delta, unit, own);
+  if (converted == null || !Number.isFinite(converted)) return { ok: false, reason: `${unit} does not convert to ${own}` };
+  return { ok: true, delta: Math.round(converted * 1e6) / 1e6 };
 }
 
 /** The core stock-delta path, shared by adjust-stock (wire/HTTP) and the
@@ -588,10 +641,18 @@ export function registerInventoryActionHandlers(): void {
       // button targets the entity and sends no partId, and the invoke used to
       // answer "skipped: missing partId" while claiming ok.
       const partId = args.partId ?? ev.partId ?? ctx.entity?.id;
-      const delta = statedQuantity((ev as { quantity?: unknown }).quantity, args.delta) ?? args.delta ?? ev.delta;
+      const stated = statedQuantity((ev as { quantity?: unknown }).quantity, args.delta) ?? args.delta ?? ev.delta;
       const reason = args.reason ?? ev.reason ?? "wire-driven adjustment";
-      if (!partId || typeof delta !== "number" || delta === 0) {
+      if (!partId || typeof stated !== "number" || stated === 0) {
         return { ok: true, skipped: true, reason: "missing partId or delta" };
+      }
+      const inUnit = await inPartUnit(ctx.orgId, partId, stated, args.unit ?? ev.unit);
+      if (!inUnit.ok) return { ok: true, skipped: true, reason: inUnit.reason };
+      const delta = inUnit.delta;
+      const sourceKind = args.sourceKind ?? ev.sourceKind;
+      const sourceId = args.sourceId ?? ev.sourceId;
+      if ((args.once ?? ev.once) === true && sourceKind && sourceId && (await alreadyApplied(ctx.orgId, partId, sourceKind, sourceId, delta))) {
+        return { ok: true, skipped: true, reason: "already applied for this source" };
       }
       // Stock arriving goes through the lots, so a restock (the wire says
       // `restock: true`) or anything landing on an empty shelf is a fresh lot
@@ -663,6 +724,9 @@ export function registerInventoryActionHandlers(): void {
     withPartUndo(ctx, async () => {
       const partId = ctx.entity?.id ?? (ctx.args as { partId?: string } | null)?.partId;
       if (!partId) return { ok: false, error: "missing_part" };
+      // One of a thing kept in kg is a whole kilogram: a spool emptied by a
+      // tap. A measured thing is used by saying how much, never by one.
+      await refuseOneOfMeasured(ctx.orgId, partId);
       const tz = (ctx.args as { timezone?: string } | null)?.timezone;
       // A note said about this one (a bottle's tasting note, asked by the
       // collection's own button) is kept on the statement line of the use,

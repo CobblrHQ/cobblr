@@ -13,7 +13,8 @@
 //                    stacked with its neighbours, and the page pays for the
 //                    stack once.
 //   anchor="corner"  a pill or bubble: sits above the dock's height, with its
-//                    own `lift`. Horizontal placement is the caller's
+//                    own `lift`, and STACKS with the other pieces in its
+//                    corner in the order `stack` names (CORNER_STACK). Horizontal placement is the caller's
 //                    (right-4, or left-1/2 -translate-x-1/2 for a centred bar).
 //
 //   yields (default true)   hides while any overlay is open, through the one
@@ -35,7 +36,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, type CSSProperties, type ElementType, type HTMLAttributes, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { HIDE_WHEN_OVERLAY_OPEN } from "./overlay-open";
+import { HIDE_WHEN_COVERED, HIDE_WHEN_OVERLAY_OPEN } from "./overlay-open";
 import { registerBottomChrome, registerCornerChrome } from "./bottom-dock";
 import { useYieldToContent, YIELDING_CLASS } from "./yield-to-content";
 
@@ -47,12 +48,17 @@ export interface FloatingChromeProps extends HTMLAttributes<HTMLElement>, Record
   type?: string;
   disabled?: boolean;
   anchor: FloatingAnchor;
-  /** Hide while an overlay is open. Default true. */
-  yields?: boolean;
+  /** Hide while an overlay is open. Default true. "covering": hide only for
+   *  an overlay over the page, staying beside a desk's side panel. */
+  yields?: boolean | "covering";
   /** Corner pieces: go translucent and click-through over a pressable control. */
   yieldToContent?: boolean;
   /** Corner pieces: the breath above the dock's edge. Any CSS length; default 1rem. */
   lift?: string;
+  /** Corner pieces: where this piece sits in its corner's stack
+   *  (CORNER_STACK, bottom first). The pieces in one corner stack, so none
+   *  can sit on another; nothing reads anybody else's height. */
+  stack?: number;
   /** The element to render. Default "div". */
   as?: ElementType;
   /** Render in place instead of portaling to body: for a piece that is itself
@@ -63,7 +69,7 @@ export interface FloatingChromeProps extends HTMLAttributes<HTMLElement>, Record
 }
 
 export const FloatingChrome = forwardRef<HTMLElement, FloatingChromeProps>(function FloatingChrome(
-  { anchor, yields = true, yieldToContent = false, lift, as: Tag = "div", inPlace = false, className = "", style, children, ...rest },
+  { anchor, yields = true, yieldToContent = false, lift, stack, as: Tag = "div", inPlace = false, className = "", style, children, ...rest },
   ref,
 ) {
   const inner = useRef<HTMLElement | null>(null);
@@ -77,14 +83,14 @@ export const FloatingChrome = forwardRef<HTMLElement, FloatingChromeProps>(funct
   useEffect(() => {
     if (!inner.current) return;
     if (anchor === "bottom") return registerBottomChrome(inner.current);
-    if (anchor === "corner") return registerCornerChrome(inner.current);
+    if (anchor === "corner") return registerCornerChrome(inner.current, stack);
     return;
-  }, [anchor]);
+  }, [anchor, stack]);
 
   const cls =
     "fc-fixed " +
     (anchor === "top" ? "fc-top " : anchor === "bottom" ? "fc-bottom " : "fc-corner ") +
-    (yields ? HIDE_WHEN_OVERLAY_OPEN + " " : "") +
+    (yields === "covering" ? HIDE_WHEN_COVERED + " " : yields ? HIDE_WHEN_OVERLAY_OPEN + " " : "") +
     (covering ? YIELDING_CLASS + " " : "") +
     className;
   const merged: CSSProperties & Record<string, string | number | undefined> = { ...(style as CSSProperties) };

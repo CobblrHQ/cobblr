@@ -1,0 +1,10 @@
+{
+  "lint": "lint:like-needles-are-escaped",
+  "run": "node scripts/lint-like-needles-are-escaped.ts",
+  "rows": [
+    "new-module"
+  ],
+  "ms": 900,
+  "recorded": "2026-09-30",
+  "source": "scaffolded by hand at twice a local run (a shared box); replaced from its first CI measurement"
+}

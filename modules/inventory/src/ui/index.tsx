@@ -27,6 +27,7 @@ import { useQuery } from "@tanstack/react-query";
 // InventoryProvider the admin shell uses.
 export { NewPartDialog } from "./NewPartDialog";
 export { InventoryProvider } from "./context";
+export { InventoryApi } from "./api";
 
 export const navItems = [
   { label: "Inventory", path: "/inventory", icon: Boxes },

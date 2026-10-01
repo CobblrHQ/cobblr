@@ -260,6 +260,22 @@ export async function describeCapabilityBlock(args: {
   });
 }
 
+const GUEST_READ_ONLY = "Your role here is read-only. An owner or admin can change it under Members.";
+
+/** A guest's write, refused before any route runs (withTenant): the same
+ *  answer a guest's role gets everywhere, nothing to ask for. */
+export async function describeGuestWrite(orgId: string, userId: string): Promise<BlockedAction> {
+  const approvers = await approversOf(orgId, userId);
+  return {
+    sentence: "Changing things here is not part of a guest's role.",
+    remedies: [],
+    requestable: false,
+    reason: GUEST_READ_ONLY,
+    approvers: { count: approvers.length, names: approvers.map((a) => a.name) },
+    pending: null,
+  };
+}
+
 export async function describeBlock(args: {
   orgId: string;
   userId: string;
@@ -298,7 +314,7 @@ export async function describeBlock(args: {
       sentence,
       remedies: named.remedies,
       requestable: false,
-      reason: "Your role here is read-only. An owner or admin can change it under Members.",
+      reason: GUEST_READ_ONLY,
       approvers: { count: approvers.length, names: approvers.map((a) => a.name) },
       pending: null,
     };

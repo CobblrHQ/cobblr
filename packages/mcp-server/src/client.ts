@@ -29,6 +29,22 @@ export interface OrgSummary {
 export class CobblrClient {
   constructor(private cfg: Config) {}
 
+  /** The workspace used when a tool names none, or null. */
+  get defaultSlug(): string | null {
+    return this.cfg.defaultOrgSlug || null;
+  }
+
+  /** A token held to one workspace can only ever use that one, so it is the
+   *  default when the person configured none. */
+  pinWorkspace(slug: string): void {
+    if (!this.cfg.defaultOrgSlug) this.cfg = { ...this.cfg, defaultOrgSlug: slug };
+  }
+
+  /** Who this token is, and what it may do (`token`: access, workspace). */
+  me(): Promise<unknown> {
+    return this.request("GET", "/me");
+  }
+
   /** The workspace slug to use: explicit arg → configured default → error. */
   resolveSlug(explicit?: string | null): string {
     const slug = (explicit ?? "").trim() || this.cfg.defaultOrgSlug;

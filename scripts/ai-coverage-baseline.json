@@ -82,11 +82,6 @@
   {
     "file": "modules/builds/src/api/builds.ts",
     "method": "post",
-    "path": "/builds/:id/build"
-  },
-  {
-    "file": "modules/builds/src/api/builds.ts",
-    "method": "post",
     "path": "/planned"
   },
   {
@@ -272,11 +267,6 @@
   {
     "file": "modules/core-catalogs/src/api/catalogs.ts",
     "method": "post",
-    "path": "/:id/pull"
-  },
-  {
-    "file": "modules/core-catalogs/src/api/catalogs.ts",
-    "method": "post",
     "path": "/:id/sync"
   },
   {
@@ -447,11 +437,6 @@
   {
     "file": "modules/core-locations/src/api/locations.ts",
     "method": "post",
-    "path": "/reorder"
-  },
-  {
-    "file": "modules/core-locations/src/api/locations.ts",
-    "method": "post",
     "path": "/"
   },
   {
@@ -466,11 +451,6 @@
   },
   {
     "file": "modules/core-maintenance/src/api/entries.ts",
-    "method": "post",
-    "path": "/"
-  },
-  {
-    "file": "modules/core-maintenance/src/api/entries.ts",
     "method": "patch",
     "path": "/:id"
   },
@@ -478,11 +458,6 @@
     "file": "modules/core-maintenance/src/api/entries.ts",
     "method": "delete",
     "path": "/:id"
-  },
-  {
-    "file": "modules/core-maintenance/src/api/entries.ts",
-    "method": "post",
-    "path": "/:id/complete"
   },
   {
     "file": "modules/core-maintenance/src/api/index.ts",
@@ -588,11 +563,6 @@
     "file": "modules/core-scan/src/api/inbox.ts",
     "method": "post",
     "path": "/scan/receipt"
-  },
-  {
-    "file": "modules/core-scan/src/api/inbox.ts",
-    "method": "post",
-    "path": "/receipt-group/:groupId/confirm"
   },
   {
     "file": "modules/core-scan/src/api/inbox.ts",
@@ -806,16 +776,6 @@
   },
   {
     "file": "modules/core-tags/src/api/tags.ts",
-    "method": "post",
-    "path": "/tags/:id/merge"
-  },
-  {
-    "file": "modules/core-tags/src/api/tags.ts",
-    "method": "post",
-    "path": "/attachments"
-  },
-  {
-    "file": "modules/core-tags/src/api/tags.ts",
     "method": "delete",
     "path": "/attachments/:id"
   },
@@ -841,11 +801,6 @@
   },
   {
     "file": "modules/core-units/src/api/units.ts",
-    "method": "post",
-    "path": "/"
-  },
-  {
-    "file": "modules/core-units/src/api/units.ts",
     "method": "delete",
     "path": "/:code"
   },
@@ -853,11 +808,6 @@
     "file": "modules/core-units/src/api/units.ts",
     "method": "put",
     "path": "/settings"
-  },
-  {
-    "file": "modules/core-views/src/api/views.ts",
-    "method": "post",
-    "path": "/"
   },
   {
     "file": "modules/core-views/src/api/views.ts",
@@ -1210,26 +1160,6 @@
     "path": "/:id"
   },
   {
-    "file": "modules/inventory/src/api/allocations.ts",
-    "method": "post",
-    "path": "/"
-  },
-  {
-    "file": "modules/inventory/src/api/allocations.ts",
-    "method": "patch",
-    "path": "/:id/status"
-  },
-  {
-    "file": "modules/inventory/src/api/categories.ts",
-    "method": "post",
-    "path": "/"
-  },
-  {
-    "file": "modules/inventory/src/api/import.ts",
-    "method": "post",
-    "path": "/parts/import"
-  },
-  {
     "file": "modules/inventory/src/api/parts.ts",
     "method": "post",
     "path": "/:id/units"
@@ -1248,11 +1178,6 @@
     "file": "modules/inventory/src/api/parts.ts",
     "method": "delete",
     "path": "/:id"
-  },
-  {
-    "file": "modules/inventory/src/api/parts.ts",
-    "method": "post",
-    "path": "/:id/stock-adjust"
   },
   {
     "file": "modules/inventory/src/api/spoolman.ts",
@@ -1302,11 +1227,6 @@
   {
     "file": "modules/labels/src/api/print.ts",
     "method": "post",
-    "path": "/"
-  },
-  {
-    "file": "modules/labels/src/api/print.ts",
-    "method": "post",
     "path": "/record"
   },
   {
@@ -1323,11 +1243,6 @@
     "file": "modules/labels/src/api/qr-tokens.ts",
     "method": "post",
     "path": "/:id/revoke"
-  },
-  {
-    "file": "modules/labels/src/api/queue.ts",
-    "method": "post",
-    "path": "/"
   },
   {
     "file": "modules/labels/src/api/queue.ts",
@@ -1368,11 +1283,6 @@
     "file": "modules/lists/src/api/lists.ts",
     "method": "delete",
     "path": "/lists/:id"
-  },
-  {
-    "file": "modules/lists/src/api/lists.ts",
-    "method": "post",
-    "path": "/lists/:id/clear-done"
   },
   {
     "file": "modules/lists/src/api/lists.ts",
@@ -1450,16 +1360,6 @@
     "path": "/:id"
   },
   {
-    "file": "modules/projects/src/api/tasks.ts",
-    "method": "post",
-    "path": "/:id/dependencies"
-  },
-  {
-    "file": "modules/projects/src/api/tasks.ts",
-    "method": "delete",
-    "path": "/:id/dependencies/:depId"
-  },
-  {
     "file": "modules/purchases/src/api/orders.ts",
     "method": "post",
     "path": "/"
@@ -1473,11 +1373,6 @@
     "file": "modules/purchases/src/api/orders.ts",
     "method": "delete",
     "path": "/:id"
-  },
-  {
-    "file": "modules/purchases/src/api/orders.ts",
-    "method": "post",
-    "path": "/:id/items"
   },
   {
     "file": "modules/purchases/src/api/vendors.ts",
@@ -1538,11 +1433,6 @@
     "file": "modules/sales/src/api/orders.ts",
     "method": "delete",
     "path": "/:id"
-  },
-  {
-    "file": "modules/sales/src/api/orders.ts",
-    "method": "post",
-    "path": "/:id/items"
   },
   {
     "file": "modules/sales/src/api/orders.ts",
@@ -1553,11 +1443,6 @@
     "file": "modules/sales/src/api/orders.ts",
     "method": "delete",
     "path": "/:id/items/:itemId"
-  },
-  {
-    "file": "modules/sales/src/api/orders.ts",
-    "method": "post",
-    "path": "/:id/fulfill"
   },
   {
     "file": "modules/tracking/src/api/metrics.ts",
@@ -1573,11 +1458,6 @@
     "file": "modules/tracking/src/api/metrics.ts",
     "method": "delete",
     "path": "/metrics/:id"
-  },
-  {
-    "file": "modules/tracking/src/api/metrics.ts",
-    "method": "post",
-    "path": "/metrics/:id/measurements"
   },
   {
     "file": "modules/tracking/src/api/metrics.ts",

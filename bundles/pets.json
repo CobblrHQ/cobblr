@@ -2,7 +2,14 @@
   "manifest": {
     "id": "cobblr.flagship.pets",
     "catalog": "extended",
-    "version": "0.2.2",
+    "version": "0.2.3",
+    "releases": [
+      {
+        "version": "0.2.3",
+        "released_at": "2026-10-02",
+        "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before."
+      }
+    ],
     "name": "Pets",
     "description": "Your pets as their own table: vitals + vet/vaccination dates (calendar-reminded), grouped by species.",
     "author": "Cobblr",
@@ -38,6 +45,7 @@
             "display_label": "Species",
             "type": "text",
             "position": 1,
+            "learns": true,
             "choices": [
               "Dog",
               "Cat",

@@ -22,6 +22,7 @@ import { api, ApiError, type CrossOrgNotificationEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { SidePanel } from "./SidePanel";
 import { notificationKeys } from "../lib/notification-keys";
+import { useNotificationStream } from "../hooks/useNotificationStream";
 import { MutationError } from "@cobblr/platform-web";
 
 type Mode = "dropdown" | "sidebar";
@@ -57,10 +58,15 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
     }
   }
 
+  // Live: a new notification (or one read in another tab) refreshes the
+  // count and the open list at once. The polls are the fallback, slower
+  // while the stream is up.
+  const live = useNotificationStream();
+  const poll = live ? 60_000 : 15_000;
   const unread = useQuery({
     queryKey: notificationKeys.unread(),
     queryFn: () => api.meNotificationsUnreadCount(),
-    refetchInterval: 15_000,
+    refetchInterval: poll,
   });
   // Unread in the CURRENT workspace, so the badge can distinguish "you
   // have something here" (ember red) from "the count is all in another
@@ -70,12 +76,14 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
     queryKey: notificationKeys.workspaceUnread(activeSlug),
     queryFn: () => api.notificationsUnreadCount(activeSlug),
     enabled: !!activeSlug,
-    refetchInterval: 15_000,
+    refetchInterval: poll,
   });
+  // Open, the list keeps itself current: it never refreshed while open.
   const list = useQuery({
     queryKey: notificationKeys.bell(),
     queryFn: () => api.meNotifications(),
     enabled: open,
+    refetchInterval: open ? poll : false,
   });
 
   const markRead = useMutation({

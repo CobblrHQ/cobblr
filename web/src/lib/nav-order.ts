@@ -69,7 +69,9 @@ export function readNavHidden(slug: string): string[] {
   }
 }
 
-export function writeNavHidden(slug: string, hidden: string[]) {
+/** Private: every write goes through setInSidebar, so "in your sidebar" has
+ *  one meaning (#4374). */
+function writeNavHidden(slug: string, hidden: string[]) {
   if (!slug) return;
   try {
     localStorage.setItem(HKEY(slug), JSON.stringify(hidden));
@@ -81,13 +83,100 @@ export function writeNavHidden(slug: string, hidden: string[]) {
   }
 }
 
+// ── per-device PINNED entries ────────────────────────────────────────
+// The rows a person ADDED: an app that is on but has no row of its own (a
+// door like Files or Tags, a module whose own row gave way to its named
+// collections). Without this the All apps page could take a row out of the
+// sidebar and never put one in (#4374).
+const PKEY = (slug: string) => `cobblr:nav-pinned:${slug}`;
+
+export function readNavPinned(slug: string): string[] {
+  if (!slug) return [];
+  try {
+    const raw = localStorage.getItem(PKEY(slug));
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeNavPinned(slug: string, pinned: string[]) {
+  if (!slug) return;
+  try {
+    localStorage.setItem(PKEY(slug), JSON.stringify(pinned));
+    window.dispatchEvent(new CustomEvent("cobblr:nav-order-changed", { detail: { slug } }));
+  } catch {
+    /* quota or disabled — the row keeps its default */
+  }
+}
+
+/** THE one way an entry goes into or out of this sidebar, whichever surface
+ *  asks: the All apps page's pin, the sidebar's own customise list, "put it
+ *  back". `names` are every name the row answers to (its nav key and its
+ *  module's name); the first is the one written. In: no longer hidden, and
+ *  pinned, so an app with no row by default gets one. Out: no longer pinned,
+ *  and hidden, so a row it has by default goes too. Two copies of this rule
+ *  would disagree about what "in your sidebar" means. */
+export function setInSidebar(slug: string, names: readonly string[], inSidebar: boolean): void {
+  const first = names[0];
+  if (!slug || !first) return;
+  const others = (list: string[]) => list.filter((n) => !names.includes(n));
+  if (inSidebar) {
+    writeNavHidden(slug, others(readNavHidden(slug)));
+    writeNavPinned(slug, [...others(readNavPinned(slug)), first]);
+  } else {
+    writeNavPinned(slug, others(readNavPinned(slug)));
+    writeNavHidden(slug, [...others(readNavHidden(slug)), first]);
+  }
+}
+
+/** What this sidebar holds and leaves out, to put back exactly (an Undo). */
+export function sidebarSnapshot(slug: string): { hidden: string[]; pinned: string[] } {
+  return { hidden: readNavHidden(slug), pinned: readNavPinned(slug) };
+}
+export function restoreSidebar(slug: string, snap: { hidden: string[]; pinned: string[] }): void {
+  writeNavHidden(slug, snap.hidden);
+  writeNavPinned(slug, snap.pinned);
+}
+
 /** Hide or show one entry; true when it is hidden now. Surfaces call it
  *  through useToggleNavHidden (lib/moreApps.ts), which says where it went. */
 export function toggleNavHidden(slug: string, name: string): boolean {
-  const cur = readNavHidden(slug);
-  const hide = !cur.includes(name);
-  writeNavHidden(slug, hide ? [...cur, name] : cur.filter((n) => n !== name));
+  const hide = !readNavHidden(slug).includes(name);
+  setInSidebar(slug, [name], !hide);
   return hide;
+}
+
+// ── per-device GROUP placement ───────────────────────────────────────
+// Which side of a grown sidebar a row sits on, when the person moved it. The
+// manifest only decides the default (nav-groups.ts isNavTool): a person who
+// keeps Inventory with their collections drags it there and it stays (#4374).
+const GKEY = (slug: string) => `cobblr:nav-placement:${slug}`;
+export type NavPlacement = "collections" | "tools";
+
+export function readNavPlacement(slug: string): Record<string, NavPlacement> {
+  if (!slug) return {};
+  try {
+    const parsed = JSON.parse(localStorage.getItem(GKEY(slug)) ?? "{}");
+    const out: Record<string, NavPlacement> = {};
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      for (const [k, v] of Object.entries(parsed)) if (v === "collections" || v === "tools") out[k] = v;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function writeNavPlacement(slug: string, name: string, group: NavPlacement): void {
+  if (!slug) return;
+  try {
+    localStorage.setItem(GKEY(slug), JSON.stringify({ ...readNavPlacement(slug), [name]: group }));
+    window.dispatchEvent(new CustomEvent("cobblr:nav-order-changed", { detail: { slug } }));
+  } catch {
+    /* quota or disabled — the row keeps its default side */
+  }
 }
 
 // ── per-device "always in More" nav entries ─────────────────────────

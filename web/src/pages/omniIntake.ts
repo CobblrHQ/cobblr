@@ -12,8 +12,8 @@
 // stays a SEARCH, because filtering is harmless and a wrong add is not.
 
 export type OmniKind = "upc" | "url" | "urls" | "text" | "cobblr-qr";
-import { clipboardImageFiles } from "../components/pastedImage";
 import { classifyScanPayload } from "../lib/scanPayload";
+import { looksShared, parseSharedText, type SharedProduct } from "@cobblr/platform-contract/shared-text";
 
 export interface OmniIntent {
   kind: OmniKind;
@@ -21,6 +21,9 @@ export interface OmniIntent {
   value: string;
   /** Button copy for the add action, null when this is a search. */
   action: string | null;
+  /** For a link or links: each product with the words it came with, the
+   *  title kept as its name (the one parse, @cobblr/platform-contract/shared-text). */
+  products?: SharedProduct[];
 }
 
 /** Digits only, ignoring the spaces and dashes a printed barcode carries. */
@@ -59,12 +62,19 @@ export function classifyOmni(raw: string): OmniIntent {
   const lines = s.split(/\s+/).filter(Boolean);
   const urls = lines.filter(looksLikeUrl);
   if (urls.length > 1) {
-    return { kind: "urls", value: urls.join("\n"), action: `Add ${urls.length}` };
+    const products = parseSharedText(s);
+    return { kind: "urls", value: products.map((p) => p.url).join("\n"), action: `Add ${products.length}`, products };
   }
-  // A single url only counts when it is the ENTIRE input - "is this in stock at
-  // https://..." is someone searching their own notes, not adding a product.
+  // A single url counts when it is the ENTIRE input, or when the words with
+  // it are a product's title as a shopping app shares it ("Samsung 990 EVO
+  // 2TB https://a.co/d/xyz"). "is this in stock at https://..." is someone
+  // searching their own notes, not adding a product, and stays a search.
   if (urls.length === 1 && lines.length === 1) {
-    return { kind: "url", value: urls[0]!, action: "Add" };
+    return { kind: "url", value: urls[0]!, action: "Add", products: [{ title: null, url: urls[0]! }] };
+  }
+  if (urls.length === 1 && looksShared(s)) {
+    const products = parseSharedText(s);
+    return { kind: "url", value: products[0]!.url, action: "Add", products };
   }
 
   if (DIGITS.test(s)) {
@@ -100,17 +110,6 @@ export function classifyFiles(files: File[]): FileIntent {
   if (images.length === files.length) return { kind: "photos", files: images };
   const first = files[0];
   return first ? { kind: "receipt", file: first } : null;
-}
-
-/** The image files on a clipboard, or [] when it carries none.
- *
- *  A paste is only intake when there is actually an image on the clipboard.
- *  Pasting a UPC, a link or a search term has to keep landing in the field, so
- *  the caller must check this is non-empty BEFORE calling preventDefault -
- *  swallowing a text paste would break the box's main job to serve its rarer
- *  one. */
-export function clipboardImages(data: DataTransfer | null | undefined): File[] {
-  return clipboardImageFiles(data);
 }
 
 /** Placeholder copy - a phone cannot show the full sentence. */

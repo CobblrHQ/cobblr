@@ -5,10 +5,14 @@ import fileDurations from "./tests/file-durations.json";
 import { loadFactor, loadPerCore } from "../scripts/lib/load-factor.mjs";
 import { suiteForks } from "../scripts/lib/job-budget.mjs";
 
-// Six at most, fewer on a box with less memory free, and a refusal by name when
-// the job's limit leaves one: the suite then went serial without a word and
-// timed out 40 minutes later (scripts/lib/job-budget.mjs, suiteForks).
-const budget = suiteForks({ max: 6 });
+// Twelve at most, fewer on a box with less memory free (350 MiB a fork,
+// scripts/lib/job-budget.mjs), and a refusal by name when the job's limit
+// leaves one: the suite then went serial without a word and timed out 40
+// minutes later (suiteForks). The ceiling was six, a constant from before the
+// memory budget, while the suite's one api queued its callers on a 10-wide
+// meta pool (ci.yml's Boot api now sets 40): a full run sat at 0.25 load per
+// core on a 16-core box, its 1,384 s of tests packed into six (2026-10-01).
+const budget = suiteForks({ max: 12 });
 if (!budget.ok) throw new Error(budget.message);
 const VITEST_FORKS = budget.forks;
 // check-test-balance.mjs reads this line for the packing floor.

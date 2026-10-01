@@ -118,7 +118,7 @@ export function discordDmPayload(
     ...(embeds ? { embeds } : {}),
     // Undefined when the notification offers nothing to do, which is most of
     // them — the bot then sends exactly what it sent before.
-    components: componentsFor(event.notificationId, event.actions),
+    components: withOpenButton(componentsFor(event.notificationId, event.actions), event.card && event.link_url ? absoluteAppUrl(event.link_url) : null),
     // A card with ROWS is also offered as Components V2: each line a section
     // with its button beside it (#3282). Sent ALONGSIDE the classic shape,
     // not instead of it: a bot that predates V2 ignores the extra keys and
@@ -128,4 +128,13 @@ export function discordDmPayload(
     ...(v2 ? { components_v2: v2.components, flags: COMPONENTS_V2_FLAG } : {}),
     fallback_text: plainForm,
   };
+}
+
+/** A card that leads somewhere says so with a button: a clickable embed title
+ *  is easy to miss, and "check them on the Purchases page" with nothing to
+ *  press was a dead end. A link button needs no custom id and no handler. */
+function withOpenButton(rows: unknown[] | undefined, url: string | null): unknown[] | undefined {
+  if (!url) return rows;
+  const open = { type: 1, components: [{ type: 2, style: 5, label: "Open in Cobblr", url }] };
+  return [...(rows ?? []), open].slice(0, 5);
 }

@@ -79,8 +79,12 @@ export function FieldPack({
           never by key: two fields that share a key (a table's own
           "category" beside a form's native one) must each keep their own
           control, not both draw the last one. */}
+      {/* Top-aligned: a field's help sits UNDER it, and bottom-aligning the
+          cells (which kept controls level beside a two-line label) put every
+          control with help higher than its neighbours without, a ragged row
+          wherever a bundle explains its fields (#4518). */}
       {packing.cells.map((c, i) => (
-        <div key={`${c.key}#${i}`} data-pack-key={c.key} data-pack-span={c.span} className="flex min-w-0 flex-col justify-end" style={{ gridColumn: `span ${c.span} / span ${c.span}` }}>
+        <div key={`${c.key}#${i}`} data-pack-key={c.key} data-pack-span={c.span} className="flex min-w-0 flex-col justify-start" style={{ gridColumn: `span ${c.span} / span ${c.span}` }}>
           {present[i]?.node}
         </div>
       ))}

@@ -1,31 +1,13 @@
 // Parts list — filterable table. Search, category, location, state,
 // low-stock toggle. Clicking a row opens the part detail page.
 
-import { Fragment, useCallback, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Archive, ArrowRightLeft, Download, ExternalLink, FileDown, FileUp, Plus, Printer, ScanLine, ShieldCheck, Tag as TagIcon, MoreHorizontal } from "lucide-react";
-import {
-  BulkActionBar,
-  EditableCell,
-  EntityThumb,
-  EntityTile,
-  suggestedSrcFor,
-  usePhotoSuggestions,
-  Modal,
-  MoveToInstanceModal,
-  ViewModeToggle,
-  useToast,
-  useConfirm,
-  usePageTitle,
-  usePageWidth,
-  useViewMode,
-  usePlatformWeb,
-  usePublishChatContext,
-  makeAreaResolver,
-  LOCATION_GROUP_KEY,
-  type EditableCellDef, useAskCobbAboutSelection, useUnits, TILE_GRID, InboxWaitingStrip, SearchInput } from "@cobblr/platform-web";
+import { AlertTriangle, Archive, ArrowRightLeft, Download, ExternalLink, FileDown, FileUp, Plus, Printer, ScanLine, ShieldCheck, MoreHorizontal } from "lucide-react";
+import { BulkActionBar, BulkTagAction, EditableCell, EntityThumb, EntityTile, suggestedSrcFor, usePhotoSuggestions, Modal, MoveToInstanceModal, ViewModeToggle, useToast, useConfirm, usePageTitle, usePageWidth, useViewMode, usePlatformWeb, usePublishChatContext, makeAreaResolver, LOCATION_GROUP_KEY, type EditableCellDef, useAskCobbAboutSelection, useUnits, TILE_GRID, InboxWaitingStrip, SearchInput, QueryError, noteWorkspaceWrite } from "@cobblr/platform-web";
 import { useInventory } from "./context";
+import { nothingToFilter, offeredFilters, type ListFilter } from "./list-filters";
 import { AddToListButton } from "./AddToListButton";
 import { QtyStepper } from "./QtyStepper";
 import { availableOnHand } from "../stock-derived";
@@ -38,6 +20,7 @@ import { useFieldPresentation } from "./useFieldPresentation";
 import { CARD_NATIVE_FIELDS } from "./card-native-fields";
 import { useDisclosure } from "./useDisclosure";
 import { NewPartDialog } from "./NewPartDialog";
+import { BulkMoveToPlace } from "./BulkMoveToPlace";
 import { ImportDialog } from "./ImportDialog";
 import { PartDetailModal } from "./PartDetailPage";
 import type { PartListItem, InvFieldDef } from "./api";
@@ -85,7 +68,28 @@ export function PartsListPage() {
   const [archivedFilter, setArchivedFilter] = useState<"hide" | "include" | "only">("hide");
   const [warrantyFilter, setWarrantyFilter] = useState<"all" | "expiring30" | "expiring90">("all");
   const [insuredOnly, setInsuredOnly] = useState(false);
+  // Records a create left without a required value (capture first): counted
+  // beside the list, and one press shows just them.
+  const [needsOnly, setNeedsOnly] = useState(false);
+  // Records holding a value capture kept that does not fit its field.
+  const [misfitOnly, setMisfitOnly] = useState(false);
   const [lifecycle, setLifecycle] = useState<"" | "bulk" | "kit" | "parted-out">("");
+  // Only the filters these records can answer, plus any already set
+  // (list-filters.ts). On a phone they sit behind one Filter button.
+  const facets = useQuery({ queryKey: ["inventory-facets", orgSlug, instance ?? "inventory"], queryFn: () => api.getPartFacets(), staleTime: 30_000 });
+  const activeFilters = new Set<ListFilter>([
+    ...(categoryId ? (["category"] as const) : []),
+    ...(locationId ? (["location"] as const) : []),
+    ...(state !== "active" ? (["state"] as const) : []),
+    ...(lifecycle ? (["lifecycle"] as const) : []),
+    ...(lowOnly ? (["low_stock"] as const) : []),
+    ...(archivedFilter !== "hide" ? (["archived"] as const) : []),
+    ...(warrantyFilter !== "all" ? (["warranty"] as const) : []),
+    ...(insuredOnly ? (["insured"] as const) : []),
+  ]);
+  const offered = new Set(offeredFilters(facets.data, activeFilters));
+  const noFilterBar = nothingToFilter(facets.data, activeFilters, !!search);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   // `?new=1` (a view's empty state, a card) opens the form on arrival.
   const closeCreateDoor = useCreateDoor(useCallback(() => setAdding(true), []));
@@ -145,6 +149,9 @@ export function PartsListPage() {
   const views = savedViews.data?.items ?? [];
   const chipViews = instance ? views.filter((v) => !v.pinned) : views;
   const activeView = viewId ? views.find((v) => v.id === viewId) ?? null : null;
+  // Leave out rows with nothing on hand. Off by default: an installed part's
+  // row still says what you own, what you paid and where it went.
+  const [hideUnavailable, setHideUnavailable] = useHideUnavailable(entityKind, activeView?.id ?? null);
   const groupBy = activeView?.config?.group_by;
   const viewFields = activeView?.config?.visible_fields;
   // The view's own query (filter / where / sort), read the one way every
@@ -190,6 +197,17 @@ export function PartsListPage() {
   // them all. (Before this, parts past the cap were unreachable.)
   const warrantyWithin =
     warrantyFilter === "expiring30" ? 30 : warrantyFilter === "expiring90" ? 90 : undefined;
+  // Under the list's own key, so whatever refreshes the list refreshes this.
+  const needsValue = useQuery({
+    queryKey: ["inventory-parts", entityKind, "needs-value"],
+    queryFn: () => api.partsNeedsValue(),
+    staleTime: 30_000,
+  });
+  const doesntFit = useQuery({
+    queryKey: ["inventory-parts", entityKind, "doesnt-fit"],
+    queryFn: () => api.partsDoesntFit(),
+    staleTime: 30_000,
+  });
   const parts = useInfiniteQuery({
     // entityKind (`<instance>:item`, or `inventory:part` for the default) MUST
     // be in the key — yarn + hooks are both inventory instances and the API is
@@ -198,7 +216,7 @@ export function PartsListPage() {
     queryKey: [
       "inventory-parts",
       entityKind,
-      { search, categoryId, locationId, state, lowOnly, archivedFilter, warrantyFilter, insuredOnly, lifecycle, byPlace, view: activeView?.id ?? null },
+      { search, categoryId, locationId, state, lowOnly, hideUnavailable, archivedFilter, warrantyFilter, insuredOnly, needsOnly, misfitOnly, lifecycle, byPlace, view: activeView?.id ?? null },
     ],
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
@@ -208,10 +226,13 @@ export function PartsListPage() {
         location_id: locationId || undefined,
         state: state === "all" ? undefined : state,
         low_stock: lowOnly || undefined,
+        hide_unavailable: hideUnavailable || undefined,
         show_archived: archivedFilter === "include" || undefined,
         archived_only: archivedFilter === "only" || undefined,
         warranty_expires_within_days: warrantyWithin,
         insured_only: insuredOnly || undefined,
+        needs_value: needsOnly || undefined,
+        doesnt_fit: misfitOnly || undefined,
         lifecycle: lifecycle || undefined,
         rows: byPlace ? "flat" : undefined,
         cursor: pageParam,
@@ -219,6 +240,12 @@ export function PartsListPage() {
       }),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
   });
+  // The records changed (one added, archived, a field filled), so which
+  // filters apply may have too.
+  const refetchFacets = facets.refetch;
+  useEffect(() => {
+    if (parts.dataUpdatedAt) void refetchFacets();
+  }, [parts.dataUpdatedAt, refetchFacets]);
 
   async function exportCsv() {
     setExporting(true);
@@ -274,7 +301,6 @@ export function PartsListPage() {
   // the same move, in bulk, from the top of the list.
   const siblingLists = useQuery({
     queryKey: ["inventory-sibling-lists", orgSlug],
-    enabled: !instance,
     staleTime: 60_000,
     queryFn: async (): Promise<{ items: SiblingList[] }> => {
       const token = getToken();
@@ -285,6 +311,8 @@ export function PartsListPage() {
       return res.json();
     },
   });
+  // Another list these could move to, offered from the bar's Move popover.
+  const otherLists = (siblingLists.data?.items ?? []).some((s) => s.instance_name !== (instance ?? "inventory") && s.movable !== false);
   const strays = useMemo(() => {
     if (instance) return [];
     const options = (siblingLists.data?.items ?? [])
@@ -405,44 +433,34 @@ export function PartsListPage() {
   // Bulk-tag: POST core-tags/attachments per selected id. The inventory
   // module doesn't have a typed client for core-tags so we fetch the
   // platform endpoint directly with the same Bearer.
-  const [bulkTagOpen, setBulkTagOpen] = useState(false);
-  const [bulkTagBusy, setBulkTagBusy] = useState(false);
   async function bulkTag(tagName: string) {
-    if (!tagName.trim()) return;
-    setBulkTagBusy(true);
-    try {
-      const token = getToken();
-      for (const id of Array.from(selected)) {
-        const res = await fetch(
-          `/api/v1/orgs/${orgSlug}/modules/core-tags/attachments`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
-            body: JSON.stringify({
-              tag_name: tagName.trim(),
-              source_module: "inventory",
-              source_type: "part",
-              source_id: id,
-            }),
+    const token = getToken();
+    for (const id of Array.from(selected)) {
+      const res = await fetch(
+        `/api/v1/orgs/${orgSlug}/modules/core-tags/attachments`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-        );
-        if (!res.ok && res.status !== 409) {
-          // 409 = already tagged with that name; ignore and continue.
-          throw new Error(`HTTP ${res.status}`);
-        }
+          body: JSON.stringify({
+            tag_name: tagName.trim(),
+            source_module: "inventory",
+            source_type: "part",
+            source_id: id,
+          }),
+        },
+      );
+      if (!res.ok && res.status !== 409) {
+        // 409 = already tagged with that name; ignore and continue.
+        throw new Error(`HTTP ${res.status}`);
       }
-      toast.success(`Tagged ${selected.size} part${selected.size === 1 ? "" : "s"}`);
-      setSelected(new Set());
-      setBulkTagOpen(false);
-      void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setBulkTagBusy(false);
     }
+    noteWorkspaceWrite(`/api/v1/orgs/${orgSlug}/modules/core-tags/attachments`);
+    toast.success(`Tagged ${selected.size} part${selected.size === 1 ? "" : "s"}`);
+    setSelected(new Set());
+    void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
   }
 
   return (
@@ -468,14 +486,24 @@ export function PartsListPage() {
         </div>
       )}
       <div className="flex items-center gap-3 flex-wrap">
-        <SearchInput value={search} onChange={setSearch} placeholder={`search ${itemNounPlural.toLowerCase()}…`} wrapperClassName="flex-1 min-w-[200px]" />
+        {!noFilterBar && <SearchInput value={search} onChange={setSearch} placeholder={`search ${itemNounPlural.toLowerCase()}…`} wrapperClassName="flex-1 min-w-[200px]" />}
         {/* The generic inventory filters (category / location / state /
             lifecycle / low-stock / archived / warranty / insured) are
             base-inventory concepts — noise on a skinned instance (Yarn). Hide
             them when scoped; search + the saved-view chips are the navigation. */}
-        {!instance && (
+        {!instance && !noFilterBar && offered.size > 0 && (
         <>
-        <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="input !w-auto">
+        <button
+          type="button"
+          onClick={() => setFiltersOpen((o) => !o)}
+          aria-expanded={filtersOpen}
+          className="sm:hidden rounded-md border border-line dark:border-slate-600 px-3 py-2 text-sm font-medium text-content dark:text-mortar-100 inline-flex items-center gap-1.5"
+        >
+          Filter{activeFilters.size > 0 ? ` (${activeFilters.size})` : ""}
+        </button>
+        <div data-testid="list-filters" className={filtersOpen ? "w-full flex flex-wrap items-center gap-3 sm:contents" : "hidden sm:contents"}>
+        {offered.has("category") && (
+        <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="input !w-auto" aria-label="Category">
           <option value="">All categories</option>
           {cats.data?.items.map((c) => (
             <option key={c.id} value={c.id}>
@@ -483,7 +511,9 @@ export function PartsListPage() {
             </option>
           ))}
         </select>
-        <select value={locationId} onChange={(e) => setLocationId(e.target.value)} className="input !w-auto">
+        )}
+        {offered.has("location") && (
+        <select value={locationId} onChange={(e) => setLocationId(e.target.value)} className="input !w-auto" aria-label="Location">
           <option value="">All locations</option>
           {locs.data?.items.map((l) => (
             <option key={l.id} value={l.id}>
@@ -492,23 +522,41 @@ export function PartsListPage() {
             </option>
           ))}
         </select>
-        <select value={state} onChange={(e) => setState(e.target.value as StateFilter)} className="input !w-auto">
+        )}
+        {offered.has("state") && (
+        <select value={state} onChange={(e) => setState(e.target.value as StateFilter)} className="input !w-auto" aria-label="State">
           <option value="active">Active</option>
           <option value="draft">Draft</option>
           <option value="needs_review">Needs review</option>
           <option value="all">All</option>
         </select>
+        )}
+        {offered.has("lifecycle") && (
         <select
           value={lifecycle}
           onChange={(e) => setLifecycle(e.target.value as typeof lifecycle)}
           className="input !w-auto"
           title="Lifecycle - kits vs bulk vs parted-out (Lego-style)"
+          aria-label="Lifecycle"
         >
           <option value="">All lifecycle</option>
           <option value="bulk">Bulk only</option>
           <option value="kit">Kits only</option>
           <option value="parted-out">Parted-out</option>
         </select>
+        )}
+        {(hideUnavailable || partItems.some((p) => (p.installed_qty ?? 0) > 0 || p.spare_qty === 0)) && (
+        <label className="flex items-center gap-1.5 text-xs text-content dark:text-mortar-200 cursor-pointer" title="Leave out what has nothing on hand: everything of it installed in something, or none left">
+          <input
+            type="checkbox"
+            checked={hideUnavailable}
+            onChange={(e) => setHideUnavailable(e.target.checked)}
+            className="accent-cobble-500"
+          />
+          Hide unavailable
+        </label>
+        )}
+        {offered.has("low_stock") && (
         <label className="flex items-center gap-1.5 text-xs text-content dark:text-mortar-200 cursor-pointer">
           <input
             type="checkbox"
@@ -518,26 +566,34 @@ export function PartsListPage() {
           />
           low-stock only
         </label>
+        )}
+        {offered.has("archived") && (
         <select
           value={archivedFilter}
           onChange={(e) => setArchivedFilter(e.target.value as typeof archivedFilter)}
           className="input !w-auto"
           title="Archive filter"
+          aria-label="Archived"
         >
           <option value="hide">Hide archived</option>
           <option value="include">Include archived</option>
           <option value="only">Archived only</option>
         </select>
+        )}
+        {offered.has("warranty") && (
         <select
           value={warrantyFilter}
           onChange={(e) => setWarrantyFilter(e.target.value as typeof warrantyFilter)}
           className="input !w-auto"
           title="Warranty filter"
+          aria-label="Warranty"
         >
           <option value="all">Any warranty</option>
           <option value="expiring30">Warranty in 30d</option>
           <option value="expiring90">Warranty in 90d</option>
         </select>
+        )}
+        {offered.has("insured") && (
         <label className="flex items-center gap-1.5 text-xs text-content dark:text-mortar-200 cursor-pointer">
           <input
             type="checkbox"
@@ -547,7 +603,41 @@ export function PartsListPage() {
           />
           insured only
         </label>
+        )}
+        </div>
         </>
+        )}
+        {(needsValue.data?.count ?? 0) > 0 && (
+          <button
+            type="button"
+            onClick={() => setNeedsOnly((v) => !v)}
+            aria-pressed={needsOnly}
+            title={`Still empty: ${needsValue.data!.fields.join(", ")}`}
+            className={
+              "rounded-full border px-2.5 py-1 text-xs font-medium transition " +
+              (needsOnly
+                ? "border-amber-400 bg-amber-100 text-amber-900 dark:border-amber-700 dark:bg-amber-900/40 dark:text-amber-200"
+                : "border-amber-300 text-amber-800 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-950/40")
+            }
+          >
+            {needsValue.data!.count} need{needsValue.data!.count === 1 ? "s" : ""} a value
+          </button>
+        )}
+        {(doesntFit.data?.count ?? 0) > 0 && (
+          <button
+            type="button"
+            onClick={() => setMisfitOnly((v) => !v)}
+            aria-pressed={misfitOnly}
+            title={doesntFit.data!.fields.map((f) => `${f.label}: ${f.count}`).join(", ")}
+            className={
+              "rounded-full border px-2.5 py-1 text-xs font-medium transition " +
+              (misfitOnly
+                ? "border-amber-400 bg-amber-100 text-amber-900 dark:border-amber-700 dark:bg-amber-900/40 dark:text-amber-200"
+                : "border-amber-300 text-amber-800 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-950/40")
+            }
+          >
+            {doesntFit.data!.count} {doesntFit.data!.count === 1 ? "doesn't fit its field" : "don't fit their field"}
+          </button>
         )}
         <div className="ml-auto" />
         {(byPlace || partItems.some((p) => p.holdings)) && <ByPlaceToggle byPlace={byPlace} onChange={setByPlace} />}
@@ -696,6 +786,7 @@ export function PartsListPage() {
         </p>
       )}
       {parts.isLoading && <div className="text-sm text-faint dark:text-slate-500">loading…</div>}
+      {parts.isError && !parts.data && <QueryError what={itemNounPlural.toLowerCase()} onRetry={() => void parts.refetch()} />}
       {parts.error && (
         <div className="text-sm text-ember-500">{(parts.error as Error).message}</div>
       )}
@@ -828,7 +919,11 @@ export function PartsListPage() {
           onClose={(created) => {
             setAdding(false);
             closeCreateDoor();
-            if (created) void parts.refetch();
+            if (created) {
+              void parts.refetch();
+              void needsValue.refetch();
+              void doesntFit.refetch();
+            }
           }}
         />
       )}
@@ -877,20 +972,12 @@ export function PartsListPage() {
             >
               <Printer size={12} /> {bulkLabelBusy ? "Queuing…" : "Print labels"}
             </button>
-            <button
-              type="button"
-              onClick={() => setBulkTagOpen(true)}
-              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-accent hover:text-accent"
-            >
-              <TagIcon size={12} /> Tag
-            </button>
-            <button
-              type="button"
-              onClick={() => setBulkMoveOpen(true)}
-              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-accent hover:text-accent"
-            >
-              <ArrowRightLeft size={12} /> Move to…
-            </button>
+            <BulkTagAction count={selected.size} placeholder="e.g. urgent, archive, low-stock" onTag={bulkTag} />
+            <BulkMoveToPlace
+              rows={partItems.filter((p) => selected.has(p.id))}
+              onMoved={() => setSelected(new Set())}
+              listMove={otherLists ? { fromInstance: instance ?? "inventory" } : undefined}
+            />
             <button
               type="button"
               onClick={() => void bulkDelete()}
@@ -910,81 +997,21 @@ export function PartsListPage() {
         fromInstance={instance ?? "inventory"}
         ids={Array.from(selected)}
         noun={itemNoun}
-        onMoved={(n, where) => {
-          toast.success(`Moved ${countOf(n, itemNoun)} to ${where}`);
+        onMoved={(n, where, undo) => {
+          toast.action(`Moved ${countOf(n, itemNoun)} to ${where}.`, {
+            actionLabel: "Undo",
+            duration: 10_000,
+            onAction: async () => {
+              await undo();
+              void qc.invalidateQueries();
+            },
+          });
           setSelected(new Set());
           void qc.invalidateQueries();
         }}
       />
 
-      {bulkTagOpen && (
-        <PartsBulkTagModal
-          count={selected.size}
-          busy={bulkTagBusy}
-          onClose={() => setBulkTagOpen(false)}
-          onSubmit={(n) => void bulkTag(n)}
-        />
-      )}
     </div>
-  );
-}
-
-function PartsBulkTagModal({
-  count,
-  busy,
-  onClose,
-  onSubmit,
-}: {
-  count: number;
-  busy: boolean;
-  onClose: () => void;
-  onSubmit: (tagName: string) => void;
-}) {
-  const [name, setName] = useState("");
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title={`Tag ${count} part${count === 1 ? "" : "s"}`}
-      size="sm"
-    >
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!name.trim()) return;
-          onSubmit(name.trim());
-        }}
-        className="space-y-3"
-      >
-        <input
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. urgent, archive, low-stock"
-          className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-          autoFocus
-        />
-        <div className="text-[11px] text-faint">
-          Existing tag? Reused. New name? Created on the fly.
-        </div>
-        <div className="flex justify-end gap-2 pt-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={busy || !name.trim()}
-            className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
-          >
-            {busy ? "tagging…" : `Tag ${count}`}
-          </button>
-        </div>
-      </form>
-    </Modal>
   );
 }
 
@@ -1127,7 +1154,7 @@ function PartsTable({
   const { entityKind } = useInventory();
   const fp = useFieldPresentation(entityKind);
   // Pictures offered to records made without one (#3818).
-  const suggestions = usePhotoSuggestions(entityKind);
+  const suggestions = usePhotoSuggestions(entityKind, items.map((p) => p.id));
   // Compose the workspace override with the stock-vs-catalog disclosure: a lean
   // catalog instance (films, books) hides the whole stock column set (qty,
   // available, min, ...) so its list reads as its own fields, not inventory's.
@@ -1273,13 +1300,19 @@ function PartsTable({
                   {p.rollup ? (
                     <span className="font-mono text-[11px]">{p.rollup.places} places</span>
                   ) : (
-                    <EditableCell
-                      def={nativeDef("location_id", fp.label("location", "Location"), "text")}
-                      value={p.location_id}
-                      options={locOptions}
-                      fallbackLabel={p.location_name}
-                      onCommit={(v) => setCol(p, "location_id", v)}
-                    />
+                    // Inside something (a computer, a backpack), it has no
+                    // place of its own: the cell says what it is in and where.
+                    p.location_id == null && p.location_name ? (
+                      <span data-testid="held-in" title="Inside something: move it from its page">{p.location_name}</span>
+                    ) : (
+                      <EditableCell
+                        def={nativeDef("location_id", fp.label("location", "Location"), "text")}
+                        value={p.location_id}
+                        options={locOptions}
+                        fallbackLabel={p.location_name}
+                        onCommit={(v) => setCol(p, "location_id", v)}
+                      />
+                    )
                   )}
                 </td>
               )}
@@ -1311,7 +1344,7 @@ function PartsTable({
                       // stepper is on its row below.
                       <span className="font-semibold" title="Across every place">{fmt(p.rollup.qty)}</span>
                     ) : (
-                      <QtyStepper partId={p.id} qty={Number(p.qty)} size="sm" />
+                      <QtyStepper partId={p.id} qty={Number(p.qty)} unit={p.unit} label={p.name} size="sm" />
                     )}
                     {units.suffix(p.unit) && (
                       <span className="text-faint dark:text-slate-500">{units.suffix(p.unit)}</span>
@@ -1385,6 +1418,7 @@ function PartsTable({
               )}
               <td className="px-3 py-2">
                 <div className="flex flex-wrap gap-1 items-center justify-end">
+                  <InstalledChip p={p} />
                   {(p.rollup ? p.rollup.low : p.low_stock) && (
                     <>
                       <span className="inline-flex items-center gap-1 text-[10px] text-ember-500 border border-ember-200 dark:border-ember-800 rounded px-1.5 py-0.5">
@@ -1422,7 +1456,7 @@ function PartsTable({
                 <td />
                 <td colSpan={tableCols - 1} className="px-3 pb-2 pt-0">
                   <RollupLine rollup={p.rollup} unit={units.suffix(p.unit) || undefined} />
-                  <HoldingRows rows={p.holdings} basePath={basePath} />
+                  <HoldingRows rows={p.holdings} basePath={basePath} unit={p.unit} />
                 </td>
               </tr>
             )}
@@ -1487,7 +1521,7 @@ function PartsTable({
                 {p.holdings && p.rollup && (
                   <div className="mt-1" onClick={(e) => e.stopPropagation()}>
                     <RollupLine rollup={p.rollup} unit={units.suffix(p.unit) || undefined} />
-                    <HoldingRows rows={p.holdings} basePath={basePath} />
+                    <HoldingRows rows={p.holdings} basePath={basePath} unit={p.unit} />
                   </div>
                 )}
                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-mono text-muted dark:text-slate-400">
@@ -1499,7 +1533,7 @@ function PartsTable({
                         </span>
                       ) : (
                         <>
-                          qty <QtyStepper partId={p.id} qty={Number(p.qty)} size="sm" />
+                          qty <QtyStepper partId={p.id} qty={Number(p.qty)} unit={p.unit} label={p.name} size="sm" />
                         </>
                       )}
                       {units.suffix(p.unit) ? ` ${units.suffix(p.unit)}` : ""}
@@ -1537,13 +1571,17 @@ function PartsTable({
                   {showLocation && !p.rollup && (
                     <span className="inline-flex items-center gap-1 min-w-[5rem]">
                       @
-                      <EditableCell
-                        def={nativeDef("location_id", fp.label("location", "Location"), "text")}
-                        value={p.location_id}
-                        options={locOptions}
-                        fallbackLabel={p.location_name}
-                        onCommit={(v) => setCol(p, "location_id", v)}
-                      />
+                      {p.location_id == null && p.location_name ? (
+                        <span data-testid="held-in">{p.location_name}</span>
+                      ) : (
+                        <EditableCell
+                          def={nativeDef("location_id", fp.label("location", "Location"), "text")}
+                          value={p.location_id}
+                          options={locOptions}
+                          fallbackLabel={p.location_name}
+                          onCommit={(v) => setCol(p, "location_id", v)}
+                        />
+                      )}
                     </span>
                   )}
                 </div>
@@ -1561,6 +1599,7 @@ function PartsTable({
                   </div>
                 )}
                 <div className="mt-1 flex flex-wrap gap-1">
+                  <InstalledChip p={p} />
                   {!p.rollup && p.low_stock && (
                     <>
                       <span className="inline-flex items-center gap-1 text-[10px] text-ember-500 border border-ember-200 dark:border-ember-800 rounded px-1.5 py-0.5">
@@ -1675,7 +1714,7 @@ function PartsTileGrid({ items, basePath }: { items: PartListItem[]; basePath: s
   // A lean catalog tile shows no qty badge — it's a record, not stock.
   const disclosure = useDisclosure();
   const { entityKind } = useInventory();
-  const suggestions = usePhotoSuggestions(entityKind);
+  const suggestions = usePhotoSuggestions(entityKind, items.map((p) => p.id));
   const units = useUnits();
   return (
     <div className={TILE_GRID}>
@@ -1716,7 +1755,7 @@ function PartsTileGrid({ items, basePath }: { items: PartListItem[]; basePath: s
             status={
               disclosure.stock && !isAssorted(p) && !p.rollup ? (
                 <span className="flex justify-end">
-                  <QtyStepper partId={p.id} qty={Number(p.qty)} size="sm" />
+                  <QtyStepper partId={p.id} qty={Number(p.qty)} unit={p.unit} label={p.name} size="sm" />
                 </span>
               ) : undefined
             }
@@ -1876,6 +1915,48 @@ function SpoolmanModal({
 function dedupeById<T extends { id: string }>(items: T[]): T[] {
   const seen = new Set<string>();
   return items.filter((it) => (seen.has(it.id) ? false : (seen.add(it.id), true)));
+}
+
+/** "0 spare · 1 installed in Gaming PC": what of a thing is installed in an
+ *  asset or machine, beside what is on hand. Nothing when none is installed. */
+function InstalledChip({ p }: { p: { installed_qty?: number; spare_qty?: number; installed_in?: Array<{ id: string; name: string; qty: number }> } }) {
+  if (!p.installed_qty) return null;
+  const where = (p.installed_in ?? []).map((h) => (p.installed_in!.length > 1 ? `${h.name} (${h.qty})` : h.name)).join(", ");
+  return (
+    <span data-testid="installed-chip" className="inline-flex items-center gap-1 text-[10px] text-muted dark:text-slate-400 border border-line dark:border-slate-700 rounded px-1.5 py-0.5">
+      {p.spare_qty ?? 0} spare · {p.installed_qty} installed in {where}
+    </span>
+  );
+}
+
+const HIDE_UNAVAILABLE_KEY = "cobblr.inventory.hide-unavailable.";
+
+/** Hide unavailable, remembered per person (this browser) and per view. Off
+ *  until turned on; a storage that throws reads as off. */
+function useHideUnavailable(kind: string, viewId: string | null): [boolean, (v: boolean) => void] {
+  const key = `${HIDE_UNAVAILABLE_KEY}${kind}.${viewId ?? "all"}`;
+  const read = () => {
+    try {
+      return window.localStorage.getItem(key) === "1";
+    } catch {
+      return false;
+    }
+  };
+  const [on, setOn] = useState<boolean>(read);
+  // A different view (or collection) reads its own choice.
+  useEffect(() => setOn(read()), [key]);
+  const set = useCallback(
+    (v: boolean) => {
+      setOn(v);
+      try {
+        window.localStorage.setItem(key, v ? "1" : "0");
+      } catch {
+        /* the choice lasts this visit */
+      }
+    },
+    [key],
+  );
+  return [on, set];
 }
 
 const BY_PLACE_KEY = "cobblr.inventory.by-place.";

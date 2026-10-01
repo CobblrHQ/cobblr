@@ -25,7 +25,7 @@ import { FEATURED_BUNDLES } from "../web/src/lib/featured-bundles.js";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { BUNDLE_RELEASE_KEYS } from "./lib/bundle-release-keys.js";
+import { BUNDLE_RELEASE_KEYS, bundleContent } from "./lib/bundle-release-keys.js";
 
 const OUT = path.join(process.cwd(), "bundles");
 const CHECK = process.argv.includes("--check");
@@ -47,9 +47,10 @@ function sig(manifest: Record<string, unknown>): string {
 // must NOT bump the version — a bump would show every existing install an "update
 // available" for the bundle you're disabling. So a catalog-only edit still
 // rewrites the json (sig differs → the field lands) but keeps the version.
+// A wire's `says` (the offer copy) is the same kind of thing: bundleContent()
+// holds both rules, shared with the two lints.
 function bumpSig(manifest: Record<string, unknown>): string {
-  const { catalog: _cat, ...rest } = manifest;
-  return sig(rest);
+  return JSON.stringify(bundleContent(manifest));
 }
 
 function bumpPatch(v: string): string {

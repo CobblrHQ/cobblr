@@ -245,6 +245,7 @@ assetsRouter.patch(
       action: "asset_updated",
       ref: { module: "assets", entityType: "asset", entityId: id },
       diff: parsed.data,
+      before,
     });
     // Flat before/after bags (native columns + flattened metadata) so a
     // transition wire can compare {{event.before.x}} vs {{event.after.x}}.

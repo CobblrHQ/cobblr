@@ -6,6 +6,7 @@
 
 import { detailPathForEntity, titleForEntity } from "../platform/entities.js";
 import { Router, type Request } from "express";
+import { PLATFORM_ACTIONS } from "../platform/platform-actions.js";
 import { z } from "zod";
 import { BindingAsk, BindingLabel, bindingAskOf } from "@cobblr/platform-contract/binding-ask";
 import { csvDownloadHeaders } from "@cobblr/platform-contract/csv";
@@ -21,6 +22,7 @@ import { labelVia } from "./label-via.js";
 import { actionRefusal, actionSafety } from "../platform/ai-action-door.js";
 import { getTenantDb } from "../db/tenant.js";
 import { listEntries } from "../modules/registry.js";
+import { LIFECYCLE_TRIGGERS, isLifecycleTrigger, lifecycleRefusal } from "../platform/wire-lifecycle.js";
 import * as activity from "../platform/activity.js";
 import { checkAvailability as checkAiAvailability, aiChainFor, getProvider as getAiProvider, type AiChainStep } from "../platform/ai.js";
 import { verificationFrom, verificationLabel } from "@cobblr/platform-contract/connection-verification";
@@ -48,12 +50,14 @@ import {
   listAllFieldDefs,
   resolveFieldDefsForKind,
   updateFieldDef,
+  previewRetype,
 } from "../platform/field-defs.js";
 import { upsertNativeFieldOverride } from "../platform/native-field-overrides.js";
 import { getScannableForModule } from "../platform/scan-registry.js";
 import { FIELD_PRESETS, presetState } from "../platform/field-presets.js";
 import { presetFieldStates, turnPresetOff, turnPresetOn } from "../platform/field-preset-switch.js";
 import { listPeople } from "../platform/people.js";
+import { fieldValuesUsed } from "../platform/field-values-used.js";
 
 export const platformOrgRouter = Router({ mergeParams: true });
 
@@ -85,7 +89,7 @@ platformOrgRouter.get(
       if (String(req.query.include ?? "").split(",").includes("custom_fields")) {
         const defs = await meta
           .selectFrom("module_field_defs")
-          .select(["entity_kind", "name", "display_label", "type", "required", "choices", "help", "applies_to"])
+          .select(["entity_kind", "name", "display_label", "type", "required", "choices", "help", "applies_to", "unit", "field_role"])
           .where("org_id", "=", req.tenant!.org.id)
           .orderBy("position")
           .execute();
@@ -110,6 +114,8 @@ platformOrgRouter.get(
                   required: d.required,
                   ...(Array.isArray(d.choices) && d.choices.length ? { choices: d.choices } : {}),
                   ...(d.help ? { help: d.help } : {}),
+                  ...(d.unit ? { unit: d.unit } : {}),
+                  ...(d.field_role ? { field_role: d.field_role } : {}),
                   scope: d.scope_label ?? d.scope,
                 })),
               );
@@ -129,6 +135,10 @@ platformOrgRouter.get(
             // under it: "Replacement value" is not what you paid, and a
             // reader of the record needs that as much as a person does.
             ...(d.help ? { help: d.help } : {}),
+            // A unit or a meaning that makes it money ("USD", "acquired-for"),
+            // so a reader shows "$4,300" (@cobblr/platform-contract/money).
+            ...(d.unit ? { unit: d.unit } : {}),
+            ...(d.field_role ? { field_role: d.field_role } : {}),
           });
           byKind.set(d.entity_kind, list);
         }
@@ -371,6 +381,7 @@ platformOrgRouter.post(
   withTenant,
   async (req, res, next) => {
     try {
+      // ROLE: any member (a read: following links, POST only for the path's shape)
       const { kind, id } = req.params;
       if (!kind || !id) {
         res.status(400).json({
@@ -1007,6 +1018,26 @@ const BindingCreate = z
     }
   });
 
+// The workspace actions a wire can run on no record (target "none"): what
+// the composer offers for "No record". Record actions come from
+// /actions?kind=; these act on the workspace and belong to no kind.
+platformOrgRouter.get(
+  "/:slug/wire-actions",
+  requireAuth,
+  withTenant,
+  async (_req, res) => {
+    res.json({
+      items: PLATFORM_ACTIONS.filter((a) => a.recordless).map((a) => ({
+        id: a.id,
+        label: a.label,
+        description: a.description,
+        icon: a.icon,
+        args_schema: a.args_schema,
+      })),
+    });
+  },
+);
+
 /** Every event some module declares it emits (manifest `exposes.events`,
  *  held to having an emitter by lint:manifest-advertises-what-it-has). A wire
  *  on anything else never runs. */
@@ -1066,15 +1097,52 @@ platformOrgRouter.get(
         .where("org_id", "=", req.tenant!.org.id)
         .orderBy("created_at", "desc")
         .execute();
-      // A wire made before its event stopped being sent (or on a name nothing
-      // ever sent) never runs; the list says so rather than showing it as live.
+      // A wire that never runs says so on the list rather than looking alive:
+      // one stored before the save check existed (never_runs), or one on an
+      // event nothing sends any more (trigger_silent).
       const declared = declaredWireEvents();
-      res.json({ items: rows.map((r) => ({ ...r, trigger_silent: r.trigger_type === "event" && !!r.trigger_event && !declared.has(r.trigger_event) })) });
+      const items = [];
+      for (const r of rows) {
+        items.push({
+          ...r,
+          never_runs: await lifecycleWireRefusal(req.tenant!.org.id, r.source_kind, r.trigger_type),
+          trigger_silent: r.trigger_type === "event" && !!r.trigger_event && !declared.has(r.trigger_event),
+        });
+      }
+      res.json({ items });
     } catch (err) {
       next(err);
     }
   },
 );
+
+/** Why a wire on "a record is created / updated / deleted" of this kind could
+ *  never run (wire-lifecycle.ts), or null. */
+async function lifecycleWireRefusal(orgId: string, sourceKind: string, triggerType: string): Promise<string | null> {
+  if (!isLifecycleTrigger(triggerType)) return null;
+  const { base, instance } = await platform().entities.resolveKind(orgId, sourceKind);
+  return lifecycleRefusal(base, triggerType, !!instance);
+}
+
+// Which "a record is created / updated / deleted" triggers a kind can carry,
+// and why not when it cannot: the composer offers only the ones that run.
+platformOrgRouter.get("/:slug/wire-lifecycle", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    const kind = typeof req.query.kind === "string" ? req.query.kind : "";
+    if (!kind) {
+      res.status(400).json({ error: { code: "missing_kind", message: "kind is required" } });
+      return;
+    }
+    const triggers: Record<string, { ok: boolean; why: string | null }> = {};
+    for (const t of LIFECYCLE_TRIGGERS) {
+      const why = await lifecycleWireRefusal(req.tenant!.org.id, kind, t);
+      triggers[t] = { ok: !why, why };
+    }
+    res.json({ kind, triggers });
+  } catch (err) {
+    next(err);
+  }
+});
 
 platformOrgRouter.post(
   "/:slug/bindings",
@@ -1103,6 +1171,11 @@ platformOrgRouter.post(
           res.status(400).json({ error: { code: "invalid_wire_filter", message: ferr } });
           return;
         }
+      }
+      const dead = await lifecycleWireRefusal(req.tenant!.org.id, parsed.data.source_kind, parsed.data.trigger_type);
+      if (dead) {
+        res.status(400).json({ error: { code: "wire_never_runs", message: dead } });
+        return;
       }
       const inserted = await meta
         .insertInto("entity_action_bindings")
@@ -1200,6 +1273,21 @@ platformOrgRouter.patch(
           return;
         }
       }
+      if (parsed.data.source_kind !== undefined || parsed.data.trigger_type !== undefined) {
+        const before = await meta
+          .selectFrom("entity_action_bindings")
+          .select(["source_kind", "trigger_type"])
+          .where("id", "=", id)
+          .where("org_id", "=", req.tenant!.org.id)
+          .executeTakeFirst();
+        if (before) {
+          const dead = await lifecycleWireRefusal(req.tenant!.org.id, parsed.data.source_kind ?? before.source_kind, parsed.data.trigger_type ?? before.trigger_type);
+          if (dead) {
+            res.status(400).json({ error: { code: "wire_never_runs", message: dead } });
+            return;
+          }
+        }
+      }
       // Build the SET only from supplied keys; jsonb columns (filter/args/target)
       // serialise the same way the create route does.
       const d = parsed.data;
@@ -1216,6 +1304,8 @@ platformOrgRouter.patch(
       if (d.target !== undefined) setObj.target = sql`${JSON.stringify(d.target)}::jsonb`;
       if (d.label !== undefined) setObj.label = d.label ?? null;
       if (d.ask !== undefined) setObj.ask = d.ask?.length ? sql`${JSON.stringify(d.ask)}::jsonb` : null;
+      // The wire as it was: the log says what this edit changed (#4517).
+      const wasWire = await meta.selectFrom("entity_action_bindings").selectAll().where("id", "=", id).where("org_id", "=", req.tenant!.org.id).executeTakeFirst();
       const updated = await meta
         .updateTable("entity_action_bindings")
         .set(setObj)
@@ -1232,6 +1322,7 @@ platformOrgRouter.patch(
         action: "wire_updated",
         ref: { module: null, entityType: "binding", entityId: updated.id },
         diff: parsed.data,
+        before: wasWire,
       });
       res.json(updated);
     } catch (err) {
@@ -1314,11 +1405,31 @@ platformOrgRouter.get(
             .execute()
         : [];
       const bundleById = new Map(bundleRows.map((b) => [b.id, b]));
-      const items = rawItems.map((f) => ({
-        ...f,
-        bundle_external_id: f.bundle_id ? (bundleById.get(f.bundle_id)?.external_id ?? null) : null,
-        bundle_name: f.bundle_id ? (bundleById.get(f.bundle_id)?.name ?? null) : null,
-      }));
+      // A shipped field's choices and "remember new entries" are the workspace's
+      // own once changed, kept in the override layer (updateFieldDef routes them
+      // there). The config read shows them too, or the field's settings would
+      // read back the bundle's list after someone saved theirs.
+      const ownBlob = new Map(
+        bundleIds.length
+          ? (
+              await meta
+                .selectFrom("native_field_overrides")
+                .select(["entity_kind", "name", "overrides"])
+                .where("org_id", "=", req.tenant!.org.id)
+                .execute()
+            ).map((o) => [`${o.entity_kind} ${o.name}`, o.overrides] as const)
+          : [],
+      );
+      const items = rawItems.map((f) => {
+        const own = f.bundle_id ? ownBlob.get(`${f.entity_kind} ${f.name}`) : undefined;
+        return {
+          ...f,
+          ...(own?.choices !== undefined ? { choices: own.choices } : {}),
+          ...(own?.learns !== undefined ? { learns: own.learns } : {}),
+          bundle_external_id: f.bundle_id ? (bundleById.get(f.bundle_id)?.external_id ?? null) : null,
+          bundle_name: f.bundle_id ? (bundleById.get(f.bundle_id)?.name ?? null) : null,
+        };
+      });
       // The form-builder sections a kind's fields are filed under travel with
       // every read of that kind: a reader that gets section_id without the
       // sections cannot place (or, worse, shows none of) those fields.
@@ -1375,6 +1486,7 @@ platformOrgRouter.get(
             // (inventory's own `category`) as the table's grouping axis without a
             // schema change — exactly the seam decode_role opened for the VIN fields.
             field_role: o.overrides?.field_role ?? f.field_role,
+            learns: o.overrides?.learns ?? f.learns,
             _hidden: o.hidden,
           };
         })
@@ -1960,9 +2072,9 @@ platformOrgRouter.patch(
         return;
       }
       // Two bars on one route (#2982). Growing a dropdown's CHOICES is a
-      // member's write: the record forms' "+ add new…", the scan confirm's
-      // category growth and the scan form's "New category…" all go through
-      // it. Changing the field's STRUCTURE (label, type, role, required) is
+      // member's write (the scan confirm's category growth goes through it; a
+      // value typed into a picker is learned by platform:learn-choice, the
+      // same bar). Changing the field's STRUCTURE (label, type, role, required) is
       // configuration: owner or admin, the bar of the screen that edits it
       // and of every sibling write here. This route used to check only that
       // the caller was signed in.
@@ -1981,6 +2093,57 @@ platformOrgRouter.patch(
           ? { ...result.def, choices: result.effectiveChoices }
           : result.def,
       );
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// What a field already holds across a kind's records, for the choice picker:
+// each value with how many records hold it and when one last took it, and
+// (detail / note) what rides beside each one. A read, as the person asking.
+// AI-REACH: reads
+platformOrgRouter.get(
+  "/:slug/field-values",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      const kind = typeof req.query.kind === "string" ? req.query.kind : "";
+      const field = typeof req.query.field === "string" ? req.query.field : "";
+      if (!kind || !field) {
+        res.status(400).json({ error: { code: "missing_params", message: "kind and field are required" } });
+        return;
+      }
+      const detail = typeof req.query.detail === "string" && req.query.detail ? req.query.detail : null;
+      const out = await fieldValuesUsed(req.tenant!.org.id, kind, field, {
+        detail,
+        withNote: req.query.note === "1",
+        viewer: { userId: req.session?.id, role: req.tenant!.role },
+      });
+      res.json(out);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// What changing a field's type would do to the values it holds, asked
+// before the change. A read, and configuration's: the same bar as the change.
+platformOrgRouter.get(
+  "/:slug/field-defs/:id/retype-preview",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      if (!requireRole(req, res, "owner", "admin")) return;
+      const to = typeof req.query.to === "string" ? req.query.to : "";
+      const out = await previewRetype(req.tenant!.org.id, req.params.id!, to);
+      if ("error" in out) {
+        res.status(out.error === "not_found" ? 404 : 400).json({ error: { code: out.error, message: out.message } });
+        return;
+      }
+      res.json(out);
     } catch (err) {
       next(err);
     }
@@ -2279,6 +2442,7 @@ const PredicateOverrideBody = z.union([
       hasFieldRole: z
         .enum(["title", "subtitle", "image", "summary", "quantity", "unit"])
         .optional(),
+      requires: z.object({ traits: z.array(z.string()).min(1) }).optional(),
     })
     .refine(
       (d) => d.kinds || d.traits || d.hasFieldRole,
@@ -2296,6 +2460,9 @@ platformOrgRouter.put(
   withTenant,
   async (req, res, next) => {
     try {
+      // Where an action appears is configuration: it widens or narrows what
+      // every person in the workspace is offered.
+      if (!requireRole(req, res, "owner", "admin")) return;
       const id = req.params.id;
       if (!id) {
         res.status(400).json({ error: { code: "missing_id", message: "id required" } });
@@ -2368,12 +2535,18 @@ platformOrgRouter.delete(
   withTenant,
   async (req, res, next) => {
     try {
+      if (!requireRole(req, res, "owner", "admin")) return;
       const id = req.params.id;
       if (!id) {
         res.status(400).json({ error: { code: "missing_id", message: "id required" } });
         return;
       }
       const orgId = req.tenant!.org.id;
+      const action = await meta.selectFrom("entity_actions").select("id").where("id", "=", id).executeTakeFirst();
+      if (!action) {
+        res.status(404).json({ error: { code: "not_found", message: "action not found" } });
+        return;
+      }
       const deleted = await meta
         .deleteFrom("entity_action_org_overrides")
         .where("org_id", "=", orgId)

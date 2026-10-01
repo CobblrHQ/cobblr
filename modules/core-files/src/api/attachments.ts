@@ -5,6 +5,7 @@
 // attachment". For galleries (>1 file per entity with same role), use
 // role='gallery' and rely on sort_order for ordering.
 
+import { photoSourceOf } from "./photo-source.js";
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
@@ -126,6 +127,7 @@ attachmentsRouter.get(
         "f.height as height",
         "f.size_bytes as size_bytes",
         "f.variants as variants",
+        "f.metadata as metadata",
       ])
       .where("fa.source_type", "=", sourceType)
       .where("fa.source_id", "=", sourceId)
@@ -134,8 +136,26 @@ attachmentsRouter.get(
       .orderBy("fa.created_at", "asc");
     if (sourceModule) q = q.where("fa.source_module", "=", sourceModule);
     const items = await q.execute();
+    // The record's main photo, so a photo strip can lead with it and star it
+    // (#4515). Asked of the record itself through the entities seam; a record
+    // whose main photo was never attached (set before photos were kept) still
+    // gets it, with its file's own source.
+    let main: { image_path: string; file_id: string | null; attached: boolean; filename: string | null; photo_source: ReturnType<typeof photoSourceOf> } | null = null;
+    if (sourceModule) {
+      const e = await platform().entities.lookup(tenantContext(req).org.id, `${sourceModule}:${sourceType}`, sourceId).catch(() => null);
+      const imagePath = (e?.image_path ?? (e?.fields as { image_path?: unknown } | undefined)?.image_path ?? null) as string | null;
+      if (imagePath) {
+        const fileId = /\/core-files\/files\/([0-9a-f-]{36})\/raw/i.exec(imagePath)?.[1]?.toLowerCase() ?? null;
+        const att = fileId ? items.find((i) => i.file_id === fileId) : undefined;
+        const file = fileId && !att ? await db.selectFrom("core_files_files").select(["filename", "metadata"]).where("id", "=", fileId).where("deleted_at", "is", null).executeTakeFirst() : undefined;
+        main = { image_path: imagePath, file_id: fileId, attached: !!att, filename: att?.filename ?? file?.filename ?? null, photo_source: photoSourceOf(att?.metadata ?? file?.metadata) };
+      }
+    }
     res.json({
-      items: items.map((r) => ({ ...r, size_bytes: Number(r.size_bytes) })),
+      main,
+      // Where each picture came from, when that was stored with it; never
+      // the rest of the file's field bag, which has its own page.
+      items: items.map(({ metadata, ...r }) => ({ ...r, size_bytes: Number(r.size_bytes), photo_source: photoSourceOf(metadata) })),
     });
   }),
 );

@@ -5,17 +5,20 @@
 
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Plus, Receipt, Store, Trash2 } from "lucide-react";
-import { ApiError, api, type Order, type OrderItem, type VendorSummary } from "../lib/api";
+import { ApiError, api, type Order, type OrderItem, type OrderSummary, type VendorSummary } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { formatStoredMoney } from "@cobblr/platform-contract/money";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { useDetailRoute } from "../lib/useDetailRoute";
 import { ReceiptSourceViewer } from "../components/ReceiptSourceViewer";
+import { QueryError } from "../components/QueryError";
 import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
 import { ModulePurposeHint } from "../components/ModulePurposeHint";
 import { usePublishChatContext, useAskCobbAboutSelection } from "../lib/chat-context";
-import { BulkActionBar, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput } from "@cobblr/platform-web";
+import { BulkActionBar, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton } from "@cobblr/platform-web";
 import { ContributedDetailPanels } from "../panels/registry";
 import { receiptGroupSummary } from "./receiptLabel";
 import { ReceiptAddressChip } from "../components/ReceiptAddressChip";
@@ -28,11 +31,8 @@ function fmtOrderDate(d: string | null): string | null {
   return Number.isNaN(dt.getTime()) ? d : dt.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
-function money(v: string | number | null | undefined): string | null {
-  if (v == null || v === "") return null;
-  const n = Number(v);
-  return Number.isNaN(n) ? null : `$${n.toFixed(2)}`;
-}
+/** An order's amounts are kept in the currency's main unit. */
+const money = (v: string | number | null | undefined): string | null => formatStoredMoney(v, "amount");
 
 type SortKey = "vendor" | "ordered_at" | "arrived_at" | "total" | "status" | "items";
 const STATUS_ORDER: Record<Order["status"], number> = {
@@ -53,7 +53,7 @@ function sortOrders(list: Order[], sort: { key: SortKey; dir: "asc" | "desc" }):
       case "arrived_at":
         return o.arrived_at ?? "";
       case "total":
-        return o.total_cost ? Number(o.total_cost) : -1;
+        return o.total ? Number(o.total) : -1;
       case "status":
         return STATUS_ORDER[o.status];
       case "items":
@@ -88,10 +88,8 @@ function VendorChip({ name }: { name: string | null }) {
 // Spend insights derived entirely from the orders already loaded — no extra
 // fetch. Single-hue bars (brand accent) with the value always labelled, so the
 // bar is a quick shape read and the number stays exact.
-function PurchasesInsights({ orders }: { orders: Order[] }) {
-  const withSpend = orders.filter((o) => o.total_cost != null);
-  const totalSpend = withSpend.reduce((s, o) => s + Number(o.total_cost), 0);
-  if (totalSpend <= 0) return null;
+function PurchasesInsights({ summary }: { summary: OrderSummary }) {
+  if (summary.spend <= 0) return null;
 
   const now = new Date();
   const months = Array.from({ length: 6 }, (_, idx) => {
@@ -101,16 +99,9 @@ function PurchasesInsights({ orders }: { orders: Order[] }) {
       label: d.toLocaleDateString(undefined, { month: "short" }),
     };
   });
-  const monthTotals: Record<string, number> = {};
-  const vendorTotals: Record<string, number> = {};
-  for (const o of withSpend) {
-    const mk = (o.ordered_at ?? o.created_at).slice(0, 7);
-    monthTotals[mk] = (monthTotals[mk] ?? 0) + Number(o.total_cost);
-    const vn = o.vendor ?? "(no vendor)";
-    vendorTotals[vn] = (vendorTotals[vn] ?? 0) + Number(o.total_cost);
-  }
+  const monthTotals: Record<string, number> = Object.fromEntries(summary.by_month.map((m) => [m.month, m.spend]));
+  const topVendors = summary.top_vendors.map((v) => [v.vendor ?? "(no vendor)", v.spend] as const);
   const maxMonth = Math.max(1, ...months.map((m) => monthTotals[m.key] ?? 0));
-  const topVendors = Object.entries(vendorTotals).sort((a, b) => b[1] - a[1]).slice(0, 5);
   const maxVendor = Math.max(1, ...topVendors.map(([, v]) => v));
   const head = "text-[10px] font-mono uppercase tracking-widest text-accent";
   const card = "rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4";
@@ -126,9 +117,9 @@ function PurchasesInsights({ orders }: { orders: Order[] }) {
               <div
                 key={m.key}
                 className="flex-1 flex flex-col items-center gap-1 h-full justify-end"
-                title={`${m.label}: ${money(total) ?? "$0.00"}`}
+                title={`${m.label}: ${money(total) ?? money(0)}`}
               >
-                <span className="text-[9px] font-mono text-faint">{total > 0 ? `$${Math.round(total)}` : ""}</span>
+                <span className="text-[9px] font-mono text-faint">{total > 0 ? money(Math.round(total)) : ""}</span>
                 <div
                   className="w-full rounded-t bg-accent/80"
                   style={{ height: `${Math.round((total / maxMonth) * 100)}%`, minHeight: total > 0 ? 3 : 0 }}
@@ -205,15 +196,41 @@ export function PurchasesPage() {
   usePageTitle("Purchases");
   // A wide table is the page here, so it gets the screen.
   usePageWidth("wide");
-  const { activeSlug } = useActiveOrg();
+  const { activeSlug, activeOrg } = useActiveOrg();
   const navigate = useNavigate();
   const { id, vendorId } = useParams<{ id?: string; vendorId?: string }>();
 
-  const orders = useQuery({
-    queryKey: ["orders", activeSlug],
-    queryFn: () => api.listOrders(activeSlug),
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"" | Order["status"]>("");
+  // The search goes to the server, so it finds an order that is not on the
+  // first page; typed a moment before it is asked.
+  const [search, setSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(query.trim()), 250);
+    return () => clearTimeout(t);
+  }, [query]);
+  // Every key starts ["orders", slug], so what refreshed the list before
+  // still refreshes the pages and the figures.
+  const orders = useInfiniteQuery({
+    queryKey: ["orders", activeSlug, "pages", statusFilter, search],
+    queryFn: ({ pageParam }) => api.listOrders(activeSlug, undefined, { status: statusFilter || undefined, q: search || undefined, cursor: pageParam, limit: 200 }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
     enabled: !!activeSlug,
   });
+  const summaryAll = useQuery({
+    queryKey: ["orders", activeSlug, "summary", "", ""],
+    queryFn: () => api.orderSummary(activeSlug),
+    enabled: !!activeSlug,
+  });
+  const filtering = !!statusFilter || !!search;
+  const summaryFiltered = useQuery({
+    queryKey: ["orders", activeSlug, "summary", statusFilter, search],
+    queryFn: () => api.orderSummary(activeSlug, { status: statusFilter || undefined, q: search || undefined }),
+    enabled: !!activeSlug && filtering,
+  });
+  const whole = summaryAll.data;
+  const shown = filtering ? summaryFiltered.data : whole;
   // Purchases instances (named collections of the module). With no base-table
   // orders, present these as a chooser instead of a bare "nothing here" — the
   // aggregate dashboard tile lands here. Same pattern as Machines / Assets.
@@ -248,39 +265,29 @@ export function PurchasesPage() {
   });
   const pendingReceipts = pendingReceiptsQ.data?.groups ?? [];
 
-  const allRows = orders.data?.items ?? [];
+  // The rows loaded so far, already filtered by the server.
+  const filtered = orders.data?.pages.flatMap((p) => p.items) ?? [];
+  const totalOrders = whole?.count ?? 0;
+  const inTransit = whole?.in_transit ?? 0;
+  const openOrders = whole?.open ?? 0;
   // Tell Ask Cobb what's on this screen (uses the order module's own statuses).
-  const inTransit = allRows.filter((o) => o.status === "in-transit").length;
-  const openOrders = allRows.filter(
-    (o) => o.status === "planned" || o.status === "ordered" || o.status === "in-transit",
-  ).length;
   usePublishChatContext({
     kind: "purchases:order",
     label: "Purchases",
     summary:
-      `${allRows.length} order${allRows.length === 1 ? "" : "s"}` +
+      `${totalOrders} order${totalOrders === 1 ? "" : "s"}` +
       (openOrders ? `, ${openOrders} open` : "") +
       (inTransit ? `, ${inTransit} in transit` : ""),
   });
-  const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"" | Order["status"]>("");
 
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "ordered_at", dir: "desc" });
-  let filtered = allRows;
-  if (statusFilter) filtered = filtered.filter((o) => o.status === statusFilter);
-  if (query) {
-    filtered = filtered.filter((o) =>
-      [o.vendor, o.order_number, o.tracking_number, o.notes]
-        .filter(Boolean)
-        .some((v) => v!.toLowerCase().includes(query.toLowerCase())),
-    );
-  }
+  // A column sort orders what is loaded; "Load more" fetches the rest.
   const rows = sortOrders(filtered, sort);
   const toggleSort = (key: SortKey) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "desc" }));
-  // Header stats — open pipeline + spend of what's currently filtered.
-  const filteredSpend = filtered.reduce((s, o) => s + (o.total_cost ? Number(o.total_cost) : 0), 0);
-  const receiptsCount = allRows.filter(orderHasReceipt).length;
+  // Header stats: over every order the filters match, from the server.
+  const filteredSpend = shown?.spend ?? 0;
+  const receiptsCount = whole?.from_receipts ?? 0;
 
   const [newOpen, setNewOpen] = useState(false);
   const [vendorsOpen, setVendorsOpen] = useState(false);
@@ -293,6 +300,9 @@ export function PurchasesPage() {
   const qcP = useQueryClient();
   const toastP = useToast();
   const confirmP = useConfirm();
+  // Deleting an order (a record of money spent) is an owner's or admin's; the
+  // server refuses a member, so a member is not offered it.
+  const mayDeleteOrders = roleSatisfies(activeOrg?.role ?? null, ["owner", "admin"]);
   const bulkDelete = useMutation({
     mutationFn: async (ids: string[]) => {
       for (const id of ids) {
@@ -318,48 +328,43 @@ export function PurchasesPage() {
 
   return (
     <div className="space-y-4">
-      {/* ONE row, and it yields rather than wraps - the same order of sacrifice
-          the scan header uses (interface-principles #6): the search field is the
-          elastic member, button labels drop to icons, then the count goes. */}
-      <div className="flex items-center gap-2 sm:gap-3 border-b border-line dark:border-slate-700 pb-3 flex-nowrap">
-        <h1 className="font-display text-lg sm:text-2xl font-extrabold text-content dark:text-mortar-100 page-title shrink-0">
-          purchases
-        </h1>
-        <span className="hidden sm:inline text-[10px] font-mono text-faint dark:text-slate-500 shrink-0">
-          {filtered.length} of {allRows.length}
-        </span>
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as Order["status"] | "")}
-          className="input !py-1 text-xs !w-24 lg:!w-32 shrink-0"
-        >
-          <option value="">All statuses</option>
-          {STATUSES.map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
-        {/* The elastic member: it absorbs the squeeze so the row never wraps. */}
-        <SearchInput value={query} onChange={(v) => setQuery(v)} placeholder="vendor / order# / notes…" wrapperClassName="w-full flex-1 min-w-[5rem]" />
-        {/* Receipt intake belongs WITH the other header controls, not on a line
-            of its own: the address was a permanent wall of text under the title,
-            and the same chip already carries it on the scan header. Same
-            component, so the two cannot drift. */}
-        {receiptAddress && <ReceiptAddressChip address={receiptAddress} />}
-        <button
-          onClick={() => setVendorsOpen(true)}
-          aria-label="Vendors"
-          className="rounded-md border border-line dark:border-slate-600 hover:bg-subtle dark:hover:bg-slate-800 text-content dark:text-mortar-100 text-sm font-medium px-2.5 lg:px-3 py-2 transition flex items-center gap-1.5 shrink-0"
-        >
-          <Store size={14} /> <span className="hidden lg:inline">Vendors</span>
-        </button>
-        <button
-          onClick={() => setNewOpen(true)}
-          aria-label="New order"
-          className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-2.5 lg:px-3 py-2 transition flex items-center gap-1.5 shrink-0"
-        >
-          <Plus size={14} /> <span className="hidden lg:inline">New order</span>
-        </button>
-      </div>
+      {/* The collection strip every collection uses (CollectionHeader): at a
+          phone's width the name takes its own row and the controls wrap under
+          it, so nothing runs off the edge and the status select shows all of
+          its value. This page once kept one row that "yielded rather than
+          wrapped", and at 390 px it ran past the width with the select
+          reading "All stat" (#4390). */}
+      <CollectionHeader
+        title="Purchases"
+        count={`${filtered.length} of ${shown?.count ?? filtered.length}`}
+        filters={
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as Order["status"] | "")}
+            aria-label="Status"
+            className={`input !py-1 text-sm !w-auto ${HEADER_CONTROL}`}
+          >
+            <option value="">All statuses</option>
+            {STATUSES.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        }
+        search={<SearchInput value={query} onChange={(v) => setQuery(v)} placeholder="vendor / order# / notes…" wrapperClassName="min-w-[10rem] flex-1 sm:w-64 sm:flex-none" />}
+        actions={
+          <>
+            {/* Receipt intake sits with the other controls, not on a line of
+                its own: the same chip the scan header carries. */}
+            {receiptAddress && <ReceiptAddressChip address={receiptAddress} />}
+            <button onClick={() => setVendorsOpen(true)} aria-label="Vendors" className={headerButton()}>
+              <Store size={14} /> <span className="hidden lg:inline">Vendors</span>
+            </button>
+            <button onClick={() => setNewOpen(true)} aria-label="New order" className={headerButton("primary")}>
+              <Plus size={14} /> <span className="hidden lg:inline">New order</span>
+            </button>
+          </>
+        }
+      />
 
       {pendingReceipts.length > 0 && (
         <button
@@ -380,32 +385,33 @@ export function PurchasesPage() {
         </button>
       )}
 
-      {allRows.length > 0 && (
+      {totalOrders > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          <StatCard label="Orders" value={String(allRows.length)} hint={`${openOrders} open`} />
+          <StatCard label="Orders" value={String(totalOrders)} hint={`${openOrders} open`} />
           <StatCard label="In transit" value={String(inTransit)} />
           <StatCard label="From receipts" value={String(receiptsCount)} />
           <StatCard
             label={statusFilter || query ? "Spend (filtered)" : "Total spend"}
             value={money(filteredSpend) ?? "$0.00"}
-            hint={`${filtered.length} order${filtered.length === 1 ? "" : "s"}`}
+            hint={`${shown?.count ?? 0} order${shown?.count === 1 ? "" : "s"}`}
           />
         </div>
       )}
 
       <UnconfirmedReceiptsBanner slug={activeSlug} />
-      {allRows.length > 0 && <PurchasesInsights orders={allRows} />}
+      {whole && totalOrders > 0 && <PurchasesInsights summary={whole} />}
 
-      {orders.isSuccess && allRows.length === 0 && <ModulePurposeHint moduleName="purchases" />}
+      {orders.isError && <QueryError what="your orders" onRetry={() => void orders.refetch()} />}
+      {summaryAll.isSuccess && totalOrders === 0 && <ModulePurposeHint moduleName="purchases" />}
 
-      {allRows.length === 0 && (orderInstances.data?.items.length ?? 0) > 0 ? (
+      {summaryAll.isSuccess && totalOrders === 0 && (orderInstances.data?.items.length ?? 0) > 0 ? (
         <ModuleInstanceChooser instances={orderInstances.data!.items} icon={Store} noun="order" />
       ) : (
       rows.length === 0 ? (
         // No rows: the sentence on its own, never centred across nine columns
         // a phone scrolls sideways to read half of.
         <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-4 py-10 text-center text-sm text-muted">
-          {allRows.length === 0 ? "No orders yet. Log the first with the + above." : "No matches with the current filters."}
+          {orders.isError ? "Couldn't load your orders." : totalOrders === 0 ? "No orders yet. Log the first with the + above." : "No matches with the current filters."}
         </div>
       ) : (
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-x-auto">
@@ -476,7 +482,7 @@ export function PurchasesPage() {
                   {o.item_count ?? "—"}
                 </td>
                 <td className="px-3 py-2 text-right font-mono text-xs text-content dark:text-mortar-200">
-                  {money(o.total_cost) ?? "—"}
+                  {money(o.total) ?? "—"}
                 </td>
                 <td className="px-2 py-2 text-faint dark:text-slate-600">
                   <ChevronRight size={14} />
@@ -497,6 +503,16 @@ export function PurchasesPage() {
             </tfoot>
           )}
         </table>
+        {orders.hasNextPage && (
+          <div className="flex items-center justify-center gap-3 border-t border-line dark:border-slate-700 px-3 py-2 text-xs text-muted">
+            <span>
+              Showing {filtered.length} of {shown?.count ?? "more"}
+            </span>
+            <button type="button" onClick={() => void orders.fetchNextPage()} disabled={orders.isFetchingNextPage} className="rounded border border-line dark:border-slate-600 px-3 py-1 font-medium text-content dark:text-mortar-100 hover:border-accent disabled:opacity-50">
+              {orders.isFetchingNextPage ? "Loading…" : "Load more"}
+            </button>
+          </div>
+        )}
       </div>
       )
       )}
@@ -519,7 +535,7 @@ export function PurchasesPage() {
         count={selected.size}
         onClear={() => setSelected(new Set())}
         actions={
-          <button
+          mayDeleteOrders && <button
             type="button"
             disabled={bulkDelete.isPending}
             onClick={async () => {
@@ -598,7 +614,7 @@ function ReceiptRenderModal({
                     {it.description ?? "—"}
                     {qty > 1 ? `  ×${qty}` : ""}
                   </span>
-                  <span className="shrink-0 tabular-nums">{ext != null ? ext.toFixed(2) : ""}</span>
+                  <span className="shrink-0 tabular-nums">{ext != null ? money(ext) : ""}</span>
                 </div>
               );
             })}
@@ -607,23 +623,23 @@ function ReceiptRenderModal({
         <div className="mt-3 space-y-1 text-xs">
           <div className="flex justify-between">
             <span>Subtotal</span>
-            <span className="tabular-nums">{subtotal.toFixed(2)}</span>
+            <span className="tabular-nums">{money(subtotal)}</span>
           </div>
           {shipping > 0 && (
             <div className="flex justify-between">
               <span>Shipping</span>
-              <span className="tabular-nums">{shipping.toFixed(2)}</span>
+              <span className="tabular-nums">{money(shipping)}</span>
             </div>
           )}
           {Math.abs(other) >= 0.01 && (
             <div className="flex justify-between">
               <span>Tax / other</span>
-              <span className="tabular-nums">{other.toFixed(2)}</span>
+              <span className="tabular-nums">{money(other)}</span>
             </div>
           )}
           <div className="flex justify-between font-bold text-sm border-t border-[#bcb4a2] pt-1.5 mt-1.5">
             <span>TOTAL</span>
-            <span className="tabular-nums">{total.toFixed(2)}</span>
+            <span className="tabular-nums">{money(total)}</span>
           </div>
         </div>
         {onViewOriginal && (
@@ -640,7 +656,7 @@ function ReceiptRenderModal({
 }
 
 function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClose: () => void }) {
-  const { activeSlug } = useActiveOrg();
+  const { activeSlug, activeOrg } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
@@ -726,9 +742,9 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
           <span className="inline-flex items-center gap-2 flex-wrap">
             {fmtOrderDate(o.ordered_at) && <span>{fmtOrderDate(o.ordered_at)}</span>}
             <StatusPill status={o.status} />
-            {money(o.total_cost) && (
+            {money(o.total) && (
               <span className="font-mono text-content dark:text-mortar-100 font-semibold">
-                {money(o.total_cost)}
+                {money(o.total)}
                 <span className="text-faint font-normal"> · {items.length} item{items.length === 1 ? "" : "s"}</span>
               </span>
             )}
@@ -785,11 +801,19 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
               !fp.hidden("expected_arrival") ? editFieldItem("expected_arrival", { label: fp.label("expected_arrival", "Expected arrival"), value: o.expected_arrival ?? "", type: "date", onCommit: (v) => update.mutate({ expected_arrival: v || null }) }) : null,
               !fp.hidden("arrived_at") ? editFieldItem("arrived_at", { label: fp.label("arrived_at", "Arrived at"), value: o.arrived_at ?? "", type: "date", onCommit: (v) => update.mutate({ arrived_at: v || null }) }) : null,
               !fp.hidden("url") ? editFieldItem("url", { label: fp.label("url", "URL"), value: o.url ?? "", type: "url", onCommit: (v) => update.mutate({ url: v || null }) }) : null,
-              !fp.hidden("total_cost") ? editFieldItem("total_cost", { label: fp.label("total_cost", "Total cost"), value: o.total_cost ?? "", numeric: true, onCommit: (v) => update.mutate({ total_cost: v ? (v as unknown as string) : null }) }) : null,
-              !fp.hidden("shipping_cost") ? editFieldItem("shipping_cost", { label: fp.label("shipping_cost", "Shipping cost"), value: o.shipping_cost ?? "", numeric: true, onCommit: (v) => update.mutate({ shipping_cost: v ? (v as unknown as string) : null }) }) : null,
+              !fp.hidden("total_cost") ? moneyFieldItem("total_cost", { label: fp.label("total_cost", "Total cost"), value: o.total_cost, storage: "amount", onCommit: (v) => update.mutate({ total_cost: v == null ? null : String(v) }) }) : null,
+              !fp.hidden("shipping_cost") ? moneyFieldItem("shipping_cost", { label: fp.label("shipping_cost", "Shipping cost"), value: o.shipping_cost, storage: "amount", onCommit: (v) => update.mutate({ shipping_cost: v == null ? null : String(v) }) }) : null,
               editFieldItem("notes", { label: "Notes", value: o.notes ?? "", multiline: true, onCommit: (v) => update.mutate({ notes: v || null }) }),
             ]}
           />
+          {/* No total stated: the order's lines are what it cost, and that is
+              the figure spend counts. Saying so beside the empty field. */}
+          {o.total_cost == null && o.total != null && (
+            <p className="text-xs text-muted" data-testid="total-from-lines">
+              No total entered, so it counts as {money(o.total)}: its lines{shipping > 0 ? " plus shipping" : ""}.
+            </p>
+          )}
+
           {/* Before it arrives the choice is still open; after, the lines have
               been received one way or the other, and only a line added later
               reads it. */}
@@ -871,12 +895,16 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
           </div>
 
           <div className="pt-3 border-t border-line dark:border-slate-700 flex items-center justify-between">
-            <button
-              onClick={handleDelete}
-              className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
-            >
-              <Trash2 size={11} /> delete order
-            </button>
+            {roleSatisfies(activeOrg?.role ?? null, ["owner", "admin"]) ? (
+              <button
+                onClick={handleDelete}
+                className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
+              >
+                <Trash2 size={11} /> delete order
+              </button>
+            ) : (
+              <span />
+            )}
             <button
               onClick={onClose}
               className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition"
@@ -939,10 +967,10 @@ function OrderLineItem({
         )}
       </span>
       <span className="font-mono text-xs text-muted whitespace-nowrap">
-        {qty.toFixed(0)} × {unit != null ? `$${unit.toFixed(2)}` : "—"}
+        {qty.toFixed(0)} × {unit != null ? money(unit) : "—"}
       </span>
       <span className="font-mono text-xs text-content dark:text-mortar-100 w-16 text-right shrink-0">
-        {ext != null ? `$${ext.toFixed(2)}` : ""}
+        {ext != null ? money(ext) : ""}
       </span>
     </>
   );
@@ -1048,9 +1076,12 @@ function NewOrderModal({ open, onClose }: { open: boolean; onClose: () => void }
 
 
 
-// Vendor combobox for the order form: pick a managed vendor, leave it unlinked,
-// or add a new vendor inline. Reports both the id (for linking) and the name
-// (dual-written to the order's legacy `vendor` text).
+// The order's vendor, through the one choice picker: the workspace's vendors,
+// the ones ordered from most first. Typing a name that is not one of them adds
+// it as a vendor and links the order (with an Undo that takes the vendor back
+// off), so a shop typed once is offered on the next order (#4516). Reports both
+// the id (for linking) and the name (dual-written to the order's legacy
+// `vendor` text).
 function VendorPicker({
   slug,
   vendorId,
@@ -1065,53 +1096,47 @@ function VendorPicker({
   const qc = useQueryClient();
   const toast = useToast();
   const vendors = useQuery({ queryKey: ["vendors", slug], queryFn: () => api.listVendors(slug), enabled: !!slug });
-  const [creating, setCreating] = useState(false);
-  const [newName, setNewName] = useState("");
-  const create = useMutation({
-    mutationFn: (name: string) => api.createVendor(slug, { name }),
-    onSuccess: (v) => {
-      toast.success("Vendor added.");
-      void qc.invalidateQueries({ queryKey: ["vendors", slug] });
-      setCreating(false);
-      setNewName("");
-      onChange(v.id, v.name);
-    },
-    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't add vendor."),
-  });
+  const options = (vendors.data?.items ?? []).map((v) => ({ value: v.name, uses: v.order_count }));
+  const byName = (name: string) => (vendors.data?.items ?? []).find((v) => v.name.trim().toLowerCase() === name.trim().toLowerCase());
 
-  if (creating) {
-    return (
-      <div className="flex gap-2">
-        <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Vendor name" className="input flex-1" />
-        <button type="button" disabled={!newName.trim() || create.isPending} onClick={() => create.mutate(newName.trim())} className="px-2.5 py-1.5 rounded-md text-xs font-medium bg-slate-700 hover:bg-slate-600 text-mortar-50 disabled:opacity-50">Add</button>
-        <button type="button" onClick={() => setCreating(false)} className="px-2.5 py-1.5 rounded-md text-xs text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800">Cancel</button>
-      </div>
-    );
-  }
+  const commit = async (name: string | null) => {
+    if (!name) return onChange(null, "");
+    const known = byName(name);
+    if (known) return onChange(known.id, known.name);
+    try {
+      const v = await api.createVendor(slug, { name });
+      void qc.invalidateQueries({ queryKey: ["vendors", slug] });
+      onChange(v.id, v.name);
+      toast.action(`"${v.name}" is now a vendor`, {
+        actionLabel: "Undo",
+        onAction: async () => {
+          await api.deleteVendor(slug, v.id);
+          void qc.invalidateQueries({ queryKey: ["vendors", slug] });
+          onChange(null, v.name);
+        },
+      });
+    } catch (e) {
+      // Kept as the order's own vendor text; only making it a vendor failed.
+      onChange(null, name);
+      toast.error(e instanceof ApiError ? e.message : "Couldn't add the vendor.");
+    }
+  };
 
   return (
-    <select
-      value={vendorId ?? ""}
-      onChange={(e) => {
-        const val = e.target.value;
-        if (val === "__new__") { setCreating(true); return; }
-        if (val === "") { onChange(null, ""); return; }
-        const v = vendors.data?.items.find((x) => x.id === val);
-        onChange(val, v?.name ?? "");
-      }}
-      className="input"
-    >
-      <option value="">{vendorName && !vendorId ? `(unlinked: ${vendorName})` : "(none)"}</option>
-      {vendors.data?.items.map((v) => (<option key={v.id} value={v.id}>{v.name}</option>))}
-      <option value="__new__">+ New vendor…</option>
-    </select>
+    <ChoiceCombobox
+      label="Vendor"
+      value={(vendorId ? vendors.data?.items.find((v) => v.id === vendorId)?.name : null) ?? (vendorName || null)}
+      options={options}
+      onCommit={(v) => void commit(v)}
+    />
   );
 }
 
 // Vendor management surface: list with order-count + spend rollup, add, edit,
 // delete. Opened from the Purchases header.
 function VendorsModal({ onClose, initialVendorId }: { onClose: () => void; initialVendorId?: string }) {
-  const { activeSlug } = useActiveOrg();
+  const { activeSlug, activeOrg } = useActiveOrg();
+  const mayDelete = roleSatisfies(activeOrg?.role ?? null, ["owner", "admin"]);
   const navigate = useNavigate();
   const qc = useQueryClient();
   const toast = useToast();
@@ -1173,7 +1198,7 @@ function VendorsModal({ onClose, initialVendorId }: { onClose: () => void; initi
                     <div className="font-medium text-content dark:text-mortar-100 truncate">{v.name}</div>
                     <div className="text-xs text-muted">
                       {v.order_count} order{v.order_count === 1 ? "" : "s"}
-                      {v.total_spend > 0 && ` · $${v.total_spend.toFixed(2)} spent`}
+                      {v.total_spend > 0 && ` · ${money(v.total_spend)} spent`}
                       {v.lead_time_days != null && ` · ~${v.lead_time_days}d lead`}
                     </div>
                   </div>
@@ -1181,7 +1206,7 @@ function VendorsModal({ onClose, initialVendorId }: { onClose: () => void; initi
                     <a href={v.website} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-xs text-accent hover:underline shrink-0">site ↗</a>
                   )}
                   <button type="button" onClick={(e) => { e.stopPropagation(); setEditing(v.id); }} className="text-xs text-muted hover:text-accent shrink-0">Edit</button>
-                  <button
+                  {mayDelete && <button
                     type="button"
                     onClick={async (e) => {
                       e.stopPropagation();
@@ -1193,7 +1218,7 @@ function VendorsModal({ onClose, initialVendorId }: { onClose: () => void; initi
                     aria-label="Delete vendor"
                   >
                     <Trash2 size={15} />
-                  </button>
+                  </button>}
                 </div>
               )}
             </li>
@@ -1344,7 +1369,7 @@ function VendorDetailPane({
                       <span className="font-mono text-xs text-muted w-24 shrink-0 truncate">{o.order_number || "—"}</span>
                       <StatusPill status={o.status} />
                       <span className="text-xs text-muted flex-1 whitespace-nowrap">{fmtOrderDate(o.ordered_at) ?? ""}</span>
-                      <span className="font-mono text-xs text-content dark:text-mortar-100">{money(o.total_cost) ?? "—"}</span>
+                      <span className="font-mono text-xs text-content dark:text-mortar-100">{money(o.total) ?? "—"}</span>
                     </button>
                   </li>
                 ))}

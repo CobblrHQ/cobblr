@@ -19,8 +19,11 @@
 //   - a field's NEED is the narrowest column its control is usable in,
 //     derived from the control fieldControl() already decided (a date needs
 //     more than a checkbox), the longest choice of a dropdown, the label
-//     (a long label must fit its column) and the help under it (a
-//     paragraph wants the row); never from the field's name;
+//     (a long label must fit its column); never from the field's name, and
+//     never from the help under it, which folds to two lines under its own
+//     field (HelpText) instead of taking the row: a vehicle's Year, Trim,
+//     Plate and Mileage each took a whole row because Trim and Mileage
+//     carried a sentence of help (#4518);
 //   - the COLUMNS come from the width: as many as fit at MIN_COL_PX, so
 //     two short fields share a row on any phone while a desktop form takes
 //     four, and a date spans two columns where one would be too narrow;
@@ -149,7 +152,8 @@ export interface FieldSpace {
   choices?: readonly string[] | null;
   /** The value shown now, when known: a long one wants the row. */
   valueLength?: number;
-  /** The help under the field: a paragraph wants the row. */
+  /** The help under the field. It never widens the field (it folds under
+   *  it); kept so a caller can pass the whole field. */
   help?: string | null;
 }
 
@@ -158,6 +162,7 @@ export interface FieldSpace {
 const CONTROL_MIN_PX: Record<FieldSpace["control"], number> = {
   checkbox: 120,
   number: 110,
+  money: 130,
   date: DATE_MIN_PX,
   choice: 120,
   text: MIN_COL_PX,
@@ -187,14 +192,11 @@ const TYPED: ReadonlySet<FieldSpace["control"]> = new Set(["text", "url", "numbe
  *  and keeps a half row beside its neighbour, even where the half cannot
  *  show every character (a 172px phone column holds about 17). */
 const LONG_VALUE_CHARS = 24;
-/** Past this a help line is a paragraph beside nothing. */
-const LONG_HELP_CHARS = 60;
 
 /** A field's need from its definition and control. */
 export function fieldNeed(key: string, space: FieldSpace): FieldNeed {
   const control = space.control;
   if (control === "markdown" || control === "location") return { key, minPx: CONTROL_MIN_PX[control], full: true };
-  if (space.help && space.help.trim().length > LONG_HELP_CHARS) return { key, minPx: CONTROL_MIN_PX[control], full: true };
   if ((space.valueLength ?? 0) > LONG_VALUE_CHARS) return { key, minPx: CONTROL_MIN_PX[control], full: true };
   let minPx = CONTROL_MIN_PX[control];
   if (control === "choice" && space.choices?.length) {

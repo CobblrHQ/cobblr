@@ -144,3 +144,36 @@ export async function serviceWriteModeFor(orgId: string, userId: string | null):
 export function serviceWaitsForAPerson(effect: ServiceEffect | string): boolean {
   return serviceConsent(effect, "cobb", { writeMode: "auto" }).verdict !== "run";
 }
+
+// What a yes given ahead of its moment can wait for (services.md section 9:
+// "power off after this print"). The owner of a kind of thing registers it:
+// the event that says the thing is finished, the payload field that names
+// it, and how to tell whether an id is one of its own (with a label a person
+// reads on the card: "when the print Bracket v2 finishes"). The kernel
+// registers "a service job is done"; digifab registers "a print finished".
+export interface ServiceConfirmTrigger {
+  event: string;
+  /** The payload field that names the thing, e.g. "jobId". */
+  key: string;
+  /** This trigger's label for `id` in this workspace, or null when `id` is
+   *  not one of its things. */
+  describe: (orgId: string, id: string) => Promise<string | null>;
+}
+const confirmTriggers: ServiceConfirmTrigger[] = [];
+const onTrigger: Array<(t: ServiceConfirmTrigger) => void> = [];
+
+export function registerServiceConfirmTrigger(t: ServiceConfirmTrigger): void {
+  if (confirmTriggers.some((x) => x.event === t.event)) return;
+  confirmTriggers.push(t);
+  for (const fn of onTrigger) fn(t);
+}
+
+export function serviceConfirmTriggers(): readonly ServiceConfirmTrigger[] {
+  return confirmTriggers;
+}
+
+/** Be told of every trigger, those registered already and those to come. */
+export function onServiceConfirmTrigger(fn: (t: ServiceConfirmTrigger) => void): void {
+  onTrigger.push(fn);
+  for (const t of confirmTriggers) fn(t);
+}

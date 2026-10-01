@@ -10,7 +10,10 @@ import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { dependenciesOf, openBlockerCount, refuseNewTaskDependency, releaseDependentsOf } from "./deps.js";
-import { routeUnknownToMetadata, refuseUnknownFields } from "@cobblr/platform-contract/entity-metadata";
+import { assigneeOf, tellAssignee } from "./assignee.js";
+import { makeNextOccurrence } from "./repeat.js";
+import { writeTaskOrder } from "./order.js";
+import { routeUnknownToMetadata, refuseUnknownFields, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 
 export const tasksRouter = Router({ mergeParams: true });
 
@@ -32,6 +35,18 @@ const TaskCreate = z.object({
   energy: z.enum(ENERGIES).nullable().optional(),
   due_date: z.string().nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
+  /** Comes round again when done; null stops it. */
+  // anchor_day rides along so editing the rule mid-series (a Feb 28 of a
+  // series on the 31st) keeps the day the series returns to.
+  repeat: z
+    .object({ every_n: z.number().int().min(1).max(365), every_unit: z.enum(["day", "week", "month", "year"]), anchor_day: z.number().int().min(1).max(31).optional() })
+    .nullable()
+    .optional(),
+  /** The whole checklist, in order; a save replaces it. */
+  checklist: z
+    .array(z.object({ id: z.string().min(1).max(64), text: z.string().trim().min(1).max(500), done: z.boolean() }))
+    .max(200)
+    .optional(),
 });
 
 const TASK_NATIVE_KEYS = new Set(Object.keys(TaskCreate.shape));
@@ -42,6 +57,8 @@ const ListQuery = z.object({
   status: z.enum(TASK_STATUSES).optional(),
   energy: z.enum(ENERGIES).optional(),
   // ?blocked=1 returns only tasks with at least one unsatisfied dep.
+  /** One person's tasks: a People entry's id, as the `assignee` field stores it. */
+  assignee: z.union([z.literal("me"), z.string().uuid()]).optional(),
   blocked: z.enum(["0", "1"]).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(100),
 });
@@ -66,17 +83,28 @@ tasksRouter.get(
       .select([
         "t.id", "t.project_id", "t.title", "t.description",
         "t.status", "t.priority", "t.energy", "t.due_date",
-        "t.completed_at", "t.metadata", "t.created_at", "t.updated_at",
+        "t.completed_at", "t.metadata", "t.created_at", "t.updated_at", "t.checklist", "t.order_within", "t.repeat",
         "p.name as project_name",
         // Open blockers, so the UI can show "blocked: 2".
         openBlockerCount("t.id").as("blocked_deps"),
       ])
+      // The order a person put them in; untouched tasks (all 0) newest first,
+      // as before there was an order.
+      .orderBy("t.order_within", "asc")
       .orderBy("t.created_at", "desc")
       .limit(parsed.data.limit);
 
     if (parsed.data.project_id) q = q.where("t.project_id", "=", parsed.data.project_id);
     if (parsed.data.status) q = q.where("t.status", "=", parsed.data.status);
     if (parsed.data.energy) q = q.where("t.energy", "=", parsed.data.energy);
+    if (parsed.data.assignee) {
+      const who =
+        parsed.data.assignee === "me"
+          ? await platform().accounts.personForUser(tenantContext(req).org.id, sessionUser(req).id)
+          : parsed.data.assignee;
+      // "Mine" for someone with no People entry is nothing, never everything.
+      q = q.where(sql<string>`t.metadata->>'assignee'`, "=", who ?? "00000000-0000-0000-0000-000000000000");
+    }
     // In SQL, before the limit: filtering the page afterwards dropped blocked
     // tasks that sat past the first 100.
     if (parsed.data.blocked === "1") q = q.where(sql<boolean>`${openBlockerCount("t.id")} > 0`);
@@ -87,7 +115,26 @@ tasksRouter.get(
       ...r,
       blocked_deps: Number(r.blocked_deps ?? 0),
     }));
-    res.json({ items });
+    // Person fields read as the person's name (assignee_label).
+    res.json({ items: await platform().entities.withFieldLabels(tenantContext(req).org.id, "projects:task", items) });
+  }),
+);
+
+// A project's tasks in the order a person put them: the whole list, top first.
+// AI-ACTION: projects:move-task
+// AI-REACH: action projects:move-task
+tasksRouter.post(
+  "/reorder",
+  asyncHandler(async (req, res) => {
+    const parsed = z.object({ project_id: z.string().uuid(), ids: z.array(z.string().uuid()).min(1).max(1000) }).safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const db = tenantDb(req);
+    const stray = await writeTaskOrder(db, parsed.data.project_id, parsed.data.ids);
+    if (stray.length > 0) {
+      res.status(400).json({ error: { code: "not_in_project", message: "Every task in the order must belong to that project.", details: { stray } } });
+      return;
+    }
+    res.json({ ok: true });
   }),
 );
 
@@ -110,7 +157,8 @@ tasksRouter.get(
       return;
     }
     const deps = await dependenciesOf(db, id);
-    res.json({ ...task, dependencies: deps, blocked_deps: deps.filter((d) => d.open).length });
+    const [labelled] = await platform().entities.withFieldLabels(tenantContext(req).org.id, "projects:task", [task as Record<string, unknown>]);
+    res.json({ ...labelled, dependencies: deps, blocked_deps: deps.filter((d) => d.open).length });
   }),
 );
 
@@ -125,9 +173,18 @@ tasksRouter.post(
     const ctx = tenantContext(req);
     const session = sessionUser(req);
 
+    // A new task goes on top of its project's list, where it always appeared.
+    const top = parsed.data.project_id
+      ? await db
+          .selectFrom("projects_tasks")
+          .select(sql<number>`coalesce(min(order_within), 0)`.as("m"))
+          .where("project_id", "=", parsed.data.project_id)
+          .executeTakeFirst()
+      : undefined;
     const inserted = await db
       .insertInto("projects_tasks")
       .values({
+        ...(top ? { order_within: Number(top.m) - 1 } : {}),
         project_id: parsed.data.project_id ?? null,
         title: parsed.data.title,
         description: parsed.data.description ?? null,
@@ -135,6 +192,8 @@ tasksRouter.post(
         priority: parsed.data.priority ?? "med",
         energy: parsed.data.energy ?? "medium",
         due_date: parsed.data.due_date ? new Date(parsed.data.due_date) : null,
+        ...(parsed.data.checklist ? { checklist: JSON.stringify(parsed.data.checklist) as never } : {}),
+        ...(parsed.data.repeat ? { repeat: JSON.stringify(parsed.data.repeat) as never } : {}),
         // D6: hoisted-from-top-level keys live here.
         ...(parsed.data.metadata && Object.keys(parsed.data.metadata).length > 0
           ? { metadata: parsed.data.metadata as never }
@@ -154,6 +213,8 @@ tasksRouter.post(
       orgId: ctx.org.id,
       taskId: inserted.id,
     });
+    const assignee = assigneeOf(inserted.metadata);
+    if (assignee) await tellAssignee(ctx.org.id, inserted, assignee, session.id);
 
     res.status(201).json(inserted);
   }),
@@ -175,13 +236,19 @@ tasksRouter.patch(
     const ctx = tenantContext(req);
     const session = sessionUser(req);
 
-    const before = await db.selectFrom("projects_tasks").select("status").where("id", "=", id).executeTakeFirst();
+    // The whole row: the assignee check reads it, and the log says what this
+    // edit changed, old → new (#4517).
+    const before = await db.selectFrom("projects_tasks").selectAll().where("id", "=", id).executeTakeFirst();
     const patch: Record<string, unknown> = { updated_at: new Date() };
     let completed = false;
     for (const [k, v] of Object.entries(parsed.data)) {
       if (v === undefined) continue;
       if (k === "due_date" && v != null && typeof v === "string") {
         patch[k] = new Date(v);
+      } else if (k === "repeat") {
+        patch[k] = v === null ? null : JSON.stringify(v);
+      } else if (k === "checklist") {
+        patch[k] = JSON.stringify(v);
       } else if (k === "status" && v === "done") {
         patch[k] = v;
         patch.completed_at = new Date();
@@ -197,7 +264,8 @@ tasksRouter.patch(
 
     const updated = await db
       .updateTable("projects_tasks")
-      .set(patch)
+      // Merge, never replace: one custom field saved must not erase the others.
+      .set(withMetadataMerged(patch) as never)
       .where("id", "=", id)
       .returningAll()
       .executeTakeFirst();
@@ -213,15 +281,24 @@ tasksRouter.patch(
       action,
       ref: { module: "projects", entityType: "task", entityId: updated.id },
       diff: parsed.data,
+      before,
     });
     platform().events.emit(completed ? "projects.task.completed" : "projects.task.updated", {
       orgId: ctx.org.id,
       taskId: updated.id,
     });
+    const nowAssignee = assigneeOf(updated.metadata);
+    if (nowAssignee && nowAssignee !== assigneeOf(before?.metadata)) {
+      await tellAssignee(ctx.org.id, updated, nowAssignee, session?.id ?? null);
+    }
     // Closing a task (done or cancelled) is what frees the tasks waiting on it.
     const closed = (st: string | undefined) => st === "done" || st === "cancelled";
     if (closed(updated.status) && !closed(before?.status)) {
       await releaseDependentsOf(ctx.org.id, db, updated.id);
+    }
+    // Done (not cancelled): a repeating task comes round again.
+    if (updated.status === "done" && before?.status !== "done") {
+      await makeNextOccurrence(ctx.org.id, db, updated.id);
     }
 
     res.json(updated);

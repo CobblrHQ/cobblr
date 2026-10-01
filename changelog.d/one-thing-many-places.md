@@ -3,6 +3,7 @@ type: feature
 scope: inventory
 date: 2026-09-28
 docs_target: docs/USER_GUIDE.md#3.1 Inventory
+docs_published: 2026-10-01
 ---
 The same thing kept in several places is now one item with a row per place. Gauze pads in a supply closet and in five ambulances read as one card: the total, how many places, and a row for each place with its own count, its own minimum and its own low warning, so one short ambulance shows even when the closet is full. Add a place from the item's page, split a place back into its own record, or switch the list to one line per place. Restock one place from another and the soonest-expiring lot goes first, keeping its expiry date and lot number, and deliveries can be entered with the date and lot printed on them. A location's page shows what it carries and what is short, with a minus and plus on each line for that place, and a Going off list shows every lot about to expire, place by place. Records that were entered once per place are offered as one item (never combined without a yes), and scanning something kept in several places asks which place it is for.
 

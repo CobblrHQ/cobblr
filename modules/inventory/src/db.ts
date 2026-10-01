@@ -59,6 +59,11 @@ export interface InventoryPartsTable {
   warranty_details: string | null;
   insured: Generated<boolean>;
   archived: Generated<boolean>;
+  // Measured values read off the record (migration 0013, measure-readings.ts):
+  // null until first read. measures_key is generated and not listed, like
+  // search_blob.
+  measures: Generated<Array<{ field: string; value: number; unit: string | null }> | null>;
+  measures_for: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

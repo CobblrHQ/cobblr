@@ -26,10 +26,12 @@
   right: 0;
   bottom: var(--fc-bottom, 0px);
 }
-/* A corner piece: its own lift above the dock. Horizontal placement is the
- * piece's (right-4, or left-1/2 -translate-x-1/2 for a centred pill). */
+/* A corner piece: its own lift above the dock, plus --fc-stack, the room the
+ * pieces below it in the same corner take (bottom-dock.ts stackCorner).
+ * Horizontal placement is the piece's (right-4, or left-1/2 -translate-x-1/2
+ * for a centred pill). */
 .fc-corner {
-  bottom: calc(var(--bottom-chrome-height, 0px) + var(--fc-lift, 1rem));
+  bottom: calc(var(--bottom-chrome-height, 0px) + var(--fc-lift, 1rem) + var(--fc-stack, 0px));
 }
 .fc-overlay {
   position: fixed;
@@ -41,4 +43,17 @@
 .fc-backdrop {
   position: fixed;
   inset: 0;
+}
+
+/* Chrome in the content column (HIDE_WHEN_COVERED, overlay-open.ts): hidden
+ * under an overlay that covers the page, and under any overlay on a phone,
+ * where a side panel covers the page too. On a desk a side panel sits beside
+ * the page, and the piece re-centres in what is left (--side-panel-w). */
+html[data-covering-open] .fc-yield-covered {
+  display: none;
+}
+@media (max-width: 639.98px) {
+  html[data-overlay-open] .fc-yield-covered {
+    display: none;
+  }
 }

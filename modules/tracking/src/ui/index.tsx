@@ -10,6 +10,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ContributedDetailPanels, CustomFieldsPanel, Modal, useRecordInPath, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { TrendingUp, Plus, Trash2 } from "lucide-react";
 import { TrackingApi, type MetricSummary, type Measurement, type GoalDirection, TrackingApiError } from "./api.js";
+import { valueWithUnit } from "@cobblr/platform-contract/money";
 
 export const navItems = [{ label: "Tracking", path: "/tracking", icon: TrendingUp }];
 
@@ -102,7 +103,7 @@ function MetricCard({ metric, api, orgSlug, onOpen, onDelete }: { metric: Metric
         <button type="button" onClick={onOpen} className="text-left flex-1">
           <div className="font-medium text-content dark:text-mortar-100">{metric.name}</div>
           <div className="text-xs text-muted mt-0.5">
-            {metric.latest_value != null ? `${metric.latest_value}${metric.unit ? ` ${metric.unit}` : ""}` : "no data"}
+            {metric.latest_value != null ? valueWithUnit(Number(metric.latest_value), metric.unit) : "no data"}
             {metric.goal_value != null && <span className="text-faint"> · goal {metric.goal_value}</span>}
           </div>
         </button>
@@ -213,7 +214,7 @@ function MetricDetailModal({ metricId, api, orgSlug, onClose }: { metricId: stri
 
   const d = detail.data;
   return (
-    <Modal open onClose={onClose} title={d?.name ?? "Metric"} subtitle={d?.goal_value != null ? `goal ${d.goal_value}${d.unit ? ` ${d.unit}` : ""} (${d.goal_direction})` : undefined} size="lg">
+    <Modal open onClose={onClose} title={d?.name ?? "Metric"} subtitle={d?.goal_value != null ? `goal ${valueWithUnit(Number(d.goal_value), d.unit)} (${d.goal_direction})` : undefined} size="lg">
       <div className="space-y-3">
         <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); if (val !== "") log.mutate(Number(val)); }}>
           <input autoFocus value={val} onChange={(e) => setVal(e.target.value)} type="number" step="any" placeholder={`Log a value${d?.unit ? ` (${d.unit})` : ""}…`} className="flex-1 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
@@ -227,7 +228,7 @@ function MetricDetailModal({ metricId, api, orgSlug, onClose }: { metricId: stri
           <ul className="divide-y divide-slate-100 dark:divide-slate-800 border border-line dark:border-slate-700 rounded max-h-48 overflow-auto">
             {[...d.measurements].reverse().map((m: Measurement) => (
               <li key={m.id} className="flex justify-between px-3 py-1.5 text-sm">
-                <span className="font-medium">{m.value}{d.unit ? ` ${d.unit}` : ""}</span>
+                <span className="font-medium">{valueWithUnit(Number(m.value), d.unit)}</span>
                 <span className="text-xs text-muted">{new Date(m.measured_at).toLocaleDateString()}</span>
               </li>
             ))}

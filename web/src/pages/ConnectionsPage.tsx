@@ -7,8 +7,10 @@
 
 import { aiAvailabilityKeys } from "../lib/ai-availability-keys";
 import { useEffect, useMemo, useState } from "react";
+import { ServiceSetup } from "../components/ServiceSetup";
 import { useSearchParams } from "react-router-dom";
 import { incumbentConnection } from "../lib/incumbent-connection";
+import { initialPick } from "../lib/connection-pick";
 import { MailSourceRow, OAuthConnectPanel } from "../components/MailSourceCard";
 import { CredentialFields } from "../components/CredentialFields";
 import { ProviderSetupSteps } from "../components/ProviderSetupSteps";
@@ -31,6 +33,10 @@ import {
   type UserConnectionInput,
 } from "../lib/api";
 import { isEdgeBridgeConnection } from "../lib/useMyEdgeBridge";
+
+/** Kinds whose connections carry a verification: tested on save and from the
+ *  card's Test button. */
+const TESTABLE_KINDS = new Set(["ai-provider", "service"]);
 
 const MODE_LABEL: Record<ConnRouteMode, string> = {
   "my-calls": "Only calls I personally make",
@@ -61,7 +67,19 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
   });
   const catalogue = useQuery({ queryKey: ["conn-catalogue"], queryFn: api.connectionCatalogue });
   const me = useQuery({ queryKey: ["me"], queryFn: api.me });
-  const [adding, setAdding] = useState(startAdding);
+  // Which kind the add form opens on: Add a service starts on the service
+  // kind, Add a connection on whatever leads the list.
+  // Another page can send a person here to connect a service for one job
+  // ("Connect a slicer" on a Make): ?add=service&capability=slice.model opens
+  // Add a service already asking for that job.
+  const [initialParams] = useSearchParams();
+  const [adding, setAdding] = useState<false | { provider: string | null; capability?: string | null }>(() =>
+    initialParams.get("add") === "service"
+      ? { provider: "service", capability: initialParams.get("capability") }
+      : startAdding
+        ? { provider: null }
+        : false,
+  );
   const [editing, setEditing] = useState<UserConnection | null>(null);
   // Google sends the browser back here with one word in the query; say it
   // once and take it out of the address bar so a reload does not say it again.
@@ -100,8 +118,8 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
   return (
     <div className="space-y-5">
       <p className="text-sm text-muted dark:text-slate-400">
-        Set up a service of your own once - an AI provider, a parcel-tracking account -
-        and route it to the workspaces you choose. It follows you instead of being
+        Set up a service of your own once - an AI provider, a parcel-tracking account,
+        a slicer you installed - and route it to the workspaces you choose. It follows you instead of being
         re-added per workspace. Secrets are stored encrypted and never shown again.
       </p>
 
@@ -134,9 +152,9 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
               <div className="font-medium text-content dark:text-mortar-100 flex items-center gap-2 flex-wrap">
                 <span>{c.label || providerLabel(c.provider_id)}</span>
                 <span className="text-[11px] font-mono text-faint">{c.provider_id}</span>
-                {c.kind === "ai-provider" && <VerificationBadge verification={c.verification} />}
+                {TESTABLE_KINDS.has(c.kind) && <VerificationBadge verification={c.verification} />}
               </div>
-              {c.kind === "ai-provider" && <VerificationLine verification={c.verification} />}
+              {TESTABLE_KINDS.has(c.kind) && <VerificationLine verification={c.verification} />}
               <div className="text-[11px] text-muted mt-0.5">
                 {c.routes.length === 0 ? (
                   c.route_scope === "explicit" ? (
@@ -201,7 +219,7 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
               >
                 <Pencil size={14} />
               </button>
-              {c.kind === "ai-provider" && (
+              {TESTABLE_KINDS.has(c.kind) && (
                 <TestConnectionButton test={() => api.testStoredConnection(c.id)} invalidate={[aiAvailabilityKeys.connections()]} className="text-[11px] px-2 py-1 rounded border border-line dark:border-slate-700 text-faint hover:text-accent" />
               )}
               <button
@@ -242,7 +260,9 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
 
       {adding ? (
         <ConnectionForm
-          key="new"
+          key={`new-${adding.provider ?? ""}`}
+          initialProviderId={adding.provider}
+          wantCapability={adding.capability ?? null}
           providers={providers}
           orgs={orgs}
           others={conns.data?.items ?? []}
@@ -254,13 +274,24 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
           onCancel={() => setAdding(false)}
         />
       ) : (
-        <button
-          type="button"
-          onClick={() => setAdding(true)}
-          className="inline-flex items-center gap-2 rounded bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-1.5"
-        >
-          <Plus size={15} /> Add a connection
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setAdding({ provider: null })}
+            className="inline-flex items-center gap-2 rounded bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-1.5"
+          >
+            <Plus size={15} /> Add a connection
+          </button>
+          {providers.some((p) => p.kind === "service") && (
+            <button
+              type="button"
+              onClick={() => setAdding({ provider: "service" })}
+              className="inline-flex items-center gap-2 rounded border border-cobble-600 text-cobble-700 dark:text-cobble-300 hover:bg-cobble-50 dark:hover:bg-cobble-900/30 text-sm font-medium px-3 py-1.5"
+            >
+              <Plus size={15} /> Add a service
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
@@ -289,9 +320,15 @@ function ConnectionForm({
   orgs,
   others,
   existing,
+  initialProviderId = null,
+  wantCapability = null,
   onDone,
   onCancel,
 }: {
+  /** The provider the add form opens on (Add a service: "service"). */
+  initialProviderId?: string | null;
+  /** The job a service is being connected for, when a page sent the person here. */
+  wantCapability?: string | null;
   providers: AiProviderDef[];
   orgs: Array<{ id: string; name: string; role: string }>;
   /** My OTHER connections, so a workspace that already has one can say so
@@ -320,7 +357,7 @@ function ConnectionForm({
   //
   // Holding only the user's CHOICE and deriving the rest means the two cannot
   // disagree: before a choice, the value IS whatever leads the list.
-  const [picked, setPicked] = useState<string | null>(existing?.provider_id ?? null);
+  const [picked, setPicked] = useState<string | null>(initialPick(existing, initialProviderId));
   const providerId = picked ?? providers[0]?.id ?? "";
   const setProviderId = setPicked;
   const [label, setLabel] = useState(existing?.label ?? "");
@@ -359,6 +396,13 @@ function ConnectionForm({
   });
 
   const provider = useMemo(() => providers.find((p) => p.id === providerId), [providers, providerId]);
+  // A service at an address has its own panel (where it is, what it offers,
+  // its key). An adapter (a third-party API Cobblr speaks itself) is kind
+  // service too, but is configured by its own fields like any provider.
+  const isService = provider?.id === "service";
+  const serviceKindOnly = initialProviderId === "service" || existing?.kind === "service";
+  // The service's own name, once its manifest is read: the label's default.
+  const [serviceName, setServiceName] = useState<string | null>(null);
   const credFields = Object.entries(provider?.credentials ?? {});
 
   const confirm = useConfirm();
@@ -455,7 +499,7 @@ function ConnectionForm({
     <section className="rounded-xl border border-cobble-300 dark:border-cobble-700 bg-cobble-50/40 dark:bg-cobble-900/15 p-5 space-y-3">
       <div className="flex items-center gap-2">
         <h2 className="text-sm font-medium text-content dark:text-slate-300 flex-1">
-          {isEdit ? "Edit connection" : "Add a connection"}
+          {isEdit ? "Edit connection" : isService ? "Add a service" : "Add a connection"}
         </h2>
         <button type="button" onClick={onCancel} className="text-faint hover:text-content p-1" title="Cancel">
           <X size={15} />
@@ -476,7 +520,7 @@ function ConnectionForm({
           {/* Grouped by kind: an AI key and a tracking account are different
               enough that one flat list of vendor names reads as a jumble. */}
           {Object.entries(
-            providers.reduce<Record<string, AiProviderDef[]>>((acc, p) => {
+            providers.filter((p) => !serviceKindOnly || p.kind === "service").reduce<Record<string, AiProviderDef[]>>((acc, p) => {
               const k = p.kind ?? "ai-provider";
               (acc[k] ??= []).push(p);
               return acc;
@@ -504,13 +548,22 @@ function ConnectionForm({
           type="text"
           value={label}
           onChange={(e) => setLabel(e.target.value)}
-          placeholder={labelPlaceholder(provider?.label)}
+          placeholder={isService ? (serviceName ? `e.g. ${serviceName}` : "its own name, once it is read") : labelPlaceholder(provider?.label)}
           className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
         />
       </label>
 
       {provider?.setup && <ProviderSetupSteps setup={provider.setup} />}
 
+      {isService ? (
+        <ServiceSetup
+          creds={creds}
+          onChange={(k, v) => setCreds((m) => ({ ...m, [k]: v }))}
+          keyIsSet={isEdit && !!existing?.credential_keys.includes("secret")}
+          onRead={(p) => setServiceName(p.name)}
+          wantCapability={wantCapability}
+        />
+      ) : (
       <CredentialFields
         fields={Object.fromEntries(editableFields)}
         creds={creds}
@@ -526,7 +579,8 @@ function ConnectionForm({
           isEdit && existing?.credential_keys.includes(k) ? "•••••• (unchanged)" : undefined
         }
       />
-      {credFields.length === 0 && (
+      )}
+      {credFields.length === 0 && !isService && (
         <div className="text-[11px] text-faint italic">
           This provider needs no credentials - it routes to a device you connect (e.g. the edge bridge).
         </div>

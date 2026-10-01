@@ -9,6 +9,7 @@ import { addLine } from "../order-lines.js";
 import { platform, readJsonArg } from "@cobblr/platform-contract";
 import type { SalesDB, SalesOrderStatus } from "../db.js";
 import { fulfilOrder } from "../fulfilment.js";
+import { cancelOrder, reinstateOrder, type Restocked } from "../cancel.js";
 import { nextOrderNumber } from "../order-number.js";
 import { shipOrder } from "../ship.js";
 import { makeLine } from "../make-line.js";
@@ -24,6 +25,31 @@ interface FulfillArgs {
 export function registerSalesActionHandlers(): void {
   if (registered) return;
   registered = true;
+
+  // Cancel, and its way back. A cancel of a shipped order with no answer to
+  // "did it come back?" is refused with that question, never guessed.
+  platform().actions.registerHandler("sales.cancel-order", async (ctx) => {
+    if (ctx.entity?.kind !== "sales:order") return { ok: false, error: "cancel works on a sales order" };
+    const raw = (ctx.args as { returned?: unknown } | null)?.returned;
+    const returned = raw === true || raw === "true" ? true : raw === false || raw === "false" ? false : undefined;
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<SalesDB>;
+    const r = await cancelOrder(db, ctx.orgId, ctx.userId, ctx.entity.id, { returned });
+    if (!r.ok) return r.code === "already_cancelled" ? { ok: true, skipped: r.message } : { ok: false, error: r.message, code: r.code };
+    return { ok: true, from: r.from, restocked: r.restocked };
+  });
+  platform().actions.registerHandler("sales.reinstate-order", async (ctx) => {
+    if (ctx.entity?.kind !== "sales:order") return { ok: false, error: "reinstate works on a sales order" };
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const restocked = readJsonArg<Restocked[]>(args, "restocked") ?? [];
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<SalesDB>;
+    const r = await reinstateOrder(db, ctx.orgId, ctx.userId, ctx.entity.id, { from: String(args.from ?? "confirmed") as SalesOrderStatus, restocked });
+    return r.ok ? { ok: true, retaken: r.retaken } : { ok: false, error: r.message };
+  });
+  platform().actions.registerUndo("sales.cancel-order", (result, ctx) => {
+    const r = result as { ok?: unknown; from?: unknown; restocked?: unknown } | null;
+    if (r?.ok !== true || typeof r.from !== "string" || !ctx.entity) return null;
+    return { action_id: "sales:reinstate-order", args: { from: r.from, restocked: JSON.stringify(r.restocked ?? []) }, entity_kind: ctx.entity.kind, entity_id: ctx.entity.id };
+  });
 
   platform().actions.registerHandler("sales.fulfill-order", async (ctx) => {
     const args = (ctx.args as FulfillArgs | null) ?? {};

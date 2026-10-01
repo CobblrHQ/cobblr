@@ -8,7 +8,7 @@ import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
 import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
-import { platform } from "@cobblr/platform-contract";
+import { likeEscape, platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
@@ -42,7 +42,7 @@ customersRouter.get(
         sql<string>`count(*) over()`.as(TOTAL_COLUMN),
       ]);
     if (term) {
-      const like = `%${term.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+      const like = `%${likeEscape(term)}%`;
       q = q.where((eb) => eb.or([eb("c.name", "ilike", like), eb("c.email", "ilike", like), eb("c.phone", "ilike", like)]));
     }
     const rows = await q.orderBy("c.name").orderBy("c.id").limit(page.limit).offset(page.offset).execute();
@@ -109,6 +109,8 @@ customersRouter.patch(
     const parsed = CustomerUpdate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
+    // The row as it was: the log says what this edit changed (#4517).
+    const before = await db.selectFrom("sales_customers").selectAll().where("id", "=", req.params.id!).where("instance", "=", instanceOf(req)).executeTakeFirst();
     const row = await db
       .updateTable("sales_customers")
       // Custom fields MERGE into the live row (withMetadataMerged, #3625).
@@ -138,6 +140,7 @@ customersRouter.patch(
       action: "customer_updated",
       ref: { module: "sales", entityType: "customer", entityId: String(req.params.id) },
       diff: parsed.data as Record<string, unknown>,
+      before,
     });
     res.json(row);
   }),

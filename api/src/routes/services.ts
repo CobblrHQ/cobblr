@@ -10,8 +10,8 @@ import { ServicesNotReadyError } from "@cobblr/platform-contract/services";
 import { requireAuth } from "../auth/middleware.js";
 import { requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
-import { capabilityDetail, invokeAs, readingStatsFor, ServiceRefusal } from "../platform/services.js";
-import { confirmServiceJob } from "../platform/service-confirm.js";
+import { capabilityDetail, invokeAs, readingStatsFor, recentRunRoots, ServiceRefusal } from "../platform/services.js";
+import { confirmServiceJob, confirmTriggerView, proposeConfirmTrigger, withdrawConfirmTrigger } from "../platform/service-confirm.js";
 import { ServiceRefused } from "../platform/service-gate.js";
 import { currentVia } from "../lib/request-context.js";
 import type { ServiceDoor } from "@cobblr/platform-contract/services";
@@ -116,6 +116,38 @@ servicesRouter.get("/:slug/services/readings", requireAuth, withTenant, async (r
 });
 
 // AI-REACH: exempt (a read)
+// A run: the chain a job belongs to, from the job that started it, each
+// step with what it waits on (services.md S9).
+servicesRouter.get("/:slug/services/runs/:id", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    const run = await platform().services.run(orgOf(req), String(req.params.id));
+    if (!run) {
+      res.status(404).json({ error: { code: "not_found", message: "no such run" } });
+      return;
+    }
+    res.json(run);
+  } catch (err) {
+    fail(res, next, err);
+  }
+});
+
+// The recent runs here, stuck and waiting first.
+servicesRouter.get("/:slug/services/runs", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    const ids = await recentRunRoots(orgOf(req), 20);
+    const runs = [];
+    for (const id of ids) {
+      const r = await platform().services.run(orgOf(req), id);
+      if (r) runs.push(r);
+    }
+    const rank: Record<string, number> = { stuck: 0, waiting: 1, running: 2, failed: 3, done: 4, cancelled: 5 };
+    runs.sort((a, b) => (rank[a.state]! - rank[b.state]!) || b.updated_at.localeCompare(a.updated_at));
+    res.json({ items: runs });
+  } catch (err) {
+    fail(res, next, err);
+  }
+});
+
 servicesRouter.get("/:slug/services/jobs/:id", requireAuth, withTenant, async (req, res, next) => {
   try {
     const job = await platform().services.job(orgOf(req), String(req.params.id));
@@ -162,6 +194,7 @@ servicesRouter.post("/:slug/services/jobs/:id/cancel", requireAuth, withTenant, 
 // AI-REACH: exempt (the yes to a job is a person's, on its card; an assistant never confirms its own job)
 servicesRouter.post("/:slug/services/jobs/:id/confirm", requireAuth, withTenant, async (req, res, next) => {
   try {
+    // ROLE: the person who asked, or an owner or admin for an automation's job, checked by mayConfirm
     const userId = userOf(req);
     if (!userId) {
       res.status(401).json({ error: { code: "unauthenticated", message: "sign in to say yes" } });
@@ -174,6 +207,72 @@ servicesRouter.post("/:slug/services/jobs/:id/confirm", requireAuth, withTenant,
     if (err instanceof ServiceRefused) {
       const status = err.code === "not_found" ? 404 : err.code === "not_yours" ? 403 : 409;
       res.status(status).json({ error: { code: err.code, message: err.message } });
+      return;
+    }
+    fail(res, next, err);
+  }
+});
+
+function refusedStatus(code: string): number {
+  return code === "not_found" ? 404 : code === "not_yours" ? 403 : code === "refused" ? 400 : 409;
+}
+
+// What a waiting job waits for besides a yes ("power off after this print"),
+// if anything (services.md section 9).
+// AI-REACH: exempt (a read; get_service_job and the job card read it)
+servicesRouter.get("/:slug/services/jobs/:id/trigger", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    res.json({ trigger: await confirmTriggerView(orgOf(req), String(req.params.id)) });
+  } catch (err) {
+    fail(res, next, err);
+  }
+});
+
+const Trigger = z.object({ after: z.string().min(1).max(200), hours: z.number().positive().max(168).optional() }).strict();
+
+// Propose "start this when that finishes" on a waiting job. Starts nothing:
+// the person's yes arms it, bound to what was shown, until its deadline.
+// AI-REACH: exempt (Cobb proposes it through invoke_service's after; the yes stays the person's)
+// UI-REACH: the assistant proposes it; the job card shows it and takes the yes or the cancel
+servicesRouter.post("/:slug/services/jobs/:id/trigger", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    // ROLE: the person who asked, or an owner or admin for an automation's job, checked by mayConfirm
+    const userId = userOf(req);
+    if (!userId) {
+      res.status(401).json({ error: { code: "unauthenticated", message: "sign in" } });
+      return;
+    }
+    const b = Trigger.safeParse(req.body ?? {});
+    if (!b.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "after (a job or print id) is required; hours at most 168" } });
+      return;
+    }
+    const view = await proposeConfirmTrigger(orgOf(req), String(req.params.id), userId, b.data.after, b.data.hours ? b.data.hours * 3600_000 : undefined);
+    res.json({ trigger: view });
+  } catch (err) {
+    if (err instanceof ServiceRefused) {
+      res.status(refusedStatus(err.code)).json({ error: { code: err.code, message: err.message } });
+      return;
+    }
+    fail(res, next, err);
+  }
+});
+
+// Take it back: the job waits for a plain yes again.
+// AI-REACH: exempt (the job card's own control)
+servicesRouter.delete("/:slug/services/jobs/:id/trigger", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    // ROLE: the person who asked, or an owner or admin for an automation's job, checked by mayConfirm
+    const userId = userOf(req);
+    if (!userId) {
+      res.status(401).json({ error: { code: "unauthenticated", message: "sign in" } });
+      return;
+    }
+    await withdrawConfirmTrigger(orgOf(req), String(req.params.id), userId);
+    res.json({ trigger: null });
+  } catch (err) {
+    if (err instanceof ServiceRefused) {
+      res.status(refusedStatus(err.code)).json({ error: { code: err.code, message: err.message } });
       return;
     }
     fail(res, next, err);

@@ -10,7 +10,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "sales",
-  version: "0.1.18",
+  version: "0.1.21",
   displayName: "Sales",
   description:
     "Customers and the orders they place; fulfilling an order takes what you sold out of stock.",
@@ -113,6 +113,8 @@ export default defineModule({
       "sales.order.shipped",
       // An order was deleted: its id, for anything that kept a copy of it.
       "sales.order.deleted",
+      // A sent parcel's delivered scan, when "Follow parcels I send" is on.
+      "sales.order.delivered",
     ],
     actions: [
       {
@@ -144,6 +146,35 @@ export default defineModule({
           description: { label: "What is being sold", type: "text" },
           part_id: { label: "Id of a tracked part (optional)", type: "text" },
           unit_price: { label: "Price each (optional)", type: "number" },
+        },
+      },
+      {
+        id: "sales:cancel-order",
+        examples: ["cancel that order", "they cancelled"],
+        undoable: true,
+        label: "Cancel order",
+        description:
+          "Cancel a sales order. One that has not shipped puts back on the shelf what Fulfill took from it. One that has shipped needs returned: true (it came back, so its stock goes back) or false (cancel it, stock stays as it is); without it the answer asks. Undo takes the stock again and restores the status. Args: { returned? }.",
+        appliesTo: { kinds: ["sales:order"] },
+        invokeHandler: "sales.cancel-order",
+        userInvokable: true,
+        argsSchema: {
+          returned: { label: "For an order that shipped: did it come back? (true puts its stock back)", type: "boolean" },
+        },
+      },
+      {
+        // NO-PHRASING: the way back for a cancel, run only from Undo
+        id: "sales:reinstate-order",
+        internal: true,
+        label: "Reinstate a cancelled order",
+        description: "Internal, the inverse of cancelling a sales order: restores its status and takes again what the cancel put back. Runs from Undo; not for direct use.",
+        icon: "undo",
+        appliesTo: { kinds: ["sales:order"] },
+        userInvokable: false,
+        invokeHandler: "sales.reinstate-order",
+        argsSchema: {
+          from: { label: "The status it had", type: "text" },
+          restocked: { label: "What the cancel put back, as JSON", type: "text" },
         },
       },
       {

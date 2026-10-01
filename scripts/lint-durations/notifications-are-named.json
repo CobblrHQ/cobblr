@@ -1,0 +1,10 @@
+{
+  "lint": "lint:notifications-are-named",
+  "run": "node scripts/lint-notifications-are-named.ts",
+  "rows": [
+    "kernel-platform-service"
+  ],
+  "ms": 642,
+  "recorded": "2026-09-30",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

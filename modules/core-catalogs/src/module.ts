@@ -19,7 +19,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-catalogs",
-  version: "0.1.4",
+  version: "0.1.5",
   displayName: "Catalogs",
   description:
     "Bring in reference lists (a parts catalog, an ingredient list) and match your own things to them.",

@@ -3,6 +3,7 @@ type: feature
 scope: machines
 date: 2026-09-28
 docs_target: docs/USER_GUIDE.md#3.30 Machines
+docs_published: 2026-10-01
 ---
 One machine record can now stand for several identical machines, and any of them can have a name of its own under it. A record of five printers says so in the list and counts as five printers, not one entry, including when you ask the assistant how many you have. Name one to give it its own notes, service log, label and links while it stays one of the five, split it into a record of its own at any time, or make a single machine one of a group again.
 

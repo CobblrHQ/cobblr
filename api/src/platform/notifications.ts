@@ -23,6 +23,7 @@ import type { Channel, NotificationCard } from "./channels/types.js";
 import type { NotificationAction } from "../db/schema.js";
 import type { NotificationChannel, NotificationPriority } from "../db/schema.js";
 import { settleForDisplay, type Settled } from "./notification-subjects.js";
+import { announceNotificationChange } from "./notification-stream.js";
 // Registers the approval request as a subject whose cards settle; imported
 // here so every inbox read has it, whatever else the process has loaded.
 import "./approval-subject.js";
@@ -171,6 +172,8 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
     })
     .returning("id")
     .executeTakeFirstOrThrow();
+  sometimesPrune(p.userId);
+  announceNotificationChange(p.userId, { kind: "new", id: inserted.id });
 
   // 2. Resolve which subscriptions to fire. We pull both exact-match
   //    (event_type = eventType) and wildcard ('*') rows. Then:
@@ -454,14 +457,36 @@ export interface NotifyAccountParams {
   /** Optional richer email than the generic "<message> <link>" fallback.
    *  `replyTo` (optional) carries a tokenized reply-by-email address; `html`
    *  (optional) is a rich body sent alongside `text` (the plaintext fallback). */
-  email?: { subject: string; text: string; html?: string; replyTo?: string; from?: string; inReplyTo?: string; references?: string };
+  email?: { subject: string; text: string; html?: string; replyTo?: string; from?: string; inReplyTo?: string; references?: string; discordInvite?: boolean };
   /** Set when this notification ANSWERS something the user sent on a specific
-   *  channel. An acknowledgement replies where the conversation is - the bell
-   *  always records it, but only the origin channel gets the outbound copy.
-   *  Without this, a feedback reply emailed AND Discord-DM'd the same sentence
-   *  to the same person (reported 2026-08-24). NEWS (a parcel arriving, a
-   *  digest) has no origin and still fans out to every enabled channel. */
+   *  channel. An answer goes out on ONE channel (answerChannel): where the
+   *  conversation is, unless the person turned that channel off, then the one
+   *  they left on. The bell records it either way. Without this, a feedback
+   *  reply emailed AND Discord-DM'd the same sentence to the same person
+   *  (reported 2026-08-24). NEWS (a parcel arriving, a digest) has no origin
+   *  and still fans out to every enabled channel. */
   originChannel?: "email" | "discord_dm" | "in_app";
+}
+
+/** The one outbound channel an ANSWER goes out on. The origin channel while
+ *  the person has it on; otherwise the one they left on, Discord first (it is
+ *  the one they have to have connected). Someone who chose Discord for
+ *  feedback replies (email off) gets the DM and no email, whichever door the
+ *  report came in by; somebody with every outbound channel off gets the bell
+ *  only. Discord counts as on only when it can deliver (verified), so an
+ *  answer is never sent into a connection that cannot take it while email
+ *  would have. */
+export function answerChannel(
+  origin: "email" | "discord_dm" | "in_app",
+  prefs: Record<PrefChannel, boolean>,
+  discordReady: boolean,
+): "email" | "discord_dm" | "in_app" {
+  if (origin === "in_app") return "in_app";
+  const on = { email: prefs.email, discord_dm: prefs.discord_dm && discordReady };
+  if (on[origin]) return origin;
+  if (on.discord_dm) return "discord_dm";
+  if (on.email) return "email";
+  return "in_app";
 }
 
 /** Deliver an account-level (platform) notification across the user's chosen
@@ -498,6 +523,8 @@ export async function notifyAccount(
       })
       .returning("id")
       .executeTakeFirstOrThrow();
+    sometimesPrune(args.userId);
+    announceNotificationChange(args.userId, { kind: "new", id: inserted.id });
     notificationId = inserted.id;
     deliveredVia.push("in_app");
     outcomes.in_app = "sent";
@@ -505,10 +532,20 @@ export async function notifyAccount(
     outcomes.in_app = "opted-out";
   }
 
+  const conn =
+    args.originChannel || prefs.discord_dm
+      ? await meta
+          .selectFrom("discord_connections")
+          .select(["discord_user_id", "verified", "verified_app_id"])
+          .where("user_id", "=", args.userId)
+          .executeTakeFirst()
+      : undefined;
+  const answerOn = args.originChannel ? answerChannel(args.originChannel, prefs, discordConnectionState(conn) === "verified") : undefined;
+
   // email — only when the caller supplies an email payload (so an event that
   // isn't meant to email never does), gated by the user's pref + the PLATFORM
   // sender (managed mailer in prod), not per-user BYO SMTP.
-  if (args.originChannel && args.originChannel !== "email") {
+  if (answerOn && answerOn !== "email") {
     outcomes.email = "ack-on-origin";
   } else if (!args.email) {
     outcomes.email = "not-offered";
@@ -526,22 +563,20 @@ export async function notifyAccount(
       outcomes.email = "no-address";
     } else {
       const ok = await sendAuthEmail({ to: u.email, subject: args.email.subject, text: args.email.text, html: args.email.html, kind: "notification", replyTo: args.email.replyTo, from: args.email.from, inReplyTo: args.email.inReplyTo, references: args.email.references });
-      if (ok) deliveredVia.push("email");
+      if (ok) {
+        deliveredVia.push("email");
+        await logAccountEmail(args.userId, args.notificationType, args.email.discordInvite === true);
+      }
       outcomes.email = ok ? "sent" : "send-failed";
     }
   }
 
   // discord_dm — only when the user has connected + verified Discord.
-  if (args.originChannel && args.originChannel !== "discord_dm") {
+  if (answerOn && answerOn !== "discord_dm") {
     outcomes.discord_dm = "ack-on-origin";
   } else if (!prefs.discord_dm) {
     outcomes.discord_dm = "opted-out";
   } else {
-    const conn = await meta
-      .selectFrom("discord_connections")
-      .select(["discord_user_id", "verified", "verified_app_id"])
-      .where("user_id", "=", args.userId)
-      .executeTakeFirst();
     const state = discordConnectionState(conn);
     if (state === "not-connected") {
       outcomes.discord_dm = "not-connected";
@@ -586,6 +621,17 @@ export async function notifyAccount(
   }
 
   return { notificationId, deliveredVia, outcomes };
+}
+
+/** One row per account email sent (account_email_sends): the weekly count of
+ *  feedback emails and each person's Discord-invitation showings both read it.
+ *  A failed write is logged and never undoes a send that already happened. */
+async function logAccountEmail(userId: string, notificationType: string, discordInvite: boolean): Promise<void> {
+  try {
+    await meta.insertInto("account_email_sends").values({ user_id: userId, notification_type: notificationType, discord_invite: discordInvite }).execute();
+  } catch (err) {
+    console.warn("[notify-account] could not record an email send:", (err as Error).message);
+  }
 }
 
 export interface NotificationListItem {
@@ -654,6 +700,7 @@ export async function markRead(notificationId: string, userId: string): Promise<
     .where("id", "=", notificationId)
     .where("user_id", "=", userId)
     .execute();
+  announceNotificationChange(userId, { kind: "changed", id: notificationId });
 }
 
 export async function markAllRead(userId: string, orgId: string): Promise<number> {
@@ -748,6 +795,55 @@ export async function unreadCountAcrossOrgs(userId: string): Promise<number> {
   return Number(row.c);
 }
 
+/** Back to unread: "I read it and I still have to do it". */
+export async function markUnread(notificationId: string, userId: string): Promise<void> {
+  await meta
+    .updateTable("notifications")
+    .set({ read_at: null })
+    .where("id", "=", notificationId)
+    .where("user_id", "=", userId)
+    .execute();
+  announceNotificationChange(userId, { kind: "changed", id: notificationId });
+}
+
+/** Delete one of a person's own notifications. A digest still waiting to
+ *  carry it drops it too (the deferred row cascades). */
+export async function remove(notificationId: string, userId: string): Promise<boolean> {
+  const gone = await meta.deleteFrom("notifications").where("id", "=", notificationId).where("user_id", "=", userId).returning("id").execute();
+  if (gone.length) announceNotificationChange(userId, { kind: "changed", id: notificationId });
+  return gone.length > 0;
+}
+
+/** Delete every notification a person has read, in every workspace. */
+export async function removeRead(userId: string): Promise<number> {
+  const gone = await meta.deleteFrom("notifications").where("user_id", "=", userId).where("read_at", "is not", null).returning("id").execute();
+  if (gone.length) announceNotificationChange(userId, { kind: "changed" });
+  return gone.length;
+}
+
+/** How long a notification somebody has READ is kept. An unread one is kept
+ *  until it is read or deleted: pruning what nobody has seen would lose it
+ *  unread. Before this nothing pruned either, and the table only grew. */
+export const READ_RETENTION_DAYS = 180;
+
+/** Drop one person's read notifications past READ_RETENTION_DAYS. Cheap (their
+ *  own rows), run now and then as their notifications arrive, never awaited
+ *  by the dispatch that triggered it. */
+export async function pruneRead(userId: string): Promise<number> {
+  const gone = await meta
+    .deleteFrom("notifications")
+    .where("user_id", "=", userId)
+    .where("read_at", "<", sql<Date>`now() - make_interval(days => ${READ_RETENTION_DAYS})`)
+    .returning("id")
+    .execute();
+  return gone.length;
+}
+
+function sometimesPrune(userId: string): void {
+  if (Math.random() >= 0.05) return;
+  void pruneRead(userId).catch((err) => console.error("[notifications] retention prune failed:", (err as Error).message));
+}
+
 export async function markAllReadAcrossOrgs(userId: string): Promise<number> {
   const updated = await meta
     .updateTable("notifications")
@@ -756,6 +852,7 @@ export async function markAllReadAcrossOrgs(userId: string): Promise<number> {
     .where("read_at", "is", null)
     .returning("id")
     .execute();
+  if (updated.length) announceNotificationChange(userId, { kind: "changed" });
   return updated.length;
 }
 

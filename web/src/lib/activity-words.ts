@@ -1,3 +1,4 @@
+import type { SaidChange } from "./api";
 // What a Recent-activity row says, in words a first-timer can read.
 //
 // The first screen a stranger met read "Automation ran an automation
@@ -104,27 +105,33 @@ export function automationWords(e: ActivityWordsEntry): { said: string; label: s
   return { hidden: true };
 }
 
-/** An update's words when the record's live title could not be read: name
- *  the field and the value that changed rather than a bare noun ("updated
- *  type" read as a bug: updated what type?). Scalars only, two at most. */
-export function updatedFieldsWords(diff: unknown): string | null {
-  if (!diff || typeof diff !== "object") return null;
-  const out: string[] = [];
-  for (const [k, v] of Object.entries(diff as Record<string, unknown>)) {
-    if (k === "id" || /_id$/.test(k) || k === "metadata" || k === "fields") continue;
-    if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
-      const value = String(v).trim();
-      if (!value) continue;
-      out.push(`${k.replace(/_/g, " ")} → ${value.length > 40 ? `${value.slice(0, 37)}…` : value}`);
-      if (out.length === 2) break;
-    }
-  }
+/** An update's words: the fields it changed under their labels, with the new
+ *  value in words, as the api said them (history-describe.ts), two at most.
+ *  Never a column name or a raw value: "purchase price cents → 430000" and
+ *  "image path → /api/v1/…" were exactly that (#4517). */
+export function updatedFieldsWords(said: SaidChange[] | undefined): string | null {
+  const out = (said ?? []).slice(0, 2).map((c) => (c.to.photo || c.field === "image_path" ? "a new photo" : `${c.label} → ${c.to.text ?? "(empty)"}`));
   return out.length ? out.join(", ") : null;
 }
 
 /** True when the row is one the dashboard should not show at all. */
 export function hiddenFromDashboard(e: ActivityWordsEntry): boolean {
   return AUTOMATION_ACTIONS.has(e.action) && automationWords(e).hidden;
+}
+
+/** On the record's own history, a part installed in it or taken out of it
+ *  says which: "installed 2 × RAM stick", "took out SSD 2TB". Null for any
+ *  other row. */
+export function partWords(action: string, diff: unknown, word?: string | null): { verb: string; what: string } | null {
+  if (action !== "part_installed" && action !== "part_removed") return null;
+  const d = (diff ?? {}) as { part?: { name?: unknown }; qty?: unknown };
+  const name = typeof d.part?.name === "string" && d.part.name ? d.part.name : "a part";
+  const qty = typeof d.qty === "number" && d.qty !== 1 ? `${d.qty} × ` : "";
+  // The kind's own word for what is inside ("Parts"), when it has one.
+  if (word) {
+    return action === "part_installed" ? { verb: "added", what: `${qty}${name} to ${word}` } : { verb: "took", what: `${qty}${name} out of ${word}` };
+  }
+  return { verb: action === "part_installed" ? "installed" : "took out", what: `${qty}${name}` };
 }
 
 /** The verb a feed row puts between who and what: one map for every feed
@@ -153,6 +160,9 @@ export function activityVerb(a: string): string {
     // One thing added from a scan, its create and follow-up rows folded in
     // (foldOneThingsRows).
     added_from_scan: "scanned in",
+    // A thing built from parts: logged on the computer (or machine) itself.
+    part_installed: "installed a part in",
+    part_removed: "took a part out of",
     // One-tap stock changes (a button, or a scanned action label).
     part_used: "took one of",
     part_restocked: "restocked",
@@ -160,14 +170,49 @@ export function activityVerb(a: string): string {
     sheet_imported: "imported",
     sheet_import_undone: "undid the import of",
     sheet_import_partly_undone: "partly undid the import of",
+    // Tags. An attach or detach is logged on the record that was tagged, so
+    // the row names that record.
+    tag_attached: "tagged",
+    tag_detached: "took a tag off",
+    tag_merged: "merged a tag into",
+    // A sales order's own changes (orderHappened).
+    order_status_changed: "moved the status of",
+    order_line_added: "added a line to",
+    order_line_changed: "changed a line on",
+    order_line_removed: "removed a line from",
+    order_stock_taken: "took stock for",
+    order_shipped: "shipped",
+    order_emailed: "emailed the customer about",
+    order_make_started: "started making for",
+    // A document from a document system (core-documents); the row says which
+    // (documentWords).
+    document_linked: "linked a document:",
+    document_unlinked: "unlinked a document:",
+    // An item from an outside library (a document, a game); the row names it
+    // (documentWords).
+    library_item_linked: "linked",
+    library_item_unlinked: "unlinked",
   };
   if (map[a]) return map[a];
+  // A module that named its action the way it names events
+  // ("core-documents.linked") would otherwise read as code on the page: the
+  // verb is its last word.
+  const verb = a.includes(".") ? a.slice(a.lastIndexOf(".") + 1) : a;
+  if (map[verb]) return map[verb];
   // 'task_created' → 'created task' (the entity_type is already
   // rendered on the row, so we just need the verb).
-  if (a.endsWith("_created")) return "created";
-  if (a.endsWith("_updated")) return "updated";
-  if (a.endsWith("_deleted")) return "deleted";
-  return a.replace(/_/g, " ");
+  if (verb.endsWith("_created")) return "created";
+  if (verb.endsWith("_updated")) return "updated";
+  if (verb.endsWith("_deleted")) return "deleted";
+  return verb.replace(/[_-]/g, " ");
+}
+
+/** The document a document row is about, by its title (core-documents logs
+ *  it in the diff), or null for any other row. */
+export function documentWords(e: { action: string; diff?: unknown }): string | null {
+  const d = (e.diff ?? {}) as { document?: unknown; item?: unknown };
+  const named = e.action === "document_linked" || e.action === "document_unlinked" ? d.document : e.action === "library_item_linked" || e.action === "library_item_unlinked" ? d.item : null;
+  return typeof named === "string" && named.trim() ? named.trim() : null;
 }
 
 /** The record a row is about. A scan's commit row is about its inbox item,

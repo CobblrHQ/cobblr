@@ -11,7 +11,9 @@ import { z } from "zod";
 import { SERVICE_EFFECTS, type PlatformServices } from "@cobblr/platform-contract/services";
 export type { PlatformServices } from "@cobblr/platform-contract/services";
 import type { DateFieldDirection } from "@cobblr/platform-contract/date-field-direction";
+import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 import { isJunkCategory } from "@cobblr/platform-contract/category-reconcile";
+import { measurePaths, measureTokens, type Measure } from "@cobblr/platform-contract/measure";
 
 export type { DateFieldDirection } from "@cobblr/platform-contract/date-field-direction";
 export { dateFieldDirection, directionOfRole, canBeOverdue, dateEventTitle } from "@cobblr/platform-contract/date-field-direction";
@@ -121,9 +123,33 @@ export const FIELD_TYPE_VALUES = [
   // Stored as the list entry's id, named at READ time. The type the `owner`
   // meaning sits on (#3787).
   "person",
+  // A measured value with an SI unit: "10k", "4k7", "100 nF", "16 V". Stored
+  // as { value (plain SI number), unit (catalog code), text (as typed) },
+  // shown with the best prefix, searched, filtered and sorted by value
+  // (@cobblr/platform-contract/measure).
+  "measure",
+  // Money: the amount in the workspace currency's main unit (4300 for
+  // $4,300), shown and typed through @cobblr/platform-contract/money
+  // ("$4,300", "4,300"). A number field whose role or unit says money reads
+  // the same way; this is the type a person picks for a price.
+  "money",
 ] as const;
 export type FieldDefType = (typeof FIELD_TYPE_VALUES)[number];
 export const FieldTypeSchema = z.enum(FIELD_TYPE_VALUES);
+/** The types a field can change between after it is made. Each holds a plain
+ *  value in the record's metadata, so a change of type moves nothing; a
+ *  computed, relation, member or person field holds a template or a reference
+ *  and is made again rather than retyped. */
+export const RetypeableFieldTypeSchema = FieldTypeSchema.exclude(["computed", "relation", "member", "person"]);
+export const RETYPEABLE_FIELD_TYPES: readonly FieldDefType[] = RetypeableFieldTypeSchema.options;
+
+/** The types a declared unit means something on: a number ("mm") and a
+ *  measured value ("ohm", what a bare "10" is in). Every door that accepts or
+ *  drops a unit asks this, so a new unit-bearing type is one line here. */
+export const UNIT_FIELD_TYPES: readonly FieldDefType[] = ["number", "measure"];
+export function fieldTypeTakesUnit(type: string | null | undefined): boolean {
+  return !!type && (UNIT_FIELD_TYPES as readonly string[]).includes(type);
+}
 
 /** What a field MEANS, as opposed to what it is called.
  *
@@ -405,6 +431,11 @@ const EntityField = z.object({
   // "json blob, show keys"; consumer modules read specific keys
   // via platform.entities.lookupMany.
   type: z.enum(["text", "number", "boolean", "date", "image-path", "url", "object"]),
+  /** The words a person reads for this field, where its name would not do
+   *  ("purchase_price_cents" is "Paid"). A record's history, and anything
+   *  else that names the field without its own form, reads it; a workspace's
+   *  relabel still wins. Absent: the name, spelt out. */
+  label: z.string().min(1).max(80).optional(),
   // SERVER-OWNED: the value is maintained by the module, not set by whoever
   // writes the record. Declaring a field WITHOUT this when the writer refuses it
   // is an invitation to write something that will be silently discarded — the
@@ -421,6 +452,11 @@ const EntityField = z.object({
   // bin with kind "bin", refused on confirm with a raw enum error
   // (2026-09-20). A writer may still validate more tightly than this says.
   choices: z.array(z.string().min(1)).min(1).optional(),
+  // Money, and how the column holds it: "cents" (an integer column such as
+  // purchase_price_cents) or "amount" (the currency's main unit, 12.5). Every
+  // surface shows and takes it through @cobblr/platform-contract/money, so a
+  // cents column never reaches a screen as 430000.
+  money: z.enum(["cents", "amount"]).optional(),
   role: EntityFieldRole.optional(),
   /** The trait value this native field belongs to, real or trial (`qty` is
    *  `fungible`, `serial_number` is `unique`, `assigned_to` is `lendable`).
@@ -1233,6 +1269,13 @@ const ActionAppliesTo = z.union([
       // on no other. Before this, the only way to scope "Threw it out" was to
       // the whole inventory kind, so a box of screws offered it too.
       hasFieldRole: z.union([EntityFieldRole, FieldRoleSchema]).optional(),
+      // What the record must ALSO be, whichever of the above matched. The
+      // three above are OR; this is AND. A status, a home or a stock count
+      // belongs to a physical thing, so an action scoped to a module's kind
+      // says `requires: { traits: ["physical"] }` and is not offered on a
+      // collection of that kind that holds descriptions of things (a filament
+      // TYPE, whose collection resolves no traits).
+      requires: z.object({ traits: z.array(z.string()).min(1) }).optional(),
     })
     .refine(
       (d) => d.kinds || d.traits || d.hasFieldRole,
@@ -1508,6 +1551,11 @@ const EntityAction = z.object({
         // Asked and required together with that argument (every_n with
         // every_unit): the form waits for both and the door refuses one alone.
         with: z.string().min(1).optional(),
+        // An amount of money, given the way a person says it ("45", "$45.50"):
+        // asked with the money input, shown on a confirm card as "$45.50", and
+        // turned into its column's shape by the handler
+        // (@cobblr/platform-contract/money moneyForStorage). Never cents.
+        money: z.boolean().optional(),
       }),
     )
     .optional(),
@@ -1824,6 +1872,9 @@ const ModuleManifest = z.object({
             required: z.boolean().optional(),
             position: z.number().int().optional(),
             choices: z.array(z.string()).optional(),
+            /** Whether what a person types becomes a choice
+             *  (@cobblr/platform-contract/field-choices). */
+            learns: z.boolean().optional(),
             /** Built-in renderer id — color-hex / image-url / url-link / year /
              *  boolean / code / markdown / qr / text. The web UI switches on
              *  this when drawing the value. */
@@ -2258,6 +2309,11 @@ export interface ActivityLogParams {
   action: string;
   ref: ActivityRef;
   diff?: unknown;
+  /** The record as it was before this write. Given with a patch `diff`, the
+   *  log works out what really changed, old → new, custom fields included
+   *  (`changes`, activity-changes.ts). Every `*_updated` write passes it
+   *  (lint:history-knows-what-changed). */
+  before?: unknown;
   /** HOW the write was made, when the caller knows better than the request
    *  context: a sync names itself ("automation", "<connection> sync"), so a
    *  record it creates is not a row with no actor (#3836). */
@@ -3128,6 +3184,9 @@ export interface PlatformEntities {
     source: { kind: string; id: string },
     spec: { rel: string; dir?: "in" | "out"; kind?: string },
   ): Promise<ResolvedEntity[]>;
+  /** Can list() answer for this kind in this workspace (a list resolver,
+   *  its module enabled)? A kind that cannot always lists empty. */
+  listable(orgId: string, kind: string): Promise<boolean>;
   /** List all declared kinds from cobblr_meta.entity_kinds. */
   listKinds(): Promise<EntityKindRecord[]>;
   /** listKinds plus one synthesized `<instance>:item` kind per named
@@ -4851,7 +4910,7 @@ export interface ConnectionProviderDef {
   label: string;
   /** The fields to ask for. `secret: true` is write-only — stored encrypted and
    *  never returned, so the edit form shows "set" rather than the value. */
-  credentials: Record<string, { label: string; secret: boolean }>;
+  credentials: Record<string, { label: string; secret: boolean; choices?: Array<{ value: string; label: string }> }>;
   /** Position in the picker; lower first, and FIRST IS THE DEFAULT. Optional:
    *  unranked providers sort after the ranked ones in registration order. */
   rank?: number;
@@ -4884,10 +4943,40 @@ export interface ConnectionProviderDef {
    *  ("who does what, in order"). Absent: the kind is ranked only as a whole. */
   capabilities?: (credentials: Record<string, unknown>, ctx: ConnectionTestContext) => Promise<string[]>;
   /** This definition answers for EVERY connection of its kind whose
-   *  provider_id no other definition claims. A service is named by its own
-   *  manifest id, which nobody can register ahead of time. */
-  anyProviderOfKind?: boolean;
+   *  provider_id no other definition claims (or every one the predicate
+   *  accepts). A service is named by its own manifest id, which nobody can
+   *  register ahead of time. */
+  anyProviderOfKind?: boolean | ((providerId: string) => boolean);
+  /** Turn what a person typed into the connection that is stored, before it
+   *  is probed or saved: a service reads its manifest here, refuses one that
+   *  does not validate (naming the field), and is stored under the manifest's
+   *  own id. Also what the form's preview shows. Absent: stored as typed. */
+  prepare?: (credentials: Record<string, unknown>, ctx: ConnectionTestContext) => Promise<PreparedConnection>;
 }
+
+/** What `ConnectionProviderDef.prepare` made of a connection being added. */
+export type PreparedConnection =
+  | {
+      ok: true;
+      /** The provider_id to store (a service: its manifest id). */
+      providerId: string;
+      /** A label to use when the person gave none. */
+      label?: string;
+      /** The credentials to probe and store. */
+      credentials: Record<string, unknown>;
+      /** What the form shows before saving (a service: its name and capabilities). */
+      preview?: unknown;
+      /** Run once the connection has an id (a service caches its manifest). */
+      afterSave?: (credentialId: string) => Promise<void>;
+    }
+  | {
+      ok: false;
+      /** 400 for something the person can fix, 502 for a service that did not answer. */
+      status: 400 | 502;
+      code: string;
+      message: string;
+      details?: unknown;
+    };
 
 /** Who a test or a capability read is for. */
 export interface ConnectionTestContext {
@@ -4938,6 +5027,21 @@ export interface PlatformConnections {
   /** The capability ids a stored connection can be ranked for, from its
    *  provider; [] for a kind ranked only as a whole. */
   capabilities(credentialId: string): Promise<string[]>;
+  /** A connection made for a workspace with no person at the form (a heal
+   *  moving an older store onto connections). It belongs to the workspace's
+   *  first owner, shared into that workspace and live there when nothing of
+   *  its kind is, exactly as the owner sharing it themselves would be. Saved
+   *  unverified, never probed: a heal must not fail on a device that is off
+   *  right now. Idempotent on `originKey`: again, it returns the same one. */
+  createWorkspaceConnection(input: {
+    orgId: string;
+    kind: string;
+    providerId: string;
+    label: string;
+    credentials: Record<string, unknown>;
+    originKey: string;
+    note?: string;
+  }): Promise<{ credentialId: string; created: boolean }>;
 }
 
 /** One connection a workspace may name, from PlatformConnections.routedTo. */
@@ -5140,7 +5244,25 @@ export interface PlatformPlacement {
     placedBy?: string | null;
     position?: PlacementPosition | null;
     via?: string;
-  }): Promise<void>;
+    /** The slot holds one thing (a printer's filament slot): whatever is
+     *  already in `slot` of this container goes back where it came from, or
+     *  out of the container when it came from nowhere. Needs a `slot`. */
+    oneToASlot?: boolean;
+    /** Put only this many in (2 of 4 sticks). The kind's module splits the
+     *  record (registerQuantity) and the part placed is a record of its own;
+     *  without a registered quantity the whole thing goes in. Refused when
+     *  there are fewer than that. */
+    qty?: number;
+  }): Promise<void | {
+    displaced: Array<EntityRef & { to: EntityRef | null }>;
+    /** The record that ended up inside: the one asked, a split-off part of it,
+     *  or the record it joined there. */
+    placed?: EntityRef;
+  }>;
+  /** Send a thing back to the container it was in before its current one
+   *  (a spool off a printer, back to its shelf); out of its container when
+   *  there is no such place. Resolves with where it went. */
+  returnHome(args: { orgId: string; containee: EntityRef; placedBy?: string | null; via?: string }): Promise<(EntityRef & { placed?: EntityRef }) | null>;
   /** Take `containee` out of whatever container it's in (no-op if unplaced). */
   remove(args: { orgId: string; containee: EntityRef }): Promise<void>;
   /** The container a containee currently lives in, or null. */
@@ -5148,6 +5270,221 @@ export interface PlatformPlacement {
   /** Everything directly inside a container (one level; not recursive), with
    *  its slot and pin where it has them. */
   contents(args: { orgId: string; container: EntityRef }): Promise<Array<EntityRef & { slot?: string | null; position?: PlacementPosition | null }>>;
+  /** Where each thing is, innermost first: its container, that container's
+   *  container, up to the top, each with its name. A thing in a Backpack that
+   *  sits in a Desk drawer reads [Backpack, Desk drawer, ...]. Empty for a
+   *  thing that is nowhere. Follows placement for any container, and a kind's
+   *  registered parent where its nesting lives elsewhere (a place inside a
+   *  place). One answer per containee, keyed `kind:id` as asked. */
+  pathsOf(args: { orgId: string; containees: EntityRef[] }): Promise<Map<string, PlacePathStep[]>>;
+  /** Every record holding something now that is not a place by nature (its
+   *  kind's traits do not make it a container): a Backpack, a toolbox. What a
+   *  place picker offers beside the places, with how many things each holds. */
+  holders(args: { orgId: string }): Promise<Array<EntityRef & { holds: number }>>;
+  /** How a container kind knows its own parent, when that nesting is not a
+   *  placement (a Location's parent place). The kind's own module registers it. */
+  registerParent(kind: string, parentOf: (orgId: string, id: string) => Promise<EntityRef | null>): void;
+  /** A kind counted in quantities says how to split some off and how two of
+   *  its records in one container become one again. place({qty}) splits;
+   *  every place() settles, so two sticks installed one at a time are one row
+   *  inside the computer, and a part taken out to the shelf it came from joins
+   *  the spares there. */
+  registerQuantity(kind: string, quantity: PlacementQuantity): void;
+  /** What one record of a kind is worth, in the workspace's currency. Given
+   *  ids, those; given "all", every record of the kind that counts. */
+  registerValue(
+    kind: string,
+    valueOf: (orgId: string, ids: string[] | "all") => Promise<Map<string, number>>,
+    /** The capability a viewer needs to see these values (a part's value
+     *  reveals its cost). A viewer without it gets them withheld, said so. */
+    opts?: { readScope?: string },
+  ): void;
+  /** A thing built from parts: its own value (what is not itemized), what is
+   *  installed in it (and in those, all the way down) and the total. Each
+   *  part counted once. `other` is null when its kind keeps no value. */
+  builtValue(args: { orgId: string; container: EntityRef; viewer?: ValueViewer }): Promise<BuiltValue>;
+  /** What everything is worth, each record counted once: the workspace, or
+   *  only what is in `within` at any depth. A computer's installed parts count
+   *  as themselves, never again inside the computer's own value. */
+  worth(args: { orgId: string; within?: EntityRef | null; viewer?: ValueViewer }): Promise<{ total: number; records: number; withheld: boolean }>;
+  /** What a kind calls the things inside one of its records ("Parts" for a
+   *  computer, "In the bag" for a backpack): the workspace's word, else a
+   *  bundle's, else null (say "Contents"). Per kind, a collection's kind
+   *  (`<instance>:item`) keeping its own. */
+  contentsWord(args: { orgId: string; kind: string }): Promise<ContentsWord>;
+  /** Set the workspace's word for a kind; null puts the default back. A
+   *  bundle update never changes it. */
+  setContentsWord(args: { orgId: string; kind: string; word: string | null }): Promise<ContentsWord>;
+}
+
+/** A kind's word for what is inside its records (placement.contentsWord). */
+export interface ContentsWord {
+  /** The word to show: the workspace's, else the bundle's; null means "Contents". */
+  word: string | null;
+  /** The workspace's own word, when it set one. */
+  custom: string | null;
+  /** The bundle's word, when one declared it. */
+  default_word: string | null;
+}
+
+/** The word, ready to show: the kind's, else "Contents". */
+export function contentsWordText(w: Pick<ContentsWord, "word"> | null | undefined): string {
+  return w?.word?.trim() || "Contents";
+}
+
+/** Who is asking for values: a kind whose values need a capability is
+ *  withheld from a viewer without it. Absent = the system, who sees all. */
+export interface ValueViewer {
+  userId: string;
+  /** Their role here; looked up when absent (an action knows only the person). */
+  role?: string;
+}
+
+/** How a kind counted in quantities splits and rejoins (registerQuantity). */
+export interface PlacementQuantity {
+  /** How many this record stands for, or null when it is not counted. */
+  quantityOf(orgId: string, id: string): Promise<number | null>;
+  /** Take `qty` off this record into a new one of the same thing, still where
+   *  this one is. Resolves with the new record's id. */
+  split(args: { orgId: string; id: string; qty: number; userId: string | null }): Promise<string>;
+  /** This record has just been put in `container`: when the same thing is
+   *  already there as another record, make them one. Resolves with the id of
+   *  the record that remains. */
+  settle(args: { orgId: string; id: string; container: EntityRef; userId: string | null }): Promise<string>;
+}
+
+/** One part of a thing built from parts. */
+export interface BuiltPart extends EntityRef {
+  name: string;
+  /** How many, for a counted kind. */
+  qty: number | null;
+  /** The part's own value, null when its kind keeps none. */
+  value: number | null;
+  /** What is installed in this part in turn, counted into `value_total`. */
+  built: number;
+  /** value + built. */
+  value_total: number;
+}
+
+export interface BuiltValue {
+  /** The thing's own value: what is not itemized. Null when its kind keeps none. */
+  other: number | null;
+  parts: BuiltPart[];
+  /** The parts, all the way down. */
+  built: number;
+  /** other + built. */
+  total: number;
+  /** Some values were not shown to this viewer (a part's cost), so the
+   *  total leaves them out. */
+  withheld: boolean;
+  /** What this thing's kind calls its parts ("Parts"), or null for "Contents". */
+  word: string | null;
+}
+
+/** Inside a thing tracked one by one that is not a place: an asset, a machine.
+ *  That is installed, not on hand. A box, a bin, a stock record used as a
+ *  container, or a place, keeps what is in it on hand. Read from the
+ *  container kind's resolved traits, so a new kind follows on its own. */
+export function isInstallHolder(traits: Record<string, unknown> | null | undefined): boolean {
+  const axis = (k: string): string | null => {
+    const v = traits?.[k];
+    if (typeof v === "string") return v;
+    const t = (v as { trait?: unknown } | null | undefined)?.trait;
+    return typeof t === "string" ? t : null;
+  };
+  return axis("tangibility") === "physical" && axis("identity") === "unique" && axis("containment") !== "container";
+}
+
+/** For each of these rows of a kind, the thing it is installed in (the first
+ *  step of its path, when that is an install holder), or nothing. */
+export async function installedIn(orgId: string, kind: string, ids: string[]): Promise<Map<string, PlacePathStep>> {
+  const out = new Map<string, PlacePathStep>();
+  if (!ids.length) return out;
+  const paths = await platform().placement.pathsOf({ orgId, containees: ids.map((id) => ({ kind, id })) });
+  const holder = new Map<string, boolean>();
+  for (const id of ids) {
+    const first = paths.get(`${kind}:${id}`)?.[0];
+    if (!first) continue;
+    if (!holder.has(first.kind)) {
+      const rec = await Promise.resolve(platform().entities.getKind(first.kind)).catch(() => null);
+      holder.set(first.kind, isInstallHolder((rec?.traits ?? null) as Record<string, unknown> | null));
+    }
+    if (holder.get(first.kind)) out.set(id, first);
+  }
+  return out;
+}
+
+/** One step of where a thing is: the container, and what it is called. */
+export interface PlacePathStep extends EntityRef {
+  name: string;
+}
+
+/** Where a thing is, as a person reads it: "Backpack, in Desk drawer". The
+ *  one wording every surface uses, so a list, a record and a search agree. */
+export function placeLine(path: ReadonlyArray<{ name: string }>): string {
+  return path.map((p) => p.name).join(", in ");
+}
+
+/** Where each of these records is when it is not in a place of its own but
+ *  inside another thing (headphones in a Backpack that sits in a Desk
+ *  drawer), as a line: "Backpack, in Desk drawer". location_id only ever
+ *  names a place, so a thing put inside a record read "No place set"
+ *  everywhere a place is shown. Records with a place, or in nothing, are
+ *  absent from the map. One rule for every module that shows a place. */
+export async function heldInLines(
+  orgId: string,
+  kind: string,
+  rows: ReadonlyArray<{ id: string; location_id?: string | null }>,
+): Promise<Map<string, string>> {
+  const ids = rows.filter((r) => !r.location_id).map((r) => r.id);
+  const out = new Map<string, string>();
+  if (!ids.length) return out;
+  try {
+    const paths = await platform().placement.pathsOf({ orgId, containees: ids.map((id) => ({ kind, id })) });
+    for (const id of ids) {
+      const path = paths.get(`${kind}:${id}`) ?? [];
+      if (path.length) out.set(id, placeLine(path));
+    }
+  } catch (err) {
+    console.warn(`[${kind}] where-it-is read failed:`, (err as Error).message);
+  }
+  return out;
+}
+
+/** Where each of these records is, by name, for a resolver's location_name:
+ *  its place's name, or what it is inside and where that is ("Backpack, in
+ *  Desk drawer"). One batched lookup for the places, one placement read for
+ *  the rest. A name is a nicety, so a failed read leaves the id to speak. */
+export async function placeNames(
+  orgId: string,
+  kind: string,
+  rows: ReadonlyArray<{ id: string; location_id?: string | null }>,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const ids = [...new Set(rows.map((r) => r.location_id).filter((id): id is string => !!id))];
+  if (ids.length) {
+    try {
+      const found = await platform().entities.lookupMany(orgId, ids.map((id) => ({ kind: "core-locations:location", id })));
+      const byId = new Map(found.map((l) => [l.id, l.title]));
+      for (const r of rows) if (r.location_id && byId.has(r.location_id)) out.set(r.id, byId.get(r.location_id)!);
+    } catch {
+      /* the id is still there */
+    }
+  }
+  for (const [id, line] of await heldInLines(orgId, kind, rows)) out.set(id, line);
+  return out;
+}
+
+/** Resolved records with `fields.location_name` set from placeNames, for a
+ *  resolver whose rows carry location_id among their fields. */
+export async function withPlaceNames(orgId: string, kind: string, items: ResolvedEntity[]): Promise<ResolvedEntity[]> {
+  if (!items.length) return items;
+  const names = await placeNames(
+    orgId,
+    kind,
+    items.map((e) => ({ id: e.id, location_id: typeof e.fields?.location_id === "string" ? e.fields.location_id : null })),
+  );
+  return items.map((e) => ({ ...e, fields: { ...e.fields, location_name: names.get(e.id) ?? null } }));
 }
 
 /** Fields as a platform seam, for a module that owns a field a bundle
@@ -5287,6 +5624,10 @@ export interface PlatformPairings {
     targetId: string;
     relationshipKind: string;
     createdBy?: string | null;
+    /** What the link is, in words, for a target that is not a record here
+     *  (a document in a document system): what a reader of the links sees
+     *  beside its id. */
+    notes?: string | null;
   }): Promise<{ id: string }>;
   /** Remove the pairing(s) matching this exact relationship. Returns how many
    *  rows went; removing something that is not there is a no-op, not an error
@@ -5482,7 +5823,7 @@ export type FileSource = Uint8Array | { path: string; size: number; sha256?: str
 export type FileWriter = (
   orgId: string,
   source: FileSource,
-  opts: { filename?: string; mimeType?: string },
+  opts: { filename?: string; mimeType?: string; photoSource?: import("./photo-source.js").PhotoSource },
 ) => Promise<FileWriteResult>;
 
 /** "This file is the <role> of that entity" - the same row POST
@@ -5514,7 +5855,22 @@ export interface FileAttachmentRow {
   width: number | null;
   height: number | null;
   createdAt: Date;
+  /** Where the picture came from, when that was stored with it. */
+  photoSource?: import("./photo-source.js").PhotoSource | null;
 }
+/** What a stored file is, for a person reading about it: its name, size,
+ *  shape and (for a picture) where it came from. */
+export interface FileDescription {
+  fileId: string;
+  filename: string;
+  mimeType: string;
+  kind: string;
+  sizeBytes: number;
+  width: number | null;
+  height: number | null;
+  photoSource: import("./photo-source.js").PhotoSource | null;
+}
+export type FileDescriber = (orgId: string, fileIds: string[]) => Promise<FileDescription[]>;
 /** Attaches a stored file to an entity. core-files registers it; it emits the
  *  same core-files.attachment.created event the HTTP route does, so wires see
  *  no difference between a user's upload and a module's server-side attach. */
@@ -5742,7 +6098,7 @@ export interface PlatformFiles {
   write(
     orgId: string,
     source: FileSource,
-    opts: { filename?: string; mimeType?: string },
+    opts: { filename?: string; mimeType?: string; photoSource?: import("./photo-source.js").PhotoSource },
   ): Promise<FileWriteResult | null>;
   /** A file-storage module registers the attacher once at boot. */
   registerAttacher(attacher: FileAttacher): void;
@@ -5757,6 +6113,12 @@ export interface PlatformFiles {
   detach(orgId: string, attachmentId: string): Promise<boolean | null>;
   /** A file-storage module registers the attachment lister once at boot. */
   registerAttachmentLister(lister: FileAttachmentLister): void;
+  /** A file-storage module registers the describer once at boot. */
+  registerDescriber(describer: FileDescriber): void;
+  /** What these files are (deleted ones left out). Null if no describer is
+   *  registered. A record's history names a photo by this, never by its
+   *  storage path (#4517). */
+  describe(orgId: string, fileIds: string[]): Promise<FileDescription[] | null>;
   /** What is attached to one entity. Returns null if no lister is registered
    *  (distinct from [] - nothing attached). */
   listAttachments(
@@ -5960,6 +6322,10 @@ export interface PlatformTelemetry {
    *  the same thing (a Live Sort session, a batch print) is one fact: "they
    *  did this today". The right call for funnel milestones. */
   trackDaily(e: TelemetryEvent): void;
+  /** Add `n` (default 1) to a workspace's count of `metric` for today (UTC).
+   *  For things that happen many times and are only ever asked "how many":
+   *  an identification served, a scan. Best-effort, never throws. */
+  count(e: { orgId: string; metric: string; n?: number }): void;
 }
 
 export interface SignupLifecycleCtx { userId: string; email: string; orgId: string }
@@ -5983,6 +6349,14 @@ export interface PlatformAccounts {
    *  Only members of `orgId`: an id that is not (someone who has left) is
    *  simply absent, and the caller says so in its own words. */
   displayNames(orgId: string, userIds: readonly string[]): Promise<Record<string, string>>;
+  /** The account behind one entry on the workspace's People list (what a
+   *  `person` field stores), or null: someone listed by name who has no
+   *  account, or has left. What a module needs to notify the person a record
+   *  names ("assigned to Robin") without reading the platform's tables. */
+  userForPerson(orgId: string, personId: string): Promise<string | null>;
+  /** A member's own entry on the People list (made if missing): what "mine"
+   *  means for a record whose `person` field names who it is for. */
+  personForUser(orgId: string, userId: string): Promise<string | null>;
   /** The person this request acts for, or null outside one (a wire on a
    *  timer, a boot pass, a sync). The same actor the activity log records,
    *  so a module that writes its own history names the same person. */
@@ -6093,6 +6467,9 @@ export interface HostedPanelContext {
   orgId: string;
   userId: string;
   slug: string;
+  /** The caller's role in the workspace. The kernel has already refused
+   *  anyone below the panel's `minRole`; a panel may narrow further. */
+  role: string;
 }
 export interface HostedPanel {
   /** URL segment + key, e.g. "billing", "slack". */
@@ -6101,6 +6478,9 @@ export interface HostedPanel {
   /** Generic icon NAME (e.g. "credit-card"); the web maps a small allowlist. */
   icon?: string;
   group?: "modules" | "data" | "access" | "extend" | "admin";
+  /** The least role that may see and use the panel. Unset means owner or
+   *  admin: a settings panel is configuration unless it says otherwise. */
+  minRole?: Exclude<OrgRoleName, "guest">;
   getView(ctx: HostedPanelContext): Promise<HostedPanelView>;
   runAction(
     ctx: HostedPanelContext,
@@ -6657,6 +7037,10 @@ export interface RoledField {
   field_role?: string | null;
   type?: string | null;
   choices?: string[] | null;
+  /** The list is open: a value off it is still this field's value (field-choices
+   *  `choiceLearns`, decided by whoever hands the field over). A parser's value
+   *  is written but never added to the list. Absent = a closed list. */
+  learns?: boolean | null;
 }
 
 /** One workspace-defined field on a kind, as `fieldsFor` reports it. */
@@ -6667,6 +7051,9 @@ export interface DefinedField extends RoledField {
   unit?: string | null;
   /** A computed field's template ("{{ length_per_skein }}"). */
   template?: string | null;
+  /** Once filled, an update may not empty it. A create may leave it empty:
+   *  capture comes before structure, and the record then shows what it needs. */
+  required?: boolean;
 }
 
 export interface MappedValue {
@@ -6699,6 +7086,15 @@ export const ROLE_CLARIFIES: Partial<Record<FieldRole, FieldRole>> = {
   seller: "acquired-from",
 };
 
+/** Is this value one of a choice field's choices? Trimmed and without regard
+ *  to case, the one rule for every writer: the scan mapper deciding whether to
+ *  write a fact, and the write routes deciding whether to take it. */
+export function isListedChoice(value: unknown, choices: readonly string[]): boolean {
+  if (typeof value !== "string") return false;
+  const v = value.trim().toLowerCase();
+  return choices.some((c) => c.trim().toLowerCase() === v);
+}
+
 /**
  * Land each fact on the field that declares its role.
  *
@@ -6721,10 +7117,7 @@ export function mapRoledFacts(
 
     const field = byRole.get(role);
     if (field) {
-      const unlisted =
-        typeof value === "string" &&
-        (field.choices?.length ?? 0) > 0 &&
-        !field.choices!.some((c) => c.trim().toLowerCase() === value.trim().toLowerCase());
+      const unlisted = field.learns !== true && typeof value === "string" && (field.choices?.length ?? 0) > 0 && !isListedChoice(value, field.choices!);
       out.push({ key: field.name, value, role, ...(unlisted ? { unlistedChoice: true } : {}) });
       continue;
     }
@@ -6943,7 +7336,7 @@ export async function restoreRow(
  *  accept it, and the SQL it produces is what the api tests check. */
 export interface LikeFnModule {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (name: "lower", args: any[]): any;
+  (name: "lower" | "jsonb_path_exists", args: any[]): any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   coalesce(...args: any[]): any;
 }
@@ -6957,6 +7350,12 @@ export interface LikeBuilder {
   cast(expr: any, to: "text"): any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   val(value: any): any;
+  /** Every one of these (Kysely's builder has it; a hand-written fake may
+   *  not, and then a search runs without reading values). */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  and?(exprs: any[]): any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  not?(expr: any): any;
 }
 
 /** The column names the caller's Kysely expression builder accepts: its
@@ -6973,6 +7372,9 @@ export interface TextSearchColumns<EB = unknown> {
   text: readonly ColumnOf<EB>[];
   /** jsonb columns searched as text (custom fields live in `metadata`). */
   json?: readonly ColumnOf<EB>[];
+  /** A jsonb array of the record's measured values read off its text
+   *  (`measureReadings`), so a value still typed as text is found by value. */
+  readings?: ColumnOf<EB>;
 }
 
 /** A set of column names checked against a table's row type, for the lists a
@@ -6983,9 +7385,18 @@ export function columnSet<Row>() {
   return <C extends keyof Row & string>(columns: readonly C[]): ReadonlySet<string> => new Set<string>(columns);
 }
 
-/** The needle a person typed, as the like pattern every resolver used. */
+/** What a person typed, made literal inside a LIKE pattern: `%` and `_` are
+ *  wildcards to Postgres and a backslash is its escape, so "50%" matched every value
+ *  holding "50" and "a_b" matched "axb". A pattern built from a person's text
+ *  goes through here (lint:like-needles-are-escaped). */
+export function likeEscape(text: string): string {
+  return text.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
+/** The needle a person typed, as the like pattern every resolver uses:
+ *  lower-cased, escaped, and matched anywhere. */
 export function likeNeedle(q: string): string {
-  return `%${q.toLowerCase()}%`;
+  return `%${likeEscape(q.toLowerCase())}%`;
 }
 
 /**
@@ -6997,14 +7408,62 @@ export function likeNeedle(q: string): string {
 export function textSearchWhere<EB extends LikeBuilder>(eb: EB, q: string | undefined, columns: TextSearchColumns<EB>): any {
   const needle = (q ?? "").trim();
   if (!needle) return null;
-  const like = likeNeedle(needle);
   const empty = eb.val("");
-  const exprs: any[] = [
-    ...columns.text.map((c: string) => eb(eb.fn("lower", [eb.fn.coalesce(c, empty)]), "like", like)),
-    ...(columns.json ?? []).map((c: string) => eb(eb.fn("lower", [eb.cast(c, "text")]), "like", like)),
-  ];
+  const anywhere = (text: string): any[] => {
+    const like = likeNeedle(text);
+    return [
+      ...columns.text.map((c: string) => eb(eb.fn("lower", [eb.fn.coalesce(c, empty)]), "like", like)),
+      ...(columns.json ?? []).map((c: string) => eb(eb.fn("lower", [eb.cast(c, "text")]), "like", like)),
+    ];
+  };
+  const exprs = anywhere(needle);
   if (exprs.length === 0) return null;
-  return eb.or(exprs);
+  const hasValues = !!(columns.json?.length || columns.readings);
+  const read = hasValues && eb.and && eb.not ? measureTokens(needle) : null;
+  if (!read) return eb.or(exprs);
+  return valueSearchWhere(eb, read, {
+    text: anywhere,
+    fields: (columns.json ?? []) as readonly string[],
+    readings: columns.readings as string | undefined,
+  });
+}
+
+/**
+ * A search that names values ("10k", "100 nF 16V ceramic"): every word has to
+ * be found somewhere, and each VALUE is found by value (±1%, in its unit) in a
+ * measure field or a reading, or else as text, but never as the text of a
+ * record that holds that number in another unit. So 4k7 finds the resistor
+ * typed "4.7 kΩ" and 10k never finds the 10 kHz crystal, even one titled
+ * "10kHz". `text` is the caller's own text match for one word.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function valueSearchWhere<EB extends LikeBuilder>(
+  eb: EB,
+  read: NonNullable<ReturnType<typeof measureTokens>>,
+  opts: { text: (word: string) => any[]; fields?: readonly string[]; readings?: string },
+): any {
+  const at = (column: string, path: string, vars: string) =>
+    // Untyped parameters: Postgres reads them as jsonpath and jsonb from the
+    // function's own signature.
+    eb.fn("jsonb_path_exists", [column, eb.val(path), eb.val(vars)]);
+  const holds = (m: Measure, which: "same" | "other"): any[] => {
+    const paths = measurePaths(m);
+    const p = paths[which];
+    if (!p) return [];
+    return [
+      ...(opts.fields ?? []).map((c) => at(c, p.fields, paths.vars)),
+      ...(opts.readings ? [at(opts.readings, p.readings, paths.vars)] : []),
+    ];
+  };
+  const every = [
+    ...read.words.map((w) => eb.or(opts.text(w))),
+    ...read.values.map((v) => {
+      const asText = eb.or(opts.text(v.text));
+      const elsewhere = holds(v.measure, "other");
+      return eb.or([...holds(v.measure, "same"), elsewhere.length ? eb.and!([asText, eb.not!(eb.or(elsewhere))]) : asText]);
+    }),
+  ];
+  return eb.and!(every);
 }
 
 

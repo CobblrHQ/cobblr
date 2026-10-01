@@ -1,7 +1,14 @@
 {
   "manifest": {
     "id": "cobblr.flagship.groceries",
-    "version": "0.13.0",
+    "version": "0.13.1",
+    "releases": [
+      {
+        "version": "0.13.1",
+        "released_at": "2026-10-02",
+        "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before."
+      }
+    ],
     "scan_keywords": [
       "chips",
       "snack",
@@ -349,6 +356,7 @@
             "display_label": "Must be kept",
             "type": "text",
             "position": 0,
+            "learns": false,
             "choices": [
               "frozen",
               "refrigerated",
@@ -385,6 +393,7 @@
             "display_label": "Category",
             "type": "text",
             "position": 4,
+            "learns": true,
             "choices": [
               "Produce",
               "Dairy",
@@ -466,6 +475,7 @@
           {
             "source_kind": "groceries:item",
             "action_id": "lists:add-item",
+            "says": "Food running low goes on your Shopping list.",
             "trigger_type": "event",
             "trigger_event": "inventory.stock.low",
             "args": {
@@ -475,6 +485,7 @@
           {
             "source_kind": "groceries:item",
             "action_id": "lists:add-item",
+            "says": "Food about to go off goes on your Shopping list, so you can replace it.",
             "trigger_type": "event",
             "trigger_event": "lists.item.expiring",
             "args": {
@@ -484,6 +495,7 @@
           {
             "source_kind": "groceries:item",
             "action_id": "inventory:adjust-stock",
+            "says": "Checking food off your Shopping list restocks the pantry.",
             "trigger_type": "event",
             "trigger_event": "lists.item.checked",
             "args": {
@@ -495,6 +507,7 @@
           {
             "source_kind": "groceries:item",
             "action_id": "core-cadence:record-event",
+            "says": "Each thing you check off shows how often you buy it.",
             "trigger_type": "event",
             "trigger_event": "lists.item.checked",
             "args": {
@@ -506,6 +519,7 @@
           {
             "source_kind": "groceries:item",
             "action_id": "lists:add-item",
+            "says": "Food you usually buy again by now goes on your Shopping list.",
             "trigger_type": "event",
             "trigger_event": "core-cadence.reorder.due",
             "args": {

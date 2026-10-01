@@ -6,11 +6,11 @@
 // extra columns automatically (no code change here).
 
 import { useEffect, useState, type FormEvent } from "react";
-import { SuggestedPhoto } from "../components/SuggestedPhoto";
+import { RecordPhoto } from "../components/RecordPhoto";
 import { pictureStateFor, suggestedSrcFor, usePhotoSuggestions } from "../lib/photoSuggestions";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRightLeft, ChevronRight, Loader2, Plus, Printer, Sprout, Tag as TagIcon, Trash2, Undo2, Wand2 } from "lucide-react";
+import { ArrowRightLeft, ChevronRight, Loader2, Plus, Printer, Sprout, Trash2, Undo2, Wand2 } from "lucide-react";
 import { ApiError, api, getToken, type Asset, type OrgModuleListItem, type PlatformFieldDef } from "../lib/api";
 import { isShapeValidVin, planVinFill, type VinFill, type VinFillTarget } from "../lib/vin";
 import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
@@ -19,7 +19,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { CustomFieldsPanel,
   EditField, EntityActionsBar, FaceSection, FieldPack, RecordFaces,
-  FacesOn, faceShows, editFieldItem, fieldNeed, EditSelect,
+  FacesOn, faceShows, editFieldItem, moneyFieldItem, fieldNeed, EditSelect,
   useAskCobbAboutSelection,
   Modal,
   useToast,
@@ -27,6 +27,9 @@ import { CustomFieldsPanel,
 import {
   BulkActionBar,
   MoveToInstanceModal,
+  MoveToInstancePanel,
+  FooterActionPopover,
+  BulkTagAction,
   EntityThumb,
   EntityTile,
   ViewModeToggle,
@@ -39,7 +42,8 @@ import { ContentsPanel, useHoldsContents } from "../components/ContentsPanel";
 import { useDeclaredChoices } from "../components/ViewBuilder";
 import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
-import { PresentationGate, useFaces } from "@cobblr/platform-web";
+import { formatMoney, toCents } from "@cobblr/platform-contract/money";
+import { PresentationGate, useFaces, UsedValueInput, usedValueFieldItem } from "@cobblr/platform-web";
 
 const ENTITY_KIND = "assets:asset";
 
@@ -170,7 +174,7 @@ export function AssetsPage({
 
   const allRows = list.data?.items ?? [];
   // What the register cost, over every asset on this page (priced or not).
-  const paidTotal = allRows.reduce((sum, r) => sum + (r.purchase_price_cents ?? 0), 0) / 100;
+  const paidTotal = toCents(allRows.reduce((sum, r) => sum + (r.purchase_price_cents ?? 0), 0));
   const rows = lensName
     ? allRows.filter((m) =>
         lensFieldDefs.some((d) => {
@@ -200,7 +204,6 @@ export function AssetsPage({
   // ones on screen a person pointed at, and Cobb gets their ids rather than a
   // count he has to go and re-find.
   const askCobb = useAskCobbAboutSelection(selected, rows, "assets:asset", "asset");
-  const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
@@ -234,7 +237,6 @@ export function AssetsPage({
   const allChecked = filtered.length > 0 && filtered.every((r) => selected.has(r.id));
   const openAsset = (aid: string) => openDetail(aid);
 
-  const [bulkTagOpen, setBulkTagOpen] = useState(false);
   const bulkTag = useMutation({
     mutationFn: async (tagName: string) => {
       for (const id of Array.from(selected)) {
@@ -249,7 +251,6 @@ export function AssetsPage({
     onSuccess: () => {
       toast.success(`Tagged ${selected.size} asset${selected.size === 1 ? "" : "s"}`);
       setSelected(new Set());
-      setBulkTagOpen(false);
       void qc.invalidateQueries({ queryKey: ["assets", activeSlug] });
     },
     onError: (e) => toast.error((e as Error).message),
@@ -259,7 +260,7 @@ export function AssetsPage({
     <div className="space-y-4">
       <CollectionHeader
         title={displayName ?? "assets"}
-        count={showArchived ? `${list.data?.total ?? allRows.length} put away` : `${filtered.length} of ${list.data?.total ?? allRows.length}${paidTotal > 0 ? ` · paid ${paidTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} in all` : ""}`}
+        count={showArchived ? `${list.data?.total ?? allRows.length} put away` : `${filtered.length} of ${list.data?.total ?? allRows.length}${paidTotal > 0 ? ` · paid ${formatMoney(paidTotal)} in all` : ""}`}
         hint={hint} kind={instance ? `${instance}:item` : ENTITY_KIND}
         filters={
           (list.data?.archived_count ?? 0) > 0 || showArchived ? (
@@ -371,21 +372,6 @@ export function AssetsPage({
         instance={instance}
       />
       <NewAssetModal open={newOpen} onClose={() => setNewOpen(false)} instance={instance} noun={noun} />
-      <MoveToInstanceModal
-        open={bulkMoveOpen}
-        onClose={() => setBulkMoveOpen(false)}
-        slug={activeSlug ?? ""}
-        getToken={getToken}
-        moduleName="assets"
-        fromInstance={instance ?? "assets"}
-        ids={Array.from(selected)}
-        noun={noun}
-        onMoved={(n, where) => {
-          toast.success(`Moved ${countOf(n, noun)} to ${where}`);
-          setSelected(new Set());
-          void qc.invalidateQueries({ queryKey: ["assets"] });
-        }}
-      />
 
       <BulkActionBar
         onAskCobb={askCobb}
@@ -393,20 +379,34 @@ export function AssetsPage({
         onClear={() => setSelected(new Set())}
         actions={
           <>
-            <button
-              type="button"
-              onClick={() => setBulkTagOpen(true)}
-              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-accent hover:text-accent"
-            >
-              <TagIcon size={12} /> Tag
-            </button>
-            <button
-              type="button"
-              onClick={() => setBulkMoveOpen(true)}
-              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-accent hover:text-accent"
-            >
-              <ArrowRightLeft size={12} /> Move to…
-            </button>
+            <BulkTagAction count={selected.size} placeholder="e.g. urgent, summer-2026, archive" onTag={(name) => bulkTag.mutateAsync(name)} />
+            <FooterActionPopover label="Move to…" icon={<ArrowRightLeft size={12} />} title="Move to another list" width={360} data-testid="bulk-move">
+              {(close) => (
+                <div className="overflow-y-auto p-3">
+                  <MoveToInstancePanel
+                    slug={activeSlug ?? ""}
+                    getToken={getToken}
+                    moduleName="assets"
+                    fromInstance={instance ?? "assets"}
+                    ids={Array.from(selected)}
+                    noun={noun}
+                    onClose={close}
+                    onMoved={(n, where, undo) => {
+                      toast.action(`Moved ${countOf(n, noun)} to ${where}.`, {
+                        actionLabel: "Undo",
+                        duration: 10_000,
+                        onAction: async () => {
+                          await undo();
+                          void qc.invalidateQueries({ queryKey: ["assets"] });
+                        },
+                      });
+                      setSelected(new Set());
+                      void qc.invalidateQueries({ queryKey: ["assets"] });
+                    }}
+                  />
+                </div>
+              )}
+            </FooterActionPopover>
             <button
               type="button"
               onClick={async () => {
@@ -450,14 +450,6 @@ export function AssetsPage({
           </>
         }
       />
-      {bulkTagOpen && (
-        <BulkTagPromptModal
-          count={selected.size}
-          busy={bulkTag.isPending}
-          onClose={() => setBulkTagOpen(false)}
-          onSubmit={(name) => bulkTag.mutate(name)}
-        />
-      )}
     </div>
   );
 }
@@ -488,7 +480,7 @@ function AssetViewChip({
 }
 
 function AssetsTiles({ rows, onOpen, kind }: { rows: Asset[]; onOpen: (id: string) => void; kind: string }) {
-  const suggestions = usePhotoSuggestions(kind);
+  const suggestions = usePhotoSuggestions(kind, rows.map((a) => a.id));
   return (
     <div className={TILE_GRID}>
       {rows.map((a) => (
@@ -526,7 +518,7 @@ function AssetsTable({
   onOpen: (id: string) => void;
   instance?: string;
 }) {
-  const suggestions = usePhotoSuggestions(instance ? `${instance}:item` : ENTITY_KIND);
+  const suggestions = usePhotoSuggestions(instance ? `${instance}:item` : ENTITY_KIND, rows.map((a) => a.id));
   // The column header must respect a bundle relabel too, or the list says
   // "Manufacturer" while the detail page says "Make".
   const fp = useFieldPresentation(instance ? `${instance}:item` : ENTITY_KIND);
@@ -626,63 +618,6 @@ function groupItems(items: Asset[], key: string): { key: string; rows: Asset[] }
     .map(([k, rows]) => ({ key: k, rows }));
 }
 
-function BulkTagPromptModal({
-  count,
-  busy,
-  onClose,
-  onSubmit,
-}: {
-  count: number;
-  busy: boolean;
-  onClose: () => void;
-  onSubmit: (tagName: string) => void;
-}) {
-  const [name, setName] = useState("");
-  return (
-    <Modal open onClose={onClose} title={`Tag ${count} item${count === 1 ? "" : "s"}`}>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!name.trim()) return;
-          onSubmit(name.trim());
-        }}
-        className="space-y-3"
-      >
-        <label className="block">
-          <div className="text-xs text-muted mb-1">Tag name</div>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. urgent, summer-2026, archive"
-            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-            autoFocus
-          />
-          <div className="text-[11px] text-faint mt-1">
-            Existing tag? It'll be reused. New name? Created on the fly.
-          </div>
-        </label>
-        <div className="flex justify-end gap-2 pt-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={busy || !name.trim()}
-            className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
-          >
-            {busy ? "tagging…" : `Tag ${count}`}
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
 export function AssetDetailModal({
   assetId,
   onClose,
@@ -775,19 +710,19 @@ export function AssetDetailModal({
           <RecordFaces kind={kind} target={instance ? { target_kind: "instance", target_id: `assets:${instance}` } : { target_kind: "entity_kind", target_id: ENTITY_KIND }}>
           <div className="grid gap-6 md:grid-cols-[minmax(200px,260px)_1fr]">
             <div className="space-y-3">
-              <EntityThumb
-                src={a.image_path}
-                alt={a.name}
-                size={256}
-                className="w-full h-auto ring-1 ring-line dark:ring-slate-700"
-              />
-              <SuggestedPhoto
+              <RecordPhoto
                 kind={kind}
                 id={a.id}
                 instance={instance ?? null}
-                hasPicture={!!a.image_path}
+                src={a.image_path}
+                alt={a.name}
                 brand={a.manufacturer}
-                onApplied={() => void qc.invalidateQueries({ queryKey: ["assets", activeSlug] })}
+                size={256}
+                onChange={(image_path) => update.mutate({ image_path })}
+                onSaved={() => {
+                  void qc.invalidateQueries({ queryKey: ["asset", activeSlug, instance ?? null, assetId] });
+                  void qc.invalidateQueries({ queryKey: ["assets", activeSlug] });
+                }}
               />
               {a.archived_at ? (
                 <p className="text-xs text-muted dark:text-slate-400">
@@ -823,7 +758,7 @@ export function AssetDetailModal({
               // make/model are keyed on their value so a guarded-auto VIN fill
               // (which mutates + refetches) actually re-renders these otherwise
               // uncontrolled inputs.
-              !fp.hidden("manufacturer") ? { need: fieldNeed("manufacturer", { control: "text", label: fp.label("manufacturer", "Manufacturer"), valueLength: (a.manufacturer ?? "").length }), node: <EditField key={`mfr-${a.manufacturer ?? ""}`} label={fp.label("manufacturer", "Manufacturer")} value={a.manufacturer ?? ""} onCommit={(v) => update.mutate({ manufacturer: v || null })} /> } : null,
+              !fp.hidden("manufacturer") ? { need: fieldNeed("manufacturer", { control: "text", label: fp.label("manufacturer", "Manufacturer"), valueLength: (a.manufacturer ?? "").length }), node: usedValueFieldItem("manufacturer", { label: fp.label("manufacturer", "Manufacturer"), kind, field: "manufacturer", value: a.manufacturer ?? null, onCommit: (v) => update.mutate({ manufacturer: v || null }) }).node } : null,
               !fp.hidden("model") ? { need: fieldNeed("model", { control: "text", label: fp.label("model", "Model"), valueLength: (a.model ?? "").length }), node: <EditField key={`mdl-${a.model ?? ""}`} label={fp.label("model", "Model")} value={a.model ?? ""} onCommit={(v) => update.mutate({ model: v || null })} /> } : null,
               !fp.hidden("type") ? editFieldItem("type", { label: fp.label("type", "Type"), value: a.type ?? "", onCommit: (v) => update.mutate({ type: v || null }) }) : null,
               !fp.hidden("state")
@@ -843,14 +778,14 @@ export function AssetDetailModal({
                 : null,
               !fp.hidden("purchased_at") ? editFieldItem("purchased_at", { label: fp.label("purchased_at", "Purchased at"), value: a.purchased_at ?? "", type: "date", onCommit: (v) => update.mutate({ purchased_at: v || null }) }) : null,
               !fp.hidden("purchase_price_cents")
-                ? editFieldItem("purchase_price_cents", {
-                    label: fp.label("purchase_price_cents", "Paid"),
-                    value: a.purchase_price_cents == null ? "" : (a.purchase_price_cents / 100).toFixed(2),
-                    numeric: true,
-                    onCommit: (v) => {
-                      const n = Number(v.replace(/,/g, ""));
-                      update.mutate({ purchase_price_cents: v.trim() === "" || !Number.isFinite(n) ? null : Math.round(n * 100) });
-                    },
+                ? moneyFieldItem("purchase_price_cents", {
+                    // Once parts are installed in it, what was paid for it is the
+                    // rest of its value: the parts are counted as themselves, and
+                    // its total (under Contents) adds them, each once.
+                    label: holdsContents ? "Other value (not itemized)" : fp.label("purchase_price_cents", "Paid"),
+                    value: a.purchase_price_cents,
+                    storage: "cents",
+                    onCommit: (cents) => update.mutate({ purchase_price_cents: cents }),
                   })
                 : null,
               !fp.hidden("vendor") ? editFieldItem("vendor", { label: fp.label("vendor", "Bought from"), value: a.vendor ?? "", onCommit: (v) => update.mutate({ vendor: v.trim() || null }) }) : null,
@@ -860,7 +795,7 @@ export function AssetDetailModal({
               !fp.hidden("quantity") && faceShows(stockOn, a.quantity, 1) ? editFieldItem("quantity", { label: fp.label("quantity", "Quantity"), value: String(a.quantity), numeric: true, onCommit: (v) => update.mutate({ quantity: Number(v) || 0 }) }) : null,
               {
                 need: fieldNeed("location", { control: "picker", label: "Location" }),
-                node: <LocationTreePicker label="Location" value={a.location_id} onChange={(id) => update.mutate({ location_id: id })} size="sm" />,
+                node: <LocationTreePicker label="Location" value={a.location_id} onChange={(id) => update.mutate({ location_id: id })} size="sm" thing={{ kind: "assets:asset", id: a.id }} onPlaced={() => { void qc.invalidateQueries({ queryKey: ["asset", activeSlug, instance ?? null, assetId] }); void qc.invalidateQueries({ queryKey: ["assets", activeSlug] }); }} />,
               },
             ]}
           />
@@ -877,7 +812,7 @@ export function AssetDetailModal({
           {/* What's inside this asset — e.g. the components in a server/computer.
               Same generic placement panel a machine or a drawer uses. */}
           <FaceSection face="container" kind={kind} holds={holdsContents}>
-            <ContentsPanel slug={activeSlug} container={{ kind: ENTITY_KIND, id: a.id }} title="Contents" />
+            <ContentsPanel slug={activeSlug} container={{ kind: ENTITY_KIND, id: a.id }} title="Contents" builtFrom wordKind={kind} />
           </FaceSection>
           {/* What other modules add to an asset (its service schedule, tags,
               the discussion) arrives as contributed panels, so the attachment
@@ -1011,10 +946,10 @@ function NewAssetModal({
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Name</span>
           <input value={name} onChange={(e) => setName(e.target.value)} autoFocus className="input" />
         </label>
-        <label className="block">
+        <div className="block">
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{fp.label("manufacturer", "Manufacturer")}</span>
-          <input value={manufacturer} onChange={(e) => setManufacturer(e.target.value)} className="input" />
-        </label>
+          <UsedValueInput kind={instance ? `${instance}:item` : ENTITY_KIND} field="manufacturer" label={fp.label("manufacturer", "Manufacturer")} value={manufacturer} onCommit={(v) => setManufacturer(v ?? "")} live />
+        </div>
         <label className="block">
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Type / category</span>
           <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder='e.g. "Appliance", "Hand tool"' className="input" />

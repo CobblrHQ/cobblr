@@ -7,11 +7,12 @@ import { receiveIfArrived, receiveOrderLines } from "../receive.js";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
-import { platform } from "@cobblr/platform-contract";
+import { likeNeedle, platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { routeUnknownToMetadata, refuseUnknownFields, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 import { claimLine, stampLine } from "./line-subject.js";
+import { orderTotal } from "../order-total.js";
 import { editOrderLine } from "../line-edit.js";
 
 export const ordersRouter = Router({ mergeParams: true });
@@ -114,37 +115,139 @@ async function vendorTextFor(
 
 // ── orders ───────────────────────────────────────────────────────
 
+// The list, a page at a time, newest first. It used to stop at 500 with no
+// way to the rest, and the page summed spend from what it had, so a workspace
+// past 500 orders could not reach its oldest and undercounted what it spent.
+// Filters run here so a search finds an order that is not on the first page.
+const PAGE_MAX = 500;
+const orderDay = sql<string>`coalesce(o.ordered_at, o.created_at::date)`;
+
+interface OrderCursor {
+  d: string;
+  c: string;
+  id: string;
+}
+const encodeCursor = (c: OrderCursor) => Buffer.from(JSON.stringify(c)).toString("base64url");
+function decodeCursor(raw: unknown): OrderCursor | null {
+  if (typeof raw !== "string" || !raw) return null;
+  try {
+    const c = JSON.parse(Buffer.from(raw, "base64url").toString("utf8")) as OrderCursor;
+    return typeof c.d === "string" && typeof c.c === "string" && typeof c.id === "string" ? c : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The status and search a list and its summary share, so the figures above
+ *  the list are always about the rows under them. */
+function filteredOrders(req: import("express").Request) {
+  const db = tenantDb(req);
+  let q = db.selectFrom("purchases_orders as o").where("o.instance", "=", instanceOf(req));
+  const status = typeof req.query.status === "string" && req.query.status ? req.query.status : null;
+  if (status) q = q.where("o.status", "=", status as never);
+  const search = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  if (search) {
+    const like = likeNeedle(search);
+    q = q.where(sql<boolean>`(lower(coalesce(o.vendor, '')) like ${like} or lower(coalesce(o.order_number, '')) like ${like} or lower(coalesce(o.notes, '')) like ${like} or lower(coalesce(o.tracking_number, '')) like ${like})`);
+  }
+  return { db, q };
+}
+
 ordersRouter.get(
   "/",
   asyncHandler(async (req, res) => {
-    const db = tenantDb(req);
     // ?receipt_group_id=<id> — "which order did THIS receipt become?". The
     // scan card's contributed panel asks it, handing over only the host's own
     // identifier; the answer is found in this module's own metadata, where the
     // receipt import stamped it. One row, so no pagination question.
     const receiptGroupId =
       typeof req.query.receipt_group_id === "string" ? req.query.receipt_group_id : null;
-    let q = db
-      .selectFrom("purchases_orders as o")
+    const limitRaw = Number(req.query.limit);
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(Math.trunc(limitRaw), PAGE_MAX) : PAGE_MAX;
+    const cursor = decodeCursor(req.query.cursor);
+    const { q } = filteredOrders(req);
+    let rows = q
       .selectAll("o")
+      .select(orderTotal("o").as("total"))
+      .select(sql<string>`to_char(${orderDay}, 'YYYY-MM-DD')`.as("sort_day"))
+      // Full precision: a JS Date keeps milliseconds, the column keeps
+      // microseconds, and a cursor rounded down skips the rows in between.
+      .select(sql<string>`o.created_at::text`.as("sort_created"))
       .select((eb) =>
         eb
           .selectFrom("purchases_order_items as i")
           .whereRef("i.order_id", "=", "o.id")
           .select(eb.fn.countAll<number>().as("c"))
           .as("item_count"),
-      )
-      .where("o.instance", "=", instanceOf(req));
+      );
     if (receiptGroupId) {
-      q = q.where(sql<boolean>`o.metadata->>'receipt_group_id' = ${receiptGroupId}`);
+      rows = rows.where(sql<boolean>`o.metadata->>'receipt_group_id' = ${receiptGroupId}`);
     }
-    const items = await q
-      .orderBy("o.ordered_at", "desc")
+    if (cursor) {
+      rows = rows.where(sql<boolean>`(${orderDay}, o.created_at, o.id) < (${cursor.d}::date, ${cursor.c}::timestamptz, ${cursor.id}::uuid)`);
+    }
+    const page = await rows
+      .orderBy(orderDay, "desc")
       .orderBy("o.created_at", "desc")
-      // list-cap-ok: not paged yet, #4134
-      .limit(500)
+      .orderBy("o.id", "desc")
+      .limit(limit + 1)
       .execute();
-    res.json({ items });
+    const more = page.length > limit;
+    const items = (more ? page.slice(0, limit) : page).map(({ sort_day, sort_created, ...o }) => ({ ...o, _day: sort_day, _created: sort_created }));
+    const last = items[items.length - 1];
+    const next_cursor =
+      more && last
+        ? encodeCursor({
+            d: String(last._day),
+            c: String(last._created),
+            id: String(last.id),
+          })
+        : null;
+    res.json({ items: items.map(({ _day, _created, ...o }) => o), next_cursor });
+  }),
+);
+
+// AI-REACH: exempt — the figures above the orders list; Cobb reads and counts orders through the list itself.
+// The figures above the list, over every order the filters match, not the
+// page loaded: how many, how many still coming, what was spent (orderTotal:
+// the stated total, else the lines), by month for the last six and by vendor.
+ordersRouter.get(
+  "/summary",
+  asyncHandler(async (req, res) => {
+    const { q } = filteredOrders(req);
+    const total = orderTotal("o");
+    const head = await q
+      .select([
+        sql<number>`count(*)::int`.as("count"),
+        sql<number>`(count(*) filter (where o.status in ('planned', 'ordered', 'in-transit')))::int`.as("open"),
+        sql<number>`(count(*) filter (where o.status = 'in-transit'))::int`.as("in_transit"),
+        sql<number>`(count(*) filter (where o.metadata ? 'receipt_file_id'))::int`.as("from_receipts"),
+        sql<string>`coalesce(sum(${total}), 0)`.as("spend"),
+        sql<number>`(count(${total}))::int`.as("priced"),
+      ])
+      .executeTakeFirstOrThrow();
+    const months = await q
+      .select([sql<string>`to_char(${orderDay}, 'YYYY-MM')`.as("month"), sql<string>`coalesce(sum(${total}), 0)`.as("spend")])
+      .where(sql<boolean>`${orderDay} >= (date_trunc('month', current_date) - interval '5 months')::date`)
+      .groupBy(sql`to_char(${orderDay}, 'YYYY-MM')`)
+      .execute();
+    const vendors = await q
+      .select([sql<string>`coalesce(o.vendor, '')`.as("vendor"), sql<string>`coalesce(sum(${total}), 0)`.as("spend")])
+      .groupBy(sql`coalesce(o.vendor, '')`)
+      .orderBy(sql`coalesce(sum(${total}), 0)`, "desc")
+      // list-cap-ok: the top five vendors by spend is the answer, not a list cut short
+      .limit(5)
+      .execute();
+    res.json({
+      count: head.count,
+      open: head.open,
+      in_transit: head.in_transit,
+      from_receipts: head.from_receipts,
+      spend: Number(head.spend),
+      priced: head.priced,
+      by_month: months.map((m) => ({ month: m.month, spend: Number(m.spend) })),
+      top_vendors: vendors.filter((v) => Number(v.spend) > 0).map((v) => ({ vendor: v.vendor || null, spend: Number(v.spend) })),
+    });
   }),
 );
 
@@ -158,10 +261,11 @@ ordersRouter.get(
     }
     const db = tenantDb(req);
     const order = await db
-      .selectFrom("purchases_orders")
-      .selectAll()
-      .where("id", "=", id)
-      .where("instance", "=", instanceOf(req))
+      .selectFrom("purchases_orders as o")
+      .selectAll("o")
+      .select(orderTotal("o").as("total"))
+      .where("o.id", "=", id)
+      .where("o.instance", "=", instanceOf(req))
       .executeTakeFirst();
     if (!order) {
       res.status(404).json({ error: { code: "not_found", message: "order not found" } });
@@ -275,6 +379,7 @@ ordersRouter.patch(
       action: "order_updated",
       ref: { module: "purchases", entityType: "order", entityId: id },
       diff: parsed.data,
+      before,
     });
     if (parsed.data.status && parsed.data.status !== before.status) {
       platform().events.emit("purchases.order.status_changed", {
@@ -302,6 +407,10 @@ ordersRouter.patch(
 ordersRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
+    // An order is a record of money spent: removing it, lines and all, is an
+    // owner's or admin's, the same as deleting a part in Inventory. A member
+    // corrects or removes a line instead.
+    if (!requireRole(req, res, "owner", "admin")) return;
     const id = req.params.id;
     if (!id) {
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });

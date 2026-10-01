@@ -3,6 +3,7 @@ type: feature
 scope: core-scan
 date: 2026-09-28
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-10-01
 ---
 A record without a photo, however you made it and including the ones you already have, is now offered one: Cobblr looks it up on the web in the background and shows a Suggested photo you can use, swap for another or turn down.
 

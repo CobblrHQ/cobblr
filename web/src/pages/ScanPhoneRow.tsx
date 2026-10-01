@@ -16,7 +16,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Camera, CheckCircle, ChevronDown, ChevronRight, Download, Loader2, MoreHorizontal, PackagePlus, RotateCcw, ScanLine, Scissors } from "lucide-react";
 import type { ScanInboxItem } from "../lib/api";
-import { OverlayLayer, BackdropLayer, PopoverLayer, useLockPageScroll } from "@cobblr/platform-web";
+import { OverlayLayer, BackdropLayer, PopoverLayer, useEscapeToClose, useLockPageScroll } from "@cobblr/platform-web";
 import { ScanReceiptUnread, type ScanReceiptUnreadProps } from "../components/ScanReceiptUnread";
 import { RECEIPT_UNREAD_TITLE } from "@cobblr/platform-contract/scan-copy";
 
@@ -491,13 +491,10 @@ function PhoneActionSheet({ title, actions, hints, onClose }: { title: string; a
   // repeat the reason (#3075).
   const groups = scanToolsFoldGroups(hints, folded);
   useLockPageScroll();
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  useEscapeToClose(true, sheetRef, onClose);
   return createPortal(
-    <OverlayLayer className="z-50 flex items-end bg-slate-900/50" onClick={onClose} role="presentation">
+    <OverlayLayer ref={sheetRef} className="z-50 flex items-end bg-slate-900/50" onClick={onClose} role="presentation">
       <div
         role="menu"
         data-sheet

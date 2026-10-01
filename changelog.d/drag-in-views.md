@@ -3,6 +3,7 @@ type: feature
 scope: views
 date: 2026-09-30
 docs_target: docs/USER_GUIDE.md#3.5 Views
+docs_published: 2026-10-01
 ---
 **Boards, calendars and timelines now move things when you drag them.** Drag a card to Done on a board and it is done. Drag a calendar entry to Friday and it is due Friday. Drag a timeline bar a week later, or pull its end out to give it more time. The change shows straight away and says what happened, and if it is refused it goes back and tells you why. It works with a mouse, with a finger (hold, then drag) and from the keyboard. On a phone the calendar becomes a list of the days that have something on them, a busy day's "+N more" opens that day, and the timeline scrolls sideways under a column of names that stays put. Tasks and projects now say which statuses, priorities and sizes they take, so a board of them has exactly those columns, and a task's own fields show in views like a project's always have.
 

@@ -12,10 +12,12 @@
 // linked an account is how a product loses the right to send them. So: say it,
 // offer the one action that fixes it, and let it be chosen.
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { MessageSquareOff } from "lucide-react";
 import { ApiError, api, type NotificationChannelBinding } from "../lib/api";
 import { useToast } from "@cobblr/platform-web";
+import { discordConnectable } from "../lib/discord-connect";
+import { useDiscordStatus } from "../lib/useDiscordStatus";
 
 export function DiscordUnsubscribedCallout({
   orgId,
@@ -28,11 +30,7 @@ export function DiscordUnsubscribedCallout({
   const qc = useQueryClient();
   const toast = useToast();
 
-  const discord = useQuery({
-    queryKey: ["me-discord"],
-    queryFn: () => api.meDiscordStatus(),
-    staleTime: 60_000,
-  });
+  const discord = useDiscordStatus();
 
   const subscribe = useMutation({
     mutationFn: () =>
@@ -58,7 +56,7 @@ export function DiscordUnsubscribedCallout({
   // Only the state this exists for: a working link with nothing routed to it.
   // Not connected is the connect screen's business, and an existing binding
   // means the question is already answered.
-  if (!discord.data?.verified) return null;
+  if (!discordConnectable(discord.data) || !discord.data?.verified) return null;
   if (bindings === undefined) return null;
   if (bindings.some((b) => b.channel === "discord_dm")) return null;
 

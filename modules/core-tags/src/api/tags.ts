@@ -5,8 +5,17 @@ import { z } from "zod";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { tenantContext, tenantDb, sessionUser } from "../db.js";
-import { asyncHandler, badBody, requireRole } from "./util.js";
+import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js";
+import { TagRestoreRefused, deleteTagKept, mergeTagKept, restoreTag } from "../tag-writes.js";
 import { isQuiet, quietReason, rankTags, type TagUsage } from "../relevance.js";
+import { attachTag, createTag, detachTag, ensureTag, TagNameTaken, updateTag, type Writer } from "../tag-writes.js";
+
+const writer = (req: Parameters<typeof tenantContext>[0]): Writer => ({ orgId: tenantContext(req).org.id, userId: sessionUser(req)?.id ?? null });
+
+/** A name another tag already has: 409 with that tag, never a 500. */
+function nameTaken(res: import("express").Response, err: TagNameTaken): void {
+  res.status(409).json({ error: { code: "tag_exists", message: `A tag called "${err.existing.name}" already exists.` }, tag: err.existing });
+}
 
 export const tagsRouter = Router({ mergeParams: true });
 
@@ -23,41 +32,6 @@ const TagUpdate = TagCreate.partial().extend({ pinned: z.boolean().optional(), m
 
 const TagMerge = z.object({ into_tag_id: z.string().uuid() });
 
-/** Move every assignment from one tag onto another and delete the source.
- *  Shared with the core-tags:merge ACTION, so tidying tags by hand and asking
- *  the assistant to do it cannot come to mean different things. Returns how
- *  many assignments moved. */
-export async function mergeTagInto(
-  db: ReturnType<typeof tenantDb>,
-  id: string,
-  into: string,
-): Promise<number> {
-  const moved = await db.transaction().execute(async (trx) => {
-    // Drop source assignments that would collide with an existing target
-    // assignment on the same entity (would violate the unique key).
-    await sql`
-      delete from core_tags_assignments a
-      where a.tag_id = ${id}
-        and exists (
-          select 1 from core_tags_assignments b
-          where b.tag_id = ${into}
-            and b.source_module = a.source_module
-            and b.source_type = a.source_type
-            and b.source_id = a.source_id
-        )
-    `.execute(trx);
-    // Reassign the rest to the target.
-    const upd = await trx
-      .updateTable("core_tags_assignments")
-      .set({ tag_id: into })
-      .where("tag_id", "=", id)
-      .executeTakeFirst();
-    // Remove the now-empty source tag.
-    await trx.deleteFrom("core_tags_tags").where("id", "=", id).execute();
-    return Number(upd.numUpdatedRows ?? 0n);
-  });
-  return moved;
-}
 
 const AttachBody = z.object({
   tag_name: z.string().min(1).max(60).optional(),
@@ -77,49 +51,10 @@ tagsRouter.post(
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const parsed = TagCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    const db = tenantDb(req);
-    const ctx = tenantContext(req);
     try {
-      const row = await db
-        .insertInto("core_tags_tags")
-        .values({
-          name: parsed.data.name.trim(),
-          color: parsed.data.color ?? null,
-          parent_id: parsed.data.parent_id ?? null,
-          icon: parsed.data.icon ?? null,
-        })
-        .returningAll()
-        .executeTakeFirstOrThrow();
-      await platform().events.emit("core-tags.tag.created", {
-        orgId: ctx.org.id,
-        tagId: row.id,
-        name: row.name,
-      });
-      await platform().activity.log({
-        orgId: ctx.org.id,
-        userId: sessionUser(req)?.id ?? null,
-        action: "tag_created",
-        ref: { module: "core-tags", entityType: "tag", entityId: row.id },
-        diff: { name: row.name },
-      });
-      res.status(201).json(row);
+      res.status(201).json(await createTag(tenantDb(req), writer(req), parsed.data));
     } catch (err) {
-      if ((err as { code?: string }).code === "23505") {
-        // Name collision — return the existing row so callers don't
-        // have to round-trip to re-look-up.
-        const existing = await db
-          .selectFrom("core_tags_tags")
-          .selectAll()
-          .where(sql`lower(name)`, "=", parsed.data.name.trim().toLowerCase())
-          .executeTakeFirst();
-        if (existing) {
-          res.status(409).json({
-            error: { code: "tag_exists", message: "Tag already exists." },
-            tag: existing,
-          });
-          return;
-        }
-      }
+      if (err instanceof TagNameTaken) return nameTaken(res, err);
       throw err;
     }
   }),
@@ -225,12 +160,14 @@ tagsRouter.patch(
       }
       patch.parent_id = newParent;
     }
-    const row = await db
-      .updateTable("core_tags_tags")
-      .set(patch)
-      .where("id", "=", id)
-      .returningAll()
-      .executeTakeFirst();
+    delete patch.updated_at;
+    let row;
+    try {
+      row = await updateTag(db, writer(req), id, patch);
+    } catch (err) {
+      if (err instanceof TagNameTaken) return nameTaken(res, err);
+      throw err;
+    }
     if (!row) {
       res.status(404).json({ error: { code: "not_found", message: "tag not found" } });
       return;
@@ -239,6 +176,10 @@ tagsRouter.patch(
   }),
 );
 
+// A tag's delete takes it off every record that carries it, across the
+// workspace, so it is an owner's or admin's call (or a grant of
+// core-tags:delete-tag); a member is told so and can ask. What it took is
+// kept, so it can be put back (tag-writes.ts).
 tagsRouter.delete(
   "/tags/:id",
   asyncHandler(async (req, res) => {
@@ -248,31 +189,22 @@ tagsRouter.delete(
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
       return;
     }
-    const db = tenantDb(req);
-    const ctx = tenantContext(req);
-    const row = await db
-      .deleteFrom("core_tags_tags")
-      .where("id", "=", id)
-      .returning(["id", "name"])
-      .executeTakeFirst();
-    if (!row) {
+    if (!(await requireCapability(req, res, "core-tags:delete-tag"))) return;
+    const gone = await deleteTagKept(tenantDb(req), tenantContext(req).org.id, id, sessionUser(req)?.id ?? null);
+    if (!gone) {
       res.status(404).json({ error: { code: "not_found", message: "tag not found" } });
       return;
     }
-    await platform().events.emit("core-tags.tag.deleted", {
-      orgId: ctx.org.id,
-      tagId: row.id,
-      name: row.name,
-    });
-    res.status(204).end();
+    res.json({ deleted: true, name: gone.name, assignments: gone.assignments, undo: { restore: `tags/deleted/${id}/restore` } });
   }),
 );
 
 // POST /tags/:id/merge — reassign every attachment from this tag to
 // `into_tag_id`, then delete this tag. Assignments that would collide with
 // an existing attachment on the target (the unique (tag_id, source_*) key)
-// are dropped rather than duplicated. Idempotent-ish: a second merge 404s
-// (source already gone). Consolidates accidental duplicate tags.
+// are dropped rather than duplicated. Like a delete it reaches every record
+// carrying the tag, so it needs the merge capability (owner or admin, or a
+// grant), and what it moved is kept so it can be put back.
 // AI-ACTION: core-tags:merge
 tagsRouter.post(
   "/tags/:id/merge",
@@ -290,33 +222,48 @@ tagsRouter.post(
       res.status(400).json({ error: { code: "merge_into_self", message: "cannot merge a tag into itself" } });
       return;
     }
+    if (!(await requireCapability(req, res, "core-tags:merge"))) return;
     const db = tenantDb(req);
-    const ctx = tenantContext(req);
-    const [source, target] = await Promise.all([
-      db.selectFrom("core_tags_tags").select(["id", "name"]).where("id", "=", id).executeTakeFirst(),
-      db.selectFrom("core_tags_tags").select(["id", "name"]).where("id", "=", into).executeTakeFirst(),
-    ]);
-    if (!source) {
-      res.status(404).json({ error: { code: "not_found", message: "source tag not found" } });
-      return;
-    }
+    const target = await db.selectFrom("core_tags_tags").select(["id", "name"]).where("id", "=", into).executeTakeFirst();
     if (!target) {
       res.status(404).json({ error: { code: "target_not_found", message: "target tag not found" } });
       return;
     }
-
-    const moved = await mergeTagInto(db, id, into);
-
-    await platform().events.emit("core-tags.tag.deleted", {
-      orgId: ctx.org.id,
-      tagId: source.id,
-      name: source.name,
-    });
+    const merged = await mergeTagKept(db, tenantContext(req).org.id, id, into, sessionUser(req)?.id ?? null);
+    if (!merged) {
+      res.status(404).json({ error: { code: "not_found", message: "source tag not found" } });
+      return;
+    }
     res.json({
       merged_into: target,
-      moved_assignments: moved,
-      deleted_tag: { id: source.id, name: source.name },
+      moved_assignments: merged.moved,
+      deleted_tag: { id, name: merged.name },
+      undo: { restore: `tags/deleted/${id}/restore` },
     });
+  }),
+);
+
+// Undo a tag delete or merge: the tag under its own id, back on every record
+// that carried it. Putting a tag back is never the dangerous direction, so
+// anyone who can tag may.
+// AI-ACTION: core-tags:restore-tag
+// AI-REACH: action core-tags:restore-tag (the page's Undo; the assistant also
+// undoes a delete through its ledger and the tag writer's restore)
+tagsRouter.post(
+  "/tags/deleted/:id/restore",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    try {
+      const back = await restoreTag(tenantDb(req), tenantContext(req).org.id, req.params.id!, sessionUser(req)?.id ?? null);
+      if (!back) {
+        res.status(404).json({ error: { code: "not_found", message: "That tag was not deleted recently enough to put back." } });
+        return;
+      }
+      res.json({ restored: true, ...back });
+    } catch (e) {
+      if (!(e instanceof TagRestoreRefused)) throw e;
+      res.status(409).json({ error: { code: "name_taken", message: e.message } });
+    }
   }),
 );
 
@@ -330,66 +277,22 @@ tagsRouter.post(
     const parsed = AttachBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
-    const ctx = tenantContext(req);
 
-    // Resolve to a tag id — create on the fly if attach-by-name and
-    // no such tag exists yet.
-    let tagId = parsed.data.tag_id ?? null;
-    if (!tagId && parsed.data.tag_name) {
-      const trimmed = parsed.data.tag_name.trim();
-      const existing = await db
-        .selectFrom("core_tags_tags")
-        .select("id")
-        .where(sql`lower(name)`, "=", trimmed.toLowerCase())
-        .executeTakeFirst();
-      tagId =
-        existing?.id ??
-        (
-          await db
-            .insertInto("core_tags_tags")
-            .values({ name: trimmed, color: parsed.data.color ?? null })
-            .returning("id")
-            .executeTakeFirstOrThrow()
-        ).id;
-    }
-    if (!tagId) {
-      res.status(400).json({
-        error: { code: "tag_required", message: "tag_name or tag_id required" },
-      });
+    // Attach by name makes the tag when there is none yet.
+    const w = writer(req);
+    const tag = parsed.data.tag_id
+      ? await db.selectFrom("core_tags_tags").select(["id", "name"]).where("id", "=", parsed.data.tag_id).executeTakeFirst()
+      : await ensureTag(db, w, parsed.data.tag_name!, parsed.data.color ?? null);
+    if (!tag) {
+      res.status(404).json({ error: { code: "tag_not_found", message: "no such tag" } });
       return;
     }
-
-    // Idempotent on (tag, entity).
-    const existing = await db
-      .selectFrom("core_tags_assignments")
-      .selectAll()
-      .where("tag_id", "=", tagId)
-      .where("source_module", "=", parsed.data.source_module)
-      .where("source_type", "=", parsed.data.source_type)
-      .where("source_id", "=", parsed.data.source_id)
-      .executeTakeFirst();
-    if (existing) {
-      res.json(existing);
-      return;
-    }
-    const row = await db
-      .insertInto("core_tags_assignments")
-      .values({
-        tag_id: tagId,
-        source_module: parsed.data.source_module,
-        source_type: parsed.data.source_type,
-        source_id: parsed.data.source_id,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    await platform().events.emit("core-tags.assignment.created", {
-      orgId: ctx.org.id,
-      tagId,
-      source_module: row.source_module,
-      source_type: row.source_type,
-      source_id: row.source_id,
+    const { row, created } = await attachTag(db, w, tag, {
+      source_module: parsed.data.source_module,
+      source_type: parsed.data.source_type,
+      source_id: parsed.data.source_id,
     });
-    res.status(201).json(row);
+    res.status(created ? 201 : 200).json(row);
   }),
 );
 
@@ -463,24 +366,11 @@ tagsRouter.delete(
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
       return;
     }
-    const db = tenantDb(req);
-    const ctx = tenantContext(req);
-    const row = await db
-      .deleteFrom("core_tags_assignments")
-      .where("id", "=", id)
-      .returning(["id", "tag_id", "source_module", "source_type", "source_id"])
-      .executeTakeFirst();
+    const row = await detachTag(tenantDb(req), writer(req), { id });
     if (!row) {
       res.status(404).json({ error: { code: "not_found", message: "attachment not found" } });
       return;
     }
-    await platform().events.emit("core-tags.assignment.deleted", {
-      orgId: ctx.org.id,
-      tagId: row.tag_id,
-      source_module: row.source_module,
-      source_type: row.source_type,
-      source_id: row.source_id,
-    });
     res.status(204).end();
   }),
 );

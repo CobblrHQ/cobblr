@@ -30,7 +30,7 @@ import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { ChevronDown, Bot } from "lucide-react";
 import { api } from "../lib/api";
-import { HIDE_WHEN_OVERLAY_OPEN, FloatingChrome, PopoverLayer } from "@cobblr/platform-web";
+import { CORNER_STACK, HIDE_WHEN_OVERLAY_OPEN, FloatingChrome, PopoverLayer } from "@cobblr/platform-web";
 import {
   useToast, usePrintProgress, useBridgeLive, BridgePrinterCard, allowLocalAccess,
   isLocalBridgePrinter, readLocalBridgeStatus, setPrinterStatus,
@@ -199,7 +199,7 @@ function OfferPrompt({
       </div>
     </div>
   );
-  if (mode === "floating") return <FloatingChrome anchor="corner" yieldToContent data-testid="live-floating" className={`right-4 ${LIVE_Z}`}>{card}</FloatingChrome>;
+  if (mode === "floating") return <FloatingChrome anchor="corner" stack={CORNER_STACK.live} yieldToContent data-testid="live-floating" className={`right-4 ${LIVE_Z}`}>{card}</FloatingChrome>;
   return (
     <div className="relative">
       <div className="absolute left-full bottom-1 ml-1.5 z-[60]">{card}</div>
@@ -457,6 +457,12 @@ function Panel({
   );
 }
 
+/** Whether the Live box has anything to say: a control the person armed, or
+ *  a batch printing. Both placements read this one rule. */
+export function somethingIsLive(armed: number, printing: number): boolean {
+  return armed > 0 || printing > 0;
+}
+
 export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: string | undefined }) {
   const [open, setOpen] = useState(false);
   // The sidebar flyout is PORTALED to <body> and fixed-positioned: rendered in
@@ -610,14 +616,16 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
   const pillIcons =
     printerControl && !onIcons.some((c) => c.id === printerControl.id) ? [printerControl, ...onIcons] : onIcons;
 
+  // Nothing is actually LIVE (no armed control, no batch printing): this is a
+  // dormant toggle, not an ongoing session mode, and the box says nothing, in
+  // the sidebar and floating alike. The floating pill used to show a bare
+  // "Live" here, on a phone nobody had started anything on, over the feedback
+  // bubble (#4390); the sidebar had learnt the rule a month before (reported
+  // 2026-07-26). The controls stay armable from their own surfaces (the
+  // Labels page's Auto-print). An OFFER has already returned above.
+  if (!somethingIsLive(onIcons.length, printing)) return null;
+
   if (mode === "sidebar") {
-    // Nothing is actually LIVE — no armed control, no batch printing — so this is
-    // just a dormant toggle, not an "ongoing session mode". Don't spend a whole
-    // sidebar row on a single idle status icon (reported 2026-07-26); it reappears the
-    // moment auto-print is armed or a job runs. The controls stay armable from
-    // their own surfaces (e.g. the Labels page's Auto-print button). An OFFER has
-    // already returned above and is unaffected.
-    if (onIcons.length === 0 && printing === 0) return null;
     // Bare ring row in the sidebar foot; expands into a right-flyout panel that
     // is PORTALED to <body> so the sidebar's overflow-hidden can't clip it.
     return (
@@ -651,7 +659,7 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
   // floating (mobile + top-bar mode): a single outlined pill that morphs to a panel
   // whose collapse strip is at the bottom (same corner).
   return (
-    <FloatingChrome anchor="corner" data-testid="live-floating" className={`right-4 ${LIVE_Z} flex flex-col items-end`}>
+    <FloatingChrome anchor="corner" stack={CORNER_STACK.live} data-testid="live-floating" className={`right-4 ${LIVE_Z} flex flex-col items-end`}>
       {open ? (
         <Panel controls={controls} states={states} onToggle={fire} segmentState={segmentState} badgeFor={badgeFor} detailFor={detailFor} footerAtBottom onClose={() => setOpen(false)} />
       ) : (

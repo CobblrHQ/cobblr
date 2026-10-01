@@ -3,6 +3,7 @@ type: feature
 scope: web
 date: 2026-09-29
 docs_target: docs/USER_GUIDE.md#On a phone
+docs_published: 2026-10-01
 ---
 **Cobblr opens without a signal.** Installed or in the browser, a page you have opened before now opens offline, showing what you had with a bar that says how old it is ("You're offline. Showing what you had as of 14:02."). Changes wait until you are back, and the page refreshes by itself when the connection returns. Opened offline before anything was kept, it shows its own offline screen with Retry instead of the browser's error.
 

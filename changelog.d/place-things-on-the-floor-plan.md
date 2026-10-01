@@ -3,6 +3,7 @@ type: feature
 scope: locations
 date: 2026-09-29
 docs_target: docs/USER_GUIDE.md#3.12 Locations (foundational)
+docs_published: 2026-10-01
 ---
 **Put things where they live, on the floor plan.** Place items shows your plan beside a list of everything that has no place yet: drag a thing onto a shelf, a toolbox or a drawer on its face (or long-press and tap on a phone), drop it on the bare floor to pin it to that spot, and see how many things each place holds. Every table of physical things has a "Place on the floor plan" link.
 

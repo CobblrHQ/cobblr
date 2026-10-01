@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-09-28
 docs_target: docs/USER_GUIDE.md#3.22 AI providers & the AI kill-switch (operator)
+docs_published: 2026-10-01
 ---
 The AI page now shows who answers each kind of work in order (photos, chat, organising, search), with plain warnings when there is no backup, when a model can change under you, or when a connection cannot read photos, and you can move your own connections up or down.
 

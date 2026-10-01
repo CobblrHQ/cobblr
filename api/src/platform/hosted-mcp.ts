@@ -21,7 +21,7 @@
 // credentials and never elevates.
 
 import { platform } from "@cobblr/platform-contract";
-import { WORKSPACE_TOOLS, jsonSchemaOf, mcpToolName, toolFromMcpName, workspaceLinks, type WorkspaceApi } from "@cobblr/workspace-tools";
+import { READ_TOOLS_THAT_POST, WORKSPACE_TOOLS, jsonSchemaOf, mcpToolName, toolFromMcpName, workspaceLinks, type WorkspaceApi } from "@cobblr/workspace-tools";
 import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
 import { signMcpWriteGrant, verifySession } from "../auth/jwt.js";
 import { resolveApiToken } from "../auth/api-tokens.js";
@@ -249,12 +249,8 @@ export function writeRefusal(tool: string, mode: WriteMode): string | null {
 
 export { actionRefusal };
 
-/** Read tools that POST to do their reading (replan_putaway recomputes a
- *  proposal and files nothing). A caller allowed only to look cannot send a
- *  POST, so these are not offered to one: a tool on the list that always
- *  refuses reads to the assistant as a broken tool. The test derives this set
- *  by running every read tool, so a new one cannot be missed. */
-export const READ_TOOLS_THAT_POST = new Set(["replan_putaway"]);
+// Read tools that POST to read, shared with the stdio MCP server.
+export { READ_TOOLS_THAT_POST };
 
 /** The tool list a relay grant sees at `write_mode`. Exported so the guardrail
  *  test can assert advertise-equals-execute without going over HTTP. */
@@ -307,6 +303,7 @@ function nameOf(data: unknown): string {
  *  the answer, no record of what was asked for — which is exactly how this bug
  *  arrived. A test holds this set against the registry's write tools. */
 export const LEDGERED_TOOLS = new Set([
+  "add_thing",
   "create_record",
   "create_records",
   "update_record",

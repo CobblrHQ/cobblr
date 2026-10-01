@@ -833,6 +833,15 @@ function uniqRefs(
   return out;
 }
 
+/** Can list() answer for this kind in this workspace? The same resolver
+ *  lookup list() does, without asking it anything: a kind with no list
+ *  resolver (a job, an order's line) always lists empty, so a search that
+ *  offers it can only ever find nothing. */
+export async function listable(orgId: string, kind: string): Promise<boolean> {
+  if (listResolvers.has(kind)) return moduleEnabledForOrg(orgId, kind.split(":")[0]!);
+  return !!(await instanceFallbackResolver(orgId, kind));
+}
+
 /** List entities of a kind. Returns { items: [] } when no list
  *  resolver is registered for the kind. Otherwise calls the
  *  resolver and projects each item through the kind's

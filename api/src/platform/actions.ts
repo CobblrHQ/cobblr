@@ -450,6 +450,8 @@ export type MatchReason =
  *    - { kinds, traits, hasFieldRole } — at least one sub-predicate set;
  *      OR across them (any hitting matches), AND within `traits` (every
  *      axis the predicate names must be satisfied by one of its poles).
+ *    - `requires: { traits }` beside them — AND: whichever matched, the
+ *      kind must also carry these traits, or nothing matched.
  */
 export function matchAction(
   predicate: ActionAppliesToDecl,
@@ -459,6 +461,18 @@ export function matchAction(
 ): MatchReason {
   if ("any" in predicate && predicate.any) return { via: "any" };
   const p = predicate as Exclude<ActionAppliesToDecl, { any: true }>;
+  const reason = matchAny(p, kindFields, kindId, kindTraits);
+  // `requires` is AND: whatever matched, the record must also be this.
+  if (reason.via !== null && p.requires?.traits.length && !traitsSatisfied(p.requires.traits, kindTraits)) return { via: null };
+  return reason;
+}
+
+function matchAny(
+  p: Exclude<ActionAppliesToDecl, { any: true }>,
+  kindFields: { role?: string }[],
+  kindId: string,
+  kindTraits: Record<string, unknown> | null,
+): MatchReason {
   // OR across kinds / traits / hasFieldRole — first hit wins, and
   // kinds is checked first as the most specific.
   if (p.kinds?.includes(kindId)) return { via: "kinds", kind: kindId };
@@ -466,30 +480,37 @@ export function matchAction(
     return { via: "hasFieldRole", role: p.hasFieldRole };
   }
   if (p.traits?.length) {
-    const have = collectTraitValues(kindTraits);
-    // Group required traits by axis: within an axis OR, across AND.
-    const byAxis = new Map<AnyAxisName, string[]>();
-    for (const t of p.traits as string[]) {
-      // Real or trial axis: a trait word on either matches the same way.
-      const axis = axisOfTrait(t);
-      if (!axis) continue;
-      const list = byAxis.get(axis) ?? [];
-      list.push(t);
-      byAxis.set(axis, list);
-    }
-    if (byAxis.size > 0) {
-      // For each axis, the trait that satisfied it (if any).
-      const satisfiers: string[] = [];
-      let allSatisfied = true;
-      for (const traits of byAxis.values()) {
-        const hit = traits.find((t) => have.has(t));
-        if (hit) satisfiers.push(hit);
-        else allSatisfied = false;
-      }
-      if (allSatisfied) return { via: "traits", traits: satisfiers };
-    }
+    const satisfiers = traitSatisfiers(p.traits, kindTraits);
+    if (satisfiers) return { via: "traits", traits: satisfiers };
   }
   return { via: null };
+}
+
+/** The traits that satisfy every axis the list names (within an axis OR,
+ *  across AND), or null when one axis goes unmet or none is named. */
+function traitSatisfiers(wanted: readonly string[], kindTraits: Record<string, unknown> | null): string[] | null {
+  const have = collectTraitValues(kindTraits);
+  const byAxis = new Map<AnyAxisName, string[]>();
+  for (const t of wanted) {
+    // Real or trial axis: a trait word on either matches the same way.
+    const axis = axisOfTrait(t);
+    if (!axis) continue;
+    const list = byAxis.get(axis) ?? [];
+    list.push(t);
+    byAxis.set(axis, list);
+  }
+  if (byAxis.size === 0) return null;
+  const satisfiers: string[] = [];
+  for (const traits of byAxis.values()) {
+    const hit = traits.find((t) => have.has(t));
+    if (!hit) return null;
+    satisfiers.push(hit);
+  }
+  return satisfiers;
+}
+
+function traitsSatisfied(wanted: readonly string[], kindTraits: Record<string, unknown> | null): boolean {
+  return traitSatisfiers(wanted, kindTraits) !== null;
 }
 
 /** True if the action's predicate matches an entity kind. */

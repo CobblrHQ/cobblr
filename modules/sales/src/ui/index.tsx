@@ -6,13 +6,14 @@
 
 import { useEffect, useState } from "react";
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { CollectionHeader, ContributedDetailPanels, useRecordInPath, CustomFieldsPanel, Modal, headerButton, useFieldDraft, useToast, useConfirm, usePageTitle, SearchInput } from "@cobblr/platform-web";
-import { ShoppingCart, Plus, Trash2, X, Users, PackageCheck, Truck, Copy, ExternalLink, Hammer } from "lucide-react";
+import { CollectionHeader, ContributedDetailPanels, MoneyInput, useRecordInPath, CustomFieldsPanel, FieldPack, fieldNeed, fieldPackControlClass, Modal, headerButton, useFieldDraft, useToast, useConfirm, usePageTitle, SearchInput } from "@cobblr/platform-web";
+import { ShoppingCart, Plus, Trash2, X, Users, PackageCheck, Truck, Copy, ExternalLink, Hammer, Settings } from "lucide-react";
 import {
   SalesApi, SalesApiError,
   type SalesOrder, type SalesOrderStatus, type CustomerSummary, type PartOption, type FulfilDoor, type HistoryRow, type OrderSort, type Paged,
 } from "./api.js";
 import { Link } from "react-router-dom";
+import { formatStoredMoney } from "@cobblr/platform-contract/money";
 
 export const navItems = [{ label: "Sales", path: "/sales", icon: ShoppingCart }];
 
@@ -75,6 +76,7 @@ export function SalesUI({ orgSlug, getToken }: Props) {
   const [customerInPath, setCustomerInPath] = useRecordInPath("sales", { sub: "customers" });
   const [creating, setCreating] = useState(false);
   const [customersList, setCustomersList] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const customersOpen = customersList || !!customerInPath;
   const setCustomersOpen = (v: boolean) => {
     setCustomersList(v);
@@ -117,6 +119,9 @@ export function SalesUI({ orgSlug, getToken }: Props) {
             <button type="button" onClick={() => setCustomersOpen(true)} className={headerButton()}>
               <Users size={14} /> Customers
             </button>
+            <button type="button" onClick={() => setSettingsOpen(true)} className={headerButton()} aria-label="Sales settings">
+              <Settings size={14} />
+            </button>
             <button type="button" onClick={() => setCreating(true)} className={headerButton("primary")}>
               <Plus size={14} /> New order
             </button>
@@ -151,8 +156,64 @@ export function SalesUI({ orgSlug, getToken }: Props) {
 
       {creating && <NewOrderModal api={api} orgSlug={orgSlug} onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); setOpen(id); }} />}
       {open && <OrderDetailModal api={api} orgSlug={orgSlug} orderId={open} onClose={() => setOpen(null)} />}
+      {settingsOpen && <SalesSettingsModal api={api} onClose={() => setSettingsOpen(false)} />}
       {customersOpen && <CustomersModal api={api} initialEditing={customerInPath} onClose={() => setCustomersOpen(false)} />}
     </div>
+  );
+}
+
+const PAUSED_WORDS: Record<string, string> = {
+  busy: "Your tracking service said it was busy, so Cobblr is leaving it alone for a while.",
+  quota_exhausted: "Your tracking service is at capacity. Cobblr will try again tomorrow.",
+  not_connected: "You have no parcel tracking connected. Add one under Your account, Connections (your own bridge works).",
+  no_driver: "Cobblr cannot follow parcels from this carrier yet.",
+};
+
+/** Sales settings: "Follow parcels I send". Off until a person turns it on;
+ *  it then asks with their own tracking connection, never one Cobblr pays for. */
+function SalesSettingsModal({ api, onClose }: { api: SalesApi; onClose: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const follow = useQuery({ queryKey: ["sales-follow-parcels"], queryFn: () => api.followParcels() });
+  const set = useMutation({
+    mutationFn: (on: boolean) => api.setFollowParcels(on),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["sales-follow-parcels"] }),
+    onError: (e) => toast.error(e instanceof SalesApiError ? e.message : String(e)),
+  });
+  const check = useMutation({
+    mutationFn: () => api.checkParcelsNow(),
+    onSuccess: (r) => {
+      toast.success(r.asked === 0 ? "Nothing due to check right now" : `Checked ${r.asked} parcel${r.asked === 1 ? "" : "s"}${r.delivered ? `, ${r.delivered} delivered` : ""}`);
+      void qc.invalidateQueries({ queryKey: ["sales-follow-parcels"] });
+      void qc.invalidateQueries({ queryKey: ["sales-orders"] });
+    },
+    onError: (e) => toast.error(e instanceof SalesApiError ? e.message : String(e)),
+  });
+  const f = follow.data;
+  return (
+    <Modal open onClose={onClose} title="Sales settings" size="md">
+      <div className="space-y-3 text-sm">
+        <label className="flex items-start gap-3">
+          <input type="checkbox" className="mt-1" checked={!!f?.on} disabled={!f || set.isPending} onChange={(e) => set.mutate(e.target.checked)} />
+          <span>
+            <span className="font-medium text-content dark:text-mortar-100">Follow parcels I send</span>
+            <span className="block text-xs text-muted">
+              Cobblr asks where each shipped order's parcel is a few times a day, and marks the order delivered when the carrier says so. It uses your own
+              tracking connection (your bridge, if you have one), never one Cobblr pays for, and stops two days after the delivered scan.
+            </span>
+          </span>
+        </label>
+        {f?.on && (
+          <div className="rounded border border-line dark:border-slate-700 p-3 space-y-2">
+            <div className="text-xs text-muted">Following {f.following ?? 0} parcel{f.following === 1 ? "" : "s"} that have not been delivered yet.</div>
+            {f.paused_reason && <div className="text-xs text-amber-700 dark:text-amber-300">{PAUSED_WORDS[f.paused_reason]}</div>}
+            <button type="button" onClick={() => check.mutate()} disabled={check.isPending} className="px-3 py-1.5 text-xs rounded border border-line dark:border-slate-600 disabled:opacity-50">
+              {check.isPending ? "Checking…" : "Check now"}
+            </button>
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }
 
@@ -173,6 +234,7 @@ function OrderCard({ order, onOpen, onDelete }: { order: SalesOrder; onOpen: () 
           <div className="font-medium text-content dark:text-mortar-100 truncate">{order.customer_name || order.order_number || "(no customer)"}</div>
           <div className="text-xs text-muted mt-0.5 flex items-center gap-2">
             <StatusPill status={order.status} />
+            {order.delivered_at && <span className="text-moss-700 dark:text-moss-300">delivered {new Date(order.delivered_at).toLocaleDateString()}</span>}
             {order.order_number && order.customer_name && <span>{order.order_number}</span>}
           </div>
         </button>
@@ -242,6 +304,12 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
     onSuccess: invalidate,
     onError: (e) => toast.error(e instanceof SalesApiError ? e.message : String(e)),
   });
+  const updateItem = useMutation({
+    mutationFn: (m: { itemId: string; body: { qty?: number; unit_price?: number | null } }) => api.updateItem(orderId, m.itemId, m.body),
+    onSuccess: invalidate,
+    onError: (e) => toast.error(e instanceof SalesApiError ? e.message : String(e)),
+  });
+  const confirm = useConfirm();
   // A short order is refused with a sentence and its doors (make more, ship
   // what you have). They stay on the order, where the decision is made,
   // rather than in a toast that leaves with them.
@@ -261,6 +329,27 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
   });
 
   const [shipping, setShipping] = useState(false);
+  // Cancel: an order that shipped is asked whether it came back first.
+  const [askReturned, setAskReturned] = useState<string | null>(null);
+  const cancel = useMutation({
+    mutationFn: (returned?: boolean) => api.cancelOrder(orderId, returned),
+    onSuccess: (r) => {
+      setAskReturned(null);
+      const back = r.restocked.reduce((n, x) => n + x.qty, 0);
+      toast.success(back > 0 ? `Order cancelled: ${back} put back in stock` : "Order cancelled", {
+        actionLabel: "Undo",
+        onAction: async () => {
+          await api.reinstateOrder(orderId, r);
+          invalidate();
+        },
+      });
+      invalidate();
+    },
+    onError: (e) => {
+      if (e instanceof SalesApiError && e.code === "ask_returned") setAskReturned(e.message);
+      else toast.error(e instanceof SalesApiError ? e.message : String(e));
+    },
+  });
   // "Make this": a work order for the line's part, made for this order.
   const [making, setMaking] = useState<{ lineId: string; name: string; qty: number } | null>(null);
   const [makeRefusal, setMakeRefusal] = useState<{ message: string; doors: FulfilDoor[] } | null>(null);
@@ -287,19 +376,46 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
         {detail.isLoading && <div className="text-sm text-muted">Loading…</div>}
         {d && (
           <>
-            <div className="grid grid-cols-2 gap-3 text-xs">
-              <div>
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Customer</span>
-                <CustomerPicker api={api} customerId={d.customer_id} customerName={d.customer_name ?? ""} onChange={(id, name) => update.mutate({ customer_id: id, customer_name: name || null })} />
-              </div>
-              <div>
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Status</span>
-                <select value={d.status} onChange={(e) => update.mutate({ status: e.target.value as SalesOrderStatus })} className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm">
-                  {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-              <OrderNumberField value={d.order_number ?? ""} onSave={(order_number) => update.mutate({ order_number })} />
-            </div>
+            {/* Laid out by the platform's packer, as every record form is: a
+                phone gets two columns where the fields fit and a row where one
+                needs it, instead of a hand grid squeezing the customer picker. */}
+            <FieldPack
+              className="gap-y-3 text-xs"
+              items={[
+                {
+                  need: fieldNeed("customer", { control: "picker", label: "Customer" }),
+                  node: (
+                    <div>
+                      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Customer</span>
+                      <CustomerPicker api={api} customerId={d.customer_id} customerName={d.customer_name ?? ""} onChange={(id, name) => update.mutate({ customer_id: id, customer_name: name || null })} />
+                    </div>
+                  ),
+                },
+                {
+                  need: fieldNeed("status", { control: "choice", label: "Status", choices: STATUSES }),
+                  node: (
+                    <div>
+                      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Status</span>
+                      <select value={d.status} onChange={(e) => (e.target.value === "cancelled" ? cancel.mutate(undefined) : update.mutate({ status: e.target.value as SalesOrderStatus }))} className="w-full min-w-0 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm">
+                        {STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
+                      </select>
+                    </div>
+                  ),
+                },
+                {
+                  need: fieldNeed("order_number", { control: "text", label: "Order number", valueLength: (d.order_number ?? "").length }),
+                  node: <OrderNumberField value={d.order_number ?? ""} onSave={(order_number) => update.mutate({ order_number })} />,
+                },
+                {
+                  need: fieldNeed("order_date", { control: "date", label: "Order date" }),
+                  node: <OrderDateField value={d.order_date ? d.order_date.slice(0, 10) : ""} onSave={(order_date) => update.mutate({ order_date })} />,
+                },
+                {
+                  need: { key: "shipping_address", minPx: 200, full: true },
+                  node: <ShipToField value={d.shipping_address ?? ""} onSave={(shipping_address) => update.mutate({ shipping_address })} />,
+                },
+              ]}
+            />
 
             {/* The order's own fields: whatever a bundle adds to an order
                 ("Due date", "Came in through"), editable here. */}
@@ -314,16 +430,38 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
             <div>
               <div className="flex items-baseline justify-between mb-1.5">
                 <span className="text-[10px] font-mono uppercase tracking-widest text-muted">Line items</span>
-                <span className="text-sm font-semibold text-content dark:text-mortar-100">Total ${d.total.toFixed(2)}</span>
+                <span className="text-sm font-semibold text-content dark:text-mortar-100">Total {formatStoredMoney(d.total, "amount")}</span>
               </div>
               {d.items.length === 0 && <div className="text-sm text-muted italic">No line items yet. Add what was sold.</div>}
               <ul className="divide-y divide-slate-100 dark:divide-slate-800 border border-line dark:border-slate-700 rounded">
                 {d.items.map((it) => (
                   <li key={it.id} className="flex items-center gap-3 px-3 py-2 text-sm group">
                     <span className="flex-1 text-content dark:text-mortar-100">{it.description || (it.part_id ? "(part)" : "(item)")}</span>
-                    <span className="text-xs text-muted tabular-nums">
-                      {Number(it.qty)}{it.unit_price ? ` × $${Number(it.unit_price).toFixed(2)}` : ""}
-                    </span>
+                    {fulfilled ? (
+                      <span className="text-xs text-muted tabular-nums">
+                        {Number(it.qty)}{it.unit_price ? ` × ${formatStoredMoney(it.unit_price, "amount")}` : ""}
+                      </span>
+                    ) : (
+                      // A line's quantity and price are the two things a
+                      // customer changes their mind about; changing them used
+                      // to mean removing the line and adding it again.
+                      <span className="inline-flex items-center gap-1 text-xs text-muted">
+                        <NumberCell
+                          label={`How many ${it.description || "of this line"}`}
+                          value={String(Number(it.qty))}
+                          min={0.0001}
+                          onSave={(v) => v !== null && updateItem.mutate({ itemId: it.id, body: { qty: v } })}
+                        />
+                        <span aria-hidden>×</span>
+                        <MoneyInput
+                          ariaLabel={`Price each for ${it.description || "this line"}`}
+                          value={it.unit_price}
+                          storage="amount"
+                          onCommit={(v) => updateItem.mutate({ itemId: it.id, body: { unit_price: v } })}
+                          className="w-28"
+                        />
+                      </span>
+                    )}
                     {!fulfilled && it.part_id && Number(it.qty_fulfilled) > 0 && (
                       <span className="text-xs text-moss-700 dark:text-moss-300 tabular-nums">{Number(it.qty_fulfilled)} shipped</span>
                     )}
@@ -354,7 +492,14 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
                       ) : null;
                     })()}
                     {!fulfilled && (
-                      <button type="button" onClick={() => removeItem.mutate(it.id)} className="text-slate-300 hover:text-red-500 hover-reveal" aria-label="Remove line item">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (await confirm({ title: "Remove this line?", message: `${it.description || "This line"} comes off the order.`, confirmLabel: "Remove", destructive: true })) removeItem.mutate(it.id);
+                        }}
+                        className="text-slate-300 hover:text-red-500 hover-reveal"
+                        aria-label={`Remove ${it.description || "line item"}`}
+                      >
                         <X size={14} />
                       </button>
                     )}
@@ -362,6 +507,17 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
                 ))}
               </ul>
             </div>
+
+            {askReturned && (
+              <div role="alertdialog" aria-label="Was it returned?" className="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-3 space-y-2">
+                <p className="text-sm text-content dark:text-mortar-100">{askReturned}</p>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => cancel.mutate(true)} className="px-3 py-1.5 text-xs rounded bg-cobble-600 text-white">Yes, it came back</button>
+                  <button type="button" onClick={() => cancel.mutate(false)} className="px-3 py-1.5 text-xs rounded border border-line dark:border-slate-600">No, cancel it anyway</button>
+                  <button type="button" onClick={() => setAskReturned(null)} className="px-3 py-1.5 text-xs rounded text-muted">Keep the order</button>
+                </div>
+              </div>
+            )}
 
             {!fulfilled && <AddLineRow api={api} onAdd={(b) => addItem.mutate(b)} />}
 
@@ -493,6 +649,82 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
 /** The order's number, editable in place. Drafts through useFieldDraft so a
  *  number that changes under the open sheet (another tab, the assistant)
  *  replaces an untouched field rather than being shadowed by it. */
+/** A number on a line, saved when you leave the box. Empty is "no value"
+ *  only where that means something (a price not set yet). */
+function NumberCell({ label, value, min, allowEmpty, onSave }: { label: string; value: string; min: number; allowEmpty?: boolean; onSave: (v: number | null) => void }) {
+  const f = useFieldDraft(value);
+  const save = () => {
+    const raw = f.draft.trim();
+    if (raw === value) return;
+    if (raw === "" && allowEmpty) {
+      f.committed("");
+      return onSave(null);
+    }
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < min) return f.reset();
+    f.committed(raw);
+    onSave(n);
+  };
+  return (
+    <input
+      aria-label={label}
+      inputMode="decimal"
+      value={f.draft}
+      onChange={(e) => f.setDraft(e.target.value)}
+      onBlur={save}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        if (e.key === "Escape") f.reset();
+      }}
+      className="w-16 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1.5 py-1 text-xs text-right tabular-nums"
+    />
+  );
+}
+
+function OrderDateField({ value, onSave }: { value: string; onSave: (v: string | null) => void }) {
+  const f = useFieldDraft(value);
+  return (
+    <label className="block">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Order date</span>
+      <input
+        type="date"
+        value={f.draft}
+        onChange={(e) => {
+          f.setDraft(e.target.value);
+          if (e.target.value !== value) {
+            f.committed(e.target.value);
+            onSave(e.target.value || null);
+          }
+        }}
+        className={"rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm " + fieldPackControlClass}
+      />
+    </label>
+  );
+}
+
+function ShipToField({ value, onSave }: { value: string; onSave: (v: string | null) => void }) {
+  const f = useFieldDraft(value);
+  const save = () => {
+    const next = f.draft.trim();
+    if (next === value.trim()) return;
+    f.committed(next);
+    onSave(next || null);
+  };
+  return (
+    <label className="block">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Ship to</span>
+      <textarea
+        rows={2}
+        value={f.draft}
+        placeholder="The address it goes to, if it is not the customer's own"
+        onChange={(e) => f.setDraft(e.target.value)}
+        onBlur={save}
+        className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm"
+      />
+    </label>
+  );
+}
+
 function OrderNumberField({ value, onSave }: { value: string; onSave: (v: string) => void }) {
   const f = useFieldDraft(value);
   const save = () => {
@@ -698,7 +930,7 @@ function AddLineRow({ api, onAdd }: { api: SalesApi; onAdd: (b: { part_id: strin
   const [picked, setPicked] = useState<PartOption | null>(null);
   const [desc, setDesc] = useState("");
   const [qty, setQty] = useState(1);
-  const [price, setPrice] = useState("");
+  const [price, setPrice] = useState<number | null>(null);
   const parts = useQuery({ queryKey: ["sales-part-search", q], queryFn: () => api.searchParts(q), enabled: q.length > 0 && !picked });
 
   function submit() {
@@ -706,9 +938,9 @@ function AddLineRow({ api, onAdd }: { api: SalesApi; onAdd: (b: { part_id: strin
       part_id: picked?.id ?? null,
       description: (picked?.title ?? desc).trim() || null,
       qty: Math.max(1, qty),
-      unit_price: price.trim() ? Number(price) : null,
+      unit_price: price,
     });
-    setPicked(null); setQ(""); setDesc(""); setQty(1); setPrice("");
+    setPicked(null); setQ(""); setDesc(""); setQty(1); setPrice(null);
   }
 
   return (
@@ -742,7 +974,7 @@ function AddLineRow({ api, onAdd }: { api: SalesApi; onAdd: (b: { part_id: strin
       </div>
       <div className="flex items-center gap-2">
         <label className="text-xs text-muted">Qty <input type="number" min={1} value={qty} onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))} className="w-16 ml-1 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm" /></label>
-        <label className="text-xs text-muted">Unit $ <input value={price} onChange={(e) => setPrice(e.target.value.replace(/[^0-9.]/g, ""))} inputMode="decimal" className="w-20 ml-1 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm" /></label>
+        <label className="text-xs text-muted flex items-center gap-1">Each <MoneyInput value={price} storage="amount" live onCommit={setPrice} ariaLabel="Price each" className="w-28 text-sm" /></label>
         <div className="flex-1" />
         <button type="button" disabled={!picked && !desc.trim()} onClick={submit} className="px-3 py-1.5 text-xs rounded bg-cobble-600 text-white disabled:opacity-50">Add</button>
       </div>

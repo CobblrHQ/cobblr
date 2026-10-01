@@ -13,7 +13,7 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, Trash2 } from "lucide-react";
-import { RelationSelect, useConfirm, useToast } from "@cobblr/platform-web";
+import { MoneyInput, RelationSelect, useConfirm, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type Order, type OrderItem } from "../lib/api";
 
 /** The choice an order that has already arrived carries: whether its lines
@@ -37,7 +37,6 @@ export function lineCountSettled(order: Pick<Order, "add_to_stock">, item: Pick<
   return !!item.received_at && !!item.part_id && order.add_to_stock !== false;
 }
 
-const numOrNull = (v: string): number | null => (v.trim() === "" ? null : Number(v));
 
 export function AddOrderLine({ slug, order }: { slug: string; order: Order }) {
   const qc = useQueryClient();
@@ -46,7 +45,7 @@ export function AddOrderLine({ slug, order }: { slug: string; order: Order }) {
   const [partId, setPartId] = useState<string | null>(null);
   const [description, setDescription] = useState("");
   const [qty, setQty] = useState("1");
-  const [unitCost, setUnitCost] = useState("");
+  const [unitCost, setUnitCost] = useState<number | null>(null);
   const [addToStock, setAddToStock] = useState(order.add_to_stock !== false);
   const arrived = order.status === "arrived";
 
@@ -56,7 +55,7 @@ export function AddOrderLine({ slug, order }: { slug: string; order: Order }) {
         part_id: partId,
         description: description.trim() || null,
         qty: Number(qty),
-        unit_cost: numOrNull(unitCost),
+        unit_cost: unitCost,
         ...(arrived ? { add_to_stock: addToStock } : {}),
       }),
     onSuccess: () => {
@@ -65,7 +64,7 @@ export function AddOrderLine({ slug, order }: { slug: string; order: Order }) {
       setPartId(null);
       setDescription("");
       setQty("1");
-      setUnitCost("");
+      setUnitCost(null);
       setOpen(false);
       toast.success(arrived && addToStock && partId ? "Line added, and its stock with it." : "Line added.");
     },
@@ -103,7 +102,7 @@ export function AddOrderLine({ slug, order }: { slug: string; order: Order }) {
         </label>
         <label className="block">
           <span className="block text-xs text-muted mb-1">Cost each</span>
-          <input type="number" inputMode="decimal" min="0" step="any" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} className="input" />
+          <MoneyInput value={unitCost} storage="amount" live onCommit={setUnitCost} ariaLabel="Cost each" />
         </label>
       </div>
       {arrived && <AddToStockChoice checked={addToStock} onChange={setAddToStock} />}
@@ -128,7 +127,7 @@ export function OrderLineControls({ slug, order, item }: { slug: string; order: 
   const [editing, setEditing] = useState(false);
   const [description, setDescription] = useState(item.description ?? "");
   const [qty, setQty] = useState(String(Number(item.qty)));
-  const [unitCost, setUnitCost] = useState(item.unit_cost == null ? "" : String(Number(item.unit_cost)));
+  const [unitCost, setUnitCost] = useState<number | null>(item.unit_cost == null ? null : Number(item.unit_cost));
   const settled = lineCountSettled(order, item);
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: orderKey(slug, order.id) });
@@ -140,7 +139,7 @@ export function OrderLineControls({ slug, order, item }: { slug: string; order: 
       api.updateOrderItem(slug, order.id, item.id, {
         description: description.trim() || null,
         ...(settled ? {} : { qty: Number(qty) }),
-        unit_cost: numOrNull(unitCost),
+        unit_cost: unitCost,
       }),
     onSuccess: () => {
       refresh();
@@ -209,7 +208,7 @@ export function OrderLineControls({ slug, order, item }: { slug: string; order: 
       </label>
       <label>
         <span className="block text-xs text-muted mb-1">Cost each</span>
-        <input type="number" inputMode="decimal" min="0" step="any" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} className="input" />
+        <MoneyInput value={unitCost} storage="amount" live onCommit={setUnitCost} ariaLabel="Cost each" />
       </label>
       {settled && <p className="col-span-2 sm:col-span-4 text-xs text-faint">Its stock was already added, so its count stays. Change the item's own count if that is wrong.</p>}
       <div className="col-span-2 sm:col-span-4 flex justify-end gap-2">

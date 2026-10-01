@@ -58,6 +58,7 @@ const DescribeBody = z.object({ remedies: z.array(Remedy).min(1).max(4), doing: 
 // AI-REACH: a read despite the verb; the same explanation a 403 carries, for a surface that knows ahead of the refusal
 approvalRequestsRouter.post("/describe", requireAuth, withTenant, async (req, res, next) => {
   try {
+    // ROLE: any member (a read: the explanation a refusal carries)
     const parsed = DescribeBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
@@ -97,6 +98,7 @@ approvalRequestsRouter.get("/", requireAuth, withTenant, async (req, res, next) 
 // AI-REACH: asking for a permission is the person's own act after a refusal the sheet shows them; an assistant blocked the same way is told the same sentence and does not ask on their behalf
 approvalRequestsRouter.post("/", requireAuth, withTenant, async (req, res, next) => {
   try {
+    // ROLE: any member (asking for more is how a member gets it)
     const parsed = CreateBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
@@ -151,6 +153,7 @@ approvalRequestsRouter.get("/:id", requireAuth, withTenant, async (req, res, nex
 // AI-REACH: deciding what another person may do is a person's decision; the assistant never approves or declines a request, and the two actions behind this are wire-only
 approvalRequestsRouter.post("/:id/decide", requireAuth, withTenant, async (req, res, next) => {
   try {
+    // ROLE: owner or admin, checked by decideApprovalRequest (mayDecide)
     const parsed = DecideBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
@@ -177,6 +180,7 @@ approvalRequestsRouter.post("/:id/decide", requireAuth, withTenant, async (req, 
 // AI-REACH: taking back one's own ask; the sheet offers it beside the pending state
 approvalRequestsRouter.post("/:id/withdraw", requireAuth, withTenant, async (req, res, next) => {
   try {
+    // ROLE: the requester, checked by withdrawApprovalRequest
     const row = await withdrawApprovalRequest(req.params.id!, userOf(req).id);
     if (!row) {
       res.status(409).json({ error: { code: "not_pending", message: "Only your own pending request can be withdrawn." } });
@@ -191,6 +195,7 @@ approvalRequestsRouter.post("/:id/withdraw", requireAuth, withTenant, async (req
 // AI-REACH: the requester asking again for a yes that was taken back since; the resume sheet offers it
 approvalRequestsRouter.post("/:id/ask-again", requireAuth, withTenant, async (req, res, next) => {
   try {
+    // ROLE: the requester, checked by askAgain
     const t = orgOf(req);
     const r = await askAgain({ requestId: req.params.id!, requesterId: userOf(req).id, requesterRole: t.role });
     if (!r.ok) {
@@ -207,6 +212,7 @@ approvalRequestsRouter.post("/:id/ask-again", requireAuth, withTenant, async (re
 // AI-REACH: the requester's own resume, handed out once; the sheet replays their draft under their session
 approvalRequestsRouter.post("/:id/resume", requireAuth, withTenant, async (req, res, next) => {
   try {
+    // ROLE: the requester, checked by prepareResume
     const r = await prepareResume(req.params.id!, userOf(req).id);
     if (!r.ok) {
       res.status(r.status).json({ error: { code: r.code, message: r.message } });
@@ -221,6 +227,7 @@ approvalRequestsRouter.post("/:id/resume", requireAuth, withTenant, async (req, 
 // AI-REACH: the requester reporting how their replay went; bookkeeping on their own row
 approvalRequestsRouter.post("/:id/complete", requireAuth, withTenant, async (req, res, next) => {
   try {
+    // ROLE: the requester, checked by the request it completes
     const parsed = CompleteBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });

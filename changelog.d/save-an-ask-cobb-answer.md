@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-09-28
 docs_target: docs/USER_GUIDE.md#3.3 Projects
+docs_published: 2026-10-01
 ---
 Every Ask Cobb answer can be saved. A crochet or knitting pattern becomes a Pattern that lists the yarn, hook and notions it names, checked against your stash like a PDF pattern; anything else becomes a Knowledge Base note that says where it came from.
 

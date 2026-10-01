@@ -21,10 +21,10 @@ import { isSandboxSession } from "../lib/sandbox-session";
 import { BringInBackup } from "../components/BringInBackup";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { activityKind } from "../lib/activityKind";
-import { AUTOMATION_ACTIONS, activityVerb, actorWords, automationWords, foldOneThingsRows, hiddenFromDashboard, updatedFieldsWords } from "../lib/activity-words";
-import { openSheetImport } from "../lib/sheet-import";
-import { ACTIVITY_ROW, ACTOR_CELL, ActorVia, GroupActorVia, ITEM_CELL } from "../components/ActorVia";
+import { AUTOMATION_ACTIONS, activityVerb, actorWords, automationWords, foldOneThingsRows, hiddenFromDashboard } from "../lib/activity-words";
+import { ACTIVITY_ROW, ACTOR_CELL, GroupActorVia, ITEM_CELL } from "../components/ActorVia";
 import { useKindLabels } from "../lib/useKindLabels";
+import { ActivitySentence, activityTitle, pickString, type KindLabels } from "../components/ActivitySentence";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, CheckCircle2, ChevronDown, Compass, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Pin, Sliders, X } from "lucide-react";
@@ -40,7 +40,8 @@ import { useDetailRoute } from "../lib/useDetailRoute";
 import { composeAttention } from "../lib/attention-cards";
 import { DatedCard } from "../components/DatedCard";
 import { DiscordReminderOffer } from "../components/DiscordReminderOffer";
-import { CONNECT_DISCORD_PATH } from "../lib/discord-connect";
+import { CONNECT_DISCORD_PATH, doorLeadsSomewhere } from "../lib/discord-connect";
+import { useDiscordStatus } from "../lib/useDiscordStatus";
 import { groupRows, NO_GROUP, type GroupableRow } from "../lib/view-group-key";
 import { useViewData } from "../lib/useViewData";
 import { useAreaResolver } from "../lib/useAreaResolver";
@@ -83,7 +84,6 @@ import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { TipLine, pickTip, registeredTips } from "@cobblr/platform-web";
 import { useTipState } from "../tips/useTipState";
 import "../tips/install-tip";
-import { withArticle } from "@cobblr/platform-contract/plural";
 
 /** Homepage quick-links: big tap targets for the destinations this workspace
  *  actually uses (Scan Inbox, each instance like "Yarn", the domain modules),
@@ -837,8 +837,8 @@ function SetupCardsPanel({ slug }: { slug: string }) {
   // "Get reminders on Discord" is a step only while it is one: not once a DM
   // reaches this person, and never on a server that cannot send one.
   const wantsDiscord = visible.some((c) => c.nextSteps.some((s) => s.path === CONNECT_DISCORD_PATH));
-  const discordQ = useQuery({ queryKey: ["discord-status"], queryFn: () => api.meDiscordStatus(), enabled: wantsDiscord, staleTime: 5 * 60_000, retry: false });
-  const stepShown = (s: { path?: string }) => s.path !== CONNECT_DISCORD_PATH || (!!discordQ.data?.configured && !discordQ.data.verified);
+  const discordQ = useDiscordStatus(wantsDiscord);
+  const stepShown = (s: { path?: string }) => doorLeadsSomewhere(s.path, discordQ.data) && (s.path !== CONNECT_DISCORD_PATH || !discordQ.data?.verified);
   if (visible.length === 0) return null;
   return (
     <div className="space-y-3">
@@ -2141,44 +2141,11 @@ function groupActivity(items: ActivityEntry[]): ActivityGroup[] {
   return out;
 }
 
-type KindLabels = ReturnType<typeof useKindLabels>;
 
 function ActivityRow({ entry: e, labels }: { entry: ActivityEntry; labels: KindLabels }) {
-  // An automation row is one sentence in the action's own words; the verb
-  // column would only repeat "ran an automation" in front of it.
-  const auto = AUTOMATION_ACTIONS.has(e.action) ? automationWords(e) : null;
-  const { activeSlug } = useActiveOrg();
-  const routeFor = useDetailRoute(activeSlug);
-  // The record, when it is still there (the server resolved its collection):
-  // the row names it AND opens it, the way every other mention of a record
-  // does. "stock moved part" had neither (#4032).
-  const href = !auto && e.entity_kind && e.entity_id ? routeFor(e.entity_kind, e.entity_id) : null;
   return (
     <li className={`px-3 py-2 text-sm ${ACTIVITY_ROW}`}>
-      <span className={`text-muted dark:text-slate-400 ${ACTOR_CELL}`}>
-        <ActorVia entry={e} />
-      </span>
-      {!auto && (
-        <span className="text-content dark:text-mortar-200 shrink-0">
-          {activityVerb(e.action)}
-        </span>
-      )}
-      <span className={`text-content dark:text-mortar-100 ${ITEM_CELL}`} data-testid="activity-item">
-        {auto ? (
-          auto.hidden ? null : auto.said
-        ) : href ? (
-          <Link to={href} className="hover:underline" data-testid="activity-item-link">
-            {activityTitle(e, labels)}
-          </Link>
-        ) : (
-          activityTitle(e, labels)
-        )}
-      </span>
-      {e.entity_type === "import_run" && e.entity_id && (
-        <button type="button" onClick={() => openSheetImport({ runId: e.entity_id })} className="shrink-0 text-xs text-accent hover:underline">
-          Open
-        </button>
-      )}
+      <ActivitySentence entry={e} labels={labels} />
       <span className="flex-1" />
       <span className="font-mono text-[10px] text-faint shrink-0">
         {relativeTime(e.occurred_at)}
@@ -2287,41 +2254,12 @@ function SectionTitle({ children, className }: { children: React.ReactNode; clas
   );
 }
 
-function pickString(
-  obj: Record<string, unknown>,
-  keys: string[],
-): string | null {
-  for (const k of keys) {
-    const v = obj[k];
-    if (typeof v === "string" && v.length > 0) return v;
-  }
-  return null;
-}
 
 
 
 /** The "what" cell. A wire's row is the action's own sentence for what it did
  *  (activity-words.ts); an id is never printed. Everything else uses its
  *  create-time title, then the live record's, then the changed fields. */
-function activityTitle(e: ActivityEntry, labels: KindLabels): React.ReactNode {
-  const diff = (e.diff ?? {}) as Record<string, unknown>;
-  if (AUTOMATION_ACTIONS.has(e.action)) {
-    const w = automationWords(e);
-    return w.hidden ? null : w.said;
-  }
-  // Diff title (creates carry one) → server-resolved live-record title (updates)
-  // → the field and value that changed (an update whose record could not be
-  // read: "updated type" read as a bug) → bare noun (deleted / unresolvable).
-  const title = pickString(diff, ["name", "title", "label"]) ?? e.entity_title;
-  if (title) return title;
-  const changed = /_updated$|^updated$/.test(e.action) ? updatedFieldsWords(diff) : null;
-  const noun = labels.noun(activityKind(e));
-  return changed ? (
-    <span className="text-xs text-faint">{withArticle(noun)}: {changed}</span>
-  ) : (
-    <span className="text-xs text-faint">{noun}</span>
-  );
-}
 
 /** A stable plain-text identity for burst summarization — the string form of
  *  what activityTitle() renders. A wire's identity is its action's label, so

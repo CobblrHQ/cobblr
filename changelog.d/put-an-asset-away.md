@@ -3,6 +3,7 @@ type: feature
 scope: assets
 date: 2026-09-30
 docs_target: docs/USER_GUIDE.md#3.31 Assets
+docs_published: 2026-10-01
 ---
 **Put a thing away instead of deleting it.** Put away takes something you sold or lost off the register and out of search and Needs you, and keeps its history and what it cost. Restore brings it back.
 

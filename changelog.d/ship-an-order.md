@@ -3,6 +3,7 @@ type: feature
 scope: sales
 date: 2026-09-29
 docs_target: docs/USER_GUIDE.md#3.26 Sales (outbound orders)
+docs_published: 2026-10-01
 ---
 Ship a sales order with its tracking number: the carrier is worked out from the number, the order shows where the parcel is and keeps a history of what happened to it, and the customer gets a shipping notice with the tracking link, emailed from your own address when you tick "Email the customer", or copied for you to send when your workspace has no email set up.
 

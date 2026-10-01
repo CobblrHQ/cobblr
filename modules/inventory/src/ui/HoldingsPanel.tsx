@@ -199,6 +199,7 @@ export function HoldingsPanel({ partId, unit }: { partId: string; unit?: string 
         <HoldingRows
           rows={rows}
           basePath={basePath}
+          unit={unit}
           onSplit={async (row) => {
             const ok = await confirm({
               title: "Split this place into its own record?",

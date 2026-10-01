@@ -12,6 +12,11 @@
 // result: every thing to the place and slot it had, every place to its old
 // parent, and a merged-away place restored first. A thing someone has moved
 // again since stays where they put it.
+//
+// The destination may also be a thing that holds things (a Backpack, a
+// toolbox): the things go inside it. Places cannot, so a move that would take
+// the places along into one is refused, and the holder itself stays put if it
+// was kept in the place being emptied.
 import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { CoreLocationsDB } from "../db.js";
@@ -28,10 +33,17 @@ export interface MovedThing {
   position: unknown;
 }
 
+/** Where a move went: a place, or a thing that holds things (kind set). */
+export interface MoveTarget {
+  id: string;
+  name: string;
+  kind?: string;
+}
+
 /** What a move did: enough to undo it, and to say it. */
 export interface MoveResult {
   from: { id: string; name: string };
-  to: { id: string; name: string };
+  to: MoveTarget;
   things: MovedThing[];
   places: string[];
   deleted: boolean;
@@ -70,35 +82,59 @@ async function reparent(db: Db, id: string, parentId: string | null): Promise<vo
   await rebuildDescendantDepths(db, id);
 }
 
-/** Move what is kept in `fromId` into `toId`; with `places`, the places inside
- *  it too; with `thenDelete`, then delete the empty place (a merge, which
- *  always takes the places). */
+/** Move what is kept in `fromId` into `toId` (a place's id, or a holder's
+ *  `{kind, id}`); with `places`, the places inside it too; with `thenDelete`,
+ *  then delete the empty place (a merge, which always takes the places). */
 export async function moveEverything(
   orgId: string,
   fromId: string,
-  toId: string,
+  toRef: string | { kind: string; id: string },
   opts: { places?: boolean; thenDelete?: boolean; userId?: string | null },
 ): Promise<MoveResult> {
   const db = await dbOf(orgId);
   const places = !!(opts.places || opts.thenDelete);
-  if (fromId === toId) throw new MoveRefused("That is the same place.");
-  const rows = await db.selectFrom("core_locations_locations").select(["id", "name"]).where("id", "in", [fromId, toId]).execute();
+  const holder = typeof toRef === "object" && toRef.kind !== LOCATION ? toRef : null;
+  const toId = typeof toRef === "object" ? toRef.id : toRef;
+  if (!holder && fromId === toId) throw new MoveRefused("That is the same place.");
+  const rows = await db
+    .selectFrom("core_locations_locations")
+    .select(["id", "name"])
+    .where("id", "in", holder ? [fromId] : [fromId, toId])
+    .execute();
   const from = rows.find((r) => r.id === fromId);
-  const to = rows.find((r) => r.id === toId);
   if (!from) throw new MoveRefused("That place is not there any more.");
+  let to: MoveTarget | undefined;
+  if (holder) {
+    const found = (await platform().entities.lookupMany(orgId, [holder], { system: true }).catch(() => []))[0];
+    to = found ? { kind: holder.kind, id: holder.id, name: found.title } : undefined;
+  } else {
+    to = rows.find((r) => r.id === toId);
+  }
   if (!to) throw new MoveRefused("The place to move them to is not there any more.");
-  if (places && (await isInside(db, toId, fromId))) {
+  const children = places
+    ? await db.selectFrom("core_locations_locations").select("id").where("parent_id", "=", fromId).execute()
+    : [];
+  if (holder && children.length) {
+    throw new MoveRefused(`${to.name} is not a place, so the places in ${from.name} cannot move into it.`);
+  }
+  if (!holder && places && (await isInside(db, toId, fromId))) {
     throw new MoveRefused(`${to.name} is inside ${from.name}, so the places in ${from.name} cannot move into it.`);
+  }
+  const container = holder ?? { kind: LOCATION, id: toId };
+  const contents = await platform().placement.contents({ orgId, container: { kind: LOCATION, id: fromId } });
+  const holderStaysBehind = !!holder && contents.some((t) => t.kind === holder.kind && t.id === holder.id);
+  if (holderStaysBehind && opts.thenDelete) {
+    throw new MoveRefused(`${to.name} is kept in ${from.name}, so ${from.name} cannot be emptied into it and deleted.`);
   }
 
   const things: MovedThing[] = [];
-  const inside = await platform().placement.contents({ orgId, container: { kind: LOCATION, id: fromId } });
-  for (const t of inside) {
+  for (const t of contents) {
     if (t.kind === LOCATION) continue;
+    if (holder && t.kind === holder.kind && t.id === holder.id) continue;
     await platform().placement.place({
       orgId,
       containee: { kind: t.kind, id: t.id },
-      container: { kind: LOCATION, id: toId },
+      container,
       placedBy: opts.userId ?? null,
       via: "Move everything",
     });
@@ -106,20 +142,17 @@ export async function moveEverything(
   }
 
   const moved: string[] = [];
-  if (places) {
-    const kids = await db.selectFrom("core_locations_locations").select("id").where("parent_id", "=", fromId).execute();
-    for (const k of kids) {
-      await reparent(db, k.id, toId);
-      moved.push(k.id);
-    }
+  for (const k of children) {
+    await reparent(db, k.id, toId);
+    moved.push(k.id);
   }
 
   let deleted = false;
   if (opts.thenDelete) deleted = !!(await deletePlace(orgId, fromId, opts.userId ?? null));
 
-  void platform().events.emit("core-locations.location.updated", { orgId, locationId: toId });
+  if (!holder) void platform().events.emit("core-locations.location.updated", { orgId, locationId: toId });
   if (!deleted) void platform().events.emit("core-locations.location.updated", { orgId, locationId: fromId });
-  return { from: { id: from.id, name: from.name }, to: { id: to.id, name: to.name }, things, places: moved, deleted };
+  return { from: { id: from.id, name: from.name }, to, things, places: moved, deleted };
 }
 
 /** Put a move back: the place first if it was merged away, then each place
@@ -144,7 +177,7 @@ export async function putBackEverything(
   let leftWhereTheyAre = 0;
   for (const t of move.things) {
     const now = await platform().placement.containerOf({ orgId, containee: { kind: t.kind, id: t.id } }).catch(() => null);
-    if (!now || now.kind !== LOCATION || now.id !== move.to.id) {
+    if (!now || now.kind !== (move.to.kind ?? LOCATION) || now.id !== move.to.id) {
       leftWhereTheyAre++;
       continue;
     }
@@ -160,7 +193,7 @@ export async function putBackEverything(
     things++;
   }
   void platform().events.emit("core-locations.location.updated", { orgId, locationId: move.from.id });
-  void platform().events.emit("core-locations.location.updated", { orgId, locationId: move.to.id });
+  if (!move.to.kind || move.to.kind === LOCATION) void platform().events.emit("core-locations.location.updated", { orgId, locationId: move.to.id });
   return { things, places, leftWhereTheyAre };
 }
 
@@ -177,7 +210,7 @@ export function readMoveResult(v: unknown): MoveResult | null {
   const places = m.places.filter((p): p is string => typeof p === "string");
   return {
     from: { id: m.from.id, name: m.from.name },
-    to: { id: m.to.id, name: m.to.name },
+    to: { id: m.to.id, name: m.to.name, ...(typeof (m.to as MoveTarget).kind === "string" ? { kind: (m.to as MoveTarget).kind } : {}) },
     things: things.map((t) => ({ kind: t.kind, id: t.id, slot: typeof t.slot === "string" ? t.slot : null, position: t.position ?? null })),
     places,
     deleted: m.deleted === true,

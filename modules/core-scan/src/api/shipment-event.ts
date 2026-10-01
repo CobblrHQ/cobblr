@@ -26,6 +26,7 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 import { receiptSessionLabel, cleanOrderRef, sameOrder, cancellationEndsSession } from "../services/receipt-shared.js";
 import { receiptTrackingTick } from "../services/receipt-tracking-sweeper.js";
 import { INTERNAL_API } from "./inbox.js";
+import { formatStoredMoney } from "@cobblr/platform-contract/money";
 
 export const shipmentEventRouter = Router({ mergeParams: true });
 
@@ -330,7 +331,7 @@ shipmentEventRouter.post(
     // hears it. The card is the same shape purchases sends, minus the link
     // to an order that does not exist.
     const what = ev.item ?? (vendor ? `your ${vendor} order` : "an order");
-    const money = ev.refund_amount != null ? ` (${ev.refund_amount.toLocaleString("en-US", { style: "currency", currency: "USD" })})` : "";
+    const money = ev.refund_amount != null ? ` (${formatStoredMoney(ev.refund_amount, "amount")})` : "";
     try {
       await platform().notifications.dispatch({
         orgId: ctx.org.id,

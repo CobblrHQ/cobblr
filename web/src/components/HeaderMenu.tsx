@@ -9,7 +9,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { PopoverLayer, useLockPageScroll } from "@cobblr/platform-web";
+import { PopoverLayer, useEscapeToClose, useLockPageScroll } from "@cobblr/platform-web";
 
 interface Props {
   /** The button. Gets the open state so it can show a pressed style. */
@@ -42,6 +42,7 @@ export function HeaderMenu({
 }: Props) {
   const [open, setOpen] = useState(false);
   const hostRef = useRef<HTMLSpanElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top?: number; bottom?: number; left: number; width: number; maxHeight: number } | null>(null);
 
   // A menu is a modal moment: the page must hold still under it. Without this
@@ -118,14 +119,10 @@ export function HeaderMenu({
         setOpen(false);
       }
     };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
     document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
+    return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
+  useEscapeToClose(open, menuRef, () => setOpen(false));
 
   return (
     <span
@@ -142,6 +139,7 @@ export function HeaderMenu({
         pos &&
         createPortal(
           <PopoverLayer
+            ref={menuRef}
             data-header-menu
             role="menu"
             style={{ top: pos.top, bottom: pos.bottom, left: pos.left, width: pos.width, maxHeight: pos.maxHeight }}

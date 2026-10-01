@@ -19,9 +19,10 @@ import { searchFeatures } from "../lib/feature-index";
 import { useHostedPanels } from "../lib/useHostedPanels";
 import { isFileHit, mergePaletteRows, paletteSectionHeader, PALETTE_RANK, tablesMatching, type PaletteRow, type PaletteTable } from "../lib/paletteRows";
 import { tableOtherNames, type NounChoiceDecl } from "@cobblr/platform-contract/kind-label";
-import { useLater, OverlayLayer, SnippetText, SearchInput, isShortcut, keyCap, OPEN_SHORTCUTS_EVENT } from "@cobblr/platform-web";
+import { useLater, useEscapeToClose, OverlayLayer, SnippetText, SearchInput, isShortcut, keyCap, OPEN_SHORTCUTS_EVENT } from "@cobblr/platform-web";
 import { SearchIncomplete } from "./SearchIncomplete";
 import { openSheetImport } from "../lib/sheet-import";
+import { useExactHits } from "../lib/useExactHits";
 
 /** Anything (the mobile bar, the palette) can ask for the quick-add sheet. */
 export const OPEN_ADD_SHEET_EVENT = "cobblr:open-add-sheet";
@@ -50,6 +51,8 @@ const ACTIONS: ActionRow[] = [
   { id: "shortcuts", label: "Keyboard shortcuts", hint: "?", keywords: "keys keyboard hotkeys help list", icon: Keyboard, run: () => window.dispatchEvent(new CustomEvent(OPEN_SHORTCUTS_EVENT)) },
 ];
 
+const LISTBOX_ID = "palette-results";
+const optionId = (i: number) => `palette-option-${i}`;
 const KBD = "rounded border border-line dark:border-slate-700 px-1 font-mono";
 
 export function CommandPalette() {
@@ -62,6 +65,8 @@ export function CommandPalette() {
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const layerRef = useRef<HTMLDivElement>(null);
+  useEscapeToClose(open, layerRef, () => setOpen(false));
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -71,7 +76,6 @@ export function CommandPalette() {
         setQ("");
         setSel(0);
       }
-      if (isShortcut(e, "close")) setOpen(false);
     }
     window.addEventListener("keydown", onKey);
     const onOpenEvt = () => setOpen(true);
@@ -176,18 +180,7 @@ export function CommandPalette() {
 
   // Exact identifier + token hits (surface: "palette"): typing a part's serial
   // surfaces that part ABOVE fuzzy name matches. Same registry the scanner uses.
-  const exactHits = useQuery({
-    queryKey: ["palette-resolve", activeSlug, debounced],
-    queryFn: () => api.resolveOnSurface(activeSlug!, debounced, "palette"),
-    enabled: open && !!activeSlug && debounced.length >= 2,
-    staleTime: 15_000,
-  });
-  const exactCandidates =
-    exactHits.data?.outcome === "resolved"
-      ? [exactHits.data.candidate]
-      : exactHits.data?.outcome === "ambiguous"
-        ? exactHits.data.candidates
-        : [];
+  const exactCandidates = useExactHits(activeSlug, debounced, "palette", open);
 
   // One merged, rank-ordered list — the index arithmetic is gone. Each source
   // contributes rows with a rank; mergePaletteRows sorts + dedupes (a fuzzy hit
@@ -198,7 +191,7 @@ export function CommandPalette() {
       key: `exact-${c.entity_kind}-${c.entity_id}`,
       kind: "exact",
       label: c.label,
-      hint: c.sublabel ?? c.entity_kind,
+      hint: c.where,
       icon: Search,
       dedupeKey: `${c.entity_kind}:${c.entity_id}`,
       run: () => { navigate(c.detail_path); close(); },
@@ -290,8 +283,14 @@ export function CommandPalette() {
       { rank: PALETTE_RANK.action, rows: actionRows },
     ]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [actions, tableHits, appHits, door, featureHits, panelHits, exactHits.data, hits.data, waiting.data, filesOpen, debounced, q, navigate]);
+  }, [actions, tableHits, appHits, door, featureHits, panelHits, exactCandidates, hits.data, waiting.data, filesOpen, debounced, q, navigate]);
   const total = rows.length;
+
+  // The arrows move a highlight the list may have scrolled away from; bring
+  // it into view, or the row Enter will open is one nobody can see.
+  useEffect(() => {
+    if (open) document.getElementById(optionId(sel))?.scrollIntoView?.({ block: "nearest" });
+  }, [sel, open]);
 
   function runSelected(i: number) {
     rows[i]?.run();
@@ -299,7 +298,7 @@ export function CommandPalette() {
 
   if (!open || !activeSlug) return null;
   return createPortal(
-    <OverlayLayer className="z-[110] bg-black/40 flex items-start justify-center pt-[12vh] px-4" onClick={() => setOpen(false)} role="dialog" aria-modal="true" aria-label="Search and commands">
+    <OverlayLayer ref={layerRef} className="z-[110] bg-black/40 flex items-start justify-center pt-[12vh] px-4" onClick={() => setOpen(false)} role="dialog" aria-modal="true" aria-label="Search and commands">
       <div
         className="w-full max-w-lg rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}
@@ -312,6 +311,11 @@ export function CommandPalette() {
             value={q}
             onChange={(v) => { setQ(v); setSel(0); }}
             placeholder="Do or find anything…"
+            role="combobox"
+            aria-expanded={total > 0}
+            aria-controls={LISTBOX_ID}
+            aria-autocomplete="list"
+            aria-activedescendant={total > 0 ? optionId(sel) : undefined}
             aria-label="Do or find anything"
             wrapperClassName="flex-1 min-w-0"
             className="!h-12 !rounded-none !border-0 !bg-transparent"
@@ -326,7 +330,7 @@ export function CommandPalette() {
         {debounced.length >= 2 && (hits.data?.kinds_failed?.length ?? 0) > 0 && (
           <div className="px-2 pt-1.5"><SearchIncomplete compact failed={hits.data?.kinds_failed} /></div>
         )}
-        <ul className="max-h-80 overflow-y-auto py-1">
+        <ul role="listbox" id={LISTBOX_ID} aria-label="Results" className="max-h-80 overflow-y-auto py-1">
           {rows.map((r, i) => {
             const Icon = r.icon;
             // A section header where a section starts. The list is rank-sorted,
@@ -336,15 +340,22 @@ export function CommandPalette() {
             return (
               <Fragment key={r.key}>
                 {header && (
-                  <li className="px-3 pt-2 pb-1 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+                  <li role="presentation" className="px-3 pt-2 pb-1 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
                     {header}
                   </li>
                 )}
-                <li>
-                  <button
-                    type="button"
-                    onMouseEnter={() => setSel(i)}
-                    onClick={() => runSelected(i)}
+                {/* An option of the listbox the box controls: the keyboard
+                    stays in the box and aria-activedescendant names this row,
+                    so a screen reader hears what the arrows land on. */}
+                <li
+                  role="option"
+                  id={optionId(i)}
+                  aria-selected={sel === i}
+                  onMouseEnter={() => setSel(i)}
+                  onClick={() => runSelected(i)}
+                  className="cursor-pointer"
+                >
+                  <div
                     className={"w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left transition " + (sel === i ? "bg-subtle dark:bg-slate-800 text-content dark:text-mortar-100" : "text-content dark:text-mortar-200")}
                   >
                     <Icon size={15} className={(r.kind === "entity" || r.kind === "file" || r.kind === "inbox" ? "text-faint" : "text-accent") + " shrink-0"} />
@@ -358,12 +369,12 @@ export function CommandPalette() {
                     </span>
                     {r.hint && <span className="text-[11px] text-faint dark:text-slate-500 shrink-0">{r.hint}</span>}
                     {sel === i && <CornerDownLeft size={13} className="text-faint shrink-0" />}
-                  </button>
+                  </div>
                 </li>
               </Fragment>
             );
           })}
-          {total === 0 && <li className="px-3 py-4 text-sm text-faint dark:text-slate-500">Nothing matches.</li>}
+          {total === 0 && <li role="presentation" className="px-3 py-4 text-sm text-faint dark:text-slate-500">Nothing matches.</li>}
         </ul>
         {/* The keys that work here, and the door to the rest (#4227). */}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line dark:border-slate-700 px-3 py-1.5 text-[11px] text-faint dark:text-slate-500" data-testid="palette-keys">

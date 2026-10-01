@@ -9,11 +9,16 @@ import { useQuery } from "@tanstack/react-query";
 import { usePlatformWeb } from "./context";
 import type { PhotoSuggestionRow } from "./types";
 
-export function usePhotoSuggestions(kind: string | null | undefined): Map<string, PhotoSuggestionRow> {
+/** `ids` are the records the list shows: a record's suggestion can be filed
+ *  under another kind name than the list's (a collection's item is its
+ *  module's record too), and asking by kind alone left its card blank. */
+export function usePhotoSuggestions(kind: string | null | undefined, ids: readonly string[]): Map<string, PhotoSuggestionRow> {
   const { api, orgSlug } = usePlatformWeb();
+  const shown = useMemo(() => [...ids].sort().slice(0, 500), [ids]);
   const q = useQuery({
-    queryKey: ["photo-suggestions", orgSlug, kind],
-    queryFn: () => api.listPhotoSuggestions!(orgSlug, kind!),
+    queryKey: ["photo-suggestions", orgSlug, kind, shown.join(",")],
+    queryFn: () => api.listPhotoSuggestions!(orgSlug, kind!, shown),
+    placeholderData: (prev) => prev,
     enabled: !!orgSlug && !!kind && !!api.listPhotoSuggestions,
     staleTime: 5_000,
     refetchInterval: (query) => ((query.state.data?.items ?? []).some((i) => i.status === "queued") ? 4_000 : 15_000),

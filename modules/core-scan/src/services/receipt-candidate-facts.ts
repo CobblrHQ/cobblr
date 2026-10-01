@@ -37,6 +37,7 @@ import {
   PURCHASE_PRICE_NAMES,
 } from "@cobblr/platform-contract/receipt-fact-names";
 import { listingOf, type ListingRead } from "./listing-evidence.js";
+import { centsFromAmount, formatMoney } from "@cobblr/platform-contract/money";
 import {
   fieldProvenanceOf,
   isAcquiredFromField,
@@ -158,10 +159,7 @@ function onChoices(f: { choices?: string[] }, value: string, same: (a: string, b
 }
 
 function priceWords(l: ListingRead): string {
-  const n = l.price!;
-  const amount = Number.isInteger(n) ? String(n) : n.toFixed(2);
-  if (!l.currency || l.currency === "USD") return `$${amount}`;
-  return `${amount} ${l.currency}`;
+  return formatMoney(centsFromAmount(l.price!), { currency: l.currency });
 }
 
 function applyListingFacts(

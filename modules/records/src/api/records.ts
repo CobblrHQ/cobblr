@@ -116,6 +116,9 @@ recordsRouter.post(
     platform().events.emit("records.record.added", {
       orgId: ctx.org.id,
       recordId: inserted.id,
+      // Which collection: a wire on one collection's "record is deleted"
+      // cannot look a gone record up to tell (wire-lifecycle.ts).
+      instance: instanceOf(req),
     });
     res.status(201).json(inserted);
   }),
@@ -196,6 +199,7 @@ recordsRouter.patch(
       action: "record_updated",
       ref: { module: "records", entityType: "record", entityId: id },
       diff: parsed.data,
+      before,
     });
     // Flat before/after bags (native columns + flattened metadata) so a
     // transition wire can compare {{event.before.x}} vs {{event.after.x}}.
@@ -209,6 +213,7 @@ recordsRouter.patch(
     await platform().events.emit("records.record.updated", {
       orgId: ctx.org.id,
       recordId: id,
+      instance: instanceOf(req),
       before: { ...before, ...beforeMeta },
       after: { ...before, ...nativeChanges, ...afterMeta },
     });
@@ -245,6 +250,9 @@ recordsRouter.delete(
     platform().events.emit("records.record.deleted", {
       orgId: ctx.org.id,
       recordId: id,
+      // Which collection: a wire on one collection's "record is deleted"
+      // cannot look a gone record up to tell (wire-lifecycle.ts).
+      instance: instanceOf(req),
     });
     res.status(204).end();
   }),

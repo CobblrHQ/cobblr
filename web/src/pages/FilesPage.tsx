@@ -17,7 +17,8 @@ import { ChevronRight, File as FileIcon, Folder, FolderPlus, Info, Pencil, Rotat
 import { api, ApiError, type FileRecord } from "../lib/api";
 import { folderPaths, formatBytes } from "../features/core-files/fileFormat";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { canPreviewFile, FilePreview, FileIntakePanels, Modal, useFileIntake, useFilePreviewRegistry, useToast, useConfirm, usePageTitle, EntityPhoto, SearchInput } from "@cobblr/platform-web";
+import { ImageLightbox } from "../components/ImageLightbox";
+import { canPreviewFile, FilePreview, FileIntakePanels, Modal, useFileIntake, useFilePreviewRegistry, useToast, useConfirm, usePageTitle, EntityPhoto, SearchInput, usePasteImage } from "@cobblr/platform-web";
 
 const TOP = "top";
 
@@ -28,6 +29,8 @@ export function FilesPage() {
   const toast = useToast();
   const confirm = useConfirm();
   const fileInput = useRef<HTMLInputElement>(null);
+  // A screenshot pasted on the Files page is uploaded here like a chosen file.
+  usePasteImage(() => fileInput.current?.parentElement ?? null, { onFiles: (files) => void intake.take(files), accept: "*", multiple: true });
   // A link can open a folder directly (a Make's page links to its folder).
   const [params] = useSearchParams();
   const [folder, setFolder] = useState<string>(() => {
@@ -40,6 +43,8 @@ export function FilesPage() {
   // A file the app can show (a PDF, an SVG, a model) opens in place; the
   // rest open in a new tab.
   const [reading, setReading] = useState<FileRecord | null>(null);
+  // The picture open in the shared viewer, which steps through this folder's images.
+  const [viewing, setViewing] = useState<number | null>(null);
   useFilePreviewRegistry();
 
   const searching = search.trim().length > 0;
@@ -297,13 +302,21 @@ export function FilesPage() {
         </div>
       )}
 
+      {viewing !== null && images[viewing] && (
+        <ImageLightbox
+          items={images.map((f) => ({ key: f.id, caption: f.filename, file: { slug: activeSlug, fileId: f.id } }))}
+          index={viewing}
+          onIndex={setViewing}
+          onClose={() => setViewing(null)}
+        />
+      )}
       {images.length > 0 && (
         <section>
           <h2 className="text-sm font-medium text-content dark:text-slate-300 mb-3">Images</h2>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-            {images.map((f) => (
+            {images.map((f, i) => (
               <div key={f.id} className="space-y-1">
-                <ImageTile file={f} slug={activeSlug} onDelete={() => void askDelete(f)} />
+                <ImageTile file={f} slug={activeSlug} onOpen={() => setViewing(i)} onDelete={() => void askDelete(f)} />
                 <div className="flex items-center gap-1">
                   {renaming?.kind === "file" && renaming.id === f.id ? (
                     renameInput
@@ -437,13 +450,15 @@ export function FilesPage() {
   );
 }
 
-function ImageTile({ file, slug, onDelete }: { file: FileRecord; slug: string; onDelete: () => void }) {
+function ImageTile({ file, slug, onOpen, onDelete }: { file: FileRecord; slug: string; onOpen: () => void; onDelete: () => void }) {
   return (
     <div className="group relative aspect-square rounded overflow-hidden border border-line dark:border-slate-700">
       {/* Auth is Bearer-header-only — a plain <img src> sends no credentials
           and 401s (the "all I see is broken images" report). useImageSrc
           blob-fetches with the token, like every other thumbnail. */}
-      <AuthedThumb slug={slug} file={file} />
+      <button type="button" onClick={onOpen} aria-label={`Open ${file.filename}`} className="absolute inset-0 cursor-zoom-in">
+        <AuthedThumb slug={slug} file={file} />
+      </button>
       <button onClick={onDelete} className="absolute top-1 right-1 p-1 rounded bg-black/40 text-white hover-reveal hover:bg-ember-600 transition" title="Delete">
         <Trash2 size={12} />
       </button>

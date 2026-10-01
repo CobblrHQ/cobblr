@@ -4,7 +4,7 @@
 import { useState } from "react";
 import { Modal } from "@cobblr/platform-web";
 import { countOf } from "@cobblr/platform-contract/plural";
-import { ApiError, api, type Location, type PlaceMove } from "../lib/api";
+import { ApiError, api, type Location, type PlaceHolder, type PlaceMove } from "../lib/api";
 import { LocationTreePicker } from "./LocationTreePicker";
 
 /** What the toast says once it is done. */
@@ -37,6 +37,8 @@ export function MoveEverythingModal({
   onMoved: (move: PlaceMove) => void;
 }) {
   const [to, setTo] = useState<string | null>(null);
+  // Or a thing that holds things (a Backpack): the things go inside it.
+  const [holder, setHolder] = useState<PlaceHolder | null>(null);
   const [places, setPlaces] = useState(placesInside > 0);
   const [merge, setMerge] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -44,11 +46,17 @@ export function MoveEverythingModal({
   const withPlaces = merge || places;
 
   const run = async () => {
-    if (!to) return;
+    if (!to && !holder) return;
     setBusy(true);
     setError(null);
     try {
-      onMoved(await api.moveEverything(slug, place.id, { to, places: withPlaces, then_delete: merge }));
+      onMoved(
+        await api.moveEverything(
+          slug,
+          place.id,
+          holder ? { to: holder.id, to_kind: holder.kind, places: withPlaces, then_delete: merge } : { to: to!, places: withPlaces, then_delete: merge },
+        ),
+      );
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
     } finally {
@@ -62,7 +70,24 @@ export function MoveEverythingModal({
         <div className="space-y-1">
           <span className="text-xs text-muted dark:text-slate-400">Into</span>
           {/* The places inside it cannot move into themselves. */}
-          <LocationTreePicker value={to} onChange={setTo} excludeId={place.id} excludeSubtreeOf={withPlaces ? place.id : undefined} placeholder="Choose a place…" />
+          <LocationTreePicker
+            value={to}
+            onChange={(id) => {
+              setTo(id);
+              setHolder(null);
+            }}
+            onPickHolder={(h) => {
+              setHolder(h);
+              setTo(null);
+            }}
+            pickedHolder={holder}
+            excludeId={place.id}
+            excludeSubtreeOf={withPlaces ? place.id : undefined}
+            placeholder="Choose a place…"
+          />
+          {holder && withPlaces && placesInside > 0 && (
+            <p className="text-xs text-muted dark:text-slate-400">{holder.title} is not a place, so the places inside {place.name} cannot go in it.</p>
+          )}
         </div>
         {placesInside > 0 && (
           <label className="flex items-start gap-2 text-sm text-content dark:text-slate-200">
@@ -92,7 +117,7 @@ export function MoveEverythingModal({
           <button
             type="button"
             onClick={() => void run()}
-            disabled={!to || busy}
+            disabled={(!to && !holder) || busy}
             className="rounded-md bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white px-3 py-1.5 text-sm font-medium"
           >
             {merge ? `Move and delete ${place.name}` : "Move everything"}

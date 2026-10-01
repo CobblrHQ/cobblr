@@ -3,13 +3,16 @@
 // (and the platform itself) call platform().entities.lookup(orgId,
 // "inventory:part", id) and the platform routes here.
 
+import { placeNames } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import { platform, type EntityListQuery, type FilterPredicate, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import { type InventoryDB } from "../db.js";
 import { applyPartFilters, applyPartSort } from "./part-query.js";
+import { readsValues, refreshMeasureReadings } from "../measure-readings.js";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 import type { Remaining } from "@cobblr/platform-contract/consumption-gauge";
 import { remainingFor } from "./remaining.js";
+import { annotateInstalled } from "./installed.js";
 
 let registered = false;
 
@@ -30,7 +33,7 @@ export function registerInventoryResolvers(): void {
       return toResolvedPart(
         row,
         (await categoryNames(db, [row])).get(row.category_id ?? "") ?? null,
-        (await locationNames(orgId, [row])).get(row.location_id ?? "") ?? null,
+        (await locationNames(orgId, [row])).get(row.id) ?? null,
         (await remainingFor(orgId, db, [row])).get(row.id) ?? null,
       );
     },
@@ -46,10 +49,16 @@ export function registerInventoryResolvers(): void {
   // Shared parts list — used for the base `inventory:part` kind (all parts)
   // and, with an `instance` arg, for any inventory instance kind
   // (`<name>:item`), scoped to that instance's parts.
-  const partsListResolver = async (orgId: string, query: EntityListQuery, instance?: string) => {
+  const partsListResolver = async (orgId: string, asked: EntityListQuery, instance?: string) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
+    // "Hide unavailable" is a view filter over what is installed, not a
+    // column: taken out before the column filters read it as a field name.
+    const { hide_unavailable: hideFlag, ...restFilter } = asked.filter ?? {};
+    const hideUnavailable = hideFlag === true || hideFlag === "true" || hideFlag === "1";
+    const query: EntityListQuery = { ...asked, ...(asked.filter ? { filter: restFilter } : {}) };
     const limit = Math.min(query.limit ?? 50, 200);
     const offset = query.offset ?? 0;
+    if (readsValues(query)) await refreshMeasureReadings(db, { instance });
     let q = db.selectFrom("inventory_parts").selectAll();
     if (instance) q = q.where("instance", "=", instance as never);
     // Out of use is out of the list, as on the module's own list, unless the
@@ -60,16 +69,28 @@ export function registerInventoryResolvers(): void {
     const namesArchived =
       query.include_retired === true || query.filter?.archived !== undefined || (query.where ?? []).some((p) => p.col === "archived");
     if (!namesArchived) q = q.where("archived", "=", false);
-    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "description", "manufacturer", "notes", "state", "unit"], json: ["metadata"] })!);
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "description", "manufacturer", "notes", "state", "unit"], json: ["metadata"], readings: "measures" })!);
     const unapplied: FilterPredicate[] = [];
     q = applyPartFilters(q, query, { unapplied });
     const sortedQ = applyPartSort(q, query.sort);
     const rows = await sortedQ.limit(limit).offset(offset).execute();
-    const [names, places, left, held] = await Promise.all([categoryNames(db, rows), locationNames(orgId, rows), remainingFor(orgId, db, rows), reservedFor(db, rows)]);
+    const [names, places, left, held, inst] = await Promise.all([
+      categoryNames(db, rows),
+      locationNames(orgId, rows),
+      remainingFor(orgId, db, rows),
+      reservedFor(db, rows),
+      annotateInstalled(orgId, rows.map((r) => ({ id: r.id, qty: Number(r.qty), approximate_qty: r.approximate_qty == null ? null : Number(r.approximate_qty) }))),
+    ]);
+    const instOf = new Map(inst.map((i) => [i.id, i]));
+    const items = rows
+      .map((r) => {
+        const e = withReserved(toResolvedPart(r, names.get(r.category_id ?? "") ?? null, places.get(r.id) ?? null, left.get(r.id) ?? null), r, held);
+        const i = instOf.get(r.id);
+        return i ? { ...e, fields: { ...e.fields, installed_qty: i.installed_qty, spare_qty: i.spare_qty, installed_in: i.installed_in } } : e;
+      })
+      .filter((e) => !hideUnavailable || Number((e.fields as { spare_qty?: unknown }).spare_qty ?? 1) > 0);
     return {
-      items: rows.map((r) =>
-        withReserved(toResolvedPart(r, names.get(r.category_id ?? "") ?? null, places.get(r.location_id ?? "") ?? null, left.get(r.id) ?? null), r, held),
-      ),
+      items,
       ...(unapplied.length ? { unapplied } : {}),
     };
   };
@@ -104,28 +125,17 @@ export function registerInventoryResolvers(): void {
     return toResolvedPart(
       row,
       (await categoryNames(db, [row])).get(row.category_id ?? "") ?? null,
-      (await locationNames(orgId, [row])).get(row.location_id ?? "") ?? null,
+      (await locationNames(orgId, [row])).get(row.id) ?? null,
       (await remainingFor(orgId, db, [row])).get(row.id) ?? null,
     );
   });
 }
 
-/** The names of the places these rows live in, one batched lookup through
- *  the platform (the locations are another module's records, so no table
- *  read). "Where is my lamp" was answered with the collection because the
- *  resolved record carried a location id and no name (2026-09-13). */
-async function locationNames(
-  orgId: string,
-  rows: ReadonlyArray<{ location_id?: string | null }>,
-): Promise<Map<string, string>> {
-  const ids = [...new Set(rows.map((r) => r.location_id).filter((id): id is string => !!id))];
-  if (!ids.length) return new Map();
-  try {
-    const found = await platform().entities.lookupMany(orgId, ids.map((id) => ({ kind: "core-locations:location", id })));
-    return new Map(found.map((l) => [l.id, l.title]));
-  } catch {
-    return new Map(); // a name is never worth failing a read over
-  }
+/** Where each row is, by name. "Where is my lamp" was answered with the
+ *  collection because the resolved record carried a location id and no name
+ *  (2026-09-13); a thing inside a Backpack has the Backpack's line. */
+function locationNames(orgId: string, rows: ReadonlyArray<{ id: string; location_id?: string | null }>): Promise<Map<string, string>> {
+  return placeNames(orgId, "inventory:part", rows);
 }
 
 /** The names of the categories these rows are filed under, one query. Kept

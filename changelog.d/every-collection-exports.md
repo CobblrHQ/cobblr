@@ -3,6 +3,7 @@ type: feature
 scope: import
 date: 2026-09-29
 docs_target: docs/USER_GUIDE.md#Bring your spreadsheet
+docs_published: 2026-10-01
 ---
 Every list now has an Export button that downloads it as a spreadsheet, and a saved view exports with its own filter and columns. The file holds only what you may see, and it goes back in through Bring your spreadsheet without making duplicates.
 

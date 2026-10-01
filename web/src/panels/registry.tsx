@@ -29,6 +29,10 @@ registerDetailPanel(
   lazy(() => import("../features/digifab/fleet").then((m) => ({ default: m.MachineCockpitPanel }))),
 );
 registerDetailPanel(
+  "digifab:loaded",
+  lazy(() => import("../features/digifab/loaded").then((m) => ({ default: m.LoadedSpoolsPanel }))),
+);
+registerDetailPanel(
   "digifab:printing-profile",
   lazy(() => import("../features/digifab/printingProfile").then((m) => ({ default: m.PrintingProfilePanel }))),
 );
@@ -66,6 +70,10 @@ registerDetailPanel(
 registerDetailPanel(
   "core-discussion:conversation",
   lazy(() => import("../features/core-discussion/panel").then((m) => ({ default: m.DiscussionPanel }))),
+);
+registerDetailPanel(
+  "core-documents:documents",
+  lazy(() => import("../features/core-documents/panel").then((m) => ({ default: m.DocumentsPanel }))),
 );
 // Links are the kernel's own (pairings), so platform-web declares this panel
 // (KERNEL_PANELS) rather than a module.

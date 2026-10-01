@@ -1,0 +1,10 @@
+{
+  "lint": "lint:shared-package-mocks-extend-the-real-one",
+  "run": "node scripts/lint-shared-package-mocks-extend-the-real-one.ts",
+  "rows": [
+    "unit-test"
+  ],
+  "ms": 500,
+  "recorded": "2026-10-01",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

@@ -37,20 +37,39 @@ export {
   isFieldNoteKey as isNoteKey,
 } from "@cobblr/platform-contract";
 import { fieldNoteKey as noteKey } from "@cobblr/platform-contract";
+import { isAcquiredFromField } from "@cobblr/platform-contract/acquisition-source";
 
 /**
  * May this field carry a clarifier?
  *
- * Only a `text` field with a choice list. The whole point is to keep a CURATED
- * list short while still recording the long tail, so a field with no list has
- * nothing to protect: put the detail in the value. Without this guard `_note`
- * sprouts on every field and becomes a second, undocumented value column.
+ * Only where a clarifier means something: the field that says where a thing
+ * came from (the `acquired-from` role, or that field by its usual names when
+ * the table declares no role), with a choice list to keep short. "eBay ·
+ * detroitaxle" is a seller beside a channel; a "which one, specifically?" box
+ * under Fuel = Gas read as a mistake, and it sat under every choice field in
+ * the app (#4518). Without this guard `_note` sprouts on every field and
+ * becomes a second, undocumented value column. A note already stored on any
+ * other field is still shown, never dropped.
  */
 export function canCarryNote(def: {
+  name: string;
   type?: string | null;
   choices?: string[] | null;
+  field_role?: string | null;
 }): boolean {
-  return (def.type ?? "text") === "text" && (def.choices?.length ?? 0) > 0;
+  return (def.type ?? "text") === "text" && (def.choices?.length ?? 0) > 0 && isAcquiredFromField(def);
+}
+
+/** Is the clarifier OFFERED (the picker's right-hand column)? Only where it
+ *  means something: a field that says where a thing came from (the seller
+ *  beside "eBay"), or a record that already holds one, so existing detail is
+ *  never hidden. A Fuel field of Gas gets no "which one?" box. */
+export function offersClarifier(
+  def: { name: string; type?: string | null; choices?: string[] | null; field_role?: string | null },
+  note: string | null | undefined,
+): boolean {
+  if (canCarryNote(def)) return true;
+  return (def.type ?? "text") === "text" && (def.choices?.length ?? 0) > 0 && !!note?.trim();
 }
 
 /** Read `name`'s clarifier out of a values bag. Blank reads as absent. */

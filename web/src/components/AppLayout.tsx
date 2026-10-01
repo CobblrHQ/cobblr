@@ -14,7 +14,6 @@ import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Moon, PanelLeft, PanelTop, Pin, PinOff, Sliders, Sun } from "lucide-react";
 import { ModuleOffGate } from "./ModuleOffGate";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
-import { Search } from "lucide-react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { DesktopDragStrip } from "./DesktopDragStrip";
@@ -40,13 +39,14 @@ import { FeedbackWidget } from "./FeedbackWidget";
 import { GlobalScanWedge } from "./GlobalScanWedge";
 import { PhotoCaptureHost } from "./PhotoCaptureHost";
 import { SearchBar } from "./SearchBar";
-import { CommandPalette, OPEN_PALETTE_EVENT } from "./CommandPalette";
-import { noteSearchUsed, searchHintShown } from "../lib/moreApps";
+import { CommandPalette } from "./CommandPalette";
 import { SheetImportHost } from "./SheetImportSheet";
 import { NewVersionNudge } from "./NewVersionNudge";
 import { QuickAccess } from "./QuickAccess";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { LabelsBasket } from "@cobblr/labels/ui";
+import { useNavHasRow } from "./useNavModules";
+import { SearchButton } from "./FootSearch";
 import { api, getToken, isFocused } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { configurationReachable } from "../lib/configuration-nav";
@@ -62,6 +62,7 @@ import { useTour } from "../tour/useTour";
 import { DASHBOARD_TOUR } from "../tour/tour.config";
 import { useTheme } from "../theme/ThemeContext";
 import { FloatingChrome, useToast } from "@cobblr/platform-web";
+import { QuickAddSheet } from "./QuickAddSheet";
 import { ShortcutsSheet } from "./ShortcutsSheet";
 import { readOpenOn, readOpenTab, restoresOn, writeOpenOn, writeOpenTab } from "../lib/panel-memory";
 
@@ -236,6 +237,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
     staleTime: 30_000,
   });
   const labelsEnabled = (orgModulesQ.data?.items ?? []).some((m) => m.name === "labels" && m.enabled);
+  const labelsHasRow = useNavHasRow(activeSlug, "labels");
 
   // Auto-update on use: once per session, ask the server to re-apply the latest
   // bundle if this managed app is behind. No-op when current; if it updated,
@@ -438,17 +440,19 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
     // first thing under the nav); any other action takes a row of its own.
     actions: (
       <div data-tour="actions" className="flex flex-col gap-0.5">
-        <HeaderActions asRows />
+        {/* Search closes the first row as an icon: Scan | Build | 🔍. It opens
+            the ⌘K palette, a centered overlay, which beats an input crammed
+            into a 208px column; a full row of its own cost the foot a line. */}
+        <HeaderActions asRows trailing={(alone) => <SearchButton alone={alone} />} />
       </div>
     ),
-    // Search opens the ⌘K palette: a centered overlay beats an expanding input
-    // + popover crammed into a 208px column.
-    search: <SearchRow />,
     notifications: <NotificationsBell panelOnly asRow />,
     // The label queue lives as a foot row here (not a floating pill) so it
     // reads as workspace chrome with its neighbours; renders nothing when the
     // queue is empty. The floating pill is suppressed in full-sidebar (App.tsx).
-    labels: labelsEnabled ? <LabelsBasket asRow orgSlug={activeSlug} getToken={getToken} /> : null,
+    // The queue's count is a badge on the Labels row (nav.count); this row
+    // only stands in when the person took Labels out of their sidebar.
+    labels: labelsEnabled && !labelsHasRow ? <LabelsBasket asRow orgSlug={activeSlug} getToken={getToken} /> : null,
     // Ongoing session modes (auto-print, …). Self-hides when the workspace has
     // no applicable live capability.
     live: <LiveBox mode="sidebar" slug={activeSlug} />,
@@ -791,6 +795,8 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
       {activeSlug ? <QuickAccess activeSlug={activeSlug} /> : null}
       {/* ⌘K — do or find anything (redesign B4). */}
       <CommandPalette />
+      {/* The palette's "Add a thing": the dashboard's capture, from anywhere. */}
+      {activeSlug ? <QuickAddSheet slug={activeSlug} /> : null}
       {/* ? — every key the app answers to, from the one registry. */}
       <ShortcutsSheet />
       {/* Bring your spreadsheet: one sheet, opened from any door (openSheetImport). */}
@@ -826,24 +832,3 @@ function PublishModalInsets({ left, right }: { left: string; right: string }) {
 /** The sidebar's Search row. It is the second way to any app (the palette
  *  finds apps, things and settings by name), and the first few times it says
  *  so, since a bare "Search" reads as searching this page (#3883). */
-function SearchRow() {
-  const [hint, setHint] = useState(searchHintShown);
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        noteSearchUsed();
-        setHint(searchHintShown());
-        window.dispatchEvent(new Event(OPEN_PALETTE_EVENT));
-      }}
-      title="Search (⌘K)"
-      aria-label="Search"
-      className="w-full flex items-center gap-2.5 px-3 py-2 rounded text-[13px] text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40 transition"
-    >
-      <Search size={16} className="shrink-0" />
-      <span className="truncate">
-        Search{hint && <span className="text-faint dark:text-slate-500"> · apps, things, settings</span>}
-      </span>
-    </button>
-  );
-}

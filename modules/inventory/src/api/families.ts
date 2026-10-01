@@ -13,6 +13,7 @@
 // its things").
 
 import { Router, type Request } from "express";
+import { withArticle } from "@cobblr/platform-contract/plural";
 import { z } from "zod";
 import { sql, type Kysely } from "kysely";
 import { columnSet, platform } from "@cobblr/platform-contract";
@@ -364,6 +365,7 @@ familiesRouter.get(
     // the same reads it is about to make): a workspace sees one shape the
     // moment it looks, not after the next boot pass.
     await healFamily(orgId, db, fam).catch((err) => console.error(`[inventory] family heal on read failed: ${(err as Error).message}`));
+    // list-cap-ok: not paged yet, #4134
     const types = await db.selectFrom("inventory_parts").selectAll().where("instance", "=", fam.parent as never).where("archived", "=", false).orderBy("name").limit(1000).execute();
     const things = await db.selectFrom("inventory_parts").select([...THING_COLUMNS]).where("instance", "=", fam.child as never).where("archived", "=", false).orderBy("created_at").limit(5000).execute();
     const byType = await childrenOf(orgId, fam, types.map((t) => t.id));
@@ -449,5 +451,42 @@ familiesRouter.post(
       diff: { name: type!.name, under: type!.id },
     });
     res.status(201).json({ id, type_id: type!.id });
+  }),
+);
+
+const SetType = z.object({ type_id: z.string().uuid() });
+
+// A thing's type changed where the thing is: its page's Type picker. The
+// link between a thing and its type is the family's, so a Links row cannot
+// remove it; this is the family's own door for moving it to another type.
+// AI-REACH: exempt (the record page's Type picker; the assistant files a thing under its type through create_record's auto-lift)
+familiesRouter.post(
+  "/family/children/:id/type",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "inventory:update-part"))) return;
+    const parsed = SetType.safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
+    const fam = await familyFor(req);
+    if (!fam) {
+      res.status(404).json({ error: { code: "not_a_type_collection", message: "Nothing in this workspace is filed under these." } });
+      return;
+    }
+    const db = tenantDb(req);
+    const orgId = tenantContext(req).org.id;
+    const childId = String(req.params.id);
+    const child = await db.selectFrom("inventory_parts").select(["id"]).where("id", "=", childId).where("instance", "=", fam.child as never).executeTakeFirst();
+    const type = await db.selectFrom("inventory_parts").select(["id", "name"]).where("id", "=", parsed.data.type_id).where("instance", "=", fam.parent as never).executeTakeFirst();
+    if (!child || !type) {
+      res.status(404).json({ error: { code: "no_such_record", message: child ? "That type is not in this collection." : `That is not ${withArticle(fam.childNoun ?? "thing")} of this collection.` } });
+      return;
+    }
+    const now = await platform().pairings.findBySources({ orgId, sourceKind: PART, sourceIds: [child.id], targetKind: PART, relationshipKind: fam.rel });
+    for (const p of now) {
+      if (p.targetId !== type.id) await platform().pairings.remove({ orgId, sourceKind: PART, sourceId: child.id, targetKind: PART, targetId: p.targetId, relationshipKind: fam.rel });
+    }
+    if (!now.some((p) => p.targetId === type.id)) {
+      await platform().pairings.create({ orgId, sourceKind: PART, sourceId: child.id, targetKind: PART, targetId: type.id, relationshipKind: fam.rel, createdBy: sessionUser(req).id });
+    }
+    res.json({ id: child.id, type_id: type.id, type_name: type.name });
   }),
 );

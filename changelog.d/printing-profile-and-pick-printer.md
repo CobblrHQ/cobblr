@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-09-29
 docs_target: docs/USER_GUIDE.md#3.19 Digital Fabrication (`digifab`, stock)
+docs_published: 2026-10-01
 ---
 A 3D printer now has a Printing profile (its model, nozzle, build volume, default quality and a slicer preset per filament), and Cobblr can pick the best printer for a print: one the part fits, already loaded with enough of the right filament, and idle.
 

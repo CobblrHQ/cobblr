@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 // Module-contributed quick-actions for the navbar's RIGHT cluster.
 // Any enabled module that declares a `headerAction` in its manifest
 // gets an icon-only button here — prime, always-visible placement for
@@ -67,10 +68,15 @@ export function footActionRows<T extends { name: string }>(actions: readonly T[]
   return rows;
 }
 
-export function HeaderActions({ asRows = false }: {
+export function HeaderActions({ asRows = false, trailing }: {
   /** Full-width labelled rows for the sidebar foot (capture first), instead
    *  of the top bar's icon buttons. */
   asRows?: boolean;
+  /** Rows mode: a control that closes the FIRST row (Search's icon, so the
+   *  foot reads Scan | Build | 🔍 rather than spending a row of its own on
+   *  Search, #4374). `alone` is true when there is no action to share a row
+   *  with, and the control then takes the row itself, labelled. */
+  trailing?: (alone: boolean) => ReactNode;
 } = {}) {
   const { activeSlug, activeOrg } = useActiveOrg();
   // Builder chrome (the AI builder, the marketplace) is the platform. Focused
@@ -118,7 +124,7 @@ export function HeaderActions({ asRows = false }: {
   // reads as "this is the inbox" (the author). The pending count rides the
   // "Scan Inbox" nav row itself (useNavBadges), the door to the inbox.
 
-  if (actions.length === 0) return null;
+  if (actions.length === 0) return asRows && trailing ? <>{trailing(true)}</> : null;
 
   const link = (m: (typeof actions)[number], inRow: "full" | "half" | "bar") => {
     const ha = m.headerAction!;
@@ -153,32 +159,40 @@ export function HeaderActions({ asRows = false }: {
 
   if (!asRows) return <>{actions.map((m) => link(m, "bar"))}</>;
 
+  const end = (i: number) => (i === 0 && trailing ? trailing(false) : null);
+  const bar = (
+    <span aria-hidden className="text-[13px] text-faint/60 dark:text-slate-600 select-none">
+      |
+    </span>
+  );
+  // A shared row spaces its doors and the quiet bars between them evenly, so
+  // Scan | Build | search reads as three equals at any sidebar width.
+  // The search icon used to end the row after the text, packed against the
+  // column's right edge (the owner, 2026-10-01, #4514).
   return (
     <>
-      {footActionRows(actions).map((row) =>
-        row.length === 1 ? (
-          link(row[0]!, "full")
-        ) : (
-          // One row, two doors, the Ask Cobb | Discussion shape: a div of
-          // links, a quiet bar between them.
+      {footActionRows(actions).map((row, ri) => {
+        const doors: ReactNode[] = row.map((m) => link(m, "half"));
+        const tail = end(ri);
+        if (tail) doors.push(tail);
+        if (doors.length === 1) return link(row[0]!, "full");
+        return (
           <div
             key={row.map((m) => m.name).join("+")}
             data-testid="foot-shared-row"
-            className="w-full flex items-center gap-1.5 px-3 py-1.5 rounded hover:bg-subtle/60 dark:hover:bg-slate-800/40 transition"
+            className="w-full flex items-center justify-evenly py-1.5 rounded hover:bg-subtle/60 dark:hover:bg-slate-800/40 transition"
           >
-            {row.map((m, i) => (
-              <Fragment key={m.name}>
-                {i > 0 && (
-                  <span aria-hidden className="px-1.5 text-[13px] text-faint/60 dark:text-slate-600 select-none">
-                    |
-                  </span>
-                )}
-                {link(m, "half")}
+            {doors.map((d, i) => (
+              <Fragment key={i}>
+                {i > 0 && bar}
+                <span data-foot-slot className="flex min-w-0 justify-center">
+                  {d}
+                </span>
               </Fragment>
             ))}
           </div>
-        ),
-      )}
+        );
+      })}
     </>
   );
 }

@@ -21,7 +21,7 @@
 //   - data-testid a locator names (`[data-testid="x"]`, `getByTestId("x")`),
 //   - placeholder it types into (`getByPlaceholder("x" | /re/)`, `[placeholder*='x']`),
 //   - label it fills by (`getByLabel("x" | /re/)`),
-// must resolve in the product source (web/src, modules/*/src, packages/*/src;
+// must resolve in the product source (web/src, ops-console/src, modules/*/src, packages/*/src;
 // labels may also come from bundles/ and demo-sites/ JSON, since a field's
 // label is data). A testid resolves against the literal testids the product
 // renders, or a template prefix (`header-action-${name}`); a placeholder or
@@ -51,7 +51,7 @@ import { join } from "node:path";
 /** Where the rule bites: the browser drivers. */
 const ROOTS = ["kiosk", "e2e"];
 /** Where a hook must resolve: what the product renders. */
-const PRODUCT_ROOTS = ["web/src", "modules", "packages"];
+const PRODUCT_ROOTS = ["web/src", "ops-console/src", "modules", "packages"];
 /** A field's label is data; a driver that fills by label may be naming one. */
 const DATA_ROOTS = ["bundles", "demo-sites"];
 
@@ -98,7 +98,7 @@ for (const root of PRODUCT_ROOTS) {
   for (const file of walk(root, isProduct)) {
     // modules/<name>/src and packages/<name>/src only; a module's tests and
     // migrations render nothing.
-    if (root !== "web/src" && !/^(modules|packages)\/[^/]+\/src\//.test(file)) continue;
+    if (root !== "web/src" && root !== "ops-console/src" && !/^(modules|packages)\/[^/]+\/src\//.test(file)) continue;
     const src = readFileSync(file, "utf8");
     productText += "\n" + src;
     // data-testid="x" · data-testid={…} · testId="x" (a prop the component

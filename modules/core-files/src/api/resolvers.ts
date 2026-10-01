@@ -9,10 +9,13 @@
 
 import { readableFilename } from "./filename.js";
 import { sameBytes } from "./intake.js";
+import { notePhotoSource, photoSourceOf } from "./photo-source.js";
 import { randomUUID } from "node:crypto";
 import { sql, type Kysely } from "kysely";
-import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
+import { likeEscape, platform, type ResolvedEntity } from "@cobblr/platform-contract";
 import type { CoreFilesDB, FileVariants } from "../db.js";
+import { registerDocumentImageReader } from "@cobblr/platform-contract/document-images";
+import { extractPdfImages } from "./pdf-images.js";
 import { eraseWorkspaceFiles, fingerprintOf, listLocalWorkspaceFolders, readVariantBytes, removeStoredFile, storeUpload } from "./storage.js";
 
 let registered = false;
@@ -44,7 +47,7 @@ export function registerFileResolvers(): void {
     // A copy that repeats another file's bytes is that file: listed once.
     let q = db.selectFrom("core_files_files").selectAll().where("deleted_at", "is", null).where("same_as", "is", null);
     const text = (query.q ?? "").trim();
-    if (text) q = q.where("filename", "ilike", `%${text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+    if (text) q = q.where("filename", "ilike", `%${likeEscape(text)}%`);
     const rows = await q
       .orderBy("created_at", "desc")
       .limit(Math.min(query.limit ?? 50, 200))
@@ -52,6 +55,10 @@ export function registerFileResolvers(): void {
       .execute();
     return { items: rows.map((r) => toResolvedFile(orgId, r)) };
   });
+
+  // The pictures inside a PDF, for every module that reads one (a pattern's
+  // photo, a scanned receipt). A file that will not parse has no pictures.
+  registerDocumentImageReader((bytes, opts) => extractPdfImages(bytes, opts).catch(() => []));
 
   // The byte-reading seam. core-files owns the disk layout, so it's
   // the natural place to satisfy platform().files.read().
@@ -104,6 +111,7 @@ export function registerFileResolvers(): void {
       await sql`select pg_advisory_xact_lock(hashtext(${"core-files:" + sha}))`.execute(tx);
       const same = await sameBytes(tx, fp);
       if (same) {
+        if (opts.photoSource) await notePhotoSource(tx, same.id, opts.photoSource);
         return { fileId: same.id, mimeType: same.mime_type, sizeBytes: Number(same.size_bytes), kind: same.kind, existed: true };
       }
       const fileId = randomUUID();
@@ -123,6 +131,7 @@ export function registerFileResolvers(): void {
             kind: stored.kind,
             width: stored.width,
             height: stored.height,
+            ...(opts.photoSource ? { metadata: { photo_source: opts.photoSource } } : {}),
           })
           .execute();
       } catch (err) {
@@ -204,6 +213,28 @@ export function registerFileResolvers(): void {
     return true;
   });
 
+  // The DESCRIBE seam: what a file is, for a person reading about it (a
+  // record's history names a photo by this, never by its storage path).
+  platform().files.registerDescriber(async (orgId, fileIds) => {
+    const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreFilesDB>;
+    const rows = await db
+      .selectFrom("core_files_files")
+      .select(["id", "filename", "mime_type", "kind", "size_bytes", "width", "height", "metadata"])
+      .where("id", "in", fileIds)
+      .where("deleted_at", "is", null)
+      .execute();
+    return rows.map((r) => ({
+      fileId: r.id,
+      filename: r.filename,
+      mimeType: r.mime_type,
+      kind: r.kind,
+      sizeBytes: Number(r.size_bytes),
+      width: r.width,
+      height: r.height,
+      photoSource: photoSourceOf(r.metadata),
+    }));
+  });
+
   // The LIST seam - GET /attachments for one entity, same order, no request.
   platform().files.registerAttachmentLister(async (orgId, source) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreFilesDB>;
@@ -221,6 +252,7 @@ export function registerFileResolvers(): void {
         "f.kind as kind",
         "f.width as width",
         "f.height as height",
+        "f.metadata as metadata",
       ])
       .where("fa.source_module", "=", source.source_module)
       .where("fa.source_type", "=", source.source_type)
@@ -240,6 +272,7 @@ export function registerFileResolvers(): void {
       width: r.width,
       height: r.height,
       createdAt: r.created_at,
+      photoSource: photoSourceOf(r.metadata),
     }));
   });
 }

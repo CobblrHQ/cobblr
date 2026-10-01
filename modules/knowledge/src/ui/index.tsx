@@ -21,6 +21,7 @@ import {
   EntityPhoto,
   SearchInput,
   usePhotoPick,
+  Lightbox,
 } from "@cobblr/platform-web";
 import { BookOpen, Plus, Pin, PinOff, Trash2, ImagePlus, X } from "lucide-react";
 import { KnowledgeApi, type Entry, type EntryInput, KnowledgeApiError } from "./api.js";
@@ -236,6 +237,7 @@ function EntryEditor({
   const [preview, setPreview] = useState(false);
   const [imagePath, setImagePath] = useState(entry?.image_path ?? null);
   const imageSrc = useImageSrc(imagePath);
+  const [viewingImage, setViewingImage] = useState(false);
 
   const uploadImage = useMutation({
     mutationFn: (file: File) => {
@@ -321,12 +323,16 @@ function EntryEditor({
           <span className="text-[10px] font-mono uppercase tracking-widest text-faint">Image</span>
           {imageSrc ? (
             <div className="mt-1 relative inline-block">
-              {/* photo-frame: a stored config-barcode screenshot, scanned from the screen, so it keeps its own shape */}
-              <img
-                src={imageSrc}
-                alt="entry"
-                className="max-h-48 rounded border border-line dark:border-slate-700"
-              />
+              {/* A barcode on screen scans better big: a tap opens it in the shared viewer. */}
+              <button type="button" onClick={() => setViewingImage(true)} aria-label="Open the image" className="block cursor-zoom-in">
+                {/* photo-frame: a stored config-barcode screenshot, scanned from the screen, so it keeps its own shape */}
+                <img
+                  src={imageSrc}
+                  alt="entry"
+                  className="max-h-48 rounded border border-line dark:border-slate-700"
+                />
+              </button>
+              {viewingImage && <Lightbox items={[{ key: "entry", caption: "Entry image", src: imageSrc }]} index={0} onClose={() => setViewingImage(false)} />}
               <button
                 type="button"
                 title="Remove image"

@@ -2,11 +2,23 @@
   "manifest": {
     "id": "cobblr.flagship.gifts-occasions",
     "catalog": "disabled",
-    "version": "0.2.2",
+    "version": "0.2.4",
     "name": "Gifts & Occasions",
     "description": "Gift ideas as their own table: who, occasion + date (calendar-reminded), budget, and an idea→bought→wrapped→given pipeline.",
     "author": "Cobblr",
-    "released_at": "2026-06-08",
+    "released_at": "2026-10-02",
+    "releases": [
+      {
+        "version": "0.2.4",
+        "released_at": "2026-10-02",
+        "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before."
+      },
+      {
+        "version": "0.2.3",
+        "released_at": "2026-10-02",
+        "notes": "Budget is a money field: it shows as $50 and takes 50 or $50.00."
+      }
+    ],
     "changelog": "Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: Now its OWN table (an inventory instance), not generic Inventory with extra columns: its own nav entry, a “New gift” button, only gift-list fields (stock/parts cruft hidden). Plain-language hints + a pinned “By recipient” view.",
     "requires": [
       {
@@ -38,6 +50,7 @@
             "display_label": "Occasion",
             "type": "text",
             "position": 2,
+            "learns": true,
             "choices": [
               "Birthday",
               "Christmas",
@@ -61,7 +74,7 @@
             "entity_kind": "inventory:part",
             "name": "budget",
             "display_label": "Budget",
-            "type": "number",
+            "type": "money",
             "position": 4
           },
           {
@@ -70,6 +83,7 @@
             "display_label": "Status",
             "type": "text",
             "position": 5,
+            "learns": false,
             "choices": [
               "Idea",
               "Bought",

@@ -87,6 +87,7 @@ export function vendorFromLabel(label: string | null | undefined): string | null
 }
 
 import type { AiFallback, ProviderErrorReason } from "@cobblr/platform-contract/scan-fallback";
+import type { ReceiptReadSource } from "@cobblr/platform-contract/scan-session";
 import { filedQuantityOf } from "./filed-quantity.js";
 import type { ReceiptDateReading } from "./receipt-date.js";
 import {
@@ -161,14 +162,19 @@ export type ParseMethod = "csv" | "pdf-table" | "text-lines" | "ocr-lines" | "ai
  */
 export type ReceiptFailure = "ai_unavailable" | "no_line_items" | "unreadable";
 
+/** What was given to read, so a sentence about it names it: a PDF is never
+ *  told to "check the picture". `scanned-pdf` is a PDF with no text, read
+ *  from the photo of the page it carries. */
+export type ReceiptSource = ReceiptReadSource;
+
 export type ReceiptResult =
   /** `date_reading`: how the receipt's date was read (receipt-date.ts), so
    *  the session can record which way round a numeric date went (#2917). */
-  | { ok: true; receipt: ParsedReceipt; method: ParseMethod; date_reading?: ReceiptDateReading }
+  | { ok: true; receipt: ParsedReceipt; method: ParseMethod; date_reading?: ReceiptDateReading; source?: ReceiptSource }
   /** `ai` / `ai_reason`: the router's coded reason when the AI was the reason
    *  (scan-fallback / provider-reason), so the session's verdict can say what
    *  to do rather than "unavailable" (#2892). `reason` stays for a person. */
-  | { ok: false; reason: string; code: ReceiptFailure; ai?: AiFallback; ai_reason?: ProviderErrorReason };
+  | { ok: false; reason: string; code: ReceiptFailure; ai?: AiFallback; ai_reason?: ProviderErrorReason; source?: ReceiptSource };
 
 export function num(v: unknown): number | null {
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
@@ -381,6 +387,7 @@ export function receiptContentKey(receipt: ParsedReceipt): string | null {
   return [
     normalizeVendorKey(receipt.vendor),
     date ?? "",
+    // MONEY-OK: a dedup key, never shown: two reads of one receipt agree to the cent.
     total === null ? "" : total.toFixed(2),
     String(receipt.items.length),
   ].join("|");

@@ -22,11 +22,17 @@ export interface PlateMetadata {
   nozzle_mm?: number;
   /** Total filament grams for the plate, when the slicer states it. */
   filament_g?: number;
+  /** The same grams per filament the slicer used, tool 1 first (a
+   *  multi-material plate draws on several spools; a slot that feeds none
+   *  reads 0). Absent when the file states only a total. */
+  filament_g_by_tool?: number[];
   /** How many discrete parts one plate yields (from the `Nx ` filename prefix). */
   parts_per_plate?: number;
   /** Which slicer wrote the file, when stated. */
   slicer?: string;
 }
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
 
 const SCAN_BYTES = 512 * 1024; // comments live in the head/tail, like thumbnails
 
@@ -70,8 +76,12 @@ function fromComments(text: string): PlateMetadata {
   // Multi-tool prints list per-extruder (`= 12.3, 4.5`) — sum them.
   const gramsRaw = grab(/;\s*(?:total\s+)?filament used \[g\]\s*=\s*([\d.,\s]+)/i);
   if (gramsRaw) {
-    const g = gramsRaw.split(/[,;]/).map((x) => parseFloat(x.trim())).filter((n) => Number.isFinite(n)).reduce((a, b) => a + b, 0);
-    if (g > 0) out.filament_g = Math.round(g * 100) / 100;
+    const each = gramsRaw.split(/[,;]/).map((x) => parseFloat(x.trim())).map((n) => (Number.isFinite(n) ? n : 0));
+    const g = each.reduce((a, b) => a + b, 0);
+    if (g > 0) {
+      out.filament_g = round2(g);
+      out.filament_g_by_tool = each.map(round2);
+    }
   }
 
   const slicer = grab(/;\s*generated (?:by|with)\s+([^\r\n]+)/i) ?? grab(/^;\s*(\S+Slicer[^\r\n]*)/im);
@@ -115,13 +125,25 @@ function from3mf(bytes: Buffer): PlateMetadata {
   const out: PlateMetadata = {};
   let g = 0;
   const types: string[] = [];
+  // Each <filament> names its slot (id="1" is the first filament / AMS lane).
+  const byTool: number[] = [];
   const re = /<filament\b[^>]*\/?>/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(xml))) {
-    const gm = /used_g\s*=\s*"([\d.]+)"/i.exec(m[0]); if (gm) g += parseFloat(gm[1]!);
+    const gm = /used_g\s*=\s*"([\d.]+)"/i.exec(m[0]);
+    const used = gm ? parseFloat(gm[1]!) : 0;
+    g += used;
+    const id = Number(/\bid\s*=\s*"(\d+)"/i.exec(m[0])?.[1] ?? byTool.length + 1);
+    if (id >= 1 && id <= 64) {
+      while (byTool.length < id) byTool.push(0);
+      byTool[id - 1] = round2((byTool[id - 1] ?? 0) + used);
+    }
     const tm = /type\s*=\s*"([^"]+)"/i.exec(m[0]); if (tm) types.push(tm[1]!.trim().toUpperCase());
   }
-  if (g > 0) out.filament_g = Math.round(g * 100) / 100;
+  if (g > 0) {
+    out.filament_g = round2(g);
+    out.filament_g_by_tool = byTool;
+  }
   if (types.length) out.material = types[0];
   const pred = /<metadata\s+key="prediction"\s+value="([\d.]+)"/i.exec(xml);
   if (pred && Number(pred[1]) > 0) out.estimated_sec = Math.round(Number(pred[1]));

@@ -114,6 +114,11 @@ export function BindingsPage() {
                   </label>
                   <ChevronRight size={14} className="text-faint dark:text-slate-600 group-hover:text-accent transition" />
                 </div>
+                {b.never_runs && (
+                  <p className="mt-1 text-xs text-ember-700 dark:text-ember-300" data-testid="wire-never-runs">
+                    This wire never runs. {b.never_runs}
+                  </p>
+                )}
                 {b.trigger_silent && (
                   <div className="mt-2 text-xs text-ember-600 dark:text-ember-400">
                     Nothing sends {b.trigger_event} any more, so this wire never runs. Open it and pick another trigger.

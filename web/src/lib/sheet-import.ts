@@ -4,6 +4,7 @@
 
 import { DISPOSITION_LABELS, type Disposition } from "@cobblr/platform-contract/disposition";
 import { toCsv } from "@cobblr/platform-contract/csv";
+import { centsFromAmount, formatMoney } from "@cobblr/platform-contract/money";
 
 export type ColumnType =
   | "text"
@@ -11,6 +12,7 @@ export type ColumnType =
   | "number"
   | "money"
   | "quantity"
+  | "measure"
   | "date"
   | "boolean"
   | "choice"
@@ -292,7 +294,9 @@ function slugOf(header: string): string {
 }
 
 function newFieldType(t: ColumnType): string {
-  if (t === "number" || t === "money" || t === "quantity") return "number";
+  if (t === "money") return "money";
+  if (t === "number" || t === "quantity") return "number";
+  if (t === "measure") return "measure";
   if (t === "date") return "date";
   if (t === "boolean") return "boolean";
   if (t === "url" || t === "image") return "url";
@@ -339,14 +343,7 @@ export function showValue(v: unknown): string {
 /** A figure the way the sheet showed it: money with two places. */
 export function showFigure(n: number, check: Pick<SummaryCheck, "money" | "currency">): string {
   if (!check.money) return n.toLocaleString();
-  if (check.currency) {
-    try {
-      return n.toLocaleString(undefined, { style: "currency", currency: check.currency });
-    } catch {
-      // an unknown code reads as a plain amount below
-    }
-  }
-  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return formatMoney(centsFromAmount(n), { currency: check.currency });
 }
 
 /** "53 still yours, 13 no longer (sold 3, parted out 6, …)". */

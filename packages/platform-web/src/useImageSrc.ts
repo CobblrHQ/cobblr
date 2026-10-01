@@ -31,10 +31,79 @@ function needsAuth(src: string): boolean {
   return false;
 }
 
+/** A picture fetched once and shared: every tile and every reopen of the same
+ *  address reads the one copy, so a card does not go blank while it fetches
+ *  again. Released a while after the last reader lets go. */
+interface Held {
+  url: string | null;
+  pending: Promise<string | null> | null;
+  readers: number;
+  release: ReturnType<typeof setTimeout> | null;
+}
+const held = new Map<string, Held>();
+const KEEP_MS = 60_000;
+/** A grid asks for many pictures at once; one that fails to come in that
+ *  burst (a 429, a 503, a dropped connection) is asked again before the card
+ *  settles on its letter. One that is genuinely gone (401, 403, 404) is not. */
+const RETRY_DELAYS_MS = [400, 1_500];
+
+async function fetchPicture(src: string): Promise<string | null> {
+  const token = typeof window !== "undefined" ? window.localStorage.getItem(TOKEN_KEY) : null;
+  for (let attempt = 0; ; attempt++) {
+    let again = false;
+    try {
+      const res = await fetch(src, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      if (res.ok) return URL.createObjectURL(await res.blob());
+      again = res.status === 408 || res.status === 429 || res.status >= 500;
+    } catch {
+      again = true;
+    }
+    const wait = RETRY_DELAYS_MS[attempt];
+    if (!again || wait === undefined) return null;
+    await new Promise((r) => setTimeout(r, wait));
+  }
+}
+
+function hold(src: string): Held {
+  let h = held.get(src);
+  if (!h) {
+    h = { url: null, pending: null, readers: 0, release: null };
+    held.set(src, h);
+  }
+  if (h.release) {
+    clearTimeout(h.release);
+    h.release = null;
+  }
+  h.readers++;
+  if (!h.url && !h.pending) {
+    const entry = h;
+    entry.pending = fetchPicture(src).then((url) => {
+      entry.pending = null;
+      entry.url = url;
+      // A failure is not kept: the next reader asks again.
+      if (!url) held.delete(src);
+      return url;
+    });
+  }
+  return h;
+}
+
+function letGo(src: string, h: Held): void {
+  h.readers--;
+  if (h.readers > 0 || h.release) return;
+  h.release = setTimeout(() => {
+    if (h.readers > 0) return;
+    if (h.url) URL.revokeObjectURL(h.url);
+    if (held.get(src) === h) held.delete(src);
+  }, KEEP_MS);
+}
+
 export function useImageSrc(src?: string | null): string | null {
-  const [resolved, setResolved] = useState<string | null>(
-    src && !needsAuth(src) ? src : null,
-  );
+  const [resolved, setResolved] = useState<string | null>(() => {
+    if (!src) return null;
+    if (!needsAuth(src)) return src;
+    return held.get(src)?.url ?? null;
+  });
   useEffect(() => {
     if (!src) {
       setResolved(null);
@@ -45,29 +114,17 @@ export function useImageSrc(src?: string | null): string | null {
       return;
     }
     let cancelled = false;
-    let blobUrl: string | null = null;
-    const token =
-      typeof window !== "undefined"
-        ? window.localStorage.getItem(TOKEN_KEY)
-        : null;
-    fetch(src, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.blob();
-      })
-      .then((blob) => {
-        if (cancelled) return;
-        blobUrl = URL.createObjectURL(blob);
-        setResolved(blobUrl);
-      })
-      .catch(() => {
-        if (!cancelled) setResolved(null);
+    const h = hold(src);
+    if (h.url) setResolved(h.url);
+    else {
+      setResolved(null);
+      void h.pending?.then((url) => {
+        if (!cancelled) setResolved(url);
       });
+    }
     return () => {
       cancelled = true;
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      letGo(src, h);
     };
   }, [src]);
   return resolved;

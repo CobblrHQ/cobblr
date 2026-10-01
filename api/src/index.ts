@@ -19,15 +19,17 @@ import { logUploadRefused, startStaleUploadSweeper, uploadMiddleware, uploadSize
 import { fileURLToPath } from "node:url";
 import { withFieldLabels } from "./platform/field-labels.js";
 import { dirname, resolve } from "node:path";
-import { createServices, registerServicesRetention, registerServicesWorker, setServiceConfirm } from "./platform/services.js";
+import { createServices, registerServicesRetention, registerServicesWorker, setServiceConfirm, setServiceConnectionPort } from "./platform/services.js";
 import { confirmServiceJob, registerServiceConfirm } from "./platform/service-confirm.js";
+import { registerServiceSupervisor } from "./platform/service-supervisor.js";
 import { openServicesTestDoors } from "./platform/services-test-doors.js";
 import { testDoorsEnabled } from "./platform/test-doors.js";
-import { setPlatform, canContain, canBeContained } from "@cobblr/platform-contract";
+import { setPlatform, canContain, canBeContained, likeEscape, platform as platformSeams, EntityKindIdRegex, isInstallHolder } from "@cobblr/platform-contract";
 import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { describeBlock, describeCapabilityBlock } from "./platform/approvals.js";
 import { mergeJsonb } from "./platform/jsonb-merge.js";
-import { deleteFieldDef, resolveFieldDefsForKind } from "./platform/field-defs.js";
+import { deleteFieldDef, effectiveFieldDefsForKind } from "./platform/field-defs.js";
+import { choiceLearns } from "@cobblr/platform-contract/field-choices";
 import { sql, type Kysely, type Generated } from "kysely";
 import { env } from "./env.js";
 import { meta, metaPool, pingMeta } from "./db/meta.js";
@@ -59,7 +61,7 @@ import * as counters from "./platform/counters.js";
 import { announceWrites } from "./platform/entity-saved.js";
 import * as files from "./platform/files.js";
 import * as hostedSeams from "./platform/hosted-seams.js";
-import { trackProductEvent, trackDailyProductEvent } from "./platform/product-events.js";
+import { countProductMetric, trackProductEvent, trackDailyProductEvent } from "./platform/product-events.js";
 import { registerConfiguredAuthEmailSender } from "./platform/auth-email-config.js";
 import * as events from "./platform/events.js";
 import * as connectionsImpl from "./platform/connections.js";
@@ -78,6 +80,7 @@ import * as deviceApply from "./platform/device-apply.js";
 import * as scanRegistry from "./platform/scan-registry.js";
 import * as unitsImpl from "./platform/units.js";
 import * as instancesImpl from "./platform/instances.js";
+import { contentsWordOf, setContentsWord } from "./platform/contents-word.js";
 import { registerMover } from "./platform/move-records.js";
 import * as scanResolvers from "./platform/scan-resolvers.js";
 import * as categoryAxis from "./platform/category-axis.js";
@@ -124,6 +127,7 @@ import { reconcileOrphanTenantRoles } from "./platform/reconcile-tenant-roles.js
 import { reconcileScanCategoryFields, retireScanCategoryPlaceholders } from "./platform/reconcile-scan-category.js";
 import { reconcileAppScanFallback } from "./platform/reconcile-app-scan-fallback.js";
 import { backfillBundleClaims } from "./platform/backfill-bundle-claims.js";
+import { healListRenames } from "./platform/heal-list-renames.js";
 import { backfillInstallSideEffectClaims } from "./platform/backfill-install-side-effect-claims.js";
 import {
   registerDeclarativeScanResolver,
@@ -134,6 +138,7 @@ import { registerBackupCron, seedBackupSchedules } from "./platform/backup-desti
 import { outboundEmailLog, outboundEmailStatus, sendFromWorkspace } from "./platform/outbound-email.js";
 import { navSurface } from "./platform/nav-surface.js";
 import { registerGmailProvider } from "./platform/mail-source/provider.js";
+import { registerServiceConnections, serviceConnectionPort } from "./platform/service-connections.js";
 import { registerMailSourceSweep } from "./platform/mail-source/sync.js";
 import { completeApp, createApp } from "./server.js";
 import { splitEntityKind } from "@cobblr/platform-contract/entity-kind";
@@ -154,6 +159,112 @@ process.on("unhandledRejection", (reason) => {
 async function canonicalRef(orgId: string, ref: { kind: string; id: string }): Promise<{ kind: string; id: string }> {
   const kind = await entities.baseKindOf(orgId, ref.kind).catch(() => ref.kind);
   return { kind, id: ref.id };
+}
+
+/** How a container kind knows its parent when that nesting is not a placement
+ *  (a place inside a place). Registered by the kind's own module. */
+const placeParents = new Map<string, (orgId: string, id: string) => Promise<{ kind: string; id: string } | null>>();
+/** How a counted kind splits and rejoins (placement.registerQuantity). */
+const placeQuantities = new Map<string, import("@cobblr/platform-contract").PlacementQuantity>();
+/** What a record of a kind is worth (placement.registerValue). */
+const placeValues = new Map<string, (orgId: string, ids: string[] | "all") => Promise<Map<string, number>>>();
+/** The capability each valued kind needs a viewer to hold (a part's cost). */
+const placeValueScopes = new Map<string, string>();
+
+/** The kinds whose values this viewer may not see. The system sees all. */
+async function withheldKinds(orgId: string, viewer: { userId: string; role?: string } | undefined): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (!viewer || !placeValueScopes.size) return out;
+  const role =
+    viewer.role ??
+    (await meta.selectFrom("org_memberships").select("role").where("org_id", "=", orgId).where("user_id", "=", viewer.userId).executeTakeFirst())?.role ??
+    "guest";
+  for (const [kind, scope] of placeValueScopes) {
+    const ok = await platformSeams()
+      .auth.userHasCapability({ orgId, userId: viewer.userId, role, actionId: scope })
+      .catch(() => false);
+    if (!ok) out.add(kind);
+  }
+  return out;
+}
+/** How deep a built thing is followed (a part in a card in a computer). */
+const BUILT_DEPTH_MAX = 6;
+
+/** The own value of each of these records, by `kind:id`, read from each
+ *  kind's registered value. A kind that keeps none is absent. */
+async function valuesOf(orgId: string, refs: ReadonlyArray<{ kind: string; id: string }>): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const byKind = new Map<string, string[]>();
+  for (const r of refs) byKind.set(r.kind, [...(byKind.get(r.kind) ?? []), r.id]);
+  for (const [kind, ids] of byKind) {
+    const fn = placeValues.get(kind);
+    if (!fn) continue;
+    const got = await fn(orgId, ids).catch((err: unknown) => {
+      console.warn(`[placement] value of ${kind} not read:`, (err as Error).message);
+      return new Map<string, number>();
+    });
+    for (const [id, v] of got) if (Number.isFinite(v)) out.set(`${kind}:${id}`, v);
+  }
+  return out;
+}
+
+/** How far up a path is followed: deeper than any real shelf-in-room nesting,
+ *  and a stop for a cycle a bad write could leave. */
+const PLACE_PATH_MAX = 12;
+
+/** Where each thing is, innermost container first, named (platform().placement.pathsOf). */
+async function placePaths(
+  orgId: string,
+  asked: ReadonlyArray<{ kind: string; id: string }>,
+): Promise<Map<string, Array<{ kind: string; id: string; name: string }>>> {
+  const out = new Map<string, Array<{ kind: string; id: string; name: string }>>();
+  if (!asked.length) return out;
+  const tdb = (await getTenantDb(orgId)) as unknown as Kysely<PlacementDB>;
+  const containerOf = new Map<string, { kind: string; id: string } | null>();
+  const key = (r: { kind: string; id: string }) => `${r.kind}:${r.id}`;
+  // One read per level for everything still climbing, not one per thing.
+  async function load(refs: Array<{ kind: string; id: string }>): Promise<void> {
+    const todo = refs.filter((r) => !containerOf.has(key(r)));
+    if (!todo.length) return;
+    const rows = await tdb
+      .selectFrom("core_placement_placements")
+      .select(["containee_kind", "containee_id", "container_kind", "container_id"])
+      .where((eb) => {
+        const byKind = new Map<string, string[]>();
+        for (const r of todo) byKind.set(r.kind, [...(byKind.get(r.kind) ?? []), r.id]);
+        return eb.or([...byKind].map(([k, ids]) => eb.and([eb("containee_kind", "=", k), eb("containee_id", "in", ids)])));
+      })
+      .execute();
+    for (const r of todo) containerOf.set(key(r), null);
+    for (const row of rows) containerOf.set(`${row.containee_kind}:${row.containee_id}`, { kind: row.container_kind, id: row.container_id });
+    for (const r of todo) {
+      if (containerOf.get(key(r))) continue;
+      const parentOf = placeParents.get(r.kind);
+      if (parentOf) containerOf.set(key(r), await parentOf(orgId, r.id).catch(() => null));
+    }
+  }
+  const canon = await Promise.all(asked.map((a) => canonicalRef(orgId, a)));
+  const chains = canon.map((c) => ({ at: c, steps: [] as Array<{ kind: string; id: string }> }));
+  for (let depth = 0; depth < PLACE_PATH_MAX; depth++) {
+    const climbing = chains.filter((c) => c.at);
+    if (!climbing.length) break;
+    await load(climbing.map((c) => c.at!));
+    for (const c of climbing) {
+      const next = containerOf.get(key(c.at!)) ?? null;
+      if (next && !c.steps.some((s) => key(s) === key(next))) {
+        c.steps.push(next);
+        c.at = next;
+      } else {
+        c.at = null as never;
+      }
+    }
+  }
+  const all = [...new Map(chains.flatMap((c) => c.steps).map((s) => [key(s), s])).values()];
+  const names = new Map((await entities.lookupMany(orgId, all, { system: true }).catch(() => [])).map((e) => [key(e), e.title]));
+  asked.forEach((a, i) => {
+    out.set(key(a), chains[i]!.steps.map((s) => ({ ...s, name: names.get(key(s)) ?? "Something" })));
+  });
+  return out;
 }
 
 // The per-tenant DB slice platform().placement touches. The table is owned by
@@ -276,26 +387,32 @@ async function boot() {
       // answers "which roled fields apply here" rather than making every module
       // reimplement a matcher and get `@physical` wrong.
       roledFieldsFor: async (orgId, kind) => {
-        const defs = await resolveFieldDefsForKind(orgId, kind);
+        // The choices as the workspace has them, and whether the list is open:
+        // a parser's value off the list is written on a field that learns (it
+        // is never ADDED to the list), and held back on a closed one.
+        const defs = await effectiveFieldDefsForKind(orgId, kind);
         return defs
           .filter((d) => d.field_role)
           .map((d) => ({
             name: d.name,
             field_role: d.field_role,
             type: d.type,
-            choices: (d.choices as string[] | null) ?? null,
+            choices: d.choices,
+            learns: choiceLearns(d),
           }));
       },
       fieldsFor: async (orgId, kind) => {
-        const defs = await resolveFieldDefsForKind(orgId, kind);
+        const defs = await effectiveFieldDefsForKind(orgId, kind);
         return defs.map((d) => ({
           name: d.name,
           display_label: d.display_label,
           field_role: d.field_role,
           type: d.type,
-          choices: (d.choices as string[] | null) ?? null,
+          choices: d.choices,
+          learns: choiceLearns(d),
           unit: (d as { unit?: string | null }).unit ?? null,
           template: (d as { template?: string | null }).template ?? null,
+          required: (d as { required?: boolean | null }).required === true,
         }));
       },
       countersFor: counters.countersFor,
@@ -314,6 +431,7 @@ async function boot() {
       lookup: entities.lookup,
       lookupMany: entities.lookupMany,
       list: entities.list,
+      listable: entities.listable,
       listAll: entities.listAll,
       hiddenFields: entities.hiddenFieldsFor,
       exportCsv: (...args) => import("./platform/entity-export.js").then((m) => m.exportEntitiesCsv(...args)),
@@ -494,6 +612,7 @@ async function boot() {
       routedTo: connectionsImpl.routedTo,
       testConnection: connectionsImpl.testConnection,
       capabilities: connectionsImpl.capabilities,
+      createWorkspaceConnection: connectionsImpl.createWorkspaceConnection,
     },
     egress: {
       guardedFetch: egressImpl.guardedFetch,
@@ -509,6 +628,8 @@ async function boot() {
       registerDetacher: files.registerDetacher,
       detach: files.detach,
       registerAttachmentLister: files.registerAttachmentLister,
+      registerDescriber: files.registerDescriber,
+      describe: files.describe,
       listAttachments: files.listAttachments,
       registerAttachmentsOfFile: files.registerAttachmentsOfFile,
       attachmentsOfFile: files.attachmentsOfFile,
@@ -569,11 +690,20 @@ async function boot() {
     telemetry: {
       track: trackProductEvent,
       trackDaily: trackDailyProductEvent,
+      count: countProductMetric,
     },
     accounts: {
       registerLifecycleHooks: hostedSeams.registerLifecycleHooks,
       dayFor: dayForPerson,
       currentUserId: () => currentActor()?.userId ?? null,
+      personForUser: async (orgId, userId) => {
+        const { personForUser } = await import("./platform/people.js");
+        return personForUser(orgId, userId);
+      },
+      userForPerson: async (orgId, personId) => {
+        const { userForPerson } = await import("./platform/people.js");
+        return userForPerson(orgId, personId);
+      },
       displayNames: async (orgId, userIds) => {
         const ids = [...new Set(userIds)].filter((u) => /^[0-9a-f-]{36}$/i.test(u));
         if (ids.length === 0) return {};
@@ -669,7 +799,7 @@ async function boot() {
     // B1 from 2026-05-25-audit.md: pairings + catalogs platform
     // surfaces so modules stop SELECTing each other's tables.
     pairings: {
-      create: async ({ orgId, sourceKind, sourceId, targetKind, targetId, relationshipKind, createdBy }) => {
+      create: async ({ orgId, sourceKind, sourceId, targetKind, targetId, relationshipKind, createdBy, notes }) => {
         const row = await meta
           .insertInto("entity_pairings")
           .values({
@@ -680,6 +810,7 @@ async function boot() {
             target_id: targetId,
             relationship_kind: relationshipKind,
             created_by: createdBy ?? null,
+            ...(notes ? { notes: notes.slice(0, 500) } : {}),
           })
           .returning("id")
           .executeTakeFirstOrThrow();
@@ -877,9 +1008,15 @@ async function boot() {
     },
     services: createServices(),
     placement: {
-      place: async ({ orgId, containee: asked, container: askedContainer, slot, placedBy, position, via }) => {
+      place: async ({ orgId, containee: asked, container: askedContainer, slot, placedBy, position, via, oneToASlot, qty }) => {
         if (position && !(Number.isFinite(position.x_mm) && Number.isFinite(position.y_mm))) {
           throw new Error("placement: a position is two numbers, x_mm and y_mm");
+        }
+        // A kind is <module>:<name>. A malformed one ("inventory:groceries:item")
+        // was stored, and every lookup of the record then missed it: the thing
+        // was placed nowhere anyone could see.
+        for (const r of [asked, askedContainer]) {
+          if (!EntityKindIdRegex.test(r.kind)) throw new Error(`placement: ${r.kind} is not a kind (<module>:<name>)`);
         }
         // One record, one key: whatever spelling the caller holds (a
         // collection's "home-inventory:item" from a search, the base
@@ -887,11 +1024,12 @@ async function boot() {
         // read under the base kind, the key the location trigger already
         // writes. Two spellings were two rows: the same fan in the Bedroom
         // and the Garage at once (#3663).
-        const containee = await canonicalRef(orgId, asked);
+        let containee = await canonicalRef(orgId, asked);
         const container = await canonicalRef(orgId, askedContainer);
         if (containee.kind === container.kind && containee.id === container.id) {
           throw new Error("placement: an entity cannot contain itself");
         }
+        const counted = placeQuantities.get(containee.kind);
         // Trait gate: only a physical thing can contain; only a containable
         // thing can be contained. Unknown kinds (not in the registry) are left
         // to the caller — we don't block a custom kind we can't classify.
@@ -941,13 +1079,35 @@ async function boot() {
             .executeTakeFirst();
           cursor = up ? { kind: up.container_kind, id: up.container_id } : null;
         }
+        // Only some of it: the kind's module takes that many off into a record
+        // of its own, and that record is the one placed (2 of 4 sticks).
+        // The split-off part remembers where the rest is, so "back where it
+        // was" takes it there and it joins them.
+        let cameFrom: { kind: string; id: string; slot: string | null } | null = null;
+        if (qty !== undefined && counted) {
+          if (!(Number.isFinite(qty) && qty > 0)) throw new Error("placement: say how many, more than none");
+          const have = await counted.quantityOf(orgId, containee.id);
+          if (have != null) {
+            if (qty > have) throw new Error(`placement: there ${have === 1 ? "is" : "are"} only ${have}`);
+            if (qty < have) {
+              const src = await tdb
+                .selectFrom("core_placement_placements")
+                .select(["container_kind", "container_id", "slot"])
+                .where("containee_kind", "=", containee.kind)
+                .where("containee_id", "=", containee.id)
+                .executeTakeFirst();
+              if (src) cameFrom = { kind: src.container_kind, id: src.container_id, slot: src.slot ?? null };
+              containee = { kind: containee.kind, id: await counted.split({ orgId, id: containee.id, qty, userId: placedBy ?? null }) };
+            }
+          }
+        }
         // Upsert — one container per containee (moving re-points the same row).
         // The pin: given, it is set (null clears it); not given, it is kept
         // while the thing stays in the same container and dropped when it
         // moves to another, whose floor it did not measure.
         const prev = await tdb
           .selectFrom("core_placement_placements")
-          .select(["container_kind", "container_id", "metadata"])
+          .select(["container_kind", "container_id", "slot", "metadata"])
           .where("containee_kind", "=", containee.kind)
           .where("containee_id", "=", containee.id)
           .executeTakeFirst();
@@ -956,6 +1116,28 @@ async function boot() {
         const sameContainer = !!prev && prev.container_kind === container.kind && prev.container_id === container.id;
         if (position) md.position = { x_mm: position.x_mm, y_mm: position.y_mm };
         else if (position === null || !sameContainer) delete md.position;
+        // Where it was before, so it can go back there: a spool loaded onto a
+        // printer returns to its own shelf when another takes its slot.
+        if (!prev) delete md.came_from;
+        else if (!sameContainer) md.came_from = { kind: prev.container_kind, id: prev.container_id, slot: prev.slot ?? null };
+        if (cameFrom) md.came_from = cameFrom;
+        // A slot that holds one thing: whatever is in it now goes home first.
+        const displaced: Array<{ kind: string; id: string; to: { kind: string; id: string } | null }> = [];
+        if (oneToASlot && slot) {
+          const occupants = await tdb
+            .selectFrom("core_placement_placements")
+            .select(["containee_kind", "containee_id"])
+            .where("container_kind", "=", container.kind)
+            .where("container_id", "=", container.id)
+            .where("slot", "=", slot)
+            .execute();
+          for (const o of occupants) {
+            if (o.containee_kind === containee.kind && o.containee_id === containee.id) continue;
+            const ref = { kind: o.containee_kind, id: o.containee_id };
+            const to = await platformSeams().placement.returnHome({ orgId, containee: ref, placedBy: placedBy ?? null, ...(via ? { via } : {}) });
+            displaced.push({ ...ref, to });
+          }
+        }
         const metadata = sql`${JSON.stringify(md)}::jsonb`;
         await tdb
           .insertInto("core_placement_placements")
@@ -1033,6 +1215,72 @@ async function boot() {
           // A subscriber must never be able to fail a move.
           console.warn("[placement] placed event not emitted:", (err as Error).message);
         }
+        // A thing built from parts keeps its own history of them: "installed
+        // RAM stick" on the computer, "took out SSD" when it leaves. Only an
+        // install holder (an asset, a machine), never a shelf or a box.
+        if (!sameContainer) {
+          try {
+            const holderOf = async (k: string) => isInstallHolder(((await Promise.resolve(entities.getKind(k)).catch(() => null))?.traits ?? null) as Record<string, unknown> | null);
+            const into = await holderOf(container.kind);
+            const outOf = prev ? await holderOf(prev.container_kind) : false;
+            if (into || outOf) {
+              const name = (await entities.lookupMany(orgId, [containee], { system: true }).catch(() => []))[0]?.title ?? null;
+              const n = qty ?? (counted ? await counted.quantityOf(orgId, containee.id).catch(() => null) : null);
+              const log = (on: { kind: string; id: string }, action: string) => {
+                const [module, entityType] = on.kind.split(":", 2);
+                return activity.log({
+                  orgId,
+                  userId: placedBy ?? undefined,
+                  action,
+                  ref: { module: module ?? null, entityType: entityType ?? on.kind, entityId: on.id },
+                  diff: { part: { kind: containee.kind, id: containee.id, name }, ...(n != null ? { qty: n } : {}) },
+                  ...(via?.trim() ? { via: { kind: "surface" as const, label: via.trim().slice(0, 80) } } : {}),
+                });
+              };
+              if (into) await log(container, "part_installed");
+              if (outOf && prev) await log({ kind: prev.container_kind, id: prev.container_id }, "part_removed");
+            }
+          } catch (err) {
+            console.warn("[placement] built-from history not written:", (err as Error).message);
+          }
+        }
+        // The same thing already in there as another record becomes one with
+        // it: a second stick installed, a part taken back to its spares.
+        let placed = containee;
+        if (counted) {
+          try {
+            placed = { kind: containee.kind, id: await counted.settle({ orgId, id: containee.id, container, userId: placedBy ?? null }) };
+          } catch (err) {
+            console.warn(`[placement] ${containee.kind} not settled:`, (err as Error).message);
+          }
+        }
+        return { displaced, placed };
+      },
+      returnHome: async ({ orgId, containee: asked, placedBy, via }) => {
+        const containee = await canonicalRef(orgId, asked);
+        const tdb = (await getTenantDb(orgId)) as unknown as Kysely<PlacementDB>;
+        const row = await tdb
+          .selectFrom("core_placement_placements")
+          .select(["container_kind", "container_id", "metadata"])
+          .where("containee_kind", "=", containee.kind)
+          .where("containee_id", "=", containee.id)
+          .executeTakeFirst();
+        if (!row) return null;
+        const home = (row.metadata as { came_from?: { kind?: unknown; id?: unknown; slot?: unknown } } | null)?.came_from;
+        const seams = platformSeams().placement;
+        if (home && typeof home.kind === "string" && typeof home.id === "string" && !(home.kind === row.container_kind && home.id === row.container_id)) {
+          const to = { kind: home.kind, id: home.id };
+          try {
+            const done = await seams.place({ orgId, containee, container: to, slot: typeof home.slot === "string" ? home.slot : null, placedBy: placedBy ?? null, ...(via ? { via } : {}) });
+            // A part that joined the rest there is now that record.
+            return done?.placed ? { ...to, placed: done.placed } : to;
+          } catch (err) {
+            // The shelf it came from is gone: it leaves the container instead.
+            console.warn(`[placement] ${containee.kind} ${containee.id} could not go home:`, (err as Error).message);
+          }
+        }
+        await seams.remove({ orgId, containee });
+        return null;
       },
       remove: async ({ orgId, containee: asked }) => {
         const containee = await canonicalRef(orgId, asked);
@@ -1073,6 +1321,98 @@ async function boot() {
           .where("containee_id", "=", containee.id)
           .executeTakeFirst();
         return row ? { kind: row.container_kind, id: row.container_id } : null;
+      },
+      pathsOf: async ({ orgId, containees }) => placePaths(orgId, containees),
+      holders: async ({ orgId }) => {
+        const tdb = (await getTenantDb(orgId)) as unknown as Kysely<PlacementDB>;
+        const rows = await tdb
+          .selectFrom("core_placement_placements")
+          .select(["container_kind", "container_id", sql<string>`count(*)`.as("n")])
+          .groupBy(["container_kind", "container_id"])
+          .execute();
+        // A kind whose records are places by nature (containment: container)
+        // is its own module's to offer; only things that hold things are here.
+        const placeKind = new Map<string, boolean>();
+        for (const k of new Set(rows.map((r) => r.container_kind))) {
+          const rec = await Promise.resolve(entities.getKind(k)).catch(() => null);
+          placeKind.set(k, (rec?.traits as { containment?: unknown } | undefined)?.containment === "container");
+        }
+        return rows
+          .filter((r) => !placeKind.get(r.container_kind))
+          .map((r) => ({ kind: r.container_kind, id: r.container_id, holds: Number(r.n) }));
+      },
+      registerParent: (kind, parentOf) => {
+        placeParents.set(kind, parentOf);
+      },
+      registerQuantity: (kind, quantity) => {
+        placeQuantities.set(kind, quantity);
+      },
+      registerValue: (kind, valueOf, opts) => {
+        placeValues.set(kind, valueOf);
+        if (opts?.readScope) placeValueScopes.set(kind, opts.readScope);
+      },
+      contentsWord: ({ orgId, kind }) => contentsWordOf(orgId, kind),
+      setContentsWord: ({ orgId, kind, word }) => setContentsWord(orgId, kind, word),
+      builtValue: async ({ orgId, container: asked, viewer }) => {
+        // The word is the kind's as asked: a collection keeps its own.
+        const word = (await contentsWordOf(orgId, asked.kind).catch(() => null))?.word ?? null;
+        const top = await canonicalRef(orgId, asked);
+        const hidden = await withheldKinds(orgId, viewer);
+        let withheld = false;
+        const tdb = (await getTenantDb(orgId)) as unknown as Kysely<PlacementDB>;
+        const seen = new Set<string>([`${top.kind}:${top.id}`]);
+        async function partsOf(c: { kind: string; id: string }, depth: number): Promise<import("@cobblr/platform-contract").BuiltPart[]> {
+          if (depth >= BUILT_DEPTH_MAX) return [];
+          const rows = await tdb
+            .selectFrom("core_placement_placements")
+            .select(["containee_kind", "containee_id"])
+            .where("container_kind", "=", c.kind)
+            .where("container_id", "=", c.id)
+            .execute();
+          const refs = rows.map((r) => ({ kind: r.containee_kind, id: r.containee_id })).filter((r) => !seen.has(`${r.kind}:${r.id}`));
+          for (const r of refs) seen.add(`${r.kind}:${r.id}`);
+          if (!refs.length) return [];
+          const [vals, found] = await Promise.all([valuesOf(orgId, refs.filter((r) => !hidden.has(r.kind))), entities.lookupMany(orgId, refs, { system: true }).catch(() => [])]);
+          if (refs.some((r) => hidden.has(r.kind) && placeValues.has(r.kind))) withheld = true;
+          const names = new Map(found.map((e) => [`${e.kind}:${e.id}`, e.title]));
+          const out: import("@cobblr/platform-contract").BuiltPart[] = [];
+          for (const r of refs) {
+            const key = `${r.kind}:${r.id}`;
+            const inner = await partsOf(r, depth + 1);
+            const built = inner.reduce((sum, p) => sum + p.value_total, 0);
+            const value = vals.has(key) ? vals.get(key)! : null;
+            const q = placeQuantities.get(r.kind);
+            const qty = q ? await q.quantityOf(orgId, r.id).catch(() => null) : null;
+            out.push({ ...r, name: names.get(key) ?? "Something", qty, value, built, value_total: (value ?? 0) + built });
+          }
+          return out.sort((a, b) => a.name.localeCompare(b.name));
+        }
+        const parts = await partsOf(top, 0);
+        if (hidden.has(top.kind) && placeValues.has(top.kind)) withheld = true;
+        const own = hidden.has(top.kind) ? undefined : (await valuesOf(orgId, [top])).get(`${top.kind}:${top.id}`);
+        const other = own === undefined ? null : own;
+        const built = Math.round(parts.reduce((sum, p) => sum + p.value_total, 0) * 100) / 100;
+        return { other, parts, built, total: Math.round(((other ?? 0) + built) * 100) / 100, withheld, word };
+      },
+      worth: async ({ orgId, within, viewer }) => {
+        const hidden = await withheldKinds(orgId, viewer);
+        // Every record that keeps a value, each once, by its own value. A
+        // computer's own value is what is not itemized, so adding its parts
+        // as themselves counts nothing twice.
+        const all: Array<{ kind: string; id: string; value: number }> = [];
+        for (const [kind, fn] of placeValues) {
+          if (hidden.has(kind)) continue;
+          const got = await fn(orgId, "all").catch(() => new Map<string, number>());
+          for (const [id, value] of got) if (Number.isFinite(value)) all.push({ kind, id, value });
+        }
+        let counted = all;
+        if (within) {
+          const w = await canonicalRef(orgId, within);
+          const paths = await placePaths(orgId, all);
+          counted = all.filter((r) => (paths.get(`${r.kind}:${r.id}`) ?? []).some((s) => s.kind === w.kind && s.id === w.id));
+        }
+        const total = Math.round(counted.reduce((sum, r) => sum + r.value, 0) * 100) / 100;
+        return { total, records: counted.length, withheld: [...hidden].some((k) => placeValues.has(k)) };
       },
       contents: async ({ orgId, container: asked }) => {
         const container = await canonicalRef(orgId, asked);
@@ -1121,7 +1461,7 @@ async function boot() {
         const row = await tdb
           .selectFrom("core_catalogs_catalogs")
           .select(["id", "name"])
-          .where("bundle_external_id", "like", `%${suffix}`)
+          .where("bundle_external_id", "like", `%${likeEscape(suffix)}`)
           .limit(1)
           .executeTakeFirst();
         return row ? { id: row.id, name: row.name } : null;
@@ -1462,6 +1802,10 @@ async function boot() {
   if (claimsOrgs > 0) {
     console.log(`[cobblr-api] bundle-resource claims backfilled for ${claimsOrgs} org(s)`);
   }
+  // List renames the assistant wrote under the bare list name, which nothing
+  // read (#4495): folded into the row the app reads. One cobblr_meta read.
+  const listRenames = await T("healListRenames", healListRenames());
+  if (listRenames > 0) console.log(`[cobblr-api] list renames healed: ${listRenames}`);
   // The modules an install switched on before installs claimed them (#3918),
   // where the activity log can say so. One cobblr_meta query, no tenant pool.
   const sideEffectClaims = await T("backfillInstallSideEffectClaims", backfillInstallSideEffectClaims());
@@ -1562,18 +1906,28 @@ async function boot() {
   // sweep is registered regardless, since a grant made under one config
   // outlives a restart without it and must at least say so.
   registerGmailProvider();
+  // Connections of kind `service`: one definition for every service, each
+  // named by its own manifest id (platform/service-connections.ts).
+  registerServiceConnections();
   registerMailSourceSweep();
 
   // Platform-owned background work — the queue worker loop. Started
   // AFTER onBoot so modules have had a chance to register their
   // queue handlers via platform.queue.registerWorker().
+  // The kernel reaches service connections through one port (the order, the
+  // manifest, a signed hop); test deployments wrap that same port, so it is
+  // made before either.
+  const servicePort = serviceConnectionPort();
+  setServiceConnectionPort(servicePort);
   registerServicesWorker();
   // The confirm (services.md section 9): a yes is bound to what was shown.
   // The gate needs no wiring; the kernel calls it directly.
   setServiceConfirm(confirmServiceJob);
   registerServiceConfirm();
   registerServicesRetention();
-  if (testDoorsEnabled(env.COBBLR_ENV || env.NODE_ENV, process.env.COBBLR_TEST_DOORS)) openServicesTestDoors(null);
+  // Something watching the chain, not only the job (services.md S9).
+  registerServiceSupervisor();
+  if (testDoorsEnabled(env.COBBLR_ENV || env.NODE_ENV, process.env.COBBLR_TEST_DOORS)) openServicesTestDoors(servicePort);
   queue.startWorker();
 
   void seedBackupSchedules().catch((err) =>

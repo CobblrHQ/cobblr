@@ -57,6 +57,9 @@ export const SERVICE_ERROR_CODES = [
   "idempotency_conflict",
   "input_timeout",
   "internal",
+  // Cobblr's own: the supervisor judged the job stuck (no change, or past its
+  // deadline) and had no one else to hand it to.
+  "stalled",
 ] as const;
 export type ServiceErrorCode = (typeof SERVICE_ERROR_CODES)[number] | `x-${string}`;
 
@@ -423,7 +426,46 @@ export interface BuiltInServiceContext {
   /** An adapter's connection id: the key a module keeps its own per-record
    *  settings under (a detector's camera map). Absent for a plain built-in. */
   connectionId?: string;
+  /** An adapter's one way to its program: a request to the connection's
+   *  `base_url`, direct or through its owner's bridge as the connection's
+   *  `transit` says. The adapter never chooses a transport and never sees a
+   *  bridge. Absent for a plain built-in. */
+  fetch?: AdapterFetch;
 }
+
+/** One request an adapter makes to the program it speaks. `path` (with any
+ *  query) is under the connection's base_url; a JSON `body` is sent as JSON. */
+export interface AdapterRequest {
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  path: string;
+  headers?: Record<string, string>;
+  body?: unknown;
+  timeoutMs?: number;
+}
+export interface AdapterResponse {
+  status: number;
+  headers: Record<string, string>;
+  bytes: Uint8Array;
+  /** The body read as JSON, or null when it is not JSON. */
+  json: unknown;
+}
+export type AdapterFetch = (req: AdapterRequest) => Promise<AdapterResponse>;
+
+/** The settings an adapter's connection form carries for WHERE its program
+ *  is, read by the kernel to make `ctx.fetch`: an address, and how to reach
+ *  it ("" direct, "bridge" the owner's bridge, "bridge:<name>" a named one). */
+export const ADAPTER_ADDRESS_KEY = "base_url";
+export const ADAPTER_TRANSIT_KEY = "transit";
+/** The transit setting as a form field, for an adapter whose program usually
+ *  lives on a home network. */
+export const ADAPTER_TRANSIT_PROPERTY: AdapterConfigProperty = {
+  type: "string",
+  title: "How to reach it",
+  description: "Direct for an address this server can reach; through your bridge for one on your home network.",
+  enum: ["", "bridge"],
+  enumLabels: ["Direct", "Through my bridge"],
+  default: "",
+};
 
 /** A setting on an adapter's connection form. Flat strings only. */
 export interface AdapterConfigProperty {
@@ -436,6 +478,8 @@ export interface AdapterConfigProperty {
   writeOnly?: true;
   default?: string;
   enum?: string[];
+  /** What each `enum` value reads as on the form, in the same order. */
+  enumLabels?: string[];
 }
 
 /** What testing an adapter connection found. */
@@ -458,7 +502,21 @@ export interface BuiltInConnectionDef {
   title: string;
   summary?: string;
   config_schema: { type: "object"; properties: Record<string, AdapterConfigProperty>; required?: string[] };
-  test(config: Record<string, string>, ctx: { userId: string; orgId?: string }): Promise<AdapterTestResult>;
+  /** `ctx.fetch` reaches the program at the address being tested, the same
+   *  way a job will. */
+  test(config: Record<string, string>, ctx: { userId: string; orgId?: string; fetch?: AdapterFetch }): Promise<AdapterTestResult>;
+  /** One program, several capabilities: built-ins that name the same group
+   *  are ONE adapter, offered once on Add a service and connected once, and
+   *  that one connection answers every capability of the group (a document
+   *  system finds, reads and links documents). The group's first registered
+   *  built-in's title, form and test speak for it. Absent: the built-in is
+   *  its own group. */
+  group?: string;
+}
+
+/** The adapter a built-in belongs to: its group, or itself. */
+export function adapterGroupOf(def: Pick<BuiltInServiceDef, "id" | "connection">): string {
+  return def.connection?.group ?? def.id;
 }
 
 export interface BuiltInServiceResult {
@@ -483,8 +541,85 @@ export function adapterProviderId(builtInId: string): string {
 }
 
 /** The job events wires trigger on (§10): how a flow chains. Payload:
- *  { orgId, jobId, capability, status, causedByJob, hop }. */
-export const SERVICE_JOB_EVENTS = ["services.job.updated", "services.job.done", "services.job.failed", "services.job.needs_input"] as const;
+ *  { orgId, jobId, capability, status, causedByJob, hop, attachTo?, output? }.
+ *  A step a person skipped emits `services.job.skipped` and then
+ *  `services.job.done` with `skipped: true` and no output, so the run goes on. */
+export const SERVICE_JOB_EVENTS = ["services.job.updated", "services.job.done", "services.job.failed", "services.job.needs_input", "services.job.skipped"] as const;
+
+/** A supervisor's stall rules: a job is stalled when it has not moved for
+ *  this long, or has run past 3x its capability's typical_seconds (never less
+ *  than the floor). */
+export const SERVICE_STALL_NO_CHANGE_MS = 10 * 60_000;
+export const SERVICE_DEADLINE_FLOOR_MS = 5 * 60_000;
+/** A stalled job is handed on at most this many times. */
+export const SERVICE_MAX_HANDOFFS = 3;
+
+/** What one step of a run waits on, for the Run view. */
+export type ServiceRunWait =
+  | { kind: "yes"; since: string; expires_at: string }
+  | { kind: "answer"; since: string }
+  | { kind: "service"; label: string; since: string; stalled: boolean; deadline_at: string | null }
+  | { kind: "next_step"; capability: string; since: string }
+  | null;
+
+export interface ServiceRunStep {
+  id: string;
+  capability: string;
+  title: string;
+  status: ServiceJobStatus;
+  /** Who answers (the service's name), or null before it is routed. */
+  answered_by: string | null;
+  origin: ServiceJobOrigin;
+  caused_by_job: string | null;
+  hop: number;
+  /** How many times it was handed on or retried. */
+  attempt: number;
+  progress: number | null;
+  message: string | null;
+  error: ServiceError | null;
+  waiting_on: ServiceRunWait;
+  /** The job that retried this one, when a person pressed Retry. */
+  retried_by: string | null;
+  /** A person skipped it; the run went on without its answer. */
+  skipped: boolean;
+  /** It failed, nothing has dealt with it, and its answer can be absent. */
+  can_skip: boolean;
+  created_at: string;
+  finished_at: string | null;
+}
+
+/** A chain of jobs grouped under the one that started it (services.md S9). */
+export interface ServiceRun {
+  root_id: string;
+  /** "stuck" when a step needs a person to decide (retry, skip, cancel). */
+  state: "running" | "waiting" | "stuck" | "done" | "failed" | "cancelled";
+  /** One line: what the run is waiting on, or how it ended. */
+  summary: string;
+  steps: ServiceRunStep[];
+  started_at: string;
+  updated_at: string;
+}
+
+/** A notice that something is stuck and a person should decide: one per
+ *  subject, however many sweeps see it, withdrawn once settled. The Services
+ *  supervisor sends these for stuck runs; any module's watchdog (a print farm)
+ *  reports through the same notice. */
+export interface StuckNotice {
+  orgId: string;
+  /** What is stuck: a job or record id (a uuid). One live notice per id. */
+  subjectId: string;
+  heading: string;
+  body: string;
+  /** The line for the bell and the digest. */
+  message: string;
+  context?: string;
+  /** Page it opens (a run, a job), when there is one. */
+  link?: string;
+  /** Buttons: platform actions, pressed as the person. */
+  actions?: Array<{ id: string; label: string; action: string; args: Record<string, unknown>; style?: "primary" | "secondary" | "danger" }>;
+  /** Who is told; the workspace's owners and admins when left out. */
+  userIds?: string[];
+}
 
 /** platform().services: the one door to outside work (§10). */
 export interface PlatformServices {
@@ -505,11 +640,36 @@ export interface PlatformServices {
   cancel(orgId: string, jobId: string, userId: string | null): Promise<void>;
   /** An in-process implementation of a capability. */
   registerBuiltIn(def: BuiltInServiceDef): void;
+  /** The chain a job belongs to, from the job that started it. */
+  run(orgId: string, jobId: string): Promise<ServiceRun | null>;
+  /** Tell people something is stuck (see StuckNotice), and take it back. */
+  raiseStuck(notice: StuckNotice): Promise<void>;
+  settleStuck(orgId: string, subjectId: string): Promise<void>;
   /** An adapter connection's settings, for the module that owns the adapter
    *  (a detector page listing the cameras behind its connection). Null
    *  unless `credentialId` is a connection of `builtInId` in this workspace:
    *  a module reads only its own adapter's settings, and only here. */
   adapterConfig(orgId: string, credentialId: string, builtInId: string): Promise<Record<string, string> | null>;
+  /** Every connection that answers `capability` in this workspace, whoever's
+   *  it is, for work a module does in the background on its records
+   *  (matching documents to things). A shared connection's answers are the
+   *  workspace's; a personal one's belong to its owner alone, so whatever a
+   *  module keeps from it is kept for that person only. Never a key or an
+   *  address. */
+  connectionsFor(orgId: string, capability: string): Promise<ServiceConnectionHolder[]>;
+}
+
+/** A connection that answers a capability here, and whose it is. */
+export interface ServiceConnectionHolder {
+  credentialId: string;
+  label: string;
+  /** The person who made it. */
+  ownerUserId: string;
+  /** The workspace may use it with no person asking. */
+  shared: boolean;
+  /** Which program it is: an adapter's group ("paperless"), or a service's
+   *  manifest id. For what a module keeps per program (its setup steps). */
+  provider: string;
 }
 
 /** Thrown by the placeholder platform().services until the kernel lands, so a

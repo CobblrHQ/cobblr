@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-09-30
 docs_target: docs/USER_GUIDE.md#3.19 Digital Fabrication (`digifab`, stock)
+docs_published: 2026-10-01
 ---
 Print this: press it on a model file or a Make, or ask Cobb, and Cobblr picks the printer the part fits with the material loaded, slices it for that printer, and waits for your one yes before anything prints.
 

@@ -2,7 +2,6 @@
 // router; the navItems metadata drives the top-bar entry.
 
 import { Routes, Route } from "react-router-dom";
-import { TaskAddress } from "./TaskAddress";
 import type { FileIntakeDecl } from "@cobblr/platform-contract";
 import { Layers } from "lucide-react";
 // Side-effect: registers the projects "at a glance" dashboard tile through
@@ -11,6 +10,7 @@ import "./DashboardWidget";
 import { ProjectsProvider } from "./context";
 import { ProjectsListPage } from "./ProjectsListPage";
 import { ProjectDetailPage } from "./ProjectDetailPage";
+import { TaskAddress } from "./TaskAddress";
 
 export const navItems = [
   { label: "Projects", path: "/projects", icon: Layers },

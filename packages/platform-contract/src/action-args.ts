@@ -13,6 +13,8 @@
 // A blank string is not a value: "" for a unit code is no code. `false` and
 // `0` are values.
 
+import { amountOf, parseMoney } from "@cobblr/platform-contract/money";
+
 export interface ArgChoice {
   value: string;
   label: string;
@@ -36,6 +38,8 @@ export interface ActionArgSpec {
   /** The values this argument may take, in the words a person picks from. */
   choices?: readonly ArgChoice[];
   choicesFrom?: ArgChoicesFrom;
+  /** An amount of money as a person says it ("$45.50"); never cents. */
+  money?: boolean;
   /** Offered on the button's sheet although the action runs without it.
    *  Only what `required` (or a `oneOf` group) names was ever asked, so an
    *  optional answer a person often has ("due back on", "last done on") had
@@ -123,7 +127,7 @@ export function requiredArgsRefusal(
 export interface PressAsk {
   arg: string;
   label: string;
-  kind: "text" | "number" | "boolean" | "choice" | "date";
+  kind: "text" | "number" | "boolean" | "choice" | "date" | "money";
   placeholder?: string;
   required?: boolean;
   oneOf?: string;
@@ -135,6 +139,7 @@ export interface PressAsk {
 
 function askKind(spec: ActionArgSpec | undefined): PressAsk["kind"] {
   if (spec?.choices) return "choice";
+  if (spec?.money) return "money";
   return spec?.type === "number" ? "number" : spec?.type === "boolean" ? "boolean" : spec?.type === "date" ? "date" : "text";
 }
 
@@ -221,6 +226,10 @@ export function pressAnswersToArgs(ask: readonly PressAsk[], answers: Record<str
     if (q.kind === "number") {
       const n = Number(v);
       if (Number.isFinite(n)) out[q.arg] = n;
+    } else if (q.kind === "money") {
+      // The amount, as the person meant it: "4,300" is 4300.
+      const c = parseMoney(v);
+      if (c !== null) out[q.arg] = amountOf(c);
     } else if (q.kind === "boolean") out[q.arg] = v === "true";
     else if (q.kind === "choice") {
       if (!q.choices || q.choices.some((c) => c.value === v)) out[q.arg] = v;

@@ -11,7 +11,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, Check, History, Pencil, Trash2, Wrench } from "lucide-react";
 import { ApiError, api, type MaintenanceEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
+import { Modal, MoneyInput, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
+import { formatStoredMoney } from "@cobblr/platform-contract/money";
 
 type Kind = "scheduled" | "history" | "all";
 
@@ -218,7 +219,7 @@ function MaintenanceCard({
               </span>
             )}
             {entry.cost_cents != null && (
-              <span>${(entry.cost_cents / 100).toFixed(2)}</span>
+              <span>{formatStoredMoney(entry.cost_cents, "cents")}</span>
             )}
           </div>
           {entry.notes && (
@@ -305,16 +306,11 @@ function EditEntryModal({
   const [performedAt, setPerformedAt] = useState(
     isoToLocalInput(entry.performed_at),
   );
-  const [costDollars, setCostDollars] = useState(
-    entry.cost_cents != null ? (entry.cost_cents / 100).toFixed(2) : "",
-  );
+  const [costCents, setCostCents] = useState<number | null>(entry.cost_cents ?? null);
   const [notes, setNotes] = useState(entry.notes ?? "");
 
   const save = useMutation({
     mutationFn: () => {
-      const cents = costDollars.trim()
-        ? Math.round(Number(costDollars) * 100)
-        : null;
       return api.updateMaintenance(slug, entry.id, {
         name: name.trim(),
         scheduled_at: scheduledAt
@@ -323,7 +319,7 @@ function EditEntryModal({
         performed_at: performedAt
           ? new Date(performedAt).toISOString()
           : null,
-        cost_cents: Number.isFinite(cents as number) ? cents : null,
+        cost_cents: costCents,
         notes: notes.trim() || null,
       });
     },
@@ -383,16 +379,8 @@ function EditEntryModal({
         </p>
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
-            <div className="text-xs text-muted mb-1">Cost (USD)</div>
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              value={costDollars}
-              onChange={(e) => setCostDollars(e.target.value)}
-              placeholder="0.00"
-              className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-            />
+            <div className="text-xs text-muted mb-1">Cost</div>
+            <MoneyInput value={costCents} storage="cents" live onCommit={setCostCents} placeholder="0" ariaLabel="Cost" className="text-sm" />
           </label>
         </div>
         <label className="block">

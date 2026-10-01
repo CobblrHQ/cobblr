@@ -22,7 +22,7 @@
 
 import { forwardRef, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useToast } from "@cobblr/platform-web";
+import { usePasteImage, useToast } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
 import { resolveSessionBatch } from "../lib/scanSession";
 import { classifyFiles } from "../pages/omniIntake";
@@ -30,6 +30,7 @@ import { UploadKindSheet } from "./UploadKindSheet";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { addPending, dropPending, expirePending, pulseRow, updatePending } from "../lib/pendingPictures";
 import { KEEP_AS_PURCHASE_SENTENCE, useKeepAsPurchase } from "../pages/KeepAsPurchase";
+import { formatStoredMoney } from "@cobblr/platform-contract/money";
 
 /** What the picker takes: a picture, or a receipt as a PDF or a CSV. One
  *  string, so no door can accept less than another. */
@@ -41,7 +42,15 @@ export const ScanPickerInput = forwardRef<HTMLInputElement, { onFiles: (files: F
   { onFiles, testId },
   ref,
 ) {
+  // A picture pasted where the picker sits takes the same path as one chosen
+  // (the one paste door: usePasteImage). The dashboard's Photos tile had none.
+  // The input's ref is the caller's (it opens the picker), so the area is
+  // found through a marker beside it: whatever element the picker sits in.
+  const marker = useRef<HTMLSpanElement>(null);
+  usePasteImage(() => marker.current?.parentElement ?? null, { onFiles, accept: SCAN_PICKER_ACCEPT, multiple: true });
   return (
+    <>
+    <span ref={marker} hidden />
     <input
       ref={ref}
       type="file"
@@ -55,6 +64,7 @@ export const ScanPickerInput = forwardRef<HTMLInputElement, { onFiles: (files: F
         if (fs.length) onFiles(fs);
       }}
     />
+    </>
   );
 });
 
@@ -205,8 +215,8 @@ export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake
     // line or a coupon that never got applied.
     if (out.receipt.lines_reconcile === false && out.receipt.total != null) {
       toast.info(
-        `${found}, but they add up to ${out.receipt.lines_total.toFixed(2)} and the receipt says ` +
-          `${out.receipt.total.toFixed(2)}. Check for a discount, or a line that did not come through.`,
+        `${found}, but they add up to ${formatStoredMoney(out.receipt.lines_total, "amount")} and the receipt says ` +
+          `${formatStoredMoney(out.receipt.total, "amount")}. Check for a discount, or a line that did not come through.`,
         { duration: 12000 },
       );
     } else {
@@ -250,6 +260,11 @@ export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake
       // Said the moment it lands, before anything has uploaded.
       const n = intent.files.length;
       toast.info(`${door === "paste" ? "Pasted" : "Dropped"} ${n} picture${n === 1 ? "" : "s"}: adding ${n === 1 ? "it" : "them"} to the inbox.`);
+    }
+    if (intent.kind === "receipt" && door !== "pick") {
+      // Said the moment it lands, as a picture is: a pasted or dropped PDF
+      // that shows nothing for a second reads as a paste that did not work.
+      toast.info(`Reading ${intent.file.name}…`);
     }
     if (intent.kind === "photos") setAskKindFor(intent.files);
     else void uploadReceipt(intent.file);

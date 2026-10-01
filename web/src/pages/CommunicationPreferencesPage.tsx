@@ -10,11 +10,14 @@
 import { useEffect, useState } from "react";
 import { AreaTabs, NOTIFICATION_TABS } from "../components/AreaTabs";
 import { DeliveryWindows } from "../components/DeliveryWindows";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Lock, MessageCircle } from "lucide-react";
 import { usePageTitle, useToast, useConfirm } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
+import { useAuth } from "../auth/AuthContext";
+import { discordConnectable } from "../lib/discord-connect";
+import { useDiscordStatus } from "../lib/useDiscordStatus";
 
 const CHANNEL_LABEL: Record<string, string> = {
   in_app: "In-app",
@@ -23,7 +26,7 @@ const CHANNEL_LABEL: Record<string, string> = {
 };
 
 export function CommunicationPreferencesPage() {
-  usePageTitle("Discord, email & in-app");
+  const { user } = useAuth();
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
@@ -32,7 +35,7 @@ export function CommunicationPreferencesPage() {
   const discordParam = params.get("discord");
 
   const prefsQ = useQuery({ queryKey: ["comm-prefs"], queryFn: () => api.meCommunicationPrefs() });
-  const discordQ = useQuery({ queryKey: ["discord-status"], queryFn: () => api.meDiscordStatus() });
+  const discordQ = useDiscordStatus();
 
   const setPref = useMutation({
     mutationFn: (b: { notification_type: string; channel: string; enabled: boolean }) =>
@@ -91,7 +94,7 @@ export function CommunicationPreferencesPage() {
     setAutoStarted(true);
     params.delete("connect");
     setParams(params, { replace: true });
-    if (discordQ.data.configured && !discordQ.data.verified) connect.mutate();
+    if (discordConnectable(discordQ.data) && !discordQ.data.verified) connect.mutate();
   }, [wantsConnect, autoStarted, discordQ.isLoading, discordQ.data, params, setParams, connect]);
 
   function clearDiscordParam() {
@@ -103,7 +106,10 @@ export function CommunicationPreferencesPage() {
 
   const verified = discordQ.data?.verified ?? false;
   const connected = discordQ.data?.connected ?? false;
-  const configured = discordQ.data?.configured ?? false;
+  const configured = discordConnectable(discordQ.data);
+  // A server that cannot connect Discord does not name it: the page is about
+  // what can reach you here.
+  usePageTitle(configured || discordQ.isLoading ? "Discord, email & in-app" : "Email & in-app");
   // Connected and previously confirmed, but by the PREVIOUS Discord app. The
   // DM channel belongs to the bot, so the permission does not carry over and
   // messages would go nowhere silently. One re-confirm fixes it.
@@ -112,6 +118,22 @@ export function CommunicationPreferencesPage() {
   // Offer the "route these to Discord?" prompt once Discord is verified.
   const [promptDismissed, setPromptDismissed] = useState(false);
   useEffect(() => { if (!verified) setPromptDismissed(false); }, [verified]);
+
+  // A link to one row (the feedback email's "switch feedback replies to
+  // Discord") lands on it: scrolled to and highlighted.
+  const { hash } = useLocation();
+  const focusKey = decodeURIComponent(hash.replace(/^#/, ""));
+  useEffect(() => {
+    if (focusKey && prefsQ.data) document.getElementById(focusKey)?.scrollIntoView({ block: "center" });
+  }, [focusKey, prefsQ.data]);
+
+  /** One notification type to Discord only: on for Discord, off for email. */
+  async function discordOnly(key: string) {
+    await api.setMeCommunicationPref({ notification_type: key, channel: "discord_dm", enabled: true });
+    await api.setMeCommunicationPref({ notification_type: key, channel: "email", enabled: false });
+    await qc.invalidateQueries({ queryKey: ["comm-prefs"] });
+    toast.success("These now come to Discord, not email.");
+  }
 
   async function applyDiscordRouting(mode: "discord_only" | "both") {
     const data = prefsQ.data;
@@ -139,12 +161,13 @@ export function CommunicationPreferencesPage() {
       <p className="text-sm text-content dark:text-mortar-200">
         Choose how we reach you for each kind of notification. Critical account &
         security messages always go to email. Everything else is yours to route - 
-        in-app, Discord DM, email, or any combination.
+        {configured ? " in-app, Discord DM, email, or any combination." : " in-app, email, or both."}
       </p>
 
       {/* ── Discord connection card ─────────────────────────────────────── */}
       <DiscordCard
         configured={configured}
+        isAdmin={!!user?.is_platform_admin}
         connected={connected}
         verified={verified}
         needsReverify={needsReverify}
@@ -209,7 +232,11 @@ export function CommunicationPreferencesPage() {
             </thead>
             <tbody>
               {data.types.map((t) => (
-                <tr key={t.key} className="border-b border-line/60 dark:border-slate-800">
+                <tr
+                  key={t.key}
+                  id={t.key}
+                  className={`border-b border-line/60 dark:border-slate-800 ${t.key === focusKey ? "bg-accent/10 ring-1 ring-inset ring-accent" : ""}`}
+                >
                   <td className="py-2.5 pr-4">
                     <div className="font-medium text-content dark:text-mortar-100">{t.label}</div>
                     <div className="text-xs text-faint">{t.description}</div>
@@ -235,18 +262,15 @@ export function CommunicationPreferencesPage() {
                           />
                         </td>
                       ))}
-                      {/* Consolidation nudge: when a type pushes to BOTH Discord and
-                          email, you'll get pinged twice — offer to keep just the
-                          "upgrade" (Discord). In-app (the inbox) is left alone. */}
+                      {/* Consolidation nudge: with Discord connected, anything still
+                          emailed can move to Discord in one tap (Discord on, email
+                          off). An answer then comes by DM and not by email.
+                          In-app (the inbox) is left alone. */}
                       <td className="py-2.5 pl-3 align-middle">
-                        {verified && (data.prefs[t.key]?.discord_dm ?? false) && (data.prefs[t.key]?.email ?? false) && (
+                        {verified && (data.prefs[t.key]?.email ?? false) && (
                           <span className="text-xs text-faint whitespace-nowrap">
-                            Also emailed.{" "}
-                            <button
-                              type="button"
-                              onClick={() => setPref.mutate({ notification_type: t.key, channel: "email", enabled: false })}
-                              className="text-accent hover:underline"
-                            >
+                            {(data.prefs[t.key]?.discord_dm ?? false) ? "Also emailed. " : "By email. "}
+                            <button type="button" onClick={() => void discordOnly(t.key)} className="text-accent hover:underline">
                               Use Discord only?
                             </button>
                           </span>
@@ -266,6 +290,7 @@ export function CommunicationPreferencesPage() {
 
 function DiscordCard(props: {
   needsReverify: boolean;
+  isAdmin: boolean;
   configured: boolean;
   connected: boolean;
   verified: boolean;
@@ -283,9 +308,19 @@ function DiscordCard(props: {
 
   if (props.loading) return <div className="text-sm text-faint">Checking Discord…</div>;
   if (!configured) {
+    // Said once, to the people who can change it. A member can do nothing
+    // about it, so for them there is simply no Discord here.
+    if (!props.isAdmin) return null;
     return (
-      <div className="rounded-lg border border-line dark:border-slate-700 p-4 text-sm text-faint">
-        Discord notifications aren't set up on this server.
+      <div className="rounded-lg border border-line dark:border-slate-700 p-4 text-sm space-y-1" data-testid="discord-not-set-up">
+        <div className="font-medium text-content dark:text-mortar-100">Discord isn't set up on this server</div>
+        <p className="text-muted dark:text-slate-400">
+          Nobody here can connect Discord yet, so it is not offered anywhere. To turn it on, give the
+          server a Discord application (<code>DISCORD_CLIENT_ID</code>, <code>DISCORD_CLIENT_SECRET</code>,{" "}
+          <code>DISCORD_REDIRECT_URI</code>) and a bot to send the messages (<code>COBBLR_DISCORD_BOT_URL</code>),
+          then restart it. See "Discord messages" in SELF_HOSTING.md. Until then, notifications reach
+          people in the app and by email.
+        </p>
       </div>
     );
   }

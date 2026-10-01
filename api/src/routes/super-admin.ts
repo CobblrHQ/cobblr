@@ -18,6 +18,7 @@ import { postCardForStoredFeedback, postCardlessFeedback, postFeedbackCard } fro
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
 import { requireAuth, requirePlatformAdmin, isPlatformAdmin } from "../auth/middleware.js";
+import { usageStats } from "../platform/usage-stats.js";
 import { inviteExpiresAt } from "../auth/signup-gate.js";
 import { scanResolversRouter } from "./super-admin-scan-resolvers.js";
 import { ImpersonationRefused, startImpersonation, describeSession } from "../platform/impersonation.js";
@@ -37,6 +38,8 @@ import { notifyAccount } from "../platform/notifications.js";
 import { guildLabelFor } from "../platform/discord-guild-labels.js";
 import { escHtml } from "../platform/esc-html.js";
 import { cobblrEmailHtml } from "../platform/email-html.js";
+import { feedbackEmail } from "../platform/feedback-email.js";
+import { discordInviteFor } from "../platform/feedback-discord-invite.js";
 import { signupSurfaceLink } from "../platform/signup-surface.js";
 import { feedbackReplyText } from "../platform/feedback-reply-text.js";
 import { feedbackAttachmentOrg } from "../platform/feedback-attachment-org.js";
@@ -69,25 +72,6 @@ import { kindFieldsOf, modulesOf, shapeCandidate } from "@cobblr/core-authoring/
 import { validateBundle } from "./bundles.js";
 import { operatorEmail } from "@cobblr/platform-contract/outbound-identity";
 import { signupsBySource } from "../platform/signups-by-source.js";
-
-// ── Feedback reply email (HTML) ──────────────────────────────────────
-// A small, email-client-safe HTML body for the transactional feedback reply,
-// so it reads as a designed message (greeting · the quoted report in a styled
-// blockquote · the fix · a button to the thread) rather than a wall of text.
-// The plaintext version is always sent alongside as the fallback.
-function feedbackEmailHtml(opts: { greeting: string; reportText?: string; bodyParas: string[]; ctaUrl: string; ctaLabel: string; footerNote?: string }): string {
-  // Thin adapter over the shared house template, so the feedback call sites read
-  // the same and "You reported:" stays feedback's wording.
-  return cobblrEmailHtml({
-    greeting: opts.greeting,
-    quoteLabel: "You reported:",
-    quoteText: opts.reportText,
-    bodyParas: opts.bodyParas,
-    ctaUrl: opts.ctaUrl,
-    ctaLabel: opts.ctaLabel,
-    footerNote: opts.footerNote,
-  });
-}
 
 export const superAdminRouter = Router();
 
@@ -662,6 +646,25 @@ superAdminRouter.get("/modules", async (_req, res, next) => {
         workspaces,
       })),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /super-admin/usage-stats — this deployment's usage in the last 1, 7 and
+// 30 days (platform/usage-stats.ts). Counts only, readable with an ops:read
+// token, which is how the ops console shows every surface side by side.
+// `?at=<ISO time>` answers as of a moment in the past (the weekly summary's
+// "the week before"); a future or unreadable time is refused.
+superAdminRouter.get("/usage-stats", async (req, res, next) => {
+  try {
+    const raw = typeof req.query.at === "string" ? req.query.at : "";
+    const at = raw ? new Date(raw) : new Date();
+    if (Number.isNaN(at.getTime()) || at.getTime() > Date.now() + 60_000) {
+      res.status(400).json({ error: { code: "bad_at", message: "at must be an ISO time, not in the future" } });
+      return;
+    }
+    res.json(await usageStats(at));
   } catch (err) {
     next(err);
   }
@@ -1703,6 +1706,31 @@ superAdminRouter.post("/feedback/:id/announce", async (req, res, next) => {
 // 🔨 Build handler needs the saved analysis); the in-session skill reads the full
 // record here too. More specific paths (/:id/context, /:id/attachments/…) are
 // registered separately and still match first.
+// GET /super-admin/feedback-emails/weekly — how many feedback emails went out
+// each week (account_email_sends), and how many carried the Discord
+// invitation. The invitation exists to send fewer of these, so this is the
+// number that says whether it does. Last 12 weeks, newest first; a week with
+// none is absent.
+superAdminRouter.get("/feedback-emails/weekly", async (_req, res, next) => {
+  try {
+    const rows = await meta
+      .selectFrom("account_email_sends")
+      .select([
+        sql<string>`to_char(date_trunc('week', sent_at), 'YYYY-MM-DD')`.as("week"),
+        sql<number>`count(*)::int`.as("sent"),
+        sql<number>`count(*) filter (where discord_invite)::int`.as("with_discord_invite"),
+      ])
+      .where("notification_type", "=", "platform.feedback.replied")
+      .where("sent_at", ">=", sql<Date>`date_trunc('week', now()) - interval '11 weeks'`)
+      .groupBy(sql`date_trunc('week', sent_at)`)
+      .orderBy(sql`date_trunc('week', sent_at)`, "desc")
+      .execute();
+    res.json({ weeks: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
 superAdminRouter.get("/feedback/:id", async (req, res, next) => {
   try {
     const row = await meta
@@ -2396,50 +2424,21 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
           // actually reaches the reporter — not just the in-app bell). The latter
           // links them to their thread to answer. notifyAccount also honors the
           // matrix per channel + DMs them if Discord is verified.
-          let email: { subject: string; text: string; html?: string; replyTo?: string } | undefined;
-          if (hasAuthEmailSender() && u?.email) {
-            const sentUs = `You'd sent us:\n  "${(row.message ?? "").slice(0, 500)}"`;
+          let email: { subject: string; text: string; html?: string; replyTo?: string; discordInvite?: boolean } | undefined;
+          if (hasAuthEmailSender() && u?.email && (isResolved || reply)) {
             // Reply-by-email when wired (a tokenized Reply-To routes replies
-            // back inbound); otherwise be explicit that email replies aren't
-            // seen and point to the in-app thread.
-            const replyAddr = feedbackReplyAddress(row.id);
-            const feedbackUrl = absoluteAppUrl("/me/feedback");
-            const replyHere = replyAddr
-              ? `Just reply to this email and it'll land on your report — or use your feedback page:\n  ${feedbackUrl}`
-              : `To reply, use your feedback page — replies to this email aren't monitored yet:\n  ${feedbackUrl}`;
-            if (isResolved) {
-              // Lead with the reporter's own words, then what we did — a
-              // "reported → fixed" record. (Body is the raw fix, not the
-              // context-wrapped `message`, or "You reported" would double up.)
-              const head = `You reported:\n${bq(reportRaw.slice(0, 600))}`;
-              email = {
-                subject: "Your Cobblr request is live",
-                text: `${hi}\n\n${head}\n\n${reply || defaultMsg}\n\nStill off? ${replyHere}\n\nThanks for helping make Cobblr better.\nThe Cobblr team`,
-                html: feedbackEmailHtml({
-                  greeting: hi,
-                  reportText: reportRaw.slice(0, 600),
-                  bodyParas: [reply || defaultMsg],
-                  ctaUrl: feedbackUrl,
-                  ctaLabel: "View your feedback",
-                  footerNote: replyAddr ? "Still off? Just reply to this email and it'll land on your report." : "Still off? Reply on your feedback page (email replies aren't monitored yet).",
-                }),
-                replyTo: replyAddr ?? undefined,
-              };
-            } else if (reply) {
-              email = {
-                subject: "We replied to your Cobblr feedback",
-                text: `${hi}\n\n${reply}\n\n${replyHere}\n\n${sentUs}\n\nThe Cobblr team`,
-                html: feedbackEmailHtml({
-                  greeting: hi,
-                  reportText: (row.message ?? "").slice(0, 500),
-                  bodyParas: [reply],
-                  ctaUrl: feedbackUrl,
-                  ctaLabel: "Open your feedback",
-                  footerNote: replyAddr ? "Reply to this email to answer, or use your feedback page." : "Reply on your feedback page; email replies aren't monitored yet.",
-                }),
-                replyTo: replyAddr ?? undefined,
-              };
-            }
+            // back inbound); otherwise the email says replies are not seen and
+            // points to the in-app thread. The Discord invitation rides along
+            // while it can still help (feedback-discord-invite.ts).
+            email = feedbackEmail({
+              kind: isResolved ? "resolved" : "reply",
+              greeting: hi,
+              report: isResolved ? reportRaw : (row.message ?? ""),
+              body: isResolved ? reply || defaultMsg : reply!,
+              feedbackUrl: absoluteAppUrl("/me/feedback"),
+              replyAddress: feedbackReplyAddress(row.id),
+              discord: await discordInviteFor(row.user_id),
+            });
           }
           const { deliveredVia, outcomes } = await notifyAccount({
             userId: row.user_id,

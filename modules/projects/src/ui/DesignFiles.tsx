@@ -13,7 +13,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, Images, Trash2, Upload } from "lucide-react";
-import { canPreviewFile, FilePreview, Modal, openAuthedFile, useConfirm, useFilePreviewRegistry, useImageSrc, useToast, EntityPhoto, uploadJson } from "@cobblr/platform-web";
+import { canPreviewFile, FilePreview, Lightbox, Modal, SelectableTile, usePasteImage, openAuthedFile, useConfirm, useFilePreviewRegistry, useToast, EntityPhoto, noteWorkspaceWrite, uploadJson } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import type { PatternPhotoState } from "./api";
 import { patternNeedsKey } from "./PatternNeeds";
@@ -42,10 +42,14 @@ export function DesignFiles({ designId }: { designId: string }) {
   const confirm = useConfirm();
   const toast = useToast();
   const fileInput = useRef<HTMLInputElement>(null);
+  // A picture pasted on the design files is added like one chosen (usePasteImage).
+  usePasteImage(() => fileInput.current?.parentElement ?? null, { onFiles: ([f]) => f && upload.mutate(f), accept: "image/*,application/pdf" });
   const [stripOpen, setStripOpen] = useState(false);
   // The pattern opens IN the app (every page, zoom, keep the screen on),
   // with a new tab one tap away; a format with no viewer opens in a tab.
   const [reading, setReading] = useState<AttachmentRow | null>(null);
+  // The design photo open in the shared viewer, which steps through them all.
+  const [viewing, setViewing] = useState<number | null>(null);
   useFilePreviewRegistry();
 
   const auth = (): Record<string, string> => {
@@ -107,6 +111,7 @@ export function DesignFiles({ designId }: { designId: string }) {
         }),
       });
       if (!ares.ok) throw await refusal(ares, "Couldn't attach that file");
+      noteWorkspaceWrite(`${base}/attachments`);
       return role;
     },
     onSuccess: (role) => {
@@ -126,6 +131,7 @@ export function DesignFiles({ designId }: { designId: string }) {
     mutationFn: async (id: string) => {
       const res = await fetch(`${base}/attachments/${id}`, { method: "DELETE", headers: auth() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      noteWorkspaceWrite(`${base}/attachments/${id}`);
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: filesKey });
@@ -261,16 +267,30 @@ export function DesignFiles({ designId }: { designId: string }) {
       )}
       {images.length > 0 && (
         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
-          {images.map((a) => (
+          {images.map((a, i) => (
             <DesignThumb
               key={a.id}
               thumb={`${base}/files/${a.file_id}/raw?variant=thumb`}
-              full={`${base}/files/${a.file_id}/raw`}
               alt={a.filename}
               fromPattern={a.role === "photo" && a.file_id === state?.photo_file_id}
+              onOpen={() => setViewing(i)}
             />
           ))}
         </div>
+      )}
+      {viewing !== null && images[viewing] && (
+        <Lightbox
+          items={images.map((a) => ({
+            key: a.id,
+            caption: a.filename,
+            src: `${base}/files/${a.file_id}/raw?variant=medium`,
+            original: `${base}/files/${a.file_id}/raw`,
+            thumb: `${base}/files/${a.file_id}/raw?variant=thumb`,
+          }))}
+          index={viewing}
+          onIndex={setViewing}
+          onClose={() => setViewing(null)}
+        />
       )}
       {reading && (
         <Modal open onClose={() => setReading(null)} title={reading.filename} size="lg" fillHeight>
@@ -343,41 +363,33 @@ function CandidateTile({
   disabled: boolean;
   onClick: () => void;
 }) {
+  // The one in use is outlined the way every chosen tile is (SelectableTile);
+  // a picture that failed the photograph floor is dimmed, still offered.
   return (
-    <button
-      type="button"
+    <SelectableTile
+      data-testid="pattern-photo-candidate"
+      selected={inUse}
+      selectedLabel="In use"
       onClick={onClick}
       disabled={disabled}
-      title={inUse ? `In use - ${label}` : photo ? `Use this photo - ${label}` : `Looks like a diagram - ${label}`}
-      data-testid="pattern-photo-candidate"
-      data-in-use={inUse ? "1" : undefined}
-      data-photo={photo ? "1" : "0"}
-      className={`relative shrink-0 w-20 h-20 rounded-md border overflow-hidden transition ${
-        inUse
-          ? "border-accent ring-2 ring-accent/40"
-          : "border-line dark:border-slate-700 hover:border-accent"
-      } ${photo ? "" : "opacity-60 hover:opacity-100"} disabled:cursor-default`}
+      title={photo ? `Use this photo - ${label}` : `Looks like a diagram - ${label}`}
+      className={`w-20 h-20 ${photo ? "" : "opacity-60 hover:opacity-100"}`}
+      faceClassName="bg-subtle dark:bg-slate-800"
     >
       <EntityPhoto src={src} alt={label} fill placeholder={null} />
-      {inUse && (
-        <span className="absolute bottom-0 inset-x-0 bg-accent text-white text-[9px] font-mono uppercase tracking-widest text-center py-0.5">
-          in use
-        </span>
-      )}
-    </button>
+    </SelectableTile>
   );
 }
 
-/** Authed thumbnail — a bare <img> can't send the Bearer token. */
-function DesignThumb({ thumb, full, alt, fromPattern }: { thumb: string; full: string; alt: string; fromPattern?: boolean }) {
-  const resolvedFull = useImageSrc(full);
+/** A design photo's tile; a tap opens the shared viewer over all of them. */
+function DesignThumb({ thumb, alt, fromPattern, onOpen }: { thumb: string; alt: string; fromPattern?: boolean; onOpen: () => void }) {
   return (
-    <a
-      href={resolvedFull ?? undefined}
-      target="_blank"
-      rel="noreferrer"
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label={`Open ${alt}`}
       title={fromPattern ? `${alt} (pulled from the pattern)` : alt}
-      className="relative block"
+      className="relative block w-full cursor-zoom-in"
       data-testid={fromPattern ? "design-photo-from-pattern" : undefined}
     >
       <EntityPhoto src={thumb} alt={alt} aspect="square" placeholder={null} className="rounded-md border border-line dark:border-slate-700 hover:border-accent transition">
@@ -387,7 +399,7 @@ function DesignThumb({ thumb, full, alt, fromPattern }: { thumb: string; full: s
           </span>
         )}
       </EntityPhoto>
-    </a>
+    </button>
   );
 }
 

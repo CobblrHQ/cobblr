@@ -13,6 +13,7 @@
 
 import { productCodeKind } from "@cobblr/platform-contract/identifier-check";
 import { readDisposition } from "@cobblr/platform-contract/disposition";
+import { parseMeasure } from "@cobblr/platform-contract/measure";
 import type { Cell, RawSheet } from "./sheet-read.js";
 
 export type ColumnType =
@@ -21,6 +22,7 @@ export type ColumnType =
   | "number"
   | "money"
   | "quantity"
+  | "measure"
   | "date"
   | "boolean"
   | "choice"
@@ -419,6 +421,17 @@ function describeColumn(d: ColumnDraft, dateOrderHint: DateOrder): UnderstoodCol
       col.type = "number";
     }
     oddOf(col.type === "money" ? isNumOrFree : isNum);
+    return col;
+  }
+
+  // Measured values with a unit, said or implied: "4k7", "100n", "16 V". A
+  // column of them is a measure field, so the values are found by value.
+  const isMeasure = (_c: Cell, t: string) => !!parseMeasure(t)?.unit;
+  if (share(isMeasure) >= FIT) {
+    const units = texts.map((t) => parseMeasure(t)?.unit).filter((u): u is string => Boolean(u));
+    col.type = "measure";
+    col.unit = mostCommon(units);
+    oddOf(isMeasure);
     return col;
   }
 

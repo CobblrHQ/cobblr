@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.15.5",
+  version: "0.18.3",
   displayName: "Inventory",
   description:
     "Parts and supplies: how many you have, where they are kept, and what is running low.",
@@ -56,7 +56,7 @@ export default defineModule({
           { name: "description", type: "text", role: "summary" },
           { name: "qty", type: "number", role: "quantity", trait: "fungible" },
           { name: "unit", type: "text", role: "unit", trait: "fungible" },
-          { name: "cost", type: "number", trait: "fungible" },
+          { name: "cost", type: "number", money: "amount", trait: "fungible" },
           { name: "min_qty", type: "number", trait: "fungible" },
           // An ESTIMATE, deliberately not role:"quantity" — that role means a
           // counted amount, and a face reading it as one would render a guess
@@ -80,6 +80,13 @@ export default defineModule({
           // a module matching a pattern's yarn sees what the stash page sees.
           { name: "assigned_qty", type: "number", readOnly: true },
           { name: "available_qty", type: "number", readOnly: true },
+          // What of it is installed in an asset or machine (2 sticks in a
+          // computer) and what is on hand, and in what: derived on read from
+          // placement, so a view can hide what has nothing on hand and the
+          // assistant can say where the rest went.
+          { name: "installed_qty", type: "number", readOnly: true },
+          { name: "spare_qty", type: "number", readOnly: true },
+          { name: "installed_in", type: "object", readOnly: true },
           // Which of the workspace's tables (instances) it is in: yarn or hooks.
           { name: "instance", type: "text", readOnly: true },
           // Free-form JSON attribute blob. Declared so we can also
@@ -126,6 +133,9 @@ export default defineModule({
           "location_name",
           "assigned_qty",
           "available_qty",
+          "installed_qty",
+          "spare_qty",
+          "installed_in",
           "instance",
           // `metadata` is the per-part free-form attribute blob —
           // already conceptually a cross-module surface (modules
@@ -326,7 +336,7 @@ export default defineModule({
         label: "Set status",
         description:
           "Set a part's `metadata.status` (e.g. a Lego set's Built / Unbuilt / Missing pieces). A member-appropriate, user-invokable action: grant it and a worker can update status from their app: the canonical write a custom (Tier B) app block performs. Args: { partId?, status }; partId falls back to the targeted entity.",
-        appliesTo: { kinds: ["inventory:part"] },
+        appliesTo: { kinds: ["inventory:part"], requires: { traits: ["physical"] } },
         invokeHandler: "inventory.set-status",
         argsSchema: {
           partId: { label: "Which part, defaults to the record this ran on", type: "text" },
@@ -510,7 +520,7 @@ export default defineModule({
         // Tightened from { any: true } to inventory:part-only — wire
         // can still hit it for any source via target traversal, but
         // the manual-button surface stays scoped.
-        appliesTo: { kinds: ["inventory:part"] },
+        appliesTo: { kinds: ["inventory:part"], requires: { traits: ["physical"] } },
         invokeHandler: "inventory.adjust-stock",
         // Wire-driven only — clicking it on an arbitrary entity
         // doesn't make sense; the user has stock-adjust HTTP for
@@ -523,6 +533,8 @@ export default defineModule({
         // amount off the event.
         readsFromEvent: ["partId", "delta"],
         argsSchema: {
+          unit: { label: "The unit delta is in (\"g\"); converted to the thing's own unit first", type: "text" },
+          once: { label: "Apply once per source: a repeat for the same thing, source and direction changes nothing", type: "boolean" },
           partId: { label: "Part id", type: "text" },
           delta: { label: "Change in qty (+ adds, − subtracts)", type: "number" },
           restock: { label: "This is stock that arrived: date it today (optional)", type: "boolean" },
@@ -540,7 +552,7 @@ export default defineModule({
         label: "Set part stock",
         description:
           "Set a part's on-hand qty to an ABSOLUTE value (not a delta). The natural op for a scale ('grams remaining'), a stocktake, or a recount. Reached from core-devices.device.reading via a device→part link, or any source. Args: { partId, qty, reason? }.",
-        appliesTo: { kinds: ["inventory:part"] },
+        appliesTo: { kinds: ["inventory:part"], requires: { traits: ["physical"] } },
         invokeHandler: "inventory.set-stock",
         userInvokable: false,
         argsSchema: {
@@ -832,6 +844,15 @@ export default defineModule({
         trigger_type: "event",
         trigger_event: "digifab.print.reversed",
       },
+      // A print's grams off each spool loaded on its printer (and back on for
+      // a scrapped print): one event per spool, in grams, converted to the
+      // spool's own unit by adjust-stock.
+      {
+        source_kind: "digifab:job",
+        action_id: "inventory:adjust-stock",
+        trigger_type: "event",
+        trigger_event: "digifab.print.consumed",
+      },
     ],
   },
 
@@ -851,6 +872,10 @@ export default defineModule({
       // spool left in the types table, and a spool with no type, put back.
       const { registerFamiliesHeal } = await import("./heal-families.js");
       registerFamiliesHeal();
+      // Parts from before measured values were read get read once, so an old
+      // "4k7" answers a search for 4.7 kΩ (heal-measure-readings.ts).
+      const { registerMeasureReadingsHeal } = await import("./heal-measure-readings.js");
+      registerMeasureReadingsHeal();
       // Catalog instances the camera sheet latched to the stock face go back to
       // the catalog face. One-shot and idempotent; meta-only for a workspace
       // with nothing to heal. Awaited rather than fired off: it is a few

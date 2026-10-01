@@ -10,6 +10,7 @@
 // moves a whole group; dragging a field re-homes + reorders it. Requested by
 // Mary (visual drag-and-drop form designer).
 
+import { VERTICAL_DRAG } from "../lib/vertical-drag";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
@@ -199,7 +200,7 @@ export function FormBuilderPage({ embedded = false }: { embedded?: boolean } = {
       )}
 
       {items.length > 0 && (
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+        <DndContext {...VERTICAL_DRAG} sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
           <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
             <div>
               {items.map((it) => (

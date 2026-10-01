@@ -8,6 +8,7 @@
 // prune rows past the window; best-effort, never blocks the write) — same
 // pattern as product_events. Unset (default) = keep everything.
 
+import { changesOf } from "@cobblr/platform-contract/activity-changes";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { env } from "../env.js";
@@ -32,6 +33,10 @@ export interface LogParams {
   action: string;
   ref: ActivityRef;
   diff?: unknown;
+  /** The record as it was: with a patch `diff`, the fields that really
+   *  changed are stored beside it as `changes` (old → new, custom fields
+   *  included; platform-contract activity-changes). */
+  before?: unknown;
   /** Override the auth method. Default: pull from request context if
    *  one is set, else 'system'. */
   authMethod?: AuthMethod;
@@ -52,6 +57,10 @@ export async function log(p: LogParams): Promise<void> {
   const apiTokenId =
     p.apiTokenId !== undefined ? p.apiTokenId : (actor?.apiTokenId ?? null);
   const via = p.via !== undefined ? p.via : currentVia();
+  const diff =
+    p.before !== undefined && p.diff && typeof p.diff === "object" && !Array.isArray(p.diff)
+      ? { ...(p.diff as Record<string, unknown>), changes: changesOf(p.before, p.diff) }
+      : p.diff;
 
   await meta
     .insertInto("activity_log")
@@ -62,7 +71,7 @@ export async function log(p: LogParams): Promise<void> {
       action: p.action,
       entity_type: p.ref.entityType,
       entity_id: p.ref.entityId,
-      diff: p.diff === undefined ? null : (p.diff as object),
+      diff: diff === undefined ? null : (diff as object),
       auth_method: authMethod,
       api_token_id: apiTokenId,
       via_kind: via?.kind ?? null,

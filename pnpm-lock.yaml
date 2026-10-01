@@ -399,6 +399,28 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  modules/core-documents:
+    dependencies:
+      '@cobblr/platform-contract':
+        specifier: workspace:*
+        version: link:../../packages/platform-contract
+      express:
+        specifier: ^4.21.2
+        version: 4.22.2
+      kysely:
+        specifier: ^0.27.5
+        version: 0.27.6
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+    devDependencies:
+      '@types/express':
+        specifier: ^4.17.21
+        version: 4.17.25
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   modules/core-file-preview:
     dependencies:
       '@cobblr/platform-contract':
@@ -456,6 +478,9 @@ importers:
       kysely:
         specifier: ^0.27.5
         version: 0.27.6
+      pdfjs-dist:
+        specifier: ^5.4.296
+        version: 5.4.296
       sharp:
         specifier: ^0.33.5
         version: 0.33.5
@@ -1160,9 +1185,6 @@ importers:
       pdf-parse:
         specifier: ^2.4.5
         version: 2.4.5
-      pdfjs-dist:
-        specifier: ^5.4.296
-        version: 5.4.296
       sharp:
         specifier: ^0.33.5
         version: 0.33.5
@@ -1318,6 +1340,9 @@ importers:
 
   ops-console:
     dependencies:
+      '@cobblr/platform-contract':
+        specifier: workspace:*
+        version: link:../packages/platform-contract
       '@cobblr/platform-web':
         specifier: workspace:*
         version: link:../packages/platform-web
@@ -1349,6 +1374,9 @@ importers:
 
   packages/mcp-server:
     dependencies:
+      '@cobblr/platform-contract':
+        specifier: workspace:*
+        version: link:../platform-contract
       '@cobblr/workspace-tools':
         specifier: workspace:*
         version: link:../workspace-tools
@@ -1445,6 +1473,9 @@ importers:
 
   packages/workspace-tools:
     dependencies:
+      '@cobblr/platform-contract':
+        specifier: workspace:*
+        version: link:../platform-contract
       zod:
         specifier: ^3.24.1
         version: 3.25.76

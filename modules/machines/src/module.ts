@@ -8,7 +8,7 @@ import { DISPOSITIONS, DISPOSITION_LABELS } from "@cobblr/platform-contract/disp
 
 export default defineModule({
   name: "machines",
-  version: "0.4.2",
+  version: "0.4.4",
   displayName: "Machines",
   description:
     "The machines you run, with a specialisation for each type (3D printers, laser cutters, CNC machines) that adds the details that type needs.",
@@ -70,6 +70,10 @@ export default defineModule({
           { name: "units", type: "object", readOnly: true },
           { name: "units_not_named", type: "number", readOnly: true },
           { name: "unit_of", type: "object", readOnly: true },
+          // Where it is, by name: its place, or what it is inside ("Backpack,
+          // in Desk drawer"). Derived on read, so a search or the assistant can
+          // say where it is.
+          { name: "location_name", type: "text", readOnly: true },
         ],
         // Public face — identifying + display fields. Manufacturer is
         // public (you'd want to see "Voron" / "Bambu" on a label) but
@@ -89,6 +93,7 @@ export default defineModule({
           "units",
           "units_not_named",
           "unit_of",
+          "location_name",
         ],
         detailRoute: "/machines/{id}",
       },

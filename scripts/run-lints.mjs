@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 import { defaultConcurrency, runParallel } from "./lib/parallel.mjs";
 import { lintCommand } from "./lib/lint-command.mjs";
 import { CEILING_MS, judgeRun, ioPressure, IO_CONTENDED_AT, cpuPressure, CPU_CONTENDED_AT, overReadBudget } from "./lib/lint-budget.mjs";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -119,6 +119,10 @@ function main() {
   const rank = (n) => (SLOWEST_FIRST.indexOf(n) === -1 ? SLOWEST_FIRST.length : SLOWEST_FIRST.indexOf(n));
   // Every lint's reads are counted (lib/lint-reads.cjs), one file per lint.
   const readsDir = mkdtempSync(join(tmpdir(), "lint-reads-"));
+  // One file per lint, ~370 inodes a run, on every push, CI job and merge
+  // probe: never removed, it was the largest share of the inodes that filled
+  // the runner host's /tmp on 2026-09-30. Gone when the run ends, however it ends.
+  process.once("exit", () => rmSync(readsDir, { recursive: true, force: true }));
   const readsFile = (name) => join(readsDir, `${name.replace(/[^A-Za-z0-9_.-]/g, "_")}.jsonl`);
   const preload = `--require ${join(ROOT, "scripts", "lib", "lint-reads.cjs")}`;
   const jobs = names

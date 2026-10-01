@@ -185,7 +185,7 @@ const MCP_READ_PATHS: Array<string | RegExp> = [
   // get_service_job); a job's confirm is never reachable from here
   "/services/capabilities",
   /^\/services\/capabilities\/[a-z0-9_-]+(\.[a-z0-9_-]+)+$/,
-  /^\/services\/jobs\/[A-Za-z0-9-]+$/,
+  /^\/services\/jobs\/[A-Za-z0-9-]+(\/trigger)?$/,
   // service history, cross-kind search, label codes
   "/modules/core-maintenance/entries",
   "/modules/core-search/search",
@@ -235,6 +235,9 @@ export function mcpWritePathAllowed(method: string, originalUrl: string, slug: s
   if (rel.includes("..")) return false;
   if (MCP_WRITE_DENIED.test(rel)) return false;
   if (MCP_WRITE_PLATFORM_PATHS.has(rel)) return true;
+  // Proposing "start it when that finishes" on a waiting job starts nothing;
+  // the yes stays a person's, in Cobblr.
+  if (method === "POST" && /^\/services\/jobs\/[A-Za-z0-9-]+\/trigger$/.test(rel)) return true;
   return /^\/(modules|instances)\/[a-z0-9_-]+\/.+/i.test(rel);
 }
 

@@ -9,7 +9,7 @@
 
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   CatalogTypeahead,
   FieldPack,
@@ -26,10 +26,11 @@ import {
   type FieldType,
   type FieldRendererId,
   usePlatformWeb,
-  changeWorkspaceShape,
+  ChoiceField,
+  UsedValueInput,
 } from "@cobblr/platform-web";
 import { useInventory } from "./context";
-import { ColourInput } from "@cobblr/platform-web";
+import { ColourInput, MoneyInput, fieldInputText, missingRequired } from "@cobblr/platform-web";
 import { useFieldPresentation } from "./useFieldPresentation";
 import { ParentPicker, type ParentRef } from "./ParentPicker";
 import { InventoryApiError, type InvFieldDef } from "./api";
@@ -135,12 +136,15 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
   const [categoryId, setCategoryId] = useState(seed?.category_id ?? "");
   const [locationId, setLocationId] = useState(seed?.location_id ?? "");
   const [manufacturer, setManufacturer] = useState(seed?.manufacturer ?? "");
-  const [cost, setCost] = useState(seed?.cost != null ? String(seed.cost) : "");
+  const [cost, setCost] = useState<number | null>(seed?.cost != null && Number.isFinite(Number(seed.cost)) ? Number(seed.cost) : null);
   const [meta, setMeta] = useState<Record<string, unknown>>(seed?.fields ?? {});
   const [parentRef, setParentRef] = useState<ParentRef | null>(seed?.parent ?? null);
   const [printLabel, setPrintLabel] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Required fields left empty: asked about once, then saved anyway if the
+  // person says so. A create is never refused for them (capture first).
+  const [askedMissing, setAskedMissing] = useState<string[] | null>(null);
   const { appMode } = usePlatformWeb();
 
   function pickImageFromPayload(payload: Record<string, unknown>): string | null {
@@ -204,8 +208,14 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
     }
   }
 
-  async function submit(e: FormEvent) {
+  async function submit(e: FormEvent, anyway = false) {
     e.preventDefault();
+    const missing = missingRequired(customFields, meta).map((d) => d.display_label);
+    if (missing.length > 0 && !anyway) {
+      setAskedMissing(missing);
+      return;
+    }
+    setAskedMissing(null);
     setBusy(true);
     setError(null);
     try {
@@ -223,7 +233,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
         manufacturer: manufacturer.trim() || null,
         // `cost` is number-or-omitted on the server (not nullable) — only
         // send it when the user typed one, else leave it off entirely.
-        ...(cost.trim() === "" ? {} : { cost: Number(cost) }),
+        ...(cost == null ? {} : { cost }),
         // The instance's custom fields (colour, fibre, weight, …) filled in
         // the form go straight onto the new item.
         ...(Object.keys(meta).length ? { metadata: meta } : {}),
@@ -391,17 +401,17 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
                   need: fieldNeed("native:manufacturer", { control: "text", label: fp.label("manufacturer", "Brand") }),
                   node: (
                     <Field label={fp.label("manufacturer", "Brand")}>
-                      <input value={manufacturer} onChange={(e) => setManufacturer(e.target.value)} className={"input " + fieldPackControlClass} />
+                      <UsedValueInput kind={entityKind} field="manufacturer" label={fp.label("manufacturer", "Brand")} value={manufacturer} onCommit={(v) => setManufacturer(v ?? "")} live className={fieldPackControlClass} />
                     </Field>
                   ),
                 }
               : null,
             !fp.hidden("cost")
               ? {
-                  need: fieldNeed("native:cost", { control: "number", label: fp.label("cost", "Price") }),
+                  need: fieldNeed("native:cost", { control: "money", label: fp.label("cost", "Price") }),
                   node: (
                     <Field label={fp.label("cost", "Price")}>
-                      <input type="number" step="any" min="0" inputMode="decimal" value={cost} onChange={(e) => setCost(e.target.value)} className={"input " + fieldPackControlClass} />
+                      <MoneyInput value={cost} storage="amount" live onCommit={setCost} ariaLabel={fp.label("cost", "Price")} className={fieldPackControlClass} />
                     </Field>
                   ),
                 }
@@ -458,6 +468,20 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
             Queue a QR label print after create
           </label>
         )}
+        {askedMissing && (
+          <div role="alert" className="text-xs rounded-md px-3 py-2 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200 space-y-2">
+            <p>
+              {askedMissing.join(", ")} {askedMissing.length === 1 ? "is" : "are"} required. Fill {askedMissing.length === 1 ? "it" : "them"} in, or save now and add {askedMissing.length === 1 ? "it" : "them"} later.
+            </p>
+            <button
+              type="button"
+              onClick={(e) => void submit(e as unknown as FormEvent, true)}
+              className="rounded-md border border-amber-300 dark:border-amber-800 px-2 py-1 font-medium hover:bg-amber-100 dark:hover:bg-amber-900/40"
+            >
+              Save anyway
+            </button>
+          </div>
+        )}
         {error && (
           <div className="text-xs text-ember-500 bg-ember-50 rounded-md px-3 py-2">{error}</div>
         )}
@@ -498,14 +522,14 @@ function CustomFieldInput({
   value: unknown;
   onChange: (v: unknown) => void;
 }) {
-  const s = value == null ? "" : String(value);
+  const s = fieldInputText(def, value);
   // The text as typed, beside the typed value the form holds: a number field
   // stores a number (valueFromInput), and "1." on the way to "1.5" must not
   // be re-rendered as "1" under the person's cursor. A value set from outside
   // (a catalog match filling blanks) replaces the draft.
   const [draft, setDraft] = useState(s);
   useEffect(() => {
-    if (valueFromInput(def.type, draft) !== value && s !== draft) setDraft(s);
+    if (valueFromInput(def, draft) !== value && s !== draft) setDraft(s);
   }, [value]);
   const help = def.help ? (
     <p className="text-[11px] text-faint dark:text-slate-500 leading-snug mt-1">{def.help}</p>
@@ -518,6 +542,7 @@ function CustomFieldInput({
     renderer: def.renderer as FieldRendererId | null,
     choices: def.choices,
     server_managed: def.server_managed,
+    learns: def.learns,
   });
 
   // Server-managed: nothing to set at creation (also filtered upstream —
@@ -526,7 +551,7 @@ function CustomFieldInput({
   // Relation: the same shared picker the detail panel uses.
   if (control === "relation") {
     return (
-      <Field label={def.display_label}>
+      <Field label={def.required ? `${def.display_label} *` : def.display_label}>
         <RelationSelect
           refKind={def.ref_kind ?? ""}
           value={value}
@@ -540,9 +565,9 @@ function CustomFieldInput({
   // Colour: a real swatch picker (type a hex/name OR pick from the OS picker).
   if (control === "color") {
     return (
-      <Field label={def.display_label}>
+      <Field label={def.required ? `${def.display_label} *` : def.display_label}>
         <div className="flex flex-wrap items-center gap-2">
-          <ColourInput value={s} onPreview={onChange} onCommit={onChange} label={def.display_label} />
+          <ColourInput value={s} onPreview={onChange} onCommit={onChange} label={def.required ? `${def.display_label} *` : def.display_label} />
           <input
             type="text"
             value={s}
@@ -562,7 +587,7 @@ function CustomFieldInput({
   // Rich text — the same Markdown editor the detail panel uses.
   if (control === "markdown") {
     return (
-      <Field label={def.display_label}>
+      <Field label={def.required ? `${def.display_label} *` : def.display_label}>
         <MarkdownEditor value={s} ariaLabel={def.display_label} onChange={(v) => onChange(v === "" ? null : v)} />
         {help}
       </Field>
@@ -587,14 +612,14 @@ function CustomFieldInput({
   // number / date / url / text (computed fields are filtered out upstream)
   const inputType = control === "number" ? "number" : control === "date" ? "date" : control === "url" ? "url" : "text";
   return (
-    <Field label={def.display_label}>
+    <Field label={def.required ? `${def.display_label} *` : def.display_label}>
       <input
         type={inputType}
         step={control === "number" ? "any" : undefined}
         value={draft}
         onChange={(e) => {
           setDraft(e.target.value);
-          onChange(valueFromInput(def.type, e.target.value));
+          onChange(valueFromInput(def, e.target.value));
         }}
         className="input"
       />
@@ -603,9 +628,9 @@ function CustomFieldInput({
   );
 }
 
-/** A choice dropdown that lets the user add a new option on the fly — the new
- *  value is persisted to the field def's `choices` (so it sticks for next
- *  time) and selected immediately. */
+/** A choice field on the create form: the one picker (ChoiceField), its value
+ *  held by the form until Create. A name the person types that is not on the
+ *  list is remembered as a choice when the field learns, with an Undo. */
 function ChoiceInput({
   def,
   value,
@@ -617,101 +642,17 @@ function ChoiceInput({
   onChange: (v: unknown) => void;
   help: ReactNode;
 }) {
-  const { api, orgSlug } = useInventory();
-  const qc = useQueryClient();
-  const [adding, setAdding] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  async function commitNew() {
-    const v = draft.trim();
-    if (!v) return;
-    if ((def.choices ?? []).some((c) => c.toLowerCase() === v.toLowerCase())) {
-      onChange(v);
-      setAdding(false);
-      setDraft("");
-      return;
-    }
-    setBusy(true);
-    setErr(null);
-    try {
-      // Settled: the select below must list the new choice before it is
-      // selected, or it shows blank for a frame.
-      await changeWorkspaceShape(qc, orgSlug, () => api.updateFieldDef(def.id, { choices: [...(def.choices ?? []), v] }), { settled: true });
-      onChange(v);
-      setAdding(false);
-      setDraft("");
-    } catch (e) {
-      setErr(e instanceof InventoryApiError ? e.message : "Couldn't add that option");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (adding) {
-    return (
-      <Field label={def.display_label}>
-        <div className="flex gap-2">
-          <input
-            autoFocus
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                void commitNew();
-              } else if (e.key === "Escape") {
-                setAdding(false);
-              }
-            }}
-            placeholder={`New ${def.display_label.toLowerCase()}…`}
-            className="input flex-1"
-          />
-          <button
-            type="button"
-            onClick={() => void commitNew()}
-            disabled={busy || !draft.trim()}
-            className="rounded-lg bg-cobble-600 px-3 text-sm font-medium text-white disabled:opacity-50"
-          >
-            {busy ? "Adding…" : "Add"}
-          </button>
-          <button
-            type="button"
-            onClick={() => setAdding(false)}
-            className="rounded-lg border border-line dark:border-slate-600 px-3 text-sm text-faint"
-            aria-label="Cancel adding a new option"
-          >
-            ✕
-          </button>
-        </div>
-        {err ? <p className="text-[11px] text-red-500 mt-1">{err}</p> : help}
-      </Field>
-    );
-  }
-
+  const { entityKind } = useInventory();
+  const label = def.required ? `${def.display_label} *` : def.display_label;
   return (
-    <Field label={def.display_label}>
-      <select
+    <Field label={label}>
+      <ChoiceField
+        def={{ ...def, entity_kind: def.entity_kind ?? entityKind }}
+        kind={entityKind}
         value={value}
-        onChange={(e) => {
-          if (e.target.value === "__add__") {
-            setAdding(true);
-            setDraft("");
-          } else {
-            onChange(e.target.value || null);
-          }
-        }}
-        className="input"
-      >
-        <option value=""> - none - </option>
-        {(def.choices ?? []).map((c) => (
-          <option key={c} value={c}>
-            {c}
-          </option>
-        ))}
-        <option value="__add__">＋ Add new…</option>
-      </select>
+        onCommit={(v) => onChange(v)}
+        live
+      />
       {help}
     </Field>
   );

@@ -4,23 +4,29 @@
 // decides where to stash it (usually `metadata.<name>` on the
 // entity).
 //
-// type='text' field-defs with a `choices` array render as a
-// dropdown with an inline "+ add new" affordance that appends to
-// the choices via api.appendFieldDefChoice (if the host adapter
-// implements it).
+// type='text' field-defs with a `choices` array render as the one
+// choice picker (ChoiceField): a list of the choices and every value
+// already used, where what you type is the value and, on a field that
+// learns, becomes a choice.
 
 import { ColourInput } from "./ColourInput";
 import { useMemo, useState, type FocusEvent } from "react";
 import { useFieldDraft } from "./use-field-draft";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { useQuery } from "@tanstack/react-query";
+import { fieldValueProblem } from "@cobblr/platform-contract/entity-metadata";
+import { choiceLearns } from "@cobblr/platform-contract/field-choices";
 import { usePlatformWeb } from "./context";
 import type { PlatformFieldDef } from "./types";
-import { fieldControl, valueFromInput } from "./fieldControl";
+import { fieldControl, fieldInputText, valueFromInput } from "./fieldControl";
+import { ChoiceField } from "./ChoiceField";
+import { MoneyInput } from "./MoneyInput";
+import { moneyStorageOf } from "@cobblr/platform-contract/money";
+import { formatMeasure, parseMeasure } from "@cobblr/platform-contract/measure";
+import { fieldTypeTakesUnit } from "@cobblr/platform-contract";
 import { FieldPack, fieldPackControlClass } from "./FieldPack";
 import { fieldNeed } from "./field-pack";
 import { FieldRenderer, boolLabel, boolTruthy } from "./FieldRenderer";
-import { canCarryNote, noteKey, noteOf } from "./field-note";
+import { noteKey, noteOf } from "./field-note";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { relativeTime } from "./relativeTime";
 import { useUnits } from "./useUnits";
@@ -59,6 +65,20 @@ interface Props {
 
 const isBlank = (v: unknown) => v === null || v === undefined || v === "";
 
+/** A value capture kept that does not fit the field (a word in a number
+ *  field, a value not among the dropdown's choices), said under the field
+ *  so a person can fix it. Never blocks anything. */
+function misfitLine(f: PlatformFieldDef, value: unknown) {
+  if (f.type === "computed") return null;
+  const p = fieldValueProblem({ name: f.name, type: f.type, choices: f.choices ?? null, learns: choiceLearns(f) }, value);
+  if (!p) return null;
+  return (
+    <p className="mt-1 text-xs text-amber-700 dark:text-amber-300" data-testid="field-misfit">
+      Holds “{Array.isArray(value) ? value.join(", ") : String(value)}”, which doesn't fit: {f.display_label} takes {p.expected}.
+    </p>
+  );
+}
+
 export function CustomFieldsPanel({
   entityKind,
   values,
@@ -76,6 +96,10 @@ export function CustomFieldsPanel({
     staleTime: 60_000,
   });
   const [showAll, setShowAll] = useState(false);
+  // A required field, once filled, cannot be emptied (the server refuses it
+  // too). The row goes back to what it holds and says why, rather than
+  // sending a write that would fail.
+  const [refused, setRefused] = useState<Record<string, number>>({});
   // Sections a person folded away on this sheet. Every section starts open,
   // so nothing a record holds is hidden until someone chooses to hide it.
   const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set());
@@ -151,12 +175,31 @@ export function CustomFieldsPanel({
   // evidence never writes over it again (one way, #3856).
   const stamps = fieldProvenanceOf(values);
   const commitField = (name: string, v: unknown) => {
+    const def = fields.find((d) => d.name === name);
+    const blank = isBlank(v) || (Array.isArray(v) && v.length === 0);
+    if (def?.required && blank && !isBlank(values[name])) {
+      setRefused((r) => ({ ...r, [name]: (r[name] ?? 0) + 1 }));
+      return;
+    }
+    if (refused[name]) setRefused((r) => ({ ...r, [name]: 0 }));
     onCommit(name, v);
     const was = stamps[name];
     if (was && was.by !== "person") {
       onCommit(FIELD_PROVENANCE_KEY, { ...stamps, [name]: { by: "person", from: "edit", at: new Date().toISOString() } });
     }
   };
+  // An explicit seller field wins over the clarifier (arrivals.md): the
+  // picker of where a thing came from writes the seller there.
+  const sellerDef = (data?.items ?? []).find((d) => d.field_role === "seller");
+  const sellerBeside = (f: PlatformFieldDef) =>
+    f.field_role === "acquired-from" && sellerDef
+      ? {
+          name: sellerDef.name,
+          label: sellerDef.display_label,
+          value: values[sellerDef.name] == null || values[sellerDef.name] === "" ? null : String(values[sellerDef.name]),
+          onCommit: (v: string | null) => commitField(sellerDef.name, v),
+        }
+      : undefined;
   const grid = (fs: PlatformFieldDef[]) => (
     <FieldPack
       items={fs.map((f) => {
@@ -170,7 +213,9 @@ export function CustomFieldsPanel({
             valueLength: typeof value === "string" ? value.length : 0,
           }),
           node: (
+            <div>
             <FieldRow
+              key={`${f.id}:${refused[f.name] ?? 0}`}
               def={f}
               value={value}
               fallbackValue={fallbackValues?.[f.name]}
@@ -179,7 +224,16 @@ export function CustomFieldsPanel({
               evidence={stamps[f.name]}
               note={noteOf(values, f.name)}
               onCommitNote={(v) => onCommit(noteKey(f.name), v)}
+              kind={entityKind}
+              detailField={sellerBeside(f)}
             />
+            {misfitLine(f, value)}
+            {(refused[f.name] ?? 0) > 0 && (
+              <p role="alert" className="mt-1 text-xs text-ember-600 dark:text-ember-400">
+                {f.display_label} is required, so it can't be emptied.
+              </p>
+            )}
+            </div>
           ),
         };
       })}
@@ -240,6 +294,8 @@ function FieldRow({
   evidence,
   note,
   onCommitNote,
+  kind,
+  detailField,
 }: {
   def: PlatformFieldDef;
   value: unknown;
@@ -250,6 +306,11 @@ function FieldRow({
   evidence?: FieldProvenance;
   note?: string | null;
   onCommitNote?: (v: unknown) => void;
+  /** The record's kind, for the values already used on its records. */
+  kind: string;
+  /** A field of its own that rides beside this one (a `seller` beside where
+   *  it came from), written by this field's picker instead of the note. */
+  detailField?: { name: string; label: string; value: string | null; onCommit: (v: string | null) => void };
 }) {
   // One shared decision (see fieldControl) so this panel and the create
   // modal can't disagree on a field's control — the bug where a boolean
@@ -278,10 +339,12 @@ function FieldRow({
       // that keeps the long tail (a specific seller) out of the curated list.
       <ChoiceRow
         def={def}
+        kind={kind}
         value={value}
         onCommit={onCommit}
         note={note}
         onCommitNote={onCommitNote}
+        detailField={detailField}
       />
     ) : control === "checkbox" ? (
       // Boolean — a real checkbox, not a text box.
@@ -289,6 +352,9 @@ function FieldRow({
     ) : control === "markdown" ? (
       // Rich text — the Markdown editor (Write/Preview split).
       <MarkdownRow def={def} value={value} onCommit={onCommit} />
+    ) : control === "money" ? (
+      // An amount: the currency symbol, grouped digits, never cents.
+      <MoneyRow def={def} value={value} onCommit={onCommit} />
     ) : (
       // number / date / url / text
       <PlainRow
@@ -331,7 +397,10 @@ function FieldRow({
  *  open once opened. Short help (a single line anyway) renders as it did. */
 export function HelpText({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
-  const long = text.length > 90;
+  // Help stays under its own field, however narrow (the packer never widens
+  // a field for its help, #4518): past what a half column holds on one line
+  // it folds to that line, tap for all.
+  const long = text.length > 40;
   return (
     <p
       className={
@@ -359,7 +428,7 @@ function PlainRow({
   fallbackLabel?: string;
   onCommit: (v: unknown) => void;
 }) {
-  const initial = value == null ? "" : String(value);
+  const initial = fieldInputText(def, value);
   const usingFallback = isBlank(value) && !isBlank(fallbackValue);
   const fallbackStr = fallbackValue == null ? "" : String(fallbackValue);
   const { draft, setDraft, committed } = useFieldDraft(initial);
@@ -367,7 +436,7 @@ function PlainRow({
     const next = e.target.value;
     if (next === initial) return;
     committed(next);
-    onCommit(valueFromInput(def.type, next));
+    onCommit(valueFromInput(def, next));
   }
   // When the field def declares a renderer, show a live preview
   // next to the input so the user sees "0033B2" → blue swatch in
@@ -376,7 +445,9 @@ function PlainRow({
   const showPreview = !!def.renderer && def.renderer !== "text";
   // A declared unit shows as a quiet suffix token on the input row ("mm"),
   // so the person typing knows what the number means.
-  const showUnit = !!def.unit && def.type === "number";
+  const showUnit = !!def.unit && fieldTypeTakesUnit(def.type);
+  // What a measured value will be read as, while it is typed: "4k7" = 4.7 kΩ.
+  const reading = def.type === "measure" && draft.trim() ? parseMeasure(draft, { unit: def.unit ?? null }) : null;
   return (
     <label className="block">
       <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
@@ -407,6 +478,11 @@ function PlainRow({
           data-draft={draft}
         />
         {showUnit && <UnitSuffix unit={def.unit!} />}
+        {def.type === "measure" && draft.trim() && (
+          <span data-testid="measure-reading" className={"shrink-0 text-xs " + (reading ? "text-muted" : "text-ember-600 dark:text-ember-400")}>
+            {reading ? `= ${formatMeasure(reading)}` : "not a value"}
+          </span>
+        )}
         {showPreview && (
           <FieldRenderer
             fieldName={def.name}
@@ -416,6 +492,24 @@ function PlainRow({
           />
         )}
       </div>
+    </label>
+  );
+}
+
+function MoneyRow({ def, value, onCommit }: { def: PlatformFieldDef; value: unknown; onCommit: (v: unknown) => void }) {
+  return (
+    <label className="block">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+        {def.display_label}
+        {def.required ? <span className="text-ember-500"> *</span> : null}
+      </span>
+      <MoneyInput
+        value={value}
+        storage={moneyStorageOf(def) ?? "amount"}
+        onCommit={(v) => onCommit(v)}
+        ariaLabel={def.display_label}
+        className={fieldPackControlClass}
+      />
     </label>
   );
 }
@@ -456,7 +550,7 @@ function ComputedRow({
         {str ? (
           // Honour the field's renderer so a {{ }}-built URL (renderer "url-link")
           // draws as a clickable link, not plain text.
-          <FieldRenderer fieldName={def.name} value={str} renderer={def.renderer ?? undefined} type={def.type} />
+          <FieldRenderer fieldName={def.name} value={str} renderer={def.renderer ?? undefined} type={def.type} unit={def.unit} fieldRole={def.field_role} />
         ) : (
           <span className="text-faint dark:text-slate-600">—</span>
         )}
@@ -797,149 +891,40 @@ function ColorRow({
   );
 }
 
-const ADD_NEW = "__add_new__";
 
 function ChoiceRow({
   def,
+  kind,
   value,
   onCommit,
   note,
   onCommitNote,
+  detailField,
 }: {
   def: PlatformFieldDef;
+  kind: string;
   value: unknown;
   onCommit: (v: unknown) => void;
   note?: string | null;
   onCommitNote?: (v: unknown) => void;
+  detailField?: { name: string; label: string; value: string | null; onCommit: (v: string | null) => void };
 }) {
-  const { api, orgSlug, role } = usePlatformWeb();
-  const qc = useQueryClient();
-  const current = value == null ? "" : String(value);
-  const [pendingNew, setPendingNew] = useState<string | null>(null);
-  // Growing a dropdown's choices is a member's write (the server's bar); a
-  // guest sees no entry. An unknown role (a host that passes none) is left
-  // to the server.
-  const canDefine = !role || roleSatisfies(role, ["member"]);
-  const append = useMutation({
-    mutationFn: (newVal: string) =>
-      api.appendFieldDefChoice
-        ? api.appendFieldDefChoice(orgSlug, def.id, newVal)
-        : Promise.reject(new Error("Adapter doesn't support appendFieldDefChoice")),
-    onSuccess: (updated, newVal) => {
-      void qc.invalidateQueries({ queryKey: ["platform-field-defs", orgSlug, def.entity_kind] });
-      onCommit(newVal);
-      setPendingNew(null);
-      // updated has the new choices array; the invalidate above
-      // refreshes the dropdown options.
-      void updated;
-    },
-    onError: () => setPendingNew(null),
-  });
-
-  if (pendingNew !== null) {
-    return (
-      <label className="block">
-        <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-          {def.display_label}{" "}
-          <span className="text-accent">(new value)</span>
-        </span>
-        <input
-          type="text"
-          autoFocus
-          value={pendingNew}
-          onChange={(e) => setPendingNew(e.target.value)}
-          onBlur={() => {
-            const v = pendingNew.trim();
-            if (v) append.mutate(v);
-            else setPendingNew(null);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            if (e.key === "Escape") setPendingNew(null);
-          }}
-          className="input"
-        />
-      </label>
-    );
-  }
-
   return (
-    <div className="space-y-1">
-      <label className="block">
-        <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-          {def.display_label}
-          {def.required ? <span className="text-ember-500"> *</span> : null}
-        </span>
-        <select
-          value={current || ""}
-          onChange={(e) => {
-            const v = e.target.value;
-            if (v === ADD_NEW) {
-              setPendingNew("");
-              return;
-            }
-            onCommit(v === "" ? null : v);
-          }}
-          className="input"
-        >
-          <option value="">—</option>
-          {def.choices!.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-          {/* current value isn't in choices? show it anyway so we don't
-              silently lose it. */}
-          {current && !def.choices!.includes(current) && (
-            <option value={current}>{current} (legacy)</option>
-          )}
-          {api.appendFieldDefChoice && canDefine && (
-            <option value={ADD_NEW}>+ add new…</option>
-          )}
-        </select>
-      </label>
-      {/* The one-off clarifier. Deliberately secondary and unlabelled beyond its
-          placeholder: it is an optional detail, not a second required field, and
-          giving it equal weight would imply everyone should fill it in. Only
-          offered once a value exists, since "eBay · detroitaxle" needs the eBay
-          first, and only on a field with a curated list to protect. */}
-      {onCommitNote && current && canCarryNote(def) && (
-        <NoteInput
-          value={note ?? ""}
-          onCommit={(v) => onCommitNote(v.trim() === "" ? null : v.trim())}
-        />
-      )}
+    <div className="block">
+      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+        {def.display_label}
+        {def.required ? <span className="text-ember-500"> *</span> : null}
+      </span>
+      <ChoiceField
+        def={def}
+        kind={kind}
+        value={value}
+        onCommit={(v) => onCommit(v)}
+        note={note}
+        onCommitNote={onCommitNote ? (v) => onCommitNote(v) : undefined}
+        detailField={detailField}
+        className={fieldPackControlClass}
+      />
     </div>
-  );
-}
-
-/** Uncontrolled-until-blur so typing does not fire a write per keystroke. */
-function NoteInput({
-  value,
-  onCommit,
-}: {
-  value: string;
-  onCommit: (v: string) => void;
-}) {
-  // Follows the record underneath (a refetch, a different row) unless the
-  // person is typing in it.
-  const { draft, setDraft, committed, reset } = useFieldDraft(value);
-  return (
-    <input
-      type="text"
-      value={draft}
-      placeholder="which one, specifically? (optional)"
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={() => {
-        if (draft.trim() === value.trim()) return;
-        committed(draft);
-        onCommit(draft);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-        if (e.key === "Escape") reset();
-      }}
-      className="input text-[12px] py-1"
-    />
   );
 }

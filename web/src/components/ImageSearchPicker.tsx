@@ -19,13 +19,13 @@
 // inbox's own pipeline) → `entity` (server-derived) → `query` (literal).
 
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { SearchInput } from "@cobblr/platform-web";
+import { AiMark, PhotoSourceBadge, SearchInput, SelectableTile, usePasteImage } from "@cobblr/platform-web";
 import { Maximize2, Sparkles, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type ImageOption } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { nextTerm } from "./imageSearchTerm";
-import { imageUrlFrom, payloadFromClipboard, readPastedImage } from "./pastedImage";
+import { imageUrlFrom } from "./pastedImage";
 import { ImageLightbox } from "./ImageLightbox";
 
 export function ImageSearchPicker({
@@ -81,8 +81,10 @@ export function ImageSearchPicker({
    *  which is a claim about the product. */
   throttled?: boolean;
   loading?: boolean;
-  /** Called with the chosen image's full-size url. The caller applies it. */
-  onPick: (url: string) => void;
+  /** Called with the chosen image's full-size url, and the address of the copy
+   *  the person was looking at (the search engine's thumbnail). The caller
+   *  applies it, and keeps the copy shown when the original will not come. */
+  onPick: (url: string, shownUrl?: string, found?: { sourcePage?: string; searched?: string }) => void;
   /** When set, a tile click hands the url to the CALLER instead of opening this
    *  component's own full-screen viewer — for a caller that already has one
    *  open (the scan inbox renders this strip inside its lightbox, where a tile
@@ -109,7 +111,7 @@ export function ImageSearchPicker({
   /** When set, show a "✨ Pick best (AI)" button that asks a vision model to pick
    *  the cleanest catalog shot. The CALLER owns the call (it has the item context
    *  the ranker needs) and reports the result back via bestUrl/bestReason. */
-  onPickBest?: () => void;
+  onPickBest?: (candidates: ImageOption[]) => void;
   /** The AI pick is in flight — the button spins. */
   pickingBest?: boolean;
   /** The URL the AI chose — its tile gets a ring + an "AI pick" badge. */
@@ -132,10 +134,13 @@ export function ImageSearchPicker({
   const [touched, setTouched] = useState(false);
   const [applied, setApplied] = useState("");
   const [viewIdx, setViewIdx] = useState<number | null>(null);
+  // A record's last results come back as they were (remembered as links,
+  // #4515); pressing Search asks the web again.
+  const [fresh, setFresh] = useState(0);
 
   const fetched = useQuery({
-    queryKey: ["image-options", activeSlug, entity?.kind, entity?.id, query, brand, applied],
-    queryFn: () => api.imageOptions(activeSlug, { q: applied || query, brand, entity }),
+    queryKey: ["image-options", activeSlug, entity?.kind, entity?.id, query, brand, applied, fresh],
+    queryFn: () => api.imageOptions(activeSlug, { q: applied || query, brand, entity, fresh: fresh > 0 }),
     // An entity needs no q at all (the server derives it); literal mode does.
     enabled: enabled && !usesProp && !!activeSlug && (!!entity || !!(applied || query || "").trim()),
     staleTime: 5 * 60_000,
@@ -188,6 +193,13 @@ export function ImageSearchPicker({
     };
   }, [compact]);
   const opts = source.filter((o) => !broken.has(o.url));
+  // What the server remembers for a record: the photo in use and the AI's
+  // pick, marked after any reload. A caller that knows better (a pick it
+  // just made) says so.
+  const inUse = currentUrl ?? fetched.data?.in_use_url ?? null;
+  const aiUrl = bestUrl ?? fetched.data?.ai_url ?? null;
+  const aiReason = bestReason ?? fetched.data?.ai_reason ?? null;
+  const pickTile = (o: ImageOption) => onPick(o.url, o.thumb || undefined, { sourcePage: o.source, searched: searched || undefined });
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -201,25 +213,23 @@ export function ImageSearchPicker({
       return;
     }
     setApplied(t);
+    setFresh((n) => n + 1);
     if (usesProp) onSearch?.(t); // the caller owns fetching in pre-fetched mode
   }
 
-  /** Cmd+V in the box. A picture goes to the caller to upload; an address is
-   *  applied straight away, so pasting never needs a second keystroke. */
-  function paste(e: React.ClipboardEvent<HTMLInputElement>) {
-    const p = readPastedImage(payloadFromClipboard(e.clipboardData));
-    if (!p) return; // ordinary text: let it land in the box and be searched
-    if (p.kind === "file") {
-      if (!onPasteImage) return; // this caller cannot take a file - keep the text
-      e.preventDefault();
-      onPasteImage(p.file);
-      return;
-    }
-    e.preventDefault();
-    setTouched(true);
-    setTerm(p.url);
-    onPick(p.url);
-  }
+  // Cmd+V in the picker, through the one paste door (usePasteImage): a picture
+  // goes to the caller to upload, an address is applied straight away, so
+  // pasting never needs a second keystroke, and ordinary text lands in the box
+  // to be searched. A caller that cannot take a file keeps the text.
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  usePasteImage(() => rootRef.current ?? portRef.current, {
+    onFiles: onPasteImage ? ([file]) => file && onPasteImage(file) : undefined,
+    onUrl: (url) => {
+      setTouched(true);
+      setTerm(url);
+      onPick(url);
+    },
+  });
 
   /** The button says what pressing it will DO. Typing an address and being
    *  offered "Search" is the whole misunderstanding, in one word. */
@@ -235,63 +245,43 @@ export function ImageSearchPicker({
   // and strip forms differ in chrome only; duplicating the tile markup is
   // how two surfaces that look alike start behaving differently.
   const tiles = opts.map((o) => {
-              const isBest = !!bestUrl && o.url === bestUrl;
-              const isCurrent = !!currentUrl && o.url === currentUrl;
-              return (
-              <div key={o.url} className="relative w-20 h-20 shrink-0 group" data-current={isCurrent ? "" : undefined}>
-                <button
-                  type="button"
-                  disabled={busy && !phone}
-                  onClick={() => (phone ? tileClick(o) : onPick(o.url))}
-                  title={`${phone ? `View full size: ${o.title} (${o.source})` : isBest ? `AI's pick: ${o.title} (${o.source})` : `Use this image: ${o.title} (${o.source})`}${isCurrent ? " (the catalog picture now)" : ""}`}
-                  aria-label={phone ? `View full size: ${o.title}` : `Use this image: ${o.title}`}
-                  aria-current={isCurrent ? "true" : undefined}
-                  className={`w-full h-full rounded overflow-hidden bg-white transition disabled:opacity-50 ${
-                    isBest
-                      ? "border-2 border-accent ring-2 ring-accent/40"
-                      : "border border-line dark:border-slate-700 hover:border-cobble-400"
-                  } ${isCurrent ? "outline outline-2 outline-offset-1 outline-accent" : ""}`}
-                >
-                  {/* CONTAIN. Every tile here is a candidate you are judging
-                      against the others, and a square crop of a product shot
-                      keeps the middle band and discards the top and bottom -
-                      so a tall bottle or jar reads as a stripe of label and the
-                      grid stops distinguishing anything. Cropping a picture
-                      whose own tooltip says "Use this image" hides the thing
-                      being chosen. */}
-                  <img
-                    src={o.thumb}
-                    alt={o.title}
-                    className="w-full h-full object-contain"
-                    loading="lazy"
-                    onError={() => setBroken((s) => new Set(s).add(o.url))}
-                  />
-                </button>
-                {isBest && (
-                  <div className="absolute top-1 left-1 inline-flex items-center gap-0.5 rounded bg-accent text-white text-[9px] font-semibold px-1 py-0.5 shadow">
-                    <Sparkles size={9} /> AI
-                  </div>
-                )}
-                {phone && !isBest && (
-                  <span className="absolute left-1 top-1 rounded bg-black/60 px-1 py-0.5 text-[9px] font-mono uppercase tracking-wider text-white">web</span>
-                )}
-                {!phone && (
-                <button
-                  type="button"
-                  onClick={() => tileClick(o)}
-                  title="View full size"
-                  aria-label={`View full size: ${o.title}`}
-                  // Always visible, not hover-only: on touch there is no hover,
-                  // and a control you can't see is a control that doesn't exist.
-                  // Not disabled by `busy` — looking is safe while a pick saves.
-                  className="absolute bottom-1 right-1 rounded bg-black/60 hover:bg-black/80 text-white shadow-md w-6 h-6 flex items-center justify-center"
-                >
-                  <Maximize2 className="w-3 h-3" strokeWidth={2.5} />
-                </button>
-                )}
-              </div>
-              );
-            });
+    const isBest = !!aiUrl && o.url === aiUrl;
+    return (
+      <SelectableTile
+        key={o.url}
+        selected={!!inUse && o.url === inUse}
+        selectedLabel="In use"
+        disabled={busy && !phone}
+        onClick={() => (phone ? tileClick(o) : pickTile(o))}
+        title={phone ? `View full size: ${o.title} (${o.source})` : isBest ? `AI's pick: ${o.title} (${o.source})` : `Use this image: ${o.title} (${o.source})`}
+        aria-label={phone ? `View full size: ${o.title}` : `Use this image: ${o.title}`}
+        topLeft={isBest ? <AiMark /> : phone ? <PhotoSourceBadge kind="web" /> : null}
+        bottomRight={
+          !phone && (
+            <button
+              type="button"
+              onClick={() => tileClick(o)}
+              title="View full size"
+              aria-label={`View full size: ${o.title}`}
+              // Always visible, not hover-only: on touch there is no hover,
+              // and a control you can't see is a control that doesn't exist.
+              // Not disabled by `busy` — looking is safe while a pick saves.
+              className="rounded bg-black/60 hover:bg-black/80 text-white shadow-md w-6 h-6 flex items-center justify-center"
+            >
+              <Maximize2 className="w-3 h-3" strokeWidth={2.5} />
+            </button>
+          )
+        }
+      >
+        {/* CONTAIN. Every tile here is a candidate you are judging against
+            the others, and a square crop of a product shot keeps the middle
+            band and discards the top and bottom - so a tall bottle or jar
+            reads as a stripe of label and the grid stops distinguishing
+            anything. */}
+        <img src={o.thumb} alt={o.title} className="w-full h-full object-contain" loading="lazy" onError={() => setBroken((s) => new Set(s).add(o.url))} />
+      </SelectableTile>
+    );
+  });
 
   const lightbox = viewIdx !== null && opts[viewIdx] && (
         <ImageLightbox
@@ -309,7 +299,9 @@ export function ImageSearchPicker({
             label: "Use this image",
             busy,
             onAction: (it) => {
-              if (it.url) onPick(it.url);
+              const o = opts.find((x) => x.url === it.url);
+              if (o) pickTile(o);
+              else if (it.url) onPick(it.url, it.thumbUrl ?? undefined);
               setViewIdx(null);
             },
           }}
@@ -336,7 +328,7 @@ export function ImageSearchPicker({
     // since a label outside the scroller cannot line up with tiles that move.
     const hasOwn = !!leading;
     return (
-      <div className="min-w-0 space-y-1.5">
+      <div ref={rootRef} className="min-w-0 space-y-1.5">
         <div className="flex items-center gap-2">
           <span className="text-xs font-medium text-content shrink-0">{hasOwn ? "Your photos and the web" : "Pictures on the web"}</span>
           <span className="flex-1" />
@@ -353,7 +345,7 @@ export function ImageSearchPicker({
           {onPickBest && (
             <button
               type="button"
-              onClick={onPickBest}
+              onClick={() => onPickBest(opts)}
               disabled={pickingBest || busy}
               title="Let AI pick the cleanest catalog photo: the product alone, correct colour, no people"
               className="inline-flex min-h-9 shrink-0 items-center gap-1 rounded-md border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-2.5 text-xs font-medium text-accent disabled:opacity-50"
@@ -372,7 +364,6 @@ export function ImageSearchPicker({
                 setTouched(true);
                 setTerm(v);
               }}
-              onPaste={paste}
               placeholder="search or paste a link…"
               aria-label="Search for a picture, or paste a link"
               size="lg"
@@ -399,7 +390,9 @@ export function ImageSearchPicker({
           <div className="flex w-max items-center gap-2">
             {hasOwn && (
               <div className="relative flex items-center gap-2">
-                <span className="absolute left-1 top-1 z-10 rounded bg-black/60 px-1 py-0.5 text-[9px] font-mono uppercase tracking-wider text-white">yours</span>
+                <span className="absolute left-1 top-1 z-10 pointer-events-none">
+                  <PhotoSourceBadge kind="camera" />
+                </span>
                 {leading}
               </div>
             )}
@@ -413,10 +406,10 @@ export function ImageSearchPicker({
             {throttled ? rateLimited : searched ? `nothing found for "${searched}"` : "no web photos yet"}
           </div>
         ) : null}
-        {bestReason && (
+        {aiReason && (
           <div className="flex items-start gap-1 text-[11px] text-accent">
             <Sparkles size={11} className="mt-0.5 shrink-0" />
-            <span className="min-w-0">{bestReason}</span>
+            <span className="min-w-0">{aiReason}</span>
           </div>
         )}
         {lightbox}
@@ -484,7 +477,6 @@ export function ImageSearchPicker({
                     setTouched(true);
                     setTerm(v);
                   }}
-                  onPaste={paste}
                   placeholder="search or paste a link…"
                   aria-label="Search for a picture, or paste a link"
                   size="sm"
@@ -502,7 +494,7 @@ export function ImageSearchPicker({
             {onPickBest && (
               <button
                 type="button"
-                onClick={onPickBest}
+                onClick={() => onPickBest(opts)}
                 disabled={pickingBest || busy}
                 title="Let AI pick the cleanest catalog photo: the product alone, correct colour, no people"
                 className="shrink-0 inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-2 py-0.5 text-[11px] font-medium text-accent hover:border-accent transition disabled:opacity-50"
@@ -527,10 +519,10 @@ export function ImageSearchPicker({
             )}
           </div>
         </div>
-        {bestReason && (
+        {aiReason && (
           <div className="mt-1 flex items-start gap-1 text-[11px] text-accent">
             <Sparkles size={11} className="mt-0.5 shrink-0" />
-            <span className="min-w-0">{bestReason}</span>
+            <span className="min-w-0">{aiReason}</span>
           </div>
         )}
         {lightbox}
@@ -538,9 +530,25 @@ export function ImageSearchPicker({
     );
   }
 
+  // The record page's panel (#4515): one row of controls (the search, Search,
+  // AI Pick), one short line on what a tap does, the tiles, then where they
+  // came from in small type. The help used to be two lines beside AI Pick
+  // and wrapped awkwardly on a phone.
+  const aiPick = onPickBest && (
+    <button
+      type="button"
+      onClick={() => onPickBest(opts)}
+      disabled={pickingBest || busy || opts.length === 0}
+      title="Let AI pick the cleanest catalog photo and use it: the product alone, correct colour, no people"
+      className="inline-flex min-h-9 shrink-0 items-center gap-1 rounded-md border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-2.5 text-xs font-medium text-accent hover:border-accent transition disabled:opacity-50"
+    >
+      <Sparkles size={12} className={pickingBest ? "animate-pulse" : ""} />
+      {pickingBest ? "Picking…" : "AI Pick"}
+    </button>
+  );
   return (
-    <div className="space-y-1.5">
-      {searchable && (
+    <div ref={rootRef} className="space-y-1.5">
+      {searchable ? (
         <form onSubmit={submit} className="flex items-center gap-1.5">
           <SearchInput
             value={term}
@@ -548,33 +556,36 @@ export function ImageSearchPicker({
               setTouched(true);
               setTerm(v);
             }}
-            onPaste={paste}
             placeholder="search or paste an image link…"
             aria-label="Search for a picture, or paste an image link"
             size="sm"
+            // The box gives way first on a narrow phone; the buttons keep their words.
             wrapperClassName="flex-1 min-w-0"
           />
           <button
             type="submit"
             disabled={busy}
-            className="shrink-0 rounded border border-line dark:border-slate-600 px-2 py-1 text-[11px] font-medium text-muted hover:text-content hover:border-faint disabled:opacity-50"
+            className="inline-flex min-h-9 shrink-0 items-center rounded-md border border-line dark:border-slate-600 px-3 text-xs font-medium text-content dark:text-mortar-100 hover:border-faint disabled:opacity-50"
           >
             {submitLabel}
           </button>
-          {touched && (
-            <button
-              type="button"
-              onClick={() => {
-                setTouched(false);
-                setApplied("");
-              }}
-              className="shrink-0 text-[11px] text-faint hover:text-content"
-              title="Back to the derived search"
-            >
-              reset
-            </button>
-          )}
+          {aiPick}
         </form>
+      ) : (
+        aiPick && <div className="flex justify-end">{aiPick}</div>
+      )}
+      {touched && searchable && (
+        <button
+          type="button"
+          onClick={() => {
+            setTouched(false);
+            setApplied("");
+          }}
+          className="text-[11px] text-faint hover:text-content"
+          title="Back to the derived search"
+        >
+          reset the search
+        </button>
       )}
       {loading ? (
         <div className="text-[11px] text-faint animate-pulse">finding photo options…</div>
@@ -583,41 +594,22 @@ export function ImageSearchPicker({
           {throttled ? rateLimited : searched ? `no images found for "${searched}"` : "no photo options"}
         </div>
       ) : (
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 min-w-0">
-              {label ?? "photo options"}{" "}
-              <span className="text-faint normal-case">
-                {throttled ? " · photo library only (web search not answering)" : " · DuckDuckGo + Wikimedia Commons"} · tap to use, ⤢ to view full size
-              </span>
-            </div>
-            {onPickBest && (
-              <button
-                type="button"
-                onClick={onPickBest}
-                disabled={pickingBest || busy}
-                title="Let AI pick the cleanest catalog photo: the product alone, correct colour, no people"
-                className="ml-auto shrink-0 inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-2 py-0.5 text-[11px] font-medium text-accent hover:border-accent transition disabled:opacity-50"
-              >
-                <Sparkles size={11} className={pickingBest ? "animate-pulse" : ""} />
-                {pickingBest ? "picking…" : "Pick best (AI)"}
-              </button>
-            )}
-          </div>
-          <div className="flex gap-1.5 overflow-x-auto overflow-y-hidden no-scrollbar pb-1">
-            {/* Two gestures for two intentions. The BIG target does the common
-                thing — you are picking a photo, so tapping the photo picks it.
-                Zooming is the rarer "let me check this one first", so it gets
-                the small corner button (reported 2026-07-20: "you should click image
-                to select, and press small button to zoom it"). */}
+        <div className="space-y-1.5">
+          <div className="text-xs text-content dark:text-mortar-100">{label ?? "Tap to use · ⤢ full size"}</div>
+          {/* Wrapping, not a sideways strip: at phone width a strip ran off
+              the edge with nothing to say there was more of it. */}
+          <div data-testid="image-options-grid" className="flex flex-wrap gap-1.5">
             {tiles}
           </div>
-          {bestReason && (
-            <div className="mt-1 flex items-start gap-1 text-[11px] text-accent">
+          {aiReason && (
+            <div data-testid="ai-pick-reason" className="flex items-start gap-1 text-[11px] text-accent">
               <Sparkles size={11} className="mt-0.5 shrink-0" />
-              <span className="min-w-0">{bestReason}</span>
+              <span className="min-w-0">{aiReason}</span>
             </div>
           )}
+          <div className="text-[10px] text-faint">
+            {throttled ? "From the photo library only: the web search is not answering right now." : "From DuckDuckGo and Wikimedia Commons."}
+          </div>
         </div>
       )}
 

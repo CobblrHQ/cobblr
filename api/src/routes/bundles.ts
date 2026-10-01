@@ -15,7 +15,7 @@ import { describeKept, moduleRecordCount, previewPlaces, releaseUnclaimed, type 
 import { resolveEnabledFeatures, featuresToOffer as pickFeaturesToOffer } from "../platform/feature-defaults.js";
 import { sql, type Kysely } from "kysely";
 import type { MetaDB } from "../db/schema.js";
-import { platform, CatalogSchemaConfig, packFieldIssues, FieldRoleSchema, FieldTypeSchema, isFieldScope, parseFieldScope, FaceSchema } from "@cobblr/platform-contract";
+import { platform, fieldTypeTakesUnit, CatalogSchemaConfig, packFieldIssues, FieldRoleSchema, FieldTypeSchema, isFieldScope, parseFieldScope, FaceSchema } from "@cobblr/platform-contract";
 import { requireAuth } from "../auth/middleware.js";
 import { requireRole } from "../auth/capability.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
@@ -122,6 +122,10 @@ const WireEntry = z
      *  runs (binding-ask.ts): the collection's shortcut on its records. */
     label: BindingLabel.optional(),
     ask: BindingAsk.optional(),
+    /** What this wire does, in one sentence a person reads where the bundle
+     *  is suggested ("Works with Lists"): a suggestion says only these, so a
+     *  bundle with none touching a page is never suggested there. */
+    says: z.string().trim().min(1).max(160).optional(),
     target: z
       .union([
         z.literal("self"),
@@ -186,6 +190,10 @@ const FieldDefEntry = z
      *  `pack` marks the packaging-count field, filled from the scanned package.
      *  At most one of each per entity kind. */
     field_role: FieldRoleSchema.optional(),
+    /** Whether what a person types becomes a choice (field-choices.ts). Every
+     *  text field with choices a bundle ships declares it
+     *  (lint:field-learns-declared). */
+    learns: z.boolean().optional(),
   })
   .refine((f) => f.type !== "computed" || (f.template && f.template.trim().length > 0), {
     message: "computed field_defs need a template",
@@ -202,8 +210,8 @@ const FieldDefEntry = z
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: [issue.path], message: issue.message });
     }
   })
-  .refine((f) => !f.unit || f.type === "number", {
-    message: "unit is only valid for type='number'",
+  .refine((f) => !f.unit || fieldTypeTakesUnit(f.type), {
+    message: "unit is only valid on a number or measure field",
     path: ["unit"],
   });
 
@@ -250,6 +258,14 @@ const InstanceEntry = z.object({
   glyph: z.string().optional(),
   item_noun: z.string().optional(),
   qty_unit: z.string().optional(),
+  /** What a record of this table calls the things inside it ("Parts" for a
+   *  computer, "In the bag" for a bag): the default for its Contents panel.
+   *  A workspace's own word wins and an update never overwrites it. */
+  contents_label: z.string().min(1).max(40).optional(),
+  /** The service jobs a record of this table usually needs ("Oil change",
+   *  "Nozzle swap"): where the maintenance panel's "What needs doing" starts,
+   *  before the workspace's own jobs are offered beside them. */
+  service_tasks: z.array(z.string().min(1).max(80)).max(40).optional(),
   /** One line under the table's title saying what goes in it ("markers,
    *  needles, safety eyes, stuffing, buttons"): for a name that does not say
    *  it on its own. */
@@ -1486,6 +1502,29 @@ bundlesRouter.get(
   },
 );
 
+// GET /passed — the bundles this workspace installed and later took out. A
+// suggestion ("Works with Lists") is never made for one: the workspace has
+// already tried it and said no.
+bundlesRouter.get(
+  "/passed",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      const rows = await meta
+        .selectFrom("bundle_snapshots")
+        .select("external_id")
+        .distinct()
+        .where("org_id", "=", req.tenant!.org.id)
+        .where("reason", "=", "uninstalled")
+        .execute();
+      res.json({ items: rows.map((r) => r.external_id) });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // Single-bundle detail with its installed wires + field defs.
 bundlesRouter.get(
   "/:id",
@@ -1540,6 +1579,7 @@ bundlesRouter.post(
   withTenant,
   async (req, res, next) => {
     try {
+      // ROLE: any member (a read: whether a bundle would install; installing has its own check)
       const Body = z.object({
         manifest: z.unknown(),
         autoEnable: z.boolean().optional(),
@@ -1675,9 +1715,10 @@ function fieldDefRow(
     renderer: (f as { renderer?: string | null }).renderer ?? null,
     template: f.type === "computed" ? f.template ?? null : null,
     help: f.help ?? null,
-    unit: f.type === "number" ? f.unit ?? null : null,
+    unit: fieldTypeTakesUnit(f.type) ? f.unit ?? null : null,
     decode_role: (f as { decode_role?: string | null }).decode_role ?? null,
     field_role: (f as { field_role?: string | null }).field_role ?? null,
+    learns: (f as { learns?: boolean | null }).learns ?? null,
   };
 }
 
@@ -1928,7 +1969,7 @@ export async function applyValidatedBundle(
     // (2026-09-12). The instance's words come first so a table-specific term
     // wins any first-match read.
     const tableWords = bundleTableWords(inst.scan_keywords, m.scan_keywords);
-    const instConfig: Record<string, unknown> = { item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null, parent: inst.parent ?? null, nav_group: inst.nav_group ?? null, scan_keywords: tableWords.length ? tableWords : null, faces: inst.faces ?? null, file_intake: inst.file_intake ?? null, connector_import: (inst as { connector_import?: unknown }).connector_import ?? null, noun: inst.noun ?? null, hint: inst.hint ?? null, links: inst.links ?? null, noun_choice: (inst as { noun_choice?: unknown }).noun_choice ?? null };
+    const instConfig: Record<string, unknown> = { item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null, parent: inst.parent ?? null, nav_group: inst.nav_group ?? null, scan_keywords: tableWords.length ? tableWords : null, faces: inst.faces ?? null, file_intake: inst.file_intake ?? null, connector_import: (inst as { connector_import?: unknown }).connector_import ?? null, noun: inst.noun ?? null, hint: inst.hint ?? null, links: inst.links ?? null, noun_choice: (inst as { noun_choice?: unknown }).noun_choice ?? null, contents_label_default: inst.contents_label ?? null, service_tasks_default: inst.service_tasks ?? null };
     // Creation-time stock signal: a bundle that declares a MEASURED unit (a
     // qty_unit that isn't blank or "each" — filament in kg, yarn in skeins)
     // carries stock character before any data exists, so latch it to stock at
@@ -3002,7 +3043,7 @@ bundlesRouter.get(
 /** The instances (no other source claims them) + modules that an uninstall of
  *  this bundle would tear down — same refcount the teardown uses (<= 1 claim ⇒
  *  only this bundle ⇒ removed). */
-async function previewBundleUninstall(
+export async function previewBundleUninstall(
   orgId: string,
   externalId: string,
 ): Promise<{
@@ -3203,33 +3244,46 @@ bundlesRouter.delete(
       // wires and views go and its instances and records stay, exactly as an
       // upgrade leaves them.
       const deleteData = req.query.delete_data === "1" || (req.body as { delete_data?: unknown } | undefined)?.delete_data === true;
-      const released = await uninstallBundleId(bundle.id, deleteData ? { teardownResources: true } : { snapshotReason: "uninstalled" });
-      await activity.log({
-        orgId: req.tenant!.org.id,
-        action: "bundle_uninstalled",
-        ref: { module: null, entityType: "bundle", entityId: bundle.id },
-        // The bundle row is gone after uninstall, so carry its name so the
-        // activity feed reads "bundle uninstalled · <name>" (mirrors install).
-        diff: {
-          name: bundle.name,
-          ...(released ? { removed: released.removed.map((r) => r.name), kept: released.kept.map((k) => k.name) } : {}),
-        },
-      });
-      // What it put back and what it kept, in words, so the dialog can say
-      // "Kept Pantry: 12 things live there" instead of "done".
-      res.status(200).json({
-        removed: released?.removed ?? [],
-        kept: released?.kept ?? [],
-        kept_words: describeKept(released?.kept ?? []),
-        // Undo: reverting this snapshot puts the bundle back as it was. Only
-        // when its records were kept; deleted records cannot come back.
-        ...(released?.snapshotId && !deleteData ? { undo_snapshot_id: released.snapshotId } : {}),
-      });
+      res.status(200).json(await removeBundle(req.tenant!.org.id, bundle, { deleteData }));
     } catch (err) {
       next(err);
     }
   },
 );
+
+/** Remove an installed bundle: the one door the Bundles page and the
+ *  assistant both go through, so what is removed, what is logged and what
+ *  comes back as Undo cannot differ between them. Records go only when
+ *  `deleteData` says so; without it the bundle's fields, wires and views go
+ *  and its tables and records stay. */
+export async function removeBundle(
+  orgId: string,
+  bundle: { id: string; name: string },
+  { deleteData }: { deleteData: boolean },
+): Promise<{ removed: ReleaseSummary["removed"]; kept: ReleaseSummary["kept"]; kept_words: string[]; undo_snapshot_id?: string }> {
+  const released = await uninstallBundleId(bundle.id, deleteData ? { teardownResources: true } : { snapshotReason: "uninstalled" });
+  await activity.log({
+    orgId,
+    action: "bundle_uninstalled",
+    ref: { module: null, entityType: "bundle", entityId: bundle.id },
+    // The bundle row is gone after uninstall, so carry its name so the
+    // activity feed reads "bundle uninstalled · <name>" (mirrors install).
+    diff: {
+      name: bundle.name,
+      ...(released ? { removed: released.removed.map((r) => r.name), kept: released.kept.map((k) => k.name) } : {}),
+    },
+  });
+  // What it put back and what it kept, in words, so the dialog can say
+  // "Kept Pantry: 12 things live there" instead of "done".
+  return {
+    removed: released?.removed ?? [],
+    kept: released?.kept ?? [],
+    kept_words: describeKept(released?.kept ?? []),
+    // Undo: reverting this snapshot puts the bundle back as it was. Only
+    // when its records were kept; deleted records cannot come back.
+    ...(released?.snapshotId && !deleteData ? { undo_snapshot_id: released.snapshotId } : {}),
+  };
+}
 
 async function uninstallBundleId(
   bundleId: string,

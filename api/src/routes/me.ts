@@ -20,6 +20,10 @@ import { hashPassword, verifyPassword } from "../auth/password.js";
 import { pendingEmailChange, requestEmailChange } from "../platform/email-change.js";
 import { signSession } from "../auth/jwt.js";
 import * as notifications from "../platform/notifications.js";
+import { notificationKindsFor, notificationLabel } from "../platform/notification-kinds.js";
+import { onNotificationChange } from "../platform/notification-stream.js";
+import { openSse, signStreamTicket, verifyStreamTicket } from "../lib/event-stream.js";
+import { NOTIFICATION_STREAM_EVENT } from "@cobblr/platform-contract/notification-stream";
 import type { NotificationChannel } from "../db/schema.js";
 import { pressNotificationAction } from "../platform/notification-press.js";
 import { loadSessionUser } from "../auth/session-user.js";
@@ -33,7 +37,7 @@ import { finalExportPath, finalExportsFor } from "../platform/workspace-final-ex
 import { issueAndSendVerifyEmail } from "./auth.js";
 import { captureBlueprint } from "./blueprint.js";
 import {
-  discordOAuthConfigured,
+  discordConnectConfigured,
   signOAuthState,
   verifyOAuthState,
   discordAuthorizeUrl,
@@ -49,7 +53,7 @@ import {
   isTier2,
   isPrefChannel,
 } from "../platform/notification-catalog.js";
-import { ORG_ROLES, roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { ORG_ROLES, ORG_ROLE_RANK, roleSatisfies, type OrgRoleName } from "@cobblr/platform-contract/org-roles";
 import { decodeKeysetCursor, encodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
 
 export const meRouter = Router();
@@ -74,6 +78,18 @@ meRouter.get("/me", requireAuth, async (req, res) => {
       community_links: communityLinks(),
     },
     orgs,
+    // What THIS token may do, for a client that offers tools on its behalf
+    // (the MCP server a person runs locally): offering a tool the token is
+    // always refused reads to a model as a broken tool. Null for a session.
+    token:
+      req.session!.auth_method === "api_token"
+        ? {
+            access: req.session!.token_access ?? "full",
+            workspace: req.session!.token_org_id
+              ? (orgs.find((o) => o.id === req.session!.token_org_id)?.slug ?? null)
+              : null,
+          }
+        : null,
   });
 });
 
@@ -843,12 +859,14 @@ meRouter.get("/me/notifications", requireAuth, async (req, res, next) => {
     const unreadOnly = req.query.unread === "1" || req.query.unread === "true";
     const before = typeof req.query.before === "string" ? req.query.before : undefined;
     const orgSlug = typeof req.query.org === "string" && req.query.org ? req.query.org : undefined;
-    const items = await notifications.listForUserAcrossOrgs(req.session!.id, {
+    const rows = await notifications.listForUserAcrossOrgs(req.session!.id, {
       limit,
       unreadOnly,
       ...(before ? { before } : {}),
       ...(orgSlug ? { orgSlug } : {}),
     });
+    // Its kind in words, for the line under it; null when nobody named it.
+    const items = rows.map((n) => ({ ...n, label: notificationLabel(n.event_type) }));
     // A full page may have more behind it: the cursor is the last row's
     // `<created_at>|<id>`, which the next call hands back as `before`.
     const last = items.length === limit ? items[items.length - 1] : undefined;
@@ -934,6 +952,102 @@ meRouter.post("/me/notifications/:id/actions/:actionId", requireAuth, async (req
   }
 });
 
+const STREAM_AUD = "notifications";
+
+/** A ticket for the notification stream (an EventSource cannot send the
+ *  Authorization header). */
+meRouter.post("/me/notifications/stream-ticket", requireAuth, async (req, res, next) => {
+  try {
+    res.json({ ticket: await signStreamTicket(STREAM_AUD, req.session!.id) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Your notifications changed: pushed to your open tabs as it happens, so the
+ *  bell and the page refetch now rather than at their next poll. */
+meRouter.get("/me/notifications/stream", async (req, res, next) => {
+  try {
+    const ticket = typeof req.query.ticket === "string" ? req.query.ticket : "";
+    const who = ticket ? await verifyStreamTicket(STREAM_AUD, ticket) : null;
+    if (!who) {
+      res.status(401).json({ error: { code: "bad_ticket", message: "A valid stream ticket is required." } });
+      return;
+    }
+    const { send, stop } = openSse(res);
+    const off = onNotificationChange(who.userId, (change) => send(NOTIFICATION_STREAM_EVENT, change));
+    req.on("close", () => {
+      stop();
+      off();
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** The kinds of notification a workspace can send you, by name: the Channels
+ *  page's picker for which ones a binding is for. */
+meRouter.get("/me/notification-kinds", requireAuth, async (req, res, next) => {
+  try {
+    const orgId = String(req.query.org_id ?? "");
+    const member = orgId
+      ? await meta.selectFrom("org_memberships").select("user_id").where("user_id", "=", req.session!.id).where("org_id", "=", orgId).executeTakeFirst()
+      : undefined;
+    if (!member) {
+      res.status(404).json({ error: { code: "not_a_member", message: "Workspace not found." } });
+      return;
+    }
+    const enabled = new Set(
+      (await meta.selectFrom("org_modules").select("module_name").where("org_id", "=", orgId).execute()).map((r) => r.module_name),
+    );
+    res.json({ items: notificationKindsFor(enabled) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+meRouter.post("/me/notifications/:id/unread", requireAuth, async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ error: { code: "missing_id", message: "id required" } });
+      return;
+    }
+    await notifications.markUnread(id, req.session!.id);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+meRouter.delete("/me/notifications/:id", requireAuth, async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ error: { code: "missing_id", message: "id required" } });
+      return;
+    }
+    // Someone else's id reads as gone, the same as one that never existed.
+    if (!(await notifications.remove(id, req.session!.id))) {
+      res.status(404).json({ error: { code: "not_found", message: "That notification is already gone." } });
+      return;
+    }
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Clear read: every notification this person has read, in every workspace. */
+meRouter.post("/me/notifications/clear-read", requireAuth, async (req, res, next) => {
+  try {
+    const count = await notifications.removeRead(req.session!.id);
+    res.json({ count });
+  } catch (err) {
+    next(err);
+  }
+});
+
 meRouter.post("/me/notifications/read-all", requireAuth, async (req, res, next) => {
   try {
     const count = await notifications.markAllReadAcrossOrgs(req.session!.id);
@@ -955,8 +1069,13 @@ meRouter.post("/me/notifications/read-all", requireAuth, async (req, res, next) 
 // Every channel the dispatcher can deliver through, and nothing else: the
 // list is the registry's own keys, so a channel added there is one a person
 // can bind, and the settings page cannot offer one this refuses (it offered
-// Discord DM, which this list had left out, so saving it failed).
-export const ChannelEnum = z.enum(Object.keys(notifications.REGISTRY) as [NotificationChannel, ...NotificationChannel[]]);
+// Discord DM, which this list had left out, so saving it failed). A channel
+// that says it is not offered (browser push, a stub that delivers nothing)
+// is left out: picking it saved a binding that never sent anything.
+export const OFFERED_CHANNELS = (Object.keys(notifications.REGISTRY) as NotificationChannel[]).filter(
+  (c) => !notifications.REGISTRY[c]?.notOffered,
+);
+export const ChannelEnum = z.enum(OFFERED_CHANNELS as [NotificationChannel, ...NotificationChannel[]]);
 const PriorityEnum = z.enum(["low", "normal", "high", "urgent"]);
 
 // Channel-specific config validators. The dispatcher's drivers
@@ -1786,6 +1905,24 @@ meRouter.get("/me/links", requireAuth, async (req, res, next) => {
 // owner can extend or set/clear expiry on an active link. Pending /
 // revoked links can't be patched (their state machine carries the
 // expiry meaning differently).
+/** Why a change to a link widens what it shares, or null when it only
+ *  narrows it (or leaves it as it is). */
+export function linkPatchWidens(
+  now: { expires_at: Date | null; min_target_role: OrgRoleName | null },
+  next: { expires_at?: Date | null; min_target_role?: OrgRoleName | null },
+): string | null {
+  if (next.expires_at !== undefined) {
+    if (next.expires_at === null && now.expires_at !== null) return "Making it never expire widens it.";
+    if (next.expires_at && now.expires_at && next.expires_at > now.expires_at) return "A later end widens it.";
+  }
+  if (next.min_target_role !== undefined) {
+    const was = now.min_target_role ? ORG_ROLE_RANK[now.min_target_role] : -1;
+    const will = next.min_target_role ? ORG_ROLE_RANK[next.min_target_role] : -1;
+    if (will < was) return "Letting a lower role see them widens it.";
+  }
+  return null;
+}
+
 const LinkPatch = z.object({
   expires_at: z.string().datetime().nullable().optional(),
   min_target_role: z
@@ -1850,6 +1987,20 @@ meRouter.patch("/me/links/:id", requireAuth, async (req, res, next) => {
         error: { code: "empty_patch", message: "Provide at least one of expires_at, min_target_role." },
       });
       return;
+    }
+    // The records are the source's: its owner sets how far they reach. The
+    // owner on the receiving side may only narrow that (an earlier end, a
+    // higher role), never widen it: "never expires" or "every member" from
+    // the side that does not own the records was a share its owner never gave.
+    if (!ownsSource) {
+      const widens = linkPatchWidens(
+        { expires_at: link.expires_at ? new Date(link.expires_at) : null, min_target_role: (link.min_target_role as OrgRoleName | null) ?? null },
+        patch as { expires_at?: Date | null; min_target_role?: OrgRoleName | null },
+      );
+      if (widens) {
+        res.status(403).json({ error: { code: "not_yours_to_widen", message: `Only an owner of the workspace sharing these records can widen what it shares; from this side you can only narrow it. ${widens}` } });
+        return;
+      }
     }
     const updated = await meta
       .updateTable("workspace_links")
@@ -2247,7 +2398,7 @@ meRouter.get("/me/discord", requireAuth, async (req, res, next) => {
     }
     const state = discordConnectionState(row);
     res.json({
-      configured: discordOAuthConfigured(),
+      configured: discordConnectConfigured(),
       connected: Boolean(row?.discord_user_id),
       // `verified` stays the field the UI already reads, and now answers the
       // question that matters: can the app that is sending TODAY reach you.
@@ -2269,7 +2420,7 @@ const DISCORD_DIGEST_DEFAULT_MINUTE = 480;
 // POST /me/discord/oauth-start — returns the Discord authorize URL.
 meRouter.post("/me/discord/oauth-start", requireAuth, async (req, res, next) => {
   try {
-    if (!discordOAuthConfigured()) {
+    if (!discordConnectConfigured()) {
       res.status(503).json({ error: { code: "not_configured", message: "Discord isn't set up on this server yet." } });
       return;
     }

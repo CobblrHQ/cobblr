@@ -30,6 +30,21 @@ const QueueAdd = z.object({
   qty: z.number().int().min(1).max(99).default(1),
 });
 
+// GET /queue/count: how many labels are waiting to print for this person, the
+// number on the Labels row of every nav (manifest `nav.count`). One cheap sum,
+// since every open tab asks it every few seconds.
+queueRouter.get(
+  "/count",
+  asyncHandler(async (req, res) => {
+    const row = await tenantDb(req)
+      .selectFrom("labels_queue")
+      .select((eb) => eb.fn.coalesce(eb.fn.sum<number>("qty"), eb.lit(0)).as("total"))
+      .where("user_id", "=", sessionUser(req).id)
+      .executeTakeFirst();
+    res.json({ total: Number(row?.total ?? 0) });
+  }),
+);
+
 queueRouter.get(
   "/",
   asyncHandler(async (req, res) => {

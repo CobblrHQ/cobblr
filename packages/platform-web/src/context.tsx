@@ -90,6 +90,12 @@ export function PlatformWebProvider({
   );
 }
 
+/** The viewer's role, or null outside a provider (a panel rendered on its
+ *  own, a test): what decides whether an owner's control is offered. */
+export function useViewerRole(): string | null {
+  return useContext(Ctx)?.role ?? null;
+}
+
 export function usePlatformWeb(): PlatformWebCtx {
   const v = useContext(Ctx);
   if (!v) throw new Error("usePlatformWeb called outside PlatformWebProvider");

@@ -10,7 +10,9 @@
 //   plain text   → parseTextReceipt (no AI) → core-ai `chat`
 //   image        → OCR (tesseract, no AI) → parseTextReceipt
 //                  └ no engine, or doesn't reconcile → core-ai `classify-image`
-//   scanned PDF  → no text → "upload a photo instead"
+//   scanned PDF  → no text → the photo of the page it carries, read as an
+//                  image (OCR, then vision): a scanner's PDF is a photo of the
+//                  paper in a PDF wrapper (#4523)
 //
 // The text tier only wins when the line items ADD UP to the receipt's own
 // subtotal, so it can never beat AI with a confident wrong answer — see
@@ -30,6 +32,7 @@ import {
   type ParsedReceipt,
   type ParseMethod,
   type ReceiptResult,
+  type ReceiptSource,
   enrichReceiptFromText,
 } from "./receipt-shared.js";
 import {
@@ -39,6 +42,7 @@ import {
 } from "./receipt-deterministic.js";
 import { detectOrderRef, parseTextReceipt } from "./receipt-text.js";
 import { ocrImageText } from "./ocr.js";
+import { documentImages } from "@cobblr/platform-contract/document-images";
 import { readReceiptDate, workspaceConventionFrom, type DateConvention, type ReceiptDateReading } from "./receipt-date.js";
 
 // Re-export the shared types + the pure shaper so existing importers (the route,
@@ -180,6 +184,14 @@ function aiFailed(e: unknown, userId: string | null | undefined): Extract<Receip
   return { ok: false, reason: words.sentence, code: "ai_unavailable", ai, ...(ai_reason ? { ai_reason } : {}) };
 }
 
+/** A PDF's own words, without the "-- 1 of 1 --" line pdf-parse writes
+ *  between pages. Left in, a scanned PDF with no text read as having some:
+ *  the page marker went to the model as the receipt and came back as "no
+ *  line items" instead of the page's photo being read (#4523). */
+export function pdfPageText(raw: string): string {
+  return raw.replace(/^\s*-- \d+ of \d+ --\s*$/gm, "");
+}
+
 /** Extract a text PDF's full text + discovered tables. Either may be empty. */
 async function readPdf(bytes: Buffer): Promise<{ text: string; tables: string[][][] } | null> {
   try {
@@ -191,7 +203,7 @@ async function readPdf(bytes: Buffer): Promise<{ text: string; tables: string[][
     } catch {
       tables = [];
     }
-    const text = (await parser.getText()).text ?? "";
+    const text = pdfPageText((await parser.getText()).text ?? "");
     await parser.destroy().catch(() => {});
     return { text, tables };
   } catch {
@@ -244,6 +256,16 @@ export function printedReceiptMeta(receipt: ParsedReceipt, text: string | null |
   return enrichReceiptFromText(enrichReceiptMeta(withRef, text), text);
 }
 
+/** The photo of the page a scanned PDF carries: its largest embedded image
+ *  on the first pages, or null when it carries none (or no reader is
+ *  registered). A scanner writes one image per page; a text PDF with a logo
+ *  never reaches here, because it has text. */
+async function pageScanOf(bytes: Buffer): Promise<{ png: Buffer } | null> {
+  const images = await documentImages(new Uint8Array(bytes), { maxPages: 2, minSide: 300 });
+  const first = images?.[0];
+  return first ? { png: first.png } : null;
+}
+
 export async function parseReceipt(
   orgId: string,
   fileId: string,
@@ -267,86 +289,99 @@ export async function parseReceipt(
   // already established (a model-read order reference) stands; the text
   // fills only what the tier left null. A tier with no text (vision on a
   // machine with no OCR engine) keeps the model's answer and says so.
-  const done = async (parsed: ParsedReceipt, method: ParseMethod, text: string | null): Promise<ReceiptResult> => {
+  const done = async (parsed: ParsedReceipt, method: ParseMethod, text: string | null, source: ReceiptSource): Promise<ReceiptResult> => {
     const receipt = printedReceiptMeta(parsed, text);
     const reading: ReceiptDateReading = readReceiptDate({
       text,
       iso: receipt.date,
       workspace: text ? await workspaceDateConvention(orgId) : null,
     });
-    return { ok: true, receipt: { ...receipt, date: reading.date ?? receipt.date }, method, date_reading: reading };
+    return { ok: true, receipt: { ...receipt, date: reading.date ?? receipt.date }, method, date_reading: reading, source };
   };
+  // The toast and the session say the same sentence, about what was given.
+  const failed = (r: Extract<ReceiptResult, { ok: false }>, source: ReceiptSource): ReceiptResult =>
+    r.code === "ai_unavailable" ? { ...r, source } : { ...r, source, reason: receiptReadWords({ ...r, source }).sentence };
 
-  // ── Tier 1: CSV (deterministic) ────────────────────────────────────────────
-  if (looksCsv && !isPdf && !isImage) {
-    const csv = parseCsvReceipt(bytes.toString("utf8"));
-    if (csv) return done(csv, "csv", bytes.toString("utf8"));
-    // A text file that isn't a recognisable CSV → let AI read it as text below.
-  }
-
-  // ── Tier 2: PDF — deterministic table first, AI on the text otherwise ───────
-  if (isPdf) {
-    const pdf = await readPdf(bytes);
-    if (!pdf) return { ok: false, reason: "Couldn't read that PDF.", code: "unreadable" };
-    const table = parsePdfTableReceipt(pdf.tables);
-    if (table) return done(table, "pdf-table", pdf.text);
-    if (!pdf.text.trim()) {
-      return {
-        ok: false,
-        reason: "That PDF has no extractable text (a scan?). Upload a photo of the receipt instead.",
-        // Not recoverable by replaying the same bytes: it needs a different
-        // input, which is what the message asks for.
-        code: "unreadable",
-      };
-    }
-    // No ruled table, but a till-style PDF is still line-structured. Free, and
-    // it only accepts a parse whose items reconcile.
-    const byLine = parseTextReceipt(pdf.text);
-    if (byLine) return done(byLine.receipt, "text-lines", pdf.text);
-    try {
-      const receipt = shapeReceipt(await chatExtract(orgId, pdf.text, fileId, userId));
-      if (!receipt) return { ok: false, reason: "Couldn't find any line items on that receipt.", code: "no_line_items" };
-      // The model is asked for line items; the totals, the seller, the ETA
-      // and the order reference are read from the same text at the door.
-      return done(receipt, "ai-chat", pdf.text);
-    } catch (e) {
-      return aiFailed(e, userId);
-    }
-  }
-
-  // ── Tier 3: image → OCR + the line parser, then AI vision ──────────────────
-  if (isImage) {
+  // A picture of a receipt: the OCR engine and the line parser first, then the
+  // model looking at the picture. A photo, and the page of a scanned PDF.
+  const readPicture = async (img: Buffer, imgMime: string, source: ReceiptSource): Promise<ReceiptResult> => {
     // The engine is optional and the parse is gated: it only wins when the
     // lines add up to the receipt's own subtotal, so a mangled read declines
     // to the model rather than shipping a wrong answer that looks right. The
     // fallback is vision, not chat on the OCR text: if the text was not good
     // enough to reconcile, the text is the weak link, and the model should
     // look at the picture itself (no-ai-receipt-reading.md §5.3).
-    const read = await ocrImageText(bytes);
+    const read = await ocrImageText(img);
     if (read) {
       const byLine = parseTextReceipt(read.text);
-      if (byLine) return done(byLine.receipt, "ocr-lines", read.text);
+      if (byLine) return done(byLine.receipt, "ocr-lines", read.text, source);
     }
     try {
-      const receipt = shapeReceipt(await visionExtract(orgId, bytes.toString("base64"), mime, fileId, userId, visitorIp));
-      if (!receipt) return { ok: false, reason: "Couldn't find any line items on that receipt.", code: "no_line_items" };
+      const receipt = shapeReceipt(await visionExtract(orgId, img.toString("base64"), imgMime, fileId, userId, visitorIp));
+      if (!receipt) return failed({ ok: false, reason: "Couldn't find any line items on that receipt.", code: "no_line_items" }, source);
       // The engine's text, when it read any, is the evidence for the date
       // even though the lines came from the model.
-      return done(receipt, "ai-vision", read?.text ?? null);
+      return done(receipt, "ai-vision", read?.text ?? null, source);
     } catch (e) {
-      return aiFailed(e, userId);
+      return failed(aiFailed(e, userId), source);
+    }
+  };
+
+  // ── Tier 1: CSV (deterministic) ────────────────────────────────────────────
+  if (looksCsv && !isPdf && !isImage) {
+    const csv = parseCsvReceipt(bytes.toString("utf8"));
+    if (csv) return done(csv, "csv", bytes.toString("utf8"), "csv");
+    // A text file that isn't a recognisable CSV → let AI read it as text below.
+  }
+
+  // ── Tier 2: PDF — deterministic table first, AI on the text otherwise ───────
+  if (isPdf) {
+    const pdf = await readPdf(bytes);
+    if (!pdf) return failed({ ok: false, reason: "Couldn't read that PDF.", code: "unreadable" }, "pdf");
+    const table = parsePdfTableReceipt(pdf.tables);
+    if (table) return done(table, "pdf-table", pdf.text, "pdf");
+    if (!pdf.text.trim()) {
+      // No text layer: a scanner's PDF, one photo of the paper per page. Read
+      // that photo the way a photo of the receipt is read.
+      const scan = await pageScanOf(bytes);
+      if (scan) return readPicture(scan.png, "image/png", "scanned-pdf");
+      return failed(
+        {
+          ok: false,
+          reason: "That PDF has no text and no scanned page in it.",
+          // Not recoverable by replaying the same bytes.
+          code: "unreadable",
+        },
+        "scanned-pdf",
+      );
+    }
+    // No ruled table, but a till-style PDF is still line-structured. Free, and
+    // it only accepts a parse whose items reconcile.
+    const byLine = parseTextReceipt(pdf.text);
+    if (byLine) return done(byLine.receipt, "text-lines", pdf.text, "pdf");
+    try {
+      const receipt = shapeReceipt(await chatExtract(orgId, pdf.text, fileId, userId));
+      if (!receipt) return failed({ ok: false, reason: "Couldn't find any line items on that receipt.", code: "no_line_items" }, "pdf");
+      // The model is asked for line items; the totals, the seller, the ETA
+      // and the order reference are read from the same text at the door.
+      return done(receipt, "ai-chat", pdf.text, "pdf");
+    } catch (e) {
+      return failed(aiFailed(e, userId), "pdf");
     }
   }
+
+  // ── Tier 3: image → OCR + the line parser, then AI vision ──────────────────
+  if (isImage) return readPicture(bytes, mime, "photo");
 
   // ── Non-CSV text file → line-wise parse first, AI on the raw text ──────────
   const asText = bytes.toString("utf8");
   const byLine = parseTextReceipt(asText);
-  if (byLine) return done(byLine.receipt, "text-lines", asText);
+  if (byLine) return done(byLine.receipt, "text-lines", asText, "text");
   try {
     const receipt = shapeReceipt(await chatExtract(orgId, asText, fileId, userId));
-    if (!receipt) return { ok: false, reason: "Couldn't find any line items on that receipt.", code: "no_line_items" };
-    return done(receipt, "ai-chat", asText);
+    if (!receipt) return failed({ ok: false, reason: "Couldn't find any line items on that receipt.", code: "no_line_items" }, "text");
+    return done(receipt, "ai-chat", asText, "text");
   } catch (e) {
-    return aiFailed(e, userId);
+    return failed(aiFailed(e, userId), "text");
   }
 }

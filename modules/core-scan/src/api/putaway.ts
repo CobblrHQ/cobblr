@@ -213,6 +213,9 @@ export interface LiveEntry {
   status: "proposed" | "confirmed";
   confirmed_location_id?: string;
   confirmed_location_name?: string;
+  /** Set instead of confirmed_location_id when it went inside a thing that
+   *  holds things (a Backpack) rather than a place. */
+  confirmed_container?: { kind: string; id: string };
   /** Set when the confirm executed a BIND (renamed a pool bin) — undo
    *  restores the prior name and returns the bin to the pool. */
   bind?: { prior_name: string };
@@ -831,6 +834,8 @@ putawayRouter.post(
 const ConfirmBody = z.object({
   entry_id: z.string().uuid(),
   location_id: z.string().uuid().optional(),
+  /** Or a thing that holds things (a Backpack): it goes inside that. */
+  container: z.object({ kind: z.string().min(1).max(120), id: z.string().min(1).max(200) }).optional(),
 });
 
 // AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
@@ -855,6 +860,31 @@ putawayRouter.post(
       return;
     }
     if (entry.status === "confirmed") {
+      res.json({ entry });
+      return;
+    }
+
+    const into = parsed.data.container;
+    if (into) {
+      const holder = await platform().entities.lookup(ctx.org.id, into.kind, into.id).catch(() => null);
+      if (!holder) {
+        res.status(422).json({
+          error: { code: "bad_destination", message: "That is not there any more. Pick another." },
+        });
+        return;
+      }
+      // Stamp the item's container (still-pending only); the commit places
+      // the new record inside it, as a scan into an active container does.
+      await db
+        .updateTable("core_scan_inbox_items")
+        .set({ target_container_kind: into.kind, target_container_id: into.id, target_location_id: null, updated_at: new Date() })
+        .where("id", "=", entry.inbox_item_id)
+        .where("status", "=", "pending")
+        .execute();
+      entry.status = "confirmed";
+      entry.confirmed_container = { kind: into.kind, id: into.id };
+      entry.confirmed_location_name = holder.title;
+      await saveState(db, session.id, state);
       res.json({ entry });
       return;
     }
@@ -953,6 +983,23 @@ putawayRouter.post(
     if (!session) return;
     const state = session.state as LiveState;
     const entry = (state.entries ?? []).find((e) => e.id === parsed.data.entry_id);
+    if (entry?.status === "confirmed" && entry.confirmed_container) {
+      // Un-stamp only if the container is still exactly what this confirm set.
+      await db
+        .updateTable("core_scan_inbox_items")
+        .set({ target_container_kind: null, target_container_id: null, updated_at: new Date() })
+        .where("id", "=", entry.inbox_item_id)
+        .where("status", "=", "pending")
+        .where("target_container_kind", "=", entry.confirmed_container.kind)
+        .where("target_container_id", "=", entry.confirmed_container.id)
+        .execute();
+      entry.status = "proposed";
+      delete entry.confirmed_container;
+      delete entry.confirmed_location_name;
+      await saveState(db, session.id, state);
+      res.json({ entry });
+      return;
+    }
     if (!entry || entry.status !== "confirmed" || !entry.confirmed_location_id) {
       res.status(404).json({ error: { code: "not_found", message: "no confirmed entry to undo" } });
       return;
@@ -1086,12 +1133,14 @@ putawayRouter.post(
       const confirmed = entries.filter((e) => e.status === "confirmed");
       const byBin = new Map<string, { location_name: string; count: number }>();
       for (const e of confirmed) {
-        const cur = byBin.get(e.confirmed_location_id!) ?? {
+        // A thing that holds things (a Backpack) is a bin here too.
+        const key = e.confirmed_location_id ?? e.confirmed_container?.id ?? "";
+        const cur = byBin.get(key) ?? {
           location_name: e.confirmed_location_name ?? "",
           count: 0,
         };
         cur.count += 1;
-        byBin.set(e.confirmed_location_id!, cur);
+        byBin.set(key, cur);
       }
       summary = {
         sorted: confirmed.length,

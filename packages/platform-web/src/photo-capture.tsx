@@ -17,6 +17,7 @@
 // the file input again.
 
 import { useCallback, useEffect, useRef, useSyncExternalStore, type ReactElement } from "react";
+import { usePasteImage } from "./usePasteImage";
 
 export interface PhotoRequest {
   /** The camera's title ("Photo of the drill"). */
@@ -88,6 +89,12 @@ export function usePhotoPick(
   const ref = useRef<HTMLInputElement>(null);
   const onFilesRef = useRef(onFiles);
   onFilesRef.current = onFiles;
+  // A picture pasted where this photo is added takes the same path as one
+  // chosen: the area is wherever the caller puts the input (usePasteImage).
+  usePasteImage(() => ref.current?.parentElement ?? null, {
+    onFiles: (files) => onFilesRef.current(files),
+    multiple: opts.multiple,
+  });
   const camera = opts.camera !== false;
   const pick = useCallback(() => {
     const asked = camera ? requestCapturedPhoto(opts.title) : null;

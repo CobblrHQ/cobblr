@@ -10,6 +10,7 @@
 // card instead of failing the whole fleet (one dead printer farm can't blank
 // the view of the others).
 
+import { putBackDrawn } from "../loaded-spools.js";
 import { recordVerdictOnMake } from "../makes-core.js";
 import { Router, raw } from "express";
 import { isEdgeManagerUrl } from "@cobblr/platform-contract/edge-bridge-client";
@@ -458,7 +459,7 @@ fleetRouter.post(
       await recordJobOutcome(db, orgId, att.job_id, outcome === "good" ? "good" : "scrap", "bed-clear", counts);
       const job = await db
         .selectFrom("digifab_jobs")
-        .select(["id", "linked_task_id", "linked_machine_id", "material_part_id", "material_grams"])
+        .select(["id", "linked_task_id", "linked_machine_id", "material_part_id", "material_grams", "material_drawn"])
         .where("id", "=", att.job_id)
         .executeTakeFirst();
       if (job) {
@@ -484,11 +485,13 @@ fleetRouter.post(
             orgId,
             jobId: job.id,
             ...(job.material_part_id && grams && grams > 0
-              ? { partId: job.material_part_id, delta: grams, reason: "Scrapped print" }
+              ? { partId: job.material_part_id, delta: grams, unit: "g", once: true, reason: "Scrapped print", sourceKind: "digifab:job", sourceId: job.id }
               : {}),
             linkedMachineId: job.linked_machine_id,
             prints: -1,
           });
+          // And the grams it drew from the spools loaded on the printer.
+          await putBackDrawn(orgId, job);
         }
       }
     }

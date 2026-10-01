@@ -8,6 +8,7 @@
 //
 // See docs/design-decisions/external-qr-resolver.md.
 
+import { VERTICAL_DRAG } from "../lib/vertical-drag";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -158,7 +159,7 @@ export function ScanRulesPage() {
             No rules yet. {isAdmin ? "Add one to teach the scanner a foreign label format." : "An admin can add rules."}
           </div>
         ) : (
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+          <DndContext {...VERTICAL_DRAG} sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
             <SortableContext items={rules.map((r) => r.id)} strategy={verticalListSortingStrategy}>
               <div className="space-y-2">
                 {rules.map((r) => (

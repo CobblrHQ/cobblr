@@ -33,8 +33,9 @@ export interface MoveToInstanceModalProps {
   ids: string[];
   /** What the records are called, for the copy ("2 items", "book"). */
   noun?: string;
-  /** Fired after a successful move, with the destination's display name. */
-  onMoved: (movedCount: number, destinationLabel: string) => void;
+  /** Fired after a successful move, with the destination's display name and
+   *  a way to put the moved records back (for the toast's Undo). */
+  onMoved: (movedCount: number, destinationLabel: string, undo: () => Promise<void>) => void;
   /** A destination already chosen by the caller (the scan that recognised a
    *  tea says Teas), so the dialog opens on the preview rather than the menu. */
   defaultTo?: string | null;
@@ -63,8 +64,24 @@ async function json<T>(
   return r.json() as Promise<T>;
 }
 
-export function MoveToInstanceModal({
-  open,
+/** The dialog: the panel in a modal, for a door that is not the selection bar
+ *  (a record's own page, a suggestion on the list). The bar opens the panel in
+ *  its own popover (FooterActionPopover). */
+export function MoveToInstanceModal({ open, onClose, ...rest }: MoveToInstanceModalProps) {
+  const ids = rest.ids;
+  const things = ids.length === 1 ? (rest.noun ?? "record") : countOf(ids.length, rest.noun ?? "record");
+  return (
+    <Modal open={open} onClose={onClose} title={`Move ${things}`} size="md">
+      {open && <MoveToInstancePanel {...rest} onClose={onClose} />}
+    </Modal>
+  );
+}
+
+export type MoveToInstancePanelProps = Omit<MoveToInstanceModalProps, "open">;
+
+/** Where to, what happens to the fields, confirm: the whole conversation,
+ *  without a frame of its own. Loads when it mounts. */
+export function MoveToInstancePanel({
   onClose,
   slug,
   getToken,
@@ -74,7 +91,7 @@ export function MoveToInstanceModal({
   noun = "record",
   onMoved,
   defaultTo = null,
-}: MoveToInstanceModalProps) {
+}: MoveToInstancePanelProps) {
   const [destinations, setDestinations] = useState<InstanceOption[]>([]);
   const [to, setTo] = useState<string>("");
   const [plan, setPlan] = useState<Plan | null>(null);
@@ -87,7 +104,6 @@ export function MoveToInstanceModal({
   const things = count === 1 ? noun : countOf(count, noun);
 
   useEffect(() => {
-    if (!open) return;
     setError(null);
     setPlan(null);
     setTo("");
@@ -103,12 +119,12 @@ export function MoveToInstanceModal({
         if (defaultTo && options.some((o) => o.instance_name === defaultTo)) setTo(defaultTo);
       })
       .catch((e: Error) => setError(e.message));
-  }, [open, base, moduleName, fromInstance, getToken, defaultTo]);
+  }, [base, moduleName, fromInstance, getToken, defaultTo]);
 
   // Ask what would happen as soon as there is a destination, so the field list
   // is on screen before the user commits rather than after.
   useEffect(() => {
-    if (!open || !to) return;
+    if (!to) return;
     setError(null);
     json<Plan>(`${base}/record-move/preview`, getToken, {
       method: "POST",
@@ -122,7 +138,7 @@ export function MoveToInstanceModal({
         setPlan(null);
         setError(e.message);
       });
-  }, [open, to, base, moduleName, fromInstance, ids, getToken]);
+  }, [to, base, moduleName, fromInstance, ids, getToken]);
 
   async function confirm() {
     if (!to) return;
@@ -140,7 +156,16 @@ export function MoveToInstanceModal({
         }),
       });
       const label = destinations.find((d) => d.instance_name === to)?.display_name ?? to;
-      onMoved(res.moved.length, label);
+      const there = to;
+      // Back the way they came: the same records, the two lists swapped. The
+      // fields carried over stay defined there; the values live on the record.
+      const undo = async () => {
+        await json(`${base}/record-move`, getToken, {
+          method: "POST",
+          body: JSON.stringify({ module: moduleName, ids: res.moved, from: there, to: fromInstance, carry_fields: [] }),
+        });
+      };
+      onMoved(res.moved.length, label, undo);
       onClose();
     } catch (e) {
       setError((e as Error).message);
@@ -150,7 +175,6 @@ export function MoveToInstanceModal({
   }
 
   return (
-    <Modal open={open} onClose={onClose} title={`Move ${things}`} size="md">
       <div className="space-y-4">
         {destinations.length === 0 ? (
           <p className="text-sm text-muted">
@@ -232,6 +256,5 @@ export function MoveToInstanceModal({
           </button>
         </div>
       </div>
-    </Modal>
   );
 }

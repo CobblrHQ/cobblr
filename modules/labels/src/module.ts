@@ -9,12 +9,20 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "labels",
-  version: "0.26.3",
+  version: "0.26.4",
   displayName: "Labels",
   description:
     "Make QR labels for your things and shelves, print them, and scan one to open or act on what it names.",
   icon: "tag",
   band: "stock",
+  // The Labels row's number: what is waiting to print, on the row itself in
+  // every nav, so the queue never needs a second "Labels (2 queued)" row.
+  nav: {
+    label: "Labels",
+    route: "/labels",
+    icon: "tag",
+    count: { path: "/queue/count", field: "total" },
+  },
   // An operator, not a trackable kind: labels are printed FOR things
   // (parts, assets, machines) — nobody "tracks labels". Keeps it out of
   // the funnel's "track a kind of thing" column; recipes offer label

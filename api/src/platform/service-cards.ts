@@ -37,6 +37,8 @@ export interface JobCard {
   context?: string;
   actions: JobCardAction[];
   eventType: string;
+  /** A page the card opens (the run), when there is one. */
+  link?: string;
   priority?: "low" | "normal" | "high";
 }
 
@@ -72,7 +74,7 @@ export async function raiseJobCard(card: JobCard): Promise<string[]> {
         eventType: card.eventType,
         message: card.message,
         priority: card.priority ?? "high",
-        no_link_reason: "the question is answered on the card itself, and a single job has no page of its own",
+        ...(card.link ? { link_url: card.link } : { no_link_reason: "the question is answered on the card itself" }),
         entityType: "service_job",
         entityId: card.jobId,
         card: { heading: card.heading, body: card.body, ...(card.context ? { context: card.context } : {}) },

@@ -141,11 +141,19 @@ export interface WirePreviewInput {
   sourceLabel: string; // e.g. "Part"
   actionLabel: string; // e.g. "Adjust part stock"
   target?: WireTarget;
+  /** The wire acts on no record: it runs once per event or tick. */
+  recordless?: boolean;
 }
 
 /** A readable one-liner describing what the wire will do. */
 export function describeWire(i: WirePreviewInput): string {
   const src = i.sourceLabel || "record";
+  if (i.recordless) {
+    const doOnce = `“${i.actionLabel}” once`;
+    if (i.triggerType === "schedule")
+      return `${i.recurrence ? capitalize(describeRecurrence(i.recurrence)) : "On a schedule"} → ${doOnce}.`;
+    return `When the event ${i.triggerEvent ? `“${i.triggerEvent}”` : "(pick one)"} fires → ${doOnce}.`;
+  }
   const onTarget =
     i.target && i.target !== "self"
       ? ` on the ${i.target.kind || "related"} ${i.target.dir === "in" ? "pointing at" : "linked to"} it`
@@ -170,3 +178,64 @@ export function describeWire(i: WirePreviewInput): string {
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
+
+// ─────────────────────────── a service's input ───────────────────────────
+
+/** Triggers that make sense for a wire on no record: there is no record to
+ *  be created, changed, deleted or carry a button. */
+export const RECORDLESS_TRIGGERS: TriggerType[] = ["event", "schedule"];
+
+export interface ServiceInputField {
+  name: string;
+  label: string;
+  type: "text" | "number" | "boolean" | "choice";
+  options?: string[];
+  required: boolean;
+}
+
+/** The fields a service asks for, read from its input schema's top-level
+ *  properties. A property of a shape a text box cannot hold (an object, an
+ *  array) is left out; the service's own defaults apply to it. */
+export function serviceInputFields(schema: Record<string, unknown> | null | undefined): ServiceInputField[] {
+  const props = (schema?.["properties"] ?? {}) as Record<string, Record<string, unknown>>;
+  const required = new Set(Array.isArray(schema?.["required"]) ? (schema!["required"] as string[]) : []);
+  const out: ServiceInputField[] = [];
+  for (const [name, p] of Object.entries(props)) {
+    const label = typeof p["title"] === "string" ? (p["title"] as string) : name.replace(/_/g, " ");
+    const base = { name, label, required: required.has(name) };
+    if (Array.isArray(p["enum"])) out.push({ ...base, type: "choice", options: (p["enum"] as unknown[]).map(String) });
+    else if (p["type"] === "number" || p["type"] === "integer") out.push({ ...base, type: "number" });
+    else if (p["type"] === "boolean") out.push({ ...base, type: "boolean" });
+    else if (p["type"] === undefined || p["type"] === "string") out.push({ ...base, type: "text" });
+  }
+  return out;
+}
+
+/** The input a wire stores: each value is a literal or a {{token}}; a number
+ *  or a yes/no typed as one is stored as one, a token stays text and is
+ *  filled in when the wire fires. Blank fields are left out. */
+export function buildServiceInput(fields: ServiceInputField[], values: Record<string, string>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const f of fields) {
+    const v = (values[f.name] ?? "").trim();
+    if (!v) continue;
+    if (f.type === "number" && /^-?\d+(\.\d+)?$/.test(v)) out[f.name] = Number(v);
+    else if (f.type === "boolean" && (v === "true" || v === "false")) out[f.name] = v === "true";
+    else out[f.name] = v;
+  }
+  return out;
+}
+
+/** The stored input back as the form's text values (editing a wire). */
+export function serviceInputValues(input: unknown): Record<string, string> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return {};
+  return Object.fromEntries(
+    Object.entries(input as Record<string, unknown>)
+      .filter(([, v]) => v == null || typeof v !== "object")
+      .map(([k, v]) => [k, v == null ? "" : String(v)]),
+  );
+}
+
+/** What a wire on a service job's event can read, as {{event.*}} tokens. A
+ *  finished job's answer is {{event.output.<field>}}, named by that service. */
+export const SERVICE_EVENT_TOKENS = ["event.capability", "event.status", "event.jobId", "event.hop"] as const;

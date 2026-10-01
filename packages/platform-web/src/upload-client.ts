@@ -14,6 +14,7 @@
 //     CONNECTION_LOST_MESSAGE instead, and reports the drop to the server log
 //     (the server never had the file, so it could not log it otherwise).
 
+import { noteWorkspaceWrite } from "./workspace-writes";
 import { CONNECTION_LOST_MESSAGE, megabytes } from "@cobblr/platform-contract/upload";
 
 export class UploadError extends Error {
@@ -57,7 +58,10 @@ function reportConnectionLost(url: string, opts: SendUploadOptions): void {
  *  CONNECTION_LOST_MESSAGE when no answer came. An abort is rethrown as is. */
 export async function sendUpload(url: string, form: FormData, opts: SendUploadOptions = {}, method: "POST" | "PUT" = "POST"): Promise<Response> {
   try {
-    return await fetch(url, { method, headers: opts.token ? { Authorization: `Bearer ${opts.token}` } : {}, body: form });
+    const res = await fetch(url, { method, headers: opts.token ? { Authorization: `Bearer ${opts.token}` } : {}, body: form });
+    // Every upload is a write: told at the one door, like any other.
+    if (res.ok) noteWorkspaceWrite(url);
+    return res;
   } catch (err) {
     if ((err as Error)?.name === "AbortError") throw err;
     reportConnectionLost(url, opts);

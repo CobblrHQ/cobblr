@@ -256,7 +256,7 @@ find_old_cluster() {
 # "postgres" is wrong on every instance that set POSTGRES_USER.
 probe_old_cluster() {
   local old_data="$1" old_bin="$2" sock row
-  sock="$(mktemp -d /tmp/oldpg.XXXXXX)"
+  sock="$(mktemp -d /tmp/oldpg.XXXXXX)" # tmp-kept: removed at each of this function's returns; an EXIT trap never fires across the exec to the real entrypoint
   chown postgres:postgres "$sock"
   # -t is generous: a large cluster needing crash recovery can take minutes,
   # and a short timeout would abort an upgrade that was merely slow.
@@ -265,6 +265,7 @@ probe_old_cluster() {
         start >/tmp/db-oldstart.log 2>&1; then
     log "could not start the Postgres $(cat "$old_data/PG_VERSION") cluster to read its settings:"
     tail -15 /tmp/db-oldstart.log
+    rm -rf "$sock"
     return 1
   fi
   # psql defaults to the OS user (postgres), and that role does not exist on a

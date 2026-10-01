@@ -16,6 +16,7 @@ import { arrivedEverywhere, platform } from "@cobblr/platform-contract";
 import type { PurchasesDB } from "./db.js";
 
 import { ORDER_ITEM_RECEIVED_KEYS } from "./receive-keys.js";
+import { amountOf, centsFromAmount } from "@cobblr/platform-contract/money";
 
 type OrderItemReceived = { orgId: string } & Record<(typeof ORDER_ITEM_RECEIVED_KEYS)[number], unknown>;
 
@@ -67,7 +68,7 @@ async function tellReceived(orgId: string, orderId: string, it: ReceivedLine, ad
   const qty = Number(it.qty ?? 0);
   const unitCost = it.unit_cost == null ? null : Number(it.unit_cost);
   // The receipt's own line total wins over qty × unit price (0007).
-  const lineCost = it.line_amount != null ? Number(it.line_amount) : unitCost == null ? null : Number((unitCost * qty).toFixed(2));
+  const lineCost = it.line_amount != null ? Number(it.line_amount) : unitCost == null ? null : amountOf(centsFromAmount(unitCost * qty));
   const payload: OrderItemReceived = {
     orgId,
     orderId,

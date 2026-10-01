@@ -29,6 +29,7 @@ import { CHAT_HISTORY_MESSAGES, platform, type AiChainStep } from "@cobblr/platf
 import { kindWordsFrom } from "@cobblr/platform-contract/kind-label";
 import { matchCommand } from "./basics.js";
 import { replyDespiteRefusal, withPlanCard } from "./plan-card.js";
+import { withDeleteThisCard } from "./delete-this.js";
 import { tenantContext, sessionUserId, sessionDisplayName, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import {
@@ -105,6 +106,9 @@ function writeRequestOf(call: ToolCall): WriteRequest | null {
   switch (call.name) {
     case "create_record":
       return kind ? { tool: "create", entity_kind: kind, fields: (a.fields as Record<string, unknown>) ?? {} } : null;
+    case "add_thing":
+      // The kind is the intake's to decide; the ledger records the one it filed.
+      return typeof a.name === "string" && a.name.trim() ? { tool: "create", via: "add_thing", entity_kind: "", args: a } : null;
     case "update_record":
       return kind && a.id
         ? { tool: "update", entity_kind: kind, entity_id: String(a.id), fields: (a.fields as Record<string, unknown>) ?? {} }
@@ -515,6 +519,14 @@ async function proposalOf(
       return {
         summary: `Create ${/^[aeiou]/i.test(words.one) ? "an" : "a"} ${words.one}${name ? `: “${name}”` : ""}`,
         proposal: { kind: "create", entity_kind: kind, fields, ...(values.length ? { values } : {}) },
+      };
+    }
+    case "add_thing": {
+      const name = String(a.name ?? "").trim();
+      if (!name) return { error: "I need to know what the thing is called." };
+      return {
+        summary: `Add “${name}” through the scan inbox${a.file === true ? " and file it" : ""}`,
+        proposal: { kind: "add", args: a },
       };
     }
     case "update_record": {
@@ -1162,7 +1174,7 @@ chatRouter.post(
     const asTurn = req.query.mode === "turn";
     if (!asTurn) {
       try {
-        res.json(withPlanCard(await runTurn(req, parsed, system, c, orgId), hit, asked));
+        res.json(withDeleteThisCard(withPlanCard(await runTurn(req, parsed, system, c, orgId), hit, asked), asked, parsed.data.selection));
       } catch (err) {
         const status = err instanceof TurnError ? err.status : 502;
         const msg = err instanceof Error ? err.message : String(err);
@@ -1222,7 +1234,7 @@ chatRouter.post(
           TURN_DEADLINE_MS,
           `this took longer than ${Math.round(TURN_DEADLINE_MS / 60000)} minutes, so I stopped waiting. Nothing was changed. If your AI is a local model or a bridge it may be busy or wedged; try again, or check Configuration → AI.`,
         );
-        await finishTurn(tdb, turnId, { ok: true, result: withPlanCard(result, hit, asked) });
+        await finishTurn(tdb, turnId, { ok: true, result: withDeleteThisCard(withPlanCard(result, hit, asked), asked, parsed.data.selection) });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (!(err instanceof TurnError) || err.status === 502) console.error(`[core-ai] chat failed: ${msg}`);
@@ -1729,6 +1741,7 @@ chatRouter.get(
       .selectFrom("core_ai_chat_writes")
       .selectAll()
       .orderBy("created_at", "desc")
+      // list-cap-ok: the recent changes an assistant made, the ones a person reviews and undoes; not an archive
       .limit(50)
       .execute();
     res.json({
@@ -1877,6 +1890,8 @@ const ExecBody = z.object({
       plan: z.object({ title: z.string(), lines: z.array(z.string()) }).optional(),
     }),
     z.object({ kind: z.literal("build"), draft_id: z.string() }),
+    // add_thing (#4472): what the agent asked to add, run through the inbox.
+    z.object({ kind: z.literal("add"), args: z.record(z.unknown()) }),
   ]),
 });
 
@@ -1905,6 +1920,18 @@ chatRouter.post(
           ...(p.kind !== "create" ? { entity_id: p.entity_id } : {}),
           ...(p.kind !== "delete" ? { fields: p.fields } : {}),
         },
+        { auto: false, orgId: tenantContext(req).org.id, ...(parsed.data.prompt ? { prompt: parsed.data.prompt } : {}) },
+      );
+      sendOutcome(res, out);
+      return;
+    }
+
+    if (p.kind === "add") {
+      const out = await performWrite(
+        chatWorkspaceApi(c),
+        tenantDb(req),
+        sessionUserId(req) ?? "",
+        { tool: "create", via: "add_thing", entity_kind: "", args: p.args },
         { auto: false, orgId: tenantContext(req).org.id, ...(parsed.data.prompt ? { prompt: parsed.data.prompt } : {}) },
       );
       sendOutcome(res, out);

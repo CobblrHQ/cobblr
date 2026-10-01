@@ -10,6 +10,8 @@ import type {
   FileSource,
   FileAttachSpec,
   FileAttachmentLister,
+  FileDescriber,
+  FileDescription,
   FileAttachmentRow,
   FileDetacher,
   FileBytes,
@@ -74,6 +76,17 @@ export async function listAttachments(
 ): Promise<FileAttachmentRow[] | null> {
   if (!lister) return null;
   return lister(orgId, source);
+}
+
+let describer: FileDescriber | null = null;
+
+export function registerDescriber(d: FileDescriber): void {
+  describer = d;
+}
+
+export async function describe(orgId: string, fileIds: string[]): Promise<FileDescription[] | null> {
+  if (!describer) return null;
+  return fileIds.length ? describer(orgId, fileIds) : [];
 }
 
 let ofFile: FileAttachmentsOfFile | null = null;

@@ -15,7 +15,6 @@
 
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
-import { navDoorsOf } from "./useNavModules";
 
 /** Where one nav row's number comes from. `key` is the row's nav key, the
  *  same token navDoorsOf gives the door, so the renderer looks the badge up
@@ -37,9 +36,13 @@ export const navCountKeys = {
   one: (slug: string, module: string, path: string) => ["nav-count", slug, module, path] as const,
 };
 
-/** The declared counts among the enabled modules. Only a PRIMARY door has a
- *  row, so only a primary door can carry a number: a search-only door has
- *  nothing to hang it on. Pure, so the rule is testable without a navbar. */
+/** The declared counts among the enabled modules, keyed by the row each one
+ *  belongs on: the module's nav key (its route's first word), which is the
+ *  name of its row whether that row is a primary door (the Scan Inbox) or the
+ *  module's own (Labels). A module with no row on screen simply has no badge
+ *  drawn. Labels used to say its queue in a second row of its own beside its
+ *  nav row, "Labels" and "Labels (2 queued)" (#4374). Pure, so the rule is
+ *  testable without a navbar. */
 export function navCountsOf(
   enabled: ReadonlyArray<{
     name: string;
@@ -52,13 +55,12 @@ export function navCountsOf(
     } | null;
   }>,
 ): NavCount[] {
-  const doors = navDoorsOf(enabled.filter((m) => m.enabled !== false));
   const out: NavCount[] = [];
-  for (const door of doors) {
-    const m = enabled.find((x) => x.name === door.fromModule);
-    const count = m?.nav?.count;
-    if (!count) continue;
-    out.push({ key: door.key, module: door.fromModule, path: count.path, field: count.field });
+  for (const m of enabled) {
+    if (m.enabled === false || !m.nav?.count) continue;
+    const key = m.nav.route.replace(/^\//, "").split("/")[0] || m.name;
+    if (out.some((c) => c.key === key)) continue;
+    out.push({ key, module: m.name, path: m.nav.count.path, field: m.nav.count.field });
   }
   return out;
 }

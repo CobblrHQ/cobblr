@@ -453,6 +453,12 @@ function PresentationEditModal({
   const [faces, setFaces] = useState<Partial<Record<FaceName, boolean>>>(
     (override.config?.faces as Partial<Record<FaceName, boolean>> | undefined) ?? {},
   );
+  // What a record of this kind calls the things inside it (its Contents
+  // panel): the same word the pencil on that panel sets.
+  const [contentsWord, setContentsWord] = useState(
+    typeof override.config?.contents_label === "string" ? override.config.contents_label : "",
+  );
+  const contentsDefault = typeof override.config?.contents_label_default === "string" ? override.config.contents_label_default : "Contents";
   const showGroupLabel = isModuleDefaultInstance(override.target_kind, override.target_id);
   const showNestToggle = override.target_kind === "instance" && !showGroupLabel;
   const showItemNoun = override.target_kind === "instance";
@@ -468,6 +474,7 @@ function PresentationEditModal({
         item_noun: itemNoun.trim() || null,
         item_noun_plural: itemNounPlural.trim() || null,
         faces: Object.keys(faces).length ? faces : null,
+        contents_label: contentsWord.trim().slice(0, 40) || null,
       };
       return changeShape(() => api.upsertOverride(activeSlug, {
         target_kind: override.target_kind,
@@ -505,6 +512,17 @@ function PresentationEditModal({
             onChanged={onSaved}
           />
         ) : null}
+        <label className="block text-sm">
+          <span className="block text-xs text-muted mb-1">What is inside one is called</span>
+          <input
+            value={contentsWord}
+            onChange={(e) => setContentsWord(e.target.value)}
+            maxLength={40}
+            placeholder={contentsDefault}
+            className="w-full px-2 py-1.5 border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+          />
+          <span className="block text-[11px] text-faint mt-0.5">The heading of each record's Contents (Parts for a computer, In the bag for a bag). Empty uses {contentsDefault}.</span>
+        </label>
         <PresentationFields
           label={label}
           setLabel={setLabel}

@@ -3,6 +3,7 @@ type: feature
 scope: fields
 date: 2026-09-28
 docs_target: docs/USER_GUIDE.md#3.1 Inventory
+docs_published: 2026-10-01
 ---
 A colour can now be a gradient or several colours. Add a second, third or fourth colour to any colour field, reorder them, and choose whether they blend or sit as bands, and every place the colour shows draws it that way: gradient and dual-colour filament, variegated yarn. A name that plainly says its colours, like Dual Color Red and Blue or Rainbow, fills them in by itself.
 

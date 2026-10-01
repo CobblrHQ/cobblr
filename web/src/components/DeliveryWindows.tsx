@@ -21,6 +21,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Clock, MessageSquare, CalendarClock } from "lucide-react";
 import { useToast } from "@cobblr/platform-web";
 import { api, type DeliveryWindowRow } from "../lib/api";
+import { discordConnectable } from "../lib/discord-connect";
+import { useDiscordStatus } from "../lib/useDiscordStatus";
 
 /** Channels worth offering a cadence for. `in_app` is deliberately absent: the
  *  bell is a place you look, not a push, and the platform refuses to defer it. */
@@ -88,6 +90,10 @@ export function DeliveryWindows() {
     onError: () => toast.error("Couldn't save that."),
   });
 
+  // No Discord on this server: no Discord schedule to set.
+  const discord = useDiscordStatus();
+  const channels = CHANNELS.filter((c) => c.key !== "discord_dm" || discordConnectable(discord.data));
+
   const byChannel = useMemo(() => {
     const m = new Map<string, DeliveryWindowRow>();
     for (const r of q.data?.items ?? []) m.set(r.channel, r);
@@ -112,7 +118,7 @@ export function DeliveryWindows() {
 
       {!q.isLoading && (
         <div className="space-y-3">
-          {CHANNELS.map((c) => (
+          {channels.map((c) => (
             <ChannelCadence
               key={c.key}
               channel={c}

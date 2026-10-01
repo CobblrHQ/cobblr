@@ -15,11 +15,14 @@
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
-import { parseServiceManifest, type ServiceManifest } from "@cobblr/platform-contract/services";
+import { adapterGroupOf, parseServiceManifest, type ServiceManifest } from "@cobblr/platform-contract/services";
+import { LIBRARY_CAPABILITY_DECLS, LIBRARY_FIND, LIBRARY_GET, type LibraryFindInput, type LibraryItem } from "@cobblr/platform-contract/library";
 import { parseServiceKey, signServiceRequest, type ServiceKey } from "@cobblr/platform-contract/service-auth";
 import { requireAuth } from "../auth/middleware.js";
 import { requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
+import { adapterFetchFor } from "./service-connections.js";
+import { supervise } from "./service-supervisor.js";
 import { listBuiltIns, RETENTION_PASS, setServiceConnectionPort, type ServiceConnectionPort, type ServiceConnectionRef, type ServiceHopResponse } from "./services.js";
 
 interface TestConnection {
@@ -33,6 +36,8 @@ const byId = new Map<string, TestConnection>();
 /** Adapter test connections' settings, by credential id: what configFor
  *  answers for them. */
 const adapterConfigs = new Map<string, Record<string, string>>();
+/** Who made each adapter test connection: whose bridge its fetch rides. */
+const adapterOwners = new Map<string, string>();
 
 async function hop(conn: TestConnection, req: { method: string; path: string; body?: Uint8Array | string; headers?: Record<string, string> }): Promise<ServiceHopResponse> {
   const pathAndQuery = `${conn.ref.manifest.api.base_path}${req.path}`;
@@ -55,6 +60,17 @@ function overlay(real: ServiceConnectionPort | null): ServiceConnectionPort {
     },
     byId: async (id) => byId.get(id)?.ref ?? (real ? real.byId(id) : null),
     configFor: async (id) => adapterConfigs.get(id) ?? (real?.configFor ? real.configFor(id) : null),
+    adapterFetch: async (id) => {
+      const config = adapterConfigs.get(id);
+      if (config) return adapterFetchFor(config, adapterOwners.get(id) ?? "");
+      return real?.adapterFetch ? real.adapterFetch(id) : null;
+    },
+    holders: async (orgId, capability) => [
+      ...mine(orgId)
+        .filter((c) => c.ref.manifest.capabilities.some((x) => x.id === capability))
+        .map((c) => ({ credentialId: c.ref.credentialId, label: c.ref.label, ownerUserId: adapterOwners.get(c.ref.credentialId) ?? "", shared: true, provider: c.ref.adapter ?? c.ref.manifest.id })),
+      ...(real?.holders ? await real.holders(orgId, capability) : []),
+    ],
     list: async (orgId, userId) => [...mine(orgId).map((c) => c.ref), ...(real ? await real.list(orgId, userId) : [])],
     fetch: async (id, req) => {
       const t = byId.get(id);
@@ -67,7 +83,9 @@ function overlay(real: ServiceConnectionPort | null): ServiceConnectionPort {
 
 const Body = z.object({ base_url: z.string().url(), key: z.string().min(3).max(400), label: z.string().max(80).optional() });
 /** An adapter's connection: which built-in, and its settings. */
-const AdapterBody = z.object({ adapter: z.string().min(1).max(120), config: z.record(z.string().max(400)), label: z.string().max(80).optional() });
+// A config value is a URL or a key, or for the test document system a list of
+// items as JSON, which is longer.
+const AdapterBody = z.object({ adapter: z.string().min(1).max(120), config: z.record(z.string().max(8000)), label: z.string().max(80).optional() });
 
 export const servicesTestRouter = Router({ mergeParams: true });
 
@@ -76,7 +94,10 @@ servicesTestRouter.post("/:slug/services/test-connections", requireAuth, withTen
   if (!requireRole(req, res, "owner", "admin")) return;
   const a = AdapterBody.safeParse(req.body ?? {});
   if (a.success) {
-    const def = listBuiltIns().find((d) => d.id === a.data.adapter && d.connection);
+    // An adapter is named by its group (or its one built-in's id): every
+    // built-in of the group answers on the one connection.
+    const defs = listBuiltIns().filter((d) => d.connection && (adapterGroupOf(d) === a.data.adapter || d.id === a.data.adapter));
+    const def = defs[0];
     if (!def) {
       res.status(404).json({ error: { code: "no_adapter", message: `no adapter ${a.data.adapter}` } });
       return;
@@ -84,21 +105,22 @@ servicesTestRouter.post("/:slug/services/test-connections", requireAuth, withTen
     const credentialId = `test:${crypto.randomUUID()}`;
     const manifest: ServiceManifest = {
       cobblr_service: 1,
-      id: `adapter.${def.id}`,
+      id: `adapter.${adapterGroupOf(def)}`,
       name: def.name,
       version: "adapter",
       auth: { schemes: ["adapter"] },
       api: { base_path: "/" },
-      capabilities: [def.capability],
+      capabilities: defs.map((d) => d.capability),
     };
     adapterConfigs.set(credentialId, a.data.config);
+    adapterOwners.set(credentialId, req.session!.id);
     byId.set(credentialId, {
       orgId: req.tenant!.org.id,
       baseUrl: "http://adapter.invalid",
       key: { keyId: "adapter", secret: "adapter" } as ServiceKey,
-      ref: { credentialId, label: a.data.label ?? def.name, scope: "personal", manifest, manifestVersion: "test", adapter: def.id },
+      ref: { credentialId, label: a.data.label ?? def.name, scope: "personal", manifest, manifestVersion: "test", adapter: adapterGroupOf(def) },
     });
-    res.status(201).json({ credential_id: credentialId, capabilities: [def.capability.id] });
+    res.status(201).json({ credential_id: credentialId, capabilities: defs.map((d) => d.capability.id) });
     return;
   }
   const b = Body.safeParse(req.body ?? {});
@@ -156,6 +178,13 @@ servicesTestRouter.post("/:slug/services/test-module-jobs", requireAuth, withTen
     }
     throw err;
   }
+});
+
+// AI-REACH: exempt (a test door: closed on production and canary)
+servicesTestRouter.post("/:slug/services/test-supervise", requireAuth, withTenant, async (req, res) => {
+  if (!requireRole(req, res, "owner", "admin")) return;
+  const now = typeof req.body?.now === "string" ? new Date(req.body.now) : new Date();
+  res.json(await supervise(req.tenant!.org.id, now));
 });
 
 let registered = false;
@@ -229,6 +258,53 @@ export function openServicesTestDoors(realPort: ServiceConnectionPort | null): v
       test: async (config) => (config.token ? { ok: true, note: `site ${config.site}` } : { ok: false, reason: "invalid_key", error: "no token" }),
     },
     run: async ({ config }) => ({ output: { site: config?.site ?? "", key_length: (config?.token ?? "").length } }),
+  });
+  // A library core-documents has never heard of, for the proof that
+  // library.* is generic: a stub with no code of its own anywhere else,
+  // answering find and get from the items its connection was given (config
+  // `items`, JSON), whatever they are. The bar of #4489: a third library
+  // needs an adapter and nothing else.
+  const stubItems = (config: Record<string, string> | undefined): LibraryItem[] => {
+    try {
+      return JSON.parse(config?.items ?? config?.documents ?? "[]") as LibraryItem[];
+    } catch {
+      return [];
+    }
+  };
+  const stubConnection = {
+    title: "Test library",
+    group: "test-library",
+    config_schema: {
+      type: "object" as const,
+      properties: { items: { type: "string" as const, title: "Items (JSON)" }, token: { type: "string" as const, title: "Token", writeOnly: true as const } },
+      required: ["items"],
+    },
+    test: async () => ({ ok: true, note: "test library" }),
+  };
+  platform().services.registerBuiltIn({
+    id: "platform.test-library-find",
+    name: "Test library",
+    capability: LIBRARY_CAPABILITY_DECLS[LIBRARY_FIND],
+    connection: stubConnection,
+    run: async ({ input, config }) => {
+      const i = (input ?? {}) as LibraryFindInput;
+      const all = stubItems(config);
+      if (i.since) return { output: { items: all } };
+      const words = `${i.query ?? ""} ${i.facts?.name ?? ""}`.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
+      return { output: { items: all.filter((d) => words.some((w) => `${d.title} ${d.excerpt ?? ""}`.toLowerCase().includes(w))) } };
+    },
+  });
+  platform().services.registerBuiltIn({
+    id: "platform.test-library-get",
+    name: "Test library",
+    capability: LIBRARY_CAPABILITY_DECLS[LIBRARY_GET],
+    connection: stubConnection,
+    run: async ({ input, config }) => {
+      const ref = String((input as { ref?: unknown })?.ref ?? "");
+      const item = stubItems(config).find((d) => d.ref === ref);
+      if (!item) throw new Error("no such item");
+      return { output: { item, thumb: null } };
+    },
   });
   platform().services.registerBuiltIn({
     id: "platform.test-now",

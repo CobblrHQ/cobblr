@@ -1,7 +1,14 @@
 {
   "manifest": {
     "id": "cobblr.flagship.spice-rack",
-    "version": "0.2.4",
+    "version": "0.2.5",
+    "releases": [
+      {
+        "version": "0.2.5",
+        "released_at": "2026-10-02",
+        "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before."
+      }
+    ],
     "released_at": "2026-09-12",
     "name": "Spice Rack",
     "author": "Cobblr",
@@ -22,6 +29,7 @@
       {
         "source_kind": "inventory:part",
         "action_id": "lists:add-item",
+        "says": "A spice you will run out of soon goes on your Shopping list.",
         "trigger_type": "event",
         "trigger_event": "inventory.stock.predicted-low",
         "args": {
@@ -31,6 +39,7 @@
       {
         "source_kind": "inventory:part",
         "action_id": "lists:add-item",
+        "says": "A spice you usually buy again by now goes on your Shopping list.",
         "trigger_type": "event",
         "trigger_event": "core-cadence.reorder.due",
         "args": {
@@ -55,6 +64,7 @@
           {
             "source_kind": "spices:item",
             "action_id": "lists:add-item",
+            "says": "A spice running low goes on your Shopping list.",
             "trigger_type": "event",
             "trigger_event": "inventory.stock.low",
             "args": {
@@ -64,6 +74,7 @@
           {
             "source_kind": "spices:item",
             "action_id": "inventory:adjust-stock",
+            "says": "Checking a spice off your Shopping list puts it back on the rack.",
             "trigger_type": "event",
             "trigger_event": "lists.item.checked",
             "args": {
@@ -75,6 +86,7 @@
           {
             "source_kind": "spices:item",
             "action_id": "core-cadence:record-event",
+            "says": "Each spice you check off shows how often you buy it.",
             "trigger_type": "event",
             "trigger_event": "lists.item.checked",
             "args": {
@@ -121,6 +133,7 @@
             "display_label": "Form",
             "type": "text",
             "position": 1,
+            "learns": true,
             "choices": [
               "Ground",
               "Whole",

@@ -33,10 +33,12 @@ const WATCH_EVERY_MS = 60_000;
  *  kernel sender has no module manifest to declare them in. */
 export const BRIDGE_NOTIFICATION_KINDS = [
   {
+    // notification-sent-elsewhere: the dispatch below picks these by index
     eventType: "edge.bridge.offline",
     label: "A bridge went offline",
     description: "Ten minutes after a bridge stops answering. Sent to owners and admins.",
   },
+  // notification-sent-elsewhere: the dispatch below picks these by index
   { eventType: "edge.bridge.online", label: "A bridge is back online", description: "After an offline notice, when it answers again." },
 ] as const;
 

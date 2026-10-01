@@ -1,0 +1,10 @@
+{
+  "lint": "lint:vertical-drag-stays-in-its-column",
+  "run": "node scripts/lint-vertical-drag-stays-in-its-column.ts",
+  "rows": [
+    "generic-web-component"
+  ],
+  "ms": 772,
+  "recorded": "2026-10-02",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

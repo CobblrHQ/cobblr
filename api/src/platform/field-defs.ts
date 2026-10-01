@@ -35,19 +35,22 @@ import {
   fieldRoleTypeRefusal,
   fieldRoleOwnedMessage,
   FieldTypeSchema,
+  RETYPEABLE_FIELD_TYPES,
   TRAIT_NAMES,
   fieldScopeLabel,
   fieldScopeSentinel,
   isFieldScope,
   parseFieldScope,
   type ActionAppliesToDecl,
+  fieldTypeTakesUnit,
 } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import type { FieldOverrideBlob, ModuleFieldDefsTable } from "../db/schema.js";
 import { matchAction } from "./actions.js";
 import * as activity from "./activity.js";
 import { clearComputedDefsCache } from "./computed-fields.js";
-import { getKind, listKindsForOrg } from "./entities.js";
+import { getKind, listAll, listKindsForOrg } from "./entities.js";
+import { valueFitsField } from "@cobblr/platform-contract/entity-metadata";
 
 export type FieldDefRow = Selectable<ModuleFieldDefsTable>;
 
@@ -262,6 +265,9 @@ export const FieldDefCreate = z.object({
    *  never accepted it, so the presets passed it and the insert silently
    *  dropped it - TypeScript missed the mismatch because the value arrived
    *  via a spread (2026-08-25 audit). */
+  /** Whether a person's typing grows the choices. Omitted: the default rule
+   *  (@cobblr/platform-contract/field-choices). */
+  learns: z.boolean().nullable().optional(),
   help: z.string().max(500).nullable().optional(),
 }).refine(
   (d) => !d.choices || d.type === "text",
@@ -270,8 +276,8 @@ export const FieldDefCreate = z.object({
   (d) => d.type !== "computed" || (d.template && d.template.trim().length > 0),
   { message: "template is required for type='computed'", path: ["template"] },
 ).refine(
-  (d) => !d.unit || d.type === "number",
-  { message: "unit is only valid for type='number'", path: ["unit"] },
+  (d) => !d.unit || fieldTypeTakesUnit(d.type),
+  { message: "unit is only valid on a number or measure field", path: ["unit"] },
 );
 
 export type FieldDefCreateInput = z.infer<typeof FieldDefCreate>;
@@ -365,7 +371,7 @@ export async function createFieldDef(
         choices: input.choices ? JSON.stringify(input.choices) : null,
         renderer: input.renderer ?? null,
         template: input.type === "computed" ? input.template ?? null : null,
-        unit: input.type === "number" ? input.unit ?? null : null,
+        unit: fieldTypeTakesUnit(input.type) ? input.unit ?? null : null,
         // Scoped to the type that uses it, like template and unit above, so a
         // stray ref_kind on a text field cannot confuse the label resolver.
         ref_kind: input.type === "relation" ? input.ref_kind ?? null : null,
@@ -373,6 +379,8 @@ export async function createFieldDef(
           ? sql`${JSON.stringify({ traits: scopeTraits })}::jsonb`
           : null,
         field_role: input.field_role ?? null,
+        // A new field with choices learns unless it says not to.
+        learns: input.learns ?? null,
         help: input.help ?? null,
       })
       .returningAll()
@@ -407,8 +415,14 @@ export async function createFieldDef(
 // assistant does not obey, and the bundle-provenance routing below is exactly
 // the kind nobody would think to copy.
 
+/** The types a field can change between (the contract's list). */
+export const RETYPEABLE: ReadonlySet<string> = new Set(RETYPEABLE_FIELD_TYPES);
+
 export const FieldDefPatch = z.object({
   display_label: z.string().min(1).optional(),
+  /** Change the field's type (see RETYPEABLE). Values already stored stay as
+   *  they are; the retype preview says first which ones would not fit. */
+  type: FieldTypeSchema.optional(),
   required: z.boolean().optional(),
   position: z.number().int().optional(),
   choices: z.array(z.string().max(120)).nullable().optional(),
@@ -420,13 +434,16 @@ export const FieldDefPatch = z.object({
   /** Settable after the fact, so a field made before roles existed can be told
    *  what it means without being recreated. Null clears it. */
   field_role: FieldRoleSchema.nullable().optional(),
+  /** Whether a person's typing grows the choices ("Remember new entries").
+   *  On a bundle's field it is the person's own override, like choices. */
+  learns: z.boolean().nullable().optional(),
 });
 
 export type FieldDefPatchInput = z.infer<typeof FieldDefPatch>;
 
 export type UpdateFieldDefResult =
   | { ok: true; def: FieldDefRow; effectiveChoices?: string[] | null }
-  | { ok: false; code: "not_found" | "unit_not_number" | "no_changes" | "role_owned_by_platform" | "role_wrong_type"; message: string };
+  | { ok: false; code: "not_found" | "unit_not_number" | "no_changes" | "role_owned_by_platform" | "role_wrong_type" | "type_not_changeable" | "type_is_the_bundles"; message: string };
 
 /** Change one field def — the shared body of PATCH /field-defs/:id and the
  *  platform:edit-field action. */
@@ -451,6 +468,7 @@ export async function updateFieldDef(
   if (patch.template !== undefined) updates.template = patch.template;
   if (patch.unit !== undefined) updates.unit = patch.unit;
   if (patch.field_role !== undefined) updates.field_role = patch.field_role;
+  if (patch.learns !== undefined) updates.learns = patch.learns;
 
   const def = await meta
     .selectFrom("module_field_defs")
@@ -460,10 +478,31 @@ export async function updateFieldDef(
     .executeTakeFirst();
   if (!def) return { ok: false, code: "not_found", message: "field def not found" };
 
+  if (patch.type !== undefined && patch.type !== def.type) {
+    if (!RETYPEABLE.has(def.type) || !RETYPEABLE.has(patch.type)) {
+      return {
+        ok: false,
+        code: "type_not_changeable",
+        message: `A ${def.type} field cannot become ${patch.type}: only text, number, yes/no, date, link and rich text fields change type. Make a new field instead.`,
+      };
+    }
+    if (def.bundle_id) {
+      return {
+        ok: false,
+        code: "type_is_the_bundles",
+        message: "This field comes from a bundle, and its type is the bundle's: the next update would put it back.",
+      };
+    }
+    updates.type = patch.type;
+    // A dropdown is a text field's; a unit is a number's. Neither survives
+    // the change, and the preview has said so.
+    if (patch.type !== "text") updates.choices = null;
+    if (!fieldTypeTakesUnit(patch.type)) updates.unit = null;
+  }
   // A unit only makes sense on a number field — checked here because the
   // patch body alone can't see the row's type.
-  if (patch.unit != null && def.type !== "number") {
-    return { ok: false, code: "unit_not_number", message: "unit is only valid for type='number'" };
+  if (patch.unit != null && !fieldTypeTakesUnit(String(updates.type ?? def.type))) {
+    return { ok: false, code: "unit_not_number", message: "unit is only valid on a number or measure field" };
   }
   const wrongType = patch.field_role ? fieldRoleTypeRefusal(patch.field_role, def.type) : null;
   if (wrongType) return { ok: false, code: "role_wrong_type", message: wrongType };
@@ -474,7 +513,7 @@ export async function updateFieldDef(
   // single chokepoint: every client PATCHes through here, so none of them can
   // clobber a bundle field.
   let routedChoices = false;
-  if (def.bundle_id && patch.choices !== undefined) {
+  if (def.bundle_id && (patch.choices !== undefined || patch.learns !== undefined)) {
     const existing = await meta
       .selectFrom("native_field_overrides")
       .selectAll()
@@ -483,8 +522,14 @@ export async function updateFieldDef(
       .where("name", "=", def.name)
       .executeTakeFirst();
     const blob: FieldOverrideBlob = { ...(existing?.overrides ?? {}) };
-    if (patch.choices === null) delete blob.choices;
-    else blob.choices = patch.choices;
+    if (patch.choices !== undefined) {
+      if (patch.choices === null) delete blob.choices;
+      else blob.choices = patch.choices;
+    }
+    if (patch.learns !== undefined) {
+      if (patch.learns === null) delete blob.learns;
+      else blob.learns = patch.learns;
+    }
     const blobSql = sql`${JSON.stringify(blob)}::jsonb` as unknown as FieldOverrideBlob;
     await meta
       .insertInto("native_field_overrides")
@@ -507,6 +552,7 @@ export async function updateFieldDef(
       )
       .execute();
     delete updates.choices;
+    delete updates.learns;
     routedChoices = true;
   }
 
@@ -530,6 +576,7 @@ export async function updateFieldDef(
     action: "field_def_updated",
     ref: { module: null, entityType: "field_def", entityId: updated.id },
     diff: patch,
+    before: def,
   });
   clearComputedDefsCache();
   return routedChoices
@@ -560,4 +607,90 @@ export async function deleteFieldDef(orgId: string, id: string): Promise<DeleteF
   });
   clearComputedDefsCache();
   return { ok: true, def: deleted };
+}
+
+export interface RetypePreview {
+  from: string;
+  to: string;
+  /** Records looked at, and whether that was all of them. */
+  checked: number;
+  complete: boolean;
+  /** Stored values that would not fit the new type. They stay as they are. */
+  wontFit: number;
+  examples: Array<{ id: string; title: string; value: unknown }>;
+  /** What goes with the change: the dropdown, the unit. */
+  drops: string[];
+}
+
+/** What changing a field's type would do to the values it already holds,
+ *  read before the change so the person decides with it in front of them. */
+export async function previewRetype(orgId: string, id: string, to: string): Promise<RetypePreview | { error: string; message: string }> {
+  const def = await meta.selectFrom("module_field_defs").selectAll().where("id", "=", id).where("org_id", "=", orgId).executeTakeFirst();
+  if (!def) return { error: "not_found", message: "field def not found" };
+  if (!RETYPEABLE.has(def.type) || !RETYPEABLE.has(to)) {
+    return { error: "type_not_changeable", message: `A ${def.type} field cannot become ${to}.` };
+  }
+  const drops: string[] = [];
+  const choices = (def.choices as string[] | null) ?? null;
+  if (to !== "text" && choices?.length) drops.push("its dropdown choices");
+  if (!fieldTypeTakesUnit(to) && (def as { unit?: string | null }).unit) drops.push("its unit");
+  const judged = { name: def.name, type: to, choices: to === "text" ? choices : null };
+  // A field on a class of kinds has no one list to read; the change still
+  // leaves every stored value where it is.
+  if (isFieldScope(def.entity_kind)) return { from: def.type, to, checked: 0, complete: false, wontFit: 0, examples: [], drops };
+  const all = await listAll(orgId, def.entity_kind, {}, undefined, { cap: 5000 });
+  let wontFit = 0;
+  const examples: RetypePreview["examples"] = [];
+  for (const r of all.items) {
+    const f = r.fields as Record<string, unknown>;
+    const bag = f.metadata && typeof f.metadata === "object" ? (f.metadata as Record<string, unknown>) : {};
+    const value = def.name in bag ? bag[def.name] : f[def.name];
+    if (value === null || value === undefined || value === "") continue;
+    if (valueFitsField(judged, value)) continue;
+    wontFit++;
+    if (examples.length < 10) examples.push({ id: r.id, title: r.title, value });
+  }
+  return { from: def.type, to, checked: all.items.length, complete: all.complete, wontFit, examples, drops };
+}
+
+/** A kind's field as a person's form sees it: its own def with the user
+ *  layer on top (a bundle field's choices and `learns` live in
+ *  native_field_overrides, never on the bundle's row). Every write that grows
+ *  or shrinks a choice list starts from THIS list, or a second addition to a
+ *  bundle field would replace the first. Null when the kind has no such field. */
+export async function effectiveFieldDef(
+  orgId: string,
+  kind: string,
+  name: string,
+): Promise<(ResolvedFieldDef & { choices: string[] | null; learns: boolean | null }) | null> {
+  return (await effectiveFieldDefsForKind(orgId, kind)).find((d) => d.name === name) ?? null;
+}
+
+/** Every field on a kind with its choices and "remember new entries" as the
+ *  workspace has them: a shipped field's own list lives in the override layer
+ *  once changed (updateFieldDef routes it there), and a reader of the raw def
+ *  would see the bundle's list instead. One query for the kind's overrides. */
+export async function effectiveFieldDefsForKind(
+  orgId: string,
+  kind: string,
+): Promise<Array<ResolvedFieldDef & { choices: string[] | null; learns: boolean | null }>> {
+  const defs = await resolveFieldDefsForKind(orgId, kind);
+  const kinds = [...new Set(defs.map((d) => d.entity_kind))];
+  const rows = kinds.length
+    ? await meta
+        .selectFrom("native_field_overrides")
+        .select(["entity_kind", "name", "overrides"])
+        .where("org_id", "=", orgId)
+        .where("entity_kind", "in", kinds)
+        .execute()
+    : [];
+  const own = new Map(rows.map((r) => [`${r.entity_kind} ${r.name}`, r.overrides] as const));
+  return defs.map((def) => {
+    const o = own.get(`${def.entity_kind} ${def.name}`);
+    return {
+      ...def,
+      choices: (o?.choices ?? (def.choices as string[] | null)) ?? null,
+      learns: o?.learns ?? def.learns ?? null,
+    };
+  });
 }

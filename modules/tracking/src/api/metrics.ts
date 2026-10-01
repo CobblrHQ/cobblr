@@ -150,6 +150,8 @@ metricsRouter.patch(
     if (parsed.data.goal_direction !== undefined) patch.goal_direction = parsed.data.goal_direction;
     // The custom fields MERGE into the live row (#3625).
     if (parsed.data.metadata !== undefined) patch.metadata = platform().db.mergeJsonb("metadata", parsed.data.metadata as Record<string, unknown>) as never;
+    // The row as it was: the log says what this edit changed (#4517).
+    const before = await db.selectFrom("tracking_metrics").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
     const row = await db.updateTable("tracking_metrics").set(patch).where("id", "=", req.params.id!).returningAll().executeTakeFirst();
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "Metric not found." } });
     // The request as sent, on the record's history: the one place a value
@@ -160,6 +162,7 @@ metricsRouter.patch(
       action: "metric_updated",
       ref: { module: "tracking", entityType: "metric", entityId: String(req.params.id) },
       diff: parsed.data as Record<string, unknown>,
+      before,
     });
     res.json({ ...row, goal_value: num(row.goal_value) });
   }),
@@ -226,6 +229,7 @@ metricsRouter.get(
   }),
 );
 
+// AI-REACH: a reading is history; the person removes one they logged by mistake, and Undo reverses a log
 metricsRouter.delete(
   "/measurements/:id",
   asyncHandler(async (req, res) => {

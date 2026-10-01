@@ -1,0 +1,10 @@
+{
+  "lint": "lint:discussion-opens-through-one-door",
+  "run": "node scripts/lint-discussion-opens-through-one-door.ts",
+  "rows": [
+    "side-panel-door"
+  ],
+  "ms": 810,
+  "recorded": "2026-10-02",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

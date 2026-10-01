@@ -3,6 +3,7 @@ type: feature
 scope: core-scan
 date: 2026-09-28
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-10-01
 ---
 Filing from the inbox now leaves the row in place saying where it went, with Go to and Undo, and a first scan files in one tap: the scan sheet offers Add to the right table, sets that table up if needed, and opens it.
 

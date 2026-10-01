@@ -13,11 +13,10 @@
 // (this offer, the setup card, Your account, the account menu, search) uses
 // the same link, CONNECT_DISCORD_PATH (lib/discord-connect.ts).
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { MessageCircle, X } from "lucide-react";
-import { api } from "../lib/api";
-import { CONNECT_DISCORD_PATH } from "../lib/discord-connect";
+import { CONNECT_DISCORD_PATH, discordConnectable } from "../lib/discord-connect";
+import { useDiscordStatus } from "../lib/useDiscordStatus";
 
 const DISMISSED_KEY = "cobblr.offer.discord-reminders.dismissed";
 
@@ -46,18 +45,12 @@ export function discordOfferWanted(o: {
   status: { configured?: boolean; verified?: boolean } | undefined;
   dismissed: boolean;
 }): boolean {
-  return o.hasDated && !!o.status?.configured && !o.status.verified && !o.dismissed;
+  return o.hasDated && discordConnectable(o.status) && !o.status?.verified && !o.dismissed;
 }
 
 export function DiscordReminderOffer({ hasDated }: { hasDated: boolean }) {
   const [dismissed, setDismissed] = useState(readDismissed);
-  const status = useQuery({
-    queryKey: ["discord-status"],
-    queryFn: () => api.meDiscordStatus(),
-    staleTime: 5 * 60_000,
-    enabled: hasDated && !dismissed,
-    retry: false,
-  });
+  const status = useDiscordStatus(hasDated && !dismissed);
   if (!discordOfferWanted({ hasDated, status: status.data, dismissed })) return null;
   return (
     <div

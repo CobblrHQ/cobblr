@@ -3,6 +3,7 @@ type: feature
 scope: maintenance
 date: 2026-09-28
 docs_target: docs/USER_GUIDE.md#3.16 Maintenance
+docs_published: 2026-10-01
 ---
 **Service schedules.** Tell a machine, a car or anything else you look after how often it wants servicing, either by the calendar ("every 3 months") or by use ("every 200 print hours" on a printer). Its next service is always on the log. Logging the service moves the schedule on from the day you did it, and anything due or overdue shows on Needs you, in your notifications and in Discord.
 

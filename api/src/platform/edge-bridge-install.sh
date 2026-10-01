@@ -72,7 +72,7 @@ say "Paired as \"$NAME\"."
 # ── Docker, when asked for ──────────────────────────────────────────────────
 if [ "$DOCKER" = "1" ]; then
   command -v docker >/dev/null 2>&1 || die "--docker was given but docker is not installed"
-  docker rm -f cobblr-edge-bridge >/dev/null 2>&1 || true
+  docker rm -f cobblr-edge-bridge >/dev/null 2>&1 || true  # keeps-volumes: its state is the named cobblr-bridge-data volume
   # shellcheck disable=SC2016 # the $ is for the container's shell
   docker run -d --name cobblr-edge-bridge --restart unless-stopped \
     --hostname "$HOST_NAME" \

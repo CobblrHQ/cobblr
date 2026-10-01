@@ -8,8 +8,11 @@
 // The column's CHECK (platform migration 156) holds the shape of both, the
 // manifest validator refuses an undotted service capability, and ranking
 // refuses an id on the wrong kind of connection through this.
-//
-// Buildless subpath: no runtime import of a sibling.
+
+// The service shape is the manifest validator's own, imported through the
+// package's subpath (the api loads this as .ts, where a relative ./x.js does
+// not exist; lint:contract-sibling-imports).
+import { SERVICE_CAPABILITY_ID } from "@cobblr/platform-contract/services";
 
 /** The connection kind of an external service (docs/design-decisions/services.md). */
 export const SERVICE_KIND = "service";
@@ -27,12 +30,10 @@ export function capabilityFitsKind(capability: string, kind: string): boolean {
 
 /** The shape of a capability id in either space, the same as the column's
  *  CHECK: lower-case words joined by `-` (AI), or such words joined by `.`
- *  (a service). */
-const AI_ID = /^[a-z][a-z0-9-]*$/;
-/** The manifest validator's own shape (SERVICE_CAPABILITY_ID in ./services),
- *  so ranking never refuses an id a valid manifest declares. */
-const SERVICE_ID = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$/;
+ *  (a service, the manifest validator's own SERVICE_CAPABILITY_ID, so ranking
+ *  never refuses an id a valid manifest declares). */
+export const AI_CAPABILITY_ID = /^[a-z][a-z0-9-]*$/;
 
 export function isCapabilityId(capability: string): boolean {
-  return AI_ID.test(capability) || SERVICE_ID.test(capability);
+  return AI_CAPABILITY_ID.test(capability) || SERVICE_CAPABILITY_ID.test(capability);
 }

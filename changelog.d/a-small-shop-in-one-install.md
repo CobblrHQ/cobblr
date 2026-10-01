@@ -3,6 +3,7 @@ type: feature
 scope: bundles
 date: 2026-09-29
 docs_target: docs/USER_GUIDE.md#8. Demo seed + featured bundles
+docs_published: 2026-10-01
 ---
 **Set up a small shop in one install.** The new **Small shop** bundle turns on Sales, Builds, Inventory, Purchases, Digital Fabrication and Shipments together and gathers them under one **Shop** menu, instead of six modules switched on one by one. Your Home page opens with the boards a shop checks every day: orders by status, stock, products and purchase orders. Orders get a due date and where they came in, parts get a SKU and whether you make or buy them, and products get a sell price.
 

@@ -3,6 +3,7 @@ type: feature
 scope: core-scan
 date: 2026-09-25
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-10-01
 ---
 A photo of a label now fills in its item. Photograph a bulk bag or a lot sticker after scanning the item and the count, lot, colour, SKU and case code printed on it are written onto that item, marked as read from the label. Anything you typed yourself stays yours, and combining a case label with one of its items counts the case once.
 

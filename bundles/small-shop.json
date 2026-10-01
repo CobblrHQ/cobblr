@@ -2,11 +2,23 @@
   "manifest": {
     "id": "cobblr.flagship.small-shop",
     "base_kind_fields_reason": "A shop runs on the modules' own records (orders, parts, products), not a table of its own; the few fields it adds are what a selling business needs on those records.",
-    "version": "0.1.1",
+    "version": "0.1.3",
     "name": "Small shop",
     "description": "For a small shop, maker business or manufacturer: customer orders, the products you make, stock, production, the print farm, purchase orders and shipments, turned on together and kept in one Shop section of the sidebar, each with a view to start from.",
     "author": "Cobblr",
-    "released_at": "2026-09-29",
+    "released_at": "2026-10-02",
+    "releases": [
+      {
+        "version": "0.1.3",
+        "released_at": "2026-10-02",
+        "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before."
+      },
+      {
+        "version": "0.1.2",
+        "released_at": "2026-10-02",
+        "notes": "Sells for is a money field: it shows as $1,200 and takes 1,200 or $1,200.00."
+      }
+    ],
     "changelog": "New: one install sets up a making business, from order to shipment, instead of seven modules enabled by hand from folded sections.",
     "requires": [
       {
@@ -71,6 +83,7 @@
         "display_label": "Came in through",
         "type": "text",
         "position": 2,
+        "learns": true,
         "choices": [
           "Website",
           "Etsy",
@@ -94,6 +107,7 @@
         "display_label": "Made or bought",
         "type": "text",
         "position": 2,
+        "learns": false,
         "choices": [
           "Made here",
           "Bought in"
@@ -103,7 +117,7 @@
         "entity_kind": "builds:build",
         "name": "sell_price",
         "display_label": "Sells for",
-        "type": "number",
+        "type": "money",
         "position": 1
       }
     ],

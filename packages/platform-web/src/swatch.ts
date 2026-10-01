@@ -9,7 +9,7 @@
 // "hex/swatch" (yarn's colourway). The matchmaker is prompted to fill them
 // with CSS hex codes.
 
-import { colourFill, normalizeColour, parseColour } from "@cobblr/platform-contract/colour";
+import { colourFill, colourFromName, normalizeColour, parseColour } from "@cobblr/platform-contract/colour";
 
 /** The minimal field-def shape the swatch check needs — satisfied by platform
  *  field defs, the scan menu's trimmed fields, and anything with a name/type. */
@@ -33,7 +33,8 @@ export function wantsSwatch(def: SwatchFieldDef): boolean {
  *  ("Royal Blue") is normalised to a CSS named colour ("royalblue") — vendors
  *  like Polar give us only the name, no hex (pfil.us returns `color:"Royal
  *  Blue"`), so this is the only way to show a swatch. Maker-specific names that
- *  aren't CSS colours ("Galaxy Black") return null → the caller shows text. */
+ *  aren't CSS colours ("Galaxy Black") draw their colour word; a name with none
+ *  ("Sunset") returns null → the caller shows text. */
 export function colorSwatch(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const v = value.trim();
@@ -43,7 +44,9 @@ export function colorSwatch(value: unknown): string | null {
   const spec = /^[a-z\s]+$/i.test(v) && !/^rainbow$/i.test(v) ? null : parseColour(v);
   if (spec) return colourFill(spec);
   const named = v.toLowerCase().replace(/\s+/g, "");
-  return typeof CSS !== "undefined" && CSS.supports?.("color", named) ? named : null;
+  if (typeof CSS !== "undefined" && CSS.supports?.("color", named)) return named;
+  // A maker's name for a colour ("Fire Engine Red") draws its colour word.
+  return colourFromName(v);
 }
 
 /** Normalise a strict 6-digit hex value → `#rrggbb` (lower-case), else null.

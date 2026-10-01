@@ -12,6 +12,7 @@
 import { useCallback, useRef, useState, type ReactNode } from "react";
 import { useToast } from "./ToastContext";
 import { sendUpload, uploadErrorOf } from "./upload-client";
+import { usePasteImage } from "./usePasteImage";
 
 const TOKEN_KEY = "cobblr.token";
 
@@ -234,6 +235,13 @@ export function FileIntakePanels({ intake, where }: { intake: ReturnType<typeof 
 export function FileIntake({ label = "Upload", accept, where, className, children, ...opts }: FileIntakeOptions & { label?: string; accept?: string; where?: string; className?: string; children?: ReactNode }) {
   const intake = useFileIntake(opts);
   const input = useRef<HTMLInputElement>(null);
+  // A file pasted where files are taken is taken too (usePasteImage), the
+  // same files the button takes.
+  usePasteImage(() => input.current?.parentElement ?? null, {
+    accept: accept || "*",
+    onFiles: (files) => void intake.take(files),
+    multiple: true,
+  });
   return (
     <div className={className ?? "space-y-2"}>
       <button

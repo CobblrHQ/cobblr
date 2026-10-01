@@ -16,7 +16,7 @@
 //
 // It portals to <body> so the header's backdrop-blur can't trap position:fixed
 // (CLAUDE.md modal note).
-import { useCallback, useRef, type ReactNode, type Ref } from "react";
+import { useCallback, useLayoutEffect, useRef, type ReactNode, type Ref } from "react";
 import { createPortal } from "react-dom";
 import { HIDE_WHEN_OVERLAY_OPEN, useLayerStack, useOverlayOpenFlag } from "@cobblr/platform-web";
 
@@ -41,10 +41,33 @@ export function SidePanel({
   cobbPanel?: boolean;
   children: ReactNode;
 }) {
-  useOverlayOpenFlag();
+  // Beside the page on a desk, over it on a phone: chrome in the content
+  // column (the selection bar) stays beside it, re-centred in what is left
+  // (--side-panel-w, published below), #4531.
+  useOverlayOpenFlag(true, "side");
   // A modal or sheet opened from inside the panel goes above it (#3954).
   const own = useRef<HTMLDivElement | null>(null);
   useLayerStack(own);
+  useLayoutEffect(() => {
+    const el = own.current;
+    const root = document.documentElement;
+    if (!el) return;
+    const publish = () => {
+      const r = el.getBoundingClientRect();
+      // Full-bleed on a phone: nothing is left beside it.
+      const beside = r.left > 0 ? Math.round(window.innerWidth - r.left) : 0;
+      root.style.setProperty("--side-panel-w", `${beside}px`);
+    };
+    publish();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(publish) : null;
+    ro?.observe(el);
+    window.addEventListener("resize", publish);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener("resize", publish);
+      root.style.removeProperty("--side-panel-w");
+    };
+  }, []);
   const setRef = useCallback(
     (el: HTMLDivElement | null) => {
       own.current = el;

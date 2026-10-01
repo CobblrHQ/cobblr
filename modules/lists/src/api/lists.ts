@@ -190,6 +190,8 @@ listsRouter.patch(
     if (parsed.data.description !== undefined) patch.description = parsed.data.description;
     // The custom fields MERGE into the live row (#3625).
     if (parsed.data.metadata !== undefined) patch.metadata = platform().db.mergeJsonb("metadata", parsed.data.metadata as Record<string, unknown>) as never;
+    // The row as it was: the log says what this edit changed (#4517).
+    const before = await db.selectFrom("lists_lists").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
     const row = await db.updateTable("lists_lists").set(patch).where("id", "=", req.params.id!).returningAll().executeTakeFirst();
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "List not found." } });
     // The request as sent, on the record's history: the one place a value
@@ -200,6 +202,7 @@ listsRouter.patch(
       action: "list_updated",
       ref: { module: "lists", entityType: "list", entityId: String(req.params.id) },
       diff: parsed.data as Record<string, unknown>,
+      before,
     });
     res.json(row);
   }),
@@ -340,6 +343,8 @@ listsRouter.patch(
       patch.claimed_by_name = parsed.data.claimed ? (who?.display_name || who?.email || null) : null;
       patch.claimed_at = parsed.data.claimed ? new Date() : null;
     }
+    // The row as it was: the log says what this edit changed (#4517).
+    const before = await db.selectFrom("lists_items").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
     const row = await db.updateTable("lists_items").set(patch).where("id", "=", req.params.id!).returningAll().executeTakeFirst();
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "Item not found." } });
     if (parsed.data.checked !== undefined) {
@@ -396,6 +401,7 @@ listsRouter.patch(
       action: "list_item_updated",
       ref: { module: "lists", entityType: "item", entityId: String(req.params.id) },
       diff: parsed.data as Record<string, unknown>,
+      before,
     });
     res.json(row);
   }),

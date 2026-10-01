@@ -5,7 +5,7 @@
 // seam, never an inventory import. Works standalone; the picker is just empty
 // when inventory isn't enabled.
 
-import { describeUnreadableBody } from "@cobblr/platform-web";
+import { describeUnreadableBody, noteWorkspaceWrite } from "@cobblr/platform-web";
 
 export interface BuildSummary {
   id: string;
@@ -181,12 +181,15 @@ export class BuildsApi {
   }
 
   private async req<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const res = await fetch(`/api/v1/orgs/${this.slug}/modules/builds${path}`, {
+    const url = `/api/v1/orgs/${this.slug}/modules/builds${path}`;
+    const res = await fetch(url, {
       method,
       headers: this.headers(body !== undefined),
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    return this.parse<T>(res);
+    const out = await this.parse<T>(res);
+    if (method.toUpperCase() !== "GET") noteWorkspaceWrite(url);
+    return out;
   }
 
   listBuilds() {

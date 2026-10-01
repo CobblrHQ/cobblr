@@ -12,7 +12,7 @@
 // descendants, so an in-header panel would be clipped. Same trick
 // the ModuleNav popover uses.
 
-import { useEffect, useState } from "react";
+import { useRef, useState } from "react";
 import { useNavPointer } from "../lib/navPointer";
 import { createPortal } from "react-dom";
 import { dismissOnEmptySpace } from "../lib/dismiss-on-empty";
@@ -29,11 +29,11 @@ import { usePendingAiShares } from "../lib/usePendingAiShares";
 import { useAuth } from "../auth/AuthContext";
 import { COMMUNITY_HEADING, CommunityLinks } from "./CommunityLinks";
 import { useTheme } from "../theme/ThemeContext";
-import { useNavModules, NAVGROUP_PREFIX, navTargetFor, surfaceTops } from "./useNavModules";
+import { useNavHasRow, useNavModules, NAVGROUP_PREFIX, navTargetFor, surfaceTops } from "./useNavModules";
 import { useNavBadges } from "./useNavBadges";
 import { NavCountBadge } from "./NavCountBadge";
 import { CobblestoneMark } from "../CobblestoneMark";
-import { OverlayLayer, useLockPageScroll } from "@cobblr/platform-web";
+import { OverlayLayer, useEscapeToClose, useLockPageScroll } from "@cobblr/platform-web";
 import { notificationKeys } from "../lib/notification-keys";
 
 /** The marker on a row that belongs to the group heading above it. It replaced
@@ -42,6 +42,24 @@ import { notificationKeys } from "../lib/notification-keys";
  *  onto a second line. */
 function ChildDot() {
   return <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-moss-300 dark:bg-moss-200" />;
+}
+
+/** How many rows the menu's two columns hold before the More apps door: Home,
+ *  search, and every top with what sits under it. The door fills the free
+ *  cell beside the last row when there is one, and takes the whole width when
+ *  there is not, so the menu never ends on a half row with a hole beside it
+ *  (#4374). Pure, for the test. */
+export function menuRowsBefore(
+  tops: ReadonlyArray<{ name: string }>,
+  childrenByParent: ReadonlyMap<string, readonly unknown[]>,
+  instanceGroups: ReadonlyMap<string, { members: readonly unknown[] }>,
+  leading: number,
+): number {
+  let n = leading;
+  for (const t of tops) {
+    n += 1 + (t.name.startsWith(NAVGROUP_PREFIX) ? (instanceGroups.get(t.name)?.members.length ?? 0) : (childrenByParent.get(t.name)?.length ?? 0));
+  }
+  return n;
 }
 
 export function MobileNav() {
@@ -54,6 +72,7 @@ export function MobileNav() {
   // cannot disagree about what is inside the app.
   const appMode = !!activeOrg?.app_mode;
   const visibleTops = surfaceTops(tops, appMode);
+  const moreAppsSpans = menuRowsBefore(visibleTops, childrenByParent, instanceGroups, appMode ? 0 : 2) % 2 === 0;
   const badges = useNavBadges(activeSlug);
   const pendingShares = usePendingAiShares(activeSlug, activeOrg?.role === "owner");
   const { logout, user } = useAuth();
@@ -85,16 +104,10 @@ export function MobileNav() {
     staleTime: 30_000,
   });
   const labelsEnabled = (orgModulesQ.data?.items ?? []).some((m) => m.name === "labels" && m.enabled);
+  const labelsHasRow = useNavHasRow(activeSlug, "labels");
 
-  // Close on Escape.
-  useEffect(() => {
-    if (!open) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open]);
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEscapeToClose(open, panelRef, () => setOpen(false));
 
   // Lock body scroll while the panel is open.
   useLockPageScroll(open);
@@ -161,7 +174,7 @@ export function MobileNav() {
 
       {open &&
         createPortal(
-          <OverlayLayer className="md:hidden z-[80]" role="dialog" aria-modal="true" aria-label="Menu">
+          <OverlayLayer ref={panelRef} className="md:hidden z-[80]" role="dialog" aria-modal="true" aria-label="Menu">
             {/* No backdrop: the panel below is `absolute inset-0` and opaque, so
                 anything behind it is invisible AND unreachable. One used to sit
                 here claiming "tap to dismiss", which was never true and is the
@@ -351,17 +364,25 @@ export function MobileNav() {
                 );
               })}
               {!appMode && (
-                <div className="px-1 pt-1.5">
+                // A row's height, so the two columns keep their rules in step,
+                // and the whole width when it would otherwise sit alone.
+                <div
+                  data-testid="menu-more-apps"
+                  data-spans={moreAppsSpans ? "" : undefined}
+                  className={"flex h-11 items-center px-2 border-b border-line dark:border-slate-800" + (moreAppsSpans ? " [column-span:all]" : "")}
+                >
                   <MoreAppsDoor onNavigate={() => setOpen(false)} />
                 </div>
               )}
 
               </div>
 
-              {/* Label queue lives here on mobile, as a menu row — the floating
-                  bottom-right pill was covering page content + the thumb zone, so
-                  it's desktop-only now. Self-hides when nothing is queued. */}
-              {labelsEnabled && !appMode && (
+              {/* The label queue's count rides on the Labels row as a badge
+                  (nav.count). This row is for a person who took Labels out of
+                  their menu, where it is the only sign anything is queued; with
+                  the row there it would list Labels twice (#4374). Self-hides
+                  when nothing is queued. */}
+              {labelsEnabled && !appMode && !labelsHasRow && (
                 <LabelsBasket
                   orgSlug={activeSlug}
                   getToken={getToken}

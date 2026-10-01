@@ -16,6 +16,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { recordHref } from "@cobblr/platform-contract/instance-detail";
 import { SearchIncomplete } from "./SearchIncomplete";
 import { SnippetText } from "@cobblr/platform-web";
+import { useExactHits } from "../lib/useExactHits";
 
 export function SearchBar() {
   const { activeSlug } = useActiveOrg();
@@ -82,6 +83,83 @@ export function SearchBar() {
   }, [expanded]);
 
   const items = hits.data?.items ?? [];
+  // An exact identifier (a serial, a code) is asked of the same registry the
+  // scanner and the palette use, and leads the list.
+  const exact = useExactHits(activeSlug, debounced, "search", expanded);
+
+  // One list the arrows walk: exact hits, the app's own features, the
+  // records, then "see all". Enter opens the highlighted one; with none
+  // highlighted it opens the full results page, as it always did.
+  type Entry = { key: string; go: () => void; node: React.ReactNode };
+  const entries: Entry[] = [
+    ...exact.map((c) => ({
+      key: `exact-${c.entity_kind}-${c.entity_id}`,
+      go: () => navigate(c.detail_path),
+      node: (
+        <>
+          <div className="font-medium truncate">{c.label}</div>
+          <div className="text-xs text-accent truncate">Exact match · {c.where}</div>
+        </>
+      ),
+    })),
+    ...featureHits.map((f) => ({
+      key: `feat-${f.route}-${f.label}`,
+      go: () => navigate(f.route),
+      node: (
+        <>
+          <div className="font-medium truncate text-accent">{f.label}</div>
+          <div className="text-xs text-muted dark:text-slate-400 truncate">{f.hint}</div>
+        </>
+      ),
+    })),
+    ...items
+      .filter((h) => !exact.some((c) => c.entity_kind === h.kind && c.entity_id === h.id))
+      .slice(0, 20)
+      .map((h) => ({
+        key: `${h.kind}:${h.id}`,
+        // Prefer the resolver-owned per-item detailUrl (carries instance
+        // context, e.g. /instances/designs/<id>); the kind→route registry map
+        // is the fallback for hits without one.
+        go: () => navigate(detailRoute(h.kind, h.id, h.detailUrl)),
+        node: (
+          <>
+            <div className="font-medium truncate">
+              {h.title}
+              {/* A retired record is still found (an old drill is exactly
+                  what a person searches for) and says so, ranked after the
+                  live ones by the search itself. */}
+              {h.retired && (
+                <span className="ml-2 align-middle text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">archived</span>
+              )}
+            </div>
+            <div className="text-xs text-muted dark:text-slate-400 truncate">
+              {labels.collection(h.kind)}
+              {h.subtitle ? ` · ${h.subtitle}` : ""}
+            </div>
+            {h.snippet && (
+              <div className="text-xs text-muted dark:text-slate-400 truncate">
+                <SnippetText text={h.snippet} q={q} />
+              </div>
+            )}
+          </>
+        ),
+      })),
+    ...(q.trim().length > 0
+      ? [
+          {
+            key: "see-all",
+            go: () => navigate(`/search?q=${encodeURIComponent(q.trim())}`),
+            node: <div className="text-xs text-muted text-center">See all results for &ldquo;{q.trim()}&rdquo; →</div>,
+          },
+        ]
+      : []),
+  ];
+  const [sel, setSel] = useState(-1);
+  useEffect(() => setSel(-1), [debounced]);
+  useEffect(() => {
+    if (sel >= 0) document.getElementById(`searchbar-option-${sel}`)?.scrollIntoView?.({ block: "nearest" });
+  }, [sel]);
+  const showList = open && expanded && (entries.length > (q.trim() ? 1 : 0) || (hits.data?.kinds_failed?.length ?? 0) > 0);
 
   return (
     <div ref={ref} className="relative shrink-0 hidden md:block">
@@ -89,6 +167,7 @@ export function SearchBar() {
         <button
           onClick={() => setExpanded(true)}
           title="Search"
+          aria-label="Search"
           className="text-faint dark:text-slate-500 hover:text-accent transition p-1.5"
         >
           <Search size={15} />
@@ -99,6 +178,11 @@ export function SearchBar() {
             size="sm"
             wrapperClassName="w-60"
             aria-label="Search"
+            role="combobox"
+            aria-expanded={showList}
+            aria-controls="searchbar-results"
+            aria-autocomplete="list"
+            aria-activedescendant={sel >= 0 ? `searchbar-option-${sel}` : undefined}
             value={q}
             onChange={(v) => {
               setQ(v);
@@ -106,8 +190,20 @@ export function SearchBar() {
             }}
             onFocus={() => setOpen(true)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && q.trim().length > 0) {
-                navigate(`/search?q=${encodeURIComponent(q.trim())}`);
+              if (e.key === "ArrowDown" && entries.length) {
+                e.preventDefault();
+                setOpen(true);
+                setSel((s) => Math.min(s + 1, entries.length - 1));
+              }
+              if (e.key === "ArrowUp" && entries.length) {
+                e.preventDefault();
+                setSel((s) => Math.max(s - 1, -1));
+              }
+              if (e.key === "Enter") {
+                const chosen = sel >= 0 ? entries[sel] : undefined;
+                if (chosen) chosen.go();
+                else if (q.trim().length > 0) navigate(`/search?q=${encodeURIComponent(q.trim())}`);
+                else return;
                 setOpen(false);
               }
               if (e.key === "Escape") {
@@ -118,71 +214,30 @@ export function SearchBar() {
             placeholder="Search…"
           />
       )}
-      {open && expanded && (items.length > 0 || featureHits.length > 0 || (hits.data?.kinds_failed?.length ?? 0) > 0) && (
-        <div className="absolute right-0 mt-1 w-80 max-h-96 overflow-y-auto bg-surface dark:bg-slate-900 border border-line dark:border-slate-700 rounded shadow-lg z-50 divide-y divide-line dark:divide-slate-800">
+      {showList && (
+        <div className="absolute right-0 mt-1 w-80 max-h-96 overflow-y-auto bg-surface dark:bg-slate-900 border border-line dark:border-slate-700 rounded shadow-lg z-50">
           {(hits.data?.kinds_failed?.length ?? 0) > 0 && (
-            <div className="p-1.5"><SearchIncomplete compact failed={hits.data?.kinds_failed} /></div>
+            <div className="p-1.5 border-b border-line dark:border-slate-800"><SearchIncomplete compact failed={hits.data?.kinds_failed} /></div>
           )}
-          {/* Cobblr FEATURES rank above data — "edge bridge" must find the
-              app surface, not nothing (feature-index.ts). */}
-          {featureHits.map((f) => (
-            <button
-              key={`feat-${f.route}-${f.label}`}
-              onClick={() => {
-                navigate(f.route);
-                setOpen(false);
-              }}
-              className="w-full text-left px-3 py-2 hover:bg-subtle dark:hover:bg-slate-800/60 text-sm"
-            >
-              <div className="font-medium truncate text-accent">{f.label}</div>
-              <div className="text-xs text-muted dark:text-slate-400 truncate">{f.hint}</div>
-            </button>
-          ))}
-          {items.slice(0, 20).map((h) => (
-            <button
-              key={`${h.kind}:${h.id}`}
-              onClick={() => {
-                // Prefer the resolver-owned per-item detailUrl (carries
-                // instance context, e.g. /instances/designs/<id>); the
-                // kind→route registry map is the fallback for hits without one.
-                navigate(detailRoute(h.kind, h.id, h.detailUrl));
-                setOpen(false);
-              }}
-              className="w-full text-left px-3 py-2 hover:bg-subtle dark:hover:bg-slate-800/60 text-sm"
-            >
-              <div className="font-medium truncate">
-                {h.title}
-                {/* A retired record is still found (an old drill is exactly
-                    what a person searches for) and says so, ranked after
-                    the live ones by the search itself. */}
-                {h.retired && (
-                  <span className="ml-2 align-middle text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
-                    archived
-                  </span>
-                )}
-              </div>
-              <div className="text-xs text-muted dark:text-slate-400 truncate">
-                {labels.collection(h.kind)}
-                {h.subtitle ? ` · ${h.subtitle}` : ""}
-              </div>
-              {h.snippet && (
-                <div className="text-xs text-muted dark:text-slate-400 truncate">
-                  <SnippetText text={h.snippet} q={q} />
-                </div>
-              )}
-            </button>
-          ))}
-          {q.trim().length > 0 && (
-            <button
-              onClick={() => {
-                navigate(`/search?q=${encodeURIComponent(q.trim())}`);
-                setOpen(false);
-              }}
-              className="w-full px-3 py-2 text-xs text-muted hover:bg-subtle dark:hover:bg-slate-800/60 text-center"
-            >
-              See all results for "{q.trim()}" →
-            </button>
-          )}
+          <ul role="listbox" id="searchbar-results" aria-label="Search results" className="divide-y divide-line dark:divide-slate-800">
+            {entries.map((en, i) => (
+              <li
+                key={en.key}
+                id={`searchbar-option-${i}`}
+                role="option"
+                aria-selected={sel === i}
+                onMouseEnter={() => setSel(i)}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  en.go();
+                  setOpen(false);
+                }}
+                className={"cursor-pointer px-3 py-2 text-sm " + (sel === i ? "bg-subtle dark:bg-slate-800/60" : "hover:bg-subtle dark:hover:bg-slate-800/60")}
+              >
+                {en.node}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>

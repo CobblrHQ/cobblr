@@ -80,6 +80,9 @@ export interface ChatSelection {
 }
 
 let rows: ChatSelection | null = null;
+/** Ticked rows handed to Cobb from a selection bar: × on the bar drops them
+ *  from the chat too, so the two never disagree (#4531). */
+let rowsFromBar = false;
 let text: ChatSelection | null = null;
 const listeners = new Set<() => void>();
 
@@ -102,6 +105,21 @@ export function getChatSelection(): ChatSelection | null {
 /** A page publishes the rows a person has ticked, for as long as it has them. */
 export function publishRowSelection(sel: ChatSelection | null): void {
   rows = sel;
+  rowsFromBar = false;
+  announce();
+}
+
+export function publishBarSelection(sel: ChatSelection): void {
+  rows = sel;
+  rowsFromBar = true;
+  announce();
+}
+/** The selection bar was cleared: its rows leave the chat as well. Rows put
+ *  in the chat some other way are not the bar's to take. */
+export function clearBarSelection(): void {
+  if (!rowsFromBar) return;
+  rows = null;
+  rowsFromBar = false;
   announce();
 }
 
@@ -208,7 +226,7 @@ export function useAskCobbAboutSelection(
   const names = rows.filter((r) => selected.has(r.id)).map((r) => r.title ?? r.name ?? "");
   if (ids.length === 0) return null;
   return () => {
-    publishRowSelection({
+    publishBarSelection({
       label: ids.length === 1 ? (names[0] || `1 ${noun}`) : countOf(ids.length, noun),
       kind,
       ids,

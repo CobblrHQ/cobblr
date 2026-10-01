@@ -15,13 +15,12 @@ import { swallowNextClick } from "../../lib/swallow-click";
 import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Link } from "react-router-dom";
 import { ChevronDown, ChevronUp, X } from "lucide-react";
-import { EntityThumb, FloatingChrome, Modal, PopoverLayer, SearchInput, useToast } from "@cobblr/platform-web";
+import { EntityThumb, FloatingChrome, Modal, PopoverLayer, SearchInput, StockStepper, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type Location } from "../../lib/api";
 import { hasOwnLayout, readBound, readRect } from "../../lib/floorplanGeometry";
 import { useIsDesktopWidth } from "../../lib/useIsDesktopWidth";
 import { usePlaceableRecords, placesOf, type PlaceableRecord } from "../../lib/placeableRecords";
 import { countsByPlace, countsWithin, pathOf, placeChoices, railItems, type RailFilter } from "../../lib/placeItems";
-import { StockStepper } from "../StockStepper";
 import { FaceFor, FloorPlan } from "../FloorPlan";
 import { PlacingContext, placeAtPoint, type Pin, type Placing } from "./placing";
 import { usePlaceActions, type Undo } from "./usePlaceActions";
@@ -92,6 +91,12 @@ export function PlaceItemsView({
 
   const listed = useMemo(() => railItems(records, filter), [records, filter]);
   const unplacedCount = useMemo(() => records.filter((r) => placesOf(r).length === 0).length, [records]);
+  // The count says what the list shows: narrowed by a collection or a
+  // search, "3 of 16 without a place", never the workspace's 16 over a list
+  // of 3 (#4437).
+  const narrowed = !!filter.q || !!filter.collection;
+  const unplacedShown = useMemo(() => railItems(records, { ...filter, showAll: false }).length, [records, filter]);
+  const withoutAPlace = narrowed ? `${unplacedShown} of ${unplacedCount} without a place` : `${unplacedCount} without a place`;
   const collections = useMemo(
     () => kinds.filter((k) => records.some((r) => r.kind === k.id)).map((k) => ({ id: k.id, name: k.display_name_plural || k.display_name })),
     [kinds, records],
@@ -263,7 +268,14 @@ export function PlaceItemsView({
         if (!isDesktop) setSheetOpen(false);
         return;
       }
-      if (!p.moved && ev.type !== "pointercancel") toggle(key);
+      if (!p.moved && ev.type !== "pointercancel") {
+        const pickingUp = !picked.has(key);
+        toggle(key);
+        // On a phone the drawer covers the plan: a thing picked up from it
+        // needs the plan in view to be put down (#4436). The bar it folds to
+        // says what is picked up, and opens again to pick more.
+        if (pickingUp && from === "rail" && !isDesktop) setSheetOpen(false);
+      }
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", end);
@@ -364,7 +376,7 @@ export function PlaceItemsView({
           {isDesktop && (
             <div className="flex items-baseline justify-between gap-2">
               <h2 className="text-sm font-semibold text-content dark:text-mortar-100">Things to place</h2>
-              <span className="text-xs text-muted">{unplacedCount} without a place</span>
+              <span className="text-xs text-muted">{withoutAPlace}</span>
             </div>
           )}
           <SearchInput
@@ -457,7 +469,11 @@ export function PlaceItemsView({
             className="w-full flex items-center justify-between gap-2 px-4 py-3 text-sm"
           >
             <span className="font-medium">
-              {previewId ? pathOf(previewId, byId) : `Things to place · ${unplacedCount} without a place`}
+              {previewId
+                ? pathOf(previewId, byId)
+                : picked.size > 0
+                  ? `Things to place · ${nameOf([...picked])} picked up`
+                  : `Things to place · ${withoutAPlace}`}
             </span>
             {sheetOpen ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
           </button>

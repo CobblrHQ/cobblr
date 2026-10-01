@@ -12,8 +12,7 @@
 // different write paths for the same number.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Minus, Plus } from "lucide-react";
-import { MutationError } from "@cobblr/platform-web";
+import { StockStepper } from "@cobblr/platform-web";
 import { rollupHoldings, type CardRollup } from "@cobblr/platform-contract/holdings";
 import { useInventory } from "./context";
 import type { HoldingRow } from "./api";
@@ -29,10 +28,16 @@ type QtyCache = { pages: QtyPage[]; pageParams: unknown[] };
 export function QtyStepper({
   partId,
   qty,
+  unit,
+  label,
   size = "lg",
 }: {
   partId: string;
   qty: number;
+  /** The unit it is kept in: a measured one (kg, m) is used by amount. */
+  unit: string | null | undefined;
+  /** What is counted, for the buttons' names ("Black PLA"). */
+  label: string;
   /** "lg" on the detail hero, "sm" in a table row. */
   size?: "lg" | "sm";
 }) {
@@ -72,56 +77,19 @@ export function QtyStepper({
       void qc.invalidateQueries({ queryKey: ["inventory-part", partId] });
     },
   });
-  const step = (delta: number) => {
-    if (adjust.isPending) return;
-    adjust.mutate(delta);
-  };
-  const display = Number.isFinite(qty)
-    ? Number.isInteger(qty)
-      ? String(qty)
-      : String(parseFloat(qty.toFixed(3)))
-    : "—";
-  const btn =
-    size === "lg"
-      ? "w-7 h-7"
-      : "w-5 h-5";
-  const val =
-    size === "lg"
-      ? "text-lg w-10"
-      : "text-sm w-8";
+  // The one stepper (platform-web StockStepper): a counted thing steps by one,
+  // a thing kept in a measured unit (a spool in kg) takes what was used,
+  // never a whole kilogram per tap (#4030).
   return (
-    // A refused change says why, under the buttons (MutationError): a member
-    // without the right to change counts used to press −1 and see nothing.
-    <span className="inline-flex flex-col items-start" onClick={(e) => e.stopPropagation()}>
-    <span
-      className="inline-flex items-center gap-1"
-      title="Adjust stock"
-      // In a table the row navigates to the record; stepping must not open it.
-      onClick={(e) => e.stopPropagation()}
-    >
-      <button
-        type="button"
-        onClick={() => step(-1)}
-        disabled={qty <= 0 || adjust.isPending}
-        className={`${btn} grid place-items-center rounded-md border border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100 disabled:opacity-30 disabled:cursor-not-allowed transition`}
-        aria-label="Decrease quantity"
-      >
-        <Minus size={size === "lg" ? 13 : 11} />
-      </button>
-      <span className={`font-mono ${val} text-center tabular-nums text-content dark:text-mortar-100`}>
-        {display}
-      </span>
-      <button
-        type="button"
-        onClick={() => step(1)}
-        disabled={adjust.isPending}
-        className={`${btn} grid place-items-center rounded-md border border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100 disabled:opacity-30 disabled:cursor-not-allowed transition`}
-        aria-label="Increase quantity"
-      >
-        <Plus size={size === "lg" ? 13 : 11} />
-      </button>
-    </span>
-    <MutationError mutation={adjust} className={size === "lg" ? "mt-1 max-w-xs" : "mt-0.5 max-w-[14rem] text-[11px]"} />
+    // In a table the row navigates to the record; stepping must not open it.
+    <span className="inline-flex" onClick={(e) => e.stopPropagation()}>
+      <StockStepper
+        qty={qty}
+        unit={unit}
+        label={label}
+        size={size === "lg" ? "md" : "sm"}
+        onStep={async (delta) => Number((await adjust.mutateAsync(delta)).qty)}
+      />
     </span>
   );
 }

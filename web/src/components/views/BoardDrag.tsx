@@ -109,6 +109,7 @@ export function BoardDnd({
   };
   return (
     <Ctx.Provider value={value}>
+      {/* drag-2d: a card crosses columns sideways, so this drag keeps x. */}
       <DndContext sensors={sensors} onDragStart={() => swallowNextClick()} onDragEnd={onDragEnd} accessibility={{ announcements }}>
         {children}
       </DndContext>

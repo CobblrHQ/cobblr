@@ -3,6 +3,7 @@ type: feature
 scope: auth
 date: 2026-09-28
 docs_target: docs/USER_GUIDE.md#Inviting others to a workspace
+docs_published: 2026-10-01
 ---
 **The label is the door.** A join link can now be offered from the workspace's item labels: someone who scans a label without an account sees "Join the club to take one", and joining takes them back to the thing they scanned. It is off unless you tick **Item labels offer it too**. People without a password can ask the join page to email them a link that joins them and opens the item. "Sign in to join" on an invite now keeps the invite instead of losing it.
 

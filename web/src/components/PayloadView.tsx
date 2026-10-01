@@ -20,6 +20,8 @@
 import { useMemo, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import { Braces, Image as ImageIcon, Text } from "lucide-react";
+import { Lightbox } from "@cobblr/platform-web";
+import { formatStoredMoney } from "@cobblr/platform-contract/money";
 
 /** Model output is markdown. Rendered raw it reads "- **Duplicate locations**
  *  — full location list…", which is the formatting characters competing with
@@ -69,14 +71,15 @@ function Chip({ children }: { children: ReactNode }) {
 }
 
 function ImageValue({ src }: { src: string }) {
+  const [open, setOpen] = useState(false);
   return (
-    <a href={src} target="_blank" rel="noopener noreferrer" className="block mt-1">
-      <img
-        src={src}
-        alt="Image sent with this call"
-        className="max-h-56 rounded border border-line dark:border-slate-700"
-      />
-    </a>
+    <>
+      <button type="button" onClick={() => setOpen(true)} aria-label="Open the image sent with this call" className="block mt-1 cursor-zoom-in">
+        {/* photo-frame: an image an action call carried, shown as it was sent */}
+        <img src={src} alt="Image sent with this call" className="max-h-56 rounded border border-line dark:border-slate-700" />
+      </button>
+      {open && <Lightbox items={[{ key: "sent", caption: "Image sent with this call", src }]} index={0} onClose={() => setOpen(false)} />}
+    </>
   );
 }
 
@@ -264,7 +267,7 @@ export function usageLine(x: {
     bits.push("tokens not reported");
     title = "This provider did not return a usage count.";
   }
-  if (x.cost_cents != null) bits.push(`$${(x.cost_cents / 100).toFixed(2)}`);
+  if (x.cost_cents != null) bits.push(formatStoredMoney(x.cost_cents, "cents") ?? "");
   if (x.cached) bits.push("cached");
   return { text: bits.join(" · "), title };
 }

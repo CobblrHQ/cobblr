@@ -21,7 +21,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-locations",
-  version: "0.7.0",
+  version: "0.7.2",
   displayName: "Locations",
   description:
     "Where your things live: rooms, shelves and bins, one inside another, and a floor plan to draw them on.",
@@ -189,12 +189,13 @@ export default defineModule({
         examples: ["move everything from Bin 3 to Bin 7", "empty the old shelf into the new one", "merge the two Bin 3s"],
         label: "Move everything to another place",
         description:
-          "Move every thing kept in this place into another place, through placement, each move recorded on the thing. `to`: the destination place's id. `places: true` also moves the places inside it (with their contents) under the destination. `then_delete: true` merges: moves everything including the places, then deletes this now-empty place. Refused when the destination is inside this place and places would move. Undo puts each thing and place back, and restores a merged-away place.",
+          "Move every thing kept in this place into another place, through placement, each move recorded on the thing. `to`: the destination place's id, or with `to_kind` a thing that holds things (a Backpack, a toolbox; the things go inside it, places cannot). `places: true` also moves the places inside it (with their contents) under the destination. `then_delete: true` merges: moves everything including the places, then deletes this now-empty place. Refused when the destination is inside this place and places would move. Undo puts each thing and place back, and restores a merged-away place.",
         appliesTo: { kinds: ["core-locations:location"] },
         invokeHandler: "core-locations.move-everything",
         userInvokable: false,
         argsSchema: {
           to: { label: "Destination place id", type: "text" as const, required: true },
+          to_kind: { label: "Destination kind, when it is a thing that holds things (a Backpack) rather than a place", type: "text" as const },
           places: { label: "Also move the places inside it", type: "boolean" as const },
           then_delete: { label: "Then delete this place (merge)", type: "boolean" as const },
         },

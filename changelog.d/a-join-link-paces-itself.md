@@ -3,6 +3,7 @@ type: feature
 scope: auth
 date: 2026-09-28
 docs_target: docs/USER_GUIDE.md#Inviting others to a workspace
+docs_published: 2026-10-01
 ---
 **A join link paces itself.** A wall QR's join link now runs until you revoke it, with a burst guard instead of an end date: 10 joins a day by default (or any number per day, week, month or year). More than that pauses the link and tells the admins, who can **Resume** it or give it a **New code** so the old QR stops working.
 

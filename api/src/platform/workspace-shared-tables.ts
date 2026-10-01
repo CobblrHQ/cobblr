@@ -68,6 +68,8 @@ export const SHARED_WORKSPACE_TABLES: Record<string, SharedTablePolicy> = {
   service_capability_policies: { travels: "backup", users: ["updated_by"] },
   service_job_cards: { travels: "never", why: "cards a running job already sent to people; the jobs they belong to do not travel" },
   service_pending_confirms: { travels: "never", why: "a running job waiting for a yes; the job does not travel, so neither does its question" },
+  service_confirm_triggers: { travels: "never", why: "a yes given to one waiting job ahead of its moment; the job does not travel, and a yes never becomes a standing permission somewhere else" },
+  service_watched_jobs: { travels: "never", why: "the supervisor's list of jobs still moving; the jobs do not travel, and a restored workspace starts with nothing running" },
   core_recurrence_entity_state: { travels: "backup" },
   core_labels_qr_tokens: {
     travels: "backup",
@@ -127,6 +129,7 @@ export const SHARED_WORKSPACE_TABLES: Record<string, SharedTablePolicy> = {
   tags: { travels: "never", why: "retired: tags live in core-tags' tables in the workspace's own database" },
   feedback: { travels: "never", why: "what the workspace's people told the operator, not the workspace's data" },
   product_events: { travels: "never", why: "the operator's usage counts, not the workspace's data" },
+  product_daily_counts: { travels: "never", why: "the operator's usage counts, not the workspace's data" },
   impersonation_sessions: { travels: "never", why: "the operator's audit of support sessions" },
   test_org_pool: { travels: "never", why: "test infrastructure" },
   try_sandbox_tokens: { travels: "never", why: "try-it sandbox bookkeeping" },

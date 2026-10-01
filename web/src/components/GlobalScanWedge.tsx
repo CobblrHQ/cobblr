@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Modal, useToast } from "@cobblr/platform-web";
 import { MapPin, ScanLine } from "lucide-react";
+import { currentScanTarget } from "../lib/scanTarget";
 import { wedgeVerdict } from "../lib/scanPayload";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
 import { resolveSessionBatch } from "../lib/scanSession";
@@ -125,6 +126,15 @@ export function GlobalScanWedge({ activeSlug }: { activeSlug: string }) {
   // nothing resolves, so today's behaviour is unchanged for unrecognised codes.
   async function handleNonToken(code: string): Promise<void> {
     const out = await api.scanResolveExternal(activeSlug, code).catch(() => null);
+    const target = currentScanTarget();
+    if (target && out?.outcome === "resolved" && target.takes(out.entity_kind)) {
+      try {
+        toast.success(await target.take({ kind: out.entity_kind, id: out.entity_id, label: out.entity_label }));
+      } catch (e) {
+        toast.error(e instanceof ApiError ? e.message : String(e));
+      }
+      return;
+    }
     const action = scanResolveActionFor(out);
     switch (action.type) {
       case "navigate":
@@ -156,6 +166,17 @@ export function GlobalScanWedge({ activeSlug }: { activeSlug: string }) {
     }
     if (resolved.org_slug && resolved.org_slug !== activeSlug) {
       toast.error("That label belongs to a different workspace.");
+      return;
+    }
+    // The open page takes this kind of thing (a printer's Loaded panel takes
+    // a spool): it goes there instead of opening its own page.
+    const target = currentScanTarget();
+    if (target && resolved.entity_kind && resolved.entity_id && target.takes(resolved.entity_kind)) {
+      try {
+        toast.success(await target.take({ kind: resolved.entity_kind, id: resolved.entity_id, label: "" }));
+      } catch (e) {
+        toast.error(e instanceof ApiError ? e.message : String(e));
+      }
       return;
     }
     const r: ResolvedQr = { path: resolved.detail_path, noun: kindNoun(resolved.entity_kind) };

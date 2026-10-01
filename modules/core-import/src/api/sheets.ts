@@ -378,6 +378,7 @@ sheetsRouter.get("/sheets/imports", (req, res, next) => {
       .selectFrom("core_import_runs")
       .select(["id", "created_at", "filename", "status", "progress_done", "progress_total", "summary", "error", "finished_at", "undone_at", "undo_report"])
       .orderBy("created_at", "desc")
+      // list-cap-ok: the recent imports, the ones a person checks or undoes; not an archive
       .limit(25)
       .execute();
     res.json({ items: rows });

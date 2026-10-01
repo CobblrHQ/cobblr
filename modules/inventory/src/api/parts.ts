@@ -5,17 +5,21 @@
 // time. We do not denormalise stock totals; one source of truth is
 // the row, and aggregations live in the read query.
 
+import { heldInLines, placeNames } from "@cobblr/platform-contract";
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { sql, type RawBuilder } from "kysely";
 import { csvCell } from "@cobblr/platform-contract/csv";
-import { daysUntilField, platform, stockDisclosureFromConfig, type FilterPredicate } from "@cobblr/platform-contract";
+import { daysUntilField, likeNeedle, platform, stockDisclosureFromConfig, valueSearchWhere, type FilterPredicate } from "@cobblr/platform-contract";
+import { asMeasure, measureTokens } from "@cobblr/platform-contract/measure";
+import { formatMoneyPlain, moneyStorageOf, storedCents } from "@cobblr/platform-contract/money";
+import { readsValues, refreshMeasureReadings } from "../measure-readings.js";
 import { floorDelta } from "../stock-floor.js";
 import { applyPartFilters, applyPartSort } from "./part-query.js";
 import { suggestKindsFromPhoto } from "./suggest-kinds.js";
 import { instanceOf, instanceQtyUnit, partKindOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js";
-import { routeUnknownToMetadata, refuseUnknownFields, coerceMetadata } from "@cobblr/platform-contract/entity-metadata";
+import { routeUnknownToMetadata, refuseUnknownFields, coerceMetadata, FIT_PATTERNS } from "@cobblr/platform-contract/entity-metadata";
 import { applyJsonbMerge } from "@cobblr/platform-contract/jsonb-merge";
 import { castFieldValues } from "@cobblr/platform-contract/field-values";
 import { disclosureHandler, fieldsShowStockSignal, latchInstanceStock } from "./disclosure.js";
@@ -25,6 +29,7 @@ import { arrivingLots, withBatches } from "./action-handlers.js";
 import { isLowStock, modelIsLow, modelOfUnit, onHandCount, openUnitsFor, openUnitsSummary } from "../on-hand.js";
 import { consumptionUnitOf } from "../consumption-unit.js";
 import { attachHoldings, holdingsCtx, liftHoldingsToCards, releaseForDelete, spreadIdentity } from "./holdings.js";
+import { annotateInstalled } from "./installed.js";
 
 export const partsRouter = Router({ mergeParams: true });
 
@@ -120,6 +125,35 @@ async function maybeLatchStock(
 // disclosure.ts + docs/design-decisions/one-record-substrate.md.
 partsRouter.get("/disclosure", disclosureHandler);
 
+// Which of the list's filters this table's records can use. A filter over a
+// field no record fills (warranty, insured, a lifecycle) narrows nothing and
+// reads as a question the person should have an answer to; seven of them
+// stood above an empty shop at phone width. One aggregate, instance-scoped,
+// before "/:id" so it is not read as a part id.
+// AI-REACH: exempt — describes which list filters apply; the list itself is the read Cobb uses.
+partsRouter.get(
+  "/facets",
+  asyncHandler(async (req, res) => {
+    const db = tenantDb(req);
+    const row = await db
+      .selectFrom("inventory_parts as p")
+      .where("p.instance", "=", instanceOf(req))
+      .select([
+        sql<number>`count(*) filter (where not p.archived)::int`.as("total"),
+        sql<boolean>`coalesce(bool_or(p.category_id is not null), false)`.as("category"),
+        sql<boolean>`coalesce(bool_or(p.location_id is not null), false)`.as("location"),
+        sql<boolean>`coalesce(bool_or(p.state <> 'active'), false)`.as("state"),
+        sql<boolean>`coalesce(bool_or(coalesce(p.metadata->>'lifecycle', p.metadata->>'state') in ('sealed', 'built', 'parted-out')), false)`.as("lifecycle"),
+        sql<boolean>`coalesce(bool_or(p.min_qty is not null and p.min_qty > 0), false)`.as("low_stock"),
+        sql<boolean>`coalesce(bool_or(p.archived), false)`.as("archived"),
+        sql<boolean>`coalesce(bool_or(p.warranty_expires is not null), false)`.as("warranty"),
+        sql<boolean>`coalesce(bool_or(p.insured), false)`.as("insured"),
+      ])
+      .executeTakeFirstOrThrow();
+    res.json(row);
+  }),
+);
+
 const PartCreate = z.object({
   name: z.string().min(1).max(160),
   description: z.string().max(8_000).nullable().optional(),
@@ -172,6 +206,58 @@ const StockAdjust = z.object({
   source_id: z.string().max(120).optional(),
 });
 
+/** The required custom fields of the kind this request lists. */
+async function requiredFieldsOf(req: Request): Promise<Array<{ name: string; label: string }>> {
+  const inst = instanceOf(req);
+  const kind = inst === "inventory" ? "inventory:part" : `${inst}:item`;
+  return (await platform().entities.fieldsFor(tenantContext(req).org.id, kind))
+    .filter((f) => f.required && f.type !== "computed")
+    .map((f) => ({ name: f.name, label: f.display_label }));
+}
+
+/** The custom fields a stored value can fail to fit: a number, a date, a
+ *  yes/no, a dropdown. Capture keeps what it read; these are what a list
+ *  counts as "don't fit their field" for a person to fix. */
+async function fitFieldsOf(req: Request): Promise<Array<{ name: string; label: string; type: string; choices: string[] | null }>> {
+  const inst = instanceOf(req);
+  const kind = inst === "inventory" ? "inventory:part" : `${inst}:item`;
+  return (await platform().entities.fieldsFor(tenantContext(req).org.id, kind))
+    // A list that learns is open: a value off it fits (#4516).
+    .filter((f) => f.type === "number" || f.type === "measure" || f.type === "date" || f.type === "boolean" || (f.type === "text" && (f.choices?.length ?? 0) > 0 && f.learns !== true))
+    .map((f) => ({ name: f.name, label: f.display_label, type: f.type, choices: f.choices ?? null }));
+}
+
+/** True for a record whose stored value in this field does not fit it, read
+ *  by the same patterns the contract's fieldValueProblem uses. A JSON number,
+ *  boolean or list is judged by its type and always fits here. */
+function misfitSql(f: { name: string; type: string; choices: string[] | null }): RawBuilder<boolean> {
+  const v = sql`p.metadata->${f.name}`;
+  const t = sql`(p.metadata->>${f.name})`;
+  const present = sql`jsonb_typeof(${v}) = 'string' and btrim(${t}) <> ''`;
+  if (f.type === "number") return sql<boolean>`(${present} and not (${t} ~ ${FIT_PATTERNS.number}))`;
+  // A measured value fits as a number, a measure, or text that reads as one
+  // (its reading is beside it in p.measures, read fresh by the caller).
+  if (f.type === "measure") {
+    return sql<boolean>`(${present} and not (${t} ~ ${FIT_PATTERNS.number}) and not exists (
+      select 1 from jsonb_array_elements(coalesce(p.measures, '[]'::jsonb)) r where r ->> 'field' = ${f.name}))`;
+  }
+  if (f.type === "date") return sql<boolean>`(${present} and not (${t} ~ ${FIT_PATTERNS.date}))`;
+  if (f.type === "boolean") return sql<boolean>`(${present} and lower(btrim(${t})) <> all(${[...FIT_PATTERNS.yesNo]}::text[]))`;
+  const listed = (f.choices ?? []).map((c) => c.trim().toLowerCase());
+  return sql<boolean>`(${present} and lower(btrim(${t})) <> all(${listed}::text[]))`;
+}
+
+function doesntFitSql(fields: ReadonlyArray<{ name: string; type: string; choices: string[] | null }>): RawBuilder<boolean> {
+  if (fields.length === 0) return sql<boolean>`false`;
+  return sql<boolean>`(${sql.join(fields.map(misfitSql), sql` or `)})`;
+}
+
+/** True for a record with any of these fields empty in its metadata. */
+function needsValueSql(names: readonly string[]): RawBuilder<boolean> {
+  if (names.length === 0) return sql<boolean>`false`;
+  return sql<boolean>`(${sql.join(names.map((n) => sql`coalesce(p.metadata->>${n}, '') = ''`), sql` or `)})`;
+}
+
 const Truthy = z.union([z.literal("1"), z.literal("true"), z.literal("0"), z.literal("false")]);
 const isTruthy = (v: string | undefined): boolean => v === "1" || v === "true";
 
@@ -181,12 +267,22 @@ const ListQuery = z.object({
   location_id: z.string().uuid().optional(),
   state: z.enum(["active", "draft", "needs_review"]).optional(),
   low_stock: Truthy.optional(),
+  /** Leave out what has nothing on hand: everything of it installed in an
+   *  asset or machine, or none left. Off by default: an installed part's row
+   *  still has value (what you own, what you paid, where it went). */
+  hide_unavailable: Truthy.optional(),
   /** Show archived rows. Default false — archived parts are hidden
    *  from the list. */
   show_archived: Truthy.optional(),
   /** Only archived rows. Overrides show_archived. */
   archived_only: Truthy.optional(),
   insured_only: Truthy.optional(),
+  /** Only records with a required custom field still empty. A create may
+   *  leave one empty (capture first); this is where they are found again. */
+  needs_value: Truthy.optional(),
+  /** Only records holding a value that does not fit its field (a word in a
+   *  number field, a value not among a dropdown's choices). */
+  doesnt_fit: Truthy.optional(),
   /** Warranty expires within N days. */
   warranty_expires_within_days: z.coerce.number().int().positive().max(3650).optional(),
   /** Lego-style lifecycle filter (backed by metadata.state).
@@ -312,6 +408,10 @@ partsRouter.get(
     const filter = q.data;
     const db = tenantDb(req);
 
+    // A search, sort or comparison that reads values reads them fresh: a part
+    // edited since its values were last read is read again first (one index
+    // probe when nothing is stale).
+    if (readsValues(filter)) await refreshMeasureReadings(db, { instance: req.query.all_instances === "1" ? undefined : instanceOf(req) });
     let query = listSelect(db);
     // A view's own query, first, so its predicates AND with the page's.
     // The reader's day: what a view's "today" compares against (a "Ready to
@@ -350,8 +450,18 @@ partsRouter.get(
         // seq-scans at scale). search_blob is already lower()'d and
         // concatenates name + notes + serial + model + manufacturer, so
         // this matches the old behaviour but is an index scan at 40k+.
-        const like = `%${raw.toLowerCase()}%`;
-        query = query.where(sql<boolean>`p.search_blob like ${like}`);
+        // A value in the search ("10k", "100 nF 16V") is found by value
+        // (±1%, in its unit) as well as by text, and never as the text of a
+        // part holding that number in another unit (the 10 kHz crystal).
+        const read = measureTokens(raw);
+        if (read) {
+          query = query.where((eb) =>
+            valueSearchWhere(eb, read, { text: (w) => [sql<boolean>`p.search_blob like ${likeNeedle(w)}`], readings: "p.measures" }),
+          );
+        } else {
+          const like = likeNeedle(raw);
+          query = query.where(sql<boolean>`p.search_blob like ${like}`);
+        }
       }
     }
     if (filter.category_id) query = query.where("p.category_id", "=", filter.category_id);
@@ -385,6 +495,12 @@ partsRouter.get(
     if (isTruthy(filter.insured_only)) {
       query = query.where("p.insured", "=", true);
     }
+    if (isTruthy(filter.needs_value)) {
+      query = query.where(needsValueSql((await requiredFieldsOf(req)).map((f) => f.name)));
+    }
+    if (isTruthy(filter.doesnt_fit)) {
+      query = query.where(doesntFitSql(await fitFieldsOf(req)));
+    }
     if (filter.warranty_expires_within_days) {
       const days = filter.warranty_expires_within_days;
       query = query.where(
@@ -414,12 +530,13 @@ partsRouter.get(
     // available qty). Mixing it with keyset pagination would make
     // next_cursor unreliable, so when it's on we fetch a generous
     // single page — the low-stock subset is inherently small.
-    const fetchLimit = lowStockOnly ? 200 : filter.limit + 1;
+    const hideUnavailable = filter.hide_unavailable === "1" || filter.hide_unavailable === "true";
+    const fetchLimit = lowStockOnly || hideUnavailable ? 200 : filter.limit + 1;
     const rows = await query.limit(fetchLimit).execute();
 
     let hasMore = false;
     let pageRows = rows;
-    if (!lowStockOnly && rows.length > filter.limit) {
+    if (!lowStockOnly && !hideUnavailable && rows.length > filter.limit) {
       hasMore = true;
       pageRows = rows.slice(0, filter.limit);
     }
@@ -502,6 +619,12 @@ partsRouter.get(
         if (p.location_id) p.location_name = byId.get(p.location_id) ?? null;
       }
     }
+    // A thing inside another thing (a Backpack) has no place of its own: the
+    // Location column says what it is in, and where that is.
+    for (const [id, line] of await heldInLines(ctx.org.id, "inventory:part", filtered)) {
+      const p = filtered.find((x) => x.id === id);
+      if (p) p.location_name = line;
+    }
 
     // Catalog-image fallback: for parts that don't carry their own
     // image_path, walk the `matches → core-catalogs:entry` pairing
@@ -560,7 +683,11 @@ partsRouter.get(
     // be an N+1 on the hottest read in the module.
     const unitCounts = await unitCountsFor(req, ctx.org.id, filtered.map((p) => p.id));
     const withUnits = filtered.map((p) => ({ ...p, units_count: unitCounts.get(p.id)?.count ?? 0 }));
-    const withRows = nest ? await attachHoldings(holdingsCtx(req), withUnits) : withUnits;
+    const withHoldings = nest ? await attachHoldings(holdingsCtx(req), withUnits) : withUnits;
+    // What of each is installed in an asset or machine, and what is spare: the
+    // row says "0 spare · 1 installed in Gaming PC" and Hide unavailable reads it.
+    const annotated = await annotateInstalled(ctx.org.id, withHoldings);
+    const withRows = hideUnavailable ? annotated.filter((p) => p.spare_qty > 0) : annotated;
 
     const last = cursorRow;
     const next_cursor = !hasMore || !last
@@ -589,6 +716,50 @@ partsRouter.get(
 // CSV export — same shape as the list query (search + filters), but
 // returns every matching row (no pagination) as text/csv. Headers
 // match the importer's synonyms so the export round-trips.
+// How many of this list's records still need a value in a required field,
+// and which fields those are: the count beside the list's filter.
+partsRouter.get(
+  "/needs-value",
+  asyncHandler(async (req, res) => {
+    const required = await requiredFieldsOf(req);
+    if (required.length === 0) {
+      res.json({ count: 0, fields: [] });
+      return;
+    }
+    const row = await tenantDb(req)
+      .selectFrom("inventory_parts as p")
+      .select(sql<number>`count(*)::int`.as("n"))
+      .where("p.instance", "=", instanceOf(req))
+      .where("p.archived", "=", false)
+      .where(needsValueSql(required.map((f) => f.name)))
+      .executeTakeFirst();
+    res.json({ count: row?.n ?? 0, fields: required.map((f) => f.label) });
+  }),
+);
+
+// How many of this list's records hold a value that does not fit its field,
+// field by field: the count beside the list's filter.
+partsRouter.get(
+  "/doesnt-fit",
+  asyncHandler(async (req, res) => {
+    const fields = await fitFieldsOf(req);
+    if (fields.length === 0) {
+      res.json({ count: 0, fields: [] });
+      return;
+    }
+    const db = tenantDb(req);
+    if (fields.some((f) => f.type === "measure")) await refreshMeasureReadings(db, { instance: instanceOf(req) });
+    const base = () => db.selectFrom("inventory_parts as p").select(sql<number>`count(*)::int`.as("n")).where("p.instance", "=", instanceOf(req)).where("p.archived", "=", false);
+    const total = await base().where(doesntFitSql(fields)).executeTakeFirst();
+    const perField: Array<{ label: string; count: number }> = [];
+    for (const f of fields) {
+      const r = await base().where(misfitSql(f)).executeTakeFirst();
+      if ((r?.n ?? 0) > 0) perField.push({ label: f.label, count: r!.n });
+    }
+    res.json({ count: total?.n ?? 0, fields: perField });
+  }),
+);
+
 partsRouter.get(
   "/export.csv",
   asyncHandler(async (req, res) => {
@@ -629,21 +800,27 @@ partsRouter.get(
       .orderBy("p.asset_id", "asc")
       .where("p.instance", "=", instanceOf(req));
 
+    if (readsValues(filter)) await refreshMeasureReadings(db, { instance: instanceOf(req) });
     if (filter.search) {
       const raw = filter.search.trim();
       const assetMatch = raw.match(/^#?\s*0*(\d+)\s*$/);
       if (assetMatch) {
         query = query.where("p.asset_id", "=", Number(assetMatch[1]));
       } else {
-        const like = `%${raw.toLowerCase()}%`;
-        query = query.where((eb) =>
-          eb.or([
-            eb(sql<string>`lower(p.name)`, "like", like),
-            eb(sql<string>`lower(coalesce(p.serial_number,''))`, "like", like),
-            eb(sql<string>`lower(coalesce(p.model_number,''))`, "like", like),
-            eb(sql<string>`lower(coalesce(p.manufacturer,''))`, "like", like),
-          ]),
-        );
+        const words = (w: string) => {
+          const like = likeNeedle(w);
+          return [
+            sql<boolean>`lower(p.name) like ${like}`,
+            sql<boolean>`lower(coalesce(p.serial_number,'')) like ${like}`,
+            sql<boolean>`lower(coalesce(p.model_number,'')) like ${like}`,
+            sql<boolean>`lower(coalesce(p.manufacturer,'')) like ${like}`,
+          ];
+        };
+        // The same value-aware search as the list (valueSearchWhere).
+        const read = measureTokens(raw);
+        query = read
+          ? query.where((eb) => valueSearchWhere(eb, read, { text: words, readings: "p.measures" }))
+          : query.where((eb) => eb.or(words(raw)));
       }
     }
     if (filter.category_id) query = query.where("p.category_id", "=", filter.category_id);
@@ -658,20 +835,9 @@ partsRouter.get(
 
     const rows = await query.execute();
 
-    // Resolve location names through the platform resolver (one
-    // batch).
-    const locationIds = Array.from(
-      new Set(rows.map((r) => r.location_id).filter((id): id is string => !!id)),
-    );
-    const locationNames = new Map<string, string>();
-    if (locationIds.length > 0) {
-      const ctx = tenantContext(req);
-      const resolved = await platform().entities.lookupMany(
-        ctx.org.id,
-        locationIds.map((id) => ({ kind: "core-locations:location", id })),
-      );
-      for (const r of resolved) locationNames.set(r.id, r.title);
-    }
+    // Where each row is, by name: its place, or what it is inside ("Backpack,
+    // in Desk drawer"), the same line the list and the record show.
+    const where = await placeNames(tenantContext(req).org.id, "inventory:part", rows);
 
     // The table's OWN columns come after the module's. A bundle's fields
     // (author, isbn, reading status on a bookshelf; expiry and storage on a
@@ -685,13 +851,25 @@ partsRouter.get(
     const exportKind = instanceOf(req) === "inventory" ? "inventory:part" : `${instanceOf(req)}:item`;
     const ownFields = await platform().entities.fieldsFor(exportCtx.org.id, exportKind);
     const labelled = await platform().entities.withFieldLabels(exportCtx.org.id, exportKind, rows);
-    const ownCell = (row: Record<string, unknown>, f: { name: string; type: string }): string => {
+    const ownCell = (row: Record<string, unknown>, f: { name: string; type: string; unit?: string | null; field_role?: string | null }): string => {
       if (f.type === "relation" || f.type === "member") {
         const label = row[`${f.name}_label`];
         if (typeof label === "string") return label;
       }
       const v = (row.metadata as Record<string, unknown> | null)?.[f.name];
       if (v == null) return "";
+      // Money as a spreadsheet keeps it ("4300.00"), which imports back the same.
+      const money = moneyStorageOf(f);
+      if (money) {
+        const c = storedCents(v, money);
+        if (c !== null) return formatMoneyPlain(c);
+      }
+      // A measured value exports as it was typed ("4k7"), which imports back
+      // to the same value.
+      if (f.type === "measure") {
+        const m = asMeasure(v);
+        if (m) return m.text;
+      }
       if (Array.isArray(v)) return v.map((x) => String(x)).join("; ");
       if (typeof v === "object") return JSON.stringify(v);
       return String(v);
@@ -756,7 +934,7 @@ partsRouter.get(
         r.archived ? "true" : "false",
         r.state,
         r.category_name ?? "",
-        r.location_id ? (locationNames.get(r.location_id) ?? "") : "",
+        where.get(r.id) ?? "",
         r.notes ?? "",
         new Date(r.created_at).toISOString(),
         ...ownFields.map((f) => ownCell(r as Record<string, unknown>, f)),
@@ -1274,6 +1452,7 @@ partsRouter.patch(
       action: "part_updated",
       ref: { module: "inventory", entityType: "part", entityId: updated.id },
       diff: { metadata: own },
+      before,
     });
     // Same event shape as PATCH /:id — a wire comparing {{event.before.x}} vs
     // {{event.after.x}} must fire for a custom-field edit too. The after-bag is
@@ -1384,6 +1563,7 @@ partsRouter.patch(
       // for the merge, and the history is the one place a value a later
       // write replaced can be read back (#3625).
       diff: hoistedMerge ? { ...parsed.data, metadata: hoistedMerge } : parsed.data,
+      before,
     });
     // Flat before/after field bags (native columns + flattened metadata) so a
     // transition-aware wire can compare {{event.before.x}} vs {{event.after.x}}

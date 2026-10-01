@@ -4,6 +4,7 @@ scope: core-scan
 date: 2026-09-27
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
 ui: none (the card's existing doubt line renders the row's note; the note is written server-side)
+docs_published: 2026-10-01
 ---
 A product somebody has already named is known to the next person who scans it. When you file a barcode item that no catalogue knew, the name you settled on goes to Cobblr's shared barcode network, so the next scan of that barcode anywhere is named at once, without an AI identification. It shows as named by one person until someone else agrees, and you can always correct it.
 

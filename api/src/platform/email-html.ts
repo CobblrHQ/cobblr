@@ -10,6 +10,9 @@
 
 import { escHtml } from "./esc-html.js";
 
+/** One line of an aside: plain text, a link, or a bold phrase, in order. */
+export type EmailLine = Array<string | { text: string; href: string } | { strong: string }>;
+
 export interface CobblrEmail {
   greeting: string;
   /** Optional quoted block above the body (a report, an ask). */
@@ -19,6 +22,36 @@ export interface CobblrEmail {
   ctaUrl?: string;
   ctaLabel?: string;
   footerNote?: string;
+  /** A short headed list after the body, before the button (the feedback
+   *  emails' Discord invitation). Omitted, or with no lines, it is absent. */
+  aside?: { heading: string; lines: EmailLine[] };
+}
+
+const lineHtml = (line: EmailLine): string =>
+  line
+    .map((seg) =>
+      typeof seg === "string"
+        ? escHtml(seg)
+        : "href" in seg
+          ? `<a href="${escHtml(seg.href)}" style="color:#8a6f47;">${escHtml(seg.text)}</a>`
+          : `<strong>${escHtml(seg.strong)}</strong>`,
+    )
+    .join("");
+
+/** The same lines for the plain-text part, each URL written out. A link whose
+ *  text is its own address is written once. */
+export function emailLinesText(lines: EmailLine[]): string {
+  return lines
+    .map(
+      (line) =>
+        "• " +
+        line
+          .map((seg) =>
+            typeof seg === "string" ? seg : "href" in seg ? (seg.href.endsWith(seg.text) ? seg.href : `${seg.text} (${seg.href})`) : seg.strong,
+          )
+          .join(""),
+    )
+    .join("\n");
 }
 
 export function cobblrEmailHtml(opts: CobblrEmail): string {
@@ -32,11 +65,17 @@ export function cobblrEmailHtml(opts: CobblrEmail): string {
   const cta = opts.ctaUrl && opts.ctaLabel
     ? `<p style="margin:22px 0 8px;"><a href="${escHtml(opts.ctaUrl)}" style="display:inline-block;background:#8a6f47;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;">${escHtml(opts.ctaLabel)}</a></p>`
     : "";
+  const asideLines = opts.aside?.lines ?? [];
+  const aside = asideLines.length
+    ? `<p style="margin:18px 0 10px;font-weight:600;">${escHtml(opts.aside!.heading)}</p>` +
+      asideLines.map((l, i) => `<p style="margin:0 0 ${i === asideLines.length - 1 ? 14 : 10}px;">&bull; ${lineHtml(l)}</p>`).join("")
+    : "";
   return `<!DOCTYPE html><html><body style="margin:0;background:#f3f4f6;padding:24px 12px;">
   <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 28px 24px;">
     <p style="margin:0 0 16px;">${escHtml(opts.greeting)}</p>
     ${quote}
     ${opts.bodyParas.map(para).join("")}
+    ${aside}
     ${cta}
     ${opts.footerNote ? `<p style="margin:14px 0 0;color:#9ca3af;font-size:12px;">${escHtml(opts.footerNote)}</p>` : ""}
     <p style="margin:18px 0 0;color:#9ca3af;font-size:12px;">The Cobblr team</p>

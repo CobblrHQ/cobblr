@@ -51,3 +51,5 @@ export { projectsRouter as primaryRouter };
 // Side-effect: the assistant's door to task dependencies.
 import { registerDependencyHandlers } from "./dep-handlers.js";
 registerDependencyHandlers();
+import { registerOrderHandlers } from "./order.js";
+registerOrderHandlers();

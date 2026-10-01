@@ -55,6 +55,10 @@ export interface NotificationCard {
 
 export interface Channel {
   readonly name: ChannelName;
+  /** Set when nothing sent through this channel would arrive (it is not
+   *  built yet): the reason, and the channel is then not offered to bind.
+   *  A channel a person can pick must be one that delivers. */
+  readonly notOffered?: string;
   /** Deliver. Resolves true on success — caller logs which channels
    *  succeeded in `notifications.delivered_via`. */
   deliver(event: ChannelEvent): Promise<boolean>;

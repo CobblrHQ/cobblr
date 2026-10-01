@@ -20,7 +20,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-placement",
-  version: "0.2.8",
+  version: "0.4.1",
   displayName: "Placement",
   description:
     "Keeps track of what is inside what: a part in a machine, a jar on a shelf, a shelf in a room.",
@@ -59,7 +59,7 @@ export default defineModule({
         undoable: true,
         label: "Place in container",
         description:
-          "Put the targeted record inside a container (a location, a bin, a box: any container-trait record). Moves it if it's already somewhere else. Args: { container_kind, container_id, slot? }.",
+          "Put the targeted record inside a container (a location, a bin, a box, a printer: any container-trait record). Moves it if it's already somewhere else. Args: { container_kind, container_id, slot?, one_to_a_slot?, qty? }. Installing parts in a computer, a machine or any asset is this with the asset as the container: qty puts in only that many of a counted part (2 of 4 RAM sticks), the rest stays where it was. Taking a part back out to a shelf is this again with the shelf, and it joins the spares kept there. Loading a spool onto a printer is this with the printer's machine record, its slot (\"1\"..) and one_to_a_slot: true.",
         appliesTo: { traits: ["containable"] },
         invokeHandler: "core-placement.place",
         userInvokable: false,
@@ -67,7 +67,30 @@ export default defineModule({
           container_kind: { label: "Container kind", type: "text", required: true },
           container_id: { label: "Container id", type: "text", required: true },
           slot: { label: "Slot (optional)", type: "text" },
+          qty: { label: "How many (optional; some of a counted thing)", type: "number" },
+          one_to_a_slot: { label: "The slot holds one thing: whatever is in it now goes back where it came from (a spool loaded on a printer)", type: "boolean" },
         },
+      },
+      {
+        id: "core-placement:built-from",
+        examples: ["what's inside the Gaming PC?", "what is the server worth with its parts?"],
+        label: "What it is built from",
+        description:
+          "What the targeted thing is built from: every part installed in it (and in those), each with its count and value, its own value besides them (other value, not itemized) and the total, each part counted once. Read-only. Values the person may not see (a part's cost) are withheld and `withheld` says so.",
+        appliesTo: { traits: ["physical"] },
+        invokeHandler: "core-placement.built-from",
+        userInvokable: false,
+      },
+      {
+        id: "core-placement:return-home",
+        examples: ["take the spool off the printer", "put it back where it was"],
+        undoable: true,
+        label: "Back where it was",
+        description:
+          "Take the targeted record out of the container it is in now and put it back in the one it was in before (a spool taken off a printer goes back to its shelf). Out of any container when it came from nowhere.",
+        appliesTo: { traits: ["containable"] },
+        invokeHandler: "core-placement.return-home",
+        userInvokable: false,
       },
       {
         id: "core-placement:remove",

@@ -19,6 +19,7 @@ import { Boxes, FolderKanban } from "lucide-react";
 import { InstanceHubGate } from "./components/InstanceHubGate";
 import { InventoryUI } from "@cobblr/inventory/ui";
 import { LabelsBasket, LabelsUI } from "@cobblr/labels/ui";
+import { useNavHasRow } from "./components/useNavModules";
 import { ProjectsUI } from "@cobblr/projects/ui";
 import { ListsUI } from "@cobblr/lists/ui";
 import { KnowledgeUI } from "@cobblr/knowledge/ui";
@@ -30,7 +31,7 @@ import { TrackingUI } from "@cobblr/tracking/ui";
 import "@cobblr/core-file-preview/ui";
 import { FilePreviewGate } from "./components/FilePreviewGate";
 import { InstalledRenderers } from "./components/InstalledRenderers";
-import { PairsWellWith } from "./components/PairsWellWith";
+import { WorksWith } from "./components/WorksWith";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { useTheme } from "./theme/ThemeContext";
 import { themePrefToApply } from "./theme/pref-to-apply";
@@ -95,6 +96,8 @@ const NotificationAudiencesPage = lazy(() => import("./pages/NotificationAudienc
 const DevicesPage = lazy(() => import("./pages/DevicesPage").then((m) => ({ default: m.DevicesPage })));
 const ScanRulesPage = lazy(() => import("./pages/ScanRulesPage").then((m) => ({ default: m.ScanRulesPage })));
 const MeActivityPage = lazy(() => import("./pages/MeActivityPage").then((m) => ({ default: m.MeActivityPage })));
+const ServiceRunsPage = lazy(() => import("./pages/ServiceRunsPage").then((m) => ({ default: m.ServiceRunsPage })));
+const ServiceRunPage = lazy(() => import("./pages/ServiceRunsPage").then((m) => ({ default: m.ServiceRunPage })));
 const MeNotificationsPage = lazy(() => import("./pages/MeNotificationsPage").then((m) => ({ default: m.MeNotificationsPage })));
 const MeNotificationChannelsPage = lazy(() => import("./pages/MeNotificationChannelsPage").then((m) => ({ default: m.MeNotificationChannelsPage })));
 const MeProfilePage = lazy(() => import("./pages/MeProfilePage").then((m) => ({ default: m.MeProfilePage })));
@@ -137,6 +140,7 @@ const TemplatesPage = lazy(() => import("./pages/TemplatesPage").then((m) => ({ 
 const AssistantSettingsPage = lazy(() => import("./pages/AssistantSettingsPage").then((m) => ({ default: m.AssistantSettingsPage })));
 const ScanPage = lazy(() => import("./pages/ScanPage").then((m) => ({ default: m.ScanPage })));
 const ScanCameraPage = lazy(() => import("./pages/ScanCameraPage").then((m) => ({ default: m.ScanCameraPage })));
+const ShareReceivePage = lazy(() => import("./pages/ShareReceivePage").then((m) => ({ default: m.ShareReceivePage })));
 const ScanLivePage = lazy(() => import("./pages/ScanLivePage").then((m) => ({ default: m.ScanLivePage })));
 const BundleComposerPage = lazy(() => import("./pages/BundleComposerPage").then((m) => ({ default: m.BundleComposerPage })));
 const CatalogsPage = lazy(() => import("./pages/CatalogsPage").then((m) => ({ default: m.CatalogsPage })));
@@ -606,6 +610,9 @@ function ActiveOrgScopedRoutes() {
   const navTopBar = useNavTopBar();
   const desktopWidth = useIsDesktopWidth();
   const fullSide = isFullSidebar({ navMode, navTopBar, appMode: !!appMode, desktopWidth });
+  // The label queue's count rides on the sidebar's Labels row (nav.count), so
+  // the floating pill is for the top bar, where the row can fold into "more".
+  const labelsRowInSidebar = useNavHasRow(activeSlug, "labels") && navMode === "side" && desktopWidth && !appMode;
   const shouldRedirectToAppHome = !!appMode && !inManagedAppSurface(location.pathname);
 
   return (
@@ -671,8 +678,7 @@ function ActiveOrgScopedRoutes() {
           api
             .orgModules(slug)
             .then((r) => [...KERNEL_PANELS, ...r.items.filter((m) => m.enabled).flatMap((m) => m.panels ?? [])]),
-        appendFieldDefChoice: (slug, id, value) =>
-          api.appendFieldDefChoice(slug, id, value),
+        fieldValues: (slug, kind, field, opts) => api.fieldValues(slug, kind, field, opts),
         listUnits: (slug) => api.listUnits(slug),
         addUnit: (slug, unit) => api.addUnit(slug, unit),
         deleteUnit: (slug, code) => api.deleteUnit(slug, code).then(() => undefined),
@@ -737,7 +743,7 @@ function ActiveOrgScopedRoutes() {
             element={
               <>
                 <ListsUI orgSlug={activeSlug} getToken={getToken} />
-                <div className="max-w-4xl"><PairsWellWith module="lists" orgSlug={activeSlug} /></div>
+                <div className="max-w-4xl"><WorksWith module="lists" orgSlug={activeSlug} /></div>
               </>
             }
           />
@@ -746,7 +752,7 @@ function ActiveOrgScopedRoutes() {
             element={
               <>
                 <KnowledgeUI orgSlug={activeSlug} getToken={getToken} />
-                <div className="max-w-4xl"><PairsWellWith module="knowledge" orgSlug={activeSlug} /></div>
+                <div className="max-w-4xl"><WorksWith module="knowledge" orgSlug={activeSlug} /></div>
               </>
             }
           />
@@ -755,7 +761,7 @@ function ActiveOrgScopedRoutes() {
             element={
               <>
                 <BuildsUI orgSlug={activeSlug} getToken={getToken} />
-                <div className="max-w-4xl"><PairsWellWith module="builds" orgSlug={activeSlug} /></div>
+                <div className="max-w-4xl"><WorksWith module="builds" orgSlug={activeSlug} /></div>
               </>
             }
           />
@@ -764,7 +770,7 @@ function ActiveOrgScopedRoutes() {
             element={
               <>
                 <SalesUI orgSlug={activeSlug} getToken={getToken} />
-                <div className="max-w-4xl"><PairsWellWith module="sales" orgSlug={activeSlug} /></div>
+                <div className="max-w-4xl"><WorksWith module="sales" orgSlug={activeSlug} /></div>
               </>
             }
           />
@@ -773,7 +779,7 @@ function ActiveOrgScopedRoutes() {
             element={
               <>
                 <TrackingUI orgSlug={activeSlug} getToken={getToken} />
-                <div className="max-w-4xl"><PairsWellWith module="tracking" orgSlug={activeSlug} /></div>
+                <div className="max-w-4xl"><WorksWith module="tracking" orgSlug={activeSlug} /></div>
               </>
             }
           />
@@ -950,6 +956,8 @@ function ActiveOrgScopedRoutes() {
           <Route path={OPEN_RECORD_ROUTE} element={<OpenRecordPage />} />
           <Route path="/scan" element={<ScanPage />} />
           <Route path="/scan/camera" element={<ScanCameraPage />} />
+          {/* Where another app's share lands (the manifests' share_target). */}
+          <Route path="/scan/share" element={<ShareReceivePage />} />
           {/* The bench display: the last few scans, big, no controls. */}
           <Route path="/scan/live" element={<ScanLivePage />} />
           {/* QR-label resolve inside the workspace: the in-app scanner
@@ -974,6 +982,8 @@ function ActiveOrgScopedRoutes() {
           <Route element={<AccountLayout />}>
             <Route path="/me/activity" element={<MeActivityPage />} />
             <Route path="/me/notifications" element={<MeNotificationsPage />} />
+            <Route path="/services/runs" element={<ServiceRunsPage />} />
+            <Route path="/services/runs/:id" element={<ServiceRunPage />} />
             <Route path="/me/notification-channels" element={<MeNotificationChannelsPage />} />
             <Route path="/me/communication" element={<CommunicationPreferencesPage />} />
             <Route path="/me/photos" element={<PhotoConsentPage />} />
@@ -1054,7 +1064,7 @@ function ActiveOrgScopedRoutes() {
           floating it in the empty bottom-right corner there reads as orphaned
           chrome. When it does float, it sits ABOVE the feedback pill (see
           BasketWidget) — the two used to overlap in that corner. */}
-      {!onAdmin && labelsEnabled && !fullSide && <LabelsBasket orgSlug={activeSlug} getToken={getToken} />}
+      {!onAdmin && labelsEnabled && !fullSide && !labelsRowInSidebar && <LabelsBasket orgSlug={activeSlug} getToken={getToken} />}
     </PlatformWebProvider>
   );
 }

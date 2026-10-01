@@ -1,7 +1,8 @@
 // knowledge CRUD — Knowledge Base entries. Mounted at
 //   /api/v1/orgs/:slug/modules/knowledge/
 // Routes:
-//   GET    /entries            list entries (newest first; ?pinned=1, ?kind=…, ?q=…)
+//   GET    /entries            list entries, a page at a time (newest first;
+//                              ?pinned=1, ?kind=…, ?q=…, ?limit, ?offset) + total
 //   POST   /entries            create an entry
 //   GET    /entries/:id        one entry
 //   PATCH  /entries/:id        edit an entry
@@ -9,7 +10,8 @@
 
 import { Router } from "express";
 import { sql } from "kysely";
-import { platform, uploadOne } from "@cobblr/platform-contract";
+import { likeEscape, platform, uploadOne } from "@cobblr/platform-contract";
+import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 import { uploadedFile } from "@cobblr/platform-contract/upload";
 import { z } from "zod";
 import { tenantDb, tenantContext, sessionUser } from "../db.js";
@@ -40,11 +42,20 @@ entriesRouter.get(
     if (req.query.pinned === "1" || req.query.pinned === "true") q = q.where("pinned", "=", true);
     if (typeof req.query.kind === "string" && req.query.kind) q = q.where("kind", "=", req.query.kind);
     if (typeof req.query.q === "string" && req.query.q.trim()) {
-      const like = `%${req.query.q.trim()}%`;
+      const like = `%${likeEscape(req.query.q.trim())}%`;
       q = q.where((eb) => eb.or([eb("title", "ilike", like), eb("body", "ilike", like)]));
     }
-    const rows = await q.orderBy("updated_at", "desc").limit(500).execute();
-    res.json({ items: rows });
+    // A page and the collection's count: a knowledge base past 500 entries
+    // used to answer the newest 500 and nothing else.
+    const page = readListPage(req.query);
+    const rows = await q
+      .select(sql<string>`count(*) over()`.as(TOTAL_COLUMN))
+      .orderBy("updated_at", "desc")
+      .orderBy("id")
+      .limit(page.limit)
+      .offset(page.offset)
+      .execute();
+    res.json(pagedAnswer(rows, page));
   }),
 );
 
@@ -110,6 +121,8 @@ entriesRouter.patch(
     }
     // The custom fields MERGE into the live row (#3625).
     if (parsed.data.metadata !== undefined) patch.metadata = platform().db.mergeJsonb("metadata", parsed.data.metadata as Record<string, unknown>) as never;
+    // The row as it was: the log says what this edit changed (#4517).
+    const before = await db.selectFrom("knowledge_entries").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
     const row = await db
       .updateTable("knowledge_entries")
       .set(patch)
@@ -126,6 +139,7 @@ entriesRouter.patch(
       action: "entry_updated",
       ref: { module: "knowledge", entityType: "entry", entityId: String(req.params.id) },
       diff: parsed.data as Record<string, unknown>,
+      before,
     });
     res.json(row);
   }),

@@ -9,9 +9,10 @@
 import type { NounChoiceDecl } from "@cobblr/platform-contract/kind-label";
 import type { CardRollup } from "@cobblr/platform-contract/holdings";
 import type { FieldRendererId, FieldType } from "@cobblr/platform-web";
-import { describeUnreadableBody } from "@cobblr/platform-web";
+import { describeUnreadableBody, noteWorkspaceWrite } from "@cobblr/platform-web";
 import { downloadBlob } from "@cobblr/platform-web";
 import { dayHere } from "@cobblr/platform-contract/day";
+import type { PartFacets } from "./list-filters";
 
 export type AllocationStatus = "reserved" | "consumed" | "released";
 
@@ -37,12 +38,20 @@ export interface InvFieldDef {
   unit?: string | null;
   /** Server-managed: value stamped server-side; never render an input. */
   server_managed?: boolean | null;
+  /** Asked for on the New form; once filled, an edit cannot empty it. */
+  required?: boolean | null;
   /** type='relation' only: the referenced entity-kind id. */
   ref_kind?: string | null;
   /** type='computed' only: the {{ }} template rendered read-only server-side.
    *  Per-unit consumption reads this to detect a DERIVED capacity + its source
    *  field for the provenance chip. */
   template?: string | null;
+  entity_kind?: string;
+  bundle_id?: string | null;
+  source_module?: string | null;
+  field_role?: string | null;
+  /** A person's new value is remembered as a choice (see field-choices). */
+  learns?: boolean | null;
 }
 
 export interface Category {
@@ -114,6 +123,12 @@ export interface PartListItem extends HomeBoxFields {
   assigned_qty: number;
   available_qty: number;
   low_stock: boolean;
+  /** Installed in an asset or machine (2 sticks in a computer), and in what.
+   *  Absent on an older response. */
+  installed_qty?: number;
+  /** On hand: not installed. Hide unavailable hides a row where this is 0. */
+  spare_qty?: number;
+  installed_in?: Array<{ kind: string; id: string; name: string; qty: number }>;
   /** What is on hand in the count's units: the unopened count plus every
    *  open unit still holding something. `low_stock` is judged on this, so an
    *  open skein with metres left is not "out". Absent on an older response. */
@@ -323,8 +338,12 @@ export class InventoryApi {
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
+    const wrote = method.toUpperCase() !== "GET";
 
-    if (res.status === 204) return undefined as T;
+    if (res.status === 204) {
+      if (wrote) noteWorkspaceWrite(url);
+      return undefined as T;
+    }
     let parsed: unknown;
     // TEXT first: res.json() CONSUMES the body, so once it throws the one
     // thing that says what went wrong is gone. See describeUnreadableBody.
@@ -343,6 +362,7 @@ export class InventoryApi {
         err?.details,
       );
     }
+    if (wrote) noteWorkspaceWrite(url);
     return parsed as T;
   }
 
@@ -350,6 +370,9 @@ export class InventoryApi {
    *  derived server-side from the instance's data (one-record-substrate.md). */
   getDisclosure = () =>
     this.partsRequest<{ stock: boolean; source: string }>("GET", "/disclosure");
+
+  /** Which list filters this table's records can use (list-filters.ts). */
+  getPartFacets = () => this.partsRequest<PartFacets>("GET", "/facets");
 
   /** The sticky stock-tracking override for THIS instance, or undefined for
    *  "auto" (let the platform derive it from the data). Stored on the
@@ -480,9 +503,15 @@ export class InventoryApi {
     location_id?: string;
     state?: "active" | "draft" | "needs_review";
     low_stock?: boolean;
+    /** Leave out rows with nothing on hand (all installed, or none left). */
+    hide_unavailable?: boolean;
     show_archived?: boolean;
     archived_only?: boolean;
     insured_only?: boolean;
+    /** Only records with a required field still empty. */
+    needs_value?: boolean;
+    /** Only records holding a value that does not fit its field. */
+    doesnt_fit?: boolean;
     warranty_expires_within_days?: number;
     /** Lego-style lifecycle filter, see the API ListQuery comment. */
     lifecycle?: "bulk" | "kit" | "parted-out";
@@ -502,6 +531,7 @@ export class InventoryApi {
     if (q.filter && Object.keys(q.filter).length) params.set("filter", JSON.stringify(q.filter));
     if (q.where && q.where.length) params.set("where", JSON.stringify(q.where));
     if (q.sort && q.sort.length) params.set("sort", q.sort.join(","));
+    if (q.hide_unavailable) params.set("hide_unavailable", "1");
     if (q.category_id) params.set("category_id", q.category_id);
     if (q.location_id) params.set("location_id", q.location_id);
     if (q.state) params.set("state", q.state);
@@ -509,6 +539,8 @@ export class InventoryApi {
     if (q.show_archived) params.set("show_archived", "1");
     if (q.archived_only) params.set("archived_only", "1");
     if (q.insured_only) params.set("insured_only", "1");
+    if (q.needs_value) params.set("needs_value", "1");
+    if (q.doesnt_fit) params.set("doesnt_fit", "1");
     if (q.warranty_expires_within_days)
       params.set("warranty_expires_within_days", String(q.warranty_expires_within_days));
     if (q.lifecycle) params.set("lifecycle", q.lifecycle);
@@ -520,6 +552,12 @@ export class InventoryApi {
       qs ? `?${qs}` : "",
     );
   };
+
+  /** How many of this list's records have a required field still empty. */
+  partsNeedsValue = () => this.partsRequest<{ count: number; fields: string[] }>("GET", "/needs-value");
+
+  /** How many of this list's records hold a value that does not fit its field. */
+  partsDoesntFit = () => this.partsRequest<{ count: number; fields: Array<{ label: string; count: number }> }>("GET", "/doesnt-fit");
 
   /** Builds the URL for the CSV export endpoint. The browser
    *  navigates to it (we can't fetch and download easily without a
@@ -586,6 +624,34 @@ export class InventoryApi {
       `/api/v1/orgs/${this.slug}/modules/core-placement/contents` +
         `?container_kind=${encodeURIComponent("inventory:part")}&container_id=${assortmentId}`,
     );
+
+  /** Records that hold things and are not places by nature (a Backpack): a
+   *  part can be kept inside one, offered beside the places. */
+  listHolders = () =>
+    this.requestAbs<{ items: Array<{ kind: string; id: string; title: string; line: string }> }>(
+      "GET",
+      `/api/v1/orgs/${this.slug}/modules/core-placement/holders`,
+    );
+
+  /** Where a part is, every step up ("Backpack, in Desk drawer"). */
+  partPath = (id: string) =>
+    this.requestAbs<{ path: Array<{ kind: string; id: string; name: string }>; line: string; inside?: { kind: string; id: string; name: string } | null }>(
+      "GET",
+      `/api/v1/orgs/${this.slug}/modules/core-placement/path?containee_kind=${encodeURIComponent("inventory:part")}&containee_id=${id}`,
+    );
+
+  /** Put a part inside something, a place or a holder, through placement. */
+  placePart = (id: string, container: { kind: string; id: string }) =>
+    this.requestAbs("POST", `/api/v1/orgs/${this.slug}/modules/core-placement/place`, {
+      containee: { kind: "inventory:part", id },
+      container,
+    });
+
+  /** Take a part out of whatever holds it. */
+  unplacePart = (id: string) =>
+    this.requestAbs("POST", `/api/v1/orgs/${this.slug}/modules/core-placement/remove`, {
+      containee: { kind: "inventory:part", id },
+    });
 
   /** Ask the record's photo what kinds are in there. Suggestion only. */
   suggestKinds = (assortmentId: string) =>
@@ -783,6 +849,15 @@ export class InventoryApi {
         relationship_kind: "matches",
       },
     );
+
+  /** One item of a SPECIFIC instance (a spool's type lives in the types
+   *  collection, not the spool's own). */
+  getInstancePart = (instance: string, id: string) =>
+    this.requestAbs<Part>("GET", `/api/v1/orgs/${this.slug}/instances/${encodeURIComponent(instance)}/items/${encodeURIComponent(id)}`);
+  /** Move a thing to another type: the family's own door (a Links row cannot
+   *  remove the link to a thing's type). */
+  setFamilyType = (childId: string, typeId: string) =>
+    this.partsRequest<{ id: string; type_id: string; type_name: string }>("POST", `/family/children/${encodeURIComponent(childId)}/type`, { type_id: typeId });
 
   /** Search items in a SPECIFIC instance — for the parent/"type" picker,
    *  which searches a different instance (e.g. the Spools form searching the

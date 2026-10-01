@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "digifab",
-  version: "0.29.3",
+  version: "0.29.4",
   displayName: "Digital Fabrication",
   description:
     "Send a design to the software that runs your machine (FDM Monster, OctoPrint and others) and follow the job until it is done.",
@@ -135,6 +135,9 @@ export default defineModule({
       // The per-machine cockpit half: link THIS machine to its manager +
       // live status, inside the machine's own detail modal.
       { id: "digifab:cockpit", surface: "entity-detail-panel" as const, target: "machines:machine", title: "Job manager" },
+      // The spools loaded on this printer, one per slot: a print draws its
+      // grams from them (loaded-spools.ts).
+      { id: "digifab:loaded", surface: "entity-detail-panel" as const, target: "machines:machine", title: "Loaded filament" },
       // What a slicer needs to know about this printer (Services §14.3): its
       // neutral model id, nozzle, build volume, default quality and a preset
       // per filament type. One per machine, read by every slicer.
@@ -151,6 +154,7 @@ export default defineModule({
     eventPayloads: {
       "digifab.print.completed": ["jobId", "connectionId", "linkedMachineId", "linkedTaskId", "partId", "delta", "reason", "sourceKind", "sourceId"],
       "digifab.print.reversed": ["jobId", "linkedMachineId", "prints", "partId", "delta", "reason"],
+      "digifab.print.consumed": ["jobId", "partId", "delta", "unit", "once", "slot", "reason", "sourceKind", "sourceId"],
     },
     events: [
       "digifab.connection.created",
@@ -158,6 +162,10 @@ export default defineModule({
       "digifab.connection.updated",
       "digifab.connection.deleted",
       "digifab.job.sent",
+      // A print's grams taken off (or, scrapped, put back on) a spool loaded
+      // on its printer: { partId, delta, unit: "g", slot, sourceKind, sourceId }.
+      // One per spool, so a multi-material print draws on each.
+      "digifab.print.consumed",
       // Fired on send when the job is linked to a build (BoM). Carries
       // { buildId, qty, outputOnGood } so a seeded builds wire consumes the
       // components from inventory. Idempotent (once per job) — the

@@ -12,9 +12,9 @@ import { Plus, Trash2, Wifi, Printer, RefreshCw, Send, ListChecks, Boxes, X, Lis
 import { ApiError, api, type DigifabConnection, type DigifabJob, type DigifabFleet, type BambuMode, type DigifabLibraryItem, type DigifabHistory, type DigifabRun, type DigifabFailureConfig, type DigifabDetector, type DigifabDetectorCatalogEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { PrintUpdatesPanel } from "./PrintUpdatesPanel";
-import { changeWorkspaceShape, CustomFieldsPanel, DragInput, Modal, useToast, useConfirm, usePageTitle, useImageSrc, SecretInput, EntityPhoto, AddressInput, SearchInput } from "@cobblr/platform-web";
+import { changeWorkspaceShape, DragInput, Lightbox, Modal, useToast, useConfirm, usePageTitle, useImageSrc, SecretInput, EntityPhoto, AddressInput, SearchInput, CustomFieldsPanel } from "@cobblr/platform-web";
 import { Combobox } from "../components/Combobox";
-import { CreateConnectionModal, FleetView, PrintDetailModal, Lightbox, LIBRARY_DRAG_MIME, fetchAllMachines } from "../features/digifab/fleet";
+import { CreateConnectionModal, FleetView, PrintDetailModal, LIBRARY_DRAG_MIME, fetchAllMachines } from "../features/digifab/fleet";
 import { useReprint } from "../features/digifab/useReprint";
 
 export function DigifabPage({
@@ -1315,7 +1315,7 @@ function PrintHistorySection({ slug }: { slug: string }) {
             </>
           )}
           {printOpen && <PrintDetailModal item={printOpen} onClose={() => setPrintOpen(null)} onZoom={setLightbox} onReprint={(r) => { setPrintOpen(null); void askReprint(r); }} />}
-          {lightbox && <Lightbox src={lightbox} onClose={() => setLightbox(null)} />}
+          {lightbox && <Lightbox items={[{ key: lightbox, caption: "Print", src: lightbox }]} index={0} onClose={() => setLightbox(null)} />}
         </div>
       )}
     </div>
@@ -1988,6 +1988,10 @@ function QueueTimeline({ slug, jobs, onOpenJob }: { slug: string; jobs: DigifabJ
   );
 }
 
+/** The New-job spool choice that means "whatever is loaded on the printer":
+ *  no spool on the job, each filament's grams off the spool in its slot. */
+const FROM_LOADED = "__loaded";
+
 function NewJobModal({
   connections,
   onClose,
@@ -2010,7 +2014,7 @@ function NewJobModal({
   const [materialPartId, setMaterialPartId] = useState("");
   const [materialGrams, setMaterialGrams] = useState("");
   const [materialType, setMaterialType] = useState("");
-  const [slicerMeta, setSlicerMeta] = useState<{ material: string | null; filament_g: number | null } | null>(null);
+  const [slicerMeta, setSlicerMeta] = useState<{ material: string | null; filament_g: number | null; filament_g_by_tool?: number[] | null } | null>(null);
   const [buildId, setBuildId] = useState("");
   const [buildQty, setBuildQty] = useState("1");
   const [priority, setPriority] = useState(0);
@@ -2046,6 +2050,13 @@ function NewJobModal({
     queryFn: () => api.listDigifabDevices(activeSlug, connectionId),
     enabled: !!connectionId && routeBy === "printer",
   });
+  // Spools loaded on the chosen machine: a print there pays from them.
+  const loaded = useQuery({
+    queryKey: ["digifab-loaded", activeSlug, machineId],
+    queryFn: () => api.digifabLoaded(activeSlug, machineId),
+    enabled: !!activeSlug && routeBy === "machine" && !!machineId,
+  });
+  const loadedOnMachine = routeBy === "machine" ? (loaded.data?.loaded.length ?? 0) : 0;
   // Stored files to optionally upload as the real print bytes.
   const files = useQuery({
     queryKey: ["files", activeSlug],
@@ -2068,13 +2079,19 @@ function NewJobModal({
     if (!m) return;
     if (m.material && !materialType) setMaterialType(m.material);
     if (m.filament_g != null && !materialGrams) setMaterialGrams(String(m.filament_g));
+    // A printer with spools loaded pays from them, each filament from its own
+    // slot: no spool to guess by name.
+    if (loadedOnMachine > 0 && !materialPartId) {
+      setMaterialPartId(FROM_LOADED);
+      return;
+    }
     if (m.material && !materialPartId) {
       const mat = m.material.toUpperCase();
       const hit = (parts.data?.items ?? []).find((p) => (p.name ?? "").toUpperCase().includes(mat));
       if (hit) setMaterialPartId(hit.id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slicerMeta, parts.data]);
+  }, [slicerMeta, parts.data, loadedOnMachine]);
 
   const save = useMutation({
     mutationFn: () =>
@@ -2085,8 +2102,14 @@ function NewJobModal({
         target_device: routeBy === "printer" ? printerId || null : null,
         target_tag: routeBy === "tag" ? tag.trim() || null : null,
         target_pool: routeBy === "pool" ? poolId || null : null,
-        material_part_id: materialPartId || null,
+        material_part_id: materialPartId && materialPartId !== FROM_LOADED ? materialPartId : null,
         material_grams: materialPartId && materialGrams ? Number(materialGrams) : null,
+        // Each filament's grams, so a multi-material print draws on the spool
+        // in each slot. Only while the total is the file's own.
+        material_grams_by_tool:
+          materialPartId === FROM_LOADED && slicerMeta?.filament_g_by_tool?.length && Number(materialGrams) === slicerMeta.filament_g
+            ? slicerMeta.filament_g_by_tool
+            : null,
         material_type: materialType || null,
         linked_build_id: buildId || null,
         build_qty: buildId ? Math.max(1, Math.floor(Number(buildQty)) || 1) : undefined,
@@ -2220,7 +2243,7 @@ function NewJobModal({
             <Combobox
               value={materialPartId}
               onChange={setMaterialPartId}
-              options={partList.map((p) => ({ value: p.id, label: p.name }))}
+              options={[{ value: FROM_LOADED, label: "The spools loaded on the printer" }, ...partList.map((p) => ({ value: p.id, label: p.name }))]}
               placeholder=" - don't track material - "
               allowClear
               className="flex-1"

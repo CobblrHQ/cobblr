@@ -22,7 +22,7 @@ import { randomUUID } from "node:crypto";
 import { platform } from "@cobblr/platform-contract";
 import { scanTargetsForOrg } from "./scan-target.js";
 import { ambientHome, requirementSpot, significantTokens } from "./suggest-location.js";
-import { resolveRequirement } from "./storage-requirement.js";
+import { resolveRequirement, satisfiesRequirement, type StorageRequirement } from "./storage-requirement.js";
 import { bucketForCategory, type CategoryBucket } from "./category-buckets.js";
 import { LengthUnitResolver, entityLongestMm, unitFieldDefsByKind } from "./organize-dims.js";
 import {
@@ -98,6 +98,97 @@ export interface OrganizePlan {
 // put-away routing signal — docs/product/put-away.md §2.1); this planner is
 // its batch caller.
 type Hint = RouteHit;
+
+// ── How it must be kept: settled before anything is grouped ─────────────────
+// A record that says how its thing must be kept (WHOLE MILK: "Must be kept:
+// refrigerated") has answered half the question already, and no grouping may
+// overrule it. The model once filed that milk into a new Pantry with the bread
+// and bananas, "Food items belong in the Kitchen", because it was never told.
+// So cold things are placed here, in code, and never reach the model: a cold
+// place the workspace has (the router's own hint first, which already vetoes
+// anywhere not cold), else a plan line that says it needs one and leaves the
+// thing for a person. Blank beats warm.
+
+type ColdRequirement = Extract<StorageRequirement, "refrigerated" | "frozen">;
+
+function coldRequirementOf(it: OrganizeInputItem): ColdRequirement | null {
+  const r = resolveRequirement(it.storage_requirement, it.category, it.name);
+  return r === "refrigerated" || r === "frozen" ? r : null;
+}
+
+/** Why a cold thing has no place yet, in the words the plan shows. */
+function needsColdPlace(req: ColdRequirement, many: boolean): string {
+  const it = many ? "these" : "this";
+  return req === "frozen"
+    ? `Must be kept frozen, and there is no freezer here yet. Add one, or pick a frozen place for ${it}.`
+    : `Must be kept refrigerated, and there is no fridge here yet. Add one, or pick a cold place for ${it}.`;
+}
+
+function unplacedColdGroups(members: OrganizeInputItem[]): OrganizeGroup[] {
+  const byReq = new Map<string, { req: ColdRequirement; members: OrganizeInputItem[] }>();
+  for (const it of members) {
+    const req = coldRequirementOf(it)!;
+    const key = `${req}\u0000${it.kind ?? ""}`;
+    const g = byReq.get(key) ?? { req, members: [] };
+    g.members.push(it);
+    byReq.set(key, g);
+  }
+  return [...byReq.values()].map((g) => ({
+    id: randomUUID(),
+    label: labelFor(g.members),
+    rationale: needsColdPlace(g.req, g.members.length > 1),
+    item_ids: g.members.map((m) => m.id),
+    destination: { kind: "unassigned" },
+  }));
+}
+
+/** Place every thing that must be kept cold; hand back the rest. */
+export function placeColdFirst(
+  items: OrganizeInputItem[],
+  hints: Map<string, Hint>,
+  census: Census,
+): { groups: OrganizeGroup[]; rest: OrganizeInputItem[] } {
+  const rest: OrganizeInputItem[] = [];
+  const places = [...census.all.entries()].map(([id, l]) => ({ id, title: l.path || l.name }));
+  const byPlace = new Map<string, { locId: string; req: ColdRequirement; members: OrganizeInputItem[]; hinted: boolean }>();
+  const nowhere: OrganizeInputItem[] = [];
+  for (const it of items) {
+    const req = coldRequirementOf(it);
+    if (!req) {
+      rest.push(it);
+      continue;
+    }
+    const hint = hints.get(it.id);
+    const hinted = !!hint && census.all.has(hint.location_id);
+    const locId = hinted ? hint!.location_id : requirementSpot(req, places)?.id;
+    if (!locId) {
+      nowhere.push(it);
+      continue;
+    }
+    const key = `${locId}\u0000${it.kind ?? ""}`;
+    const g = byPlace.get(key) ?? { locId, req, members: [], hinted };
+    g.members.push(it);
+    byPlace.set(key, g);
+  }
+  const groups: OrganizeGroup[] = [];
+  for (const g of byPlace.values()) {
+    const loc = census.all.get(g.locId)!;
+    const keeps = g.req === "frozen" ? "frozen" : "cold";
+    const supporting = g.members.map((m) => hints.get(m.id)).filter((h): h is Hint => !!h && h.location_id === g.locId);
+    groups.push({
+      id: randomUUID(),
+      label: labelFor(g.members),
+      rationale: g.members.length > 1 ? `These keep ${keeps}: ${loc.name}.` : `This keeps ${keeps}: ${loc.name}.`,
+      item_ids: g.members.map((m) => m.id),
+      destination: { kind: "existing", location_id: g.locId, location_name: loc.name, location_path: loc.path },
+      ...(supporting.length > 0
+        ? { evidence: { sibling_count: Math.max(...supporting.map((h) => h.sibling_count)), sample_names: supporting[0]!.sample_names } }
+        : {}),
+    });
+  }
+  groups.push(...unplacedColdGroups(nowhere));
+  return { groups, rest };
+}
 
 // ── Heuristic plan (no AI) ───────────────────────────────────────────────────
 
@@ -420,6 +511,7 @@ export function groundAiGroups(
     return known;
   };
   const splitOff: string[][] = [];
+  const warm: string[] = [];
   for (const g of raw) {
     const all = (Array.isArray(g.item_ids) ? g.item_ids : [])
       .filter((x): x is string => typeof x === "string")
@@ -455,6 +547,26 @@ export function groundAiGroups(
         parent_id: parentId,
         parent_name: parentId ? census.all.get(parentId)!.name : null,
       };
+    }
+
+    // How it must be kept outranks the model. Cold things are placed before
+    // it is asked (placeColdFirst), so this is the backstop for a caller that
+    // grounds a reply on its own: a cold thing only stays in a group whose
+    // destination is cold enough for it; the rest wait, saying why.
+    const placeName =
+      destination.kind === "existing"
+        ? census.all.get(destination.location_id)?.path ?? destination.location_name
+        : destination.kind === "new"
+          ? destination.name
+          : null;
+    const tooWarm = ids.filter((id) => {
+      const req = coldRequirementOf(itemById.get(id)!);
+      return !!req && !satisfiesRequirement(req, placeName);
+    });
+    if (tooWarm.length > 0) {
+      warm.push(...tooWarm);
+      ids.splice(0, ids.length, ...ids.filter((id) => !tooWarm.includes(id)));
+      if (ids.length === 0) continue;
     }
 
     // Evidence for existing destinations comes from OUR deterministic scorer —
@@ -523,6 +635,21 @@ export function groundAiGroups(
       ...(evidence ? { evidence } : {}),
       ...(aiGuess ? { ai_guess: true } : {}),
     });
+  }
+  groups.push(...unplacedColdGroups(warm.map((id) => itemById.get(id)!)));
+  // A thing the reply left out is still in the pile: it stands alone, waiting,
+  // rather than vanishing from the plan the person reviews.
+  if (groups.length > 0 || splitOff.length > 0) {
+    for (const it of items) {
+      if (claimed.has(it.id)) continue;
+      groups.push({
+        id: randomUUID(),
+        label: it.name,
+        rationale: "Nothing similar is placed yet. Pick a spot for this one, or organize it by hand.",
+        item_ids: [it.id],
+        destination: { kind: "unassigned" },
+      });
+    }
   }
   for (const ids of splitOff) {
     const members = ids.map((id) => itemById.get(id)!);
@@ -700,13 +827,28 @@ export async function planOrganize(
     const h = routeItem(it, census);
     if (h) hints.set(it.id, h);
   }
+  const cold = placeColdFirst(items, hints, census);
+  const plan = await planTheRest(orgId, cold.rest, hints, census, userHint, userId);
+  const groups = [...cold.groups, ...plan.groups];
+  annotateSizeWarnings(groups, items, census);
+  return { groups, census_truncated: census.truncated, source: plan.source };
+}
+
+/** Everything how-it-keeps did not already settle. */
+async function planTheRest(
+  orgId: string,
+  items: OrganizeInputItem[],
+  hints: Map<string, Hint>,
+  census: Census,
+  userHint?: string,
+  userId?: string | null,
+): Promise<{ groups: OrganizeGroup[]; source: OrganizePlan["source"] }> {
+  if (items.length === 0) return { groups: [], source: "heuristic" };
 
   // Small pile: unchanged — the whole batch to the LLM for best holistic grouping.
   if (items.length <= AI_ITEM_CAP) {
     const ai = await aiPlan(orgId, items, hints, census, userHint, userId);
-    const groups = ai ?? heuristicPlan(items, hints, census);
-    annotateSizeWarnings(groups, items, census);
-    return { groups, census_truncated: census.truncated, source: ai ? "ai" : "heuristic" };
+    return { groups: ai ?? heuristicPlan(items, hints, census), source: ai ? "ai" : "heuristic" };
   }
 
   // Large batch. Everything the deterministic router placed groups by its bin
@@ -727,9 +869,7 @@ export async function planOrganize(
       residueGroups = [...residueGroups, ...heuristicPlan(residue.slice(AI_ITEM_CAP), hints, census)];
     }
   }
-  const groups = [...detGroups, ...residueGroups];
-  annotateSizeWarnings(groups, items, census);
-  return { groups, census_truncated: census.truncated, source: usedAi ? "ai" : "heuristic" };
+  return { groups: [...detGroups, ...residueGroups], source: usedAi ? "ai" : "heuristic" };
 }
 
 /** Size check on the FINAL groups (both tiers — the deterministic scorer

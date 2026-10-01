@@ -10,13 +10,13 @@ import { AreaTabs, NOTIFICATION_TABS } from "../components/AreaTabs";
 import { Link, useNavigate } from "react-router-dom";
 import { notificationAction } from "../lib/notification-action";
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Check, CheckCheck } from "lucide-react";
+import { CheckCheck, Mail, MailOpen, Trash2 } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { QueryError } from "../components/QueryError";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, type CrossOrgNotificationEntry } from "../lib/api";
 import { NotificationActionButtons } from "../components/NotificationActionButtons";
-import { useToast, usePageTitle } from "@cobblr/platform-web";
+import { useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
 import { notificationKeys } from "../lib/notification-keys";
 
 const PAGE = 50;
@@ -28,6 +28,7 @@ export function MeNotificationsPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const toast = useToast();
+  const confirm = useConfirm();
   // Default to THIS workspace, not the cross-workspace firehose — seeing
   // workspace A's notifications while you're in B is noise. The dropdown
   // still offers "all workspaces" for the deliberate global view.
@@ -50,6 +51,24 @@ export function MeNotificationsPage() {
       void qc.invalidateQueries({ queryKey: notificationKeys.all() });
     },
     onError: (e: unknown) => toast.error(`Couldn't mark that read: ${e instanceof Error ? e.message : String(e)}`),
+  });
+  const markUnread = useMutation({
+    mutationFn: (id: string) => api.meMarkNotificationUnread(id),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: notificationKeys.all() }),
+    onError: (e: unknown) => toast.error(`Couldn't mark that unread: ${e instanceof Error ? e.message : String(e)}`),
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.meDeleteNotification(id),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: notificationKeys.all() }),
+    onError: (e: unknown) => toast.error(`Couldn't delete that: ${e instanceof Error ? e.message : String(e)}`),
+  });
+  const clearRead = useMutation({
+    mutationFn: () => api.meClearReadNotifications(),
+    onSuccess: ({ count }) => {
+      toast.success(count === 1 ? "Deleted 1 read notification" : `Deleted ${count} read notifications`);
+      void qc.invalidateQueries({ queryKey: notificationKeys.all() });
+    },
+    onError: (e: unknown) => toast.error(`Couldn't clear them: ${e instanceof Error ? e.message : String(e)}`),
   });
   const markAll = useMutation({
     mutationFn: () => api.meMarkAllNotificationsRead(),
@@ -122,12 +141,28 @@ export function MeNotificationsPage() {
         >
           <CheckCheck size={12} /> Mark all read
         </button>
+        <button
+          onClick={async () => {
+            const ok = await confirm({
+              title: "Delete every notification you have read?",
+              message: "In every workspace. Unread ones stay. This can't be undone.",
+              confirmLabel: "Delete read",
+              destructive: true,
+            });
+            if (ok) clearRead.mutate();
+          }}
+          disabled={clearRead.isPending}
+          className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-accent hover:text-accent disabled:opacity-50"
+        >
+          <Trash2 size={12} /> Clear read
+        </button>
       </div>
 
       <p className="text-sm text-muted dark:text-slate-400">
         Every notification dispatched to you across every workspace you
         belong to. Click a row to switch to that workspace + open the
-        linked page. Refreshes every 30s.
+        linked page. Refreshes every 30s. Read notifications are kept for
+        180 days; unread ones until you read or delete them.
       </p>
 
       {q.isLoading && <div className="text-sm text-muted">Loading…</div>}
@@ -188,13 +223,31 @@ export function MeNotificationsPage() {
                       </div>
                     )}
                     <NotificationActionButtons n={n} />
-                    <div className="text-[11px] font-mono text-faint dark:text-slate-500 mt-0.5">
-                      {n.event_type} · {new Date(n.created_at).toLocaleTimeString()}
+                    <div className={"text-[11px] text-faint dark:text-slate-500 mt-0.5" + (n.label ? "" : " font-mono")}>
+                      {n.label ?? n.event_type} · {new Date(n.created_at).toLocaleTimeString()}
                     </div>
                   </div>
-                  {n.read_at && (
-                    <Check size={12} className="text-faint shrink-0" />
-                  )}
+                  {/* Its own two controls; a press here is not a press on the row. */}
+                  <span className="shrink-0 flex items-center gap-0.5 self-center" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      onClick={() => (n.read_at ? markUnread.mutate(n.id) : markRead.mutate(n.id))}
+                      aria-label={n.read_at ? "Mark unread" : "Mark read"}
+                      title={n.read_at ? "Mark unread" : "Mark read"}
+                      className="p-2 rounded text-faint hover:text-accent hover:bg-subtle dark:hover:bg-slate-800"
+                    >
+                      {n.read_at ? <Mail size={14} /> : <MailOpen size={14} />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => remove.mutate(n.id)}
+                      aria-label="Delete"
+                      title="Delete"
+                      className="p-2 rounded text-faint hover:text-ember-600 hover:bg-subtle dark:hover:bg-slate-800"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </span>
                 </div>
               </li>
             ))}

@@ -3,6 +3,7 @@ type: feature
 scope: labels
 date: 2026-09-28
 docs_target: docs/USER_GUIDE.md#3.17 QR codes (`labels` (QR half), stock)
+docs_published: 2026-10-01
 ---
 **Action labels.** Print a code that does something when you scan it with your phone's camera. Stick one on the bathroom shelf, and scanning it opens "Toilet paper: 12 → 11" with a big Confirm. Nothing changes until you press it, and you can undo it. At the minimum it offers to add the item to your shopping list, and your history says it was the label.
 

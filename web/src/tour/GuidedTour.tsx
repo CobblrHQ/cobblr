@@ -11,7 +11,7 @@ import { useNavLayout } from "../lib/nav-mode";
 import { useTheme } from "../theme/ThemeContext";
 import { LayoutPreview } from "../components/LayoutPreview";
 import { LAYOUT_OPTIONS, tourStepsFor, type StepContext, type TourStep } from "./tour.config";
-import { OverlayLayer, isShortcut } from "@cobblr/platform-web";
+import { OverlayLayer, useEscapeToClose, isShortcut } from "@cobblr/platform-web";
 import { dismissInstall, installRoute, readInstallEnv, shouldOfferInstall } from "../lib/install-app";
 import { InstallWalkBody } from "../components/InstallWalk";
 
@@ -61,6 +61,7 @@ export function GuidedTour({ steps: allSteps, onClose }: { steps: TourStep[]; on
   const [ctx, setCtx] = useState<StepContext>({ folded: false });
   const [cardPos, setCardPos] = useState<{ left: number; top: number } | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
+  const layerRef = useRef<HTMLDivElement>(null);
   const navLayout = useNavLayout();
   const { theme, toggle: toggleTheme } = useTheme();
   const step = steps[i];
@@ -125,11 +126,11 @@ export function GuidedTour({ steps: allSteps, onClose }: { steps: TourStep[]; on
     const onKey = (e: KeyboardEvent) => {
       if (isShortcut(e, "next") || isShortcut(e, "choose")) { e.preventDefault(); move(1); }
       else if (isShortcut(e, "previous")) { e.preventDefault(); move(-1); }
-      else if (isShortcut(e, "close")) { e.preventDefault(); onClose(); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [move, onClose]);
+  }, [move]);
+  useEscapeToClose(true, layerRef, onClose);
 
   const spots = steps.filter((s) => s.kind === "spotlight").length;
   const spotAt = steps.slice(0, i + 1).filter((s) => s.kind === "spotlight").length;
@@ -159,7 +160,7 @@ export function GuidedTour({ steps: allSteps, onClose }: { steps: TourStep[]; on
     : null;
 
   return createPortal(
-    <OverlayLayer className="z-[200]" role="dialog" aria-modal data-tour-card>
+    <OverlayLayer ref={layerRef} className="z-[200]" role="dialog" aria-modal data-tour-card>
       {step.kind !== "spotlight" && (
         <div className="absolute inset-0" style={{ background: step.kind === "chooseLayout" || step.kind === "welcome" ? "rgba(6,10,20,0.4)" : SCRIM }} />
       )}

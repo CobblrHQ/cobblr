@@ -3,6 +3,7 @@ type: feature
 scope: core-locations
 date: 2026-09-30
 docs_target: docs/USER_GUIDE.md#3.12 Locations (foundational)
+docs_published: 2026-10-01
 ---
 The floor plan editor has undo and redo. The arrows beside Done, or ⌘Z and ⌘⇧Z, take back a move, a resize, a new wall, a rename, a set of added drawers or a whole drafted plan, one change at a time, and put it back again.
 

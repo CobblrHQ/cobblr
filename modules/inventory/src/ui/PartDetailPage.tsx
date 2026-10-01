@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, ArrowRightLeft, Copy, Library, Minus, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { consumptionGauge, type ConsumptionGauge as ConsumptionGaugeT } from "@cobblr/platform-contract/consumption-gauge";
-import { PresentationGate, StickyBottomBar, MutationError, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, EntityThumb, FaceSection, faceShows, useHoldsContents, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, editFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
+import { Lightbox, PresentationGate, StickyBottomBar, MutationError, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, EntityThumb, FaceSection, faceShows, useHoldsContents, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, editFieldItem, moneyFieldItem, usedValueFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits, usedInUnit } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { QtyStepper } from "./QtyStepper";
 import { isAssorted } from "./assorted";
@@ -44,6 +44,7 @@ import {
   type AllocationLike,
 } from "./consumption/perUnit";
 import { withArticle } from "@cobblr/platform-contract/plural";
+import { putPart, type PartPlace } from "./move-part";
 
 // The part-detail body. Rendered inside PartDetailModal (below) — the
 // detail view is a modal over the list now (consistent with machines),
@@ -211,11 +212,17 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
 
   const cats = useQuery({ queryKey: ["inventory-categories"], queryFn: () => api.listCategories() });
   const locs = useQuery({ queryKey: ["inventory-locations"], queryFn: () => api.listLocations() });
+  // Things that hold things (a Backpack) are places too: offered beside the
+  // locations, and the part says it is inside one ("Backpack, in Desk drawer").
+  const holders = useQuery({ queryKey: ["placement-holders"], queryFn: () => api.listHolders() });
+  const where = useQuery({ queryKey: ["placement-path", "inventory:part", id], queryFn: () => api.partPath(id!), enabled: !!id });
+  const inside = where.data?.inside ?? null;
   const matched = useMatchedCatalogEntry(id);
 
   const toast = useToast();
   const confirm = useConfirm();
   const [dup, setDup] = useState(false);
+  const [viewingCover, setViewingCover] = useState(false);
   const [moving, setMoving] = useState(false);
   const [counting, setCounting] = useState(false);
   const [addingKind, setAddingKind] = useState(false);
@@ -230,15 +237,16 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
       const rows = (await api.listParentPairings(id!)).items;
       const first = rows[0];
       if (!first) return null;
-      const target = await api.getPart(first.target_id);
+      // The type lives in the types collection, not this one.
+      const target = await api.getInstancePart(parent!.instance, first.target_id);
       return { id: first.target_id, name: target.name };
     },
   });
   const setParent = useMutation({
     mutationFn: async (next: { id: string; name: string } | null) => {
-      const rows = (await api.listParentPairings(id!)).items;
-      for (const r of rows) await api.deletePairing(r.id);
-      if (next) await api.createParentPairing(id!, next.id);
+      // A thing always has its type: picking another moves it there. There
+      // is no "no type" to pick (the Links row refuses that removal too).
+      if (next) await api.setFamilyType(id!, next.id);
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["inventory-parent", id] });
@@ -262,6 +270,22 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["assortment-kinds", orgSlug, id] });
       setAddingKind(false);
+    },
+    onError: (e: unknown) => toast.error((e as Error).message),
+  });
+
+  const placeIn = useMutation({
+    mutationFn: async (pick: string) => {
+      // "kind|id" for a holder, a bare location id for a place, "" for nowhere.
+      const [kind, ref] = pick.split("|");
+      const to: PartPlace = pick.includes("|") ? { location_id: null, inside: { kind: kind!, id: ref! } } : { location_id: pick || null, inside: null };
+      await putPart(api, id!, to, { location_id: part.data?.location_id ?? null, inside: inside ? { kind: inside.kind, id: inside.id } : null });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["inventory-part", id] });
+      void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
+      void qc.invalidateQueries({ queryKey: ["placement-path"] });
+      void qc.invalidateQueries({ queryKey: ["placement-holders"] });
     },
     onError: (e: unknown) => toast.error((e as Error).message),
   });
@@ -370,12 +394,19 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
   // update-item is a genuine per-page choice - it DOES act on this item, it
   // just duplicates the inline editing right here.
   // (The Lego kit→parts action also moved to the bricklink-connector module.)
+  // A measured unit (kg, m, L), and until the unit list has loaded, anything
+  // that is not a plain count: the same reading the amount control makes.
+  const isMeasured = (u: string | null | undefined) =>
+    !!u && u.trim().toLowerCase() !== "each" && (!units.all.length || usedInUnit(u, units.all) != null);
   const excludeActionIds = [
     "inventory:update-item",
     ...(canDisassemble ? [] : ["bricklink:disassemble-kit"]),
     // "Split one off" only makes sense for a lot (qty > 1) — hide it on a
     // single item (splitting would have to leave 0).
     ...(Number(p.qty) > 1 ? [] : ["inventory:split-lot"]),
+    // "Use one" of a thing kept in kg is a whole kilogram: a measured thing is
+    // used by saying how much (the amount control), never by one.
+    ...(isMeasured(p.unit) ? ["inventory:use-one"] : []),
     // A lean catalog instance (films, books) shows no stock actions — using
     // one / using up / restocking a film is nonsensical. These match on the
     // global kind traits (stock-material), so exclude them here per-instance
@@ -483,14 +514,29 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
 
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 sm:p-5 space-y-3">
         <div className="flex items-start gap-4">
-          <EntityThumb
-            src={p.image_path ?? matched.data?.image_path ?? null}
-            alt={p.name}
-            size={96}
-            color={(p.metadata as Record<string, unknown> | null)?.color as string | undefined}
-            values={p.metadata as Record<string, unknown> | null}
-            className="ring-1 ring-line dark:ring-slate-700"
-          />
+          <button
+            type="button"
+            disabled={!(p.image_path ?? matched.data?.image_path)}
+            onClick={() => setViewingCover(true)}
+            aria-label={`See the photo of ${p.name}`}
+            className="shrink-0 cursor-zoom-in disabled:cursor-default"
+          >
+            <EntityThumb
+              src={p.image_path ?? matched.data?.image_path ?? null}
+              alt={p.name}
+              size={96}
+              color={(p.metadata as Record<string, unknown> | null)?.color as string | undefined}
+              values={p.metadata as Record<string, unknown> | null}
+              className="ring-1 ring-line dark:ring-slate-700"
+            />
+          </button>
+          {viewingCover && (p.image_path ?? matched.data?.image_path) && (
+            <Lightbox
+              items={[{ key: "cover", caption: p.name, src: (p.image_path ?? matched.data?.image_path)! }]}
+              index={0}
+              onClose={() => setViewingCover(false)}
+            />
+          )}
           <div className="flex-1 min-w-0">
             <div className="min-w-0">
               <EditableTitle
@@ -575,7 +621,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
                               not counted
                             </span>
                           ) : (
-                            <QtyStepper partId={p.id} qty={Number(p.qty)} />
+                            <QtyStepper partId={p.id} qty={Number(p.qty)} unit={p.unit} label={p.name} />
                           ))}
                         {!hide("unit") && (
                           // Changing the unit auto-converts the quantity when the two are
@@ -599,7 +645,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
                 }
               : null,
             !hide("min_qty") ? editFieldItem("min_qty", { label: fp.label("min_qty", "Min qty"), value: p.min_qty ?? "", placeholder: "—", numeric: true, onCommit: (v) => update.mutate({ min_qty: v === "" ? null : Number(v) }) }) : null,
-            !hide("cost") ? editFieldItem("cost", { label: fp.label("cost", "Cost"), value: p.cost ?? "", placeholder: "—", numeric: true, onCommit: (v) => update.mutate({ cost: v === "" ? null : Number(v) }) }) : null,
+            !hide("cost") ? moneyFieldItem("cost", { label: fp.label("cost", "Cost"), value: p.cost, storage: "amount", placeholder: "—", onCommit: (v) => update.mutate({ cost: v }) }) : null,
             !hide("category")
               ? {
                   need: fieldNeed("category", { control: "choice", label: fp.label("category", "Category"), choices: (cats.data?.items ?? []).map((c) => c.name) }),
@@ -622,7 +668,12 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
                   need: fieldNeed("location", { control: "choice", label: fp.label("location", "Location"), choices: (locs.data?.items ?? []).map((l) => l.name) }),
                   node: (
                     <Field label={fp.label("location", "Location")}>
-                      <select value={p.location_id ?? ""} onChange={(e) => update.mutate({ location_id: e.target.value || null })} className="input">
+                      <select
+                        aria-label={fp.label("location", "Location")}
+                        value={inside ? `${inside.kind}|${inside.id}` : (p.location_id ?? "")}
+                        onChange={(e) => placeIn.mutate(e.target.value)}
+                        className="input"
+                      >
                         <option value=""> - none - </option>
                         {locs.data?.items.map((l) => (
                           <option key={l.id} value={l.id}>
@@ -630,12 +681,26 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
                             {l.name}
                           </option>
                         ))}
+                        {(holders.data?.items ?? []).some((h) => h.id !== p.id) && (
+                          <optgroup label="Inside something">
+                            {holders.data!.items
+                              .filter((h) => h.id !== p.id)
+                              .map((h) => (
+                                <option key={`${h.kind}|${h.id}`} value={`${h.kind}|${h.id}`}>
+                                  {h.line ? `${h.title}, in ${h.line}` : h.title}
+                                </option>
+                              ))}
+                          </optgroup>
+                        )}
+                        {inside && !(holders.data?.items ?? []).some((h) => h.kind === inside.kind && h.id === inside.id) && (
+                          <option value={`${inside.kind}|${inside.id}`}>{where.data!.line}</option>
+                        )}
                       </select>
                     </Field>
                   ),
                 }
               : null,
-            !hide("manufacturer") ? editFieldItem("manufacturer", { label: fp.label("manufacturer", "Manufacturer"), value: p.manufacturer ?? "", placeholder: "—", onCommit: (v) => update.mutate({ manufacturer: v || null }) }) : null,
+            !hide("manufacturer") ? usedValueFieldItem("manufacturer", { label: fp.label("manufacturer", "Manufacturer"), kind: entityKind, field: "manufacturer", value: p.manufacturer ?? null, placeholder: "—", onCommit: (v) => update.mutate({ manufacturer: v || null }) }) : null,
             !hide("supplier_url") ? editFieldItem("supplier_url", { label: fp.label("supplier_url", "Supplier URL"), value: p.supplier_url ?? "", placeholder: "—", type: "url", onCommit: (v) => update.mutate({ supplier_url: v || null }) }) : null,
             !hide("serial_number") ? editFieldItem("serial_number", { label: fp.label("serial_number", "Serial number"), value: p.serial_number ?? "", placeholder: "—", onCommit: (v) => update.mutate({ serial_number: v || null }) }) : null,
             !hide("model_number") ? editFieldItem("model_number", { label: fp.label("model_number", "Model number"), value: p.model_number ?? "", placeholder: "—", onCommit: (v) => update.mutate({ model_number: v || null }) }) : null,
@@ -806,6 +871,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
         getToken={getToken}
         container={{ kind: "inventory:part", id: p.id }}
         title="Contents"
+        wordKind={entityKind}
         scanIntoHref={`/scan/camera?container_kind=${encodeURIComponent("inventory:part")}&container_id=${encodeURIComponent(p.id)}`}
       />
       </FaceSection>

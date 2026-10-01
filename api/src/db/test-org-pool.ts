@@ -92,7 +92,9 @@ async function bakeOneOrg(index: number): Promise<void> {
   await enableAllModulesInternal(orgId);
   await meta
     .insertInto("test_org_pool")
-    .values({ org_id: orgId, slug, owner_user_id: userRow.id })
+    // 'available' is the bake's word, never the column's default ('unbaked',
+    // migration 178): a row a test writes is never handed to another test.
+    .values({ org_id: orgId, slug, owner_user_id: userRow.id, status: "available" })
     .execute();
 }
 

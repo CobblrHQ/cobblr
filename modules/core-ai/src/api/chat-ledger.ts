@@ -45,6 +45,11 @@ export interface WriteRequest {
   fields?: Record<string, unknown>;
   action_id?: string;
   args?: Record<string, unknown>;
+  /** A create made through a tool other than create_record. `add_thing`
+   *  (#4472) puts a thing through the scan inbox's intake and may file it;
+   *  what it filed is ledgered as a create of that record, so the panel's
+   *  Undo removes it like any other. */
+  via?: "add_thing";
 }
 
 export interface BulkOutcome {
@@ -394,6 +399,45 @@ export async function performWrite(
       // Undoable exactly when the action handed back its inverse; the row
       // carries it, and undoWrite runs it.
       undoable: !!undo,
+    };
+  }
+
+  if (tool === "create" && req.via === "add_thing") {
+    const r = await getTool("add_thing")!.execute(wsApi, req.args ?? {});
+    if (!r.ok) return { ok: false, message: r.error ?? "The add did not go through." };
+    const found = r.data as { item_id?: string; name?: string | null; next?: string; filed?: { entity_id: string | null; entity_kind: string | null } | null };
+    const label = String(found.name ?? (req.args?.name as string | undefined) ?? "the thing");
+    const filed = found.filed?.entity_id && found.filed.entity_kind ? { id: found.filed.entity_id, kind: found.filed.entity_kind } : null;
+    // Left in the inbox, nothing in the workspace's records changed: the
+    // inbox row is the person's to file or discard, so there is no undo here.
+    if (!filed) return { ok: true, message: found.next ?? `Added ${label} to the scan inbox.` };
+    const after = await stateOf(wsApi, opts.orgId, filed.kind, filed.id);
+    const row = await db
+      .insertInto("core_ai_chat_writes")
+      .values({
+        user_id: userId,
+        tool: "create",
+        entity_kind: filed.kind,
+        entity_id: filed.id,
+        entity_label: label,
+        before: null,
+        after: after ? (JSON.stringify(after) as unknown) : null,
+        after_hash: after ? stateHash(after) : null,
+        payload: JSON.stringify({ via: "add_thing", item_id: found.item_id ?? null, args: req.args ?? {} }) as unknown,
+        auto_applied: opts.auto,
+        prompt: opts.prompt ?? null,
+        turn_id: opts.turnId ?? null,
+        undone_at: null,
+        undo_of: opts.undoOf ?? null,
+      })
+      .returning("id")
+      .executeTakeFirst();
+    return {
+      ok: true,
+      message: found.next ?? `Added ${label}.`,
+      entity: { kind: filed.kind, id: filed.id, label },
+      ledger_id: row?.id,
+      undoable: true,
     };
   }
 

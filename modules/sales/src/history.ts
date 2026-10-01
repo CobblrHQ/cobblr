@@ -36,6 +36,8 @@ function actionFor(e: HistoryEntry): string | null {
       return "order_make_started";
     case "line":
       return `order_line_${String(e.detail?.change ?? "changed")}`;
+    case "delivered":
+      return "order_delivered";
   }
 }
 

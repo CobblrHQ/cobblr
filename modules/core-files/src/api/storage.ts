@@ -3,13 +3,14 @@
 
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { copyFile, link, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, link, mkdir, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import sharp from "sharp";
 import { platform, type FilesDriver, type WorkspaceFolder } from "@cobblr/platform-contract";
 import type { FileKind, FileVariants } from "../db.js";
+import { sniffType } from "@cobblr/platform-contract/sniff-type";
 
 // Default storage root: <repo>/_files. Overridable per-deploy.
 // _files (leading underscore) sorts to the top and is conventionally
@@ -184,9 +185,12 @@ export async function storeUpload(
   orgId: string,
   fileId: string,
   source: FileSourceIn,
-  declaredMime: string,
+  claimedMime: string,
   known?: Fingerprint,
 ): Promise<StoredFile> {
+  // The bytes' own type over whatever the upload claimed: a PDF stored under
+  // a wrong type was served as a download and shown as raw bytes (#4523).
+  const declaredMime = sniffType(await headOf(source)) ?? claimedMime;
   const fp = known ?? (await fingerprintOf(source));
   const sha = fp.sha256;
   const ext = extFromMime(declaredMime);
@@ -314,7 +318,7 @@ export async function readVariantBytes(
   return b ? (Buffer.isBuffer(b) ? b : Buffer.from(b)) : null;
 }
 
-function classifyKind(mime: string): FileKind {
+export function classifyKind(mime: string): FileKind {
   if (mime.startsWith("image/")) return "image";
   if (mime.startsWith("video/")) return "video";
   if (
@@ -352,4 +356,23 @@ function extFromMime(mime: string): string {
     "video/webm": ".webm",
   };
   return map[mime.toLowerCase()] ?? ".bin";
+}
+
+/** The first bytes of a source, enough to sniff its type. */
+export async function headOf(source: FileSourceIn, n = 64): Promise<Uint8Array> {
+  if (source instanceof Uint8Array) return source.subarray(0, n);
+  return headOfPath(source.path, n);
+}
+
+/** The first bytes of a file on disk. */
+export async function headOfPath(path: string, n = 64): Promise<Uint8Array> {
+  const fh = await open(path, "r").catch(() => null);
+  if (!fh) return new Uint8Array(0);
+  try {
+    const buf = Buffer.alloc(n);
+    const { bytesRead } = await fh.read(buf, 0, n, 0);
+    return buf.subarray(0, bytesRead);
+  } finally {
+    await fh.close();
+  }
 }

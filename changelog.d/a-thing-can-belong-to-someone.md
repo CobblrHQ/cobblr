@@ -3,6 +3,7 @@ type: feature
 scope: fields
 date: 2026-09-28
 docs_target: docs/USER_GUIDE.md#Saying what a field means
+docs_published: 2026-10-01
 ---
 **Say whose a thing is, even if they are not a member.** A new **person** field type, with the meaning **Who it belongs to**, picks from the workspace's People: every member, plus anyone you add by name (family, a friend whose things you keep). Configuration → People lists them, and an admin can invite someone on the list to join; when they accept, everything that was theirs stays theirs. **My things** (in your account menu) lists what is yours across every collection, and each person on the People list has the same page; a saved view grouped by Owner makes a column per person; a label template's `{{owner}}` prints the name; and the assistant answers "what does Alex own". Removing a member who owns things asks who gets them, and someone who already left can have theirs handed on from the People list. Names stay in the workspace.
 

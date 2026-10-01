@@ -19,6 +19,7 @@ import { quantityWithUnit, type EntityListQuery, type ResolvedEntity } from "@co
 import { meta } from "../db/meta.js";
 import { hiddenFieldsFor, listAll, listKindsForOrg } from "./entities.js";
 import { resolveFieldDefsForKind } from "./field-defs.js";
+import { formatMoneyPlain, moneyStorageOf, storedCents, type MoneyStorage } from "@cobblr/platform-contract/money";
 
 export interface ExportColumn {
   /** The header a person reads. */
@@ -43,6 +44,14 @@ const field = (name: string) => (row: ResolvedEntity) => {
   const f = row.fields as Record<string, unknown>;
   const labelled = f[`${name}_label`];
   return readable(labelled !== undefined && labelled !== null ? labelled : f[name]);
+};
+
+/** A money column as a spreadsheet keeps it: "4300.00", never 430000 cents. */
+const moneyCell = (name: string, storage: MoneyStorage) => (row: ResolvedEntity) => {
+  const f = row.fields as Record<string, unknown>;
+  const raw = name in f ? f[name] : ((f.metadata as Record<string, unknown> | undefined) ?? {})[name];
+  const c = storedCents(raw, storage);
+  return c === null ? readable(raw) : formatMoneyPlain(c);
 };
 
 /** The columns a viewer's export of a kind carries, in order: the name, the
@@ -87,12 +96,14 @@ export async function exportColumns(
   for (const f of record.fields) {
     if (!isWritableNativeField(f) || !shown(f.name)) continue;
     seen.add(f.name);
-    all.push({ label: byName.get(f.name)?.display_label || columnLabel(f.name), field: f.name, cell: field(f.name) });
+    const money = moneyStorageOf(f);
+    all.push({ label: byName.get(f.name)?.display_label || columnLabel(f.name), field: f.name, cell: money ? moneyCell(f.name, money) : field(f.name) });
   }
   for (const d of await resolveFieldDefsForKind(orgId, kind)) {
     if (seen.has(d.name) || !isWritableCustomField(d) || !shown(d.name)) continue;
     seen.add(d.name);
-    all.push({ label: d.display_label || columnLabel(d.name), field: d.name, cell: field(d.name) });
+    const money = moneyStorageOf(d);
+    all.push({ label: d.display_label || columnLabel(d.name), field: d.name, cell: money ? moneyCell(d.name, money) : field(d.name) });
   }
   const name: ExportColumn = { label: byName.get("name")?.display_label || "Name", field: "title", cell: (row) => row.title };
   if (!only?.length) return [name, ...all];

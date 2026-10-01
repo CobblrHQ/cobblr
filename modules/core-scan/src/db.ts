@@ -236,6 +236,19 @@ export interface CoreScanRecordPhotoSuggestionsTable {
   updated_at: Generated<Date>;
 }
 
+/** A record's last photo search, kept as links (#4515). */
+export interface CoreScanRecordPhotoSearchesTable {
+  entity_kind: string;
+  entity_id: string;
+  query: string | null;
+  items: ColumnType<unknown[], string, string>;
+  ai_url: string | null;
+  ai_reason: string | null;
+  used_url: string | null;
+  used_file_id: string | null;
+  updated_at: Generated<Date>;
+}
+
 export interface CoreScanPhotoSuggestConfigTable {
   id: Generated<boolean>;
   auto_apply: Generated<boolean>;
@@ -261,6 +274,7 @@ export interface CoreScanIdentifyUsageTable {
 export interface CoreScanDB {
   core_scan_photo_rank_config: CoreScanPhotoRankConfigTable;
   core_scan_record_photo_suggestions: CoreScanRecordPhotoSuggestionsTable;
+  core_scan_record_photo_searches: CoreScanRecordPhotoSearchesTable;
   core_scan_photo_suggest_config: CoreScanPhotoSuggestConfigTable;
   core_scan_glance_config: CoreScanPhotoRankConfigTable;
   core_scan_inbox_items: CoreScanInboxItemsTable;

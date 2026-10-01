@@ -14,6 +14,7 @@
 // model's sentence about them.
 
 import type { KindRec } from "@cobblr/workspace-tools";
+import { amountOf, formatMoney, formatStoredMoney, moneyStorageOf, parseMoney, storedCents, type MoneyStorage } from "@cobblr/platform-contract/money";
 
 export interface WriteValue {
   /** The field key, top-level or inside metadata (where custom fields live). */
@@ -43,6 +44,15 @@ const humanize = (key: string): string => {
   return words ? words[0]!.toUpperCase() + words.slice(1) : key;
 };
 
+/** How a field of this kind holds money, when it does: "$4,300" on the
+ *  card, never the 430000 a cents column keeps. */
+function moneyOf(kind: KindRec | undefined, key: string): MoneyStorage | null {
+  const custom = kind?.custom_fields?.find((f) => f.name === key);
+  if (custom) return moneyStorageOf(custom);
+  const native = kind?.fields?.find((f) => f.name === key);
+  return native ? moneyStorageOf(native) : null;
+}
+
 function labelOf(kind: KindRec | undefined, key: string): string {
   const custom = kind?.custom_fields?.find((f) => f.name === key);
   if (custom?.label) return custom.label;
@@ -64,7 +74,8 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /** Did the person's words give this value? A number by its digits, a word by
  *  its text; "a"/"an"/"one" gives a count of 1. */
 function valueSaid(said: string, value: string): boolean {
-  const s = said.toLowerCase();
+  // "4,300" is said as 4300: thousands separators are not part of a number.
+  const s = said.toLowerCase().replace(/(\d),(?=\d{3}\b)/g, "$1");
   const v = value.toLowerCase();
   if (/^-?\d+(\.\d+)?$/.test(v)) {
     const n = Number(v);
@@ -114,11 +125,24 @@ export async function writeValues(opts: {
     return key in c ? c[key] : ((c.metadata as Record<string, unknown> | undefined) ?? {})[key];
   };
   const out: WriteValue[] = [];
+  /** A money value's plain amount ("4300"), what the person's words are read for. */
+  const said = new Map<WriteValue, string>();
   for (const [field, raw] of entries) {
     if (TITLE_KEYS.has(field) && !opts.update) continue;
     let value = words(raw);
     if (value === null) continue;
     let from = opts.update ? words(cur(field)) : null;
+    const money = moneyOf(kind, field);
+    if (money) {
+      const shown = formatStoredMoney(raw, money);
+      if (shown !== null) {
+        const c = storedCents(raw, money)!;
+        const v: WriteValue = { field, label: labelOf(kind, field), value: shown, ...(opts.update ? { from: formatStoredMoney(cur(field), money) ?? "nothing" } : {}) };
+        out.push(v);
+        said.set(v, String(amountOf(c)));
+        continue;
+      }
+    }
     // A record named by id reads as the record's own name.
     const ref = field.match(/^(.+)_id$/)?.[1];
     if (ref && opts.titleOf) {
@@ -134,7 +158,7 @@ export async function writeValues(opts: {
   // person gave fills two fields, only the field their words name has it.
   for (const v of out) {
     const same = out.filter((o) => o.value.toLowerCase() === v.value.toLowerCase()).length;
-    const stated = valueSaid(opts.said, v.value) && (same === 1 || labelSaid(opts.said, v.label));
+    const stated = valueSaid(opts.said, said.get(v) ?? v.value) && (same === 1 || labelSaid(opts.said, v.label));
     if (!stated) v.suggested = true;
     if (!required.has(v.field)) v.removable = true;
   }
@@ -148,13 +172,32 @@ export async function writeValues(opts: {
  * the `_kind` half left out. The fallback that keeps any new action from
  * reaching a person as its label alone.
  */
+/** An argument's label as a card shows it: the words that name it, without
+ *  the guidance written for whoever fills it in ("The feature, by its name in
+ *  the app (e.g. Shipments)" is "The feature"). An action's argument labels
+ *  serve its form and the assistant alike, and the assistant needs the
+ *  examples; a person reading back a change does not. */
+export function cardLabel(label: string): string {
+  const out = label
+    .replace(/\s*\((?:e\.g\.|eg\.|for example|from|optional|the rest stay|defaults?\b)[^)]*\)/gi, "")
+    .replace(/\s*\([^)]*\be\.g\.[^)]*\)/gi, "")
+    .replace(/,\s*e\.g\..*$/i, "")
+    .replace(/,\s*by\b.*$/i, "")
+    .replace(/,\s*(?:comma-separated|one per line|or empty)\b.*$/i, "")
+    .replace(/\.\s+Defaults?\b.*$/i, "")
+    .replace(/[\s,.:;]+$/, "")
+    .trim();
+  return out || label.trim();
+}
+
 export async function actionArgValues(opts: {
   args: Record<string, unknown>;
-  schema?: Record<string, { label?: string }> | null;
+  schema?: Record<string, { label?: string; money?: boolean }> | null;
   said: string;
   titleOf?: TitleOf;
 }): Promise<WriteValue[]> {
   const out: WriteValue[] = [];
+  const amounts = new Map<WriteValue, string>();
   for (const [field, raw] of Object.entries(opts.args)) {
     if (/_kind$/.test(field)) continue;
     let value = words(raw);
@@ -162,9 +205,13 @@ export async function actionArgValues(opts: {
     const ref = field.match(/^(.+)_id$/)?.[1];
     const refKind = ref ? words(opts.args[`${ref}_kind`]) : null;
     if (refKind && opts.titleOf) value = (await opts.titleOf(refKind, value)) ?? value;
-    const declared = opts.schema?.[field]?.label?.replace(/\s*\((optional)\)\s*$/i, "").replace(/\s+id$/i, "");
-    out.push({ field, label: declared || humanize(field), value });
+    const declared = opts.schema?.[field]?.label ? cardLabel(opts.schema[field]!.label!).replace(/\s+id$/i, "") : undefined;
+    // A money argument is an amount as a person says it: "$45.50" on the card.
+    const c = opts.schema?.[field]?.money ? parseMoney(raw) : null;
+    const v: WriteValue = { field, label: declared || humanize(field), value: c !== null ? formatMoney(c) : value };
+    out.push(v);
+    if (c !== null) amounts.set(v, String(amountOf(c)));
   }
-  for (const v of out) if (!valueSaid(opts.said, v.value)) v.suggested = true;
+  for (const v of out) if (!valueSaid(opts.said, amounts.get(v) ?? v.value)) v.suggested = true;
   return out;
 }

@@ -21,6 +21,7 @@ import { useActiveOrg } from "../../auth/ActiveOrgContext";
 import { useDetailRoute } from "../../lib/useDetailRoute";
 import { useKindLabels } from "../../lib/useKindLabels";
 import { SearchIncomplete } from "../../components/SearchIncomplete";
+import { LIBRARY_LINK_REL } from "@cobblr/platform-contract/library";
 
 type Offered = { kind: string; label: string; to: string[]; reverse: boolean };
 type Words = Record<string, { label: string; inverse: string }>;
@@ -69,7 +70,11 @@ export function LinksSection({
   });
   const words = kinds.data?.words ?? {};
   const fixed = new Set(kinds.data?.fixed ?? []);
-  const rows = links.data?.items ?? [];
+  // An item linked from an outside library (a document, a game) is a link
+  // too, but it is not a record here: the library panel shows it, with its
+  // title and where to open it, and removing it there also takes it off the
+  // panel's list.
+  const rows = (links.data?.items ?? []).filter((p) => p.relationship_kind !== LIBRARY_LINK_REL);
   const refresh = () => void qc.invalidateQueries({ queryKey: ["links", activeSlug] });
   const del = useMutation({
     mutationFn: (id: string) => api.deletePairing(activeSlug, id),

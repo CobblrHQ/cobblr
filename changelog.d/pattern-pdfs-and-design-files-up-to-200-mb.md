@@ -3,6 +3,7 @@ type: feature
 scope: files
 date: 2026-09-30
 docs_target: docs/USER_GUIDE.md#3.4 Files (foundational)
+docs_published: 2026-10-01
 ---
 **PDFs and design files can be much bigger now.** A scanned pattern PDF, a STEP or STL model, a 3MF or a gcode file can be up to 200 MB on your own server (100 MB on the hosted app), where every file used to stop at 25 MB. Photos, videos and other files stay at 25 MB. A file over its limit says how big it is and what the limit is for that kind of file. Big uploads are also easier on the server, which now writes them to disk as they arrive instead of holding them in memory. And when a phone loses signal partway through, the page now says the upload was cut off and to try again on a steadier connection, instead of "Load failed".
 

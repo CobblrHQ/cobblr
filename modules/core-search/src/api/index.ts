@@ -4,7 +4,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { platform } from "@cobblr/platform-contract";
+import { placeLine, platform } from "@cobblr/platform-contract";
 
 const router = Router({ mergeParams: true });
 
@@ -43,8 +43,15 @@ router.get("/search", (req, res, next) => {
   void (async () => {
     const parsed = SearchQuery.safeParse(req.query);
     if (!parsed.success) {
+      // Name the parameter that was wrong: every failure here used to say
+      // "q is required", including a per_kind of 500 with q present.
+      const first = parsed.error.issues[0];
       res.status(400).json({
-        error: { code: "invalid_query", message: "q is required", details: parsed.error.issues },
+        error: {
+          code: "invalid_query",
+          message: first ? `${first.path.join(".") || "query"}: ${first.message}` : "invalid query",
+          details: parsed.error.issues,
+        },
       });
       return;
     }
@@ -53,16 +60,18 @@ router.get("/search", (req, res, next) => {
     const tr = req as unknown as TenantReq;
     const viewer = { userId: tr.session?.id, role: tr.tenant.role };
     const { q, per_kind, tag, offset } = parsed.data;
-    if (!q && !tag) {
-      res.status(400).json({
-        error: { code: "empty_query", message: "Supply at least one of ?q or ?tag" },
-      });
-      return;
-    }
     const kindsParam = parsed.data.kinds
       ?.split(",")
       .map((s) => s.trim())
       .filter(Boolean);
+    // A kind on its own is a browse of that kind ("pick a kind", the page
+    // says); with no kind, no words and no tag there is nothing to ask.
+    if (!q && !tag && !kindsParam?.length) {
+      res.status(400).json({
+        error: { code: "empty_query", message: "Supply at least one of ?q, ?tag or ?kinds" },
+      });
+      return;
+    }
 
     // Discover the candidate kinds, for THIS workspace. listKinds() is the
     // process registry: base kinds only, every module whether or not this
@@ -118,7 +127,20 @@ router.get("/search", (req, res, next) => {
     }
 
     // Live ones first, whatever kind; retired ones after, still found.
-    const ranked = [...merged.filter((i) => i.retired !== true), ...merged.filter((i) => i.retired === true)];
+    const ordered = [...merged.filter((i) => i.retired !== true), ...merged.filter((i) => i.retired === true)];
+
+    // Where each one is, every step up ("Backpack, in Desk drawer"), read
+    // from placement for every kind alike, so a thing inside another thing
+    // answers "where is it" the same as one on a shelf.
+    const paths = ordered.length
+      ? await platform()
+          .placement.pathsOf({ orgId, containees: ordered.map((i) => ({ kind: i.kind, id: i.id })) })
+          .catch(() => new Map<string, never[]>())
+      : new Map<string, never[]>();
+    const ranked = ordered.map((i) => {
+      const line = placeLine(paths.get(`${i.kind}:${i.id}`) ?? []);
+      return line ? { ...i, where: line } : i;
+    });
 
     res.json({
       q,
@@ -126,8 +148,27 @@ router.get("/search", (req, res, next) => {
       kinds_failed: kindsFailed,
       items: ranked,
       // A kind that filled its share may have more: ask again with
-      // offset + per_kind.
+      // offset + per_kind. more_kinds names which, so a page can offer
+      // "show more" on exactly the groups that have it.
       has_more: perKind.some((list) => list.length === per_kind),
+      more_kinds: candidateIds.filter((_, i) => perKind[i]!.length === per_kind),
+    });
+  })().catch(next);
+});
+
+// GET /search/kinds: the kinds a search can reach in this workspace, for a
+// picker of kinds. Every kind the registry knows is not one search can list:
+// a print job or an order's line has no list resolver, so a chip for it could
+// only ever find nothing.
+router.get("/search/kinds", (req, res, next) => {
+  void (async () => {
+    const orgId = (req as unknown as TenantReq).tenant.org.id;
+    const all = await platform().entities.listKindsForOrg(orgId);
+    const ok = await Promise.all(all.map((k) => platform().entities.listable(orgId, k.id)));
+    res.json({
+      items: all
+        .filter((_, i) => ok[i])
+        .map((k) => ({ id: k.id, display_name: k.display_name, display_name_plural: k.display_name_plural ?? null })),
     });
   })().catch(next);
 });

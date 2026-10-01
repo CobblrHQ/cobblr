@@ -3,6 +3,7 @@
 // and the core-queue poll worker use the same code.
 
 import { interpretReport, plainDriverError, unreachablePlan, POLL_MS } from "./job-truth.js";
+import { drawForCompletedJob } from "./loaded-spools.js";
 import { settleMakeForJob } from "./makes-core.js";
 import { platform } from "@cobblr/platform-contract";
 import { isEdgeManagerUrl, edgeInstanceOf } from "@cobblr/platform-contract/edge-bridge-client";
@@ -534,12 +535,22 @@ export async function pollJob(
         ? {
             partId: job.material_part_id,
             delta: -grams,
+            // In grams: the wire converts to the spool's own unit (kg).
+            unit: "g",
+            once: true,
             reason: `Print: ${job.file_ref}`,
             // Source attribution for the consumption ledger — "this print drew it down".
             sourceKind: "digifab:job",
             sourceId: jobId,
           }
         : {};
+    // No spool picked on the job: the spools loaded on its printer pay, each
+    // for its own slot's grams.
+    if (status === "completed") {
+      await drawForCompletedJob(db, orgId, job as never).catch((err: unknown) =>
+        console.error(`[digifab] job ${jobId}: drawing from the loaded spools failed: ${(err as Error).message}`),
+      );
+    }
     // A driver-reported `cancelled` (someone stopped it at the printer) is NOT a
     // failure — firing print.failed for it ran failure wires + posted "❌ Print
     // failed" for a deliberate stop. Cancelled emits nothing; completed/failed

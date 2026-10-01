@@ -3,6 +3,7 @@ type: feature
 scope: dashboard
 date: 2026-09-28
 docs_target: docs/USER_GUIDE.md#The dashboard (home)
+docs_published: 2026-10-01
 ---
 **Needs you shows each collection as one card, and each row finishes the job.** Overdue, today and coming up for Groceries are one card with a Today line between them. Each item has Used up, Tossed and +3 days right on the row, with Undo, and a stale backlog clears with Mark all as tossed. Two rows that look like one thing can be put together from the card.
 

@@ -18,6 +18,7 @@ import { platform, parcelAudience } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { orderLink } from "../arrival-sweeper.js";
+import { formatStoredMoney } from "@cobblr/platform-contract/money";
 
 export const returnsRouter = Router({ mergeParams: true });
 
@@ -115,7 +116,7 @@ returnsRouter.post(
     // everyone. No button — a return needs nothing confirmed, it needs to be
     // known about.
     const what = ev.item ? ev.item : order.vendor ? `your ${order.vendor} order` : "your order";
-    const money = ev.refund_amount != null ? ` (${ev.refund_amount.toLocaleString("en-US", { style: "currency", currency: "USD" })})` : "";
+    const money = ev.refund_amount != null ? ` (${formatStoredMoney(ev.refund_amount, "amount")})` : "";
     const message = `${what}: ${RETURN_WORDS[ev.stage]}${money}.`;
     const memberIds = await platform().notifications.orgMemberIds(ctx.org.id);
     const audience = parcelAudience([order.tracking_added_by_user_id, session.id], new Set(memberIds));

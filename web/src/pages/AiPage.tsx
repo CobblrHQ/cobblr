@@ -28,7 +28,8 @@ import { ProviderSetupSteps } from "../components/ProviderSetupSteps";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Info, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
-import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { Modal, MoneyInput, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { formatMoney, formatStoredMoney, toCents } from "@cobblr/platform-contract/money";
 import { capabilityLabel } from "../lib/ai-capability-labels";
 import { connectionsNotUsedIn, routesWith } from "../lib/unused-connections";
 import type { ConnRoute, ConnectionVerification, UserConnection } from "../lib/api";
@@ -228,7 +229,7 @@ export function AiPage() {
                       )}
                     </div>
                     <div className="text-faint">
-                      ${((Number(s.total_cost_cents ?? 0)) / 100).toFixed(2)}
+                      {formatStoredMoney(Number(s.total_cost_cents ?? 0), "cents")}
                     </div>
                   </div>
                 </div>
@@ -256,7 +257,7 @@ export function AiPage() {
               <span className="text-muted">{c.provider_id}</span>
               <span className="text-muted">{c.model ?? "—"}</span>
               <span className="text-faint">
-                {c.cost_cents !== null ? `${(c.cost_cents / 100).toFixed(2)}¢` : "—"} ·{" "}
+                {c.cost_cents !== null ? formatStoredMoney(c.cost_cents, "cents") : "—"} ·{" "}
                 {c.duration_ms ?? "—"}ms
               </span>
               <span className="text-faint">
@@ -353,7 +354,7 @@ function ProviderRow({
             )}
             {provider.monthly_budget_cents !== null && (
               <span className="ml-2">
-                budget: ${(provider.monthly_budget_cents / 100).toFixed(2)} / month
+                budget: {formatStoredMoney(provider.monthly_budget_cents, "cents")} / month
               </span>
             )}
           </div>
@@ -412,7 +413,7 @@ function ProviderAddModal({
   const picked = catalogue.find((c) => c.id === pickedId);
   const [label, setLabel] = useState("");
   const [creds, setCreds] = useState<Record<string, string>>({});
-  const [budget, setBudget] = useState<string>("");
+  const [budget, setBudget] = useState<number | null>(null);
 
   const confirm = useConfirm();
   // The server tests the key before the connection is presented as ready
@@ -425,7 +426,7 @@ function ProviderAddModal({
         provider_id: pickedId,
         label: label.trim() || picked?.label || pickedId,
         credentials: creds,
-        monthly_budget_cents: budget.trim() === "" ? null : Math.round(Number(budget) * 100),
+        monthly_budget_cents: budget,
         ...(confirmUnverified ? { confirm_unverified: true } : {}),
       }),
     onSuccess: (created) => {
@@ -504,14 +505,7 @@ function ProviderAddModal({
           <label className="block text-sm font-medium mb-1">
             Monthly budget USD (optional)
           </label>
-          <input
-            type="number"
-            step="0.01"
-            value={budget}
-            onChange={(e) => setBudget(e.target.value)}
-            placeholder="e.g. 10.00"
-            className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
-          />
+          <MoneyInput value={budget} storage="cents" live onCommit={setBudget} placeholder="e.g. 10" ariaLabel="Monthly budget" className="text-sm" />
         </div>
         <div className="flex justify-end gap-2 pt-2">
           <button
@@ -549,10 +543,8 @@ function ProviderEditModal({
   const [label, setLabel] = useState(provider.label);
   const [creds, setCreds] = useState<Record<string, string>>({});
   const [updateCreds, setUpdateCreds] = useState(false);
-  const [budget, setBudget] = useState<string>(
-    provider.monthly_budget_cents !== null
-      ? (provider.monthly_budget_cents / 100).toFixed(2)
-      : "",
+  const [budget, setBudget] = useState<number | null>(
+    provider.monthly_budget_cents,
   );
 
   const confirm = useConfirm();
@@ -563,8 +555,7 @@ function ProviderEditModal({
       api.updateAiProvider(activeSlug, provider.id, {
         label: label.trim() || provider.label,
         credentials: updateCreds ? creds : undefined,
-        monthly_budget_cents:
-          budget.trim() === "" ? null : Math.round(Number(budget) * 100),
+        monthly_budget_cents: budget,
         ...(confirmUnverified ? { confirm_unverified: true } : {}),
       }),
     onSuccess: (updated) => {
@@ -606,13 +597,7 @@ function ProviderEditModal({
           <label className="block text-sm font-medium mb-1">
             Monthly budget USD (blank = unlimited)
           </label>
-          <input
-            type="number"
-            step="0.01"
-            value={budget}
-            onChange={(e) => setBudget(e.target.value)}
-            className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
-          />
+          <MoneyInput value={budget} storage="cents" live onCommit={setBudget} ariaLabel="Monthly budget" className="text-sm" />
         </div>
         <label className="flex items-center gap-2 text-sm">
           <input
@@ -998,7 +983,7 @@ function MonthTotals({
   const n = (v: unknown) => Number(v ?? 0);
   const calls = items.reduce((a, s) => a + n(s.calls), 0);
   const failed = items.reduce((a, s) => a + n(s.failed), 0);
-  const cost = items.reduce((a, s) => a + n(s.total_cost_cents), 0) / 100;
+  const cost = toCents(items.reduce((a, s) => a + n(s.total_cost_cents), 0));
   const Tile = ({ label, value, tone }: { label: string; value: string; tone?: string }) => (
     <div className="flex-1 min-w-[7rem] rounded-lg bg-subtle dark:bg-slate-800/60 px-3 py-2">
       <div className={"text-lg font-semibold " + (tone ?? "text-content dark:text-mortar-100")}>
@@ -1010,7 +995,7 @@ function MonthTotals({
   return (
     <div className="flex flex-wrap gap-2">
       <Tile label="calls" value={String(calls)} />
-      <Tile label="spent" value={`$${cost.toFixed(2)}`} />
+      <Tile label="spent" value={formatMoney(cost)} />
       <Tile
         label="failed"
         value={String(failed)}

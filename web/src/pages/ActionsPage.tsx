@@ -39,7 +39,8 @@ function predicateSummary(p: ActionAppliesTo): string {
   if (p.traits?.length) parts.push(`traits: ${p.traits.join(", ")}`);
   if (p.kinds?.length) parts.push(`kinds: ${p.kinds.join(", ")}`);
   if (p.hasFieldRole) parts.push(`field role: ${p.hasFieldRole}`);
-  return parts.join(" · ") || "—";
+  const base = parts.join(" · ") || "—";
+  return p.requires?.traits.length ? `${base}, only when ${p.requires.traits.join(" and ")}` : base;
 }
 
 export function ActionsPage() {

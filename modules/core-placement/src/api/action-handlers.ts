@@ -6,7 +6,7 @@
 //   - core-placement.place  — put the targeted record inside a container.
 //   - core-placement.remove — take the targeted record out of its container.
 
-import { platform, requireActionEntity } from "@cobblr/platform-contract";
+import { contentsWordText, platform, requireActionEntity } from "@cobblr/platform-contract";
 import type { ActionUndoStep } from "@cobblr/platform-contract/action-undo";
 
 let registered = false;
@@ -46,6 +46,13 @@ function registerPlanners(): void {
     const from = was ? await nameOf(ctx.orgId, was.kind, was.id) : null;
     return { title: from ? `Take “${what}” out of ${from}` : `“${what}” is not in any place`, lines: from ? [`From: ${from}`] : [] };
   });
+  platform().actions.registerPlanner("core-placement.return-home", async (ctx) => {
+    if (!ctx.entity) return null;
+    const what = (await nameOf(ctx.orgId, ctx.entity.kind, ctx.entity.id)) ?? "it";
+    const was = await platform().placement.containerOf({ orgId: ctx.orgId, containee: { kind: ctx.entity.kind, id: ctx.entity.id } }).catch(() => null);
+    const from = was ? await nameOf(ctx.orgId, was.kind, was.id) : null;
+    return { title: from ? `Take “${what}” off ${from}, back where it was` : `“${what}” is not in any place`, lines: from ? [`From: ${from}`] : [] };
+  });
 }
 
 export function registerPlacementActionHandlers(): void {
@@ -55,28 +62,65 @@ export function registerPlacementActionHandlers(): void {
   registerPlanners();
 
   platform().actions.registerHandler("core-placement.place", async (ctx) => {
-    const args = (ctx.args as { container_kind?: unknown; container_id?: unknown; slot?: unknown } | null) ?? {};
+    const args = (ctx.args as { container_kind?: unknown; container_id?: unknown; slot?: unknown; one_to_a_slot?: unknown; qty?: unknown } | null) ?? {};
     const containerKind = String(args.container_kind ?? "").trim();
     const containerId = String(args.container_id ?? "").trim();
     if (!containerKind || !containerId) {
       return { ok: false, error: "container_kind and container_id are required" };
     }
+    const qty = args.qty === undefined || args.qty === null || args.qty === "" ? undefined : Number(args.qty);
+    if (qty !== undefined && !(Number.isFinite(qty) && qty > 0)) return { ok: false, error: "qty is how many to put in, more than none" };
+    const slot = typeof args.slot === "string" && args.slot.trim() ? args.slot.trim() : null;
+    const oneToASlot = args.one_to_a_slot === true || args.one_to_a_slot === "true";
+    if (oneToASlot && !slot) return { ok: false, error: "one_to_a_slot needs a slot" };
     const entity = requireActionEntity(ctx);
     const was = await platform().placement.containerOf({ orgId: ctx.orgId, containee: { kind: entity.kind, id: entity.id } }).catch(() => null);
+    let displaced: unknown[] = [];
+    let placed: { kind: string; id: string } = { kind: entity.kind, id: entity.id };
     try {
-      await platform().placement.place({
+      const done = await platform().placement.place({
         orgId: ctx.orgId,
         containee: { kind: entity.kind, id: entity.id },
         container: { kind: containerKind, id: containerId },
-        slot: typeof args.slot === "string" && args.slot.trim() ? args.slot.trim() : null,
+        slot,
         placedBy: ctx.userId ?? null,
+        ...(oneToASlot ? { oneToASlot: true } : {}),
+        ...(qty !== undefined ? { qty } : {}),
       });
+      displaced = done?.displaced ?? [];
+      if (done?.placed) placed = done.placed;
     } catch (err) {
       // Surface the eligibility guard's message (self, cycle, ineligible kind)
       // as a clean failure the invoker can relay, not a thrown 500.
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
-    return { ok: true, placed_in: { kind: containerKind, id: containerId }, was };
+    return { ok: true, placed_in: { kind: containerKind, id: containerId }, placed, was, ...(displaced.length ? { sent_home: displaced } : {}) };
+  });
+
+  // What a thing is built from, with what each part is worth and the total:
+  // "what's inside the Gaming PC?", "what is it worth?". Values a person may
+  // not see (a part's cost) are withheld and the answer says so.
+  platform().actions.registerHandler("core-placement.built-from", async (ctx) => {
+    const entity = requireActionEntity(ctx);
+    const built = await platform().placement.builtValue({
+      orgId: ctx.orgId,
+      container: { kind: entity.kind, id: entity.id },
+      ...(ctx.userId ? { viewer: { userId: ctx.userId } } : {}),
+    });
+    // Said in the kind's own word: "The Gaming PC's parts: 2 × RAM stick, SSD 2TB."
+    const name = (await nameOf(ctx.orgId, entity.kind, entity.id)) ?? "It";
+    const word = contentsWordText(built).toLowerCase();
+    const list = built.parts.map((p) => `${p.qty != null && p.qty !== 1 ? `${p.qty} × ` : ""}${p.name}`).join(", ");
+    const said = built.parts.length ? `${name}'s ${word}: ${list}.` : `${name} has nothing in its ${word} yet.`;
+    return { ok: true, ...built, said };
+  });
+
+  platform().actions.registerHandler("core-placement.return-home", async (ctx) => {
+    const entity = requireActionEntity(ctx);
+    const was = await platform().placement.containerOf({ orgId: ctx.orgId, containee: { kind: entity.kind, id: entity.id } }).catch(() => null);
+    if (!was) return { ok: true, skipped: true, reason: "it is not in any place" };
+    const to = await platform().placement.returnHome({ orgId: ctx.orgId, containee: { kind: entity.kind, id: entity.id }, placedBy: ctx.userId ?? null });
+    return { ok: true, returned_to: to, was };
   });
 
   platform().actions.registerHandler("core-placement.remove", async (ctx) => {
@@ -91,11 +135,14 @@ export function registerPlacementActionHandlers(): void {
 }
 
 // Back where it was: placed again in its previous container, or taken out
-// when it was in none.
+// when it was in none. When only some of it went in (2 of 4 sticks), it is the
+// part that went in that goes back, and joins the rest there.
 function backWhereItWas(result: unknown, ctx: { entity?: { kind: string; id: string } }): ActionUndoStep | null {
   if (!ctx.entity) return null;
-  const was = (result as { was?: { kind?: unknown; id?: unknown } | null } | null)?.was;
-  const on = { entity_kind: ctx.entity.kind, entity_id: ctx.entity.id };
+  const r = result as { was?: { kind?: unknown; id?: unknown } | null; placed?: { kind?: unknown; id?: unknown } } | null;
+  const was = r?.was;
+  const moved = typeof r?.placed?.kind === "string" && typeof r?.placed?.id === "string" ? { kind: r.placed.kind, id: r.placed.id } : ctx.entity;
+  const on = { entity_kind: moved.kind, entity_id: moved.id };
   if (was && typeof was.kind === "string" && typeof was.id === "string") {
     return { action_id: "core-placement:place", args: { container_kind: was.kind, container_id: was.id }, ...on };
   }
@@ -103,6 +150,7 @@ function backWhereItWas(result: unknown, ctx: { entity?: { kind: string; id: str
 }
 function registerUndos(): void {
   platform().actions.registerUndo("core-placement.place", backWhereItWas);
+  platform().actions.registerUndo("core-placement.return-home", backWhereItWas);
   platform().actions.registerUndo("core-placement.remove", (result, ctx) => {
     const was = (result as { was?: unknown } | null)?.was;
     return was ? backWhereItWas(result, ctx) : null;

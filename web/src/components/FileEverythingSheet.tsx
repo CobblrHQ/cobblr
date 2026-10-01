@@ -19,7 +19,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, ChevronDown, Loader2, RotateCcw } from "lucide-react";
 import { Modal, useToast } from "@cobblr/platform-web";
-import { ApiError, api, type AutofileDryRun, type AutofilePlanLine, type AutofileResult } from "../lib/api";
+import { ApiError, api, type AutofileDryRun, type AutofilePlanLine, type AutofileResult, type PlaceHolder } from "../lib/api";
 import { lineFor, pilesFrom, seenFrom, type Piles } from "../lib/autofilePiles";
 import { RestockPlanChoice } from "./RepurchaseControls";
 import { LocationTreePicker } from "./LocationTreePicker";
@@ -120,6 +120,8 @@ export function FileEverythingSheet({
   const qc = useQueryClient();
   const [openPiles, setOpenPiles] = useState<Record<"attach" | "create" | "skip", boolean>>({ attach: true, create: true, skip: false });
   const [locationId, setLocationId] = useState<string | null>(defaultLocationId ?? null);
+  // Or a thing that holds things (a Backpack): the new ones go inside it.
+  const [holder, setHolder] = useState<PlaceHolder | null>(null);
   const [result, setResult] = useState<AutofileResult | null>(null);
   const [undone, setUndone] = useState<Set<string>>(new Set());
 
@@ -144,7 +146,7 @@ export function FileEverythingSheet({
         ...(batchId ? { batch_id: batchId } : {}),
         item_ids,
         seen,
-        ...(locationId ? { location_id: locationId } : {}),
+        ...(holder ? { container: { kind: holder.kind, id: holder.id } } : locationId ? { location_id: locationId } : {}),
         ...(TZ() ? { timezone: TZ() } : {}),
       }) as Promise<AutofileResult>;
     },
@@ -280,7 +282,21 @@ export function FileEverythingSheet({
           {piles.create.length > 0 && (
             <div className="flex items-center gap-2 text-xs text-muted px-1">
               <span className="shrink-0">New ones go to</span>
-              <LocationTreePicker value={locationId} onChange={setLocationId} size="sm" placeholder="no location" className="min-w-0 flex-1" />
+              <LocationTreePicker
+                value={locationId}
+                onChange={(id) => {
+                  setLocationId(id);
+                  setHolder(null);
+                }}
+                onPickHolder={(h) => {
+                  setHolder(h);
+                  setLocationId(null);
+                }}
+                pickedHolder={holder}
+                size="sm"
+                placeholder="no location"
+                className="min-w-0 flex-1"
+              />
             </div>
           )}
           <Pile

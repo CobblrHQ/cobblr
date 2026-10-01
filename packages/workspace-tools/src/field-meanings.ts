@@ -16,6 +16,29 @@
 // only narrates it.
 
 import type { KindRec } from "./kinds.js";
+import { formatStoredMoney, moneyStorageOf } from "@cobblr/platform-contract/money";
+
+/** Money as a person reads it ("$4,300"): a cents column never reaches the
+ *  model as 430000, and an amount never as a bare 4300 it could misread. */
+function moneyInWords(fields: Record<string, unknown>, kind: KindRec | undefined): Record<string, unknown> {
+  if (!kind) return fields;
+  const words = (bag: Record<string, unknown>, custom: boolean): Record<string, unknown> => {
+    const out: Record<string, unknown> = { ...bag };
+    for (const [k, v] of Object.entries(bag)) {
+      const def = custom ? kind.custom_fields?.find((f) => f.name === k) : kind.fields?.find((f) => f.name === k);
+      const storage = def ? moneyStorageOf(def) : null;
+      if (!storage) continue;
+      const shown = formatStoredMoney(v, storage);
+      if (shown !== null) out[k] = shown;
+    }
+    return out;
+  };
+  const out = words(fields, false);
+  if (fields.metadata && typeof fields.metadata === "object" && !Array.isArray(fields.metadata)) {
+    out.metadata = words(fields.metadata as Record<string, unknown>, true);
+  }
+  return out;
+}
 
 export const UNRECORDED_NOTE =
   "Each record lists only the fields that hold a value. A field that is not listed has nothing recorded: say it is not recorded, and never state it from another field (a replacement value is not a price paid).";
@@ -75,7 +98,7 @@ export function explainRecords(body: unknown, kinds: readonly KindRec[]): unknow
   const shape = (v: unknown): unknown => {
     if (!isRecord(v)) return v;
     saw = true;
-    const fields = withoutEmpty(v.fields);
+    const fields = moneyInWords(withoutEmpty(v.fields), kinds.find((k) => k.id === String(v.kind)));
     note(v, fields);
     return { ...v, fields };
   };

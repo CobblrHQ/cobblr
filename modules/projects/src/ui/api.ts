@@ -1,3 +1,5 @@
+import { noteWorkspaceWrite } from "@cobblr/platform-web";
+
 export type ProjectStatus = "planning" | "active" | "blocked" | "done" | "abandoned";
 export type Priority = "low" | "med" | "high" | "urgent";
 export type TaskStatus = "todo" | "doing" | "done" | "blocked" | "cancelled";
@@ -37,6 +39,18 @@ export interface Task {
   updated_at: string;
   project_name?: string | null;
   blocked_deps?: number;
+  /** Who it is assigned to, by name (the `assignee` person field). */
+  assignee_label?: string | null;
+  /** The steps inside the task, in order. */
+  checklist?: ChecklistItem[];
+  /** Comes round again when done, or null. */
+  repeat?: { every_n: number; every_unit: "day" | "week" | "month" | "year" } | null;
+}
+
+export interface ChecklistItem {
+  id: string;
+  text: string;
+  done: boolean;
 }
 
 export interface TaskDependency {
@@ -49,6 +63,11 @@ export interface TaskDependency {
   satisfied: boolean;
   note: string | null;
   created_at: string;
+  /** Whether it still holds the task up: for a task dependency, the blocker is
+   *  not done or cancelled; for a record dependency, nothing has satisfied it. */
+  open?: boolean;
+  blocker_title?: string | null;
+  blocker_status?: TaskStatus | null;
 }
 
 export class ProjectsApi {
@@ -79,12 +98,17 @@ export class ProjectsApi {
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    if (res.status === 204) return undefined as T;
+    const wrote = method.toUpperCase() !== "GET";
+    if (res.status === 204) {
+      if (wrote) noteWorkspaceWrite(url);
+      return undefined as T;
+    }
     const parsed = await res.json().catch(() => null);
     if (!res.ok) {
       const err = (parsed as { error?: { code?: string; message?: string } } | null)?.error;
       throw new Error(err?.message ?? `HTTP ${res.status}`);
     }
+    if (wrote) noteWorkspaceWrite(url);
     return parsed as T;
   }
 
@@ -113,20 +137,24 @@ export class ProjectsApi {
     this.projectsRequest<Project>("PATCH", `/${id}`, b);
   deleteProject = (id: string) => this.projectsRequest<void>("DELETE", `/${id}`);
 
-  listTasks = (q: { project_id?: string; status?: TaskStatus; energy?: Energy } = {}) => {
+  listTasks = (q: { project_id?: string; status?: TaskStatus; energy?: Energy; assignee?: "me" | string } = {}) => {
     const params = new URLSearchParams();
     if (q.project_id) params.set("project_id", q.project_id);
+    if (q.assignee) params.set("assignee", q.assignee);
     if (q.status) params.set("status", q.status);
     if (q.energy) params.set("energy", q.energy);
     const qs = params.toString();
     return this.request<{ items: Task[] }>("GET", `/tasks${qs ? "?" + qs : ""}`);
   };
-  getTask = (id: string) => this.request<Task & { dependencies: TaskDependency[] }>("GET", `/tasks/${id}`);
+  getTask = (id: string) => this.request<Task & { dependencies: TaskDependency[]; blocked_deps: number }>("GET", `/tasks/${id}`);
   createTask = (b: { project_id?: string | null; title: string; status?: TaskStatus; priority?: Priority | null; energy?: Energy | null }) =>
     this.request<Task>("POST", "/tasks", b);
   updateTask = (id: string, b: Record<string, unknown>) =>
     this.request<Task>("PATCH", `/tasks/${id}`, b);
   deleteTask = (id: string) => this.request<void>("DELETE", `/tasks/${id}`);
+  /** A project's tasks in a new order, top first. */
+  reorderTasks = (projectId: string, ids: string[]) =>
+    this.request<{ ok: true }>("POST", "/tasks/reorder", { project_id: projectId, ids });
 
   addDependency = (taskId: string, b: {
     depends_on_task_id?: string;

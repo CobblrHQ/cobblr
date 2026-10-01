@@ -19,6 +19,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { OverlayLayer } from "./fixed-layers";
+import { useEscapeToClose } from "./useEscapeToClose";
 
 interface ConfirmOptions {
   title?: string;
@@ -66,13 +67,12 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
     setPending(null);
   }
 
+  const layerRef = useRef<HTMLDivElement>(null);
+  useEscapeToClose(!!pending, layerRef, () => close(false));
   useEffect(() => {
     if (!pending) return;
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        close(false);
-      } else if (e.key === "Enter") {
+      if (e.key === "Enter") {
         // Enter on a focused button is that button: Cancel cancels. Only an
         // Enter that lands on no control of its own means "yes".
         if (e.target instanceof HTMLElement && e.target.closest("button, a, input, select, textarea")) return;
@@ -89,6 +89,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
       {children}
       {pending && createPortal(
         <OverlayLayer
+          ref={layerRef}
           className="z-[60] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4"
           onClick={() => close(false)}
           role="dialog"

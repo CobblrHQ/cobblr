@@ -1,13 +1,18 @@
 {
   "manifest": {
     "id": "cobblr.flagship.yarn",
-    "version": "0.9.2",
+    "version": "0.9.3",
     "name": "Yarn",
     "description": "Yarn as its own inventory instance: counted in balls, skeins or hanks, yarn-only fields, grouped by weight. Optional Hooks, Supplies and Patterns tables.",
     "author": "Cobblr",
     "released_at": "2026-09-29",
     "changelog": "Importing patterns with Source: Ribblr now shows how to get them out of Ribblr: what can be downloaded, what cannot, and how to bring the downloads in.",
     "releases": [
+      {
+        "version": "0.9.3",
+        "released_at": "2026-10-02",
+        "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before."
+      },
       {
         "version": "0.9.2",
         "released_at": "2026-09-29",
@@ -82,6 +87,7 @@
             "display_label": "Fibre",
             "type": "text",
             "position": 3,
+            "learns": true,
             "choices": [
               "Wool",
               "Merino",
@@ -104,6 +110,7 @@
             "display_label": "Weight",
             "type": "text",
             "position": 4,
+            "learns": false,
             "choices": [
               "0 – Lace",
               "1 – Fingering",
@@ -122,6 +129,7 @@
             "display_label": "Vendor",
             "type": "text",
             "position": 5,
+            "learns": true,
             "choices": [
               "Michaels",
               "Hobby Lobby",
@@ -166,6 +174,7 @@
             "display_label": "Suggested needle size",
             "type": "text",
             "position": 9,
+            "learns": false,
             "choices": [
               "2.0 mm",
               "2.5 mm",
@@ -335,6 +344,7 @@
                 "display_label": "Category",
                 "type": "text",
                 "position": 2,
+                "learns": true,
                 "choices": [
                   "Wearables",
                   "Toys",
@@ -357,6 +367,7 @@
                 "display_label": "Source",
                 "type": "text",
                 "position": 4,
+                "learns": true,
                 "choices": [
                   "Ribblr",
                   "Ravelry",
@@ -374,6 +385,7 @@
                 "display_label": "Difficulty",
                 "type": "text",
                 "position": 5,
+                "learns": false,
                 "choices": [
                   "Beginner",
                   "Easy",
@@ -433,6 +445,7 @@
                 "display_label": "Hook gauge",
                 "type": "text",
                 "position": 1,
+                "learns": false,
                 "choices": [
                   "1.0 mm",
                   "1.5 mm",
@@ -459,6 +472,7 @@
                 "display_label": "Hook material",
                 "type": "text",
                 "position": 2,
+                "learns": true,
                 "choices": [
                   "All-metal",
                   "Metal + silicone grip",
@@ -570,6 +584,7 @@
                 "display_label": "Type",
                 "type": "text",
                 "position": 1,
+                "learns": true,
                 "choices": [
                   "Stitch markers",
                   "Stitch holders",

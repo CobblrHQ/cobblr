@@ -42,6 +42,7 @@ import { ScanResolversTab } from "../components/ScanResolversTab";
 import { PayloadView, usageLine } from "../components/PayloadView";
 import { FeedbackCard, FEEDBACK_STATUSES, fbStatusLabel, type FeedbackSourceItem } from "@cobblr/platform-web";
 import { apiFeedbackSource } from "../lib/feedback-source-api";
+import { formatStoredMoney } from "@cobblr/platform-contract/money";
 
 // The console content — one routed section at a time. The shell (AdminLayout)
 // owns the operator chrome + the section nav; this just dispatches /admin/:section
@@ -131,7 +132,7 @@ function OverviewTab() {
           {ai.data && (
             <StatText
               label="AI (24h)"
-              value={`${ai.data.calls_24h} calls${ai.data.cost_cents_24h ? ` · $${(ai.data.cost_cents_24h / 100).toFixed(2)}` : ""}`}
+              value={`${ai.data.calls_24h} calls${ai.data.cost_cents_24h ? ` · ${formatStoredMoney(ai.data.cost_cents_24h, "cents")}` : ""}`}
               to="/admin/ai"
             />
           )}
@@ -1522,7 +1523,7 @@ function AiActivityTab() {
                 <td className="px-3 py-1.5"><span className="font-mono text-[11px]">{c.capability}</span></td>
                 <td className="px-3 py-1.5 text-muted whitespace-nowrap">{c.model ?? "—"}</td>
                 <td className="px-3 py-1.5 text-muted whitespace-nowrap">{(c.input_tokens ?? 0) + (c.output_tokens ?? 0) || "—"}</td>
-                <td className="px-3 py-1.5 text-muted whitespace-nowrap">{c.cost_cents != null ? `$${(c.cost_cents / 100).toFixed(2)}` : "—"}</td>
+                <td className="px-3 py-1.5 text-muted whitespace-nowrap">{c.cost_cents != null ? formatStoredMoney(c.cost_cents, "cents") : "—"}</td>
                 <td className="px-3 py-1.5 text-faint whitespace-nowrap">{c.cached ? "cache" : c.source_kind ?? "—"}{c.ok ? "" : " ⚠"}</td>
                 <td className="px-3 py-1.5 text-right text-accent">view</td>
               </tr>

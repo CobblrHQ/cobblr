@@ -200,7 +200,7 @@ export async function fileThroughConfirm(
   installer: BundleInstaller,
   row: FilingRow,
   locationId: string | null,
-  overrides: { quantity?: number } = {},
+  overrides: { quantity?: number; container?: { kind: string; id: string } } = {},
 ): Promise<FilingOutcome> {
   const blocker = filingBlocker(row, door.tables);
   if (blocker) return { ok: false, item_id: row.id, name: displayName(row), reason: blocker };
@@ -229,7 +229,9 @@ export async function fileThroughConfirm(
         // that predates it never turns an auto-file into a bad request.
         quantity: overrides.quantity ?? (row.quantity == null ? undefined : filedQuantityOf(row.quantity)),
         extras: cand.fields ?? {},
-        ...(locationId ? { location_id: locationId } : {}),
+        // A thing that holds things wins over a place: the new record goes
+        // inside it (a Backpack), not onto a shelf.
+        ...(overrides.container ? { container: overrides.container } : locationId ? { location_id: locationId } : {}),
       }),
     });
     if (!r.ok) {

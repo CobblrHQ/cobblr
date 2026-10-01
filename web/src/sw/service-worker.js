@@ -2,7 +2,7 @@
 // two constants in front (BUILD, PRECACHE) and sw-logic.js inlined; see the
 // rules there. Served from the root so its scope is the whole app, and never
 // cached by the browser itself (nginx: /sw.js is no-cache).
-/* global BUILD, PRECACHE, routeOf, keepable, asOfflineCopy, offlineAnswer */
+/* global BUILD, PRECACHE, routeOf, keepable, asOfflineCopy, offlineAnswer, sharePayload, SHARE_CACHE, SHARE_PAYLOAD */
 
 const SHELL = `cobblr-shell-${BUILD}`;
 const STATIC = "cobblr-static-v1";
@@ -36,7 +36,8 @@ self.addEventListener("fetch", (event) => {
   const req = event.request;
   const route = routeOf(req.method, req.url, req.mode, self.location.origin, req.headers.has("x-impersonation"));
   if (route === "pass") return;
-  if (route === "navigate") event.respondWith(navigate(req));
+  if (route === "share") event.respondWith(takeShare(req));
+  else if (route === "navigate") event.respondWith(navigate(req));
   else if (route === "static") event.respondWith(staticFile(req));
   else if (route === "file") event.respondWith(appFile(req));
   else event.respondWith(apiRead(req));
@@ -107,4 +108,23 @@ async function apiRead(req) {
     const { body, init } = offlineAnswer();
     return new Response(body, init);
   }
+}
+
+// Another app shared to Cobblr: keep the form for the page (it alone holds the
+// person's token), replacing any share not yet read, and open the page that
+// adds it. A redirect after the POST, so a reload never posts it twice.
+async function takeShare(req) {
+  const form = await req.formData();
+  const entries = [...form.entries()];
+  const payload = sharePayload(entries);
+  await caches.delete(SHARE_CACHE);
+  const cache = await caches.open(SHARE_CACHE);
+  let i = 0;
+  for (const [name, value] of entries) {
+    if (name !== "files" || typeof value === "string" || !String(value.type).startsWith("image/")) continue;
+    await cache.put(`/__share/file/${i}`, new Response(value, { headers: { "content-type": value.type } }));
+    i++;
+  }
+  await cache.put(SHARE_PAYLOAD, new Response(JSON.stringify(payload), { headers: { "content-type": "application/json" } }));
+  return Response.redirect(new URL("/scan/share?received=1", self.location.origin).href, 303);
 }

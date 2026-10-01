@@ -1,13 +1,18 @@
 {
   "manifest": {
     "id": "cobblr.community.3d-printers",
-    "version": "0.3.2",
+    "version": "0.3.4",
     "name": "3D Printers",
     "description": "A 3D Printers tracker: your printers with hotend, extruder, board, firmware, bed size, and local IP. It's a named view of your machines, so each printer still drives prints, fleet status, and maintenance.",
     "author": "Cobblr community",
-    "released_at": "2026-09-28",
-    "changelog": "Connecting your 3D printers now names every print manager it can send to: Bambu, FDM Monster, OctoPrint, Klipper, Duet or Prusa.",
+    "released_at": "2026-10-02",
+    "changelog": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a board, a firmware, a controller) offer what you typed before. Setting a service schedule offers the usual jobs (nozzle swap, bed level, belt tension and more) beside the ones you have logged.",
     "releases": [
+      {
+        "version": "0.3.4",
+        "released_at": "2026-10-02",
+        "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a board, a firmware, a controller) offer what you typed before. Setting a service schedule offers the usual jobs (nozzle swap, bed level, belt tension and more) beside the ones you have logged."
+      },
       {
         "version": "0.3.2",
         "released_at": "2026-09-28",
@@ -42,6 +47,13 @@
       {
         "module": "machines",
         "instance_name": "3d-printers",
+        "service_tasks": [
+          "Nozzle swap",
+          "Bed level",
+          "Belt tension",
+          "Lubricate rails",
+          "Clean build plate"
+        ],
         "display_name": "3D Printers",
         "item_noun": "3D printer",
         "glyph": "🖨️",
@@ -52,6 +64,7 @@
             "display_label": "Hotend",
             "type": "text",
             "position": 10,
+            "learns": true,
             "choices": [
               "Stock",
               "E3D V6",
@@ -69,6 +82,7 @@
             "display_label": "Extruder",
             "type": "text",
             "position": 11,
+            "learns": true,
             "choices": [
               "Stock",
               "Bondtech LGX",
@@ -86,6 +100,7 @@
             "display_label": "Mainboard",
             "type": "text",
             "position": 12,
+            "learns": true,
             "choices": [
               "Stock",
               "BTT SKR Mini E3",
@@ -102,6 +117,7 @@
             "display_label": "Firmware",
             "type": "text",
             "position": 13,
+            "learns": true,
             "choices": [
               "Stock",
               "Marlin",
@@ -116,6 +132,7 @@
             "display_label": "Bed size (mm)",
             "type": "text",
             "position": 14,
+            "learns": true,
             "choices": [
               "180×180",
               "200×200",

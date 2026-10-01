@@ -20,6 +20,7 @@ import type { Kysely } from "kysely";
 import type { CoreMaintenanceDB } from "../db.js";
 import { rollForward, rolledFromOf, unroll } from "../schedules-store.js";
 import { createSchedule, ScheduleCreateBody } from "./schedules.js";
+import { moneyForStorage } from "@cobblr/platform-contract/money";
 
 const str = (v: unknown): string | null =>
   typeof v === "string" && v.trim() ? v.trim() : null;
@@ -66,7 +67,7 @@ export function registerMaintenanceHandlers(): void {
         description: str(args.description),
         performed_at: performed,
         scheduled_at: scheduledAt,
-        cost_cents: typeof args.cost_cents === "number" ? Math.round(args.cost_cents) : null,
+        cost_cents: args.cost == null ? null : moneyForStorage(args.cost, "cents"),
         performed_by: performed ? ctx.userId : null,
         notes: str(args.notes),
         recurrence_rule: str(args.recurrence_rule),

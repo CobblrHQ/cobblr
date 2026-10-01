@@ -1,7 +1,14 @@
 {
   "manifest": {
     "id": "cobblr.community.printer-mods",
-    "version": "0.1.0",
+    "version": "0.1.1",
+    "releases": [
+      {
+        "version": "0.1.1",
+        "released_at": "2026-10-02",
+        "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before."
+      }
+    ],
     "name": "Printer mods",
     "description": "A Printer mods table: each upgrade or change you make to a printer, linked to the printer it is installed on and to the parts it uses. The printer lists what it has installed and each part what uses it.",
     "author": "Cobblr community",
@@ -45,6 +52,7 @@
             "display_label": "Status",
             "type": "text",
             "position": 1,
+            "learns": false,
             "choices": [
               "Planned",
               "Ordered",

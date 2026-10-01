@@ -2,7 +2,14 @@
   "manifest": {
     "id": "cobblr.flagship.fasteners",
     "changelog": "Says up front that it tracks stock, so counts and Use one or Used up are there from the first item rather than after one is counted. Earlier: First catalogued release: the fastener drawer skin (length, diameter, thread, head) on inventory.",
-    "version": "0.1.3",
+    "version": "0.1.4",
+    "releases": [
+      {
+        "version": "0.1.4",
+        "released_at": "2026-10-02",
+        "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before."
+      }
+    ],
     "name": "Fasteners",
     "description": "Your fastener drawers as their own table: an inventory instance with thread, length, head, drive and material pre-shaped, quantities + reorder thresholds kept, grouped by thread.",
     "author": "Cobblr",
@@ -58,6 +65,7 @@
             "display_label": "Type",
             "type": "text",
             "position": 1,
+            "learns": true,
             "choices": [
               "Screw",
               "Bolt",
@@ -92,6 +100,7 @@
             "display_label": "Head",
             "type": "text",
             "position": 4,
+            "learns": true,
             "choices": [
               "Socket cap",
               "Button",
@@ -108,6 +117,7 @@
             "display_label": "Drive",
             "type": "text",
             "position": 5,
+            "learns": true,
             "choices": [
               "Hex (Allen)",
               "Phillips",
@@ -123,6 +133,7 @@
             "display_label": "Material",
             "type": "text",
             "position": 6,
+            "learns": true,
             "choices": [
               "Steel (black oxide)",
               "Stainless",

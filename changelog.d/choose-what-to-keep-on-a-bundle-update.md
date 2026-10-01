@@ -3,6 +3,7 @@ type: feature
 scope: bundles
 date: 2026-09-29
 docs_target: docs/USER_GUIDE.md#4. The platform layer
+docs_published: 2026-10-01
 ---
 A bundle update that changes something you customised now shows exactly what: your version beside the update's, with a choice for each (keep mine, use the update's, or keep both for a list of options). It also lists what is new in every version since yours, and an update that only adds options you already have no longer asks at all.
 

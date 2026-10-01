@@ -6,8 +6,8 @@
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ContributedDetailPanels, CustomFieldsPanel, Modal, useToast, useConfirm, usePageTitle, usePlatformWeb } from "@cobblr/platform-web";
-import { ListChecks, Plus, Trash2, X, RotateCcw, Hand, Minus, ChevronDown } from "lucide-react";
+import { ContributedDetailPanels, CustomFieldsPanel, Modal, QueryError, useToast, useConfirm, usePageTitle, usePlatformWeb } from "@cobblr/platform-web";
+import { ListChecks, Plus, Trash2, X, RotateCcw, Hand, Minus, Pencil, ChevronDown } from "lucide-react";
 import { ListsApi, type ListSummary, type ListItem, ListsApiError, lineQuantity, restockAmount, willDatePhrase } from "./api.js";
 import { RunningLowOffer } from "./RunningLowOffer.js";
 
@@ -84,6 +84,7 @@ export function ListsUI({ orgSlug, getToken }: Props) {
 
       {lists.data && <RunningLowOffer lists={lists.data.items} />}
       {lists.isLoading && <div className="text-sm text-muted">Loading…</div>}
+      {lists.isError && <QueryError what="your lists" onRetry={() => void lists.refetch()} />}
       {lists.data?.items.length === 0 && (
         <div className="text-sm text-muted italic">No lists yet. Create one - a shopping list, a to-do, a packing list.</div>
       )}
@@ -203,6 +204,21 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
     onSuccess: invalidate,
     onError: (e) => toast.error(e instanceof ListsApiError ? e.message : String(e)),
   });
+  // A typo in the list's name or a line had no fix but deleting and typing it
+  // again, which on a shared list also dropped who said they'd get it.
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const rename = useMutation({
+    mutationFn: (title: string) => api.renameList(listId, title),
+    onSuccess: () => { setRenaming(null); invalidate(); },
+    onError: (e) => toast.error(e instanceof ListsApiError ? e.message : String(e)),
+  });
+  const [editing, setEditing] = useState<{ id: string; title: string; qty: string; note: string } | null>(null);
+  const saveItem = useMutation({
+    mutationFn: (e: { id: string; title: string; qty: string; note: string }) =>
+      api.updateItem(e.id, { title: e.title.trim(), qty: e.qty.trim(), note: e.note.trim() }),
+    onSuccess: () => { setEditing(null); invalidate(); },
+    onError: (e) => toast.error(e instanceof ListsApiError ? e.message : String(e)),
+  });
   const setListField = useMutation({
     mutationFn: (m: Record<string, unknown>) => api.setListFields(listId, m),
     onSuccess: invalidate,
@@ -225,6 +241,31 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
   return (
     <Modal open onClose={onClose} title={detail.data?.title ?? "List"} size="md">
       <div className="space-y-3">
+        {renaming === null ? (
+          detail.data && (
+            <div className="flex justify-end -mt-1">
+              <button type="button" onClick={() => setRenaming(detail.data!.title)} className="inline-flex items-center gap-1 text-xs text-muted hover:text-accent">
+                <Pencil size={12} /> Rename list
+              </button>
+            </div>
+          )
+        ) : (
+          <form
+            className="flex gap-2"
+            aria-label="Rename list"
+            onSubmit={(e) => { e.preventDefault(); if (renaming.trim()) rename.mutate(renaming.trim()); }}
+          >
+            <input
+              autoFocus
+              value={renaming}
+              onChange={(e) => setRenaming(e.target.value)}
+              aria-label="List name"
+              className="flex-1 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm"
+            />
+            <button type="button" onClick={() => setRenaming(null)} className="px-3 py-2 text-xs rounded text-muted hover:text-content">Cancel</button>
+            <button type="submit" disabled={!renaming.trim() || rename.isPending} className="px-3 py-2 text-xs rounded bg-cobble-600 text-white disabled:opacity-50">Save</button>
+          </form>
+        )}
         <form
           className="flex gap-2"
           onSubmit={(e) => { e.preventDefault(); if (draft.trim()) add.mutate(draft.trim()); }}
@@ -240,10 +281,27 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
         </form>
 
         {detail.isLoading && <div className="text-sm text-muted">Loading…</div>}
-        {items.length === 0 && !detail.isLoading && <div className="text-sm text-muted italic">Empty list.</div>}
+        {detail.isError && <QueryError what="this list" onRetry={() => void detail.refetch()} />}
+        {items.length === 0 && !detail.isLoading && !detail.isError && <div className="text-sm text-muted italic">Empty list.</div>}
 
         <ul className="divide-y divide-slate-100 dark:divide-slate-800 border border-line dark:border-slate-700 rounded">
-          {items.map((it: ListItem) => (
+          {items.map((it: ListItem) => editing?.id === it.id ? (
+            <li key={it.id} className="px-3 py-2 text-sm">
+              <form
+                aria-label="Correct this line"
+                className="grid grid-cols-[1fr_5rem] gap-2"
+                onSubmit={(e) => { e.preventDefault(); if (editing.title.trim()) saveItem.mutate(editing); }}
+              >
+                <input autoFocus aria-label="What it is" value={editing.title} onChange={(e) => setEditing({ ...editing, title: e.target.value })} className="rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm" />
+                <input aria-label="How many" value={editing.qty} onChange={(e) => setEditing({ ...editing, qty: e.target.value })} placeholder="how many" className="rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm" />
+                <input aria-label="Note" value={editing.note} onChange={(e) => setEditing({ ...editing, note: e.target.value })} placeholder="a note (the brand, the size)" className="col-span-2 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm" />
+                <div className="col-span-2 flex justify-end gap-2">
+                  <button type="button" onClick={() => setEditing(null)} className="px-3 py-1.5 text-xs rounded text-muted hover:text-content">Cancel</button>
+                  <button type="submit" disabled={!editing.title.trim() || saveItem.isPending} className="px-3 py-1.5 text-xs rounded bg-cobble-600 text-white disabled:opacity-50">Save</button>
+                </div>
+              </form>
+            </li>
+          ) : (
             <li key={it.id} className="px-3 py-2 text-sm group">
               <div className="flex items-center gap-3">
               <input
@@ -255,6 +313,7 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
               <span className={`flex-1 min-w-0 ${it.checked ? "line-through text-faint" : ""}`}>
                 {it.title}
                 {it.qty && <span className="text-xs text-muted ml-2">×{it.qty}</span>}
+                {it.note && <span className="block text-xs text-muted">{it.note}</span>}
                 {it.metadata?.source_ref?.kind && (
                   <span
                     className="ml-2 inline-flex items-center gap-0.5 rounded bg-emerald-50 dark:bg-emerald-900/30 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300 align-middle"
@@ -314,6 +373,16 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
                   }`}
                 >
                   {it.claimed_by ? "Never mind" : "I'll get it"}
+                </button>
+              )}
+              {!it.checked && (
+                <button
+                  type="button"
+                  onClick={() => setEditing({ id: it.id, title: it.title, qty: it.qty ?? "", note: it.note ?? "" })}
+                  className="text-slate-300 hover:text-accent hover-reveal"
+                  aria-label="Correct this line"
+                >
+                  <Pencil size={13} />
                 </button>
               )}
               {lineHasFields && (

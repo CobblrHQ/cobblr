@@ -3,6 +3,7 @@ type: feature
 scope: views
 date: 2026-09-28
 docs_target: docs/USER_GUIDE.md#3.5 Views
+docs_published: 2026-10-01
 ---
 **A view can ask for what is ready today.** A saved view can now compare a custom date field with today, so "Ready to drink" or "Past its best" answers for the day you are reading it on. Two new field meanings, *When it is ready from* and *When it is at its best until*, describe a window instead of a deadline, and a filter that cannot run is now shown on the view instead of being quietly skipped.
 

@@ -16,7 +16,7 @@ import { withCount, type CountedRow } from "@cobblr/inventory/ui";
 import { useFaces } from "@cobblr/platform-web";
 import { api, type ViewDataResponse } from "../lib/api";
 import { fieldVal } from "../lib/view-group-key";
-import { StockStepper } from "./StockStepper";
+import { StockStepper } from "@cobblr/platform-web";
 
 /** The least a row must carry to be stepped. */
 export interface StockableRow {

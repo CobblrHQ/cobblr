@@ -2,7 +2,14 @@
   "manifest": {
     "id": "cobblr.flagship.medications",
     "catalog": "extended",
-    "version": "0.3.4",
+    "version": "0.3.5",
+    "releases": [
+      {
+        "version": "0.3.5",
+        "released_at": "2026-10-02",
+        "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before."
+      }
+    ],
     "name": "Medications",
     "description": "Your medications as their own table: dose, schedule, instructions, prescriber/pharmacy, refills left + a refill-by date. Caregiver-friendly.",
     "author": "Cobblr",
@@ -51,6 +58,7 @@
             "display_label": "Schedule",
             "type": "text",
             "position": 2,
+            "learns": true,
             "choices": [
               "Once daily",
               "Twice daily",
@@ -71,6 +79,7 @@
             "display_label": "Time of day",
             "type": "text",
             "position": 3,
+            "learns": false,
             "choices": [
               "Morning",
               "Midday",
@@ -110,6 +119,7 @@
             "display_label": "Form",
             "type": "text",
             "position": 7,
+            "learns": true,
             "choices": [
               "Tablet",
               "Capsule",

@@ -20,7 +20,7 @@ import { commandOrigin } from "../lib/command-origin";
 import { growToContent } from "../lib/useAutoGrowTextarea";
 import { PlanLines } from "./PlanLines";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { X, Send, Check, Eye, PencilLine, Trash2, Wand2, Cpu, ChevronDown, Bookmark } from "lucide-react";
+import { Send, Check, Eye, PencilLine, Trash2, Wand2, Cpu, ChevronDown, Bookmark } from "lucide-react";
 import { SaveAnswerSheet, type SavedAnswer } from "./SaveAnswerSheet";
 import { createPortal } from "react-dom";
 import { api, ApiError, type AiChatProposal, type AiChatResponse, type BasicCommandOffer, type BundleValidationPreview, type ChatModelMenu, type ChatModelOption, type ChatPrefsInput } from "../lib/api";
@@ -47,7 +47,7 @@ import {
 import { useDetailRoute, useListRoute } from "../lib/useDetailRoute";
 import { useAiStatus, AiOffNotice, aiStatusLine } from "./AiStatusNotice";
 import { RailTabContent, openRail, useRailActiveTab, useRailTab } from "./SideRail";
-import { PopoverLayer } from "@cobblr/platform-web";
+import { ContextChip, PopoverLayer, openDiscussion, useEscapeToClose } from "@cobblr/platform-web";
 import { ServiceJobCard } from "./ServiceJobCard";
 
 // Shown only if the basic-mode endpoint itself is unreachable (network error) —
@@ -56,9 +56,9 @@ const BASIC_FALLBACK =
   "I couldn't reach the assistant just now. For anything about your workspace, connect AI using the link at the top.";
 
 // Chat history is cached per-workspace in localStorage so a page refresh doesn't
-// wipe the conversation. We store ONLY the plain text turns — never the live
-// interactive state (pending proposals, build-draft polls, undo handles), which
-// would be stale on reload. Capped so it can't grow unbounded.
+// wipe the conversation: every message as it was shown, cards and their state
+// included, minus what web/src/lib/chat-store.ts names as moment-to-moment
+// (a running build's poll). Capped so it can't grow unbounded.
 
 const CHAT_STORE_MAX = 100;
 
@@ -187,6 +187,7 @@ function ModelChip({
 }) {
   const [open, setOpen] = useState(false);
   const btn = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [at, setAt] = useState<{ top: number; right: number } | null>(null);
   // The menu is PORTALED to the body and positioned from the button's rect.
   // Inside the panel it was clipped: the panel sits at the right edge of the
@@ -205,18 +206,26 @@ function ModelChip({
       if (e.type === "mousedown" && (e.target as HTMLElement | null)?.closest?.("[data-model-menu]")) return;
       setOpen(false);
     };
-    const key = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
     document.addEventListener("mousedown", close);
     window.addEventListener("scroll", close, true);
     window.addEventListener("resize", place);
-    document.addEventListener("keydown", key);
     return () => {
       document.removeEventListener("mousedown", close);
       window.removeEventListener("scroll", close, true);
       window.removeEventListener("resize", place);
-      document.removeEventListener("keydown", key);
     };
   }, [open]);
+  // Focus goes INTO the menu when it opens. The pill sits in the Ask Cobb
+  // panel, which is escape-exempt, so an Esc pressed with focus still on the
+  // pill would never reach the menu.
+  const shown = open && !!at;
+  useEffect(() => {
+    if (shown) menuRef.current?.focus({ preventScroll: true });
+  }, [shown]);
+  useEscapeToClose(open, menuRef, () => {
+    setOpen(false);
+    btn.current?.focus();
+  });
   const options = menu?.groups.flatMap((g) => g.options) ?? [];
   // Nothing to choose between is not a pill: one model in one place is not a
   // decision, and a chip that opens on nothing reads as broken.
@@ -254,10 +263,12 @@ function ModelChip({
         at &&
         createPortal(
           <PopoverLayer
+            ref={menuRef}
+            tabIndex={-1}
             data-model-menu
             role="menu"
             style={{ top: at.top, right: at.right }}
-            className="z-[70] min-w-[15rem] max-w-[min(20rem,calc(100vw-1rem))] rounded-lg border border-line dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg py-1 text-[12px]"
+            className="z-[70] min-w-[15rem] max-w-[min(20rem,calc(100vw-1rem))] outline-none rounded-lg border border-line dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg py-1 text-[12px]"
           >
             {menu.groups.map((g) => (
               <div key={g.heading} className="py-1">
@@ -396,6 +407,9 @@ export function ChatLauncher({ open, setOpen, asRow = false }: { open: boolean; 
   // called openRail).
   const go = (tab: string) => () => {
     if (open && activeTab === tab) setOpen(false);
+    // The header has no record of its own: Discussion shows the one in
+    // context, or the room.
+    else if (tab === "discussion") openDiscussion({ record: null });
     else openRail(tab);
   };
   const openCobb = go("cobb");
@@ -2429,31 +2443,18 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
               // Part of the input's own box is what "anchored to the top of the
               // text input" actually means: no divider between them, nothing
               // overlapping, opaque.
-              <div className="flex">
-                <div className="inline-flex items-center gap-1.5 rounded-md border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900 px-2 py-1 text-[11px] text-cobble-800 dark:text-cobble-100 max-w-full">
-                  {/* Not "In context" — that is the vocabulary of the tool, not
-                      of the person using it. What the chip means is "this is what
-                      my next message is about". */}
-                  <span className="shrink-0 opacity-70">About:</span>
-                  <span className="truncate font-medium" title={selection.text ?? selection.label}>
-                    {selection.label}
-                    {/* The words, only when they add something. A highlight that
-                        resolved to a record already reads as its name. */}
-                    {selection.text && selection.text.trim() !== selection.label
-                      ? ` — “${selection.text.slice(0, 60)}${selection.text.length > 60 ? "…" : ""}”`
-                      : ""}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => clearChatSelection()}
-                    className="shrink-0 opacity-60 hover:opacity-100"
-                    title="Don't include this"
-                    aria-label="Remove from context"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              </div>
+              <ContextChip
+                label={selection.label}
+                title={selection.text ?? selection.label}
+                // The words, only when they add something. A highlight that
+                // resolved to a record already reads as its name.
+                detail={
+                  selection.text && selection.text.trim() !== selection.label
+                    ? `${selection.text.slice(0, 60)}${selection.text.length > 60 ? "…" : ""}`
+                    : undefined
+                }
+                onRemove={() => clearChatSelection()}
+              />
             )}
             <div className="flex items-end gap-2">
             <textarea

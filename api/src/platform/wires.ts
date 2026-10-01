@@ -22,7 +22,8 @@ import { sourceIdKey, type ActionInvokeActor, type WireEffect } from "@cobblr/pl
 import { actionActed } from "@cobblr/platform-contract/action-result";
 import { meta } from "../db/meta.js";
 import { actionLabelOf, invoke } from "./actions.js";
-import { baseKindOf, lookup, walkPairings } from "./entities.js";
+import { baseKindOf, lookup, resolveKind, walkPairings } from "./entities.js";
+import { lifecycleOf } from "./wire-lifecycle.js";
 import { render } from "./templates.js";
 import { templateDataOf } from "@cobblr/platform-contract/entity-metadata";
 import { namePeopleForTemplate } from "./member-fields.js";
@@ -147,6 +148,9 @@ export async function fireEvent(
     .where("trigger_event", "=", eventName)
     .where("enabled", "=", true)
     .execute();
+  // A kind's own "created / updated / deleted" event also runs the wires on
+  // "a record is created / updated / deleted" of that kind (wire-lifecycle.ts).
+  bindings.push(...(await lifecycleBindings(eventName, orgId, payload)));
   if (bindings.length === 0) return;
   if (await sandboxAwaitingVisitor(orgId)) return;
 
@@ -174,6 +178,37 @@ export async function fireEvent(
     return;
   }
   await wireDepth.run(depth + 1, () => fireBindings(eventName, orgId, payload, bindings));
+}
+
+/** The on-create / on-update / on-delete wires this event runs: those on its
+ *  kind, and those on a collection (instance) of its kind that the record is
+ *  in. A record in another collection of the same kind runs none of them. */
+async function lifecycleBindings(eventName: string, orgId: string, payload: Record<string, unknown>) {
+  const life = lifecycleOf(eventName);
+  if (!life) return [];
+  const rows = await meta
+    .selectFrom("entity_action_bindings")
+    .selectAll()
+    .where("org_id", "=", orgId)
+    .where("trigger_type", "=", life.trigger)
+    .where("enabled", "=", true)
+    .execute();
+  const out: typeof rows = [];
+  const idKey = sourceIdKey(await baseKindOf(orgId, life.baseKind));
+  const sourceId = typeof payload[idKey] === "string" ? (payload[idKey] as string) : "";
+  for (const b of rows) {
+    const { base, instance } = await resolveKind(orgId, b.source_kind);
+    if (base !== life.baseKind) continue;
+    if (instance) {
+      if (life.trigger === "on-delete") {
+        if (payload.instance !== instance) continue;
+      } else if (!sourceId || !(await lookup(orgId, b.source_kind, sourceId))) {
+        continue;
+      }
+    }
+    out.push(b);
+  }
+  return out;
 }
 
 async function fireBindings(

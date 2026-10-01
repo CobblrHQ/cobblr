@@ -4,20 +4,22 @@
 
 import { useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { Filter, KeyRound, ShieldCheck, Wrench, User } from "lucide-react";
+import { Filter, KeyRound, ShieldCheck, Wrench } from "lucide-react";
 import { api, type ActivityEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { usePageTitle } from "@cobblr/platform-web";
 import { QueryError } from "../components/QueryError";
 import { FEED_SCROLL_PAGE } from "../lib/feed";
-import { ActorVia } from "../components/ActorVia";
-import { openSheetImport } from "../lib/sheet-import";
+import { ACTIVITY_ROW } from "../components/ActorVia";
+import { ActivitySentence, type KindLabels } from "../components/ActivitySentence";
+import { useKindLabels } from "../lib/useKindLabels";
 
 type AuthMethod = "session" | "api_token" | "system";
 
 export function ActivityPage() {
   usePageTitle("Activity");
   const { activeSlug } = useActiveOrg();
+  const labels = useKindLabels(activeSlug);
   const [authFilter, setAuthFilter] = useState<AuthMethod | "all">("all");
   const [entityFilter, setEntityFilter] = useState<string>("");
 
@@ -87,7 +89,7 @@ export function ActivityPage() {
       )}
       <ul className={"space-y-1.5 " + FEED_SCROLL_PAGE}>
         {items.map((it) => (
-          <ActivityRow key={it.id} entry={it} />
+          <ActivityRow key={it.id} entry={it} labels={labels} />
         ))}
       </ul>
       {activity.hasNextPage && (
@@ -104,54 +106,41 @@ export function ActivityPage() {
   );
 }
 
-function ActivityRow({ entry }: { entry: ActivityEntry }) {
+function ActivityRow({ entry, labels }: { entry: ActivityEntry; labels: KindLabels }) {
   const tone = entry.action.includes("failed")
     ? "border-ember-200 bg-ember-50/40 dark:bg-slate-900 dark:border-ember-700/40"
     : entry.auth_method === "system"
     ? "border-line bg-subtle/40 dark:bg-slate-900 dark:border-slate-700"
     : "border-line bg-surface dark:bg-slate-900 dark:border-slate-700";
   return (
-    <li className={"rounded-md border p-2.5 text-xs " + tone}>
-      <div className="flex items-baseline gap-2 flex-wrap">
-        <AuthBadge method={entry.auth_method} />
-        <span className="font-mono text-accent dark:text-cobble-300 font-semibold">
-          {entry.action}
-        </span>
-        <span className="font-mono text-[10px] text-faint">
-          {entry.entity_type}
-          {entry.entity_id ? `:${entry.entity_id.slice(0, 8)}` : ""}
-        </span>
-        {entry.entity_type === "import_run" && entry.entity_id && (
-          <button type="button" onClick={() => openSheetImport({ runId: entry.entity_id })} className="text-[11px] text-accent hover:underline">
-            Open this import
-          </button>
-        )}
+    <li className={"rounded-md border p-2.5 text-sm " + tone}>
+      <div className={ACTIVITY_ROW}>
+        <ActivitySentence entry={entry} labels={labels} />
         <span className="flex-1" />
-        <span className="font-mono text-[10px] text-faint">
+        <time dateTime={entry.occurred_at} className="font-mono text-[10px] text-faint shrink-0">
           {new Date(entry.occurred_at).toLocaleString()}
-        </span>
+        </time>
       </div>
-      <div className="flex items-baseline gap-2 mt-1 text-[10px] text-muted dark:text-slate-400">
-        <span className="flex items-center gap-1 min-w-0">
-          <User size={9} className="shrink-0" /> <ActorVia entry={entry} />
-        </span>
-        {entry.token?.prefix && (
-          <span className="font-mono">({entry.token.prefix}…)</span>
-        )}
-        {entry.module_name && (
-          <span className="font-mono">· module: {entry.module_name}</span>
-        )}
-      </div>
-      {entry.diff != null && (
-        <details className="mt-1.5">
-          <summary className="text-[10px] font-mono text-faint cursor-pointer hover:text-accent">
-            diff
-          </summary>
+      {/* What an admin needs to trace it, a tap down: the action as recorded,
+          how it was signed in, which record, which module, and the diff. */}
+      <details className="mt-1">
+        <summary className="text-[10px] font-mono text-faint cursor-pointer hover:text-accent">details</summary>
+        <div className="flex items-baseline gap-2 flex-wrap mt-1 text-[10px] text-muted dark:text-slate-400">
+          <AuthBadge method={entry.auth_method} />
+          <span className="font-mono text-accent dark:text-cobble-300">{entry.action}</span>
+          <span className="font-mono">
+            {entry.entity_type}
+            {entry.entity_id ? `:${entry.entity_id.slice(0, 8)}` : ""}
+          </span>
+          {entry.token?.prefix && <span className="font-mono">({entry.token.prefix}…)</span>}
+          {entry.module_name && <span className="font-mono">· module: {entry.module_name}</span>}
+        </div>
+        {entry.diff != null && (
           <pre className="mt-1 p-2 rounded bg-subtle/60 dark:bg-slate-800/60 font-mono text-[10px] overflow-x-auto text-content dark:text-mortar-200">
             {JSON.stringify(entry.diff, null, 2)}
           </pre>
-        </details>
-      )}
+        )}
+      </details>
     </li>
   );
 }

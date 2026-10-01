@@ -2,13 +2,18 @@
   "manifest": {
     "id": "cobblr.community.cnc-machines",
     "catalog": "extended",
-    "version": "0.3.2",
+    "version": "0.3.3",
     "name": "CNC Machines",
     "description": "A CNC Machines tracker: spindle, axes, work area, controller, coolant. A named view of your machines, so each mill still drives jobs, fleet status, and maintenance.",
     "author": "Cobblr community",
-    "released_at": "2026-09-28",
-    "changelog": "A CNC machine's page now uses its own words: it sends jobs to a job manager (the software that runs it, through your bridge), and asks only what fits a CNC machine.",
+    "released_at": "2026-10-02",
+    "changelog": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a board, a firmware, a controller) offer what you typed before.",
     "releases": [
+      {
+        "version": "0.3.3",
+        "released_at": "2026-10-02",
+        "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a board, a firmware, a controller) offer what you typed before."
+      },
       {
         "version": "0.3.2",
         "released_at": "2026-09-28",
@@ -53,6 +58,7 @@
             "display_label": "Spindle",
             "type": "text",
             "position": 30,
+            "learns": true,
             "choices": [
               "Stock",
               "Makita RT0701C router",
@@ -77,6 +83,7 @@
             "display_label": "Work area (mm)",
             "type": "text",
             "position": 32,
+            "learns": true,
             "choices": [
               "200×200×80",
               "300×300×100",
@@ -92,6 +99,7 @@
             "display_label": "Controller",
             "type": "text",
             "position": 33,
+            "learns": true,
             "choices": [
               "GRBL",
               "Mach3",
@@ -109,6 +117,7 @@
             "display_label": "Coolant",
             "type": "text",
             "position": 34,
+            "learns": false,
             "choices": [
               "None",
               "Air blast",

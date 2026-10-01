@@ -19,12 +19,14 @@ export function readFailureFrom(result: Failed, prior: ReceiptReadAttempt[], at:
     at: at.toISOString(),
     outcome: "failed",
     code: result.code,
+    ...(result.source ? { source: result.source } : {}),
     ...(result.ai ? { ai: result.ai } : {}),
     ...(result.ai_reason ? { ai_reason: result.ai_reason } : {}),
     reason: result.reason,
   };
   return {
     code: result.code,
+    ...(result.source ? { source: result.source } : {}),
     ...(result.ai ? { ai: result.ai } : {}),
     ...(result.ai_reason ? { ai_reason: result.ai_reason } : {}),
     reason: result.reason,

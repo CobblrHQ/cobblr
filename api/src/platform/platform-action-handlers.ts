@@ -9,7 +9,9 @@
 // services require ("Purchase Date" → purchase_date, "dropdown" → text with
 // choices), and refusing with a sentence instead of a zod issue list.
 
-import { isFieldScope, pluralise, readListArg, type ActionInvokeContext } from "@cobblr/platform-contract";
+import { contentsWordOf, setContentsWord } from "./contents-word.js";
+import { contentsWordText } from "@cobblr/platform-contract";
+import { isFieldScope, platform, pluralise, readListArg, type ActionInvokeContext } from "@cobblr/platform-contract";
 import { matchByLabel, splitNames } from "@cobblr/platform-contract/said-names";
 import { kindWordsFrom, type KindWords } from "@cobblr/platform-contract/kind-label";
 import { disableModuleForOrg, enableModuleForOrg } from "../modules/enable.js";
@@ -19,15 +21,17 @@ import { actionLabelOf, registerHandler, registerPlanner, registerUndo } from ".
 import { getMover, instancesHolding, moveRecords } from "./move-records.js";
 import * as activity from "./activity.js";
 import { upsertNativeFieldOverride } from "./native-field-overrides.js";
-import { USER_SOURCE } from "./bundle-claims.js";
+import { USER_SOURCE, claimsForSource } from "./bundle-claims.js";
 import { listKindsForOrg, lookup } from "./entities.js";
 import {
   FieldDefCreate,
   createFieldDef,
   deleteFieldDef,
+  effectiveFieldDef,
   resolveFieldDefsForKind,
   updateFieldDef,
 } from "./field-defs.js";
+import { choiceLearns, sameChoice, withLearnedChoice } from "@cobblr/platform-contract/field-choices";
 import { listOverrides, upsertOverride } from "./entity-kind-overrides.js";
 import { FIELD_PRESETS } from "./field-presets.js";
 import { turnPresetOff, turnPresetOn } from "./field-preset-switch.js";
@@ -38,7 +42,20 @@ import { provisionInstance } from "./instances.js";
 import { setWireEnabled } from "./wires.js";
 import { decideApprovalRequest } from "./approvals.js";
 import { confirmHeldChange, keepHeldChange } from "./ai-held-changes.js";
-import { confirmServiceJob } from "./service-confirm.js";
+import { confirmServiceJob, mayConfirm } from "./service-confirm.js";
+import { cancelRun } from "./service-supervisor.js";
+import { invokeAs, retryJob, skipJob, stableJson } from "./services.js";
+import { render } from "./templates.js";
+
+/** A service input with every string in it filled from the event
+ *  (`{{event.jobId}}`): the wire engine fills only top-level strings, and an
+ *  input is an object. */
+function renderEventValues(value: unknown, data: Record<string, unknown>): unknown {
+  if (typeof value === "string") return value.includes("{{") ? render(value, data) : value;
+  if (Array.isArray(value)) return value.map((v) => renderEventValues(v, data));
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, renderEventValues(v, data)]));
+  return value;
+}
 
 /** A storage name from a label: "Purchase Date" → purchase_date. The def
  *  schema requires a leading letter, so a label like "3D printer count" gets a
@@ -532,11 +549,15 @@ export function registerPlatformActionHandlers(): void {
     // What the def and its override say now, kept with the result so the
     // change can be put back exactly.
     const defBefore = (await resolveFieldDefsForKind(ctx.orgId, entityKind)).find((d) => d.id === found.id);
+    // The choices a person sees: a bundle field's list is the user layer's, so
+    // adding to the raw list would drop every earlier addition.
+    const effective = defBefore ? await effectiveFieldDef(ctx.orgId, entityKind, defBefore.name) : null;
     const before = {
       display_label: defBefore?.display_label ?? found.label,
       required: defBefore?.required ?? false,
       unit: defBefore?.unit ?? null,
-      choices: defBefore?.choices ?? null,
+      choices: effective?.choices ?? defBefore?.choices ?? null,
+      learns: effective?.learns ?? null,
       hidden: (await readFieldOverride(ctx.orgId, entityKind, found.name)).hidden,
     };
 
@@ -557,6 +578,9 @@ export function registerPlatformActionHandlers(): void {
     if (edited) patch.choices = edited.choices;
     else if (args.choices === null) patch.choices = null;
     else if (namesOf(args.choices).length) patch.choices = namesOf(args.choices);
+    // Whether a value someone types is remembered as a choice. null puts it
+    // back to the field's default (field-choices `choiceLearns`).
+    if (typeof args.learns === "boolean" || args.learns === null) patch.learns = args.learns;
     if (Object.keys(patch).length === 0) {
       if (hidden !== undefined) {
         return {
@@ -567,13 +591,21 @@ export function registerPlatformActionHandlers(): void {
       }
       return {
         ok: false,
-        error: "nothing to change — pass a new display_label, required, choices, add_choices, remove_choices, unit, or hidden",
+        error: "nothing to change — pass a new display_label, required, choices, add_choices, remove_choices, learns, unit, or hidden",
       };
     }
     const result = await updateFieldDef(ctx.orgId, found.id, patch);
     if (!result.ok) return { ok: false, error: result.message };
     const changed = Object.keys(patch)
-      .map((k) => (k === "display_label" ? `now called "${result.def.display_label}"` : k.replace(/_/g, " ")))
+      .map((k) =>
+        k === "display_label"
+          ? `now called "${result.def.display_label}"`
+          : k === "learns"
+            ? patch.learns === false
+              ? "no longer remembers new entries"
+              : "remembers new entries"
+            : k.replace(/_/g, " "),
+      )
       .join(", ");
     const onlyChoices = Object.keys(patch).length === 1 && patch.choices !== undefined;
     const summary =
@@ -597,6 +629,7 @@ export function registerPlatformActionHandlers(): void {
           required: "required" in patch,
           unit: "unit" in patch,
           choices: "choices" in patch,
+          learns: "learns" in patch,
         },
       },
     };
@@ -621,6 +654,7 @@ export function registerPlatformActionHandlers(): void {
       if (changed.required) args.required = before.required;
       if (changed.unit) args.unit = before.unit ?? null;
       if (changed.choices) args.choices = list(before.choices);
+      if (changed.learns) args.learns = before.learns ?? null;
     }
     if (changed.hidden) args.hidden = before.hidden;
     return Object.keys(args).length > 2 ? { action_id: "platform:edit-field", args } : null;
@@ -840,11 +874,115 @@ export function registerPlatformActionHandlers(): void {
     return { action_id: "platform:disable-module", args: { module: d.module } };
   });
 
+  // What the card says, in words a person reads: the feature by its name and
+  // what turning it on or off does to their workspace. Without these the card
+  // showed the action's name and its argument's label, which is a prompt for
+  // the assistant ("The feature, by its name in the app (e.g. Shipments)").
+  registerPlanner("platform.enable-module", async (ctx: ActionInvokeContext) => {
+    const said = str((ctx.args ?? {}).module);
+    if (!said) return { error: "module is required (the feature's name, e.g. Purchases)" };
+    const found = findModule(said);
+    if ("error" in found) return { error: found.error };
+    return {
+      title: `Turn on the ${found.label} feature`,
+      lines: [`${found.label} appears in the menu for everyone in this workspace.`],
+    };
+  });
+
+  registerPlanner("platform.disable-module", async (ctx: ActionInvokeContext) => {
+    const said = str((ctx.args ?? {}).module);
+    if (!said) return { error: "module is required (the feature's name, e.g. Shipments)" };
+    const found = findModule(said);
+    if ("error" in found) return { error: await notAModuleButABundle(ctx.orgId, said, found.error) };
+    return {
+      title: `Turn off the ${found.label} feature`,
+      lines: [
+        `${found.label} leaves the menu for everyone in this workspace.`,
+        "Its records are kept, and come back if you turn it on again.",
+        `The fields and automations that came with ${found.label} are removed.`,
+      ],
+    };
+  });
+
+  /** The installed bundle a person NAMED: by the bundle's own name, or by the
+   *  name of a table it made ("yarn" for the Yarn bundle's Yarn). */
+  const findBundle = async (orgId: string, said: string): Promise<{ id: string; name: string; external_id: string } | { error: string }> => {
+    const rows = await meta.selectFrom("bundles").select(["id", "name", "external_id"]).where("org_id", "=", orgId).execute();
+    if (rows.length === 0) return { error: "this workspace has no bundles installed" };
+    const byName = matchByLabel(said, rows.map((r) => ({ ...r, label: r.name })));
+    if (byName && !("ambiguous" in byName)) return byName;
+    const [instances, claims] = await Promise.all([listInstances(orgId), Promise.all(rows.map((r) => claimsForSource(orgId, r.external_id)))]);
+    const tables = rows.flatMap((r, i) =>
+      (claims[i] ?? [])
+        .filter((c) => c.resource_type === "instance")
+        .map((c) => ({ ...r, label: instances.find((x) => x.instance_name === c.resource_key)?.display_name ?? c.resource_key })),
+    );
+    const byTable = matchByLabel(said, tables);
+    if (byTable && !("ambiguous" in byTable)) return { id: byTable.id, name: byTable.name, external_id: byTable.external_id };
+    const hit = byName ?? byTable;
+    if (hit && "ambiguous" in hit) return { error: `"${said}" could be ${hit.ambiguous.map((a) => `"${a.label}"`).join(" or ")}; which one?` };
+    return { error: `no bundle called "${said}"; installed: ${rows.map((r) => r.name).join(", ")}` };
+  };
+  /** "Turn off yarn" names a table a bundle made, not a feature: say which
+   *  action removes it, so the assistant asks again with the right one
+   *  instead of telling the person it cannot be done. */
+  const notAModuleButABundle = async (orgId: string, said: string, otherwise: string): Promise<string> => {
+    const b = await findBundle(orgId, said).catch(() => ({ error: "" }));
+    return "error" in b ? otherwise : `"${said}" is not a feature but the ${b.name} bundle: remove it with platform:remove-bundle (bundle: "${b.name}", delete_records: true only when its records should go too)`;
+  };
+  const wantsRecordsGone = (args: Record<string, unknown> | undefined) => args?.delete_records === true || args?.delete_records === "true";
+
+  registerPlanner("platform.remove-bundle", async (ctx: ActionInvokeContext) => {
+    const said = str((ctx.args ?? {}).bundle);
+    if (!said) return { error: "bundle is required (its name, e.g. Groceries)" };
+    const found = await findBundle(ctx.orgId, said);
+    if ("error" in found) return { error: found.error };
+    const { previewBundleUninstall } = await import("../routes/bundles.js");
+    const p = await previewBundleUninstall(ctx.orgId, found.external_id);
+    const gone = wantsRecordsGone(ctx.args);
+    const records = p.instances.reduce((n, i) => n + i.item_count, 0);
+    const lines: string[] = [];
+    for (const i of p.instances) {
+      lines.push(
+        i.item_count === 0
+          ? gone
+            ? `${i.display_name} is deleted. It holds no records yet.`
+            : `${i.display_name} stays. It holds no records yet.`
+          : gone
+            ? `${i.display_name} is deleted with its ${countOf(i.item_count, "record")}. This cannot be undone.`
+            : `${i.display_name} stays, with its ${countOf(i.item_count, "record")}.`,
+      );
+    }
+    lines.push(`The fields, views and automations that came with ${found.name} are removed.`);
+    if (p.module_names.length) lines.push(`Turned off, as nothing else uses ${p.module_names.length === 1 ? "it" : "them"}: ${p.module_names.join(", ")}.`);
+    if (p.places.length) lines.push(`Empty places it made are removed: ${p.places.map((x) => x.name).join(", ")}.`);
+    for (const k of p.kept) lines.push(`Kept: ${k.name} (${k.reason}).`);
+    return {
+      title: gone && records > 0 ? `Remove ${found.name} and its ${countOf(records, "record")} (permanent)` : gone ? `Remove ${found.name} (permanent)` : `Remove ${found.name}, keeping its records`,
+      lines,
+    };
+  });
+
+  registerHandler("platform.remove-bundle", async (ctx: ActionInvokeContext) => {
+    const said = str((ctx.args ?? {}).bundle);
+    if (!said) return { ok: false, error: "bundle is required (its name, e.g. Groceries)" };
+    const found = await findBundle(ctx.orgId, said);
+    if ("error" in found) return { ok: false, error: found.error };
+    const { removeBundle } = await import("../routes/bundles.js");
+    const deleteData = wantsRecordsGone(ctx.args);
+    const out = await removeBundle(ctx.orgId, found, { deleteData });
+    return {
+      ok: true,
+      summary: `${found.name} is removed.${out.kept_words.length ? ` ${out.kept_words.join(" ")}` : ""}`,
+      data: { bundle: found.name, removed: out.removed.map((r) => r.name), kept: out.kept.map((k) => k.name), deleted_records: deleteData },
+    };
+  });
+
   registerHandler("platform.disable-module", async (ctx: ActionInvokeContext) => {
     const said = str((ctx.args ?? {}).module);
     if (!said) return { ok: false, error: "module is required (the feature's name, e.g. Shipments)" };
     const found = findModule(said);
-    if ("error" in found) return { ok: false, error: found.error };
+    if ("error" in found) return { ok: false, error: await notAModuleButABundle(ctx.orgId, said, found.error) };
     try {
       await disableModuleForOrg(ctx.orgId, found.name);
     } catch (err) {
@@ -883,14 +1021,20 @@ export function registerPlatformActionHandlers(): void {
     // list_record_kinds and get_workspace_setup and hands one back as the
     // target, which is not wrong, only not a label (#3123). An instance's
     // own name wins over the kind synthesised from it, as below.
+    // A list's presentation row is keyed `<module>:<instance>`, the key the
+    // nav, the palette and the list's own page read. Keyed by the bare name it
+    // was written where nothing looked, and a rename through the assistant
+    // said done and changed nothing (#4495).
+    const instanceRowId = (i: { module_name: string; instance_name: string }) => `${i.module_name}:${i.instance_name}`;
     const byInstanceName = instances.find((i) => !i.is_default && i.instance_name === said.trim());
     if (byInstanceName) {
-      const label = labelOf("instance", byInstanceName.instance_name, byInstanceName.display_name ?? byInstanceName.instance_name);
+      const id = instanceRowId(byInstanceName);
+      const label = labelOf("instance", id, byInstanceName.display_name ?? byInstanceName.instance_name);
       return {
         targetKind: "instance",
-        targetId: byInstanceName.instance_name,
+        targetId: id,
         label,
-        before: { name: label, plural: pluralOf("instance", byInstanceName.instance_name, pluralise(label)) },
+        before: { name: label, plural: pluralOf("instance", id, pluralise(label)) },
       };
     }
     const byKindId = kinds.find((k) => k.id === said.trim());
@@ -924,12 +1068,13 @@ export function registerPlatformActionHandlers(): void {
     }
     for (const i of instances) {
       if (i.is_default) continue;
-      const label = labelOf("instance", i.instance_name, i.display_name ?? i.instance_name);
+      const id = instanceRowId(i);
+      const label = labelOf("instance", id, i.display_name ?? i.instance_name);
       candidates.push({
         label,
         targetKind: "instance",
-        targetId: i.instance_name,
-        before: { name: label, plural: pluralOf("instance", i.instance_name, pluralise(label)) },
+        targetId: id,
+        before: { name: label, plural: pluralOf("instance", id, pluralise(label)) },
       });
     }
     const hit = matchByLabel(said, candidates);
@@ -945,7 +1090,7 @@ export function registerPlatformActionHandlers(): void {
       // "could be Pantry or Pantry - which one?".
       const inst = hit.ambiguous.find((a) => a.targetKind === "instance");
       const others = hit.ambiguous.filter(
-        (a) => !(a.targetKind === "instance") && !(inst && a.targetId === `${inst.targetId}:item`),
+        (a) => !(a.targetKind === "instance") && !(inst && a.targetId === `${inst.targetId.split(":").pop()}:item`),
       );
       if (inst && others.length === 0) {
         return { targetKind: "instance", targetId: inst.targetId, label: inst.label, before: inst.before };
@@ -995,6 +1140,69 @@ export function registerPlatformActionHandlers(): void {
       summary: `"${found.label}" is now called ${plural}`,
       data: { target: found.targetId, name, plural, before: found.before },
     };
+  });
+
+  // What a kind calls the things inside its records, by the list's name.
+  const kindOfFound = (found: { targetKind: "entity_kind" | "instance"; targetId: string }): string =>
+    found.targetKind === "instance" ? `${found.targetId.split(":").pop()}:item` : found.targetId;
+  registerHandler("platform.rename-contents", async (ctx: ActionInvokeContext) => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const said = str(args.target);
+    if (!said) return { ok: false, error: "target is required" };
+    const found = await findThing(ctx.orgId, said);
+    if ("error" in found) return { ok: false, error: found.error };
+    const kind = kindOfFound(found);
+    const before = await contentsWordOf(ctx.orgId, kind);
+    const now = await setContentsWord(ctx.orgId, kind, str(args.word) || null);
+    return {
+      ok: true,
+      summary: `What is inside ${found.label} is now called ${contentsWordText(now)}`,
+      data: { target: found.label, kind, word: now.word, before: before.custom },
+    };
+  });
+  // What a person types into a field that learns becomes one of its choices
+  // (@cobblr/platform-contract/field-choices), from the list the person sees
+  // and in any spelling only once. Its undo takes it back off.
+  registerHandler("platform.learn-choice", async (ctx: ActionInvokeContext) => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const kind = str(args.entity_kind);
+    const field = str(args.field);
+    const value = str(args.value)?.replace(/\s+/g, " ");
+    if (!kind || !field || !value) return { ok: false, error: "entity_kind, field and value are required" };
+    const def = await effectiveFieldDef(ctx.orgId, kind, field);
+    if (!def) return { ok: false, error: `no field "${field}" on ${(await kindWords(ctx.orgId, kind)).many}` };
+    const data = { learned: false, entity_kind: kind, field, value };
+    if (!choiceLearns(def)) return { ok: true, summary: `"${def.display_label}" does not remember new entries`, data };
+    const next = withLearnedChoice(def.choices, value);
+    if (!next) return { ok: true, summary: `"${value}" is already a choice for ${def.display_label}`, data };
+    const r = await updateFieldDef(ctx.orgId, def.id, { choices: next });
+    if (!r.ok) return { ok: false, error: r.message };
+    return { ok: true, summary: `"${value}" is now a choice for ${def.display_label}`, data: { ...data, learned: true } };
+  });
+  registerUndo("platform.learn-choice", (result) => {
+    const d = (result as { data?: { learned?: unknown; entity_kind?: unknown; field?: unknown; value?: unknown } } | null)?.data;
+    if (!d?.learned || typeof d.entity_kind !== "string" || typeof d.field !== "string" || typeof d.value !== "string") return null;
+    return { action_id: "platform:forget-choice", args: { entity_kind: d.entity_kind, field: d.field, value: d.value } };
+  });
+  registerHandler("platform.forget-choice", async (ctx: ActionInvokeContext) => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const kind = str(args.entity_kind);
+    const field = str(args.field);
+    const value = str(args.value);
+    if (!kind || !field || !value) return { ok: false, error: "entity_kind, field and value are required" };
+    const def = await effectiveFieldDef(ctx.orgId, kind, field);
+    if (!def) return { ok: false, error: `no field "${field}" on ${(await kindWords(ctx.orgId, kind)).many}` };
+    const next = (def.choices ?? []).filter((c) => !sameChoice(c, value));
+    if (next.length === (def.choices ?? []).length) return { ok: true, summary: `"${value}" was not a choice`, data: { forgot: false } };
+    const r = await updateFieldDef(ctx.orgId, def.id, { choices: next });
+    if (!r.ok) return { ok: false, error: r.message };
+    return { ok: true, summary: `"${value}" is no longer a choice for ${def.display_label}`, data: { forgot: true } };
+  });
+
+  registerUndo("platform.rename-contents", (result) => {
+    const d = (result as { data?: { target?: unknown; before?: unknown } } | null)?.data;
+    if (typeof d?.target !== "string") return null;
+    return { action_id: "platform:rename-contents", args: { target: d.target, word: typeof d.before === "string" ? d.before : "" } };
   });
 
   // Called what it was called. The thing is named by its NEW name, which is
@@ -1403,6 +1611,50 @@ export function registerPlatformActionHandlers(): void {
   // ── Services: the yes on a waiting job's card (service-confirm.ts) ──
   // The same function the job card's route calls, so who may say yes and
   // what the yes is bound to cannot drift between the doors.
+  // A wire that runs a service. The wire door stamps the job (never the
+  // wire's word), the gate decides consent, and a job that follows another
+  // service job is counted as its next step, so the loop guard sees the
+  // whole chain.
+  registerHandler("platform.invoke-service", async (ctx: ActionInvokeContext) => {
+    const args = ctx.args ?? {};
+    const capability = str(args.capability);
+    if (!capability) return { ok: false, error: "which service to run is not set" };
+    let input: unknown = args.input ?? {};
+    if (typeof input === "string") {
+      try {
+        input = input.trim() ? JSON.parse(input) : {};
+      } catch {
+        return { ok: false, error: "the service's input is not JSON" };
+      }
+    }
+    const eventName = ctx.event?.name ?? "";
+    const payload = (ctx.event?.payload ?? {}) as Record<string, unknown>;
+    input = renderEventValues(input, { event: { ...payload, name: eventName } });
+    const causedBy = eventName.startsWith("services.job.") ? str(payload.jobId) : "";
+    const attachTo = payload.attachTo && typeof payload.attachTo === "object" ? (payload.attachTo as { kind: string; id: string }) : undefined;
+    try {
+      const ref = await invokeAs(
+        { origin: "wire", userId: null },
+        {
+          orgId: ctx.orgId,
+          capability,
+          input,
+          ...(causedBy ? { causedByJob: causedBy } : {}),
+          ...(attachTo ? { attachTo } : {}),
+          // One job per event per capability, however often the event is
+          // delivered.
+          idempotencyKey: `wire:${eventName}:${causedBy || stableJson(payload)}`,
+        },
+      );
+      return {
+        ok: true,
+        summary: ref.status === "awaiting_confirm" ? `${capability} is waiting for a person to say yes.` : `Started ${capability}.`,
+      };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  });
+
   registerHandler("platform.confirm-service-job", async (ctx: ActionInvokeContext) => {
     const jobId = str((ctx.args ?? {}).job_id);
     if (!jobId) return { ok: false, error: "job_id is required" };
@@ -1410,6 +1662,54 @@ export function registerPlatformActionHandlers(): void {
     try {
       await confirmServiceJob(ctx.orgId, jobId, ctx.userId);
       return { ok: true, message: "Started." };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  });
+
+  // ── The supervisor's buttons on a stuck run (service-supervisor.ts) ──
+  // Who may press: the person whose run it is, or an owner or admin for one
+  // an automation started (the confirm's rule).
+  const stepAllowed = async (orgId: string, jobId: string, userId: string): Promise<string | null> => {
+    const job = await platform().services.job(orgId, jobId);
+    if (!job) return "There is no such step here.";
+    return mayConfirm(orgId, { requested_by: job.requested_by, capability: job.capability }, userId);
+  };
+  registerHandler("platform.retry-service-job", async (ctx: ActionInvokeContext) => {
+    const jobId = str((ctx.args ?? {}).job_id);
+    if (!jobId) return { ok: false, error: "job_id is required" };
+    if (!ctx.userId) return { ok: false, error: "a person has to press this" };
+    const why = await stepAllowed(ctx.orgId, jobId, ctx.userId);
+    if (why) return { ok: false, error: why };
+    try {
+      const ref = await retryJob(ctx.orgId, jobId, ctx.userId);
+      return { ok: true, message: ref.status === "awaiting_confirm" ? "Asked again; it waits for a yes." : "Started again." };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  });
+  registerHandler("platform.skip-service-job", async (ctx: ActionInvokeContext) => {
+    const jobId = str((ctx.args ?? {}).job_id);
+    if (!jobId) return { ok: false, error: "job_id is required" };
+    if (!ctx.userId) return { ok: false, error: "a person has to press this" };
+    const why = await stepAllowed(ctx.orgId, jobId, ctx.userId);
+    if (why) return { ok: false, error: why };
+    try {
+      await skipJob(ctx.orgId, jobId, ctx.userId);
+      return { ok: true, message: "Skipped; the run goes on without it." };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  });
+  registerHandler("platform.cancel-service-run", async (ctx: ActionInvokeContext) => {
+    const jobId = str((ctx.args ?? {}).job_id);
+    if (!jobId) return { ok: false, error: "job_id is required" };
+    if (!ctx.userId) return { ok: false, error: "a person has to press this" };
+    const why = await stepAllowed(ctx.orgId, jobId, ctx.userId);
+    if (why) return { ok: false, error: why };
+    try {
+      const n = await cancelRun(ctx.orgId, jobId, ctx.userId);
+      return { ok: true, message: n ? `Cancelled ${n} step${n === 1 ? "" : "s"}.` : "Stopped: nothing more starts from it." };
     } catch (err) {
       return { ok: false, error: (err as Error).message };
     }

@@ -11,11 +11,14 @@
  * arrived on Discord.
  *
  * Two lists that must agree, in two languages, with no type shared between
- * them. That is the shape a lint is for.
+ * them. That is the shape a lint is for. The one exception is a channel whose
+ * adapter declares `notOffered` (browser push, a stub that sends nothing): it
+ * must be ABSENT from the page, because offering it saved a binding that
+ * never delivered.
  *
  * Run: npx tsx scripts/lint-notification-channels-parity.ts
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const ROOT = new URL("..", import.meta.url).pathname;
@@ -41,9 +44,22 @@ const page = new Set(
     .matchAll(/channel:\s*"([a-z_]+)"/g)].map((m) => m[1]!),
 );
 
+/** Channels whose adapter says it delivers nothing (`notOffered: "<why>"`, a
+ *  stub such as browser push): the page must NOT offer these, since a binding
+ *  to one sends nothing. */
+const CHANNELS_DIR = join(ROOT, "api/src/platform/channels");
+const notOffered = new Set<string>();
+for (const f of readdirSync(CHANNELS_DIR)) {
+  if (!f.endsWith(".ts") || f.endsWith(".test.ts")) continue;
+  const src = readFileSync(join(CHANNELS_DIR, f), "utf8");
+  const name = src.match(/\bname:\s*"([a-z_]+)"/)?.[1];
+  if (name && /\bnotOffered:\s*["'`]/.test(src)) notOffered.add(name);
+}
+
 const missingFromWeb = [...server].filter((c) => !web.has(c));
 const extraInWeb = [...web].filter((c) => !server.has(c));
-const unofferable = [...server].filter((c) => !page.has(c));
+const unofferable = [...server].filter((c) => !page.has(c) && !notOffered.has(c));
+const offeredDead = [...page].filter((c) => notOffered.has(c));
 
 const problems: string[] = [];
 if (missingFromWeb.length) {
@@ -65,6 +81,13 @@ if (unofferable.length) {
   );
 }
 
+if (offeredDead.length) {
+  problems.push(
+    `  the settings page offers a channel that delivers nothing: ${offeredDead.join(", ")}\n` +
+      `      Its adapter says notOffered; a binding to it would never send.`,
+  );
+}
+
 if (problems.length) {
   console.error("❌ notification channels have drifted:\n");
   console.error(problems.join("\n\n"));
@@ -74,4 +97,4 @@ if (problems.length) {
   );
   process.exit(1);
 }
-console.log(`notification-channels-parity: clean (${server.size} channels)`);
+console.log(`notification-channels-parity: clean (${server.size} channels, ${notOffered.size} not offered)`);

@@ -4,7 +4,8 @@
 //
 // Modules will compose this onto their own routers in later phases.
 
-import { guestMayRead, guestRouteKey } from "../auth/guest-reads.js";
+import { describeGuestWrite } from "../platform/approvals.js";
+import { guestMayRead, guestMayWrite, guestRouteKey, portalShares } from "../auth/guest-reads.js";
 import { holdForAPerson } from "../platform/ai-held-changes.js";
 import { sandboxIsOver, trialIsOver } from "../platform/sandbox-over.js";
 import { sandboxEnabled } from "../platform/try-sandbox.js";
@@ -134,6 +135,7 @@ export async function withTenant(
       "o.sandbox",
       "o.trial_expires_at",
       "o.shape_version",
+      "o.portal_config",
       "m.role",
     ])
     .where("m.user_id", "=", req.session.id)
@@ -196,17 +198,41 @@ export async function withTenant(
     return;
   }
 
-  // A guest reads what the workspace shares in its portal, not the workspace
-  // itself (auth/guest-reads.ts). Writes are each route's own role check.
-  if (row.role === "guest" && req.method === "GET" && !guestMayRead(guestRouteKey(req.baseUrl, req.route?.path as string | undefined, slug))) {
-    res.status(403).json({
-      error: { code: "guest_not_shared", message: "A guest sees what this workspace shares in its portal, and this is not part of it." },
-    });
-    return;
-  }
-
   try {
     const db = await getTenantDb(row.org_id);
+    // A guest reads what the workspace shares in its portal, not the
+    // workspace itself, and changes only what auth/guest-reads.ts names.
+    const readOnly = req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS";
+    if (row.role === "guest" && !readOnly) {
+      const key = guestRouteKey(req.baseUrl, req.route?.path as string | undefined, req.path, slug);
+      if (!guestMayWrite(req.method, key)) {
+        res.status(403).json({
+          error: {
+            code: "guest_read_only",
+            message: "A guest can look at what this workspace shares, and ask for more, but cannot change it.",
+            blocked: await describeGuestWrite(row.org_id, req.session!.id),
+          },
+        });
+        return;
+      }
+    }
+    if (row.role === "guest" && readOnly) {
+      let shared: Promise<{ views: Set<string>; kinds: Set<string> }> | null = null;
+      const shares = () => (shared ??= portalShares(row.portal_config, db as unknown as Kysely<unknown>));
+      const fileKinds = async (fileId: string) => {
+        const { rows } = await sql<{ k: string }>`select source_module || ':' || source_type as k from core_files_attachments where file_id::text = ${fileId}`
+          .execute(db)
+          .catch(() => ({ rows: [] as { k: string }[] }));
+        return rows.map((r) => r.k);
+      };
+      const key = guestRouteKey(req.baseUrl, req.route?.path as string | undefined, req.path, slug);
+      if (!(await guestMayRead(key, req.route ? (req.params as Record<string, string>) : {}, shares, fileKinds))) {
+        res.status(403).json({
+          error: { code: "guest_not_shared", message: "A guest sees what this workspace shares in its portal, and this is not part of it." },
+        });
+        return;
+      }
+    }
     serveShapeVersion(res, row.org_id, row.shape_version);
     req.tenant = {
       org: { id: row.org_id, name: row.org_name, slug: row.org_slug },

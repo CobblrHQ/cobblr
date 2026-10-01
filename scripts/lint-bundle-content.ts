@@ -31,18 +31,16 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { FEATURED_BUNDLES } from "../web/src/lib/featured-bundles.js";
 import { twinScopeWires, type ManifestLike } from "./lib/bundle-wire-scopes.js";
-import { BUNDLE_NON_CONTENT_KEYS } from "./lib/bundle-release-keys.js";
+import { bundleContent } from "./lib/bundle-release-keys.js";
 
 const LOCK = path.join(process.cwd(), "bundles", "bundle-versions.lock.json");
 const WRITE = process.argv.includes("--write");
 
-// Release-metadata keys excluded from the content hash (mirrors lint-versions.ts
-// and sync-bundles.ts `sig()`): moving these alone is a release, not a content
-// change, and is not what we're guarding. `catalog` (the offer tier — see
-// docs/design-decisions/bundle-catalog-tiers.md) is the same kind of thing:
-// demoting a bundle is curation, not content an installed workspace re-syncs, so
-// it must not demand a version bump (which would show a spurious upgrade prompt).
-const META = BUNDLE_NON_CONTENT_KEYS;
+// What the hash leaves out (release metadata, the offer tier, a wire's offer
+// copy) is one rule, bundleContent() in scripts/lib/bundle-release-keys.ts,
+// shared with lint-versions.ts and sync-bundles.ts: moving any of it alone is
+// not content an installed workspace re-syncs, so it must not demand a version
+// bump (which would show a spurious upgrade prompt).
 
 /** Deterministic JSON with recursively sorted object keys, so a cosmetic key
  *  reorder in the source doesn't spuriously change the hash. */
@@ -58,8 +56,7 @@ function canonical(v: unknown): unknown {
 }
 
 function contentHash(manifest: Record<string, unknown>): string {
-  const rest = Object.fromEntries(Object.entries(manifest).filter(([k]) => !META.has(k)));
-  return createHash("sha256").update(JSON.stringify(canonical(rest))).digest("hex");
+  return createHash("sha256").update(JSON.stringify(canonical(bundleContent(manifest)))).digest("hex");
 }
 
 type LockEntry = { version: string; hash: string };

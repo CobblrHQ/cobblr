@@ -38,9 +38,19 @@ export interface ProjectsTasksTable {
   completed_at: Date | null;
   order_within: Generated<number>;
   metadata: Generated<Record<string, unknown>>;
+  /** The steps inside the task, in order (0007). */
+  checklist: Generated<ChecklistItem[]>;
+  /** Comes round again: {every_n, every_unit}, or null (0008). */
+  repeat: { every_n: number; every_unit: "day" | "week" | "month" | "year" } | null;
   instance: Generated<string>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
+}
+
+export interface ChecklistItem {
+  id: string;
+  text: string;
+  done: boolean;
 }
 
 export interface ProjectsTaskDependenciesTable {

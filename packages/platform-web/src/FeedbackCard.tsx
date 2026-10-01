@@ -13,7 +13,7 @@
 
 import { useState } from "react";
 import { describeDelivery, isOurFault, type ChannelOutcome, type DeliveryChannel } from "@cobblr/platform-contract/delivery-outcome";
-import { Modal } from "./Modal";
+import { Lightbox } from "./Lightbox";
 import { useImageSrc } from "./useImageSrc";
 import { EntityPhoto } from "./EntityPhoto";
 import { isForeign, type FeedbackSource, type FeedbackSourceItem, type FeedbackUpdate } from "./feedback-source";
@@ -62,35 +62,46 @@ function ValidViableChip({ ok, label }: { ok: boolean | null; label: string }) {
   );
 }
 
-// A reporter-attached screenshot: thumbnail in the card, click to enlarge. The image
-// routes through useImageSrc (Bearer → blob) since the raw endpoint is auth-gated; one
-// `medium` fetch serves both the thumb and the lightbox.
-function FeedbackShot({ url, name }: { url: string | null; name?: string }) {
-  const [zoom, setZoom] = useState(false);
-  const src = useImageSrc(url);
+// A report's screenshots: thumbnails in the card, and one tap opens them all
+// in the shared Lightbox, so a report with three screenshots steps through
+// all three (← →, swipe, "2 of 3") instead of opening each alone (#4319).
+// The raw endpoint is signed-in, so each thumbnail resolves through
+// useImageSrc; the viewer does the same for the full size.
+function FeedbackShots({ shots }: { shots: Array<{ key: string; name?: string; medium: string; thumb: string | null }> }) {
+  const [open, setOpen] = useState<number | null>(null);
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setZoom(true)}
-        title={name || "screenshot"}
-        className="relative w-16 h-16 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800"
-      >
-        <EntityPhoto src={src} alt={name || "screenshot"} fill placeholder="…" />
-      </button>
-      <Modal open={zoom} onClose={() => setZoom(false)} title={name || "Screenshot"} size="lg">
-        {src ? (
-          // photo-frame: the full-size screenshot in its zoom dialog, shown at its own shape
-          <img src={src} alt={name || "screenshot"} className="max-h-[70vh] w-auto mx-auto rounded" />
-        ) : (
-          <div className="text-xs text-faint p-8 text-center">loading…</div>
-        )}
-      </Modal>
+      {shots.map((s, i) => (
+        <FeedbackThumb key={s.key} src={s.thumb ?? s.medium} name={s.name} onOpen={() => setOpen(i)} />
+      ))}
+      {open !== null && (
+        <Lightbox
+          items={shots.map((s, i) => ({ key: s.key, caption: s.name || `Screenshot ${i + 1}`, src: s.medium, thumb: s.thumb }))}
+          index={open}
+          onIndex={setOpen}
+          onClose={() => setOpen(null)}
+        />
+      )}
     </>
   );
 }
 
 const OPEN = new Set(["new", "triaged", "in_progress", "awaiting_decision"]);
+
+function FeedbackThumb({ src, name, onOpen }: { src: string; name?: string; onOpen: () => void }) {
+  const resolved = useImageSrc(src);
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title={name || "screenshot"}
+      aria-label={`Open ${name || "the screenshot"}`}
+      className="relative w-16 h-16 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800"
+    >
+      <EntityPhoto src={resolved} alt={name || "screenshot"} fill placeholder="…" />
+    </button>
+  );
+}
 
 export function FeedbackCard({
   f,
@@ -225,15 +236,19 @@ export function FeedbackCard({
       )}
       {f.attachments?.length > 0 && (
         <div className="flex flex-wrap gap-2">
-          {f.attachments.map((a) =>
-            source.imageUrl(f, a.file_id, "medium") ? (
-              <FeedbackShot key={a.file_id} url={source.imageUrl(f, a.file_id, "medium")} name={a.name} />
-            ) : (
+          <FeedbackShots
+            shots={f.attachments.flatMap((a) => {
+              const medium = source.imageUrl(f, a.file_id, "medium");
+              return medium ? [{ key: a.file_id, name: a.name, medium, thumb: source.imageUrl(f, a.file_id, "thumb") }] : [];
+            })}
+          />
+          {f.attachments
+            .filter((a) => !source.imageUrl(f, a.file_id, "medium"))
+            .map((a) => (
               <span key={a.file_id} className="text-[10px] text-faint dark:text-slate-500">
                 🖼 {a.name || "screenshot"} (on {f.instance_label ?? "the instance"})
               </span>
-            ),
-          )}
+            ))}
         </div>
       )}
       {f.followups?.length > 0 && (

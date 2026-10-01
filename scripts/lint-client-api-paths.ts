@@ -280,10 +280,17 @@ export function routeTable(root = ROOT): string[] {
 }
 
 /** A client's literal against an express pattern, segment by segment. A
- *  placeholder on either side ({{target}}, {slug}, :id, ${x}) is one segment. */
+ *  placeholder on either side ({{target}}, {slug}, :id, ${x}) is one segment,
+ *  and one glued onto the last segment is a query (`/stats${q}` is `/stats`). */
 export function resolves(clientPath: string, pattern: string): boolean {
   const wild = (s: string) => /^([:*]|\{|\$\{)/.test(s) || /^\{\{.*\}\}$/.test(s);
   const a = clientPath.split("/").filter(Boolean);
+  // A placeholder glued onto the LAST literal segment is a query string the
+  // client built in a variable (`/usage-stats${q}`, q = "?days=7" or ""): the
+  // path is the literal before it. A placeholder that is the whole segment
+  // stays one segment.
+  const last = a.length - 1;
+  if (last >= 0) a[last] = a[last]!.replace(/^([^$]+)\$\{[^}]*\}$/, "$1");
   const b = pattern.split("/").filter(Boolean);
   // A literal ending in "/" is a prefix the client concatenates onto, so it
   // only has to REACH a route, not be one.

@@ -22,16 +22,33 @@
 // reminder in it went quiet for twelve days (#3279).
 
 import { fieldDay } from "@cobblr/platform-contract/field-day";
+import { asMeasure } from "@cobblr/platform-contract/measure";
+import { amountOf, parseMoney } from "@cobblr/platform-contract/money";
 
 /** One field's declared shape, as `fieldsFor` reports it. */
 export interface TypedField {
   name: string;
   type: string;
+  /** A number's or a measure's declared unit: a bare "10" in a volts field is 10 V. */
+  unit?: string | null;
 }
 
 /** The value cast to its field type where the reading is unambiguous. */
-export function castFieldValue(type: string, value: unknown): unknown {
+export function castFieldValue(type: string, value: unknown, unit?: string | null): unknown {
   if (value === null || value === undefined) return value;
+  // A measured value stored as { value, unit, text }: "4k7" is 4700 Ω however
+  // it was typed. Text that does not read as one is kept as typed.
+  if (type === "measure") {
+    if (value && typeof value === "object") return value;
+    return asMeasure(value, unit ?? null) ?? value;
+  }
+  // Money keeps the amount ("$4,300" is 4300); text that is not an amount
+  // is kept as typed, for a person to fix.
+  if (type === "money") {
+    if (typeof value === "number") return value;
+    const c = parseMoney(value);
+    return c === null ? value : amountOf(c);
+  }
   if (type === "date") return fieldDay(value) ?? value;
   if (type === "number") {
     if (typeof value === "number") return value;
@@ -57,13 +74,13 @@ export function castFieldValues(
   bag: Record<string, unknown>,
 ): Record<string, unknown> {
   if (!defs.length) return bag;
-  const byName = new Map(defs.map((d) => [d.name, d.type]));
+  const byName = new Map(defs.map((d) => [d.name, d]));
   let changed = false;
   const out: Record<string, unknown> = { ...bag };
   for (const [k, v] of Object.entries(bag)) {
-    const type = byName.get(k);
-    if (!type) continue;
-    const cast = castFieldValue(type, v);
+    const def = byName.get(k);
+    if (!def) continue;
+    const cast = castFieldValue(def.type, v, def.unit ?? null);
     if (cast !== v) {
       out[k] = cast;
       changed = true;

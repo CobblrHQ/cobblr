@@ -14,21 +14,32 @@ import { useLocation } from "react-router-dom";
 import { Power } from "lucide-react";
 import type { AppEntry } from "@cobblr/platform-contract/app-catalog";
 import { useAppCatalog, useModuleDoor } from "../lib/appCatalog";
+import { CONFIG_DESTINATIONS } from "../lib/configuration-nav";
 
 /** The app whose page this is, when that app is off. A page belongs to the
  *  app whose route's first segment it starts with, the same key the nav and
- *  the All apps page use. */
-export function moduleOffAt(pathname: string, apps: readonly AppEntry[]): AppEntry | null {
+ *  the All apps page use, or, for a settings page, to the module its
+ *  settings entry names (QR codes under /configuration belong to Labels). */
+export function moduleOffAt(
+  pathname: string,
+  apps: readonly AppEntry[],
+  settings: ReadonlyArray<{ to: string; module?: string }> = CONFIG_DESTINATIONS,
+): AppEntry | null {
   const seg = pathname.split("/").filter(Boolean)[0];
   if (!seg) return null;
-  const app = apps.find((a) => a.key === seg);
+  const owner = settings.find((d) => d.module && (pathname === d.to || pathname.startsWith(`${d.to}/`)))?.module;
+  const app = apps.find((a) => a.key === seg) ?? (owner ? apps.find((a) => a.name === owner) : undefined);
   return app && app.state === "off" ? app : null;
 }
 
 export function ModuleOffGate({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const { apps, loading } = useAppCatalog();
-  const off = loading ? null : moduleOffAt(pathname, apps);
+  // Nothing renders until the catalogue says whether this page's module is on:
+  // a page drawn in that window fires its reads, and an off module answers
+  // every one with 409. The nav waits on the same cached query.
+  if (loading) return null;
+  const off = moduleOffAt(pathname, apps);
   if (!off) return <>{children}</>;
   return <ModuleOff app={off} />;
 }

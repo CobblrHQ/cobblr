@@ -157,7 +157,11 @@ export function rowShape(row: ShapeRow, door?: IntakeDoor): RowShape {
   return "phrase";
 }
 
-export type IntakeDoor = "scan" | "note" | "receipt" | "split" | "import";
+/** `assistant`: an AI agent adding a thing (MCP, the chat, the API's
+ *  add-a-thing door). The row is shaped as a typed note is and runs the same
+ *  plan; the door waits for it (`settle`) so its answer can say what the
+ *  intake found. */
+export type IntakeDoor = "scan" | "note" | "receipt" | "split" | "import" | "assistant";
 
 /** The match passes live in api/inbox.ts (the matchmaker's request-side
  *  half); it registers them at load so the plan can call them without an
@@ -200,6 +204,12 @@ export interface IntakeOpts {
   /** Race the first identify inline for this long (the scanner's sheet wants
    *  the enriched row on the response); the rest runs detached. */
   inlineBudgetMs?: number;
+  /** Await the whole plan before returning, so the caller can answer with
+   *  what the intake found (the assistant's door). The passes are the same
+   *  ones, in the same order; only the waiting differs. A photo's identify
+   *  rides the scan.received wire and is still detached: `inline` says
+   *  "timeout" for it, and the row fills in afterwards. */
+  settle?: boolean;
 }
 
 export interface IntakeResult {
@@ -253,6 +263,10 @@ export async function intakeRow(opts: IntakeOpts): Promise<IntakeResult> {
 
   const ctx: PassContext = { ...opts, row, shape };
   let inline: IntakeResult["inline"] = "none";
+  if (opts.settle) {
+    await runPasses(ctx, plan);
+    return { row, shape, plan, inline: shape === "photo" ? "timeout" : "done" };
+  }
   if (plan[0] === "identify-code" && shape === "barcode" && opts.inlineBudgetMs) {
     inline = await raceInline(ctx, identifyCode(ctx), opts.inlineBudgetMs);
     void runPasses(ctx, plan.slice(1));
@@ -314,7 +328,10 @@ async function runPass(ctx: PassContext, pass: IntakePass): Promise<void> {
       // A shape whose identify lands later and out of band (the barcode race
       // past its budget, the photo wire) is matched once it has a name; a
       // shape whose name is on the row already is matched now.
-      if (ctx.shape === "barcode" || ctx.shape === "url" || ctx.shape === "photo") r.matchWhenEnriched({ ...common, token: ctx.token });
+      // A settled plan has already awaited its identify, so a barcode or a
+      // url is matched now; only a photo's identify is still out on the wire.
+      if (ctx.settle && ctx.shape !== "photo") await r.match({ ...common, token: ctx.token });
+      else if (ctx.shape === "barcode" || ctx.shape === "url" || ctx.shape === "photo") r.matchWhenEnriched({ ...common, token: ctx.token });
       else await r.match({ ...common, token: ctx.token });
       return;
     }

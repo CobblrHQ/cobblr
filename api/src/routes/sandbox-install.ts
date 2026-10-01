@@ -94,6 +94,7 @@ function auditTarballMembers(tmpTar: string): string | null {
   return null;
 }
 
+// AI-REACH: running third-party module code is an operator's trust decision, made at the console
 sandboxInstallRouter.post("/install", async (req, res, next) => {
   try {
     const parsed = InstallBody.safeParse(req.body);
@@ -332,6 +333,7 @@ sandboxInstallRouter.get("/registry", async (req, res, next) => {
  *  Workspace `org_modules` rows that had this module enabled stay —
  *  the operator can choose to clean those up via super-admin's
  *  workspace module matrix if needed. */
+// AI-REACH: running third-party module code is an operator's trust decision, made at the console
 sandboxInstallRouter.delete("/install/:name", async (req, res, next) => {
   try {
     const name = req.params.name;

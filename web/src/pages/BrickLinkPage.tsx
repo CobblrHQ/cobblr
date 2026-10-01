@@ -16,6 +16,7 @@ import { Diff, FileText, Upload } from "lucide-react";
 import { usePageTitle, usePageWidth, useToast } from "@cobblr/platform-web";
 import { ApiError, api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { formatStoredMoney } from "@cobblr/platform-contract/money";
 
 interface ParsedItem {
   item_type: "P" | "S" | "M" | "B" | "G" | "C" | "I" | "O";
@@ -350,7 +351,7 @@ function ParsedWantedTable({ result }: { result: ParseWantedResponse }) {
                 {item.min_qty}
               </Td>
               <Td mono dim align="right">
-                {item.max_price != null ? `$${item.max_price.toFixed(2)}` : "—"}
+                {item.max_price != null ? formatStoredMoney(item.max_price, "amount") : "—"}
               </Td>
               <Td dim>{item.condition === "N" ? "New" : item.condition === "U" ? "Used" : "Any"}</Td>
             </tr>
@@ -441,7 +442,7 @@ function ParsedOrderTable({ result }: { result: ParseOrderResponse }) {
           </span>
         )}
         <span className="text-[10px] font-mono uppercase tracking-widest text-muted">
-          ${result.summary.total.toFixed(2)} total
+          {formatStoredMoney(result.summary.total, "amount")} total
         </span>
         {result.summary.parts > 0 && (
           <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
@@ -481,8 +482,8 @@ function ParsedOrderTable({ result }: { result: ParseOrderResponse }) {
                 {line.color_id >= 0 ? line.color_id : "—"}
               </Td>
               <Td mono align="right">{line.qty}</Td>
-              <Td mono align="right">${line.unit_price.toFixed(2)}</Td>
-              <Td mono align="right">${line.line_total.toFixed(2)}</Td>
+              <Td mono align="right">{formatStoredMoney(line.unit_price, "amount")}</Td>
+              <Td mono align="right">{formatStoredMoney(line.line_total, "amount")}</Td>
               <Td dim>
                 {line.condition === "N" ? "New" : line.condition === "U" ? "Used" : "Any"}
               </Td>

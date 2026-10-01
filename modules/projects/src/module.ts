@@ -12,7 +12,7 @@ import { ENERGIES, PRIORITIES, PROJECT_STATUSES, TASK_STATUSES } from "./vocab.j
 
 export default defineModule({
   name: "projects",
-  version: "0.3.17",
+  version: "0.3.25",
   displayName: "Projects",
   description:
     "Projects and their tasks, with what each task is waiting for.",
@@ -107,6 +107,7 @@ export default defineModule({
     // workspace can say who each kind is for (Configuration > Who gets told).
     notifications: [
       { eventType: "projects.task.unblocked", label: "A task became unblocked", description: "A task whose blockers are all done." },
+      { eventType: "projects.task.assigned", label: "A task was given to you", description: "Someone assigned you a task." },
     ],
     events: [
       "projects.project.created",
@@ -115,6 +116,7 @@ export default defineModule({
       "projects.task.updated",
       "projects.task.completed",
       "projects.task.unblocked",
+      "projects.task.assigned",
     ],
     actions: [
       {
@@ -144,6 +146,31 @@ export default defineModule({
         scope: "workspace" as const,
         invokeHandler: "projects.unblock",
         argsSchema: { dependency_id: { label: "Id of the dependency to remove", type: "text", required: true } },
+      },
+      {
+        id: "projects:move-task",
+        examples: ["put this task first", "move that one down", "do this one last"],
+        undoable: true,
+        label: "Move in the list",
+        description:
+          "Move this task within its project's list. Pass `to` (first, last, up or down) or `position` (its place counting from 1). The list on the project page shows the same order.",
+        icon: "arrow-up-down",
+        appliesTo: { kinds: ["projects:task"] },
+        invokeHandler: "projects.move-task",
+        argsSchema: {
+          to: {
+            label: "Where to",
+            type: "text",
+            oneOf: "where",
+            choices: [
+              { value: "first", label: "First" },
+              { value: "up", label: "Up one" },
+              { value: "down", label: "Down one" },
+              { value: "last", label: "Last" },
+            ],
+          },
+          position: { label: "Or its place in the list, counting from 1", type: "number", oneOf: "where" },
+        },
       },
       {
         // NO-PHRASING: flips flags for whatever entity triggered it, so without an event there is nothing to act on
@@ -203,6 +230,12 @@ export default defineModule({
   // disable / replace them. The wires belong to projects because
   // projects owns the actions they fire.
   contributes: {
+    // Whose job a task is: anyone on the workspace's People list, member or
+    // not. No role: the `assignee` role means "who has it now" for a thing
+    // that gets lent, and a task is not lent.
+    fieldDefs: [
+      { entity_kind: "projects:task", name: "assignee", display_label: "Assigned to", type: "person" as const },
+    ],
     wires: [
       // Auto-unblock a task when its part comes back in stock.
       {

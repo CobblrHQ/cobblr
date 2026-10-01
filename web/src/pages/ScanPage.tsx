@@ -4,7 +4,7 @@ import { FileEverythingSheet } from "../components/FileEverythingSheet";
 import { ScanSessionTheme } from "../components/ScanSessionTheme";
 import { SessionPlaceChip } from "../components/SessionPlaceChip";
 import { SessionHeadline } from "../components/SessionHeadline";
-import { ScanPickerInput, useScanIntake } from "../components/ScanPhotoPicker";
+import { SCAN_PICKER_ACCEPT, ScanPickerInput, useScanIntake } from "../components/ScanPhotoPicker";
 import { SessionReadVerdict } from "../components/SessionReadVerdict";
 //
 // Layout (the author's spec):
@@ -24,9 +24,9 @@ import { SessionReadVerdict } from "../components/SessionReadVerdict";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle, ChevronDown, ExternalLink, Image as ImagePlus, LayoutGrid, List, Loader2, MapPin, MonitorSmartphone, Pencil, ReceiptText, RotateCcw, ScanLine, Search, Sparkles, Tag, Trash2, Truck, X, Zap, MoreHorizontal, Undo2 } from "lucide-react";
-import { useLater, Modal, useToast, usePageTitle, PopoverLayer, OverlayLayer, relativeTime, TILE_GRID } from "@cobblr/platform-web";
+import { useLater, Modal, useToast, usePageTitle, PopoverLayer, OverlayLayer, relativeTime, TILE_GRID, useEscapeToClose } from "@cobblr/platform-web";
 import { ScanImportModal } from "../components/ScanImportModal";
 import { ExportInboxModal } from "../components/ExportInboxModal";
 import { } from "../components/CameraCaptureSheet";
@@ -42,6 +42,8 @@ import { } from "../components/CropPhotoModal";
 import { } from "../components/pastedImage";
 import { ReceiptSourceViewer, type ReceiptMoney } from "../components/ReceiptSourceViewer";
 import { ReceiptPeek } from "../components/ReceiptPeek";
+import { DocumentSessionCard, sessionFileKey } from "../components/DocumentSessionCard";
+import { documentStateWords } from "../lib/documentState";
 import { } from "../lib/scanRerun";
 import { } from "../lib/identifySentence";
 import { } from "../lib/namelessCard";
@@ -50,7 +52,8 @@ import { BinAdjustModal } from "../components/BinAdjustModal";
 import { HeaderMenu, MenuHead, MenuItem, MenuNote, MenuSep } from "../components/HeaderMenu";
 import { DuplicateRecordsSheet } from "./DuplicateRecordsSheet";
 import { ReceiptAddressChip } from "../components/ReceiptAddressChip";
-import { classifyOmni, clipboardImages, omniPlaceholder } from "./omniIntake";
+import { classifyOmni, omniPlaceholder } from "./omniIntake";
+import { useInboxPaste } from "./inboxPaste";
 import { ScanPendingPictures } from "./ScanPendingPictures";
 import { ScanTwinsContext, twinsOf } from "./scanTwins";
 import { usePendingPictures } from "../lib/pendingPictures";
@@ -92,6 +95,8 @@ import { useScanViewer } from "./scanViewer";
 import { resolveInstanceForFiling } from "./scanInstall";
 import { arrivalLabel, arrivalOf } from "./scanArrival";
 import type { ScanBatchMeta } from "../lib/api";
+import { addSharedProducts, addedSharedMessage } from "../lib/sharedProducts";
+import { parseSharedText } from "@cobblr/platform-contract/shared-text";
 import { SeriesBanner } from "../components/ScanSeriesBanner";
 import { installToastLine } from "../lib/installSummary";
 import {
@@ -1036,6 +1041,26 @@ export function ScanPage() {
   // Every group (session or day) carries a meaningful time header now, so show
   // them whenever we're grouping at all.
   const showSessionHeaders = sessionGroups.length > 0;
+  // The name of the file each document session was read from. A session that
+  // has not been read has no other name: its title is the file's, never
+  // "not read yet" (#4523).
+  const sourceFileIds = useMemo(
+    () => [...new Set(sessionGroups.map((g) => g.sourceFileId).filter((id): id is string => !!id))],
+    [sessionGroups],
+  );
+  const sourceFileQueries = useQueries({
+    queries: sourceFileIds.map((id) => ({
+      queryKey: sessionFileKey(activeSlug, id),
+      queryFn: () => api.getFile(activeSlug, id),
+      staleTime: 5 * 60_000,
+      retry: false,
+    })),
+  });
+  const sourceFileNames = new Map<string, string>();
+  sourceFileIds.forEach((id, i) => {
+    const f = sourceFileQueries[i]?.data;
+    if (f?.filename) sourceFileNames.set(id, f.filename);
+  });
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
   // Sessions whose "Do these belong together?" was pressed in the ⋯ (#3064).
   const [themeAsked, setThemeAsked] = useState<Set<string>>(new Set());
@@ -1472,43 +1497,15 @@ export function ScanPage() {
       return;
     }
     if (intent.kind === "url" || intent.kind === "urls") {
-      const urls = intent.value.split("\n").slice(0, 50);
+      // Each link with the words it came with: a title pasted from a shopping
+      // app is kept as the item's name (lib/sharedProducts.ts). A failure keeps
+      // its reason; "Added 0" is never a success (reported 2026-08-12).
+      const products = intent.products ?? intent.value.split("\n").map((url) => ({ title: null, url }));
       setSearchQ("");
-      let ok = 0;
-      let lastErr: string | null = null;
-      for (const url of urls) {
-        try {
-          await api.scanBarcode(activeSlug, {
-            source_kind: "url",
-            source_url: url,
-            target_location_id: fileBin || undefined,
-          });
-          ok++;
-        } catch (e) {
-          // Carry on through the rest, but KEEP the reason. Discarding it is
-          // what turned a server-side 400 into a green "Added 0 URLs" that read
-          // as "nothing happened" instead of "this failed, here is why"
-          // (reported 2026-08-12).
-          lastErr = e instanceof ApiError ? e.message : String(e);
-        }
-      }
+      const added = await addSharedProducts(activeSlug, products, { target_location_id: fileBin || undefined });
       void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
-      // "Added 0" is a FAILURE whatever the loop technically did. A success
-      // toast reporting zero confirms nothing and hides the one fact that would
-      // explain it.
-      if (ok === 0) {
-        toast.error(
-          (urls.length === 1 ? "Couldn't add that link" : `Couldn't add any of those ${urls.length} links`) +
-            (lastErr ? `: ${lastErr}` : "."),
-        );
-      } else if (ok < urls.length) {
-        toast.info(
-          `Added ${ok} of ${urls.length} links - identifying in the inbox.` +
-            (lastErr ? ` The rest failed: ${lastErr}` : ""),
-        );
-      } else {
-        toast.success(`Added ${ok} URL${ok === 1 ? "" : "s"} - identifying in the inbox.`);
-      }
+      const said = addedSharedMessage(added);
+      toast[said.tone](said.text);
     }
   };
   // Dropping a file on the box routes by TYPE, so there is no "which kind of
@@ -1534,42 +1531,35 @@ export function ScanPage() {
     setDropHot(false);
     takeFiles(Array.from(e.dataTransfer.files ?? []), "drop");
   };
-  // Pasting a screenshot into the box is intake too. A receipt, a listing or a
-  // spec sheet usually reaches you as an image on the clipboard, and without
-  // this the only route is saving it to disk to drag it back in.
-  //
-  // Images are intercepted ONLY when the clipboard actually carries one. A
-  // normal text paste - a UPC, a link, a search - must still land in the field,
-  // so preventDefault is called after that check and never before it.
-  const onOmniPaste = (e: React.ClipboardEvent) => {
-    const files = clipboardImages(e.clipboardData);
-    if (!files.length) return;
-    e.preventDefault();
-    // ...and stop it reaching the copy of this handler on the label outside.
-    // preventDefault only cancels the browser's own behaviour; the event still
-    // bubbles, so without this one paste into the focused field ran intake twice.
-    e.stopPropagation();
-    takeFiles(files, "paste");
-  };
-
-  // A picture pasted or dropped ANYWHERE on the inbox is intake, not only in
-  // the box (#3852): the box is a collapsed icon on a phone and easy to miss
-  // on a desk, and a paste that lands nowhere shows nothing, so it gets
-  // pasted again. A field, a sheet or a dialog keeps its own paste; the box's
-  // own handlers stop the event, so one paste is never taken twice.
+  // A picture pasted ANYWHERE on the inbox is intake, in the box or not
+  // (#3852): the box is a collapsed icon on a phone and easy to miss on a
+  // desk, and a paste that lands nowhere shows nothing, so it gets pasted
+  // again. Through the one paste door (usePasteImage): the page is the area,
+  // so a card's own photo (an area inside it) still takes a paste meant for
+  // it, a dialog on top takes its own, and a text paste (a UPC, a link) still
+  // lands in the field. A drop anywhere is intake too.
   const takeFilesRef = useRef(takeFiles);
   takeFilesRef.current = takeFiles;
+  // Files first, then text (inboxPaste.ts): a picture or a PDF pasted
+  // anywhere here, or into the box at the top, is taken as the upload button
+  // takes it; text with no file is a product shared from a shopping app (the
+  // iPhone path: Safari cannot make an installed web app a share target),
+  // each link added with the words it came with as its name.
+  useInboxPaste(
+    (files) => takeFilesRef.current(files, "paste"),
+    (text) => {
+      const products = parseSharedText(text);
+      if (!products.length || !activeSlug) return false;
+      void addSharedProducts(activeSlug, products, { target_location_id: fileBin || undefined }).then((added) => {
+        void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
+        const said = addedSharedMessage(added);
+        toast[said.tone](said.text);
+      });
+      return true;
+    },
+  );
   const [pageDrop, setPageDrop] = useState(false);
   useEffect(() => {
-    const ownsPaste = (t: EventTarget | null) =>
-      !!(t as HTMLElement | null)?.closest?.("input, textarea, select, [contenteditable='true'], [role='dialog']");
-    const onPaste = (e: ClipboardEvent) => {
-      if (e.defaultPrevented || ownsPaste(e.target)) return;
-      const files = clipboardImages(e.clipboardData);
-      if (!files.length) return;
-      e.preventDefault();
-      takeFilesRef.current(files, "paste");
-    };
     const carriesFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
     const onOver = (e: DragEvent) => {
       if (!carriesFiles(e)) return;
@@ -1585,12 +1575,10 @@ export function ScanPage() {
       e.preventDefault();
       takeFilesRef.current(Array.from(e.dataTransfer?.files ?? []), "drop");
     };
-    document.addEventListener("paste", onPaste);
     window.addEventListener("dragover", onOver);
     window.addEventListener("dragleave", onLeave);
     window.addEventListener("drop", onDrop);
     return () => {
-      document.removeEventListener("paste", onPaste);
       window.removeEventListener("dragover", onOver);
       window.removeEventListener("dragleave", onLeave);
       window.removeEventListener("drop", onDrop);
@@ -1900,12 +1888,17 @@ export function ScanPage() {
    *  that would otherwise clip it. */
   const [trackingRect, setTrackingRect] = useState<{ top: number; left: number } | null>(null);
   const trackingPopRef = useRef<HTMLSpanElement>(null);
+  const trackingPanelRef = useRef<HTMLDivElement>(null);
+  // The parcel panel is a layer: Escape closes it only when nothing is over it.
+  // Escape must not dump keyboard users at the document root - hand focus
+  // back to the trigger, the way the destination menu does.
+  useEscapeToClose(!!trackingPopover, trackingPanelRef, () => {
+    trackingPopRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    setTrackingPopover(null);
+  });
   useEffect(() => {
     if (!editingPo && !editingTracking && !trackingPopover) return;
     const closeAll = () => {
-      // Escape must not dump keyboard users at the document root - hand focus
-      // back to the trigger, the way the destination menu does.
-      if (trackingPopover) trackingPopRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
       setEditingPo(null);
       setEditingTracking(null);
       setTrackingPopover(null);
@@ -1927,8 +1920,11 @@ export function ScanPage() {
       }
       closeAll();
     };
+    // escape-not-a-layer: cancels an inline PO / tracking edit in the row; the parcel panel closes through useEscapeToClose above.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeAll();
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      setEditingPo(null);
+      setEditingTracking(null);
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -2560,7 +2556,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
           // Also on the LABEL, not only the input: the box is collapsed to an
           // icon until you click it, so a paste aimed at the control lands here
           // when the field is not focused yet.
-          onPaste={onOmniPaste}
+         
           onClick={() => {
             if (!omniOpen) {
               setOmniOpen(true);
@@ -2598,7 +2594,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             ref={omniRef}
             value={searchQ}
             onChange={(e) => setSearchQ(e.target.value)}
-            onPaste={onOmniPaste}
+           
             onBlur={() => {
               // Collapsing while it holds text would eat the search you are
               // in the middle of typing.
@@ -2730,7 +2726,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
         <input
           ref={receiptRef}
           type="file"
-          accept="application/pdf,image/*,.csv,text/csv"
+          accept={SCAN_PICKER_ACCEPT}
           className="hidden"
           onChange={(e) => {
             const f = e.target.files?.[0];
@@ -3342,7 +3338,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
           </div>
         )}
         <p className="hidden sm:block text-xs text-faint dark:text-slate-500" data-testid="paste-anywhere-hint">
-          Paste or drop a picture anywhere on this page to add it.
+          Paste or drop a picture, or a product's name and link, anywhere on this page to add it.
         </p>
         <SeriesBanner slug={activeSlug} items={visibleItems.filter((i) => i.status === "pending")} />
         {(() => {
@@ -3544,6 +3540,11 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             // gating on sourceFileId — that is a capability check, not this
             // question.
             const isReceiptSession = g.isBatch && !!g.batchId && !!g.label?.startsWith("Receipt");
+            // A document that has not been read yet is named by its file.
+            const unreadDocName =
+              g.sourceFileId && (g.verdict.kind === "failed" || g.verdict.kind === "in_flight")
+                ? (sourceFileNames.get(g.sourceFileId) ?? null)
+                : null;
             // What the receipt promised, for the parcel control's label. A live
             // carrier state outranks it there; this is what fills the usual gap
             // before any carrier has said anything.
@@ -3697,7 +3698,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       title={g.label ?? formatSessionTime(g.latest)}
                     >
                       <SessionHeadline
-                        name={sessionName(g, isReceiptSession)}
+                        name={unreadDocName ?? sessionName(g, isReceiptSession)}
                         // Named by when it was scanned: the time drops as a
                         // whole word before anything is cut.
                         nameFits={g.label ? undefined : [formatSessionTime(g.latest), formatSessionDay(g.latest)]}
@@ -3715,7 +3716,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                         // A receipt's date is the date ON THE RECEIPT, not when
                         // the photo was uploaded (reported 2026-08-20); the
                         // upload time is on the tooltip.
-                        date={g.label ? (receiptDateOf(g) ?? formatSessionDay(g.latest)) : null}
+                        date={unreadDocName ? null : g.label ? (receiptDateOf(g) ?? formatSessionDay(g.latest)) : null}
                         dateTitle={[
                           g.origin === "email" ? "Emailed." : null,
                           receiptDateOf(g) ? receiptDateWords(g.dateReading) : null,
@@ -3731,7 +3732,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       over with the actions, while the number it creates appears
                       next to the name, made the two look like different things
                       (reported 2026-08-21). */}
-                  {isReceiptSession && g.batchId && !g.orderRef && editingPo !== g.batchId && (
+                  {isReceiptSession && g.batchId && !unreadDocName && !g.orderRef && editingPo !== g.batchId && (
                     <button
                       type="button"
                       onClick={(e) => {
@@ -4110,6 +4111,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                           // Click, not hover: a phone has no hover, and this is
                           // the surface a phone user reaches for most.
                           <PopoverLayer
+                            ref={trackingPanelRef}
                             data-portal-panel
                             role="dialog"
                             aria-label="Parcel status"
@@ -4390,6 +4392,16 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                 {!collapsed && (
                   <div className="space-y-2">
                     {g.batchId && batchMeta[g.batchId]?.purchase_pending && <KeepAsPurchase slug={activeSlug} batchId={g.batchId} />}
+                    {/* The document itself, read or not: its first page, its
+                        name, and where the reading stands (#4523). */}
+                    {g.sourceFileId && (
+                      <DocumentSessionCard
+                        slug={activeSlug}
+                        fileId={g.sourceFileId}
+                        state={documentStateWords(g.verdict, g.items)}
+                        onOpen={setViewSource}
+                      />
+                    )}
                     {/* The read's verdict, in the session's own words: a failed
                         read says why, with a Read again you can see and the
                         connect link when a provider is the reason (#2892). The
@@ -4791,6 +4803,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
           fileId={viewSource}
           money={viewSourceMoney?.money ?? null}
           soldBy={viewSourceMoney?.soldBy ?? null}
+          filename={sourceFileNames.get(viewSource) ?? null}
           onClose={() => setViewSource(null)}
         />
       )}

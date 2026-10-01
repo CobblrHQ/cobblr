@@ -4,6 +4,7 @@ scope: account
 date: 2026-09-29
 docs_target: docs/USER_GUIDE.md#Forgot your password? Verifying your email
 ui: changes the existing Identity & password page
+docs_published: 2026-10-01
 ---
 You can change the email address you sign in with. The change happens only when you open a link sent to the new address, every device is signed out, and your old address is told, with a way to undo it for 7 days.
 

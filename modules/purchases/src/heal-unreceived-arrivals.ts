@@ -26,6 +26,13 @@
 // a person settles each ("Add to stock", "Already counted") on the Purchases
 // page. Lines that arrived before that date only ever had the dropdown, which
 // added their stock, so they are stamped and not asked about.
+//
+// WHO IS NEVER ASKED (#4381): an order filed already arrived from a receipt
+// (bought over a counter, carried home, filed from the scan inbox) never went
+// through "Mark arrived": its lines' stock came from the scan filing each one.
+// Nor is an order filed as a past purchase whose stock was already counted
+// (add_to_stock off). Lines flagged before this rule are withdrawn on the next
+// visit, so the question disappears without anyone answering it.
 
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
@@ -39,12 +46,36 @@ export const MARK_ARRIVED_SHIPPED = "2026-08-13";
 
 export const UNCONFIRMED_NOTICE = "purchases.receipts.unconfirmed";
 
-/** Heal one workspace; answers how many lines it stamped. */
+/** Could this order's arrival have gone through the old "Mark arrived"? Not
+ *  when it was filed already arrived from a receipt (its arrival day is no
+ *  later than the day it was filed), and never when it was not meant to add
+ *  stock. `o` is purchases_orders. */
+const MAY_HAVE_MISSED_STOCK = sql<boolean>`(
+  coalesce(o.add_to_stock, true)
+  and not (coalesce(o.metadata->>'source', '') = 'receipt' and coalesce(o.arrived_at, o.created_at::date) <= o.created_at::date)
+)`;
+
+/** What the notice and the banner say, in the person's words. */
+export function unconfirmedSentence(n: number): string {
+  return n === 1
+    ? "One thing you ordered may not have reached your stock when it was delivered."
+    : `${n} things you ordered may not have reached your stock when they were delivered.`;
+}
+
+/** Heal one workspace; answers how many lines it stamped or withdrew. */
 export async function healUnreceivedArrivalsIn(orgId: string, db: Kysely<PurchasesDB>): Promise<number> {
+  // A question asked in error, before the rule above, is taken back.
+  const withdrawn = await sql`
+    update purchases_order_items i
+       set receipt_unconfirmed = false
+      from purchases_orders o
+     where o.id = i.order_id
+       and i.receipt_unconfirmed
+       and not ${MAY_HAVE_MISSED_STOCK}`.execute(db);
   const stamped = await sql<{ flagged: boolean }>`
     update purchases_order_items i
        set received_at = coalesce(o.arrived_at, o.ordered_at, i.created_at::date),
-           receipt_unconfirmed = coalesce(o.arrived_at, i.created_at::date) >= ${MARK_ARRIVED_SHIPPED}::date
+           receipt_unconfirmed = coalesce(o.arrived_at, i.created_at::date) >= ${MARK_ARRIVED_SHIPPED}::date and ${MAY_HAVE_MISSED_STOCK}
       from purchases_orders o
      where o.id = i.order_id
        and o.status = 'arrived'
@@ -54,10 +85,7 @@ export async function healUnreceivedArrivalsIn(orgId: string, db: Kysely<Purchas
   const flagged = stamped.rows.filter((r) => r.flagged).length;
   if (flagged > 0) {
     // Once: the lines are stamped now, so no later visit flags them again.
-    const message =
-      flagged === 1
-        ? "One line on an order marked arrived may not have added its stock. Check it on the Purchases page."
-        : `${flagged} lines on orders marked arrived may not have added their stock. Check them on the Purchases page.`;
+    const message = unconfirmedSentence(flagged);
     for (const userId of await platform().notifications.orgMemberIds(orgId)) {
       await platform()
         .notifications.dispatch({
@@ -68,12 +96,12 @@ export async function healUnreceivedArrivalsIn(orgId: string, db: Kysely<Purchas
           module: "purchases",
           triggeredBy: "schedule",
           link_url: "/purchases?unconfirmed=1",
-          card: { heading: "Some orders may not have added their stock", body: message },
+          card: { heading: "Check what was delivered", body: message },
         })
         .catch((err: unknown) => console.error("[purchases] unconfirmed-receipt notice failed:", (err as Error).message));
     }
   }
-  return stamped.rows.length;
+  return stamped.rows.length + Number(withdrawn.numAffectedRows ?? 0);
 }
 
 export function registerUnreceivedArrivalsHeal(): void {

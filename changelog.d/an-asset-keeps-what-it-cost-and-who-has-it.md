@@ -3,6 +3,7 @@ type: feature
 scope: assets
 date: 2026-09-29
 docs_target: docs/USER_GUIDE.md#3.31 Assets
+docs_published: 2026-10-01
 ---
 **Keep what an asset cost, where it came from and who has it.** An asset now has Paid, Bought from and Who has it, which can be anyone in your workspace's people, even someone without an account. The Assets page adds up what everything cost.
 

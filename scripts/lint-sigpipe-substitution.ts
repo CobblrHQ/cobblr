@@ -80,7 +80,21 @@ const DIRS = ["scripts", "deploy"];
  * out of it, so `[ -n "$head" ] || head="$(…)"` is not read as a pipe into
  * head(1).
  */
-const EARLY_EXIT = /(?<!\|)\|(?!\|)\s*(head\b|grep\s+-[a-zA-Z]*q|grep\s+-[a-zA-Z]*m\s*\d)/;
+const EARLY_EXIT = /(?<!\|)\|(?!\|)\s*(head\b|grep\s+-[a-zA-Z]*q|grep\s+-[a-zA-Z]*m\s*\d|awk_exits\b)/;
+
+/** An `awk` whose program calls `exit` closes its input early, like head: the
+ *  merge-queue timer's installer read the primary checkout with
+ *  `git worktree list --porcelain | awk '/^worktree /{print $2; exit}'` and died
+ *  141 before printing a word (2026-10-01). Its program is single-quoted, so
+ *  the blanking below would hide the `exit`; it is marked first, on the raw
+ *  text, as the consumer `awk_exits`. (Limit in the producer, or let awk read
+ *  everything: `awk '/^worktree /&&!n{print $2;n=1}'`.) */
+export function markAwkExit(src: string): string {
+  // An `exit` in the END block runs after awk has read everything: no early close.
+  return src.replace(/(\|\s*)awk\b([^'|\n]*)'([^']*)'/g, (m, pipe, opts, prog) =>
+    /\bexit\b/.test(prog.replace(/\bEND\s*\{[^}]*\}/g, "")) ? `${pipe}awk_exits${opts}'${prog}'` : m,
+  );
+}
 
 const failures: string[] = [];
 let checked = 0;
@@ -157,7 +171,7 @@ for (const file of shFiles) {
   const src = readFileSync(file, "utf8");
   if (!/set\s+-[a-zA-Z]*o\s+pipefail|set\s+-o\s+pipefail/.test(src)) continue;
   checked++;
-  const lines = blankSingleQuoted(src).split("\n");
+  const lines = blankSingleQuoted(markAwkExit(src)).split("\n");
   for (let i = 0; i < lines.length; i++) {
     const where = earlyExitPipe(lines[i] ?? "");
     if (!where) continue;
@@ -226,7 +240,8 @@ const WF_DIR = ".forgejo/workflows";
 let steps = 0;
 for (const f of existsSync(WF_DIR) ? readdirSync(WF_DIR).filter((n) => /\.ya?ml$/.test(n)) : []) {
   const file = join(WF_DIR, f);
-  for (const { line, n } of runBlockLines(readFileSync(file, "utf8"))) {
+  for (const { line: raw, n } of runBlockLines(readFileSync(file, "utf8"))) {
+    const line = markAwkExit(raw);
     if (line.trimStart().startsWith("#")) continue;
     if (!EARLY_EXIT.test(line)) continue;
     if (/\|\|\s*true/.test(line)) continue;

@@ -22,8 +22,11 @@ import {
   api,
   type NotificationChannelBinding,
   type NotificationChannelName,
+  type NotificationKindEntry,
   type NotificationPriority,
 } from "../lib/api";
+import { discordConnectable } from "../lib/discord-connect";
+import { useDiscordStatus } from "../lib/useDiscordStatus";
 
 const PRIORITIES: NotificationPriority[] = ["low", "normal", "high", "urgent"];
 
@@ -51,12 +54,6 @@ const CHANNEL_OPTIONS: Array<{
     channel: "in_app",
     label: "In-app",
     hint: "The bell badge + /me/notifications inbox. Notifications go here by default; add a row with enabled=off to MUTE in-app for a specific event_type.",
-    fields: [],
-  },
-  {
-    channel: "browser_push",
-    label: "Browser push",
-    hint: "Service-worker push notifications (stubbed for now. See backlog). Add a row to opt-in once VAPID keys are wired up.",
     fields: [],
   },
   {
@@ -180,11 +177,29 @@ export function MeNotificationChannelsPage() {
   );
 }
 
+/** The kinds of notification a workspace sends, by name (one read for the
+ *  bindings table and the add form). */
+function useNotificationKinds(orgId: string) {
+  return useQuery({
+    queryKey: ["notification-kinds", orgId],
+    queryFn: () => api.meNotificationKinds(orgId).then((r) => r.items),
+    staleTime: 5 * 60_000,
+  });
+}
+
+function groupByModule(kinds: NotificationKindEntry[]): Array<[string, NotificationKindEntry[]]> {
+  const m = new Map<string, NotificationKindEntry[]>();
+  for (const k of kinds) m.set(k.group, [...(m.get(k.group) ?? []), k]);
+  return [...m.entries()];
+}
+
 function WorkspaceBindings({ orgId }: { orgId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
   const [addOpen, setAddOpen] = useState(false);
+  const kinds = useNotificationKinds(orgId);
+  const kindLabel = new Map((kinds.data ?? []).map((k) => [k.event_type, k.label] as const));
 
   const q = useQuery({
     queryKey: ["notification-channels", orgId],
@@ -316,12 +331,19 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
             <tbody className="divide-y divide-line dark:divide-slate-800">
               {q.data.items.map((b) => (
                 <tr key={b.id}>
-                  <td className="px-3 py-2 font-mono">{b.channel}</td>
-                  <td className="px-3 py-2 font-mono">
+                  <td className="px-3 py-2">
+                    <span className="font-mono">{b.channel}</span>
+                    {!CHANNEL_OPTIONS.some((c) => c.channel === b.channel) && (
+                      <span className="block text-xs text-amber-700 dark:text-amber-400">Sends nothing: this channel isn&rsquo;t available. Remove it.</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
                     {b.event_type === "*" ? (
-                      <span className="text-accent">(all events)</span>
+                      <span className="text-accent">All events</span>
+                    ) : kindLabel.get(b.event_type) ? (
+                      kindLabel.get(b.event_type)
                     ) : (
-                      b.event_type
+                      <span className="font-mono">{b.event_type}</span>
                     )}
                   </td>
                   <td className="px-3 py-2">
@@ -438,10 +460,15 @@ function AddBindingModal({
   const toast = useToast();
   const [channel, setChannel] = useState<NotificationChannelName>("discord");
   const [eventType, setEventType] = useState<string>("*");
+  const kinds = useNotificationKinds(orgId);
   const [minPriority, setMinPriority] = useState<NotificationPriority>("normal");
   const [enabled, setEnabled] = useState(true);
   const [config, setConfig] = useState<Record<string, string>>({});
 
+  // A Discord DM binding sends to the account someone connected, which a
+  // server that cannot connect Discord never has.
+  const discord = useDiscordStatus();
+  const channelOptions = CHANNEL_OPTIONS.filter((c) => c.channel !== "discord_dm" || discordConnectable(discord.data));
   const channelDef = CHANNEL_OPTIONS.find((c) => c.channel === channel)!;
 
   const save = useMutation({
@@ -485,7 +512,7 @@ function AddBindingModal({
         <FieldPack
           items={[
             {
-              need: fieldNeed("channel", { control: "choice", label: "Channel", choices: CHANNEL_OPTIONS.map((c) => c.label) }),
+              need: fieldNeed("channel", { control: "choice", label: "Channel", choices: channelOptions.map((c) => c.label) }),
               node: (
                 <Field label="Channel">
                   <select
@@ -496,10 +523,12 @@ function AddBindingModal({
                       setConfig({});
                     }}
                   >
-                    {/* All channels including in_app/browser_push: users can add an
-                        in_app row with enabled=off to mute a specific event_type.
-                        The hint copy spells that out. */}
-                    {CHANNEL_OPTIONS.map((c) => (
+                    {/* Every channel that delivers, in_app included: an in_app
+                        row with enabled=off mutes one event type, as its hint
+                        says. A channel that delivers nothing yet (browser
+                        push) is not offered at all, nor Discord on a server
+                        that cannot connect it. */}
+                    {channelOptions.map((c) => (
                       <option key={c.channel} value={c.channel}>
                         {c.label}
                       </option>
@@ -512,7 +541,24 @@ function AddBindingModal({
               need: fieldNeed("event_type", { control: "text", label: "Event type", valueLength: eventType.length }),
               node: (
                 <Field label="Event type">
-                  <input className="input" value={eventType} onChange={(e) => setEventType(e.target.value)} placeholder="* for all" />
+                  {/* The kinds this workspace sends, by name: an id typed into a
+                      box was the only way in, and a wrong one routed nothing. */}
+                  {kinds.data ? (
+                    <select className="input" value={eventType} onChange={(e) => setEventType(e.target.value)} aria-label="Which notifications">
+                      <option value="*">All events</option>
+                      {groupByModule(kinds.data).map(([mod, items]) => (
+                        <optgroup key={mod} label={mod}>
+                          {items.map((k) => (
+                            <option key={k.event_type} value={k.event_type}>
+                              {k.label}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                  ) : (
+                    <input className="input" value={eventType} onChange={(e) => setEventType(e.target.value)} placeholder="* for all" />
+                  )}
                 </Field>
               ),
             },

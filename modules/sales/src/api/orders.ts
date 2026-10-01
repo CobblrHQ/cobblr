@@ -6,13 +6,14 @@ import { withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
-import { platform } from "@cobblr/platform-contract";
+import { likeEscape, platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb, type SalesOrderStatus } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { fulfilOrder } from "../fulfilment.js";
 import { nextOrderNumber } from "../order-number.js";
 import { orderHappened, readHistory } from "../history.js";
 import { addLine, changeLine, removeLine } from "../order-lines.js";
+import { cancelOrder, reinstateOrder } from "../cancel.js";
 import { shipOrder, shipPreview } from "../ship.js";
 import { workOrdersFor } from "../work-orders.js";
 import { makeLine, makeIdsByWorkOrder } from "../make-line.js";
@@ -108,7 +109,7 @@ ordersRouter.get(
     const page = readListPage(req.query);
     let q = tenantDb(req).selectFrom("sales_orders").selectAll().where("instance", "=", instanceOf(req));
     if (f.data.q) {
-      const like = `%${f.data.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+      const like = `%${likeEscape(f.data.q)}%`;
       q = q.where((eb) => eb.or([eb("customer_name", "ilike", like), eb("order_number", "ilike", like), eb("notes", "ilike", like)]));
     }
     if (f.data.status) q = q.where("status", "=", f.data.status);
@@ -202,6 +203,17 @@ ordersRouter.patch(
     // be a second way to ship: it would close an order whose parts never left
     // stock. While a tracked part is still owed, the way there is Fulfill.
     const SHIPPED: SalesOrderStatus[] = ["fulfilled", "shipped", "closed"];
+    // Cancelling from the status list is the same cancel as the button: what
+    // Fulfill took goes back, and a shipped order is asked whether it came
+    // back. The rest of the patch, if any, is applied after.
+    if (parsed.data.status === "cancelled" && before.status !== "cancelled") {
+      const c = await cancelOrder(db, ctx.org.id, sessionUser(req)?.id ?? null, req.params.id!, {});
+      if (!c.ok) {
+        res.status(c.code === "not_found" ? 404 : 409).json({ error: { code: c.code, message: c.message } });
+        return;
+      }
+      delete (parsed.data as { status?: unknown }).status;
+    }
     if (parsed.data.status && SHIPPED.includes(parsed.data.status) && !SHIPPED.includes(before.status)) {
       const owed = await db
         .selectFrom("sales_order_items")
@@ -240,6 +252,7 @@ ordersRouter.patch(
       action: "order_updated",
       ref: { module: "sales", entityType: "order", entityId: String(req.params.id) },
       diff: parsed.data as Record<string, unknown>,
+      before,
     });
     res.json(row);
   }),
@@ -271,6 +284,53 @@ ordersRouter.delete(
       diff: { name: gone.order_number ?? gone.customer_name ?? gone.id, customer: gone.customer_name, status: gone.status },
     });
     res.status(204).end();
+  }),
+);
+
+// ── cancel ─────────────────────────────────────────────────────────
+const CancelBody = z.object({ returned: z.boolean().optional() });
+// AI-REACH: action sales:cancel-order
+ordersRouter.post(
+  "/:id/cancel",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const body = CancelBody.safeParse(req.body ?? {});
+    if (!body.success) return badBody(res, body.error);
+    if (!(await orderHere(req))) {
+      res.status(404).json({ error: { code: "not_found", message: "order not found" } });
+      return;
+    }
+    const r = await cancelOrder(tenantDb(req), tenantContext(req).org.id, sessionUser(req)?.id ?? null, req.params.id!, body.data);
+    if (!r.ok) {
+      res.status(r.code === "not_found" ? 404 : 409).json({ error: { code: r.code, message: r.message } });
+      return;
+    }
+    res.json(r);
+  }),
+);
+
+// The way back from a cancel: the person's Undo sends what the cancel answered.
+const Reinstate = z.object({
+  from: Status,
+  restocked: z.array(z.object({ line_id: z.string().uuid(), part_id: z.string().uuid(), qty: z.number().positive() })),
+});
+// AI-REACH: action sales:reinstate-order
+ordersRouter.post(
+  "/:id/reinstate",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const body = Reinstate.safeParse(req.body ?? {});
+    if (!body.success) return badBody(res, body.error);
+    if (!(await orderHere(req))) {
+      res.status(404).json({ error: { code: "not_found", message: "order not found" } });
+      return;
+    }
+    const r = await reinstateOrder(tenantDb(req), tenantContext(req).org.id, sessionUser(req)?.id ?? null, req.params.id!, body.data);
+    if (!r.ok) {
+      res.status(r.code === "not_found" ? 404 : 409).json({ error: { code: r.code, message: r.message } });
+      return;
+    }
+    res.json(r);
   }),
 );
 

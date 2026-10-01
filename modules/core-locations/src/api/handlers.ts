@@ -25,11 +25,12 @@ export function registerLocationsHandlers(): void {
   // assistant's door to what the place page's "Move everything to…" does.
   platform().actions.registerHandler("core-locations.move-everything", async (ctx) => {
     const entity = requireActionEntity(ctx);
-    const a = (ctx.args ?? {}) as { to?: unknown; places?: unknown; then_delete?: unknown };
+    const a = (ctx.args ?? {}) as { to?: unknown; to_kind?: unknown; places?: unknown; then_delete?: unknown };
     const to = typeof a.to === "string" ? a.to.trim() : "";
+    const toKind = typeof a.to_kind === "string" ? a.to_kind.trim() : "";
     if (!to) return { ok: false, error: "Pass `to`: the id of the place to move everything into." };
     try {
-      const moved = await moveEverything(ctx.orgId, entity.id, to, {
+      const moved = await moveEverything(ctx.orgId, entity.id, toKind ? { kind: toKind, id: to } : to, {
         places: a.places === true || a.places === "true",
         thenDelete: a.then_delete === true || a.then_delete === "true",
         userId: ctx.userId ?? null,

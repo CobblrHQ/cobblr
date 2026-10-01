@@ -45,7 +45,6 @@ const MODULES = join(ROOT, "modules");
  *  relation/member field the workspace has added to that kind. */
 const BASELINE = new Set<string>([
   "machines",
-  "projects",
   "purchases",
   "sales",
   "tracking",
@@ -63,7 +62,6 @@ const BASELINE = new Set<string>([
  *  grow it. */
 const DETAIL_BASELINE = new Set<string>([
   "machines",
-  "projects",
   "purchases",
   "sales",
   "records",

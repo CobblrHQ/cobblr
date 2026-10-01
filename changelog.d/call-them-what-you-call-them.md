@@ -3,6 +3,7 @@ type: feature
 scope: bundles
 date: 2026-09-26
 docs_target: docs/USER_GUIDE.md#Install a bundle
+docs_published: 2026-10-01
 ---
 Call your things what you call them. Yarn asks whether you count in balls, skeins or hanks, and Groceries, Lego, Bookshelf and Home Inventory offer their own words (pantry items, kits, titles, belongings). Pick the word when you install, or change it later in the table's settings: every label, the New button, the count on each record and what Cobb says all use it, and an update never puts the old word back.
 

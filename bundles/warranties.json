@@ -2,7 +2,14 @@
   "manifest": {
     "id": "cobblr.flagship.warranties",
     "catalog": "extended",
-    "version": "0.2.3",
+    "version": "0.2.4",
+    "releases": [
+      {
+        "version": "0.2.4",
+        "released_at": "2026-10-02",
+        "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before."
+      }
+    ],
     "name": "Warranties",
     "description": "Your appliances/electronics as their own table: where/when you bought it + warranty and return-by dates, grouped by category.",
     "author": "Cobblr",
@@ -54,6 +61,7 @@
             "display_label": "Category",
             "type": "text",
             "position": 4,
+            "learns": true,
             "choices": [
               "Appliance",
               "Electronics",

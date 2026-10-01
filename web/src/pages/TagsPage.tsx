@@ -108,11 +108,30 @@ export function TagsPage() {
 
   const del = useMutation({
     mutationFn: (id: string) => api.deleteTag(activeSlug, id),
-    onSuccess: () => {
-      toast.success("Tag deleted");
-      void qc.invalidateQueries({ queryKey: ["tags", activeSlug] });
+    onSuccess: (gone, id) => {
+      const refresh = () => {
+        void qc.invalidateQueries({ queryKey: ["tags", activeSlug] });
+        void qc.invalidateQueries({ queryKey: ["tag-attachments"] });
+      };
+      refresh();
+      toast.action(`Deleted the tag ${gone.name}.`, {
+        actionLabel: "Undo",
+        onAction: async () => {
+          try {
+            const back = await api.restoreTag(activeSlug, id);
+            refresh();
+            toast.success(`Put ${back.name} back on ${back.assignments} ${back.assignments === 1 ? "record" : "records"}.`);
+          } catch (e) {
+            toast.error(e instanceof ApiError ? e.message : String(e));
+          }
+        },
+      });
     },
-    onError: (e: unknown) => toast.error(`Couldn't delete that tag: ${e instanceof ApiError ? e.message : String(e)}`),
+    // A member refused opens the blocked-action sheet by itself (api.ts).
+    onError: (e: unknown) => {
+      if (e instanceof ApiError && e.blocked) return;
+      toast.error(`Couldn't delete that tag: ${e instanceof ApiError ? e.message : String(e)}`);
+    },
   });
 
   const pin = useMutation({
@@ -141,7 +160,7 @@ export function TagsPage() {
   const onDelete = async (t: TagRecord) => {
     const ok = await confirm({
       title: "Delete tag?",
-      message: `${t.name}: its attachments are removed (cascade); any child tags become top-level.`,
+      message: `${t.name} comes off every record that carries it (the records stay), and any tags inside it move to the top level. You can undo this straight after.`,
       confirmLabel: "Delete",
       destructive: true,
     });

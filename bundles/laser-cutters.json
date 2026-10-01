@@ -2,13 +2,18 @@
   "manifest": {
     "id": "cobblr.community.laser-cutters",
     "catalog": "extended",
-    "version": "0.3.2",
+    "version": "0.3.3",
     "name": "Laser Cutters",
     "description": "A Laser Cutters tracker: tube type, wattage, bed size, cooling, focal length. A named view of your machines, so each cutter still drives jobs, fleet status, and maintenance.",
     "author": "Cobblr community",
-    "released_at": "2026-09-28",
-    "changelog": "A laser cutter's page now uses its own words: it sends jobs to a job manager (LightBurn, through your bridge), and asks only what fits a laser cutter.",
+    "released_at": "2026-10-02",
+    "changelog": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a board, a firmware, a controller) offer what you typed before.",
     "releases": [
+      {
+        "version": "0.3.3",
+        "released_at": "2026-10-02",
+        "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a board, a firmware, a controller) offer what you typed before."
+      },
       {
         "version": "0.3.2",
         "released_at": "2026-09-28",
@@ -53,6 +58,7 @@
             "display_label": "Tube type",
             "type": "text",
             "position": 20,
+            "learns": false,
             "choices": [
               "CO2 (sealed)",
               "CO2 (DC-excited)",
@@ -76,6 +82,7 @@
             "display_label": "Bed size (mm)",
             "type": "text",
             "position": 22,
+            "learns": true,
             "choices": [
               "200×300",
               "300×400",
@@ -92,6 +99,7 @@
             "display_label": "Cooling",
             "type": "text",
             "position": 23,
+            "learns": false,
             "choices": [
               "Passive",
               "Water (open loop)",

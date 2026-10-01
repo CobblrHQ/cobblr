@@ -20,6 +20,7 @@
 //
 // Mounted at /api/v1/orgs/:slug/backup. Owner/admin only.
 
+import { leaveOut } from "../platform/take-provenance.js";
 import { uploadMiddleware } from "../platform/uploads.js";
 import { UPLOAD_CEILING_BYTES, uploadedFile } from "@cobblr/platform-contract/upload";
 import { Router } from "express";
@@ -130,58 +131,6 @@ async function listTenantTables(tdb: Kysely<unknown>): Promise<string[]> {
   return r.rows.map((x) => x.table_name).filter((t) => t !== "migrations");
 }
 
-/** Take a sandbox's stock out of the dump. Stock is every row made at or
- *  before the hand-over (its `created_at`), plus the records the log names
- *  as made then (`omit`, for a table with no timestamp). A stock row that
- *  points at stock being left out goes with it (a sample book's lot, its
- *  stock moves); stock that the person's own rows point at stays (their
- *  grocery on the example list keeps the list). Returns the ids left out. */
-function leaveOut(
-  dataFiles: Array<{ jsonl: string; index: DataIndexTable }>,
-  opts: { omit?: ReadonlySet<string>; stockUntil?: Date },
-): Set<string> {
-  type Row = { line: string; id: string | null; own: boolean; out: boolean };
-  const until = opts.stockUntil?.getTime();
-  const tables: Row[][] = dataFiles.map((d) =>
-    (d.jsonl ? d.jsonl.split("\n") : []).map((line) => {
-      const r = JSON.parse(line) as { id?: unknown; created_at?: unknown };
-      const id = r.id == null ? null : String(r.id);
-      const made = typeof r.created_at === "string" ? Date.parse(r.created_at) : NaN;
-      const stock = (id !== null && !!opts.omit?.has(id)) || (until !== undefined && Number.isFinite(made) && made <= until);
-      return { line, id, own: until !== undefined && Number.isFinite(made) && made > until, out: stock };
-    }),
-  );
-  const all = tables.flat();
-  for (let round = 0; round < 6; round++) {
-    let changed = false;
-    const outIds = new Set(all.filter((r) => r.out && r.id).map((r) => r.id!));
-    const ownText = all.filter((r) => r.own).map((r) => r.line).join("\n");
-    for (const r of all) {
-      if (r.out && r.id && ownText.includes(r.id)) {
-        r.out = false;
-        changed = true;
-      }
-    }
-    for (const r of all) {
-      if (r.out || r.own) continue;
-      for (const id of outIds) {
-        if (r.line.includes(id)) {
-          r.out = true;
-          changed = true;
-          break;
-        }
-      }
-    }
-    if (!changed) break;
-  }
-  dataFiles.forEach((d, i) => {
-    const keep = tables[i]!.filter((r) => !r.out).map((r) => r.line);
-    d.jsonl = keep.join("\n");
-    d.index = { ...d.index, row_count: keep.length };
-  });
-  return new Set(all.filter((r) => r.out && r.id).map((r) => r.id!));
-}
-
 export const backupRouter = Router({ mergeParams: true });
 
 // ── Build the backup zip (reused by GET /export AND the destinations cron) ──
@@ -197,6 +146,8 @@ export async function buildBackupZip(
      *  made at or before `stockUntil`. See leaveOut. */
     omit?: ReadonlySet<string>;
     stockUntil?: Date;
+    /** What the person made, from the log: what makes a later row theirs. */
+    madeBy?: ReadonlySet<string>;
   } = {},
 ): Promise<{ buffer: Buffer; filename: string }> {
   const blueprint = await captureBlueprint(orgId);
@@ -476,6 +427,7 @@ export async function restoreBackupInto(
         // GENERATED columns (Postgres recomputes them). See safeInsertColumns.
         const cols = safeInsertColumns(Object.keys(row), info.all, info.generated);
         if (cols.length === 0) continue;
+        // MONEY-OK: SQL placeholders ($1, $2), not money.
         const placeholders = cols.map((c, i) => (info.jsonb.has(c) ? `$${i + 1}::jsonb` : `$${i + 1}`));
         const params = cols.map((c) => {
           const v = row[c];

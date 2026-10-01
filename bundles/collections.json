@@ -2,11 +2,23 @@
   "manifest": {
     "id": "cobblr.flagship.collections",
     "catalog": "disabled",
-    "version": "0.3.2",
+    "version": "0.3.4",
     "name": "Collections",
     "description": "Your collection as its own cover wall: condition, edition, paid vs value today, so you stop buying the dupe.",
     "author": "Cobblr",
-    "released_at": "2026-06-08",
+    "released_at": "2026-10-02",
+    "releases": [
+      {
+        "version": "0.3.4",
+        "released_at": "2026-10-02",
+        "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before."
+      },
+      {
+        "version": "0.3.3",
+        "released_at": "2026-10-02",
+        "notes": "Paid and Value today are money fields: they show as $1,200 and take 1,200 or $1,200.00."
+      }
+    ],
     "changelog": "Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: Now its OWN table (an inventory instance), not generic Inventory with extra columns: its own nav entry, a “New piece” button, only collector fields (parts/warranty/supplier cruft hidden). Plain-language hints + a pinned “By condition” view.",
     "requires": [
       {
@@ -31,6 +43,7 @@
             "display_label": "Condition",
             "type": "text",
             "position": 1,
+            "learns": false,
             "choices": [
               "Mint / Sealed",
               "Near Mint",
@@ -60,14 +73,14 @@
             "entity_kind": "inventory:part",
             "name": "acquired_price",
             "display_label": "Paid",
-            "type": "number",
+            "type": "money",
             "position": 4
           },
           {
             "entity_kind": "inventory:part",
             "name": "current_value",
             "display_label": "Value today",
-            "type": "number",
+            "type": "money",
             "position": 5,
             "help": "Roughly what it'd sell for now, for insurance or knowing your collection's worth."
           },

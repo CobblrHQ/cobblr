@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-09-28
 docs_target: docs/USER_GUIDE.md#4.5 Custom fields
+docs_published: 2026-10-01
 ---
 **The scanner reads the year a bottle was made.** Scan a bottle and the vintage on its label fills the field you marked as *The year it was made*, a new field meaning. It reads the vintage and not the year the house was founded, and because one barcode covers every vintage, the year is never shared as a fact about the barcode.
 

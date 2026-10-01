@@ -3,6 +3,7 @@ type: feature
 scope: core-file-preview
 date: 2026-09-26
 docs_target: docs/USER_GUIDE.md#3.4 Files (foundational)
+docs_published: 2026-10-01
 ---
 **PDFs open in the app, every page.** A pattern, a manual or any PDF on a record or on the Files page opens in a viewer with zoom, a fit-to-width button, pinch-zoom on a phone, and "Keep screen on" while you work from it. "Open in a new tab" and Download are one tap away.
 

@@ -14,7 +14,8 @@
 
 import type { AiConnectionTest, ConnectionProviderDef, ConnectionTestContext, ResolvedConnection } from "@cobblr/platform-contract";
 import * as aiImpl from "./ai.js";
-import { listRoutedConnections, resolvePersonalProvider, storedCredentialById } from "./user-credentials.js";
+import { meta } from "../db/meta.js";
+import { addUserCredential, listRoutedConnections, resolvePersonalProvider, storedCredentialById } from "./user-credentials.js";
 
 /** The kind AI credentials have carried since migration 053. Existing rows say
  *  this, so it stays the wire value rather than being tidied to "ai". */
@@ -24,6 +25,23 @@ const registered = new Map<string, ConnectionProviderDef>();
 
 export function registerProvider(p: ConnectionProviderDef): void {
   registered.set(p.id, p);
+}
+
+/** Providers that exist only while something else says so (a service
+ *  adapter is a built-in that may or may not be installed), read at the time
+ *  of asking so the order modules register in never matters. */
+const sources: Array<() => ConnectionProviderDef[]> = [];
+export function registerProviderSource(list: () => ConnectionProviderDef[]): void {
+  sources.push(list);
+}
+function sourced(): ConnectionProviderDef[] {
+  return sources.flatMap((list) => {
+    try {
+      return list();
+    } catch {
+      return [];
+    }
+  });
 }
 
 /** AI's providers in this shape, so one catalogue serves the whole page.
@@ -51,7 +69,7 @@ function aiProviders(): ConnectionProviderDef[] {
  *  two registries happened to be written in. Unranked providers keep their
  *  registration order behind the ranked ones, the same rule ai.ts uses. */
 export function listProviders(kind?: string): ConnectionProviderDef[] {
-  const all = [...aiProviders(), ...registered.values()]
+  const all = [...aiProviders(), ...registered.values(), ...sourced()]
     .map((p, i) => ({ p, i }))
     .sort(
       (a, b) =>
@@ -64,7 +82,7 @@ export function listProviders(kind?: string): ConnectionProviderDef[] {
 export function getProvider(id: string): ConnectionProviderDef | null {
   // A registered provider wins a name collision with an AI one. Neither ships
   // with a clashing id today; deciding it here beats an order-dependent answer.
-  return registered.get(id) ?? aiProviders().find((p) => p.id === id) ?? null;
+  return registered.get(id) ?? aiProviders().find((p) => p.id === id) ?? sourced().find((p) => p.id === id) ?? null;
 }
 
 /** The definition a STORED connection answers to: its provider by id, else
@@ -76,7 +94,11 @@ export function providerFor(providerId: string, kind: string | null | undefined)
   const byId = getProvider(providerId);
   if (byId) return byId;
   if (!kind) return null;
-  return [...registered.values()].find((p) => p.kind === kind && p.anyProviderOfKind) ?? null;
+  return (
+    [...registered.values()].find(
+      (p) => p.kind === kind && (typeof p.anyProviderOfKind === "function" ? p.anyProviderOfKind(providerId) : p.anyProviderOfKind === true),
+    ) ?? null
+  );
 }
 
 /** Run a connection's own probe. AI keeps its catalogue's probe (models and
@@ -122,14 +144,20 @@ export async function capabilities(credentialId: string): Promise<string[]> {
  *  returned for pre-filling a form only when its provider says it is not a
  *  secret. An unknown provider or field is treated as secret — the safe way to
  *  be wrong is to withhold. */
-export function secretLookup(): (providerId: string, key: string) => boolean {
+export function secretLookup(): (providerId: string, key: string, kind?: string) => boolean {
   const map = new Map<string, Set<string>>();
   for (const p of listProviders()) {
     const secrets = new Set<string>();
     for (const [k, def] of Object.entries(p.credentials ?? {})) if (def.secret) secrets.add(k);
     map.set(p.id, secrets);
   }
-  return (providerId, key) => map.get(providerId)?.has(key) ?? true;
+  // A row named by something nobody registers (a service's manifest id)
+  // answers through its kind's definition, so its address can pre-fill the
+  // edit form while its key still never leaves.
+  return (providerId, key, kind) => {
+    const own = map.get(providerId) ?? (kind ? map.get(providerFor(providerId, kind)?.id ?? "") : undefined);
+    return own ? own.has(key) : true;
+  };
 }
 
 export async function resolve(
@@ -150,6 +178,46 @@ export async function resolve(
     label: found.label,
     ownerUserId: found.ownerUserId,
   };
+}
+
+export async function createWorkspaceConnection(input: {
+  orgId: string;
+  kind: string;
+  providerId: string;
+  label: string;
+  credentials: Record<string, unknown>;
+  originKey: string;
+  note?: string;
+}): Promise<{ credentialId: string; created: boolean }> {
+  const made = async () =>
+    (await meta.selectFrom("user_credentials").select("id").where("origin_key", "=", input.originKey).executeTakeFirst())?.id ?? null;
+  const already = await made();
+  if (already) return { credentialId: already, created: false };
+  const owner = await meta
+    .selectFrom("org_memberships")
+    .select("user_id")
+    .where("org_id", "=", input.orgId)
+    .where("role", "=", "owner")
+    .orderBy("joined_at", "asc")
+    .executeTakeFirst();
+  if (!owner) throw new Error(`workspace ${input.orgId} has no owner to hold the connection`);
+  try {
+    const credentialId = await addUserCredential(owner.user_id, {
+      kind: input.kind,
+      provider_id: input.providerId,
+      label: input.label,
+      credentials: input.credentials,
+      origin_key: input.originKey,
+      routes: [{ org_id: input.orgId, mode: "workspace-default" }],
+      verification: { state: "unverified", at: new Date().toISOString(), message: input.note ?? "Made for this workspace; press Test to check it." },
+    });
+    return { credentialId, created: true };
+  } catch (err) {
+    // Two heals at once: the index keeps one, and the loser returns it.
+    const raced = await made();
+    if (raced) return { credentialId: raced, created: false };
+    throw err;
+  }
 }
 
 /** The connections of one kind routed into a workspace — the choosable set. */

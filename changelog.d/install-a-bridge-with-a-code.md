@@ -3,6 +3,7 @@ type: feature
 scope: integrations
 date: 2026-09-28
 docs_target: docs/USER_GUIDE.md#3.19½ Edge bridges (Configuration → Edge bridges)
+docs_published: 2026-10-01
 ---
 **Install a bridge with one line and a code.** Setting up a bridge now gives you a short code and a single command to paste on the box: it installs the bridge as a service that starts at boot and keeps itself up to date, on Linux, macOS and Raspberry Pi, including 32-bit Pi OS and a Pi Zero. The bridge's key is made on that box and never passes through your clipboard. Docker is still there for people who want it.
 

@@ -18,6 +18,8 @@
   "packages/platform-web/src/CustomFieldsPanel.tsx::\"text-moss-600\"",
   "packages/platform-web/src/EntityActionsBar.tsx::\"border-moss-200 bg-moss-50 text-moss-600\"",
   "packages/platform-web/src/FieldRenderer.tsx::\"inline-flex items-center gap-1 text-moss-600\"",
+  "packages/platform-web/src/Lightbox.tsx::\"w-16 h-16 shrink-0 rounded overflow-hidden bg-white/5 transition border-2 \"",
+  "packages/platform-web/src/Lightbox.tsx::\"w-px self-stretch shrink-0 bg-white/20 mx-1.5\"",
   "packages/platform-web/src/QrCode.tsx::\"rounded bg-white p-1\"",
   "packages/platform-web/src/RecordHeaderChips.tsx::\"border-moss-200 bg-moss-50 text-moss-600\"",
   "packages/platform-web/src/RecordRow.tsx::\"text-moss-600\"",
@@ -29,8 +31,6 @@
   "web/src/components/DrivePresenceOverlay.tsx::\"text-cobble-600 drop-shadow-md\"",
   "web/src/components/FirstScanCard.tsx::\"rounded-md border border-line dark:border-slate-700 bg-white p-2 w-fit\"",
   "web/src/components/HeaderMenu.tsx::\"h-3 w-3 rounded-full bg-white shadow transition-transform \"",
-  "web/src/components/ImageLightbox.tsx::\"w-16 h-16 shrink-0 rounded overflow-hidden bg-white/5 transition border-2 \"",
-  "web/src/components/ImageLightbox.tsx::\"w-px self-stretch shrink-0 bg-white/20 mx-1.5\"",
   "web/src/components/ImpersonationBanner.tsx::\"inline-flex items-center gap-1 rounded bg-white/15 hover:bg-white/25 px-2 py-0.5 disabled:opacity-50\"",
   "web/src/components/ImportLocationsDialog.tsx::\"text-amber-600\"",
   "web/src/components/ImportLocationsDialog.tsx::\"text-moss-600\"",
@@ -103,6 +103,5 @@
   "web/src/pages/ScanCaptureDrawer.tsx::\"relative w-11 h-11 rounded-lg overflow-hidden border bg-white/5 \"",
   "web/src/pages/ScanCaptureDrawer.tsx::\"w-full inline-flex items-center gap-1.5 rounded-lg border border-white/20 bg-white/10 px-2.5 py-2 text-white text-[13px] disabled:opacity-70\"",
   "web/src/pages/ScanCaptureDrawer.tsx::\"w-full rounded-lg border border-white/20 bg-white/10 px-2.5 py-2 text-white text-[13.5px] focus:outline-none focus:border-cobble-400\"",
-  "web/src/pages/ScanInboxCard.tsx::\"flex-1 min-w-0 rounded border border-white/20 bg-white/10 px-2 py-1 text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-white/40\"",
   "web/src/pages/ScanRulesPage.tsx::\"text-xs text-cobble-600 hover:underline\""
 ]

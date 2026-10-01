@@ -4,7 +4,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { platform } from "@cobblr/platform-contract";
+import { likeEscape, platform } from "@cobblr/platform-contract";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { tenantContext, tenantDb, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
@@ -563,7 +563,7 @@ discussionRouter.get(
         fn.count<number>("c.id").as("comments"),
       ])
       .where("c.deleted_at", "is", null)
-      .$if(q.length > 0, (qb) => qb.where("c.body", "ilike", `%${q}%`))
+      .$if(q.length > 0, (qb) => qb.where("c.body", "ilike", `%${likeEscape(q)}%`))
       .groupBy([
         "v.id",
         "v.source_module",
@@ -574,6 +574,7 @@ discussionRouter.get(
         "r.last_read_at",
       ])
       .orderBy("latest_at", "desc")
+      // list-cap-ok: the newest conversations with something unread; an inbox is read from the top
       .limit(200)
       .execute();
 

@@ -4,6 +4,7 @@ scope: core-scan
 date: 2026-09-27
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
 ui: none (the card's existing doubt line renders the row's note; the name is written server-side)
+docs_published: 2026-10-01
 ---
 A product without a barcode is now known to the next person who photographs it. When you file something the AI named from a photo, the product words on its label that are also in what you filed go to Cobblr's shared barcode network, so the next photo of that product gets the name you settled on.
 

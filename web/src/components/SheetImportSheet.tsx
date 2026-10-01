@@ -255,6 +255,7 @@ function PickStep(props: {
   const { dragging, setDragging, busy, fileRef, link, setLink, onFile, onLink } = props;
   return (
     <>
+      {/* paste-ok: a spreadsheet door (ACCEPTED_SHEETS); a picture is not a sheet */}
       <input
         ref={fileRef}
         type="file"

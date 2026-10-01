@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/projects",
-  "version": "0.1.13",
+  "version": "0.1.16",
   "private": true,
   "type": "module",
   "main": "dist/module.js",
@@ -23,7 +23,6 @@
     "express": "^4.21.2",
     "kysely": "^0.27.5",
     "pdf-parse": "^2.4.5",
-    "pdfjs-dist": "^5.4.296",
     "sharp": "^0.33.5",
     "zod": "^3.24.1"
   },

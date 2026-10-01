@@ -10,7 +10,7 @@ import { appCatalog, type AppEntry } from "@cobblr/platform-contract/app-catalog
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { api, ApiError } from "./api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { readNavHidden, writeNavHidden } from "./nav-order";
+import { readNavHidden, setInSidebar } from "./nav-order";
 import { raiseBlockedAction } from "./blocked-action";
 
 /** The sidebar's per-device hide list, live: the nav writes it and announces
@@ -70,7 +70,7 @@ export function useModuleDoor() {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
   const showInSidebar = (app: AppEntry) => {
-    writeNavHidden(activeSlug, readNavHidden(activeSlug).filter((k) => k !== app.key && k !== app.name));
+    setInSidebar(activeSlug, [app.key, app.name], true);
     toast.success(`${app.label} is back in your sidebar`);
   };
   return {

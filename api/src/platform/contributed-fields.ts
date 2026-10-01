@@ -76,6 +76,7 @@ export async function applyContributedFieldDefs(
           position: fd.position ?? 0,
           source_module: moduleName,
           choices: fd.choices ? JSON.stringify(fd.choices) : null,
+          learns: (fd as { learns?: boolean }).learns ?? null,
           renderer: fd.renderer ?? null,
           server_managed: fd.server_managed ?? false,
           ref_kind: fd.ref_kind ?? null,

@@ -8,9 +8,12 @@ import { ordersRouter } from "./orders.js";
 import { customersRouter } from "./customers.js";
 import { registerSalesResolvers } from "./resolvers.js";
 import { registerSalesActionHandlers } from "./action-handlers.js";
+import { followParcelsRouter } from "./follow-parcels.js";
+import { registerFollowSweep } from "../follow-parcels.js";
 
 registerSalesResolvers();
 registerSalesActionHandlers();
+registerFollowSweep();
 
 // Per-instance item count (orders are the primary entity) — lets the nav hide
 // an empty auto-created default instance once named ones exist.
@@ -23,6 +26,7 @@ platform().instances.registerItemCounter("sales", async (orgId, instance) => {
 const router = Router({ mergeParams: true });
 router.use("/orders", ordersRouter);
 router.use("/customers", customersRouter);
+router.use("/follow-parcels", followParcelsRouter);
 
 export default router;
 

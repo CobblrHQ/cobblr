@@ -11,9 +11,9 @@
 //
 // The box is fractions of the image (cropBox.ts), so the preview can be any
 // size: the server crops the ORIGINAL at full resolution.
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { OverlayLayer } from "@cobblr/platform-web";
+import { OverlayLayer, useEscapeToClose } from "@cobblr/platform-web";
 import { OverlayCloseButton } from "./OverlayCloseButton";
 import { cropBoxFrom, type CropBox, type Point } from "./cropBox";
 
@@ -33,13 +33,8 @@ export function CropPhotoModal({
   const [drag, setDrag] = useState<{ start: Point; cur: Point } | null>(null);
   const [box, setBox] = useState<CropBox | null>(null);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const layerRef = useRef<HTMLDivElement>(null);
+  useEscapeToClose(true, layerRef, onClose);
 
   const rectOf = () => imgRef.current?.getBoundingClientRect() ?? null;
 
@@ -79,6 +74,7 @@ export function CropPhotoModal({
 
   return createPortal(
     <OverlayLayer
+      ref={layerRef}
       className="z-[130] bg-black/85 backdrop-blur-sm flex flex-col"
       onClick={onClose}
       role="dialog"
@@ -97,6 +93,7 @@ export function CropPhotoModal({
             onPointerUp={onPointerUp}
             onPointerCancel={() => setDrag(null)}
           >
+            {/* lightbox-exempt: the crop tool; the picture is the thing being cut, not a picture being looked at */}
             <img
               ref={imgRef}
               src={src}

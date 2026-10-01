@@ -10,7 +10,8 @@ import { dayHere } from "@cobblr/platform-contract/day";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Calendar, CheckCircle, History, Plus, Trash2 } from "lucide-react";
-import { Modal, useConfirm, useToast, MutationError } from "@cobblr/platform-web";
+import { Modal, MoneyInput, useConfirm, useToast, MutationError, noteWorkspaceWrite } from "@cobblr/platform-web";
+import { formatStoredMoney } from "@cobblr/platform-contract/money";
 import { useInventory } from "./context";
 
 interface MaintenanceEntry {
@@ -86,6 +87,7 @@ export function MaintenancePanel({ entityModule, entityType, entityId }: Props) 
         body: JSON.stringify({}),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      noteWorkspaceWrite(`${base}/${id}/complete`);
     },
     onSuccess: () => {
       toast.success("Marked done.");
@@ -99,6 +101,7 @@ export function MaintenancePanel({ entityModule, entityType, entityId }: Props) 
     mutationFn: async (id: string) => {
       const res = await fetch(`${base}/${id}`, { method: "DELETE", headers: auth() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      noteWorkspaceWrite(`${base}/${id}`);
     },
     onSuccess: () => {
       toast.success("Entry deleted.");
@@ -231,7 +234,7 @@ function EntryRow({
               </span>
             )}
             {entry.cost_cents != null && (
-              <span> · ${(entry.cost_cents / 100).toFixed(2)}</span>
+              <span> · {formatStoredMoney(entry.cost_cents, "cents")}</span>
             )}
           </div>
           {entry.description && (
@@ -286,7 +289,7 @@ function AddEntryModal({
   // to pre-fill tomorrow's date on a form about something done today (#3351).
   const [performedAt, setPerformedAt] = useState(dayHere());
   const [scheduledAt, setScheduledAt] = useState("");
-  const [cost, setCost] = useState("");
+  const [cost, setCost] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
 
   const auth = (): Record<string, string> => {
@@ -304,7 +307,7 @@ function AddEntryModal({
         entity_id: entityId,
         name: name.trim(),
         description: description.trim() || null,
-        cost_cents: cost.trim() === "" ? null : Math.round(Number(cost) * 100),
+        cost_cents: cost,
       };
       if (kind === "done" || kind === "both") body.performed_at = performedAt;
       if (kind === "scheduled" || kind === "both") body.scheduled_at = scheduledAt;
@@ -322,6 +325,7 @@ function AddEntryModal({
         };
         throw new Error(err.error?.message ?? `HTTP ${res.status}`);
       }
+      noteWorkspaceWrite(`/api/v1/orgs/${orgSlug}/modules/core-maintenance/entries`);
       toast.success("Maintenance entry added.");
       void qc.invalidateQueries({
         queryKey: ["maintenance", orgSlug, entityModule, entityType, entityId],
@@ -402,16 +406,8 @@ function AddEntryModal({
             />
           </Field>
         )}
-        <Field label="Cost (USD)">
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            value={cost}
-            onChange={(e) => setCost(e.target.value)}
-            className="input"
-            placeholder="—"
-          />
+        <Field label="Cost">
+          <MoneyInput value={cost} storage="cents" live onCommit={setCost} placeholder="—" ariaLabel="Cost" />
         </Field>
         <div className="flex gap-2 pt-2">
           <button

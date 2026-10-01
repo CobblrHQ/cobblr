@@ -2,7 +2,14 @@
   "manifest": {
     "id": "cobblr.flagship.documents",
     "catalog": "extended",
-    "version": "0.2.3",
+    "version": "0.2.4",
+    "releases": [
+      {
+        "version": "0.2.4",
+        "released_at": "2026-10-02",
+        "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before."
+      }
+    ],
     "name": "Documents",
     "description": "Every document that expires as its own table: number/issuer/expiry, grouped by type, with expiry dates on your calendar.",
     "author": "Cobblr",
@@ -27,6 +34,7 @@
             "display_label": "Type",
             "type": "text",
             "position": 1,
+            "learns": true,
             "choices": [
               "Passport",
               "Driver's license",

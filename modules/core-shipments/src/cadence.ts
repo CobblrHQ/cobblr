@@ -36,6 +36,12 @@ export interface PollContext {
   confirmed?: boolean;
   /** When the carrier said it landed, for bounding the watch above. */
   deliveredAt?: string | null;
+  /** How long to keep watching after the delivered scan. The default is the
+   *  recipient's window: a person can say "I never got it" and only their
+   *  "I have it" ends the watch. A parcel somebody SENT has no such answer
+   *  coming (the shop does not confirm its customer's doorstep), so the
+   *  sender asks for a short one instead of watching for two weeks. */
+  watchAfterDeliveryMs?: number;
 }
 
 const HOUR_MS = 3_600_000;
@@ -108,7 +114,7 @@ export function nextPollAt(
   if (state === "delivered") {
     const since = opts.deliveredAt ? Date.parse(opts.deliveredAt) : NaN;
     const elapsed = Number.isFinite(since) ? now.getTime() - since : 0;
-    if (elapsed > DISPUTE_WINDOW_MS) return null;
+    if (elapsed > (opts.watchAfterDeliveryMs ?? DISPUTE_WINDOW_MS)) return null;
     return nextAt(now, [POLL_HOURS.overnight]);
   }
 

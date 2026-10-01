@@ -14,6 +14,7 @@
 // supply cannot read differently in two places.
 // See docs/design-decisions/holdings-and-units.md.
 
+import { heldInLines } from "@cobblr/platform-contract";
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { sql, type Kysely } from "kysely";
@@ -132,7 +133,7 @@ export async function readHoldingRows(c: HoldingsCtx, ids: string[]): Promise<Ma
     .where("p.id", "in", ids)
     .where("p.instance", "=", c.instance)
     .execute();
-  const names = await locationNames(c, rows.map((r) => r.location_id));
+  const [names, heldIn] = await Promise.all([locationNames(c, rows.map((r) => r.location_id)), heldInLines(c.orgId, "inventory:part", rows)]);
   for (const r of rows) {
     const qty = Number(r.qty);
     const minQty = r.min_qty == null ? null : Number(r.min_qty);
@@ -141,7 +142,7 @@ export async function readHoldingRows(c: HoldingsCtx, ids: string[]): Promise<Ma
       id: r.id,
       own: false,
       location_id: r.location_id,
-      location_name: r.location_id ? (names.get(r.location_id) ?? null) : null,
+      location_name: r.location_id ? (names.get(r.location_id) ?? null) : (heldIn.get(r.id) ?? null),
       qty,
       min_qty: minQty,
       low: isLowStock({
@@ -271,7 +272,7 @@ export async function releaseForDelete(c: HoldingsCtx, id: string): Promise<void
 
 type Refusal = { status: number; error: { code: string; message: string; holding_id?: string } };
 
-async function loadCard(c: HoldingsCtx, id: string) {
+export async function loadCard(c: HoldingsCtx, id: string) {
   return c.db.selectFrom("inventory_parts").selectAll().where("id", "=", id).where("instance", "=", c.instance).executeTakeFirst();
 }
 
@@ -481,7 +482,7 @@ export async function transferStock(
  *  lot: the soonest-expiring first unless one is named, every lot keeping its
  *  expiry, arrival date and lot number, and a ledger line at each end naming
  *  the other. The one lot move; transfer and move-all both go through it. */
-async function moveLots(
+export async function moveLots(
   c: HoldingsCtx,
   fromId: string,
   toId: string,
@@ -613,7 +614,7 @@ export async function receiveLot(
   );
 }
 
-const isRefusal = (x: object): x is Refusal => "error" in x && typeof (x as { status?: unknown }).status === "number";
+export const isRefusal = (x: object): x is Refusal => "error" in x && typeof (x as { status?: unknown }).status === "number";
 
 /** Records that look like one thing kept in several places, never combined
  *  on their own: the same name, or the same barcode, in one collection, each

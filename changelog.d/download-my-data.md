@@ -3,6 +3,7 @@ type: feature
 scope: account
 date: 2026-09-30
 docs_target: docs/USER_GUIDE.md#Deleting your account
+docs_published: 2026-10-01
 ---
 You can download a copy of what Cobblr holds about you from your account page: your profile, the workspaces you belong to, your tokens and connections (never their secrets), your notification settings, what you did and what you sent us.
 

@@ -12,7 +12,9 @@
 // Six modules and two kernel files each carried their own copy, identical
 // today and free to drift apart (#3499). They import these now.
 
-import { platform } from "@cobblr/platform-contract";
+import { asMeasure } from "@cobblr/platform-contract/measure";
+import { parseMoney } from "@cobblr/platform-contract/money";
+import { isListedChoice, platform } from "@cobblr/platform-contract";
 
 export function routeUnknownToMetadata<T extends Record<string, unknown>>(
   body: unknown,
@@ -229,6 +231,160 @@ export function unknownFieldsOf(
   return { unknown, suggestions };
 }
 
+// What a write may do to a custom field's value.
+//
+// A required field, once filled, is never emptied: a write that sends it blank
+// is refused, whichever door it came through. A create may leave one empty
+// (capture comes before structure: a scan or "add a part called X" is never
+// refused for it), and the list says how many records still need a value.
+//
+// A value that does not fit its field's type is NOT refused here. Capture
+// keeps what it read: a best-before printed "see lid", a pattern's source
+// stamped by the assistant, a category a scan named that is not in the list
+// yet. The product surfaces those for a person to fix (the dashboard names an
+// unreadable date; a dropdown shows an unlisted value) rather than losing
+// them at the door. problemWith is the one reading of "fits", used to tell a
+// person which stored values would not fit a field's new type.
+
+export interface FieldValueProblem {
+  field: string;
+  value: unknown;
+  /** What the field takes, in words: "one of: small, large", "a number". */
+  expected: string;
+  code: "not_a_choice" | "not_a_number" | "not_a_yes_no" | "not_a_date" | "not_a_measure" | "required_field";
+  choices?: string[];
+}
+
+export class InvalidFieldValueError extends Error {
+  readonly status = 422;
+  readonly code: string;
+  readonly kind: string;
+  readonly problems: FieldValueProblem[];
+  constructor(kind: string, problems: FieldValueProblem[]) {
+    super(
+      problems
+        .map((p) =>
+          p.code === "required_field"
+            ? `${p.field} is required, so it cannot be emptied.`
+            : `${p.field} takes ${p.expected}, not ${JSON.stringify(p.value)}.${p.code === "not_a_choice" ? " Add it as a choice first if it should be one." : ""}`,
+        )
+        .join(" "),
+    );
+    this.kind = kind;
+    this.problems = problems;
+    this.code = problems.length === 1 ? problems[0]!.code : "invalid_field_value";
+  }
+  toJSON() {
+    return { error: { code: this.code, message: this.message, details: { kind: this.kind, problems: this.problems } } };
+  }
+}
+
+export interface JudgedField {
+  name: string;
+  type: string;
+  choices?: string[] | null;
+  required?: boolean;
+  /** An open list (field-choices `choiceLearns`): a value off it fits. */
+  learns?: boolean | null;
+}
+
+const BLANK = (v: unknown) => v === null || v === undefined || (typeof v === "string" && v.trim() === "") || (Array.isArray(v) && v.length === 0);
+/** What "fits" means for a stored string, written once so the write-side
+ *  reading (problemWith) and a SQL filter over stored rows (a list's "don't
+ *  fit their field") cannot disagree. POSIX-compatible: the same text is a
+ *  Postgres `~` pattern and a JS RegExp. A JSON number, boolean or array is
+ *  judged by its type, not these. */
+export const FIT_PATTERNS = {
+  number: "^\\s*[-+]?([0-9]+[.]?[0-9]*|[.][0-9]+)([eE][-+]?[0-9]+)?\\s*$",
+  date: "^\\s*[0-9]{4}(-[0-9]{2}(-[0-9]{2})?)?($|T)",
+  yesNo: ["true", "false", "yes", "no", "1", "0"] as readonly string[],
+} as const;
+const NUMBER_RE = new RegExp(FIT_PATTERNS.number);
+const DATE_RE = new RegExp(FIT_PATTERNS.date);
+const YES_NO = new Set(FIT_PATTERNS.yesNo);
+
+/** What is wrong with one stored value against its field, if anything. For
+ *  a person reading the record ("this field takes a number"), never a gate
+ *  on a write. */
+export function fieldValueProblem(def: JudgedField, value: unknown): FieldValueProblem | null {
+  return problemWith(def, value);
+}
+
+function problemWith(def: JudgedField, value: unknown): FieldValueProblem | null {
+  if (BLANK(value)) return null;
+  if (def.type === "text" && def.choices && def.choices.length > 0 && def.learns !== true) {
+    const picked = Array.isArray(value) ? value : [value];
+    const bad = picked.find((v) => !isListedChoice(v, def.choices!));
+    return bad === undefined
+      ? null
+      : { field: def.name, value, expected: `one of: ${def.choices.join(", ")}`, code: "not_a_choice", choices: def.choices };
+  }
+  if (def.type === "number") {
+    const fits = typeof value === "number" ? Number.isFinite(value) : typeof value === "string" && NUMBER_RE.test(value);
+    return fits ? null : { field: def.name, value, expected: "a number", code: "not_a_number" };
+  }
+  if (def.type === "boolean") {
+    return typeof value === "boolean" || (typeof value === "string" && YES_NO.has(value.trim().toLowerCase())) || value === 1 || value === 0
+      ? null
+      : { field: def.name, value, expected: "yes or no", code: "not_a_yes_no" };
+  }
+  if (def.type === "money") {
+    return typeof value === "number" || parseMoney(value) !== null
+      ? null
+      : { field: def.name, value, expected: "an amount, like 4,300 or 12.50", code: "not_a_number" };
+  }
+  if (def.type === "measure") {
+    // A measured value as stored, or text that still reads as one ("4k7").
+    return asMeasure(value) ? null : { field: def.name, value, expected: "a measured value, like 4k7 or 100 nF", code: "not_a_measure" };
+  }
+  if (def.type === "date") {
+    // A day, or a month or a year as printed (the write doors store a month
+    // as its last day); anything else is a date nobody can read.
+    return typeof value === "string" && DATE_RE.test(value)
+      ? null
+      : { field: def.name, value, expected: "a date", code: "not_a_date" };
+  }
+  return null;
+}
+
+/** Would this value fit a field of this type (and these choices)? For a
+ *  person deciding on a field's new type, not a gate on writes. */
+export function valueFitsField(def: JudgedField, value: unknown): boolean {
+  return problemWith(def, value) === null;
+}
+
+const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+/** Pure half: what is wrong with the custom-field values a write sets.
+ *  `stored` is the record's current values (null on a create). */
+export function fieldValueProblemsOf(
+  body: unknown,
+  defs: readonly JudgedField[],
+  stored: Record<string, unknown> | null,
+): FieldValueProblem[] {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return [];
+  const b = body as Record<string, unknown>;
+  const bag = b.metadata && typeof b.metadata === "object" && !Array.isArray(b.metadata) ? (b.metadata as Record<string, unknown>) : null;
+  const storedBag =
+    stored?.metadata && typeof stored.metadata === "object" && !Array.isArray(stored.metadata) ? (stored.metadata as Record<string, unknown>) : null;
+  const out: FieldValueProblem[] = [];
+  for (const def of defs) {
+    const written: unknown[] = [];
+    if (Object.prototype.hasOwnProperty.call(b, def.name)) written.push(b[def.name]);
+    if (bag && Object.prototype.hasOwnProperty.call(bag, def.name)) written.push(bag[def.name]);
+    if (written.length === 0) continue;
+    const before = storedBag && def.name in storedBag ? storedBag[def.name] : stored?.[def.name];
+    for (const v of written) {
+      if (stored && same(v, before)) continue;
+      if (stored && def.required && BLANK(v) && !BLANK(before)) {
+        out.push({ field: def.name, value: v, expected: "a value", code: "required_field" });
+        continue;
+      }
+    }
+  }
+  return out;
+}
+
 /** Throws UnknownFieldError when a write names a field the kind does not
  *  have. `baseKind` is the module's own kind; a collection's item route
  *  (req.instance) checks against `<instance>:item`, whose fields those are. */
@@ -237,9 +393,20 @@ export async function refuseUnknownFields(req: unknown, body: unknown, nativeKey
   const orgId = r.tenant?.org?.id;
   if (!orgId) return;
   const kind = r.instance ? `${r.instance}:item` : baseKind;
-  const names = (await platform().entities.fieldsFor(orgId, kind)).map((f) => f.name);
+  const defs = await platform().entities.fieldsFor(orgId, kind);
+  const names = defs.map((f) => f.name);
   const { unknown, suggestions } = unknownFieldsOf(body, nativeKeys, names);
-  if (unknown.length === 0) return;
-  const valid = [...new Set([...nativeKeys, ...names])].filter((n) => n !== "id" && n !== "metadata").sort();
-  throw new UnknownFieldError(kind, unknown, valid, suggestions);
+  if (unknown.length > 0) {
+    const valid = [...new Set([...nativeKeys, ...names])].filter((n) => n !== "id" && n !== "metadata").sort();
+    throw new UnknownFieldError(kind, unknown, valid, suggestions);
+  }
+  // Values: judged against what the record holds now, on an update.
+  const judged = defs.filter((d) => d.type !== "computed" && !nativeKeys.has(d.name));
+  if (judged.length === 0) return;
+  const q = req as { method?: string; params?: Record<string, string> };
+  const id = q.params?.id;
+  const updating = (q.method === "PATCH" || q.method === "PUT") && !!id;
+  const stored = updating ? ((await platform().entities.lookup(orgId, kind, id!))?.fields ?? {}) : null;
+  const problems = fieldValueProblemsOf(body, judged, stored);
+  if (problems.length > 0) throw new InvalidFieldValueError(kind, problems);
 }

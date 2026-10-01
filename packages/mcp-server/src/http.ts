@@ -24,6 +24,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { loadHttpConfig } from "./config.js";
 import { CobblrClient } from "./client.js";
 import { registerTools } from "./tools.js";
+import { grantFromMe } from "./offers.js";
 
 const JSON_HEADERS = { "content-type": "application/json" };
 
@@ -130,7 +131,9 @@ async function main(): Promise<void> {
       defaultOrgSlug: url.searchParams.get("workspace") || null,
     });
     const server = new McpServer({ name: "cobblr", version: "0.1.0" });
-    registerTools(server, client);
+    const grant = grantFromMe(await client.me().catch(() => null));
+    if (grant.workspace) client.pinWorkspace(grant.workspace);
+    registerTools(server, client, grant);
 
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined, // stateless

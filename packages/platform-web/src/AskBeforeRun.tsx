@@ -14,6 +14,7 @@ import { useState } from "react";
 import { pressStillNeeds, type PressAsk } from "@cobblr/platform-contract/action-args";
 import { Modal } from "./Modal";
 import { isShortcut } from "./shortcuts";
+import { currencySymbol } from "@cobblr/platform-contract/money";
 
 export interface Asking {
   /** The button's label, which is also what the sheet's run button says. */
@@ -79,6 +80,11 @@ function AskSheet({ asking }: { asking: Asking }) {
                 </select>
               ) : q.kind === "date" ? (
                 <input {...common} type="date" onChange={(e) => setAnswers((a) => ({ ...a, [q.arg]: e.target.value }))} />
+              ) : q.kind === "money" ? (
+                <span className="flex items-center gap-1">
+                  <span className="text-muted dark:text-slate-400" aria-hidden>{currencySymbol()}</span>
+                  <input {...common} type="text" inputMode="decimal" data-money-input="" onChange={(e) => setAnswers((a) => ({ ...a, [q.arg]: e.target.value }))} />
+                </span>
               ) : q.kind === "number" ? (
                 <input {...common} type="number" inputMode="decimal" onChange={(e) => setAnswers((a) => ({ ...a, [q.arg]: e.target.value }))} />
               ) : (

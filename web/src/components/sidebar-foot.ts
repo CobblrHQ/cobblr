@@ -4,8 +4,9 @@
 // the Scan Inbox row above already says how much is waiting, so the tool that
 // feeds it is the first thing under the nav, on its own full-width row, with
 // Build under it (it used to share a half-width row with Scan, which hid the
-// most-used action inside the least-used one). Then Search, Notifications, the
-// label queue, the Live box, Ask Cobb. Below the rule the META rows: Feedback
+// most-used action inside the least-used one). Search is the icon that ends
+// that first row (Scan | Build | 🔍, #4374), not a row of its own. Then
+// Notifications, the label queue, the Live box, Ask Cobb. Below the rule the META rows: Feedback
 // ("reach the makers", which used to head the foot and pushed every tool down
 // a row), Configuration, and the person last, where they expect to find
 // themselves: ONE row, the name opening Your account and a chevron beside it
@@ -23,7 +24,6 @@ export const SIDEBAR_FOOT_ORDER = [
   /** The module quick-actions, one full row each, capture first (see
    *  orderHeaderActions). */
   "actions",
-  "search",
   "notifications",
   /** The label queue; renders nothing while it is empty. */
   "labels",
@@ -42,7 +42,6 @@ export type SidebarFootSlot = (typeof SIDEBAR_FOOT_ORDER)[number];
 /** The slots a person uses to DO something in the workspace. */
 export const SIDEBAR_FOOT_TOOLS: readonly SidebarFootSlot[] = [
   "actions",
-  "search",
   "notifications",
   "labels",
   "live",

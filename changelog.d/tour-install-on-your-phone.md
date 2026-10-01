@@ -3,6 +3,7 @@ type: feature
 scope: tour
 date: 2026-09-27
 docs_target: docs/USER_GUIDE.md#Guided tour
+docs_published: 2026-10-01
 ---
 The guided tour on a phone now walks you through putting Cobblr on your home screen, step by step, with a drawing of each screen and an arrow at the first tap. It is offered again once after your first scan, on Android it raises the browser's own Install prompt, an app already installed is never asked, and "Not now" is remembered.
 

@@ -20,6 +20,8 @@ import type { ReactNode } from "react";
 import { MessageSquare, X } from "lucide-react";
 import { usePlatformWeb } from "./context";
 import { FloatingChrome } from "./FloatingChrome";
+import { CORNER_STACK } from "./bottom-dock";
+import { clearBarSelection } from "./chat-context";
 
 interface Props {
   count: number;
@@ -48,8 +50,13 @@ export function BulkActionBar({ count, actions, onClear, onAskCobb }: Props) {
        are pinned; only the actions between them slide. */
     <FloatingChrome
       anchor="corner"
+      stack={CORNER_STACK.selectionBar}
       lift="var(--bulk-bar-lift, 5rem)"
-      className="left-1/2 -translate-x-1/2 z-50 sm:[--bulk-bar-lift:1rem] flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 rounded-full border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg whitespace-nowrap max-w-[calc(100vw-1.5rem)]"
+      // Stays beside a side panel on a desk (Ask Cobb from this bar opens
+      // one), centred in what the panel leaves; it used to hide with every
+      // overlay, so the selection seemed to vanish (#4531).
+      yields="covering"
+      className="left-[calc((100vw-var(--side-panel-w,0px))/2)] -translate-x-1/2 z-50 sm:[--bulk-bar-lift:1rem] flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 rounded-full border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg whitespace-nowrap max-w-[calc(100vw-var(--side-panel-w,0px)-1.5rem)]"
     >
       {/* Just the number on a phone. "2 selected" spends a third of the bar
           saying what the checkboxes above already showed you; the number beside
@@ -78,7 +85,11 @@ export function BulkActionBar({ count, actions, onClear, onAskCobb }: Props) {
         )}
       </div>
       <button
-        onClick={onClear}
+        onClick={() => {
+          // The rows leave Cobb's chat too, if this bar put them there.
+          clearBarSelection();
+          onClear();
+        }}
         className="shrink-0 text-faint hover:text-content dark:hover:text-mortar-100 transition p-1"
         title="Clear selection"
         aria-label="Clear selection"

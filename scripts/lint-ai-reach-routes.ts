@@ -19,11 +19,19 @@
 // a router) in a module's api/ must be one of:
 //
 //   1. a kind's DECLARED CRUD endpoint (createEndpoint / updateEndpoint /
-//      deleteEndpoint in the manifest) - already reachable, nothing to write;
+//      deleteEndpoint in the manifest), matched by verb AND path the way the
+//      record tools call it (POST, PATCH, DELETE) - already reachable, nothing
+//      to write. Matched by path alone, a kind with a create and no delete
+//      passed its DELETE route too (tracking's measurements, #4199);
 //   2. backed by a registered ACTION - annotate `// AI-ACTION: <action-id>`
 //      within 6 lines above the route, and that action must exist in the
 //      manifest;
-//   3. deliberately NOT reachable - annotate `// AI-REACH: <reason>` above the
+//   3. reached by a workspace TOOL of its own - annotate `// AI-TOOL: <tool>`
+//      within 6 lines above the route, and that tool must exist in
+//      packages/workspace-tools (the registry Cobb and MCP are both built
+//      from). For a door that has to answer in its own shape, the way an
+//      agent's add runs the scan intake and returns what it found;
+//   4. deliberately NOT reachable - annotate `// AI-REACH: <reason>` above the
 //      route: an upload, the edge wire, connector credentials, an operator
 //      probe, a financial deletion, an unshipped stub. The reason is for the
 //      next reader.
@@ -42,7 +50,9 @@
 // baselined in scripts/ai-reach-kernel-baseline.json rather than fixed in a
 // single change: the baseline is the WORKLIST, it can only shrink, and a NEW
 // kernel route cannot join it - it has to say which it is on the day it is
-// written. Kernel routes are matched to actions by the whole registry (any
+// written. Each entry says what door its route needs; an entry without one is
+// a finding, because a bare list of gaps left whoever picked one up to
+// re-derive what closing it would take. Kernel routes are matched to actions by the whole registry (any
 // module's action may cover a kernel route), since the kernel has no manifest
 // of its own.
 //
@@ -55,10 +65,17 @@ import { readdirSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MODULES, WIRE_PATH, kernelRoutes, moduleRoutes, norm, walkTs as walk } from "./lib/mutating-routes.ts";
 const BASELINE_FILE = join("scripts", "ai-reach-kernel-baseline.json");
+/** The method the assistant's record tools use for each declared endpoint. */
+const CRUD_VERB: Record<string, string> = { create: "POST", update: "PATCH", delete: "DELETE" };
 const REGISTRY_FILE = join("docs", "architecture", "ai-capability-registry.md");
 const LOOKBACK = 6;
 const ACTION_MARK = /AI-ACTION:\s*([a-z0-9-]+:[a-z0-9-]+)/;
 const REACH_MARK = /AI-REACH:/;
+const TOOL_MARK = /AI-TOOL:\s*([a-z0-9_]+)/;
+/** The workspace tools by name: Cobb's chat and both MCP faces are built from this one list. */
+const TOOL_NAMES = new Set(
+  [...readFileSync(join("packages", "workspace-tools", "src", "tools.ts"), "utf8").matchAll(/^\s{4}name:\s*"([a-z0-9_]+)"/gm)].map((m) => m[1]!),
+);
 
 /** WHO A ROUTE IS FOR, decided by family rather than one annotation at a time.
  *
@@ -136,7 +153,7 @@ interface Entry {
   area: string; // module name, or "kernel"
   file: string;
   route: string;
-  status: "crud" | "action" | "no-door" | "open";
+  status: "crud" | "action" | "tool" | "no-door" | "open";
   detail: string; // the action id, or the reason there is no door
 }
 const registry: Entry[] = [];
@@ -168,8 +185,12 @@ for (const mod of readdirSync(MODULES)) {
   if (!existsSync(man) || !existsSync(api)) continue;
 
   const manSrc = readFileSync(man, "utf8");
+  // Keyed by VERB and path, as the assistant's tools call them: create is a
+  // POST, update a PATCH, delete a DELETE. Keyed by path alone, a declared
+  // GET covered every write on the same path, so `DELETE /measurements/:id`
+  // passed for a kind that declares no delete at all (#4199).
   const declared = new Set(
-    [...manSrc.matchAll(/(get|create|update|delete)Endpoint:\s*["'`]([^"'`]+)["'`]/g)].map((m) => norm(m[2]!)),
+    [...manSrc.matchAll(/(create|update|delete)Endpoint:\s*["'`]([^"'`]+)["'`]/g)].map((m) => `${CRUD_VERB[m[1]!]} ${norm(m[2]!)}`),
   );
   const actionIds = new Set([...manSrc.matchAll(/id:\s*["'`]([a-z0-9-]+:[a-z0-9-]+)["'`]/g)].map((m) => m[1]!));
 
@@ -180,7 +201,7 @@ for (const mod of readdirSync(MODULES)) {
     const route = `${r.verb} ${full}`;
     checked++;
 
-    if (declared.has(full)) {
+    if (declared.has(route)) {
       registry.push({ area: mod, file: f, route, status: "crud", detail: "a record kind's own create/update/delete" });
       continue; // a kind's CRUD endpoint
     }
@@ -193,6 +214,14 @@ for (const mod of readdirSync(MODULES)) {
         findings.push({ where, route, problem: `AI-ACTION names "${act[1]}", which ${mod}'s manifest does not declare` });
       }
       registry.push({ area: mod, file: f, route, status: "action", detail: act[1]! });
+      continue;
+    }
+    const tool = above.match(TOOL_MARK);
+    if (tool) {
+      if (!TOOL_NAMES.has(tool[1]!)) {
+        findings.push({ where, route, problem: `AI-TOOL names "${tool[1]}", which packages/workspace-tools does not register` });
+      }
+      registry.push({ area: mod, file: f, route, status: "tool", detail: tool[1]! });
       continue;
     }
     if (REACH_MARK.test(above)) {
@@ -236,10 +265,19 @@ for (const f of walk(join("api", "src", "platform"))) {
   }
 }
 
-const baseline: string[] = existsSync(BASELINE_FILE)
-  ? (JSON.parse(readFileSync(BASELINE_FILE, "utf8")) as { unreachable: string[] }).unreachable
-  : [];
+/** Each worklist entry says what door the route needs. A bare list of routes
+ *  said which capabilities were missing and nothing about what closing one
+ *  would take, so nobody could pick one up without re-deriving it (#4199). */
+const baselineReasons: Record<string, string> = existsSync(BASELINE_FILE)
+  ? (JSON.parse(readFileSync(BASELINE_FILE, "utf8")) as { unreachable: Record<string, string> }).unreachable
+  : {};
+const baseline = Object.keys(baselineReasons);
 const baselined = new Set(baseline);
+for (const [key, why] of Object.entries(baselineReasons)) {
+  if (typeof why !== "string" || why.trim().length < 12) {
+    findings.push({ where: BASELINE_FILE, route: key, problem: "the worklist entry does not say what door the route needs" });
+  }
+}
 const stillUnreachable = new Set<string>();
 const unbaselined: string[] = [];
 /** `--write-baseline` records today's unreachable kernel routes as the worklist.
@@ -274,7 +312,7 @@ const WRITING = process.argv.includes("--write-baseline");
       registry.push({ area: "kernel", file: f, route, status: "no-door", detail: family });
       continue;
     }
-    registry.push({ area: "kernel", file: f, route, status: "open", detail: "" });
+    registry.push({ area: "kernel", file: f, route, status: "open", detail: baselineReasons[key] ?? "" });
     if (baselined.has(key)) {
       stillUnreachable.add(key);
       continue;
@@ -330,6 +368,7 @@ function renderRegistry(): string {
   const open = of("open");
   const doors = of("action");
   const crud = of("crud");
+  const tools = of("tool");
   const shut = of("no-door");
 
   // Group the closed doors by the SENTENCE, so a family that covers thirty
@@ -357,7 +396,7 @@ function renderRegistry(): string {
   // pull requests that each added a route conflicted on these lines or merged
   // them stale, and merge-pr sent both round again. The lint's own run says
   // how many routes it checked.
-  L.push("- **Reachable**: the actions he can run by name, and each record kind's own create/update/delete");
+  L.push("- **Reachable**: the actions he can run by name, each record kind's own create/update/delete, and the doors with a tool of their own");
   L.push("- **Shut, and why**: routes he must never run, grouped by the stated reason");
   L.push("- **Not reachable yet**: the worklist");
   L.push("");
@@ -379,6 +418,12 @@ function renderRegistry(): string {
           (routes.length ? ` (${routes.join(", ")})` : ""),
       );
     }
+    L.push("");
+  }
+  if (tools.length) {
+    L.push("**Doors with a tool of their own**");
+    L.push("");
+    for (const e of tools) L.push(`- \`${e.detail}\`: ${e.area}: ${e.route}`);
     L.push("");
   }
   if (acts.length !== allActs.length) {
@@ -413,7 +458,7 @@ function renderRegistry(): string {
   for (const [file, entries] of [...byFile.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
     L.push(`**${file}**`);
     L.push("");
-    for (const e of entries) L.push(`- ${e.route}`);
+    for (const e of entries) L.push(`- ${e.route}${e.detail ? `: ${e.detail}` : ""}`);
     L.push("");
   }
   L.push("");
@@ -432,7 +477,7 @@ if (process.argv.includes("--write-registry")) {
 
 if (WRITING) {
   writeFileSync(REGISTRY_FILE, renderRegistry());
-  const all = [...new Set([...stillUnreachable, ...unbaselined])].sort();
+  const all = Object.fromEntries([...new Set([...stillUnreachable, ...unbaselined])].sort().map((k) => [k, baselineReasons[k] ?? ""]));
   writeFileSync(
     BASELINE_FILE,
     `${JSON.stringify(
@@ -449,7 +494,7 @@ if (WRITING) {
       2,
     )}\n`,
   );
-  console.log(`ai-reach-routes: wrote ${all.length} kernel route(s) to ${BASELINE_FILE}, registry to ${REGISTRY_FILE}`);
+  console.log(`ai-reach-routes: wrote ${Object.keys(all).length} kernel route(s) to ${BASELINE_FILE}, registry to ${REGISTRY_FILE}`);
   process.exit(0);
 }
 
@@ -466,18 +511,8 @@ if (staleBaseline.length) {
   process.exit(1);
 }
 
-// The registry is generated, so a stale one is a lie about what the assistant
-// can do — and the people most likely to read it are the ones deciding whether
-// a capability needs building.
-const wantRegistry = renderRegistry();
-if (!existsSync(REGISTRY_FILE) || readFileSync(REGISTRY_FILE, "utf8") !== wantRegistry) {
-  console.error(
-    `✗ ai-reach-routes lint: ${REGISTRY_FILE} is stale.\n` +
-      "  Regenerate: npx tsx scripts/lint-ai-reach-routes.ts --write-baseline",
-  );
-  process.exit(1);
-}
-
+// Findings first: a stale registry is the SYMPTOM of an unannotated route,
+// and reporting it first hid which route it was.
 if (findings.length > 0) {
   console.error(`✗ ai-reach-routes lint: ${findings.length} mutating route(s) neither reachable by the assistant nor justified.\n`);
   for (const f of findings) console.error(`  ${f.where}\n      ${f.route}\n      ${f.problem}`);
@@ -494,6 +529,19 @@ which it is, at the route, within ${LOOKBACK} lines above it:
 A kind's declared CRUD endpoint needs nothing - the manifest already says so.`);
   process.exit(1);
 }
+
+// The registry is generated, so a stale one is a lie about what the assistant
+// can do — and the people most likely to read it are the ones deciding whether
+// a capability needs building.
+const wantRegistry = renderRegistry();
+if (!existsSync(REGISTRY_FILE) || readFileSync(REGISTRY_FILE, "utf8") !== wantRegistry) {
+  console.error(
+    `✗ ai-reach-routes lint: ${REGISTRY_FILE} is stale.\n` +
+      "  Regenerate: npx tsx scripts/lint-ai-reach-routes.ts --write-baseline",
+  );
+  process.exit(1);
+}
+
 
 console.log(
   `✓ ai-reach-routes lint: all ${checked} mutating route(s) are reachable, backed by an action, or justified` +

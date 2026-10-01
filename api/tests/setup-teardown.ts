@@ -15,6 +15,11 @@
 // cleanly between files.
 
 import { afterAll } from "vitest";
+import { scopeTmpdir } from "../../scripts/lib/test-tmpdir.mjs";
+
+// A temporary directory of this test file's own, gone when it finishes
+// (scripts/lib/test-tmpdir.mjs: /tmp ran out of inodes on 2026-09-30).
+scopeTmpdir(afterAll);
 import { fetchTransient } from "./fetch-transient.js";
 
 const BASE = process.env.COBBLR_TEST_API ?? "http://localhost:4000";

@@ -32,9 +32,7 @@ import {
   useViewMode, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, headerButton } from "@cobblr/platform-web";
 import { EntityAttachments } from "../components/EntityAttachments";
 import { ContributedDetailPanels } from "../panels/registry";
-import { EntityImageEdit } from "../components/EntityImageEdit";
-import { ImageSearchPicker } from "../components/ImageSearchPicker";
-import { SuggestedPhoto } from "../components/SuggestedPhoto";
+import { RecordPhoto } from "../components/RecordPhoto";
 import { pictureStateFor, suggestedSrcFor, usePhotoSuggestions } from "../lib/photoSuggestions";
 import { LocationTreePicker } from "../components/LocationTreePicker";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
@@ -233,7 +231,7 @@ export function RecordsPage({
 }
 
 function RecordsTiles({ rows, onOpen, kind }: { rows: RecordItem[]; onOpen: (id: string) => void; kind: string }) {
-  const suggestions = usePhotoSuggestions(kind);
+  const suggestions = usePhotoSuggestions(kind, rows.map((r) => r.id));
   return (
     <div className={TILE_GRID}>
       {rows.map((r) => (
@@ -256,7 +254,7 @@ function RecordsTable({
   onOpen: (id: string) => void;
   kind: string;
 }) {
-  const suggestions = usePhotoSuggestions(kind);
+  const suggestions = usePhotoSuggestions(kind, rows.map((r) => r.id));
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-x-auto">
       <table className="w-full text-sm">
@@ -369,34 +367,11 @@ export function RecordDetailModal({
         .enrichEntityImage(activeSlug, { entity_kind: kind, entity_id: r.id, instance })
         .catch(() => null);
       if (res?.image_path) refetchRecord();
-      else toast.error("Couldn't find an image to auto-fetch.");
+      else toast.error(res?.reason ?? "No photo found that clearly shows this.");
     } finally {
       setAutoBusy(false);
     }
   }
-  const [photoSearchOpen, setPhotoSearchOpen] = useState(false);
-  const [photoPickBusy, setPhotoPickBusy] = useState(false);
-  async function pickWebPhoto(url: string) {
-    if (!r) return;
-    setPhotoPickBusy(true);
-    try {
-      const res = await api
-        .enrichEntityImage(activeSlug, {
-          entity_kind: kind,
-          entity_id: r.id,
-          instance,
-          image_url: url, // a picked url skips the search entirely
-        })
-        .catch(() => null);
-      if (res?.image_path) {
-        refetchRecord();
-        setPhotoSearchOpen(false);
-      } else toast.error("Couldn't save that image.");
-    } finally {
-      setPhotoPickBusy(false);
-    }
-  }
-
   async function handleDelete() {
     if (!r) return;
     const ok = await confirm({
@@ -423,8 +398,10 @@ export function RecordDetailModal({
                   while the column had height to spare (reported 2026-07-18) — a
                   record's image is usually the identity (a jacket, a poster,
                   a label), so it renders whole, not cropped to a tile. */}
-              <EntityImageEdit
-                slug={activeSlug}
+              <RecordPhoto
+                kind={kind}
+                id={r.id}
+                instance={instance}
                 src={r.image_path}
                 alt={r.name}
                 size={256}
@@ -432,40 +409,11 @@ export function RecordDetailModal({
                 onChange={(image_path) => update.mutate({ image_path })}
                 onAutoFetch={runAutoFetch}
                 autoBusy={autoBusy}
-              />
-              <SuggestedPhoto
-                kind={kind}
-                id={r.id}
-                hasPicture={!!r.image_path}
-                onApplied={() => {
-                  void qc.invalidateQueries({ queryKey: ["record", activeSlug, instance ?? null, recordId] });
+                onSaved={() => {
+                  refetchRecord();
                   void qc.invalidateQueries({ queryKey: ["records", activeSlug] });
                 }}
-                onPickOther={pickWebPhoto}
-                pickBusy={photoPickBusy}
               />
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setPhotoSearchOpen((v) => !v)}
-                  className="text-[10px] font-mono uppercase tracking-widest text-accent hover:underline"
-                >
-                  {photoSearchOpen ? "hide image search" : "search the web for an image"}
-                </button>
-                {photoSearchOpen && (
-                  <div className="mt-1.5">
-                    {/* Derived mode: the server builds the phrase from this
-                        record's own name + fields, identically to the scan
-                        inbox. No hand-built query here on purpose. */}
-                    <ImageSearchPicker
-                      entity={{ kind: kind, id: r.id }}
-                      busy={photoPickBusy}
-                      onPick={pickWebPhoto}
-                      label="pick an image"
-                    />
-                  </div>
-                )}
-              </div>
               <EntityActionsBar entityKind={ENTITY_KIND} entityId={r.id} />
             </div>
             <div className="min-w-0 space-y-4">
@@ -478,7 +426,7 @@ export function RecordDetailModal({
                   editFieldItem("name", { label: fp.label("name", "Name"), value: r.name, onCommit: (v) => update.mutate({ name: v }) }),
                   {
                     need: fieldNeed("location", { control: "picker", label: "Location" }),
-                    node: <LocationTreePicker label="Location" value={r.location_id} onChange={(lid) => update.mutate({ location_id: lid })} size="sm" />,
+                    node: <LocationTreePicker label="Location" value={r.location_id} onChange={(lid) => update.mutate({ location_id: lid })} size="sm" thing={{ kind: "records:record", id: r.id }} onPlaced={() => { void qc.invalidateQueries({ queryKey: ["record", activeSlug, instance ?? null, recordId] }); void qc.invalidateQueries({ queryKey: ["records", activeSlug] }); }} />,
                   },
                 ]}
               />

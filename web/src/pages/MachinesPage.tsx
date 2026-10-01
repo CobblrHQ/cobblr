@@ -12,7 +12,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Plus, Printer, Send, Tag as TagIcon, Trash2, Wrench } from "lucide-react";
+import { ChevronRight, Plus, Printer, Send, Trash2, Wrench } from "lucide-react";
 import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
 import { queueLabelsBulk } from "../lib/queue-label";
 import { usePersistedState } from "../lib/use-persisted-state";
@@ -21,10 +21,8 @@ import { ApiError, api, type Machine, type OrgModuleListItem, type PlatformField
 import { fleetStatusChip, indexFleetByMachine } from "../lib/fleet-status";
 import { ContributedPageTab, ContributedDetailPanels, hasPageTab } from "../panels/registry";
 import { DirectManagerConnect } from "../components/DirectManagerConnect";
-import { EntityImageEdit } from "../components/EntityImageEdit";
 import { MachineUnits } from "../components/MachineUnits";
-import { ImageSearchPicker } from "../components/ImageSearchPicker";
-import { SuggestedPhoto } from "../components/SuggestedPhoto";
+import { RecordPhoto } from "../components/RecordPhoto";
 import { pictureStateFor, suggestedSrcFor, usePhotoSuggestions } from "../lib/photoSuggestions";
 // NewMachineModal's inline "connect its manager" flow still reaches the
 // digifab feature directly — candidate for its own seam (an intent/action),
@@ -54,6 +52,7 @@ import { ContentsPanel, useHoldsContents } from "../components/ContentsPanel";
 import { CustomFieldsPanel, EditField, EditSelect, EntityActionsBar, FaceSection, FacesOn, faceShows, FieldPack, RecordFaces, editFieldItem, fieldNeed, useAskCobbAboutSelection, Modal, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton } from "@cobblr/platform-web";
 import {
   BulkActionBar,
+  BulkTagAction,
   EntityThumb,
   EntityTile,
   ViewModeToggle,
@@ -63,7 +62,7 @@ import {
 import { EntityAttachments } from "../components/EntityAttachments";
 import { LocationTreePicker } from "../components/LocationTreePicker";
 import { itemNounFor, pluralise } from "@cobblr/platform-contract";
-import { PresentationGate, useFaces } from "@cobblr/platform-web";
+import { PresentationGate, useFaces, UsedValueInput, usedValueFieldItem } from "@cobblr/platform-web";
 
 const ENTITY_KIND = "machines:machine";
 
@@ -382,7 +381,6 @@ export function MachinesPage({
       return n;
     });
   }
-  const [bulkTagOpen, setBulkTagOpen] = useState(false);
   const bulkTag = useMutation({
     mutationFn: async (tagName: string) => {
       for (const id of Array.from(selected)) {
@@ -397,7 +395,6 @@ export function MachinesPage({
     onSuccess: () => {
       toastM.success(`Tagged ${selected.size} machine${selected.size === 1 ? "" : "s"}`);
       setSelected(new Set());
-      setBulkTagOpen(false);
       void qcM.invalidateQueries({ queryKey: ["machines", activeSlug] });
     },
     onError: (e) => toastM.error((e as Error).message),
@@ -697,13 +694,7 @@ export function MachinesPage({
         onClear={() => setSelected(new Set())}
         actions={
           <>
-            <button
-              type="button"
-              onClick={() => setBulkTagOpen(true)}
-              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-accent hover:text-accent"
-            >
-              <TagIcon size={12} /> Tag
-            </button>
+            <BulkTagAction count={selected.size} placeholder="e.g. in-progress, voron, archive" onTag={(name) => bulkTag.mutateAsync(name)} />
             <button
               type="button"
               onClick={async () => {
@@ -747,14 +738,6 @@ export function MachinesPage({
           </>
         }
       />
-      {bulkTagOpen && (
-        <MachineBulkTagModal
-          count={selected.size}
-          busy={bulkTag.isPending}
-          onClose={() => setBulkTagOpen(false)}
-          onSubmit={(name) => bulkTag.mutate(name)}
-        />
-      )}
     </div>
   );
 }
@@ -939,60 +922,6 @@ function SaveViewModal({
   );
 }
 
-function MachineBulkTagModal({
-  count,
-  busy,
-  onClose,
-  onSubmit,
-}: {
-  count: number;
-  busy: boolean;
-  onClose: () => void;
-  onSubmit: (tagName: string) => void;
-}) {
-  const [name, setName] = useState("");
-  return (
-    <Modal open onClose={onClose} title={`Tag ${count} machine${count === 1 ? "" : "s"}`}>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!name.trim()) return;
-          onSubmit(name.trim());
-        }}
-        className="space-y-3"
-      >
-        <label className="block">
-          <div className="text-xs text-muted mb-1">Tag name</div>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. in-progress, voron, archive"
-            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-            autoFocus
-          />
-        </label>
-        <div className="flex justify-end gap-2 pt-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={busy || !name.trim()}
-            className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
-          >
-            {busy ? "tagging…" : `Tag ${count}`}
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
 /** Live fleet chip on a registry row — the fleet's view of a linked machine,
  *  shown beside its lifecycle state (two facts, both labelled as what they are). */
 function LiveChip({ dev }: { dev: DigifabFleetDevice }) {
@@ -1028,7 +957,7 @@ function MachineTable({
   // The column header must respect a relabel too, or the list says "Manufacturer"
   // while the detail page says "Make".
   const fp = useFieldPresentation(instance ? `${instance}:item` : ENTITY_KIND);
-  const suggestions = usePhotoSuggestions(instance ? `${instance}:item` : ENTITY_KIND);
+  const suggestions = usePhotoSuggestions(instance ? `${instance}:item` : ENTITY_KIND, rows.map((m) => m.id));
   const showSelect = !!selected && !!onToggle;
   const allChecked = showSelect && rows.length > 0 && rows.every((r) => selected!.has(r.id));
   return (
@@ -1162,7 +1091,7 @@ export function MachineTileGrid({
   /** machine_id → its linked fleet device, for the live status chip. */
   live?: Map<string, { dev: DigifabFleetDevice; connId: string }>;
 }) {
-  const suggestions = usePhotoSuggestions(instance ? `${instance}:item` : ENTITY_KIND);
+  const suggestions = usePhotoSuggestions(instance ? `${instance}:item` : ENTITY_KIND, rows.map((m) => m.id));
   return (
     <div className={TILE_GRID}>
       {rows.map((m) => (
@@ -1273,41 +1202,12 @@ export function MachineDetailModal({
         void qc.invalidateQueries({ queryKey: ["machine", activeSlug, machineId] });
         void qc.invalidateQueries({ queryKey: ["machines", activeSlug] });
       } else {
-        toast.error("Couldn't find a photo to auto-fetch.");
+        toast.error(r?.reason ?? "No photo found that clearly shows this.");
       }
     } finally {
       setAutoBusy(false);
     }
   }
-  // Interactive web-photo picker (the shared ImageSearchPicker) — pick a SPECIFIC
-  // image instead of letting Auto choose. enrichEntityImage stores the chosen url.
-  const [photoSearchOpen, setPhotoSearchOpen] = useState(false);
-  const [photoPickBusy, setPhotoPickBusy] = useState(false);
-  async function pickWebPhoto(url: string) {
-    if (!m) return;
-    setPhotoPickBusy(true);
-    try {
-      const r = await api
-        .enrichEntityImage(activeSlug, {
-          entity_kind: "machines:machine",
-          entity_id: m.id,
-          instance,
-          image_url: url, // a picked url skips the search entirely
-        })
-        .catch(() => null);
-      if (r?.image_path) {
-        void qc.invalidateQueries({ queryKey: ["machine", activeSlug, machineId] });
-        void qc.invalidateQueries({ queryKey: ["machines", activeSlug] });
-        toast.success("Photo updated.");
-        setPhotoSearchOpen(false);
-      } else {
-        toast.error("Couldn't save that image.");
-      }
-    } finally {
-      setPhotoPickBusy(false);
-    }
-  }
-
   async function handleDelete() {
     if (!m) return;
     const ok = await confirm({
@@ -1348,55 +1248,24 @@ export function MachineDetailModal({
           <RecordFaces kind={instance ? `${instance}:item` : ENTITY_KIND} target={instance ? { target_kind: "instance", target_id: `machines:${instance}` } : { target_kind: "entity_kind", target_id: ENTITY_KIND }}>
           <div className="grid gap-6 md:grid-cols-[minmax(180px,240px)_1fr]">
             <div className="space-y-2">
-              <EntityImageEdit
-                slug={activeSlug}
+              {/* The photo, a suggestion in its place when it has none
+                  (#3818, #4373), and the one web search. */}
+              <RecordPhoto
+                kind={instance ? `${instance}:item` : ENTITY_KIND}
+                id={m.id}
+                instance={instance}
                 src={m.image_path}
                 alt={m.name}
+                brand={m.manufacturer}
                 size={220}
                 onChange={(image_path) => update.mutate({ image_path })}
                 onAutoFetch={printerKind !== null ? runAutoFetch : undefined}
                 autoBusy={autoBusy}
-              />
-              {/* A record made without a picture is offered one (#3818):
-                  suggested, never put on it until someone says Use it. */}
-              <SuggestedPhoto
-                kind={instance ? `${instance}:item` : ENTITY_KIND}
-                id={m.id}
-                hasPicture={!!m.image_path}
-                brand={m.manufacturer}
-                onApplied={() => {
+                onSaved={() => {
                   void qc.invalidateQueries({ queryKey: ["machine", activeSlug, machineId] });
                   void qc.invalidateQueries({ queryKey: ["machines", activeSlug] });
                 }}
-                onPickOther={pickWebPhoto}
-                pickBusy={photoPickBusy}
               />
-              {/* Universal web-image picker — pick the machine's photo from a web search. */}
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setPhotoSearchOpen((v) => !v)}
-                  className="text-[10px] font-mono uppercase tracking-widest text-accent hover:underline"
-                >
-                  {photoSearchOpen ? "hide photo search" : "search the web for a photo"}
-                </button>
-                {photoSearchOpen && (
-                  <div className="mt-1.5">
-                    {/* Derived mode: the server builds the phrase from this
-                        machine's own name + brand + fields, identically to the
-                        scan inbox. The old hand-built query (manufacturer +
-                        family + a literal "3D printer") is gone — one
-                        derivation, one behaviour. */}
-                    <ImageSearchPicker
-                      entity={{ kind: ENTITY_KIND, id: m.id }}
-                      brand={m.manufacturer ?? undefined}
-                      busy={photoPickBusy}
-                      onPick={pickWebPhoto}
-                      label="pick a photo"
-                    />
-                  </div>
-                )}
-              </div>
             </div>
             <div className="min-w-0 space-y-3">
             <div className="space-y-2">
@@ -1448,7 +1317,7 @@ export function MachineDetailModal({
               !fp.hidden("short_name") && (m.short_name || !instance) ? editFieldItem("short_name", { label: fp.label("short_name", "Short name"), value: m.short_name ?? "", onCommit: (v) => update.mutate({ short_name: v || null }) }) : null,
               !fp.hidden("family") ? editFieldItem("family", { label: fp.label("family", "Family"), value: m.family ?? "", onCommit: (v) => update.mutate({ family: v || null }) }) : null,
               !fp.hidden("type") && (m.type || !instance) ? editFieldItem("type", { label: fp.label("type", "Type"), value: m.type ?? "", onCommit: (v) => update.mutate({ type: v || null }) }) : null,
-              !fp.hidden("manufacturer") ? editFieldItem("manufacturer", { label: fp.label("manufacturer", "Manufacturer"), value: m.manufacturer ?? "", onCommit: (v) => update.mutate({ manufacturer: v || null }) }) : null,
+              !fp.hidden("manufacturer") ? usedValueFieldItem("manufacturer", { label: fp.label("manufacturer", "Manufacturer"), kind: instance ? `${instance}:item` : ENTITY_KIND, field: "manufacturer", value: m.manufacturer ?? null, onCommit: (v) => update.mutate({ manufacturer: v || null }) }) : null,
               !fp.hidden("serial_number") && (m.serial_number || !instance) ? editFieldItem("serial_number", { label: fp.label("serial_number", "Serial number"), value: m.serial_number ?? "", onCommit: (v) => update.mutate({ serial_number: v || null }) }) : null,
               !fp.hidden("state")
                 ? {
@@ -1459,7 +1328,7 @@ export function MachineDetailModal({
               !fp.hidden("quantity") && faceShows(stockOn && !instance, m.quantity, 1) ? editFieldItem("quantity", { label: fp.label("quantity", "Quantity"), value: String(m.quantity), numeric: true, onCommit: (v) => update.mutate({ quantity: Number(v) || 0 }) }) : null,
               {
                 need: fieldNeed("location", { control: "picker", label: "Location" }),
-                node: <LocationTreePicker label="Location" kind="area" value={m.location_id} onChange={(id) => update.mutate({ location_id: id })} size="sm" />,
+                node: <LocationTreePicker label="Location" kind="area" value={m.location_id} onChange={(id) => update.mutate({ location_id: id })} size="sm" thing={{ kind: "machines:machine", id: m.id }} onPlaced={() => { void qc.invalidateQueries({ queryKey: ["machine", activeSlug, machineId] }); void qc.invalidateQueries({ queryKey: ["machines", activeSlug] }); }} />,
               },
             ]}
           />
@@ -1486,7 +1355,7 @@ export function MachineDetailModal({
           {/* What's installed inside this machine (a printer's mods/parts). The
               generic placement panel — same one a server asset or a drawer uses. */}
           <FaceSection face="container" kind={instance ? `${instance}:item` : ENTITY_KIND} holds={holdsContents}>
-            <ContentsPanel slug={activeSlug} container={{ kind: "machines:machine", id: m.id }} title="Installed components" />
+            <ContentsPanel slug={activeSlug} container={{ kind: "machines:machine", id: m.id }} title="Installed components" builtFrom wordKind={instance ? `${instance}:item` : ENTITY_KIND} />
           </FaceSection>
 
           {/* Contributed detail panels (e.g. digifab's Print manager) — the
@@ -1920,10 +1789,10 @@ function NewMachineModal({
           <span className={lblCls}>Name</span>
           <input value={name} onChange={(e) => setName(e.target.value)} autoFocus className="input" />
         </label>
-        <label className="block">
+        <div className="block">
           <span className={lblCls}>{fp.label("manufacturer", "Manufacturer")}</span>
-          <input value={manufacturer} onChange={(e) => setManufacturer(e.target.value)} className="input" />
-        </label>
+          <UsedValueInput kind={instance ? `${instance}:item` : ENTITY_KIND} field="manufacturer" label={fp.label("manufacturer", "Manufacturer")} value={manufacturer} onCommit={(v) => setManufacturer(v ?? "")} live />
+        </div>
         <label className="block">
           <span className={lblCls}>{words.familyExample ? `Family (${words.familyExample})` : "Family"}</span>
           <input value={family} onChange={(e) => setFamily(e.target.value)} className="input" />

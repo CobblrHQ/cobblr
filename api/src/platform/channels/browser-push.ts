@@ -12,6 +12,7 @@ import type { Channel, ChannelEvent } from "./types.js";
 
 export const browserPushChannel: Channel = {
   name: "browser_push",
+  notOffered: "web push is not built yet (no VAPID keys, no push subscriptions), so nothing sent this way would arrive",
   async deliver(event: ChannelEvent): Promise<boolean> {
     console.log(`[browser-push] would push notification ${event.notificationId} (not implemented)`);
     return false;

@@ -19,6 +19,9 @@
 // children - and both levels stay consistent by construction rather than by
 // two functions agreeing.
 
+import { writeNavOrder, writeNavPlacement } from "../lib/nav-order";
+import { groupMoveOf, type NavGroups } from "./nav-groups";
+
 /** A top and the children rendered under it, in the order they appear now. */
 export interface NavBranch {
   name: string;
@@ -68,4 +71,22 @@ export function reorderNav(branches: NavBranch[], moved: string, over: string): 
   const next = [...branches];
   next[from] = { ...branch, children: kids };
   return flatten(next);
+}
+
+/** A drop on the sidebar, written: the row goes to the group it was dropped
+ *  in (a person's place for it beats the manifest's, #4374) and to the slot
+ *  it was dropped at. The sidebar's drag end calls this, so the rule is held
+ *  by a test without simulating a pointer. */
+export function dropOnSidebar<T extends { name: string }>(
+  slug: string,
+  groups: NavGroups<T>,
+  branches: NavBranch[],
+  moved: string,
+  over: string,
+): void {
+  const childrenOf = (top: string) => branches.find((b) => b.name === top)?.children ?? [];
+  const move = groupMoveOf(groups, moved, over, childrenOf);
+  if (move) writeNavPlacement(slug, move.name, move.to);
+  const next = reorderNav(branches, moved, over);
+  if (next) writeNavOrder(slug, next);
 }

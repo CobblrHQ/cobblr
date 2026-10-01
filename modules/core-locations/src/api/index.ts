@@ -9,6 +9,7 @@ import { floorplanRouter } from "./floorplan.js";
 import { registerLocationsResolvers } from "./resolvers.js";
 import { registerLocationsWriter } from "./sync-writer.js";
 import { registerLocationsHandlers } from "./handlers.js";
+import { registerPlaceParent } from "./place-parent.js";
 
 const router = Router({ mergeParams: true });
 
@@ -29,5 +30,7 @@ registerLocationsWriter();
 // Side-effect: register the action handlers (core-locations:reorder) so the
 // assistant has a door to the one field the update route refuses.
 registerLocationsHandlers();
+// Side-effect: a place's parent place, for "where is this" across placements.
+registerPlaceParent();
 
 export default router;

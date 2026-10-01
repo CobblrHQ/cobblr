@@ -3,6 +3,7 @@ type: feature
 scope: files
 date: 2026-09-29
 docs_target: docs/USER_GUIDE.md#3.4 Files (foundational)
+docs_published: 2026-10-01
 ---
 Deleted files now go to Recently deleted for 30 days, where you can restore them or delete them forever, and after that they are removed from disk for good.
 

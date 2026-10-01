@@ -20,6 +20,14 @@ export function csvCell(value: unknown): string {
   else if (value instanceof Date) text = value.toISOString();
   else if (typeof value === "string") text = FORMULA_START.test(value) ? `'${value}` : value;
   else text = JSON.stringify(value);
+  return csvCellAsWritten(text);
+}
+
+/** A cell read back from a file this module wrote, written again unchanged:
+ *  quoted the way csvCell quotes, and never guarded a second time, because
+ *  the writer already guarded its text (a bare -5 in that file is a number).
+ *  For a pass that takes columns out of a finished export. */
+export function csvCellAsWritten(text: string): string {
   return /[",\r\n]|^\s|\s$/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 

@@ -39,6 +39,9 @@ interface TrackArgs {
   /** When the carrier said it landed, so an unconfirmed delivery is watched
    *  for a bounded window rather than forever. */
   deliveredAt?: string | null;
+  /** Days to keep watching after the delivered scan (default: the recipient's
+   *  14). A sender asks for 2. */
+  watchDaysAfterDelivery?: number;
 }
 
 export function registerShipmentsActionHandlers(): void {
@@ -79,7 +82,12 @@ export function registerShipmentsActionHandlers(): void {
 
     const lastChecked = args.lastCheckedAt ? new Date(args.lastCheckedAt) : null;
     const lastState = args.lastState ?? null;
-    const poll = { confirmed: args.confirmed === true, deliveredAt: args.deliveredAt ?? null };
+    const watchDays = Number(args.watchDaysAfterDelivery);
+    const poll = {
+      confirmed: args.confirmed === true,
+      deliveredAt: args.deliveredAt ?? null,
+      ...(Number.isFinite(watchDays) && watchDays >= 0 ? { watchAfterDeliveryMs: watchDays * 24 * 3_600_000 } : {}),
+    };
 
     // Whose parcel this is decides who can follow it: the instance may have no
     // tracking credentials at all while its owner has connected their own.
@@ -122,17 +130,23 @@ export function registerShipmentsActionHandlers(): void {
     } catch (err) {
       const retryable = err instanceof CarrierError ? err.retryable : true;
       const full = err instanceof CarrierError && err.quotaExhausted;
+      const busy = err instanceof CarrierError && err.busy;
+      const waitMs = err instanceof CarrierError ? err.retryAfterMs : null;
       // A carrier that did not answer has told us nothing. The caller keeps its
       // estimate and its previous state; nothing here is allowed to look like
       // progress. A permanent failure stops the schedule so we do not hammer it.
       return {
         ok: false,
         followed: false,
-        reason: full ? "quota_exhausted" : "carrier_error",
+        reason: full ? "quota_exhausted" : busy ? "busy" : "carrier_error",
         retryable,
         message: err instanceof Error ? err.message : "the carrier did not answer",
         eta: current,
-        nextPollAt: retryable ? (nextPollAt(lastState, current.date, now, poll)?.toISOString() ?? null) : null,
+        // Busy: when it said to come back, else the next window.
+        nextPollAt: busy && waitMs !== null
+          ? new Date(now.getTime() + waitMs).toISOString()
+          : retryable ? (nextPollAt(lastState, current.date, now, poll)?.toISOString() ?? null) : null,
+        ...(busy ? { retryAfterMs: waitMs } : {}),
       };
     }
 

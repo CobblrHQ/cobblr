@@ -10,6 +10,7 @@
 // actually previewed. A future hot-loaded third-party renderer is just
 // another loader that mounts a sandboxed iframe — same registry, same key.
 
+import { sniffType } from "@cobblr/platform-contract/sniff-type";
 import {
   lazy,
   Suspense,
@@ -58,6 +59,24 @@ export function unregisterFilePreviewRenderer(exts: string[]): void {
   notify();
 }
 
+/** A thumbnail drawer: a file's bytes to a small picture (a data URL), or
+ *  null when it cannot be drawn. Registered by format, as renderers are, so
+ *  a document tile (<DocThumb>) shows a PDF's first page without importing
+ *  the module that knows how to draw one. */
+export type ThumbDrawer = (bytes: ArrayBuffer, width: number) => Promise<string | null>;
+type ThumbLoader = () => Promise<{ default: ThumbDrawer }>;
+const THUMBS = new Map<string, ThumbLoader>();
+
+export function registerFileThumbRenderer(exts: string[], loader: ThumbLoader): void {
+  for (const e of exts) THUMBS.set(e.toLowerCase().replace(/^\./, ""), loader);
+  notify();
+}
+
+/** The thumbnail drawer for a format (by extension, e.g. "pdf"), if any. */
+export function thumbDrawerFor(ext: string): ThumbLoader | undefined {
+  return THUMBS.get(ext.toLowerCase());
+}
+
 /** Subscribe to renderer-set changes — returns a version that bumps on
  *  every register/unregister, so a component re-evaluates canPreviewFile. */
 export function useFilePreviewRegistry(): number {
@@ -69,6 +88,12 @@ export function useFilePreviewRegistry(): number {
     () => version,
     () => version,
   );
+}
+
+/** The renderer for a type the bytes named, if one is registered. */
+function rendererForType(type: string | null): RendererLoader | undefined {
+  if (type === "application/pdf") return REGISTRY.get("pdf");
+  return undefined;
 }
 
 function extOf(filename: string): string {
@@ -97,41 +122,61 @@ export function FilePreview({
   className?: string;
 }) {
   const ext = extOf(filename);
-  const loader = REGISTRY.get(ext);
+  const byName = REGISTRY.get(ext);
+  // The renderer is chosen by what the file IS (its bytes), the name only
+  // when the bytes name nothing: a PDF stored without its extension, or under
+  // a wrong one, still opens in the PDF viewer (#4523).
+  const [loader, setLoader] = useState<RendererLoader | undefined>(byName);
   const [data, setData] = useState<{ blobUrl: string; bytes: ArrayBuffer } | null>(null);
   const [err, setErr] = useState(false);
+  const [probed, setProbed] = useState(false);
 
   useEffect(() => {
-    if (!loader) return;
     let cancelled = false;
     let blobUrl: string | null = null;
     setData(null);
     setErr(false);
+    setProbed(false);
+    setLoader(byName);
     const token = typeof window !== "undefined" ? window.localStorage.getItem(TOKEN_KEY) : null;
-    fetch(src, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-      .then((r) => {
+    const auth: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+    void (async () => {
+      try {
+        // No renderer by name: read only the first bytes to learn what it is
+        // before fetching all of it (a large file with no preview stays unread).
+        if (!byName) {
+          const probe = await fetch(src, { headers: { ...auth, Range: "bytes=0-63" } });
+          if (!probe.ok) throw new Error(`HTTP ${probe.status}`);
+          const head = new Uint8Array(await probe.arrayBuffer()).subarray(0, 64);
+          const bySniff = rendererForType(sniffType(head));
+          if (cancelled) return;
+          setProbed(true);
+          if (!bySniff) return;
+          setLoader(() => bySniff);
+        }
+        const r = await fetch(src, { headers: auth });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.blob();
-      })
-      .then(async (blob) => {
+        const blob = await r.blob();
         const ab = await blob.arrayBuffer();
         if (cancelled) return;
+        const bySniff = rendererForType(sniffType(new Uint8Array(ab, 0, Math.min(64, ab.byteLength))));
+        if (bySniff) setLoader(() => bySniff);
         blobUrl = URL.createObjectURL(blob);
         setData({ blobUrl, bytes: ab });
-      })
-      .catch(() => {
+      } catch {
         if (!cancelled) setErr(true);
-      });
+      }
+    })();
     return () => {
       cancelled = true;
       if (blobUrl) URL.revokeObjectURL(blobUrl);
     };
-  }, [src, loader]);
+  }, [src, byName]);
 
   const Comp = useMemo(() => (loader ? lazy(loader) : null), [loader]);
 
-  if (!loader)
-    return <div className={`text-xs text-faint italic ${className ?? ""}`}>No preview for .{ext} files</div>;
+  if (!loader && (probed || err))
+    return <div className={`text-xs text-faint italic ${className ?? ""}`}>No preview for {ext ? `.${ext} ` : "these "}files</div>;
   if (err)
     return <div className={`text-xs text-faint italic ${className ?? ""}`}>Couldn't load preview</div>;
   if (!data || !Comp)

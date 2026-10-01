@@ -391,6 +391,8 @@ locationsRouter.patch(
       }
     }
 
+    // The row as it was: the log says what this edit changed (#4517).
+    const before = await db.selectFrom("core_locations_locations").selectAll().where("id", "=", id).executeTakeFirst();
     const updated = await db
       .updateTable("core_locations_locations")
       .set(patch)
@@ -418,6 +420,7 @@ locationsRouter.patch(
       action: "location_updated",
       ref: { module: "core-locations", entityType: "location", entityId: String(req.params.id) },
       diff: parsed.data as Record<string, unknown>,
+      before,
     });
     res.json(updated);
   }),
@@ -484,7 +487,9 @@ locationsRouter.post(
 );
 
 const MoveEverythingBody = z.object({
-  to: z.string().uuid(),
+  to: z.string().min(1).max(200),
+  // Set for a thing that holds things (a Backpack); a place when absent.
+  to_kind: z.string().min(1).max(120).optional(),
   places: z.boolean().optional(),
   then_delete: z.boolean().optional(),
 });
@@ -502,7 +507,12 @@ locationsRouter.post(
     const parsed = MoveEverythingBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     try {
-      const moved = await moveEverything(tenantContext(req).org.id, req.params.id!, parsed.data.to, {
+      const { to, to_kind } = parsed.data;
+      if ((!to_kind || to_kind === "core-locations:location") && !z.string().uuid().safeParse(to).success) {
+        res.status(400).json({ error: { code: "invalid_body", message: "`to` is not a place id." } });
+        return;
+      }
+      const moved = await moveEverything(tenantContext(req).org.id, req.params.id!, to_kind ? { kind: to_kind, id: to } : to, {
         places: parsed.data.places,
         thenDelete: parsed.data.then_delete,
         userId: sessionUser(req).id,

@@ -3,6 +3,7 @@ type: feature
 scope: auth
 date: 2026-09-27
 docs_target: docs/USER_GUIDE.md#First account
+docs_published: 2026-10-01
 ---
 Making your Cobblr account happens right on the sign-in page now: your name, email and a password, then Create account, and the link in your email brings you straight back, signed in. The sign-in page is one card, Sign in or Create an account, with "Email me a sign-in link" underneath, instead of four different ways in.
 

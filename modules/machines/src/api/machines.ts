@@ -165,7 +165,8 @@ machinesRouter.patch(
     const ctx = tenantContext(req);
     const before = await db
       .selectFrom("machines_machines")
-      .select("state")
+      // The whole row: the log says what this edit changed, old → new (#4517).
+      .selectAll()
       .where("id", "=", id)
       .where("instance", "=", instanceOf(req))
       .executeTakeFirst();
@@ -209,6 +210,7 @@ machinesRouter.patch(
       action: "machine_updated",
       ref: { module: "machines", entityType: "machine", entityId: id },
       diff: parsed.data,
+      before,
     });
     if (parsed.data.state && parsed.data.state !== before.state) {
       platform().events.emit("machines.machine.state_changed", {

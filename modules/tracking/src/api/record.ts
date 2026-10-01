@@ -7,6 +7,7 @@ import { type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { TrackingDB, MeasurementsTable } from "../db.js";
 import type { Selectable } from "kysely";
+import { valueWithUnit } from "@cobblr/platform-contract/money";
 
 export interface MetricLike {
   id: string;
@@ -66,14 +67,13 @@ export async function logMeasurement(opts: {
   if (goal != null && goalReached(value, goal, metric.goal_direction)) {
     void platform().events.emit("tracking.goal.reached", { orgId, metricId: metric.id, value, goal });
     try {
-      const unit = metric.unit ? ` ${metric.unit}` : "";
       const memberIds = await platform().notifications.orgMemberIds(orgId);
       for (const userId of memberIds) {
         await platform().notifications.dispatch({
           orgId,
           userId,
           eventType: "tracking.goal-reached",
-          message: `🎯 Goal reached: ${metric.name} hit ${goal}${unit}`,
+          message: `🎯 Goal reached: ${metric.name} hit ${valueWithUnit(goal, metric.unit)}`,
           // Straight to the metric, opened. It said "you hit your goal" and
           // then went nowhere, so the only way to see the number behind it was
           // to remember where the metric lived.

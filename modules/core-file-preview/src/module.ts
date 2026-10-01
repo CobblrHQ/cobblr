@@ -20,7 +20,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-file-preview",
-  version: "0.2.1",
+  version: "0.2.2",
   displayName: "File preview",
   description:
     "See 3D models, print files and drawings wherever a file appears, without downloading them.",

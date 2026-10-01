@@ -11,8 +11,9 @@
 
 import { dayIn, daysUntil } from "@cobblr/platform-contract/day";
 
-export type IntervalUnit = "day" | "week" | "month" | "year";
-export const INTERVAL_UNITS: readonly IntervalUnit[] = ["day", "week", "month", "year"];
+// The calendar step rule is shared with everything else that repeats.
+import { addInterval, INTERVAL_UNITS, type IntervalUnit } from "@cobblr/platform-contract/interval";
+export { addInterval, INTERVAL_UNITS, type IntervalUnit };
 
 export interface ScheduleRule {
   /** Calendar interval: every `every_n` `every_unit`s. Null when counter-only. */
@@ -35,23 +36,6 @@ export interface ScheduleState extends ScheduleRule {
 export const DUE_SOON_DAYS = 7;
 /** A tenth of the interval, so "every 200 hours" warns at 180. */
 export const DUE_SOON_COUNTER_FRACTION = 0.1;
-
-/** `n` units after `from`. A month step keeps the day of the month where it
- *  can and clamps where it cannot: every month from Jan 31 is Feb 28/29, then
- *  Mar 31, because each step is counted from the original day, not from the
- *  clamped one. */
-export function addInterval(from: Date, n: number, unit: IntervalUnit, steps = 1): Date {
-  const d = new Date(from.getTime());
-  const k = n * steps;
-  if (unit === "day") return new Date(d.getTime() + k * 86_400_000);
-  if (unit === "week") return new Date(d.getTime() + k * 7 * 86_400_000);
-  const months = unit === "year" ? k * 12 : k;
-  const day = d.getUTCDate();
-  const target = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + months, 1, d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), d.getUTCMilliseconds()));
-  const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
-  target.setUTCDate(Math.min(day, lastDay));
-  return target;
-}
 
 export function hasCalendar(r: ScheduleRule): r is ScheduleRule & { every_n: number; every_unit: IntervalUnit } {
   return typeof r.every_n === "number" && r.every_n > 0 && !!r.every_unit;

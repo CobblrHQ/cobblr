@@ -1,6 +1,8 @@
 // Labels module client. Exposed alongside the UI so other modules
 // (inventory's web UI) can import + call it directly.
 
+import { noteWorkspaceWrite } from "@cobblr/platform-web";
+
 export interface QueueItem {
   id: string;
   user_id: string | null;
@@ -174,17 +176,23 @@ export class LabelsApi {
     if (body !== undefined) headers["Content-Type"] = "application/json";
     const token = this.opts.getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
-    const res = await fetch(`${this.base()}${path}`, {
+    const url = `${this.base()}${path}`;
+    const res = await fetch(url, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    if (res.status === 204) return undefined as T;
+    const wrote = method.toUpperCase() !== "GET";
+    if (res.status === 204) {
+      if (wrote) noteWorkspaceWrite(url);
+      return undefined as T;
+    }
     const parsed = await res.json().catch(() => null);
     if (!res.ok) {
       const err = (parsed as { error?: { code?: string; message?: string } } | null)?.error;
       throw new Error(err?.message ?? `HTTP ${res.status}`);
     }
+    if (wrote) noteWorkspaceWrite(url);
     return parsed as T;
   }
 
@@ -322,9 +330,14 @@ export class LabelsApi {
     const token = this.opts.getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
     const res = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
-    if (res.status === 204) return undefined as T;
+    const wrote = method.toUpperCase() !== "GET";
+    if (res.status === 204) {
+      if (wrote) noteWorkspaceWrite(url);
+      return undefined as T;
+    }
     const parsed = await res.json().catch(() => null);
     if (!res.ok) throw new Error((parsed as { error?: { message?: string } } | null)?.error?.message ?? `HTTP ${res.status}`);
+    if (wrote) noteWorkspaceWrite(url);
     return parsed as T;
   }
   /** driver + settings matter here: a "browser-bluetooth" printer cannot be

@@ -7,10 +7,12 @@
 // proposal before it and nothing asks twice.
 
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { EntityPhoto } from "@cobblr/platform-web";
 import { api, ApiError, type ServiceJob } from "../lib/api";
 import { openAuthedFile } from "../lib/authed-file";
+import { ImageLightbox } from "./ImageLightbox";
 
 const TERMINAL = new Set(["done", "failed", "cancelled"]);
 
@@ -42,6 +44,16 @@ export function ServiceJobCard({ slug, jobId, capability }: { slug: string; jobI
   const confirm = useMutation({ mutationFn: () => api.confirmServiceJob(slug, jobId), onSuccess: settle, onError });
   const cancel = useMutation({ mutationFn: () => api.cancelServiceJob(slug, jobId), onSuccess: settle, onError });
   const answer = useMutation({ mutationFn: (input: unknown) => api.answerServiceJob(slug, jobId, input), onSuccess: settle, onError });
+  // What a waiting job waits for besides a yes ("power off after this print").
+  const waiting = job.data?.status === "awaiting_confirm";
+  const trigger = useQuery({
+    queryKey: [...serviceJobKey(slug, jobId), "trigger"],
+    queryFn: () => api.getServiceJobTrigger(slug, jobId),
+    enabled: waiting,
+  });
+  const t = trigger.data?.trigger ?? null;
+  const armAfter = () => void qc.invalidateQueries({ queryKey: [...serviceJobKey(slug, jobId), "trigger"] });
+  const withdraw = useMutation({ mutationFn: () => api.withdrawServiceJobTrigger(slug, jobId), onSuccess: armAfter, onError });
 
   const j = job.data;
   const status = j?.status ?? "queued";
@@ -62,14 +74,30 @@ export function ServiceJobCard({ slug, jobId, capability }: { slug: string; jobI
         </div>
       )}
 
-      {status === "awaiting_confirm" && (
+      {status === "awaiting_confirm" && t?.armed && (
+        <div className="mt-2" data-armed="">
+          <div className="text-[12px] text-content dark:text-mortar-100">
+            Will run {t.label}, exactly as it was asked. Until {new Date(t.until).toLocaleString()}.
+          </div>
+          <button type="button" disabled={withdraw.isPending} onClick={() => withdraw.mutate()} className="mt-2 px-3 py-1 rounded border border-line dark:border-slate-700 disabled:opacity-60">
+            Withdraw
+          </button>
+        </div>
+      )}
+
+      {status === "awaiting_confirm" && !t?.armed && (
         <div className="mt-2">
           <div className="text-[12px] text-amber-700 dark:text-amber-500">
             Nothing has run yet. It starts only when you say yes, exactly as it was asked.
           </div>
           <div className="flex gap-2 mt-2">
-            <button type="button" disabled={busy} onClick={() => confirm.mutate()} className="px-3 py-1 rounded bg-cobble-600 text-white disabled:opacity-60">
-              {confirm.isPending ? "Starting…" : "Yes, start it"}
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => confirm.mutate(undefined, { onSuccess: armAfter })}
+              className="px-3 py-1 rounded bg-cobble-600 text-white disabled:opacity-60"
+            >
+              {confirm.isPending ? "Starting…" : t ? `Yes, start it ${t.label}` : "Yes, start it"}
             </button>
             <button type="button" disabled={busy} onClick={() => cancel.mutate()} className="px-3 py-1 rounded border border-line dark:border-slate-700 disabled:opacity-60">
               Don't
@@ -106,6 +134,9 @@ export function ServiceJobCard({ slug, jobId, capability }: { slug: string; jobI
         </button>
       )}
       {said && <div className="text-[12px] text-red-700 dark:text-red-400 mt-1">{said}</div>}
+      <Link to={`/services/runs/${jobId}`} className="mt-2 inline-block text-[12px] text-accent hover:underline">
+        See the whole run
+      </Link>
     </div>
   );
 }
@@ -191,15 +222,22 @@ function NeedsInput({ slug, needs, busy, onAnswer }: { slug: string; needs: Need
   );
 }
 
-/** A picture the job made, shown whole in a box sized before it arrives. */
+/** A picture the job made, shown whole in a box sized before it arrives; a
+ *  tap opens it in the shared viewer. */
 function JobPicture({ slug, fileId, name }: { slug: string; fileId: string; name: string }) {
+  const [open, setOpen] = useState(false);
   return (
-    <EntityPhoto
-      src={api.fileRawUrl(slug, fileId, "medium")}
-      alt={name}
-      aspect="4/3"
-      fit="contain"
-      className="w-48 rounded border border-line dark:border-slate-700"
-    />
+    <>
+      <button type="button" onClick={() => setOpen(true)} aria-label={`Open ${name}`} className="block cursor-zoom-in">
+        <EntityPhoto
+          src={api.fileRawUrl(slug, fileId, "medium")}
+          alt={name}
+          aspect="4/3"
+          fit="contain"
+          className="w-48 rounded border border-line dark:border-slate-700"
+        />
+      </button>
+      {open && <ImageLightbox items={[{ key: fileId, caption: name, file: { slug, fileId } }]} index={0} onClose={() => setOpen(false)} />}
+    </>
   );
 }

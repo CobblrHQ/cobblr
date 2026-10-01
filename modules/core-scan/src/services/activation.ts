@@ -16,9 +16,21 @@ export function noteScanCaptured(orgId: string, userId: string | null | undefine
       event: "scan_captured",
       detail: { source_kind: sourceKind },
     });
+    platform().telemetry.count({ orgId, metric: "scan.captured" });
   } catch (err) {
     // Telemetry never fails a capture. A stub platform in a unit test may not
     // carry the seam at all.
+    console.error("[core-scan] telemetry threw:", (err as Error).message);
+  }
+}
+
+/** One identification served to a workspace, for the operator's usage stats:
+ *  a barcode or a photo, and whether it found anything. A call nobody answered
+ *  (no service, out of allowance) is not counted. */
+export function noteIdentification(orgId: string, kind: "barcode" | "vision", found: boolean): void {
+  try {
+    platform().telemetry.count({ orgId, metric: `identify.${kind}.${found ? "found" : "not_found"}` });
+  } catch (err) {
     console.error("[core-scan] telemetry threw:", (err as Error).message);
   }
 }

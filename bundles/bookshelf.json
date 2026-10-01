@@ -3,7 +3,14 @@
     "id": "cobblr.community.bookshelf",
     "released_at": "2026-06-28",
     "changelog": "Call them books or titles: pick the word when you install, or change it later in the table's settings, and every label says it. Earlier: The shelf opens on its covers rather than the table, and remembers the view you pick. A book is not stock: the shelf no longer offers Use one, Used up or a reorder point, and the parts-category picker is gone from the book form. An ISBN scan fills author, year and ISBN, and a book you already have is offered instead of a second copy.",
-    "version": "0.3.0",
+    "version": "0.3.1",
+    "releases": [
+      {
+        "version": "0.3.1",
+        "released_at": "2026-10-02",
+        "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before."
+      }
+    ],
     "name": "Bookshelf",
     "description": "Your books as their own shelf: author + ISBN + year + read status, on a lean catalog that opens as a cover wall. Spine-label wire bundled.",
     "author": "Cobblr community",
@@ -94,6 +101,7 @@
             "name": "read_status",
             "display_label": "Status",
             "type": "text",
+            "learns": false,
             "choices": [
               "To read",
               "Reading",

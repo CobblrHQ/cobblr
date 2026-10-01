@@ -27,6 +27,7 @@ import { pinnedFirst } from "../lib/placeItems";
 import { recordHref } from "@cobblr/platform-contract/instance-detail";
 import { countOf } from "@cobblr/platform-contract/plural";
 import { deleteDialogMessage, deletedSentence, restoredSentence } from "../lib/placeDelete";
+import { formatStoredMoney } from "@cobblr/platform-contract/money";
 
 /** Where a kind's detail page lives. The placement endpoint answers WHAT is
  *  here; the registry is still how a kind says where to click through to. */
@@ -109,6 +110,15 @@ export function LocationDetailPage() {
     queryFn: () =>
       api.placementContents(activeSlug, "core-locations:location", id!),
     enabled: !!activeSlug && !!id,
+  });
+
+  // What everything here is worth, at any depth, each thing once: a computer
+  // on a shelf counts its own value and its installed parts as themselves.
+  const worth = useQuery({
+    queryKey: ["placement-worth", activeSlug, id],
+    queryFn: () => api.placementWorth(activeSlug, { kind: "core-locations:location", id: id! }),
+    enabled: !!activeSlug && !!id,
+    staleTime: 30_000,
   });
 
   // A field a bundle or a person adds to places, saved on its own and merged
@@ -230,6 +240,11 @@ export function LocationDetailPage() {
               </span>
               {l.short_name && (
                 <span className="text-faint dark:text-slate-500">{l.short_name}</span>
+              )}
+              {(worth.data?.total ?? 0) > 0 && (
+                <span data-testid="worth-here" className="text-muted" title={worth.data!.withheld ? "Some values are not shown to you, so they are left out" : "What everything kept here is worth, each thing counted once"}>
+                  worth {formatStoredMoney(worth.data!.total, "amount")}
+                </span>
               )}
             </div>
             {l.description && (

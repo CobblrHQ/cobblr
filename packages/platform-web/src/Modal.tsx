@@ -27,6 +27,7 @@ import { useOverLiveSurface } from "./live-surface";
 import { modalPanelLayout, modalOverlayPadding } from "./modal-layout";
 import { useLayerStack } from "./layer-stack";
 import { useDialogFocus } from "./useDialogFocus";
+import { useEscapeToClose } from "./useEscapeToClose";
 
 interface Props {
   open: boolean;
@@ -136,25 +137,12 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
     dirtyRef.current = true;
   };
 
+  // Prevent background scroll while open. Escape is ModalOverlay's: it knows
+  // whether this modal is the layer on top.
   useEffect(() => {
     if (!open || inline) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        // A surface marked data-modal-escape-exempt (the docked chat panel)
-        // coexists with modals — its Escape must not close them.
-        if (e.target instanceof HTMLElement && e.target.closest("[data-modal-escape-exempt]")) return;
-        e.preventDefault();
-        onClose();
-      }
-    }
-    document.addEventListener("keydown", onKey);
-    // Prevent background scroll while open
-    const release = lockPageScroll();
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      release();
-    };
-  }, [open, onClose, inline]);
+    return lockPageScroll();
+  }, [open, inline]);
 
   if (!open) return null;
 
@@ -265,7 +253,7 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
     );
   }
 
-  return createPortal(<ModalOverlay overLive={overLive} onBackdrop={handleBackdrop} panel={panelRef} labelledBy={title ? titleId : undefined}>
+  return createPortal(<ModalOverlay overLive={overLive} onBackdrop={handleBackdrop} onEscape={onClose} panel={panelRef} labelledBy={title ? titleId : undefined}>
       {panel}
     </ModalOverlay>, document.body);
 }
@@ -273,10 +261,11 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
 /** The modal's backdrop and frame, mounted only while the modal is open, so it
  *  takes its place in the layer stack at the moment it opens: above the Ask
  *  Cobb panel it was opened from, not under it (#3954). */
-function ModalOverlay({ overLive, onBackdrop, panel, labelledBy, children }: { overLive: boolean; onBackdrop: () => void; panel: RefObject<HTMLDivElement | null>; labelledBy?: string; children: ReactNode }) {
+function ModalOverlay({ overLive, onBackdrop, onEscape, panel, labelledBy, children }: { overLive: boolean; onBackdrop: () => void; onEscape: () => void; panel: RefObject<HTMLDivElement | null>; labelledBy?: string; children: ReactNode }) {
   const ref = useRef<HTMLDivElement | null>(null);
   useLayerStack(ref);
   useDialogFocus(true, panel, ref);
+  useEscapeToClose(true, ref, onEscape);
   return (
     <div
       ref={ref}

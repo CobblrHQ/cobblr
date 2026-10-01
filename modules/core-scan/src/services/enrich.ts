@@ -9,6 +9,7 @@
 // resolver is slow we return the bare row immediately and let
 // this finish detached.
 
+import { noteSharedName, sharedTitleOf } from "./shared-title.js";
 import { pictureColour, pictureColours, colourContradiction, colourShows, looksDifferent } from "./picture-colour.js";
 import { ownPhotoColours } from "./withhold-picture.js";
 import { looksOfRow, pictureVerdict, statedColoursOf } from "./picture-agrees.js";
@@ -470,7 +471,20 @@ interface EnrichContext {
 export { STORE_CODE_NOTE } from "@cobblr/platform-contract/scan-copy";
 import { STORE_CODE_NOTE as STORE_CODE_WORDS } from "@cobblr/platform-contract/scan-copy";
 
+/** Identify a scanned or pasted code. A title the person shared with it
+ *  (services/shared-title.ts) is already their name for the row; here it
+ *  steers the search, and when nothing else identified the thing, the card
+ *  says the name came from what they shared. */
 export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
+  const shared = await sharedTitleOf(ctx.db, ctx.itemId);
+  try {
+    await enrichCode(shared && !ctx.hint ? { ...ctx, hint: shared } : ctx);
+  } finally {
+    if (shared) await noteSharedName(ctx.db, ctx.itemId).catch((err: unknown) => console.error("[core-scan] shared name note failed:", (err as Error).message));
+  }
+}
+
+async function enrichCode(ctx: EnrichContext): Promise<void> {
   // If the user hand-picked a catalog image, NO enrichment path may overwrite it —
   // it's their explicit choice and must survive a re-run/hint correction. The write
   // paths below still overwrite the catalog_image_* COLUMNS, so we hold the refs up
@@ -1753,6 +1767,7 @@ export async function downloadCatalogImage(
       const written = await platform().files.write(ctx.orgId, trimmed, {
         filename,
         mimeType: trimmed === raw ? blob.type || "image/jpeg" : "image/jpeg",
+        photoSource: { kind: "catalog", original_url: imageUrl, at: new Date().toISOString() },
       });
       if (!written) continue;
       await ctx.db

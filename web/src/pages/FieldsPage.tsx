@@ -3,13 +3,13 @@
 // own without writing a bundle manifest.
 
 import { useState, type FormEvent } from "react";
-import { FIELD_TYPE_VALUES } from "@cobblr/platform-contract";
+import { FIELD_TYPE_VALUES, fieldTypeTakesUnit } from "@cobblr/platform-contract";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Plus } from "lucide-react";
 import { FIELD_ROLE_LABELS, FIELD_ROLE_VALUES, fieldRoleTypeRefusal } from "@cobblr/platform-contract";
 import { ApiError, api, type CatalogFieldRenderer, type FieldScope, type PlatformFieldDef, type FieldPresetState } from "../lib/api";
 import { TraitScopePicker } from "../components/TraitScopePicker";
-import { ChoicesInput } from "../components/ChoicesInput";
+import { ChoicesInput, LearnsToggle } from "../components/ChoicesInput";
 import { slugifyFieldName } from "../lib/field-key";
 import { fieldFormReadiness } from "../lib/field-form";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -29,6 +29,10 @@ const TYPES: PlatformFieldDef["type"][] = [...FIELD_TYPE_VALUES];
 const RENDERERS_BY_TYPE: Record<PlatformFieldDef["type"], CatalogFieldRenderer[]> = {
   text: ["text", "color-hex", "image-url", "url-link", "code", "qr"],
   number: ["text", "year"],
+  // A measured value shows with its best prefix ("4.7 kΩ"); what was typed is on hover.
+  measure: ["text"],
+  // Money shows as "$4,300" through the one formatter; nothing to pick.
+  money: ["text"],
   // A person renders as their name; nothing else would mean anything.
   member: ["text"],
   person: ["text"],
@@ -85,6 +89,8 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [nameTouched, setNameTouched] = useState(false);
   const [label, setLabel] = useState("");
   const [choices, setChoices] = useState<string[]>([]);
+  // null = the default (a person's own field with choices learns).
+  const [learns, setLearns] = useState<boolean | null>(null);
   // What a field MEANS, so the pipeline can fill it. The API has always taken
   // this; the form never sent one, which is why a hand-built "Acquired on" was
   // a plain date the scan could not fill. Optional and empty by default: a role
@@ -171,10 +177,11 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
         // A relation with no ref_kind stores an id nothing can resolve; the API
         // rejects it rather than let a permanently-broken field be created.
         ref_kind: type === "relation" && refKind ? refKind : undefined,
-        unit: type === "number" && unit.trim() ? unit.trim() : undefined,
+        unit: fieldTypeTakesUnit(type) && unit.trim() ? unit.trim() : undefined,
         // Only text fields take a dropdown; the API rejects choices on any other
         // type, so don't send an empty array and trip it.
         choices: type === "text" && choices.length ? choices : undefined,
+        learns: type === "text" && learns !== null ? learns : undefined,
         field_role: fieldRole ? (fieldRole as PlatformFieldDef["field_role"]) : undefined,
       })),
     onSuccess: (created) => {
@@ -455,7 +462,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
             >
               {TYPES.map((t) => (
                 <option key={t} value={t}>
-                  {t}
+                  {t === "measure" ? "measure (4k7, 100 nF, 16 V)" : t === "money" ? "money ($4,300)" : t}
                 </option>
               ))}
             </select>
@@ -499,7 +506,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
           {/* Choices + Renderer share one row: the choice LIST is the big input and
               the renderer is a small dropdown, so 2/3 + 1/3 rather than two
               full-width bands stacked. A text field with choices renders as a
-              DROPDOWN on the record (with a "+ add new" option) — that control has
+              picker on the record (type a value not on the list and it is kept) — that control has
               existed for ages; there was simply no way to SET the choices here. */}
           {/* What the field MEANS. The pipeline fills a field by its ROLE, so a
               hand-built "Acquired on" with no role is a date nothing can fill -
@@ -542,6 +549,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
                     onChange={setChoices}
                     placeholder="e.g. FB Marketplace, Gift, Bought new"
                   />
+                  <LearnsToggle def={{ choices, learns }} onChange={setLearns} />
                 </div>
               )}
               {rendererChoices.length > 1 && (
@@ -617,12 +625,14 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
               </span>
             </label>
           )}
-          {type === "number" && (
+          {fieldTypeTakesUnit(type) && (
             <label className="block">
               <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                 Unit
                 <span className="ml-2 normal-case tracking-normal text-faint dark:text-slate-600">
-                  optional - what the number measures ("mm", "g")
+                  {type === "measure"
+                    ? `optional - what a bare number means ("ohm", "farad", "volt")`
+                    : `optional - what the number measures ("mm", "g")`}
                 </span>
               </span>
               <UnitInput value={unit} onCommit={setUnit} placeholder="none" />

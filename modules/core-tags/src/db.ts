@@ -28,9 +28,22 @@ export interface TagAssignmentsTable {
   created_at: Generated<Date>;
 }
 
+/** migrations/0006_deleted_tags.sql: what a tag delete or merge took with it. */
+export interface DeletedTagsTable {
+  id: string;
+  name: string;
+  row: unknown;
+  assignments: Generated<unknown>;
+  children: Generated<unknown>;
+  merged_into: string | null;
+  deleted_by: string | null;
+  deleted_at: Generated<Date>;
+}
+
 export interface CoreTagsDB {
   core_tags_tags: TagsTable;
   core_tags_assignments: TagAssignmentsTable;
+  core_tags_deleted: DeletedTagsTable;
 }
 
 /** Re-exported from the contract so this module cannot fall behind the

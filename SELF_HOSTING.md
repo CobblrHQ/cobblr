@@ -252,6 +252,24 @@ They are offered chat first, then forum, then tracker, then docs: chat gets the 
 
 The **"Open an issue"** button on a self-hosted instance is separate: it carries the report you just typed and goes to Cobblr's own tracker, because that is where a bug in Cobblr belongs.
 
+## Discord messages
+
+Cobblr can send each person a Discord message before things go off, and one
+morning list of what is due. That needs two things on the server, and without
+both nobody can connect Discord, so it is not offered anywhere: no Connect
+Discord button, no Discord schedule, no Discord DM binding. Notifications reach
+people in the app and by email instead. A server admin sees one note saying so
+on **Your account → Notifications → Discord, email & in-app**.
+
+| Variable | What it is |
+|---|---|
+| `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` | A Discord application's OAuth2 credentials (Discord Developer Portal → your application → OAuth2). Used only to learn who the person is (`identify`). |
+| `DISCORD_REDIRECT_URI` | The callback registered on that application. Defaults to `PUBLIC_BASE_URL` + `/api/v1/me/discord/oauth-callback` when `PUBLIC_BASE_URL` is set. |
+| `COBBLR_DISCORD_BOT_URL` | The bot that sends the messages. Cobblr never talks to Discord itself; it posts each message to this URL's `/dm`. |
+
+Set all of them and restart the api: the doors come back, and connecting sends
+a test message to prove a message reaches the person.
+
 ## Backups
 
 The stack takes a **nightly `pg_dumpall`** to `./data/backups/daily` on its own

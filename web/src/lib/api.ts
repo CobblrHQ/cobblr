@@ -2,7 +2,8 @@
 // call so the AuthProvider can update it without rewiring the client.
 // Everything goes through `request<T>` so error shape stays uniform.
 
-import type { TipState } from "@cobblr/platform-web";
+import type { FieldValuesUsedBody, TipState } from "@cobblr/platform-web";
+import { noteWorkspaceWrite } from "@cobblr/platform-web";
 import type { CancelResult } from "./digifab-cancel";
 import type { ScanCountReason } from "@cobblr/platform-contract/scan-count";
 import type { AiChainAnswer } from "./ai-chain";
@@ -200,19 +201,9 @@ export function noteWorkspaceShape(path: string, header: string | null): void {
 // moved. They poll, but a person who just filed the last item should not see
 // "1" beside the inbox for another fifteen seconds (#3582). Told here for the
 // same reason as the shape: every workspace write passes through here.
-const writeListeners = new Set<ShapeListener>();
-export function subscribeWorkspaceWrite(listener: ShapeListener): () => void {
-  writeListeners.add(listener);
-  return () => {
-    writeListeners.delete(listener);
-  };
-}
-function noteWorkspaceWrite(path: string): void {
-  const m = /^\/orgs\/([^/?#]+)/.exec(path);
-  if (!m) return;
-  const slug = decodeURIComponent(m[1]!);
-  writeListeners.forEach((l) => l(slug));
-}
+// The door itself is shared with the modules' own clients
+// (@cobblr/platform-web workspace-writes), so their writes are told too.
+export { subscribeWorkspaceWrite } from "@cobblr/platform-web";
 
 // A write that can change whether AI works here (a connection or its routing,
 // a share, the AI switch, a provider): every reader of AI availability is
@@ -654,7 +645,7 @@ export interface VendorSummary extends Vendor {
 }
 
 export interface VendorDetail extends Vendor {
-  orders: Array<Pick<Order, "id" | "order_number" | "status" | "ordered_at" | "expected_arrival" | "arrived_at" | "total_cost">>;
+  orders: Array<Pick<Order, "id" | "order_number" | "status" | "ordered_at" | "expected_arrival" | "arrived_at" | "total_cost" | "total">>;
   order_count: number;
   total_spend: number;
 }
@@ -679,7 +670,12 @@ export interface Order {
   expected_arrival: string | null;
   arrived_at: string | null;
   status: "planned" | "ordered" | "in-transit" | "arrived" | "cancelled";
+  /** The figure somebody stated (a receipt's total, typed in). */
   total_cost: string | null;
+  /** What the order cost: the stated total, else its lines plus shipping.
+   *  Every spend figure reads this (order-total.ts); null when nothing on
+   *  the order has a price. */
+  total?: string | null;
   shipping_cost: string | null;
   tracking_number: string | null;
   /** Where the parcel is, written by the arrival sweep. Null until something
@@ -746,7 +742,20 @@ export type ShipmentStatusReason =
   | "no_driver"
   | "not_connected"
   | "carrier_error"
-  | "quota_exhausted";
+  | "quota_exhausted"
+  | "busy";
+
+export interface OrderSummary {
+  count: number;
+  open: number;
+  in_transit: number;
+  from_receipts: number;
+  spend: number;
+  /** How many orders have a total (stated, or from their lines). */
+  priced: number;
+  by_month: Array<{ month: string; spend: number }>;
+  top_vendors: Array<{ vendor: string | null; spend: number }>;
+}
 
 export interface OrderItem {
   id: string;
@@ -1015,6 +1024,54 @@ export interface OutboundEmailLogRow {
   error: string | null;
   at: string;
 }
+
+/** One library item (a document, a game) as the record's library panel shows it. */
+export interface DocumentRow {
+  connection_id: string;
+  ref: string;
+  /** What it is ("document", "game") and its kind's heading ("Games"). */
+  type: string;
+  type_label: string;
+  title: string;
+  subtitle?: string | null;
+  open_label?: string | null;
+  created: string | null;
+  tags: string[];
+  open_url: string | null;
+  has_thumb: boolean;
+  /** Linked: the system it is in. */
+  system?: string;
+  written_back?: boolean;
+  /** Suggested: what made it a match ("serial", "model", "name"). */
+  because?: string | null;
+  score?: number;
+}
+export interface RecordDocuments {
+  available: boolean;
+  /** Each library this person can ask here, and what it does beyond find. */
+  systems: Array<{
+    connection_id: string;
+    label: string;
+    can_link_back: boolean;
+    can_copy: boolean;
+    /** How this library pushes a new item to Cobblr, when it can. */
+    push_setup: { library: string; arrives: string; before: string[]; after: string[] } | null;
+  }>;
+  linked: DocumentRow[];
+  suggestions: DocumentRow[];
+  matching: boolean;
+  matched_at: string | null;
+  /** The document system did not answer the last background ask. */
+  unanswered: string | null;
+}
+export interface DocumentFindSystem {
+  connection_id: string;
+  label: string;
+  items: DocumentRow[];
+  error?: string;
+}
+const documentsPath = (slug: string, kind: string, id: string) =>
+  `/orgs/${slug}/modules/core-documents/records/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`;
 
 export const api = {
   /** A one-shot URL for an iframe document that must run inline script (a
@@ -1371,9 +1428,33 @@ export const api = {
    *  built phrases are how Auto and the web search drifted apart. */
   enrichEntityImage: (
     slug: string,
-    body: { entity_kind: string; entity_id: string; query?: string; instance?: string | null; image_url?: string; file_id?: string },
+    body: {
+      entity_kind: string;
+      entity_id: string;
+      query?: string;
+      instance?: string | null;
+      image_url?: string;
+      shown_url?: string;
+      file_id?: string;
+      /** A picked image_url: chosen by the person or by AI Pick, where it was found, and why. */
+      source?: "web" | "ai_pick";
+      source_page?: string;
+      searched?: string;
+      reason?: string;
+    },
   ) =>
-    request<{ image_path: string | null }>("POST", `/orgs/${slug}/modules/core-scan/entity-image`, body),
+    // `reason` says why, in words, when no picture was kept. A picture made
+    // the main photo says what the record had (`previous_image_path`, for
+    // Undo); that one stays in the record's photos.
+    request<{ image_path: string | null; previous_image_path?: string | null; file_id?: string; reason?: string }>("POST", `/orgs/${slug}/modules/core-scan/entity-image`, body),
+  /** Make one of a record's photos its main photo, or put back the one it had
+   *  (Undo). The photo it replaces stays in the record's photos. */
+  setMainPhoto: (slug: string, body: { entity_kind: string; entity_id: string; instance?: string | null; file_id?: string; image_path?: string | null }) =>
+    request<{ image_path: string | null; previous_image_path: string | null }>("POST", `/orgs/${slug}/modules/core-scan/entity-image/main`, body),
+  /** The scan inbox's Pick best, for a record: the AI chooses among the
+   *  pictures on screen that show the record. Runs only when pressed. */
+  rankRecordPhotoAi: (slug: string, body: { entity_kind: string; entity_id: string; candidates: ImageOption[] }) =>
+    request<{ chosen_url: string | null; reason: string }>("POST", `/orgs/${slug}/modules/core-scan/entity-image/rank-ai`, body),
   /** Pictures the platform suggested for records made without one (#3818):
    *  the ones waiting for an answer, still being looked for, or not found. */
   photoSuggestions: (slug: string, kind: string | null, ids?: string[]) => {
@@ -1415,7 +1496,7 @@ export const api = {
    *  phrase it actually searched. */
   imageOptions: (
     slug: string,
-    opts: { q?: string; brand?: string; entity?: { kind: string; id: string } | null },
+    opts: { q?: string; brand?: string; entity?: { kind: string; id: string } | null; fresh?: boolean },
   ) => {
     const p = new URLSearchParams();
     if (opts.q?.trim()) p.set("q", opts.q.trim());
@@ -1424,7 +1505,10 @@ export const api = {
       p.set("entity_kind", opts.entity.kind);
       p.set("entity_id", opts.entity.id);
     }
-    return request<{ items: ImageOption[]; query?: string; throttled?: boolean }>(
+    if (opts.fresh) p.set("fresh", "1");
+    // For a record: its last results come back remembered (no new search),
+    // with the result its photo came from (`in_use_url`) and AI Pick's choice.
+    return request<{ items: ImageOption[]; query?: string; throttled?: boolean; remembered?: boolean; in_use_url?: string | null; ai_url?: string | null; ai_reason?: string | null }>(
       "GET",
       `/orgs/${slug}/modules/core-scan/image-options?${p.toString()}`,
     );
@@ -1443,8 +1527,25 @@ export const api = {
     request<void>("DELETE", `${primaryBase(slug, "machines/machines", instance)}/${id}`),
 
   // purchases module (instance? scopes to /instances/:name/items)
-  listOrders: (slug: string, instance?: string) =>
-    request<{ items: Order[] }>("GET", primaryBase(slug, "purchases/orders", instance)),
+  /** A page of orders, newest first; `next_cursor` fetches the next. Status
+   *  and search are applied on the server, over every order. */
+  listOrders: (slug: string, instance?: string, opts: { status?: string; q?: string; cursor?: string | null; limit?: number } = {}) => {
+    const p = new URLSearchParams();
+    if (opts.status) p.set("status", opts.status);
+    if (opts.q) p.set("q", opts.q);
+    if (opts.cursor) p.set("cursor", opts.cursor);
+    if (opts.limit) p.set("limit", String(opts.limit));
+    const qs = p.toString();
+    return request<{ items: Order[]; next_cursor?: string | null }>("GET", `${primaryBase(slug, "purchases/orders", instance)}${qs ? `?${qs}` : ""}`);
+  },
+  /** The figures over every order the filters match, not the page loaded. */
+  orderSummary: (slug: string, opts: { status?: string; q?: string } = {}) => {
+    const p = new URLSearchParams();
+    if (opts.status) p.set("status", opts.status);
+    if (opts.q) p.set("q", opts.q);
+    const qs = p.toString();
+    return request<OrderSummary>("GET", `/orgs/${slug}/modules/purchases/orders/summary${qs ? `?${qs}` : ""}`);
+  },
   getOrder: (slug: string, id: string, instance?: string) =>
     request<Order & { items: OrderItem[] }>("GET", `${primaryBase(slug, "purchases/orders", instance)}/${id}`),
   createOrder: (slug: string, body: Partial<Order>, instance?: string) =>
@@ -1538,11 +1639,16 @@ export const api = {
     if (opts?.pinned) qs.set("pinned", "1");
     if (opts?.kind) qs.set("kind", opts.kind);
     if (opts?.q) qs.set("q", opts.q);
-    const tail = qs.toString();
-    return request<{ items: KnowledgeEntry[] }>(
-      "GET",
-      `/orgs/${slug}/modules/knowledge/entries${tail ? `?${tail}` : ""}`,
-    );
+    // Every entry, not the first page: the route answers a page and the total.
+    return walkPages<KnowledgeEntry>((offset, limit) => {
+      const page = new URLSearchParams(qs);
+      page.set("limit", String(limit));
+      page.set("offset", String(offset));
+      return request<{ items: KnowledgeEntry[]; total?: number | null; complete?: boolean }>(
+        "GET",
+        `/orgs/${slug}/modules/knowledge/entries?${page}`,
+      );
+    });
   },
 
   // ── discussion ──────────────────────────────────────────────────────────
@@ -1777,8 +1883,13 @@ export const api = {
   connectionCatalogue: () =>
     request<{ items: AiProviderDef[] }>("GET", "/me/connections/catalogue"),
   /** Check personal credentials without saving them (twin of testAiCredentials). */
-  testConnection: (body: { provider_id: string; credentials: Record<string, string> }) =>
+  testConnection: (body: { provider_id: string; kind?: string; credentials: Record<string, string> }) =>
     request<AiConnectionTest>("POST", "/me/connections/test", body),
+  /** What a connection would be before it is saved: a service's name and
+   *  what it offers, read from its manifest, or the field the manifest gets
+   *  wrong (400 invalid_manifest, `details`). Nothing is stored. */
+  previewConnection: (body: { provider_id: string; credentials: Record<string, string> }) =>
+    request<{ provider_id: string; label: string | null; preview: ServicePreview | null }>("POST", "/me/connections/preview", body),
   addConnection: (body: UserConnectionInput) =>
     request<{ id: string; verification?: ConnectionVerification }>("POST", "/me/connections", body),
   updateConnection: (id: string, body: Partial<UserConnectionInput>) =>
@@ -1861,6 +1972,33 @@ export const api = {
       "GET",
       `/orgs/${slug}/modules/core-placement/of?containee_kind=${encodeURIComponent(containeeKind)}&containee_id=${encodeURIComponent(containeeId)}`,
     ),
+  /** Records that hold things and are not places by nature (a Backpack, a
+   *  toolbox): offered beside the places wherever a place is picked. */
+  placementHolders: (slug: string) =>
+    request<{ items: PlaceHolder[] }>("GET", `/orgs/${slug}/modules/core-placement/holders`),
+  /** What a kind calls the things inside its records ("Parts"); null word = "Contents". */
+  contentsWord: (slug: string, kind: string) =>
+    request<{ word: string | null; custom: string | null; default_word: string | null }>(
+      "GET",
+      `/orgs/${slug}/modules/core-placement/word?kind=${encodeURIComponent(kind)}`,
+    ),
+  /** What everything is worth, each thing once: the workspace, or one place. */
+  placementWorth: (slug: string, within?: { kind: string; id: string } | null) =>
+    request<{ total: number; records: number; withheld: boolean }>(
+      "GET",
+      `/orgs/${slug}/modules/core-placement/worth${within ? `?within_kind=${encodeURIComponent(within.kind)}&within_id=${encodeURIComponent(within.id)}` : ""}`,
+    ),
+  /** Where a thing is, every step up: "Headphones" → "Backpack, in Desk drawer". */
+  placementPath: (slug: string, containeeKind: string, containeeId: string) =>
+    request<{
+      path: Array<{ kind: string; id: string; name: string }>;
+      line: string;
+      /** The thing it sits inside, when that is not a place (a Backpack). */
+      inside?: { kind: string; id: string; name: string } | null;
+    }>(
+      "GET",
+      `/orgs/${slug}/modules/core-placement/path?containee_kind=${encodeURIComponent(containeeKind)}&containee_id=${encodeURIComponent(containeeId)}`,
+    ),
   placementPlace: (
     slug: string,
     body: {
@@ -1932,8 +2070,9 @@ export const api = {
     slug: string,
     { label, ...body }: {
       actionId: string;
-      entityKind: string;
-      entityId: string;
+      /** Left out for an action on the workspace (scope "workspace"). */
+      entityKind?: string;
+      entityId?: string;
       bindingId?: string;
       args?: Record<string, unknown>;
       /** A scanned action label's code: the door checks it and the history
@@ -2012,6 +2151,12 @@ export const api = {
     request<{ items: PlatformBinding[] }>("GET", `/orgs/${slug}/bindings`),
   // Available trigger events (enabled modules' manifest-declared events)
   // for the wire composer's typeahead.
+  /** Workspace actions a wire can run on no record ("Run a service"). */
+  listWireActions: (slug: string) => request<{ items: WireRecordlessAction[] }>("GET", `/orgs/${slug}/wire-actions`),
+  /** Which record triggers ("a record is created / updated / deleted") this
+   *  kind can carry, and why not. */
+  getWireLifecycle: (slug: string, kind: string) =>
+    request<{ kind: string; triggers: Record<string, { ok: boolean; why: string | null }> }>("GET", `/orgs/${slug}/wire-lifecycle?kind=${encodeURIComponent(kind)}`),
   listWireEvents: (slug: string) =>
     request<{ items: { event: string; module: string }[] }>(
       "GET",
@@ -2090,6 +2235,12 @@ export const api = {
     request<PlatformFieldDef>("PATCH", `/orgs/${slug}/field-defs/${id}`, body),
   deleteFieldDef: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/field-defs/${id}`),
+  /** What changing a field's type would do to the values it holds. */
+  retypePreview: (slug: string, id: string, to: string) =>
+    request<{ from: string; to: string; checked: number; complete: boolean; wontFit: number; examples: Array<{ id: string; title: string; value: unknown }>; drops: string[] }>(
+      "GET",
+      `/orgs/${slug}/field-defs/${id}/retype-preview?to=${encodeURIComponent(to)}`,
+    ),
   // Form-builder sections — group a kind's fields under headings.
   listFieldSections: (slug: string, kind: string) =>
     request<{ items: FieldSection[] }>("GET", `/orgs/${slug}/field-sections?kind=${encodeURIComponent(kind)}`),
@@ -2115,18 +2266,20 @@ export const api = {
   ) => request<NativeFieldOverride>("PUT", `/orgs/${slug}/native-field-overrides`, body),
   deleteNativeFieldOverride: (slug: string, entityKind: string, name: string) =>
     request<void>("DELETE", `/orgs/${slug}/native-field-overrides/${encodeURIComponent(entityKind)}/${encodeURIComponent(name)}`),
-  appendFieldDefChoice: async (slug: string, id: string, value: string) => {
-    // Fetch current choices, append, PATCH. The server routes a bundle-owned
-    // field's choices to the user override layer, so this never clobbers a bundle.
-    const list = await request<{ items: PlatformFieldDef[] }>("GET", `/orgs/${slug}/field-defs`);
-    const cur = list.items.find((f) => f.id === id);
-    const choices = [...(cur?.choices ?? []), value];
-    return request<PlatformFieldDef>("PATCH", `/orgs/${slug}/field-defs/${id}`, { choices });
+  /** What a field already holds across a kind's records, for the choice
+   *  picker (GET /field-values). Growing a field's choices is
+   *  platform:learn-choice, never a client-side read-modify-write. */
+  fieldValues: (slug: string, kind: string, field: string, opts: { detail?: string | null; note?: boolean } = {}) => {
+    const q = new URLSearchParams({ kind, field, ...(opts.detail ? { detail: opts.detail } : {}), ...(opts.note ? { note: "1" } : {}) });
+    return request<FieldValuesUsedBody>("GET", `/orgs/${slug}/field-values?${q.toString()}`);
   },
 
   // Bundles (C.2)
   listBundles: (slug: string) =>
     request<{ items: PlatformBundle[] }>("GET", `/orgs/${slug}/bundles`),
+  /** Bundles this workspace installed and later took out: never suggested again. */
+  passedBundles: (slug: string) =>
+    request<{ items: string[] }>("GET", `/orgs/${slug}/bundles/passed`),
   installBundle: (
     slug: string,
     manifest: PlatformBundleManifest,
@@ -2416,6 +2569,15 @@ export const api = {
     request<void>("POST", `/me/notifications/${id}/read`),
   meMarkAllNotificationsRead: () =>
     request<{ count: number }>("POST", "/me/notifications/read-all"),
+  meNotificationStreamTicket: () => request<{ ticket: string }>("POST", "/me/notifications/stream-ticket"),
+  meNotificationKinds: (orgId: string) =>
+    request<{ items: NotificationKindEntry[] }>("GET", `/me/notification-kinds?org_id=${encodeURIComponent(orgId)}`),
+  meMarkNotificationUnread: (id: string) =>
+    request<void>("POST", `/me/notifications/${id}/unread`),
+  meDeleteNotification: (id: string) =>
+    request<void>("DELETE", `/me/notifications/${id}`),
+  meClearReadNotifications: () =>
+    request<{ count: number }>("POST", "/me/notifications/clear-read"),
 
   // ─── Notification channel bindings ────────────────────────────────
   meNotificationChannels: (orgId: string) =>
@@ -2586,10 +2748,13 @@ export const api = {
    *  already here when the same bytes are uploaded again (`duplicate: true`
    *  and the existing file come back); otherwise a second copy is stored and
    *  `duplicate_of` names the first. */
-  uploadFile: async (slug: string, file: File, opts: { folderId?: string | null; onDuplicate?: "skip" } = {}): Promise<FileRecord> => {
+  uploadFile: async (slug: string, file: File, opts: { folderId?: string | null; onDuplicate?: "skip"; camera?: boolean } = {}): Promise<FileRecord> => {
     const form = new FormData();
     if (opts.folderId) form.set("folder_id", opts.folderId);
     if (opts.onDuplicate) form.set("on_duplicate", opts.onDuplicate);
+    // A picture taken with the camera rather than chosen from the device: the
+    // file remembers it (platform-contract photo-source).
+    if (opts.camera) form.set("photo_source", "camera");
     form.set("file", file);
     return upload<FileRecord>(`/api/v1/orgs/${slug}/modules/core-files/files`, form, file);
   },
@@ -2703,8 +2868,17 @@ export const api = {
       `/orgs/${slug}/modules/core-tags/tags/${id}`,
       body,
     ),
+  /** Takes the tag off every record carrying it; kept for 30 days so
+   *  `restoreTag` can put it back. Owner or admin, or a grant. */
   deleteTag: (slug: string, id: string) =>
-    request<void>("DELETE", `/orgs/${slug}/modules/core-tags/tags/${id}`),
+    request<{ deleted: true; name: string; assignments: number }>("DELETE", `/orgs/${slug}/modules/core-tags/tags/${id}`),
+  /** Undo a tag delete or merge: the tag under its own id, on every record
+   *  that carried it. */
+  restoreTag: (slug: string, id: string) =>
+    request<{ restored: true; name: string; assignments: number; mergedInto: string | null }>(
+      "POST",
+      `/orgs/${slug}/modules/core-tags/tags/deleted/${id}/restore`,
+    ),
   mergeTag: (slug: string, id: string, intoTagId: string) =>
     request<{
       merged_into: TagRecord;
@@ -2744,18 +2918,35 @@ export const api = {
   // can be combined to narrow tagged entities by name as well.
   search: (
     slug: string,
-    args: { q?: string; kinds?: string; tag?: string } | string,
+    args: { q?: string; kinds?: string; tag?: string; per_kind?: number; offset?: number } | string,
   ) => {
     const a = typeof args === "string" ? { q: args } : args;
     const qs = new URLSearchParams();
     if (a.q) qs.set("q", a.q);
     if (a.kinds) qs.set("kinds", a.kinds);
     if (a.tag) qs.set("tag", a.tag);
-    return request<{ items: SearchHit[]; kinds_searched: string[]; /** Kinds whose search FAILED (not "no matches"). */ kinds_failed?: string[] }>(
+    if (a.per_kind) qs.set("per_kind", String(a.per_kind));
+    if (a.offset) qs.set("offset", String(a.offset));
+    return request<{
+      items: SearchHit[];
+      kinds_searched: string[];
+      /** Kinds whose search FAILED (not "no matches"). */
+      kinds_failed?: string[];
+      /** Kinds that filled their share, so may have more past `offset + per_kind`. */
+      more_kinds?: string[];
+    }>(
       "GET",
       `/orgs/${slug}/modules/core-search/search?${qs.toString()}`,
     );
   },
+
+  /** The kinds a search can reach in this workspace (a list resolver, its
+   *  module on), for the search page's kind picker. */
+  searchKinds: (slug: string) =>
+    request<{ items: Array<{ id: string; display_name: string; display_name_plural: string | null }> }>(
+      "GET",
+      `/orgs/${slug}/modules/core-search/search/kinds`,
+    ),
 
   // ─── core-public-surfaces ─────────────────────────────────────────
   listSurfaces: (slug: string) =>
@@ -2842,6 +3033,21 @@ export const api = {
   // serves agent-pushed frames for remote viewing.
   setDigifabDeviceSnapshotRelay: (slug: string, connectionId: string, deviceId: string, enabled: boolean) =>
     request<{ ok: boolean; snapshot_relay: boolean }>("POST", `/orgs/${slug}/modules/digifab/fleet/${connectionId}/${encodeURIComponent(deviceId)}/snapshot-relay`, { enabled }),
+  /** The spools loaded on a printer, by slot (digifab loaded.ts). */
+  digifabLoaded: (slug: string, machineId: string) =>
+    request<DigifabLoaded>("GET", `/orgs/${slug}/modules/digifab/loaded/${encodeURIComponent(machineId)}`),
+  digifabSetSlots: (slug: string, machineId: string, slots: number) =>
+    request<DigifabLoaded>("PUT", `/orgs/${slug}/modules/digifab/loaded/${encodeURIComponent(machineId)}/slots`, { slots }),
+  /** Load a spool (into `slot`, else the first empty one). The one it
+   *  replaces goes back to its shelf and comes back in `returned`. */
+  digifabLoad: (slug: string, machineId: string, partId: string, slot?: string) =>
+    request<DigifabLoaded & { slot: string; returned: Array<{ thing: { id: string; title?: string }; to: { id: string; title?: string } | null }> }>(
+      "POST",
+      `/orgs/${slug}/modules/digifab/loaded/${encodeURIComponent(machineId)}/load`,
+      { part_id: partId, ...(slot ? { slot } : {}) },
+    ),
+  digifabUnload: (slug: string, machineId: string, slot: string) =>
+    request<DigifabLoaded & { to: { id: string; title?: string } | null }>("POST", `/orgs/${slug}/modules/digifab/loaded/${encodeURIComponent(machineId)}/unload`, { slot }),
   digifabSnapshotPath: (slug: string, connectionId: string, deviceId: string) =>
     `/orgs/${slug}/modules/digifab/fleet/${connectionId}/${encodeURIComponent(deviceId)}/snapshot`,
   createDigifabConnection: (
@@ -3164,6 +3370,7 @@ export const api = {
       target_pool?: string | null;
       material_part_id?: string | null;
       material_grams?: number | null;
+      material_grams_by_tool?: number[] | null;
       material_type?: string | null;
       file_id?: string | null;
       linked_machine_id?: string | null;
@@ -3259,7 +3466,7 @@ export const api = {
   // Slicer metadata (filament material + grams) parsed from a stored file, to
   // pre-fill the New-job form instead of asking the operator to retype it.
   getDigifabSlicerMeta: (slug: string, fileId: string) =>
-    request<{ material: string | null; filament_g: number | null; estimated_sec: number | null }>(
+    request<{ material: string | null; filament_g: number | null; filament_g_by_tool?: number[] | null; estimated_sec: number | null }>(
       "GET",
       `/orgs/${slug}/modules/digifab/files/${fileId}/slicer-meta`,
     ),
@@ -3348,6 +3555,12 @@ export const api = {
     request<{ counters: Array<{ key: string; label: string; value: number | null }> }>(
       "GET",
       `/orgs/${slug}/modules/core-maintenance/schedules/counters?kind=${encodeURIComponent(kind)}&entity_id=${encodeURIComponent(entityId)}`,
+    ),
+  /** The jobs this kind of record has had, and the ones its table ships with. */
+  maintenanceServiceNames: (slug: string, kind: string) =>
+    request<{ values: Array<{ value: string; uses: number; lastUsed: string | null }>; suggested: string[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-maintenance/schedules/names?kind=${encodeURIComponent(kind)}`,
     ),
   createMaintenanceSchedule: (
     slug: string,
@@ -3469,6 +3682,23 @@ export const api = {
     request<void>("DELETE", `/orgs/${slug}/pairings/${id}`),
   /** Every link touching one record, both ways round, whichever spelling of
    *  its kind each was stored under (#3875). */
+  /** A record's documents (core-documents): what is linked and what was
+   *  matched in the background. No outside call behind it. */
+  recordDocuments: (slug: string, kind: string, id: string) =>
+    request<RecordDocuments>("GET", `${documentsPath(slug, kind, id)}`),
+  findDocuments: (slug: string, kind: string, id: string, query?: string) =>
+    request<{ systems: DocumentFindSystem[] }>("POST", `${documentsPath(slug, kind, id)}/find`, query ? { query } : {}),
+  linkDocument: (slug: string, kind: string, id: string, doc: { connection_id: string; ref: string; write_back?: boolean }) =>
+    request<{ linked: { title: string; system: string }; write_back: { id: string; status: string } | null; already: boolean }>("POST", `${documentsPath(slug, kind, id)}/links`, doc),
+  unlinkDocument: (slug: string, kind: string, id: string, doc: { connection_id: string; ref: string }) =>
+    request<{ removed: boolean }>("DELETE", `${documentsPath(slug, kind, id)}/links?connection_id=${encodeURIComponent(doc.connection_id)}&ref=${encodeURIComponent(doc.ref)}`),
+  dismissDocument: (slug: string, kind: string, id: string, doc: { connection_id: string; ref: string }) =>
+    request<{ ok: true }>("POST", `${documentsPath(slug, kind, id)}/dismiss`, doc),
+  rematchDocuments: (slug: string, kind: string, id: string) => request<{ ok: true }>("POST", `${documentsPath(slug, kind, id)}/rematch`, {}),
+  copyDocument: (slug: string, kind: string, id: string, doc: { connection_id: string; ref: string }) =>
+    request<{ job: { id: string; status: string } }>("POST", `${documentsPath(slug, kind, id)}/copies`, doc),
+  documentThumbPath: (slug: string, doc: { connection_id: string; ref: string }) =>
+    `/orgs/${slug}/modules/core-documents/thumb?connection_id=${encodeURIComponent(doc.connection_id)}&ref=${encodeURIComponent(doc.ref)}`,
   recordLinks: (slug: string, kind: string, id: string) =>
     request<{ items: Array<PairingItem & { direction: "in" | "out" }> }>(
       "GET",
@@ -3791,6 +4021,8 @@ export const api = {
       barcode?: string;
       source_kind?: "barcode" | "photo" | "url" | "receipt";
       source_url?: string;
+      /** The title shared or pasted with the link: kept as the item's name. */
+      shared_title?: string;
       image_file_id?: string;
       scan_batch_id?: string;
       scan_area?: string;
@@ -4086,7 +4318,7 @@ export const api = {
   putawayConfirm: (
     slug: string,
     sessionId: string,
-    body: { entry_id: string; location_id?: string },
+    body: { entry_id: string; location_id?: string; container?: { kind: string; id: string } },
   ) =>
     request<{ entry: LiveSortEntry }>(
       "POST",
@@ -4368,6 +4600,8 @@ export const api = {
       item_ids?: string[];
       seen?: Array<{ item_id: string; action: "attach" | "create" | "skip"; to_id?: string | null }>;
       location_id?: string | null;
+      /** Or a thing that holds things (a Backpack): new ones go inside it. */
+      container?: { kind: string; id: string } | null;
     },
   ) => {
     const r = request<AutofileDryRun | AutofileResult>("POST", `/orgs/${slug}/modules/core-scan/inbox/autofile`, body);
@@ -4915,6 +5149,10 @@ export const api = {
     request<{ items: Array<{ capability: string; policy: "always_ask" | "run" | "off" }> }>("GET", `/orgs/${slug}/services/policies`),
   setServicePolicy: (slug: string, capability: string, policy: "default" | "always_ask" | "run" | "off") =>
     request<{ capability: string; policy: string }>("PUT", `/orgs/${slug}/services/policies/${encodeURIComponent(capability)}`, { policy }),
+  // Services (S9): a run is the chain of jobs one started; its steps and what
+  // each waits on.
+  getServiceRun: (slug: string, id: string) => request<ServiceRun>("GET", `/orgs/${slug}/services/runs/${encodeURIComponent(id)}`),
+  listServiceRuns: (slug: string) => request<{ items: ServiceRun[] }>("GET", `/orgs/${slug}/services/runs`),
   // Services (#4034): one job, and the three things a person does to it.
   getServiceJob: (slug: string, id: string) =>
     request<ServiceJob>("GET", `/orgs/${slug}/services/jobs/${encodeURIComponent(id)}`),
@@ -4922,6 +5160,10 @@ export const api = {
     request<ServiceJob>("POST", `/orgs/${slug}/services/jobs/${encodeURIComponent(id)}/confirm`, {}),
   answerServiceJob: (slug: string, id: string, input: unknown) =>
     request<ServiceJob>("POST", `/orgs/${slug}/services/jobs/${encodeURIComponent(id)}/input`, { input }),
+  getServiceJobTrigger: (slug: string, id: string) =>
+    request<{ trigger: { label: string; event: string; until: string; armed: boolean } | null }>("GET", `/orgs/${slug}/services/jobs/${encodeURIComponent(id)}/trigger`),
+  withdrawServiceJobTrigger: (slug: string, id: string) =>
+    request<{ trigger: null }>("DELETE", `/orgs/${slug}/services/jobs/${encodeURIComponent(id)}/trigger`),
   cancelServiceJob: (slug: string, id: string) =>
     request<ServiceJob>("POST", `/orgs/${slug}/services/jobs/${encodeURIComponent(id)}/cancel`, {}),
   runCommand: (slug: string, id: string, message: string, selectionIds?: string[], section?: string) =>
@@ -5707,7 +5949,7 @@ export const api = {
   /** Move everything kept in a place into another; `places` moves the places
    *  inside it too, `then_delete` merges (moves all, deletes the empty one).
    *  The answer is the move itself, which `putBackEverything` undoes. */
-  moveEverything: (slug: string, id: string, body: { to: string; places?: boolean; then_delete?: boolean }) =>
+  moveEverything: (slug: string, id: string, body: { to: string; to_kind?: string; places?: boolean; then_delete?: boolean }) =>
     request<PlaceMove>("POST", `/orgs/${slug}/modules/core-locations/locations/${id}/move-everything`, body),
   putBackEverything: (slug: string, move: PlaceMove) =>
     request<{ things: number; places: number; leftWhereTheyAre: number }>(
@@ -6055,6 +6297,18 @@ export interface WorkspaceMailSource {
 
 /** How the personal-connections page introduces each kind. An unlisted kind
  *  still works — it just gets its raw id as a heading instead of prose. */
+/** A service as its manifest describes it, for the Add a service form. */
+export interface ServicePreview {
+  id: string;
+  name: string;
+  version: string;
+  publisher: string | null;
+  docs_url: string | null;
+  requires: string[];
+  manifest_version: string;
+  capabilities: Array<{ id: string; title: string; summary: string; effect: "none" | "writes" | "physical" | "spends"; mode: "async" | "sync" }>;
+}
+
 export const CONNECTION_KIND_LABELS: Record<string, { title: string; blurb: string }> = {
   "ai-provider": {
     title: "AI",
@@ -6063,6 +6317,10 @@ export const CONNECTION_KIND_LABELS: Record<string, { title: string; blurb: stri
   "parcel-tracking": {
     title: "Parcel tracking",
     blurb: "Follow your own deliveries with your own tracking account.",
+  },
+  service: {
+    title: "Services",
+    blurb: "Something that does work for you, that you installed yourself: a slicer, a design service.",
   },
   "mail-source": {
     title: "Mail",
@@ -6445,7 +6703,8 @@ export interface ImageOption {
 /** What "Move everything to…" did: enough to say it and to put it back. */
 export interface PlaceMove {
   from: { id: string; name: string };
-  to: { id: string; name: string };
+  /** `kind` is set when it went into a thing that holds things, not a place. */
+  to: { id: string; name: string; kind?: string };
   things: Array<{ kind: string; id: string; slot: string | null; position: unknown }>;
   places: string[];
   deleted: boolean;
@@ -6586,6 +6845,12 @@ export interface ScanResolveCandidate {
   detail_path: string;
   rule_id: string;
   rule_name: string;
+}
+
+/** A printer's filament slots and the spool loaded in each. */
+export interface DigifabLoaded {
+  slots: number;
+  loaded: Array<{ slot: string; thing: PlatformResolvedEntity }>;
 }
 
 export type ScanResolveOutcome =
@@ -6778,6 +7043,8 @@ export interface LiveSortEntry {
   status: "proposed" | "confirmed";
   confirmed_location_id?: string;
   confirmed_location_name?: string;
+  /** Set when it went inside a thing that holds things, not a place. */
+  confirmed_container?: { kind: string; id: string };
   bind?: { prior_name: string };
 }
 
@@ -7424,6 +7691,8 @@ export interface SearchHit {
   /** Found inside the record's words (a pattern's PDF, its notes) rather
    *  than its name: the line the searched word is on. */
   snippet?: string;
+  /** Where it is, every step up: "Backpack, in Desk drawer". */
+  where?: string;
   fields: Record<string, unknown>;
 }
 
@@ -7484,8 +7753,8 @@ export interface SuperAdminBarcodeCacheItem {
 /** A write the agentic chat proposes; the user confirms before it runs. */
 /** What one chat turn returns — the widget renders this whether it came back
  *  from the blocking POST or from a persisted turn's final event. */
-import type { ServiceCapabilityView, ServiceJob } from "@cobblr/platform-contract/services";
-export type { ServiceCapabilityView, ServiceJob };
+import type { ServiceCapabilityView, ServiceJob, ServiceRun, ServiceRunStep, ServiceRunWait } from "@cobblr/platform-contract/services";
+export type { ServiceCapabilityView, ServiceJob, ServiceRun, ServiceRunStep, ServiceRunWait };
 
 export interface AiChatResponse {
   type: "reply" | "proposal" | "proposals" | "build-proposal" | "error";
@@ -7561,7 +7830,9 @@ export type AiChatProposal =
       /** What it was handed, for an action with no planner: the card lists it. */
       values?: ProposalValue[];
     }
-  | { kind: "build"; draft_id: string };
+  | { kind: "build"; draft_id: string }
+  /** add_thing: a thing put through the scan inbox's intake (#4472). */
+  | { kind: "add"; args: Record<string, unknown> };
 
 export interface SurfaceRecord {
   id: string;
@@ -8231,6 +8502,18 @@ export interface CrossOrgNotificationEntry extends NotificationEntry {
   org_id: string;
   org_name: string;
   org_slug: string;
+  /** Its kind in words ("Print failed"), or null when nobody named it. */
+  label?: string | null;
+}
+
+/** A kind of notification a workspace can send, by name. */
+export interface NotificationKindEntry {
+  event_type: string;
+  label: string;
+  description: string | null;
+  module: string;
+  /** What a picker titles its set with: the module's name, never its id. */
+  group: string;
 }
 
 export type NotificationPriority = "low" | "normal" | "high" | "urgent";
@@ -8321,6 +8604,34 @@ export interface ActivityEntry {
   /** The COLLECTION the record lives in (`bookshelf:item`), resolved from the
    *  live record, so the feed can use its noun. Null when the record is gone. */
   entity_kind?: string | null;
+  /** What an edit changed, in words (the api's history-describe): each field
+   *  under its label, old → new, a photo as a photo. Empty for anything else. */
+  said?: SaidChange[];
+}
+
+/** A picture in a record's history: never named by its path on the line. */
+export interface ShownPhoto {
+  file_id: string;
+  thumb: string;
+  filename: string;
+  size_bytes: number;
+  width: number | null;
+  height: number | null;
+  source: import("@cobblr/platform-contract/photo-source").PhotoSource | null;
+  /** The stored address, shown only inside the photo's detail card. */
+  path: string;
+}
+export interface ShownValue {
+  /** The value in words; null reads "(empty)". */
+  text: string | null;
+  photo?: ShownPhoto;
+}
+export interface SaidChange {
+  field: string;
+  label: string;
+  /** Absent on an edit made before old values were kept. */
+  from?: ShownValue;
+  to: ShownValue;
 }
 
 /** Shape of /me/activity rows — every workspace activity attributed
@@ -8545,6 +8856,18 @@ export interface PlacedThing extends PlatformResolvedEntity {
   position: { x_mm: number; y_mm: number } | null;
 }
 
+/** A record that holds things (a Backpack), with where it is itself. */
+export interface PlaceHolder {
+  kind: string;
+  id: string;
+  title: string;
+  detailUrl: string | null;
+  /** "Desk drawer, in Office"; empty when it has no place of its own. */
+  line: string;
+  /** How many things are inside it. */
+  holds: number;
+}
+
 // core-units vocabulary (shapes match @cobblr/platform-web's types).
 export type UnitDisplayMode = "symbol" | "name" | "both";
 export interface UnitDef {
@@ -8590,14 +8913,37 @@ export interface PlatformAction {
   invoke_route: string | null;
   invoke_handler: string | null;
   /** Per-arg shape for the wire composer's structured "With" form; null if none. */
-  args_schema: Record<string, { label: string; type: "text" | "number" | "boolean" | "list" }> | null;
+  args_schema: Record<string, ActionArgSpec> | null;
   version: string;
 }
+
+/** One argument of an action, as the wire composer draws it. `picker` asks
+ *  for a chooser instead of a text box; `schema_from` names the argument
+ *  whose choice decides this one's fields (a service's input). */
+export interface ActionArgSpec {
+  label: string;
+  type: "text" | "number" | "boolean" | "list" | "json";
+  required?: boolean;
+  picker?: "service-capability";
+  schema_from?: string;
+}
+
+/** A workspace action a wire runs once per event on no record. */
+export interface WireRecordlessAction {
+  id: string;
+  label: string;
+  description: string;
+  icon: string;
+  args_schema: Record<string, ActionArgSpec>;
+}
+
+/** The kind a record-less wire is filed under: it acts on the workspace. */
+export const WORKSPACE_SOURCE_KIND = "platform:workspace";
 
 /** appliesTo predicate — mirrors the platform-contract shape. */
 export type ActionAppliesTo =
   | { any: true }
-  | { kinds?: string[]; traits?: string[]; hasFieldRole?: string };
+  | { kinds?: string[]; traits?: string[]; hasFieldRole?: string; requires?: { traits: string[] } };
 
 export interface RegisteredAction {
   id: string;
@@ -8675,6 +9021,9 @@ export interface PlatformBinding {
   source_kind: string;
   action_id: string;
   trigger_type: "user-invoked" | "event" | "on-create" | "on-update" | "on-delete" | "schedule";
+  /** Why this wire can never run (a record trigger on a kind that says
+   *  nothing at that moment); null or absent when it can. */
+  never_runs?: string | null;
   trigger_event: string | null;
   /** The event it waits for is one nothing sends any more, so it never runs. */
   trigger_silent?: boolean;
@@ -8753,6 +9102,8 @@ export interface PlatformFieldDef {
    *  lands on the field that CLAIMS that meaning, never on one whose name looks
    *  right. Null on a field nobody has told. See FIELD_ROLE_LABELS. */
   field_role?: FieldRole | null;
+  /** A person's new value is remembered as a choice (platform-contract field-choices). */
+  learns?: boolean | null;
   name: string;
   display_label: string;
   type: FieldDefType;
@@ -8862,6 +9213,9 @@ export interface PlatformBundleManifest {
     /** Where the action lands: "self" (default), "none", or a routed target —
      *  the server stores it verbatim (see the bundle-install contract). */
     target?: unknown;
+    /** What this wire does, in one sentence a person reads where the bundle
+     *  is suggested ("Works with Lists"). A suggestion says only these. */
+    says?: string;
   }[];
   field_defs?: {
     entity_kind: string;
@@ -8896,6 +9250,9 @@ export interface PlatformBundleManifest {
      *  identifier, e.g. a VIN) or `decode:<key>` (fill from the decoder's
      *  output). Mirrors the server contract's FieldDefEntry. */
     decode_role?: string;
+    /** A text field with choices: is a value someone types remembered as a
+     *  choice (lint:field-learns-declared requires the answer). */
+    learns?: boolean;
   }[];
   /** Presentation overrides for a kind's native fields (relabel / hide). */
   field_overrides?: {
@@ -8977,6 +9334,10 @@ export interface PlatformBundleInstance {
   item_noun?: string;
   /** Default unit for new items (e.g. "skein"). */
   qty_unit?: string;
+  /** What a record of this table calls the things inside it ("Parts"). */
+  contents_label?: string;
+  /** The service jobs a record of this table usually needs ("Oil change"). */
+  service_tasks?: string[];
   /** One line under the table's title saying what goes in it. */
   hint?: string;
   /** The links a record in this table makes, in words (#3875). */

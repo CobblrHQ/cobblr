@@ -31,6 +31,7 @@ const Body = z.object({
 // only because the surface + filters travel in a body.
 resolveRouter.post("/:slug/resolve", requireAuth, withTenant, async (req, res, next) => {
   try {
+    // ROLE: any member (a read: what a value could mean here)
     const parsed = Body.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: "bad_request", detail: parsed.error.flatten() });

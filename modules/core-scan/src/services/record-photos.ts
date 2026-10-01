@@ -25,7 +25,7 @@ import { ENTITY_SAVED_EVENT, type EntitySavedEvent } from "@cobblr/platform-cont
 import type { CoreScanDB } from "../db.js";
 import { derivedQueryFor, fetchAndStoreImage, imagePathForFile } from "./entity-image.js";
 import { pictureOptions } from "./picture-options.js";
-import { pickImage } from "./barcode-websearch.js";
+import { pickPhotoOf } from "./shows-the-thing.js";
 import { scanTargetsForOrg } from "./scan-target.js";
 
 export const RECORD_PHOTO_PASS = "core-scan.record-photo-suggestions";
@@ -116,20 +116,25 @@ export interface SuggestionStore {
 export function kyselyStore(db: Db): SuggestionStore {
   const T = "core_scan_record_photo_suggestions" as const;
   return {
-    get: async (kind, id) =>
-      (await db.selectFrom(T).select(["status", "name"]).where("entity_kind", "=", kind).where("entity_id", "=", id).executeTakeFirst()) ?? null,
+    // ONE row per record, whatever kind name a save arrived under: a machine
+    // in a collection is saved as `<collection>:item` by one door and as the
+    // module's own kind by another, and two rows for one record answered the
+    // page differently on every open (one "suggested", one "none").
+    get: async (_kind, id) =>
+      (await db.selectFrom(T).select(["status", "name"]).where("entity_id", "=", id).orderBy("updated_at", "desc").executeTakeFirst()) ?? null,
     queue: async (e) => {
       const name = (e.title ?? "").trim();
+      const fresh = { name, status: "queued" as const, file_id: null, source_url: null, attempts: 0, updated_at: new Date() };
+      const moved = await db.updateTable(T).set(fresh).where("entity_id", "=", e.id).executeTakeFirst();
+      if (Number(moved.numUpdatedRows ?? 0) > 0) return;
       await db
         .insertInto(T)
         .values({ entity_kind: e.kind, entity_id: e.id, name, user_id: e.userId })
-        .onConflict((oc) =>
-          oc.columns(["entity_kind", "entity_id"]).doUpdateSet({ name, status: "queued", file_id: null, source_url: null, attempts: 0, updated_at: new Date() }),
-        )
+        .onConflict((oc) => oc.columns(["entity_kind", "entity_id"]).doUpdateSet(fresh))
         .execute();
     },
-    forget: async (kind, id) => {
-      await db.deleteFrom(T).where("entity_kind", "=", kind).where("entity_id", "=", id).execute();
+    forget: async (_kind, id) => {
+      await db.deleteFrom(T).where("entity_id", "=", id).execute();
     },
     // Newest first: the record someone made a moment ago is the one they are
     // looking at, and an import's backlog trickles in behind it.
@@ -156,6 +161,8 @@ export function kyselyStore(db: Db): SuggestionStore {
         .execute();
     },
     queueIfAbsent: async (kind, id, name) => {
+      // Known under any kind name is known.
+      if (await db.selectFrom(T).select("entity_id").where("entity_id", "=", id).executeTakeFirst()) return false;
       // Dated at the epoch: the queue is newest first, and a backlog of old
       // records must wait behind the record someone made a moment ago.
       const r = await db
@@ -175,6 +182,22 @@ export function kyselyStore(db: Db): SuggestionStore {
       return Number(r.numUpdatedRows ?? 0) > 0;
     },
   };
+}
+
+/** The row a record answers with, when an older workspace still holds more
+ *  than one for it: a picture waiting for an answer, then one being looked
+ *  for, then none found; the newest of a kind. Every surface reads the same
+ *  one, every time. */
+const STANDING: Record<string, number> = { suggested: 0, queued: 1, none: 2 };
+export function oneRowPerRecord<T extends { entity_id: string; status: string; updated_at?: Date | string | null }>(rows: readonly T[]): T[] {
+  const best = new Map<string, T>();
+  const rank = (r: T) => STANDING[r.status] ?? 9;
+  const when = (r: T) => (r.updated_at ? new Date(r.updated_at).getTime() : 0);
+  for (const r of rows) {
+    const cur = best.get(r.entity_id);
+    if (!cur || rank(r) < rank(cur) || (rank(r) === rank(cur) && when(r) > when(cur))) best.set(r.entity_id, r);
+  }
+  return [...best.values()];
 }
 
 /** A person pressed Search on a record whose picture was not found: ask
@@ -241,15 +264,32 @@ export interface SuggestDeps {
   existingWithoutPicture?: (orgId: string, limit: number) => Promise<Array<{ kind: string; id: string; title: string }>>;
 }
 
+/** What a record is called and how to search for it, and the search: real by
+ *  default, a fixture in the test. */
+export interface FindSeams {
+  describe: typeof derivedQueryFor;
+  search: typeof pictureOptions;
+}
+
+/** The picture to suggest for one record: the best-ranked one that shows it,
+ *  never simply the first one back. A banner sharing the maker's name with
+ *  the record is not a picture of it. */
+export async function findPictureFor(
+  orgId: string,
+  kind: string,
+  id: string,
+  seams: FindSeams = { describe: derivedQueryFor, search: pictureOptions },
+): Promise<{ url: string; query: string } | null | "refused"> {
+  const { query, name, brand } = await seams.describe(orgId, kind, id);
+  if (!query) return null;
+  const { items, throttled } = await seams.search({ query, brand, limit: 8 });
+  if (!items.length && throttled) return "refused";
+  const url = pickPhotoOf(items, { name: name ?? query, brand })?.url ?? null;
+  return url ? { url, query } : null;
+}
+
 const REAL: SuggestDeps = {
-  find: async (orgId, kind, id) => {
-    const { query } = await derivedQueryFor(orgId, kind, id);
-    if (!query) return null;
-    const { items, throttled } = await pictureOptions({ query, limit: 8 });
-    if (!items.length && throttled) return "refused";
-    const url = pickImage(items, query) ?? items[0]?.url ?? null;
-    return url ? { url, query } : null;
-  },
+  find: (orgId, kind, id) => findPictureFor(orgId, kind, id),
   store: fetchAndStoreImage,
   hasNoPicture: recordHasNoPicture,
   apply: putPictureOn,

@@ -14,7 +14,10 @@
 // The rule: every `<name>Router.(post|put|patch|delete)(...)` under a module's
 // src/api/ must carry an "AI-REACH:" classification within the LOOKBACK lines
 // above it — one of:
-//   AI-REACH: action[ <id>]  — reached via a declared action (invoke_action)
+//   AI-REACH: action[ <id>]  — reached via a declared action (invoke_action);
+//   AI-ACTION: <id>             says the same, in lint-ai-reach-routes' grammar
+//   AI-TOOL: <tool>          — reached by a workspace tool of its own (checked
+//                              against the registry by lint-ai-reach-routes)
 //   AI-REACH: crud           — this is a kind's create/update/delete endpoint
 //                              (governed by lint-ai-reach at the kind level)
 //   AI-REACH: exempt <why>   — deliberately NOT AI-reachable, with a reason:
@@ -42,7 +45,10 @@ const LOOKBACK = 8;
 // partsRouter, …). Whitespace/newlines between "(" and the path are allowed so
 // the common multi-line `router.post(\n  "/x",` form is matched.
 const ROUTE_RE = /(\w*[Rr]outer)\.(post|put|patch|delete)\(\s*["'`]([^"'`]*)["'`]/g;
-const CATEGORY_RE = /AI-REACH:\s*(action|crud|exempt)\b/i;
+// AI-ACTION: <id> is the same claim as AI-REACH: action <id>, in the grammar
+// lint-ai-reach-routes reads (and checks against the manifest), so a route
+// that says it once in either form is classified by both lints.
+const CATEGORY_RE = /AI-REACH:\s*(action|crud|exempt)\b|AI-TOOL:\s*[a-z0-9_]+|AI-ACTION:\s*[a-z0-9-]+:[a-z0-9-]+/i;
 
 interface Finding {
   file: string;

@@ -7,7 +7,7 @@
 
 import { Router, type Request } from "express";
 import { z } from "zod";
-import { platform } from "@cobblr/platform-contract";
+import { likeEscape, platform } from "@cobblr/platform-contract";
 import { readGramsByTool } from "@cobblr/platform-contract/filament-draw";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import type { DigifabDB } from "../db.js";
@@ -91,7 +91,7 @@ export async function listMakes(db: Kysely<DigifabDB>, q: string | undefined, li
   let query = db.selectFrom("digifab_makes").selectAll();
   const text = q?.trim();
   if (text) {
-    const like = `%${text.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+    const like = `%${likeEscape(text)}%`;
     query = query.where((eb) =>
       eb.or([
         eb("name", "ilike", like),

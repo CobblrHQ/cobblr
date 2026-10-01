@@ -32,6 +32,7 @@ import { checkEntitlement } from "../platform/hosted-seams.js";
 import { disableModuleForOrg, enableModuleForOrg, isDefaultModule } from "../modules/enable.js";
 import { USER_SOURCE } from "../platform/bundle-claims.js";
 import { baseKindOf, lookup as lookupEntity } from "../platform/entities.js";
+import { describeChanges } from "../platform/history-describe.js";
 
 /** The kind a resolved record is FILED under: `<instance>:item` for a record
  *  in a named instance (read off its instance field, else its detail route,
@@ -559,6 +560,7 @@ orgsRouter.patch("/:slug", requireAuth, withTenant, async (req, res, next) => {
 // + idempotent (no-op when current). The web calls it once per session when a
 // managed-app user enters the app. `manifest` is a test/operator override.
 const RefreshAppBody = z.object({ manifest: z.unknown().optional() });
+// AI-REACH: the app refreshes itself on entry; there is nothing here for anyone to decide
 orgsRouter.post("/:slug/refresh-app", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (!requireRole(req, res, "owner", "admin")) return;
@@ -905,9 +907,25 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
       }),
     );
 
+    // What each edit changed, in words: labels, values by type, a photo as a
+    // photo, never a column name, an id or a path (history-describe.ts).
+    const said = await describeChanges(
+      req.tenant!.org.id,
+      req.tenant!.org.slug,
+      items.map((i) => {
+        const base = i.module_name ? `${i.module_name}:${i.entity_type}` : i.entity_type;
+        const coll = kindByEntity.get(`${i.entity_type}:${i.entity_id}`) ?? (entityKind || null);
+        return { action: i.action, diff: i.diff, kinds: coll && coll !== base ? [coll, base] : [base] };
+      }),
+    ).catch((err) => {
+      console.error("[activity] describing changes failed:", (err as Error).message);
+      return items.map(() => []);
+    });
+
     res.json({
-      items: items.map((i) => ({
+      items: items.map((i, n) => ({
         ...i,
+        said: said[n] ?? [],
         entity_title: titleByEntity.get(`${i.entity_type}:${i.entity_id}`) ?? null,
         entity_kind: kindByEntity.get(`${i.entity_type}:${i.entity_id}`) ?? null,
         actor: i.user_id
@@ -975,6 +993,7 @@ orgsRouter.post(
   withTenant,
   async (req, res, next) => {
     try {
+      // ROLE: any member (their own notifications)
       const id = req.params.id;
       if (!id) {
         res.status(400).json({ error: { code: "missing_id", message: "id required" } });
@@ -995,6 +1014,7 @@ orgsRouter.post(
   withTenant,
   async (req, res, next) => {
     try {
+      // ROLE: any member (their own notifications)
       const count = await notifications.markAllRead(
         req.session!.id,
         req.tenant!.org.id,

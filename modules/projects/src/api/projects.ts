@@ -176,6 +176,8 @@ projectsRouter.patch(
       }
     }
 
+    // The row as it was: the log says what this edit changed (#4517).
+    const before = await db.selectFrom("projects_projects").selectAll().where("id", "=", id).where("instance", "=", instanceOf(req)).executeTakeFirst();
     const updated = await db
       .updateTable("projects_projects")
       .set(withMetadataMerged(patch as Record<string, unknown>) as never)
@@ -194,6 +196,7 @@ projectsRouter.patch(
       action: "project_updated",
       ref: { module: "projects", entityType: "project", entityId: updated.id },
       diff: parsed.data,
+      before,
     });
     platform().events.emit("projects.project.updated", {
       orgId: ctx.org.id,

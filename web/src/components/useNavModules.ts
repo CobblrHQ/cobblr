@@ -20,7 +20,7 @@ import {
   type ModuleInstance,
   type OrgModuleListItem,
 } from "../lib/api";
-import { applyNavOrder, readNavHidden, readNavOrder, readNavOverflow } from "../lib/nav-order";
+import { applyNavOrder, readNavHidden, readNavOrder, readNavOverflow, readNavPinned, readNavPlacement, type NavPlacement } from "../lib/nav-order";
 import { inManagedAppSurface } from "../lib/managed-apps";
 
 /** Synthetic top-level name prefix for a user-defined heading group. */
@@ -92,6 +92,9 @@ export interface NavModules {
   hiddenNames: Set<string>;
   /** Entries the user pinned to the "more" overflow (always folded). */
   overflowNames: Set<string>;
+  /** Rows the person moved to the other side of a grown sidebar: their
+   *  choice over the manifest's default (nav-groups.ts). */
+  placement: Readonly<Record<string, NavPlacement>>;
   /** parentModuleName → its enabled specialisation children
    *  (either real Pillar-E modules OR installed lens bundles
    *  rendered as synthetic module items), hidden ones removed. */
@@ -139,12 +142,15 @@ export interface NavDoor {
  *  consequence can be tested without a navbar. */
 export function navDoorsOf(
   enabled: ReadonlyArray<{ name: string; nav?: { label: string; route: string; icon?: string | null; overrideKey?: string | null; primary?: boolean | null } | null }>,
+  /** Doors this person pinned to their sidebar (setInSidebar): a row too. */
+  pinned: ReadonlySet<string> = new Set(),
 ): NavDoor[] {
   const doors: NavDoor[] = [];
   for (const m of enabled) {
     const nav = m.nav;
-    if (!nav?.primary) continue;
+    if (!nav) continue;
     const key = nav.route.replace(/^\//, "").split("/")[0] || m.name;
+    if (!nav.primary && !pinned.has(key) && !pinned.has(m.name)) continue;
     if (doors.some((d) => d.key === key)) continue;
     doors.push({ key, label: nav.label, icon: nav.icon ?? null, overrideKey: nav.overrideKey ?? null, fromModule: m.name });
   }
@@ -375,15 +381,17 @@ export function useNavModules(activeSlug: string): NavModules {
   const [navOrder, setNavOrder] = useState<string[]>(() => readNavOrder(activeSlug));
   const [navHidden, setNavHidden] = useState<string[]>(() => readNavHidden(activeSlug));
   const [navOverflow, setNavOverflow] = useState<string[]>(() => readNavOverflow(activeSlug));
+  const [navPinned, setNavPinned] = useState<string[]>(() => readNavPinned(activeSlug));
+  const [placement, setPlacement] = useState<Record<string, NavPlacement>>(() => readNavPlacement(activeSlug));
   useEffect(() => {
-    setNavOrder(readNavOrder(activeSlug));
-    setNavHidden(readNavHidden(activeSlug));
-    setNavOverflow(readNavOverflow(activeSlug));
     function reload() {
       setNavOrder(readNavOrder(activeSlug));
       setNavHidden(readNavHidden(activeSlug));
       setNavOverflow(readNavOverflow(activeSlug));
+      setNavPinned(readNavPinned(activeSlug));
+      setPlacement(readNavPlacement(activeSlug));
     }
+    reload();
     window.addEventListener("cobblr:nav-order-changed", reload);
     window.addEventListener("storage", reload);
     return () => {
@@ -441,7 +449,10 @@ export function useNavModules(activeSlug: string): NavModules {
       .filter((i) => !i.is_default && overridesByKey.get(`instance:${i.module_name}:${i.instance_name}`)?.config?.presents_as_top_level === false)
       .map((i) => i.module_name),
   );
-  const hideDefaultModules = defaultModuleEntriesToHide(instances.data?.items ?? [], nestedUnder);
+  const pinned = new Set(navPinned);
+  // A module this person pinned keeps its own row even when its named
+  // collections would otherwise stand in for it.
+  const hideDefaultModules = new Set([...defaultModuleEntriesToHide(instances.data?.items ?? [], nestedUnder)].filter((n) => !pinned.has(n)));
   const childrenByParent = new Map<string, OrgModuleListItem[]>();
   const rawTops: OrgModuleListItem[] = [];
   for (const m of userFacing) {
@@ -478,7 +489,7 @@ export function useNavModules(activeSlug: string): NavModules {
   // an `overrideKey`, so a workspace calling locations "Rooms" gets that on every
   // device rather than as a per-browser tweak.
   const displayNameOf = new Map(enabled.map((m) => [m.name, m.displayName] as const));
-  for (const door of navDoorsOf(enabled)) {
+  for (const door of navDoorsOf(enabled, pinned)) {
     const key = door.key;
     if (rawTops.some((t) => t.name === key)) continue;
     const o = overridesByKey.get(`instance:${key}:${key}`);
@@ -720,6 +731,9 @@ export function useNavModules(activeSlug: string): NavModules {
   const hiddenNames = new Set(navHidden);
   const overflowNames = new Set(navOverflow);
   const shown = withoutHidden(allTops, childrenByParent, instanceGroups, hiddenNames);
+  // The doors the manifests make rows of: the default tools. A door this
+  // person pinned is a row they chose, and sits with the collections unless
+  // they move it.
   const doorNames = new Set(navDoorsOf(enabled).map((d) => d.key));
 
   return {
@@ -727,6 +741,7 @@ export function useNavModules(activeSlug: string): NavModules {
     allTops,
     hiddenNames,
     overflowNames,
+    placement,
     childrenByParent: shown.childrenByParent,
     allChildrenByParent: childrenByParent,
     instanceGroups: shown.instanceGroups,
@@ -775,4 +790,13 @@ export function orderGroupMembers<T extends { name: string }>(
   for (const [name, g] of groups) {
     groups.set(name, { ...g, members: applyNavOrder(g.members, navOrder) });
   }
+}
+
+/** Whether a module's row is in this person's nav right now, as a top or
+ *  under one. A count that rides on the row (Labels' queue, nav.count) needs
+ *  no second row of its own while the row is there; when the person took the
+ *  row out, the second row is the only place the count is. */
+export function useNavHasRow(slug: string, name: string): boolean {
+  const { tops, childrenByParent } = useNavModules(slug);
+  return tops.some((t) => t.name === name) || [...childrenByParent.values()].some((kids) => kids.some((k) => k.name === name));
 }

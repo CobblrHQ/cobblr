@@ -6,17 +6,17 @@
 // source_id) polymorphic shape on both core-tags_assignments and
 // core_files_attachments; this is the matching UI primitive.
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { openAuthedFile } from "../lib/authed-file";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Eye, ImageIcon, Plus, Tag as TagIcon, Trash2, Upload, X } from "lucide-react";
+import { Eye, Plus, Star, Tag as TagIcon, Trash2, Upload, X } from "lucide-react";
 import { ApiError, api, type TagRecord } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm, EntityPhoto } from "@cobblr/platform-web";
-import { FilePreview, canPreviewFile, useFilePreviewRegistry } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, EntityPhoto, usePasteImage, SelectableTile, PhotoSourceBadge } from "@cobblr/platform-web";
+import type { PhotoSource } from "@cobblr/platform-contract/photo-source";
+import { FilePreview, DocThumb, canPreviewFile, useFilePreviewRegistry } from "@cobblr/platform-web";
 import { ImageLightbox } from "./ImageLightbox";
 import { DiscussionPreview } from "./DiscussionTab";
-import { clipboardImageFiles } from "./pastedImage";
 import { LinksSection } from "../features/links/LinksSection";
 
 interface Props {
@@ -77,25 +77,13 @@ export function EntityAttachments({ kind, entityId, collection, compact = false,
 }
 
 /** Shared small dashed add-pill used by the compact empty states. */
+/** A PDF by its stored type (which the store sets from the bytes) or its name. */
+function isPdfAttachment(att: { mime_type: string; filename: string }): boolean {
+  return att.mime_type === "application/pdf" || /\.pdf$/i.test(att.filename);
+}
+
 const ADD_PILL =
   "inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs border border-dashed border-line dark:border-slate-600 text-muted hover:border-cobble-500 hover:text-accent transition";
-
-/** Best-effort PATCH the entity's image_path to a given URL.
- *  Convention: `/orgs/<slug>/modules/<module>/<type>s/<id>` is the
- *  CRUD route for every user-facing entity kind (part, machine,
- *  asset, project, task, order). Pluralizing with +s is reliable
- *  for the current set of kinds; if a future kind ends in '-y'
- *  this helper would need adjustment. */
-async function setEntityImagePath(
-  slug: string,
-  sourceModule: string,
-  sourceType: string,
-  sourceId: string,
-  imagePath: string,
-): Promise<void> {
-  const path = `/orgs/${slug}/modules/${sourceModule}/${sourceType}s/${sourceId}`;
-  await api.request("PATCH", path, { image_path: imagePath });
-}
 
 // ──────────────── Tags ──────────────────────────────────────────────
 
@@ -354,6 +342,9 @@ function FilesSection({
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return (await res.json()) as {
+        /** The record's main photo: an attached file, a file never attached
+         *  (set before photos were kept), or an outside address. */
+        main?: { image_path: string; file_id: string | null; attached: boolean; filename: string | null; photo_source: PhotoSource | null } | null;
         items: Array<{
           id: string;
           file_id: string;
@@ -361,6 +352,7 @@ function FilesSection({
           mime_type: string;
           kind: string;
           role: string | null;
+          photo_source?: PhotoSource | null;
         }>;
       };
     },
@@ -370,7 +362,7 @@ function FilesSection({
   const uploadAndAttach = useMutation({
     mutationFn: async (file: File) => {
       // Snapshot BEFORE the upload: does the entity already have a photo?
-      const hadImage = (list.data?.items ?? []).some((i) => i.kind === "image");
+      const hadImage = !!list.data?.main || (list.data?.items ?? []).some((i) => i.kind === "image");
       const f = await api.uploadFile(activeSlug, file);
       // Then attach to this entity.
       const res = await fetch(
@@ -386,7 +378,9 @@ function FilesSection({
             source_module: sourceModule,
             source_type: sourceType,
             source_id: sourceId,
-            role: "gallery",
+            // By type, never by asking: a picture is one of the record's
+            // photos, anything else (a bill of sale, a manual) is a file.
+            role: file.type.startsWith("image/") ? "gallery" : null,
           }),
         },
       );
@@ -397,15 +391,9 @@ function FilesSection({
       // never fails the upload, and we only claim the cover when there isn't one.
       if (file.type.startsWith("image/") && !hadImage) {
         try {
-          await setEntityImagePath(
-            activeSlug,
-            sourceModule,
-            sourceType,
-            sourceId,
-            api.fileRawUrl(activeSlug, f.id, "medium"),
-          );
+          await api.setMainPhoto(activeSlug, { entity_kind: `${sourceModule}:${sourceType}`, entity_id: sourceId, file_id: f.id });
         } catch {
-          /* gallery attachment already succeeded — cover is a bonus */
+          /* gallery attachment already succeeded — the main photo is a bonus */
         }
       }
       return f;
@@ -462,25 +450,16 @@ function FilesSection({
     if (fileInput.current) fileInput.current.value = "";
   }
 
-  // Clipboard paste: take a screenshot (Print Screen / Cmd-Shift-4) and Ctrl/Cmd-V
-  // anywhere on the page to attach it — no need to save it to a file first. We
-  // listen on the window so the user doesn't have to focus the panel, but bail
-  // when they're typing in a text field so a normal text paste isn't hijacked.
-  // `pasteUploadRef` keeps the once-bound listener calling the latest uploader.
-  const pasteUploadRef = useRef<(files: File[]) => void>(() => {});
-  pasteUploadRef.current = (files) => void uploadFiles(files);
-  useEffect(() => {
-    function onPaste(e: ClipboardEvent) {
-      const ae = document.activeElement as HTMLElement | null;
-      if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)) return;
-      const imgs = clipboardImageFiles(e.clipboardData);
-      if (imgs.length === 0) return;
-      e.preventDefault();
-      pasteUploadRef.current(imgs);
-    }
-    window.addEventListener("paste", onPaste);
-    return () => window.removeEventListener("paste", onPaste);
-  }, []);
+  // Anything pasted onto the record is attached, the way a chosen file is
+  // (the input takes any file): a picture to its photos, a PDF to its files,
+  // through the one paste door (usePasteImage), which also decides between
+  // this list and a photo box on the same page by where the person was.
+  const sectionRef = useRef<HTMLElement>(null);
+  usePasteImage(() => sectionRef.current ?? fileInput.current?.parentElement ?? null, {
+    onFiles: (files) => void uploadFiles(files),
+    accept: "*",
+    multiple: true,
+  });
 
   const items = list.data?.items ?? [];
   // Re-evaluate canPreviewFile when the host gate toggles renderers
@@ -491,8 +470,65 @@ function FilesSection({
   // Which image is open in the full-screen lightbox (index into the image
   // attachments), or null when closed. The lightbox pages across ALL images on
   // the entity, so it navigates this filtered list, not the mixed grid.
+  const main = list.data?.main ?? null;
+  // The record's photos in one row with its files (#4515): the main photo
+  // first (starred, outlined), even one set before photos were kept and so
+  // never attached; then every other picture; then the files, which wrap to
+  // a row of their own only when the photos fill this one.
+  type Photo = { key: string; fileId: string | null; src: string; filename: string; source: PhotoSource | null; attachmentId: string | null; isMain: boolean };
   const imageAtts = items.filter((a) => a.kind === "image");
+  const mainAtt = main?.file_id ? imageAtts.find((a) => a.file_id === main.file_id) : undefined;
+  const photos: Photo[] = [
+    ...(main
+      ? [
+          {
+            key: "main",
+            fileId: main.file_id,
+            src: main.file_id ? api.fileRawUrl(activeSlug, main.file_id, "thumb") : main.image_path,
+            filename: mainAtt?.filename ?? main.filename ?? "Main photo",
+            source: mainAtt?.photo_source ?? main.photo_source ?? null,
+            attachmentId: mainAtt?.id ?? null,
+            isMain: true,
+          },
+        ]
+      : []),
+    ...imageAtts
+      .filter((a) => a !== mainAtt)
+      .map((a) => ({ key: a.id, fileId: a.file_id, src: api.fileRawUrl(activeSlug, a.file_id, "thumb"), filename: a.filename, source: a.photo_source ?? null, attachmentId: a.id, isMain: false })),
+  ];
+  const otherFiles = items.filter((a) => a.kind !== "image");
   const [lightbox, setLightbox] = useState<number | null>(null);
+  const makeMain = useMutation({
+    mutationFn: (fileId: string) => api.setMainPhoto(activeSlug, { entity_kind: `${sourceModule}:${sourceType}`, entity_id: sourceId, file_id: fileId }),
+    onSuccess: (r) => {
+      refreshRecord();
+      const previous = r.previous_image_path;
+      toast.action("Main photo changed.", {
+        actionLabel: "Undo",
+        duration: 10_000,
+        onAction: async () => {
+          try {
+            await api.setMainPhoto(activeSlug, { entity_kind: `${sourceModule}:${sourceType}`, entity_id: sourceId, image_path: previous });
+            refreshRecord();
+          } catch (e) {
+            toast.error(`Couldn't put it back: ${(e as Error).message}`);
+          }
+        },
+      });
+    },
+    onError: (e) => toast.error(`Couldn't change the main photo: ${(e as Error).message}`),
+  });
+  function refreshRecord() {
+    void qc.invalidateQueries({ queryKey: ["file-attachments", activeSlug, sourceType, sourceId] });
+    // The record's page shows its main photo too; we do not know which page
+    // the person came from, so every list and detail that might.
+    void qc.invalidateQueries({ queryKey: [sourceType + "s"] });
+    void qc.invalidateQueries({ queryKey: ["assets"] });
+    void qc.invalidateQueries({ queryKey: ["machines"] });
+    void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
+    void qc.invalidateQueries({ queryKey: ["inventory-part"] });
+    void qc.invalidateQueries({ queryKey: ["image-options", activeSlug] });
+  }
 
   // Drag-and-drop: drop anywhere on the section to upload. We track
   // `dragOver` so the grid can highlight as a drop target instead of
@@ -531,7 +567,7 @@ function FilesSection({
 
   // Compact + empty → a small "+ File" pill (no header, no big dropzone). Grows
   // into the full grid below once a file is attached.
-  if (compact && items.length === 0) {
+  if (compact && items.length === 0 && !main) {
     return (
       <>
         <button onClick={() => fileInput.current?.click()} className={ADD_PILL}>
@@ -544,6 +580,7 @@ function FilesSection({
 
   return (
     <section
+      ref={sectionRef}
       onDragEnter={onDragEnter}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
@@ -552,13 +589,13 @@ function FilesSection({
         "rounded-lg transition " +
         (compact ? "w-full " : "") +
         (dragOver
-          ? "ring-2 ring-cobble-400 ring-offset-2 dark:ring-offset-slate-900 bg-cobble-50/30 dark:bg-cobble-900/10"
+          ? "outline-dashed outline-1 outline-offset-4 outline-cobble-400 bg-cobble-50/30 dark:bg-cobble-900/10"
           : "")
       }
     >
       {!compact && (
         <h3 className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2 flex items-center gap-2">
-          // files
+          // photos and files
           {dragOver && (
             <span className="text-accent font-normal normal-case tracking-normal">
               drop to upload
@@ -566,47 +603,76 @@ function FilesSection({
           )}
         </h3>
       )}
-      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
-        {items.map((att) =>
-          att.kind === "image" ? (
-            <AttachmentThumb
+      <div data-testid="photo-strip" className="flex flex-wrap gap-2">
+        {photos.map((ph, i) => (
+          <SelectableTile
+            key={ph.key}
+            data-testid={ph.isMain ? "main-photo-tile" : "photo-tile"}
+            selected={ph.isMain}
+            selectedLabel="Main photo"
+            onClick={() => setLightbox(i)}
+            title={ph.filename}
+            aria-label={`See ${ph.filename}`}
+            faceClassName="bg-subtle dark:bg-slate-800"
+            topLeft={<PhotoSourceBadge source={ph.source} />}
+            topRight={
+              ph.isMain ? (
+                <span title="Main photo" aria-label="Main photo" className="rounded bg-black/60 p-1 text-amber-300">
+                  <Star size={10} fill="currentColor" />
+                </span>
+              ) : (
+                ph.fileId && (
+                  <button
+                    type="button"
+                    onClick={() => makeMain.mutate(ph.fileId!)}
+                    disabled={makeMain.isPending}
+                    title="Make this the main photo"
+                    aria-label={`Make ${ph.filename} the main photo`}
+                    className="rounded bg-black/60 p-1 text-white hover:bg-cobble-600 transition disabled:opacity-50"
+                  >
+                    <Star size={10} />
+                  </button>
+                )
+              )
+            }
+            bottomRight={
+              !ph.isMain &&
+              ph.attachmentId && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const ok = await confirm({
+                      title: "Detach photo?",
+                      message: `${ph.filename} will stay in your file library, just unlinked from this record.`,
+                      confirmLabel: "Detach",
+                      destructive: true,
+                    });
+                    if (ok) detach.mutate(ph.attachmentId!);
+                  }}
+                  className="rounded bg-black/60 p-1 text-white hover:bg-ember-600 transition"
+                  title="Detach"
+                  aria-label={`Detach ${ph.filename}`}
+                >
+                  <Trash2 size={10} />
+                </button>
+              )
+            }
+          >
+            <EntityPhoto src={ph.src} alt={ph.filename} fill placeholder="…" />
+          </SelectableTile>
+        ))}
+        {otherFiles.map((att) =>
+          isPdfAttachment(att) ? (
+            // A PDF shows its first page, drawn from the file; tapping it
+            // opens the PDF reader (#4523). One tile for a document
+            // everywhere: the inbox shows the same.
+            <DocThumb
               key={att.id}
-              attachmentId={att.id}
-              fileId={att.file_id}
+              src={api.fileRawUrl(activeSlug, att.file_id, "original")}
               filename={att.filename}
-              slug={activeSlug}
-              onOpen={() => setLightbox(imageAtts.findIndex((i) => i.id === att.id))}
-              onSetAsCover={async () => {
-                try {
-                  await setEntityImagePath(
-                    activeSlug,
-                    sourceModule,
-                    sourceType,
-                    sourceId,
-                    api.fileRawUrl(activeSlug, att.file_id, "medium"),
-                  );
-                  toast.success("Set as cover image");
-                  // Invalidate the entity's list/detail queries so
-                  // pages re-render with the new image_path. Cast a
-                  // wide net since we don't know which page the user
-                  // came from.
-                  void qc.invalidateQueries({ queryKey: [sourceType + "s"] });
-                  void qc.invalidateQueries({ queryKey: ["assets"] });
-                  void qc.invalidateQueries({ queryKey: ["machines"] });
-                  void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
-                } catch (err) {
-                  toast.error(`Couldn't set as cover: ${(err as Error).message}`);
-                }
-              }}
-              onDetach={async () => {
-                const ok = await confirm({
-                  title: "Detach file?",
-                  message: `${att.filename} will stay in your file library, just unlinked from this entity.`,
-                  confirmLabel: "Detach",
-                  destructive: true,
-                });
-                if (ok) detach.mutate(att.id);
-              }}
+              width={80}
+              onOpen={() => setPreview({ file_id: att.file_id, filename: /\.pdf$/i.test(att.filename) ? att.filename : `${att.filename}.pdf` })}
+              className="w-20 h-20 shrink-0 rounded border border-line dark:border-slate-700 hover:border-cobble-500 transition"
             />
           ) : canPreviewFile(att.filename) ? (
             // Previewable model/job file (STL / G-code / SVG / …) — click
@@ -615,7 +681,7 @@ function FilesSection({
               key={att.id}
               type="button"
               onClick={() => setPreview({ file_id: att.file_id, filename: att.filename })}
-              className="aspect-square flex flex-col items-center justify-center text-xs text-muted border border-line dark:border-slate-700 rounded hover:border-cobble-500 hover:text-accent transition p-2 text-center group"
+              className="w-20 h-20 shrink-0 flex flex-col items-center justify-center text-xs text-muted border border-line dark:border-slate-700 rounded hover:border-cobble-500 hover:text-accent transition p-2 text-center group"
               title={`Preview ${att.filename}`}
             >
               <Eye size={14} className="mb-1 text-faint group-hover:text-accent" />
@@ -630,7 +696,7 @@ function FilesSection({
               type="button"
               // Bearer-only auth: a plain href 401s (lint-authed-media).
               onClick={() => void openAuthedFile(activeSlug, att.file_id, { mime: att.mime_type, filename: att.filename })}
-              className="aspect-square flex flex-col items-center justify-center text-xs text-muted border border-line dark:border-slate-700 rounded hover:border-cobble-500 transition p-2 text-center"
+              className="w-20 h-20 shrink-0 flex flex-col items-center justify-center text-xs text-muted border border-line dark:border-slate-700 rounded hover:border-cobble-500 transition p-2 text-center"
               title={att.filename}
             >
               <div className="font-mono text-[10px] uppercase">
@@ -642,7 +708,7 @@ function FilesSection({
         )}
         <button
           onClick={() => fileInput.current?.click()}
-          className="aspect-square flex flex-col items-center justify-center gap-1 text-xs text-muted border border-dashed border-line dark:border-slate-600 rounded hover:border-cobble-500 hover:text-accent transition"
+          className="w-20 h-20 shrink-0 flex flex-col items-center justify-center gap-1 text-xs text-muted border border-dashed border-line dark:border-slate-600 rounded hover:border-cobble-500 hover:text-accent transition"
         >
           <Upload size={14} />
           <span>Add</span>
@@ -665,12 +731,12 @@ function FilesSection({
         </Modal>
       )}
 
-      {lightbox !== null && imageAtts[lightbox] && (
+      {lightbox !== null && photos[lightbox] && (
         <ImageLightbox
-          items={imageAtts.map((a) => ({
-            key: a.id,
-            caption: a.filename,
-            file: { slug: activeSlug, fileId: a.file_id },
+          items={photos.map((ph) => ({
+            key: ph.key,
+            caption: ph.filename,
+            ...(ph.fileId ? { file: { slug: activeSlug, fileId: ph.fileId } } : { url: ph.src }),
           }))}
           index={lightbox}
           onIndex={setLightbox}
@@ -678,60 +744,5 @@ function FilesSection({
         />
       )}
     </section>
-  );
-}
-
-// ──────────────── Pairings (D4) ─────────────────────────────────────
-// Polymorphic "this entity is linked to that one" without firing a
-// wire. UI-driven only; wires that subscribe to entity_pairings can
-// observe the link, but the link itself is just data.
-
-// Image attachment thumbnail with hover affordances:
-//   - Set as cover (camera/image icon)  → PATCH the entity image_path
-//   - Detach (trash icon)               → DELETE the attachment row
-//
-// The image itself routes through useImageSrc so the Bearer token
-// is sent (the file-raw endpoint requires it; <img src> alone fails).
-function AttachmentThumb({
-  attachmentId,
-  fileId,
-  filename,
-  slug,
-  onOpen,
-  onSetAsCover,
-  onDetach,
-}: {
-  attachmentId: string;
-  fileId: string;
-  filename: string;
-  slug: string;
-  onOpen: () => void;
-  onSetAsCover: () => void;
-  onDetach: () => void;
-}) {
-  const url = api.fileRawUrl(slug, fileId, "thumb");
-  void attachmentId;
-  return (
-    <div className="group relative aspect-square rounded overflow-hidden border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800">
-      <button type="button" onClick={onOpen} className="absolute inset-0 cursor-zoom-in" title="Click to enlarge">
-        <EntityPhoto src={url} alt={filename} fill placeholder="…" />
-      </button>
-      <div className="absolute top-1 right-1 flex gap-1 hover-reveal transition">
-        <button
-          onClick={onSetAsCover}
-          className="p-1 rounded bg-black/40 text-white hover:bg-cobble-600 transition"
-          title="Set as cover image"
-        >
-          <ImageIcon size={10} />
-        </button>
-        <button
-          onClick={onDetach}
-          className="p-1 rounded bg-black/40 text-white hover:bg-ember-600 transition"
-          title="Detach"
-        >
-          <Trash2 size={10} />
-        </button>
-      </div>
-    </div>
   );
 }

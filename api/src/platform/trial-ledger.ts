@@ -345,6 +345,35 @@ export async function trialLedger(orgId: string): Promise<TrialLedger> {
   };
 }
 
+/** The ids of what the person made: every record whose create the log names
+ *  after the hand-over, every scan they committed and its photos. This, not a
+ *  row's own timestamp, is what makes a row theirs in a take: the platform
+ *  also writes after the hand-over (a sweep, a wire, a label code minted on
+ *  first view), and a row it wrote about an example is not the person's
+ *  (#4364). Empty for a workspace that was never handed over. */
+export async function madeByThePerson(orgId: string): Promise<Set<string>> {
+  const since = await handedOverAt(orgId);
+  if (!since) return new Set();
+  const rows = await meta
+    .selectFrom("activity_log")
+    .select(["action", "entity_id", "diff"])
+    .where("org_id", "=", orgId)
+    .where((eb) => eb.or([eb("action", "=", "scan_committed"), eb("action", "like", "%\\_created")]))
+    .where("occurred_at", ">", since)
+    .execute();
+  const ids = new Set<string>();
+  for (const r of rows) {
+    if (r.action !== "scan_committed") {
+      ids.add(r.entity_id);
+      continue;
+    }
+    const d = (r.diff ?? {}) as { entity_id?: unknown; photo_file_ids?: unknown };
+    if (typeof d.entity_id === "string") ids.add(d.entity_id);
+    if (Array.isArray(d.photo_file_ids)) for (const p of d.photo_file_ids) if (typeof p === "string") ids.add(p);
+  }
+  return ids;
+}
+
 /** The ids of what a sandbox came stocked with: every record whose create was
  *  logged before the hand-over, the one line that splits the platform's work
  *  from the person's (the ledger above is everything after it). Empty for a

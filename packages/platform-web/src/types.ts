@@ -106,6 +106,17 @@ export interface PlatformPerson {
   left: boolean;
 }
 
+export interface UsedValueBody {
+  value: string;
+  uses: number;
+  lastUsed: string | null;
+}
+
+export interface FieldValuesUsedBody {
+  values: UsedValueBody[];
+  details?: Record<string, UsedValueBody[]>;
+}
+
 export interface PlatformFieldDef {
   id: string;
   entity_kind: string;
@@ -141,6 +152,10 @@ export interface PlatformFieldDef {
    *  (e.g. "core-locations:location"). The stored value is the target's id;
    *  display resolves it to the target's title. */
   ref_kind?: string | null;
+  /** What the field MEANS (a record role such as "acquired-from"). */
+  field_role?: string | null;
+  /** Whether what a person types becomes a choice (field-choices.ts). */
+  learns?: boolean | null;
 }
 
 /** A named form-builder section grouping a kind's fields under a heading. */
@@ -241,9 +256,15 @@ export interface PlatformWebApi {
   listPhotoSuggestions?(slug: string, kind: string | null, ids?: string[]): Promise<{ items: PhotoSuggestionRow[] }>;
   /** Search again for a record whose picture was not found. */
   searchPhotoFor?(slug: string, kind: string, id: string): Promise<{ ok: true }>;
-  /** Append a new choice to a text field-def's `choices` array. The
-   *  CustomFieldsPanel's "+ add new" affordance calls this. */
-  appendFieldDefChoice?(slug: string, id: string, value: string): Promise<PlatformFieldDef>;
+  /** What a field already holds across a kind's records (GET /field-values),
+   *  for the choice picker's list; `detail` / `note` also return what rode
+   *  beside each value. A host without it offers the field's choices alone. */
+  fieldValues?(
+    slug: string,
+    kind: string,
+    field: string,
+    opts?: { detail?: string | null; note?: boolean },
+  ): Promise<FieldValuesUsedBody>;
   /** core-units vocabulary: built-in + custom units + the workspace's
    *  display mode. Optional — the UnitInput / formatting helpers degrade
    *  to free-text when a host doesn't wire it. */

@@ -42,7 +42,19 @@ export interface SalesOrdersTable {
   notes: string | null;
   metadata: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown> | undefined>;
   instance: Generated<string>;
+  /** Where a sent parcel is, as core-shipments last said, for "Follow parcels
+   *  I send". Null until the sweep first asks. */
+  shipment_state: string | null;
+  shipment_checked_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
+  shipment_next_poll_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
+  delivered_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
   created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface SalesSettingsTable {
+  key: string;
+  value: ColumnType<Record<string, unknown>, string, string>;
   updated_at: Generated<Date>;
 }
 
@@ -60,7 +72,7 @@ export interface SalesOrderItemsTable {
   updated_at: Generated<Date>;
 }
 
-export type SalesHistoryKind = "status" | "stock" | "shipped" | "email" | "work_order" | "line";
+export type SalesHistoryKind = "status" | "stock" | "shipped" | "email" | "work_order" | "line" | "delivered";
 
 export interface SalesOrderHistoryTable {
   id: Generated<string>;
@@ -78,6 +90,7 @@ export interface SalesDB {
   sales_orders: SalesOrdersTable;
   sales_order_items: SalesOrderItemsTable;
   sales_order_history: SalesOrderHistoryTable;
+  sales_settings: SalesSettingsTable;
 }
 
 /** Re-exported from the contract so this module cannot fall behind the

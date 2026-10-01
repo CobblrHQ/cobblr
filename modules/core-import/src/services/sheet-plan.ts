@@ -18,6 +18,7 @@ import { isStockPreviewUrl } from "@cobblr/platform-contract/stock-preview";
 import { readDisposition, type Disposition } from "@cobblr/platform-contract/disposition";
 import { provenanceFieldFor, PROVENANCE_FIELDS } from "@cobblr/platform-contract/provenance-fields";
 import { parseNumber, parseQuantity, type ColumnType, type SummaryFact, type UnderstoodColumn, type UnderstoodSheet, type Value } from "./sheet-understand.js";
+import { moneyForStorage, moneyStorageOf, type MoneyStorage } from "@cobblr/platform-contract/money";
 
 // ─── the workspace, as the planner sees it ───────────────────────────────────
 
@@ -30,6 +31,8 @@ export interface TargetField {
   choices?: string[] | null;
   field_role?: string | null;
   unit?: string | null;
+  /** A native money column, and how it holds money ("cents" | "amount"). */
+  money?: MoneyStorage | null;
 }
 
 export interface Target {
@@ -368,9 +371,10 @@ const FITS: Record<ColumnType, readonly string[]> = {
   choice: ["text"],
   tags: ["text"],
   code: ["text"],
-  number: ["number", "text"],
-  money: ["number", "text"],
+  number: ["number", "measure", "money", "text"],
+  money: ["money", "number", "text"],
   quantity: ["number", "text"],
+  measure: ["measure", "text"],
   date: ["date", "text"],
   boolean: ["boolean", "text"],
   url: ["url", "text"],
@@ -441,9 +445,11 @@ function newFieldShape(c: UnderstoodColumn, taken: Set<string>): Extract<Destina
     case "number":
       return { ...base, type: "number" };
     case "money":
-      return { ...base, type: "number", unit: c.currency ?? null };
+      return { ...base, type: "money" };
     case "quantity":
       return { ...base, type: "number", unit: c.unit ?? null };
+    case "measure":
+      return { ...base, type: "measure", unit: c.unit ?? null };
     case "date": {
       const role = roleOfHeader(c.header);
       return { ...base, type: "date", ...(role === "expiry" || role === "acquired-on" ? { field_role: role } : {}) }; // VOCAB-ENUMERATION OK: a declared destination or column role
@@ -545,8 +551,15 @@ function display(v: Value): string {
 }
 
 /** A value shaped for the field it is going into, or undefined with a reason. */
-function fitValue(v: Value, type: string): { value: unknown } | { misfit: string } {
+function fitValue(v: Value, type: string, money: MoneyStorage | null = null): { value: unknown } | { misfit: string } {
   if (v === null) return { value: undefined };
+  // Money lands in its column's shape: "$4,300" is 4300 in an amount column
+  // and 430000 in a cents one (what an export wrote reads back the same).
+  if (money) {
+    const amount = typeof v === "number" ? v : typeof v === "object" && !Array.isArray(v) ? v.amount : null;
+    const stored = moneyForStorage(amount ?? display(v), money);
+    return stored !== null ? { value: stored } : { misfit: `"${display(v)}" is not an amount` };
+  }
   if (type === "number") {
     if (typeof v === "number") return { value: v };
     if (typeof v === "object" && !Array.isArray(v)) return { value: v.amount };
@@ -733,7 +746,7 @@ export function planSheet(input: PlanInput): SheetPlan {
       const col = sheet.columns[only.column]!;
       only.dest = paidField
         ? { to: "field", field: paidField.name, label: paidField.label, native: paidField.native }
-        : { to: "new-field", field: PROVENANCE_FIELDS.for.name, label: PROVENANCE_FIELDS.for.label, type: "number", unit: col.currency ?? null, field_role: PROVENANCE_FIELDS.for.field_role };
+        : { to: "new-field", field: PROVENANCE_FIELDS.for.name, label: PROVENANCE_FIELDS.for.label, type: "money", field_role: PROVENANCE_FIELDS.for.field_role };
       only.why = "what each one cost you";
     } else if (costCols.length >= 2) {
       paidFrom = costCols.map((c) => c.column);
@@ -742,6 +755,7 @@ export function planSheet(input: PlanInput): SheetPlan {
   }
 
   const fieldType = new Map<string, string>(target.fields.map((f) => [f.name, f.type]));
+  const fieldMoney = new Map<string, MoneyStorage | null>(target.fields.map((f) => [f.name, moneyStorageOf(f)]));
   for (const c of columns) if (c.dest.to === "new-field") fieldType.set(c.dest.field, c.dest.type);
 
   const paths = locationPaths(input.locations);
@@ -758,7 +772,7 @@ export function planSheet(input: PlanInput): SheetPlan {
   const fateField = fateCol ? (target.fields.find((f) => norm(f.name) === norm(fateCol.header) || norm(f.label) === norm(fateCol.header))?.name ?? slugOf(fateCol.header, takenNames)) : null;
   // The collection's own Sold for, when an earlier import (or a person) made
   // one, so a second import of the same sheet lands in the same field.
-  const ownSoldFor = target.fields.find((f) => f.type === "number" && (f.name === "sold_for" || norm(f.label) === "sold for"))?.name ?? null;
+  const ownSoldFor = target.fields.find((f) => (f.type === "money" || f.type === "number") && (f.name === "sold_for" || norm(f.label) === "sold for"))?.name ?? null;
   const soldForField = !fateCol ? null : ownSoldFor ?? (takenNames.has("sold_for") ? slugOf("sold for", takenNames) : (takenNames.add("sold_for"), "sold_for"));
   const fateOf = (r: UnderstoodSheet["rows"][number]) => {
     if (!fateCol) return null;
@@ -866,7 +880,7 @@ export function planSheet(input: PlanInput): SheetPlan {
         }
         case "field":
         case "new-field": {
-          const fitted = fitValue(v, fieldType.get(c.dest.field) ?? "text");
+          const fitted = fitValue(v, fieldType.get(c.dest.field) ?? "text", fieldMoney.get(c.dest.field) ?? (c.dest.to === "new-field" && c.dest.type === "money" ? "amount" : null));
           if ("misfit" in fitted) {
             // Kept as written in a field of its own name rather than dropped.
             problems.push(`${c.header}: ${fitted.misfit}, kept as text`);
@@ -958,11 +972,11 @@ export function planSheet(input: PlanInput): SheetPlan {
   }
   if (soldForField && !ownSoldFor && records.some((r) => r.fields[soldForField] != null)) {
     const currency = costCols.map((c) => sheet.columns[c.column]!.currency).find(Boolean) ?? null;
-    fields_to_create.push({ to: "new-field", field: soldForField, label: "Sold for", type: "number", unit: currency });
+    fields_to_create.push({ to: "new-field", field: soldForField, label: "Sold for", type: "money" });
   }
   if (paidName && !paidField) {
     const currency = costCols.map((c) => sheet.columns[c.column]!.currency).find(Boolean) ?? null;
-    fields_to_create.push({ to: "new-field", field: paidName, label: PROVENANCE_FIELDS.for.label, type: "number", unit: currency, field_role: PROVENANCE_FIELDS.for.field_role });
+    fields_to_create.push({ to: "new-field", field: paidName, label: PROVENANCE_FIELDS.for.label, type: "money", field_role: PROVENANCE_FIELDS.for.field_role });
   }
 
   // A field the collection already has is written into, never made again:

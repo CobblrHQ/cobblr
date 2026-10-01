@@ -19,7 +19,6 @@ export function SuggestedPhotoPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
       kind={kind}
       id={ctx.entityId}
       hasPicture={false}
-      besidePicture={false}
       // The record's own page reads it from a query this panel cannot name:
       // refresh what is on screen.
       onApplied={() => void qc.invalidateQueries()}

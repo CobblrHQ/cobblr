@@ -21,7 +21,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-shipments",
-  version: "0.6.6",
+  version: "0.6.7",
   maturity: "beta",
   displayName: "Shipments",
   description:
@@ -103,6 +103,7 @@ export default defineModule({
         argsSchema: {
           confirmed: { label: "Whether a person has confirmed they received it", type: "boolean" },
           deliveredAt: { label: "When the carrier said it was delivered, ISO timestamp", type: "text" },
+          watchDaysAfterDelivery: { label: "Days to keep watching after the delivered scan (default 14; a parcel you sent: 2)", type: "number" },
           number: { label: "The tracking number", type: "text" },
           currentEta: { label: "The arrival date you already hold, if any", type: "text" },
           currentEtaSource: { label: "Where that date came from", type: "text" },

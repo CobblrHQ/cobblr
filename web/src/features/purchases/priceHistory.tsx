@@ -12,10 +12,10 @@ import { Link } from "react-router-dom";
 import { TrendingDown, TrendingUp, Minus } from "lucide-react";
 import { api, type PurchasePricePoint, type PurchasePriceStats } from "../../lib/api";
 import type { EntityDetailPanelCtx } from "../../panels/types";
+import { formatStoredMoney } from "@cobblr/platform-contract/money";
 
 function money(v: number | null | undefined): string {
-  if (v === null || v === undefined || !Number.isFinite(v)) return "—";
-  return v.toLocaleString(undefined, { style: "currency", currency: "USD" });
+  return formatStoredMoney(v, "amount") ?? "—";
 }
 
 function day(iso: string | null): string {

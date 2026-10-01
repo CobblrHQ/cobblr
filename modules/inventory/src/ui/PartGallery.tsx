@@ -9,7 +9,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, Scissors, Star, Trash2, Upload, X } from "lucide-react";
-import { useConfirm, useImageSrc, usePhotoPick, useToast, EntityPhoto, MutationError, uploadJson } from "@cobblr/platform-web";
+import { SELECTED_TILE, useConfirm, useImageSrc, usePhotoPick, useToast, EntityPhoto, Lightbox, MutationError, noteWorkspaceWrite, uploadJson } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { cutoutPlainBackground } from "./remove-background";
 import { isCoverFile } from "./gallery-cover";
@@ -38,6 +38,8 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
   const toast = useToast();
   const confirm = useConfirm();
   const [dragOver, setDragOver] = useState(false);
+  // The photo open in the shared viewer, which steps through all of them.
+  const [viewing, setViewing] = useState<number | null>(null);
 
   const auth = (): Record<string, string> => {
     const t = getToken();
@@ -76,6 +78,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
         }),
       });
       if (!ares.ok) throw new Error(`attach ${ares.status}`);
+      noteWorkspaceWrite(`${base}/attachments`);
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["part-gallery", orgSlug, partId] });
@@ -90,6 +93,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
         headers: auth(),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      noteWorkspaceWrite(`${base}/attachments/${id}`);
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["part-gallery", orgSlug, partId] });
@@ -119,6 +123,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
         body: JSON.stringify({ file_id: f.id, source_module: "inventory", source_type: "part", source_id: partId, role: "gallery" }),
       });
       if (!ares.ok) throw new Error(`attach ${ares.status}`);
+      noteWorkspaceWrite(`${base}/attachments`);
       onSetCover(fullUrl(f.id));
       toast.success("Background removed - cut-out set as the cover.");
       void qc.invalidateQueries({ queryKey: ["part-gallery", orgSlug, partId] });
@@ -155,7 +160,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
       className={
         "rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 transition " +
         (dragOver
-          ? "ring-2 ring-cobble-400 ring-offset-2 dark:ring-offset-slate-900"
+          ? "outline-dashed outline-1 outline-offset-4 outline-cobble-400"
           : "")
       }
       onDragEnter={(e) => {
@@ -210,24 +215,19 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
           ten short of what "cover", "cut out" and the bin need on one line. */}
       {items.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
-          {items.map((att) => {
+          {items.map((att, i) => {
             const isCover = isCoverFile(coverImagePath, att.file_id);
             return (
               <div
                 key={att.id}
                 className={
-                  "group rounded-md overflow-hidden border flex flex-col " +
-                  (isCover
-                    ? "border-accent dark:border-cobble-500 ring-2 ring-cobble-300/40"
-                    : "border-line dark:border-slate-700")
+                  "group rounded-md overflow-hidden border border-line dark:border-slate-700 flex flex-col " +
+                  // The cover is the chosen one: the same outline every chosen tile has.
+                  (isCover ? SELECTED_TILE : "")
                 }
               >
                 <div className="relative">
-                  <GalleryImg
-                    thumb={thumbUrl(att.file_id)}
-                    full={fullUrl(att.file_id)}
-                    alt={att.filename}
-                  />
+                  <GalleryImg thumb={thumbUrl(att.file_id)} alt={att.filename} onOpen={() => setViewing(i)} />
                   {isCover && (
                     <div className="absolute top-1 left-1 text-[9px] font-mono uppercase tracking-widest bg-cobble-600 text-white rounded px-1.5 py-0.5">
                       cover
@@ -285,6 +285,20 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
           })}
         </div>
       )}
+      {viewing !== null && items[viewing] && (
+        <Lightbox
+          items={items.map((att) => ({
+            key: att.id,
+            caption: att.filename,
+            src: `${base}/files/${att.file_id}/raw?variant=medium`,
+            original: fullUrl(att.file_id),
+            thumb: thumbUrl(att.file_id),
+          }))}
+          index={viewing}
+          onIndex={setViewing}
+          onClose={() => setViewing(null)}
+        />
+      )}
       <MutationError mutation={detach} className="block mt-2" />
       {/* Surface a tiny X if uploading mid-drag so the user can cancel/reset if needed. */}
       {upload.isPending && (
@@ -300,13 +314,10 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
 }
 
 /** A gallery thumbnail. The core-files `/raw` endpoint is Bearer-gated, and a
- *  bare <img src> can't carry the SPA's token — so it 401s and renders broken.
- *  useImageSrc fetches with the token and hands back a blob: URL. The "open
- *  full size" link points at the same authed blob (a new tab to the raw URL
- *  would 401 too). */
-function GalleryImg({ thumb, full, alt }: { thumb: string; full: string; alt: string }) {
+ *  bare <img src> can't carry the SPA's token, so useImageSrc fetches it with
+ *  the token. A tap opens the shared viewer over the whole gallery. */
+function GalleryImg({ thumb, alt, onOpen }: { thumb: string; alt: string; onOpen: () => void }) {
   const resolvedThumb = useImageSrc(thumb);
-  const resolvedFull = useImageSrc(full);
   if (!resolvedThumb) {
     return (
       <div className="w-full aspect-square bg-subtle dark:bg-slate-800 flex items-center justify-center text-faint dark:text-slate-500">
@@ -315,8 +326,8 @@ function GalleryImg({ thumb, full, alt }: { thumb: string; full: string; alt: st
     );
   }
   return (
-    <a href={resolvedFull ?? resolvedThumb} target="_blank" rel="noopener noreferrer">
+    <button type="button" onClick={onOpen} aria-label={`Open ${alt}`} className="block w-full cursor-zoom-in">
       <EntityPhoto src={resolvedThumb} alt={alt} aspect="square" />
-    </a>
+    </button>
   );
 }

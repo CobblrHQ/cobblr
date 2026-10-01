@@ -110,6 +110,7 @@ const FileIntakeBody = z.object({
   values: z.record(z.string().max(80), z.string().max(200)).optional(),
 });
 
+// AI-REACH: an upload; the files arrive from the person's device, which the assistant does not hold
 instancesRouter.post(
   "/:instance/file-intake",
   requireAuth,

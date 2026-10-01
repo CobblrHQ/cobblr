@@ -1,9 +1,21 @@
 {
   "manifest": {
     "id": "cobblr.community.computers",
-    "released_at": "2026-08-31",
-    "changelog": "First release: computers as their own table, with the specs, an owner, and scan routing that stops laptops filing themselves as machines.",
-    "version": "0.1.0",
+    "released_at": "2026-10-02",
+    "changelog": "A computer's Contents are called Parts: install what it is built from, and rename the word if you call them something else.",
+    "version": "0.2.1",
+    "releases": [
+      {
+        "version": "0.2.1",
+        "released_at": "2026-10-02",
+        "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before."
+      },
+      {
+        "version": "0.2.0",
+        "released_at": "2026-10-02",
+        "notes": "A computer's Contents are called Parts: install what it is built from, and rename the word if you call them something else."
+      }
+    ],
     "name": "Computers",
     "description": "Computers as their own top-level table rather than machines: CPU, memory, storage and OS beside the maker, model, serial and warranty Assets already keeps. Scans of a laptop land here.",
     "author": "Cobblr community",
@@ -19,6 +31,7 @@
         "display_name": "Computers",
         "glyph": "💻",
         "item_noun": "computer",
+        "contents_label": "Parts",
         "qty_unit": "each",
         "scan_keywords": [
           "laptop",
@@ -42,6 +55,7 @@
             "name": "form_factor",
             "display_label": "Form",
             "type": "text",
+            "learns": true,
             "choices": [
               "Laptop",
               "Desktop",
@@ -92,6 +106,7 @@
             "name": "operating_system",
             "display_label": "OS",
             "type": "text",
+            "learns": true,
             "choices": [
               "Windows",
               "macOS",
