@@ -19,14 +19,17 @@ export interface PendingPurchaseLine {
   qty: number;
   unitCost: number | null;
   lineAmount: number | null;
+  /** A line that is not a thing: a charge, or a bill of sale's add-on. */
+  kind?: "charge" | "add-on";
 }
 
 /** Everything the order needs, as read from the receipt: what is stored on
  *  the session while Purchases is off. */
 export interface PendingPurchase extends Omit<ReceiptOrderInput, "baseUrl" | "slug" | "headers"> {
   lines: PendingPurchaseLine[];
-  /** The inbox rows the read made, in receipt order: rows[i] is lines[i]. */
-  rowIds: string[];
+  /** The inbox rows the read made, in receipt order: rows[i] is lines[i],
+   *  null for a line that is not a thing (a charge, an add-on). */
+  rowIds: Array<string | null>;
   /** The item this paperwork was attached to, when it was. */
   targetItemId: string | null;
 }
@@ -73,15 +76,16 @@ export async function recordReceiptPurchase(
   // what lets a later confirm CLAIM it rather than add a second one.
   const lineIds: Array<string | null> = [];
   for (const line of lines) {
-    lineIds.push(await addOrderLine({ ...http, orderId, description: line.description, qty: line.qty, unitCost: line.unitCost, lineAmount: line.lineAmount }));
+    lineIds.push(await addOrderLine({ ...http, orderId, description: line.description, qty: line.qty, unitCost: line.unitCost, lineAmount: line.lineAmount, kind: line.kind }));
   }
   for (let i = 0; i < rowIds.length; i++) {
     const lineId = lineIds[i] ?? null;
-    if (!lineId) continue;
+    const rowId = rowIds[i];
+    if (!lineId || !rowId) continue;
     await db
       .updateTable("core_scan_inbox_items")
       .set({ suggested_metadata: mergeMeta({ receipt_order_id: orderId, receipt_order_item_id: lineId }) as never })
-      .where("id", "=", rowIds[i]!)
+      .where("id", "=", rowId)
       .execute();
   }
   // The item this paperwork was attached to now knows its purchase. A

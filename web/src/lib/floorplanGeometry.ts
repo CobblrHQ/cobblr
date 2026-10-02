@@ -27,6 +27,12 @@ export interface FpBound {
    *  drawer wants 42 (exact Gridfinity) or whatever "1 square" means to its
    *  owner. Placement positions AND sizes quantize to it. */
   grid_mm?: number;
+  /** The grid drawn on this plan in every mode, and what pins snap to. Off
+   *  until somebody turns it on; remembered on the plan. */
+  grid_on?: boolean;
+  /** The field this plan groups its pinned things by ("drive"), remembered
+   *  with the plan; any measure or choice field their kinds declare. */
+  group_by?: string;
   walls?: FpWall[];
 }
 
@@ -74,6 +80,8 @@ function boundFrom(fp: Record<string, unknown>): FpBound | null {
     unit: fp.unit === "ft" || fp.unit === "in" || fp.unit === "m" || fp.unit === "cm" || fp.unit === "mm" ? fp.unit : undefined,
     view: fp.view === "front" ? "front" : fp.view === "plan" ? "plan" : undefined,
     ...(grid && grid >= 5 && grid <= 1000 ? { grid_mm: grid } : {}),
+    ...(typeof fp.grid_on === "boolean" ? { grid_on: fp.grid_on } : {}),
+    ...(typeof fp.group_by === "string" && fp.group_by ? { group_by: fp.group_by } : {}),
     ...(walls.length ? { walls } : {}),
   };
 }
@@ -114,10 +122,10 @@ export function hasOwnLayout(metadata: Record<string, unknown> | null | undefine
   if (face) return !!boundFrom(face);
   if (!boundFrom(fp)) return false;
   if (num(fp.x_mm) === null || num(fp.y_mm) === null) return true;
-  return fp.view !== undefined || fp.unit !== undefined || fp.grid_mm !== undefined || Array.isArray(fp.walls);
+  return fp.view !== undefined || fp.unit !== undefined || fp.grid_mm !== undefined || fp.grid_on !== undefined || Array.isArray(fp.walls);
 }
 
-const BOUND_KEYS = ["w_mm", "d_mm", "unit", "view", "grid_mm", "walls"] as const;
+const BOUND_KEYS = ["w_mm", "d_mm", "unit", "view", "grid_mm", "grid_on", "group_by", "walls"] as const;
 const RECT_KEYS = ["x_mm", "y_mm", "w_mm", "d_mm", "wall_mounted"] as const;
 
 function boundKeys(b: FpBound): Record<string, unknown> {

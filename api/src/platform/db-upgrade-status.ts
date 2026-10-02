@@ -118,6 +118,7 @@ export function startDbUpgradeHoldWatch(): void {
   // share one database on the canary channel — without this the operator gets
   // the same "database held back" alert twice per interval.
   timer = setInterval(
+    // SKIP-IF-BUSY OK: a timer tick; the process holding the lock sends the alert, the next tick checks again
     () => void runExclusive("platform.db-upgrade-alert", checkAndAlert).catch(() => {}),
     CHECK_INTERVAL_MS,
   );

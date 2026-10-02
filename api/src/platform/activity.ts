@@ -47,6 +47,16 @@ export interface LogParams {
   via?: Via | null;
 }
 
+type WriteObserver = (orgId: string, ref: ActivityRef) => void;
+const writeObservers: WriteObserver[] = [];
+/** Told of every row written, after it is: something in that workspace
+ *  changed. A module's own route logs its edit here even when it emits no
+ *  event, so this is the one place a hand edit is always seen. Must be cheap
+ *  for a workspace it does not care about. */
+export function observeActivity(fn: WriteObserver): void {
+  writeObservers.push(fn);
+}
+
 export async function log(p: LogParams): Promise<void> {
   // Auto-resolve actor from the current request's AsyncLocalStorage
   // context when caller didn't override.
@@ -78,6 +88,13 @@ export async function log(p: LogParams): Promise<void> {
       via_label: via?.label ?? null,
     })
     .execute();
+  for (const fn of writeObservers) {
+    try {
+      fn(p.orgId, p.ref);
+    } catch (err) {
+      console.error("[activity] observer failed:", err);
+    }
+  }
 
   const days = env.ACTIVITY_LOG_RETENTION_DAYS;
   if (days && Math.random() < 0.01) {

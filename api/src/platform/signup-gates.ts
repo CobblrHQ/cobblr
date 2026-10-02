@@ -23,7 +23,7 @@ import { publicSignupEnabled } from "../auth/signup-gate.js";
 const onOff = (on: boolean) => (on ? "ON" : "off");
 
 /** True when a setting has a real value. Compose passes an unset variable as "", so a
- *  truthiness check is the only one that reads that as "not set" (CLAUDE.md 14.6). */
+ *  truthiness check is the only one that reads that as "not set" (docs/architecture/platform-spec.md §14.6). */
 const isSet = (v: string | undefined) => !!v;
 
 export function signupGateSummary(e: {

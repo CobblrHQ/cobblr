@@ -123,13 +123,16 @@ export function pantryList(): { buf: Uint8Array; filename: string } {
   return { buf: bytes(wb, "xlsx"), filename: "pantry.xlsx" };
 }
 
-/** Two lists in one file, a hidden lookup sheet and an empty third tab. */
-export function workshopWorkbook(bookType: "xlsx" | "ods" = "xlsx"): { buf: Uint8Array; filename: string } {
+/** Two lists in one file, a hidden lookup sheet and an empty third tab.
+ *  `kit` names the first list "Kit" with an "Item" column, for a test that
+ *  needs a list no collection is called (a "Tools" sheet is offered Hand
+ *  Tools now that it exists). */
+export function workshopWorkbook(bookType: "xlsx" | "ods" = "xlsx", opts: { kit?: boolean } = {}): { buf: Uint8Array; filename: string } {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(
     wb,
     sheet([
-      ["Tool", "Make", "Category", "Location", "Qty"],
+      [opts.kit ? "Item" : "Tool", "Make", "Category", "Location", "Qty"],
       ["Cordless drill", "Makita", "Power tools", "Pegboard", 1],
       ["Impact driver", "Makita", "Power tools", "Pegboard", 1],
       ["Hex key set", "Wera", "Hand tools", "Top drawer", 2],
@@ -137,7 +140,7 @@ export function workshopWorkbook(bookType: "xlsx" | "ods" = "xlsx"): { buf: Uint
       ["Flush cutters", "Knipex", "Hand tools", "Top drawer", 3],
       ["Multimeter", "Fluke", "Measuring", "Shelf 2", 1],
     ]),
-    "Tools",
+    opts.kit ? "Kit" : "Tools",
   );
   XLSX.utils.book_append_sheet(
     wb,

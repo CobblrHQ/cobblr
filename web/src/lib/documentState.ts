@@ -11,6 +11,12 @@ function fromScan(v: SessionVerdict, items: ReadonlyArray<{ suggested_metadata?:
   return items.some((i) => (i.suggested_metadata as { receipt_source?: unknown } | null | undefined)?.receipt_source === "scanned-pdf");
 }
 
+/** A bill of sale says so: it is one thing and its purchase, not a till
+ *  receipt's lines. */
+function isBillOfSale(items: ReadonlyArray<{ suggested_metadata?: unknown }>): boolean {
+  return items.some((i) => (i.suggested_metadata as { receipt_document?: unknown } | null | undefined)?.receipt_document === "bill-of-sale");
+}
+
 export function documentStateWords(v: SessionVerdict, items: ReadonlyArray<{ suggested_metadata?: unknown }>): string | null {
   const scan = fromScan(v, items);
   const lines = items.length;
@@ -21,6 +27,7 @@ export function documentStateWords(v: SessionVerdict, items: ReadonlyArray<{ sug
     case "in_flight":
       return "Reading it now";
     case "read":
+      if (isBillOfSale(items)) return scan ? "Bill of sale, read from its scan" : "Bill of sale, read";
       return scan ? `Scanned PDF, read from its image into ${read}` : `Read into ${read}`;
     case "empty":
       return scan ? "Scanned PDF, read from its image; every line is dealt with" : "Read, and every line is dealt with";

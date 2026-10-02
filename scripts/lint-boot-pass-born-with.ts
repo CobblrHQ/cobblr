@@ -4,7 +4,7 @@
 // THE BUG THIS PREVENTS. The scan category axis was created by the boot pass
 // alone, so a workspace signed up between two restarts was born without it
 // and stayed so until the next deploy, a day on the hosted product (#3252,
-// found on a first-run walk, 2026-09-20). CLAUDE.md 8.1 is about EXISTING
+// found on a first-run walk, 2026-09-20). docs/architecture/platform-spec.md §8.1 is about EXISTING
 // workspaces healing on the next boot; this is the worse version, a workspace
 // that starts life missing the capability, and nothing had asked the
 // question of any other pass. Asked once, by hand, the answer was: of the

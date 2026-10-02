@@ -26,6 +26,8 @@ export interface SessionClaims {
    *  requireAuth to clamp app tokens to the Tier-B allowlist server-side
    *  (defense-in-depth — not just the client-side mediator). */
   aud?: string;
+  /** The instance that minted a relay grant (instanceOfGrants), when it says. */
+  ins?: string;
 }
 
 export async function signSession(userId: string): Promise<string> {
@@ -79,9 +81,16 @@ export async function signAppToken(
 // the workspace over MCP. See docs/design-decisions/ask-cobb-bridge-mcp-tools.md.
 const MCP_READ_TTL_SECONDS = 15 * 60; // 15 minutes — one chat turn's worth
 
+/** Which instance this is, as a relay grant records it: two instances can
+ *  share a database and a signing secret (a canary beside its release), and a
+ *  grant minted by one must not be answered by the other's older code. */
+export function instanceOfGrants(): string {
+  return (process.env.COBBLR_ENV || "").trim();
+}
+
 export async function signMcpReadGrant(userId: string, orgSlug: string): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
-  return new SignJWT({})
+  return new SignJWT({ ins: instanceOfGrants() })
     .setProtectedHeader({ alg: ALG })
     .setIssuer(ISSUER)
     .setSubject(userId)
@@ -177,5 +186,6 @@ export async function verifySession(token: string): Promise<SessionClaims> {
     iat: payload.iat as number,
     exp: payload.exp as number,
     aud: typeof payload.aud === "string" ? payload.aud : Array.isArray(payload.aud) ? payload.aud[0] : undefined,
+    ...(typeof payload.ins === "string" ? { ins: payload.ins } : {}),
   };
 }

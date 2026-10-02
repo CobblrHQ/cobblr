@@ -12,7 +12,7 @@ import {
   useToast,
   useConfirm,
   usePageTitle,
-  useAskCobbAboutSelection, SearchInput, CollectionHeader } from "@cobblr/platform-web";
+  useAskCobbAboutSelection, useTickedRows, SearchInput, CollectionHeader } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import type { Project } from "./api";
 import { pluralise } from "@cobblr/platform-contract";
@@ -161,7 +161,7 @@ export function ProjectsListPage() {
     return m;
   }, [filtered]);
 
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useTickedRows(list.data ? items.map((p) => p.id) : null);
 
 
   // What is ticked IS context: with the panel open, "delete these" means the

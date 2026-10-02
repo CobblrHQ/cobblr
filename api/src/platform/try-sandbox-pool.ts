@@ -166,6 +166,7 @@ export function stop(): void {
 export function startSandboxPool(deps: PoolDeps): void {
   if (poolTarget() <= 0 || timer) return;
   const run = () =>
+    // SKIP-IF-BUSY OK: a timer tick; the holder tops up the pool, the next tick tops up again
     void runExclusive("platform.try-sandbox-pool", async () => {
       // One per tick, and the tick is short, so an empty pool fills steadily.
       await topUpPool(deps);

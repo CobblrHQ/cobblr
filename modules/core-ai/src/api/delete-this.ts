@@ -3,9 +3,9 @@
 // A person with a yarn record in the chat's context ("About: Loops & Threads
 // Charisma Yarn") wrote "delete this and yarn as a whole". The model proposed
 // one change, turning the Yarn feature off, and the card read back only that:
-// the record they asked to delete was never offered. Two things asked for are
-// two cards, one per thing, so the readback says "delete this item" and "turn
-// off this feature" and each is confirmed on its own (the owner, 2026-10-01).
+// the record they asked to delete was never offered. The readback says
+// "delete this item" and then the rest, as the steps of one plan with one
+// Confirm (one-plan.ts, 2026-10-02).
 //
 // The model chooses the changes; this makes sure the one that is unmistakable
 // is there. A message that says delete or remove "this" (or "it", "this one")

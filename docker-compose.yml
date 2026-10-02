@@ -211,6 +211,8 @@ services:
       SANDBOX_CPU_QUOTA_MS_PER_WINDOW: ${SANDBOX_CPU_QUOTA_MS_PER_WINDOW:-}
       # This instance's own address, and the Discord sign-in app.
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      COBBLR_MCP_RELAY_URL: ${COBBLR_MCP_RELAY_URL:-}
+      COBBLR_SHARE_TRUSTED_PEERS: ${COBBLR_SHARE_TRUSTED_PEERS:-}
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
       DISCORD_REDIRECT_URI: ${DISCORD_REDIRECT_URI:-}
@@ -291,7 +293,7 @@ services:
       # ONE provider via COBBLR_AUTH_EMAIL_PROVIDER (default smtp); unset = no
       # sender (dev-link / copy-link fallback). See auth-email-config.ts +
       # docs/operations/PRODUCTION_DEPLOY.md. (Cloud uses the overlay's managed
-      # sender instead.) Empty-string is treated as unset (CLAUDE.md §14.6).
+      # sender instead.) Empty-string is treated as unset (docs/architecture/platform-spec.md §14.6).
       COBBLR_AUTH_EMAIL_PROVIDER: ${COBBLR_AUTH_EMAIL_PROVIDER:-}
       COBBLR_AUTH_EMAIL_FROM: ${COBBLR_AUTH_EMAIL_FROM:-}
       COBBLR_AUTH_SMTP_HOST: ${COBBLR_AUTH_SMTP_HOST:-}

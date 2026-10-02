@@ -70,6 +70,11 @@ export function registerInventoryWriter(): void {
       await db.updateTable("inventory_parts").set({ archived: true, updated_at: new Date() } as never).where("id", "=", id).execute();
     },
 
+    async unretire(orgId, id) {
+      const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
+      await db.updateTable("inventory_parts").set({ archived: false, updated_at: new Date() } as never).where("id", "=", id).execute();
+    },
+
     /** Put the row back exactly as it was, id and all (EntityWriter.restore).
      *  Not a create: no name-clash rule, no re-derived id, no new row for
      *  everything that pointed at the old one to miss. */

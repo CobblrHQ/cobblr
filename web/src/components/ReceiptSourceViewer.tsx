@@ -139,9 +139,16 @@ export function ReceiptSourceViewer({
       onClick={onClose}
       role="dialog"
       aria-modal="true"
-      aria-label="Original receipt"
+      aria-label={filename ? `Original: ${filename}` : "Original receipt"}
     >
       <OverlayCloseButton onClose={onClose} />
+      {/* What the document is, by name ("Email from eBay, Aug 12"): the
+          caller names it, never a file name the platform made up (#4581). */}
+      {filename && (
+        <div data-testid="receipt-viewer-name" onClick={(e) => e.stopPropagation()} className="absolute left-4 sm:left-6 right-16 top-4 truncate text-sm font-medium text-white">
+          {filename}
+        </div>
+      )}
       {(() => {
         const rows = receiptMoneyRows(receiptMoney);
         if (rows.length === 0 && !soldBy) return null;

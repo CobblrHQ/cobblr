@@ -364,6 +364,10 @@ export function deriveImageQuery(opts: {
    *  collection), its words join the phrase, so the search asks for a 3D
    *  printer and not for whatever else the maker's name is known for. */
   collection?: string | null;
+  /** A model or part number the item is known by ("S-12415"). The sharpest
+   *  term there is: a search for it finds that product, where the name alone
+   *  finds the category. */
+  identifier?: string | null;
 }): string | null {
   const override = (opts.override ?? "").trim();
   if (override) return override;
@@ -390,7 +394,8 @@ export function deriveImageQuery(opts: {
   // term (a creator, the colour, the observed shape) leads. imageQuery drops
   // any of these already present in the name, so a line called "Produce Bag"
   // is not told twice.
-  const extra = [author, mediaWord, color, form, category].filter(Boolean).join(" ") || null;
+  const identifier = (opts.identifier ?? "").trim();
+  const extra = [identifier, author, mediaWord, color, form, category].filter(Boolean).join(" ") || null;
   return imageQuery(name, opts.brand ?? null, extra);
 }
 

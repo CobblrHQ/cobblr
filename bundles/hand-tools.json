@@ -1,0 +1,124 @@
+{
+  "manifest": {
+    "id": "cobblr.community.hand-tools",
+    "released_at": "2026-10-02",
+    "changelog": "Hand tools as their own table: each one's size and drive as real measurements and what kind of tool it is, filled from its name.",
+    "version": "0.1.2",
+    "releases": [
+      {
+        "version": "0.1.0",
+        "released_at": "2026-10-02",
+        "notes": "Hand tools as their own table: each one's size and drive as real measurements and what kind of tool it is, filled from its name."
+      }
+    ],
+    "name": "Hand Tools",
+    "description": "Sockets, ratchets, wrenches and drivers as their own table, with each one's size and drive kept as measurements (10 mm, 3/8 in) rather than words, and its kind of tool. A name like \"10 mm deep socket, 3/8 in drive\" fills all three.",
+    "author": "Cobblr community",
+    "requires": [
+      {
+        "module": "inventory"
+      },
+      {
+        "module": "core-scan"
+      }
+    ],
+    "provides_instances": [
+      {
+        "module": "inventory",
+        "instance_name": "hand-tools",
+        "display_name": "Hand Tools",
+        "glyph": "🔧",
+        "item_noun": "hand tool",
+        "qty_unit": "each",
+        "faces": {
+          "stock": true
+        },
+        "scan_keywords": [
+          "socket",
+          "deep socket",
+          "ratchet",
+          "wrench",
+          "spanner",
+          "screwdriver",
+          "hex key",
+          "allen key",
+          "breaker bar",
+          "torque wrench",
+          "nut driver"
+        ],
+        "wires": [
+          {
+            "source_kind": "hand-tools:item",
+            "action_id": "core-scan:fill-known",
+            "says": "A new tool fills its empty size, drive and kind from its name.",
+            "trigger_type": "event",
+            "trigger_event": "inventory.part.created"
+          },
+          {
+            "source_kind": "hand-tools:item",
+            "action_id": "core-scan:fill-known",
+            "says": "Renaming a tool fills its size, drive and kind if they are still empty.",
+            "trigger_type": "event",
+            "trigger_event": "inventory.part.updated"
+          }
+        ],
+        "field_defs": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "tool_type",
+            "display_label": "Type",
+            "type": "text",
+            "learns": true,
+            "choices": [
+              "Socket",
+              "Deep socket",
+              "Ratchet",
+              "Extension",
+              "Wrench",
+              "Driver"
+            ],
+            "field_role": "category",
+            "position": 1,
+            "help": "What kind of tool. The table groups by this, and a name that says it fills it."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "size",
+            "display_label": "Size",
+            "type": "measure",
+            "position": 2,
+            "help": "The size it fits: 10 mm, 5/8 in. Read from the name when the name says it."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "drive",
+            "display_label": "Drive",
+            "type": "measure",
+            "unit": "in",
+            "position": 3,
+            "help": "The square drive it takes or turns: 1/4, 3/8 or 1/2 in. A plan of a drawer can group its tools by this."
+          }
+        ],
+        "saved_views": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "By type",
+            "view_type": "table",
+            "pinned": true,
+            "config": {
+              "visible_fields": [
+                "name",
+                "tool_type",
+                "size",
+                "drive",
+                "qty",
+                "location_name"
+              ],
+              "group_by": "tool_type"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

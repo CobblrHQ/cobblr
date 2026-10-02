@@ -6,7 +6,7 @@
 //
 // No-op when COBBLR_TRIAGE_TRIGGER_URL is unset (open-core / dev) — the sweep is
 // the backstop, so a missing or failed poke is never an error. Uses `||` (not
-// `??`) because compose passes an unset optional var as "" (core CLAUDE.md §14.6).
+// `??`) because compose passes an unset optional var as "" (core docs/architecture/platform-spec.md §14.6).
 
 const TRIGGER_URL = process.env.COBBLR_TRIAGE_TRIGGER_URL || "";
 

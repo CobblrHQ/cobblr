@@ -19,6 +19,12 @@
 // obtained from a separate multipart endpoint — keeps the JSON
 // body limits sane.
 
+import { withSellersApart } from "../services/seller-split.js";
+import { routeWhereKept, type KeptTable } from "../services/kept-route.js";
+import { fetchShownImage } from "../services/shown-images.js";
+import { COULDNT_SAVE_WORDS } from "@cobblr/platform-contract/scan-pictures";
+import { storeOrClearCatalogUrl } from "../services/catalog-store.js";
+import { placeAgentFields, sellerInName, type AgentField } from "../services/agent-fields.js";
 import { ARRIVED_BY_KEY } from "../services/photo-observation-gate.js";
 import { applySharedTitle } from "../services/shared-title.js";
 import { canonicalColourFields, type ColourFieldDef } from "../services/colour-fields.js";
@@ -33,7 +39,7 @@ import { SCAN_COUNT_REASONS, scanCountLedgerReason, scanCountLeftLow } from "@co
 import { LOOKUP_GAVE_UP, retryHasRunOut } from "../services/retry-lookup.js";
 import { rememberPickedImage } from "../services/picked-images.js";
 import { TITLE_VARIANTS_KEY, asTitleFormat, formatTitleVariants, titleVariantsOf, type TitleFormat } from "@cobblr/platform-contract/display-identity";
-import { applyUserCategory, applyUserFieldPatch, candidateKind, candidatesWithUserFields } from "../services/user-fields.js";
+import { applyUserCategory, applyUserFieldPatch, candidateKind, candidatesWithUserFields, userFieldsAfterMatch, userFieldsOf } from "../services/user-fields.js";
 import { isMachineReadCode } from "../services/barcode-source.js";
 import { randomUUID } from "node:crypto";
 import { buildCadenceEvents } from "../cadence-events.js";
@@ -56,6 +62,9 @@ import { FiledQuantity, filedQuantityOf } from "../services/filed-quantity.js";
 import { expiryDefaults } from "../services/shelf-life.js";
 import { Router, type Request } from "express";
 import { sql } from "kysely";
+import { attachPaperwork, type AttachPaperworkResult } from "../services/attach-paperwork.js";
+import { takePaperworkValue, undoPaperworkFill } from "../services/record-paperwork.js";
+import { amountOf, centsFromAmount } from "@cobblr/platform-contract/money";
 import { z } from "zod";
 import { fileReceiptAs, type KnownShipment } from "../services/receipt-arrival.js";
 import { claimOrderLine, orderLines, deleteReceiptOrder, lineUnitCost } from "../services/receipt-order.js";
@@ -65,6 +74,7 @@ import {
   planDecodeFill,
   platform,
   roledFactsPatch,
+  roledNativePatch,
   traitAxisValue,
   type DecodeFillTarget,
   isActionStep,
@@ -88,14 +98,14 @@ import {
   SCAN_TRIAGE_COLUMNS,
   type ScanTriageFacet,
   splitUncutWords,
-  type ScanTriageRow, type ScanRowStateContext, type ScanResolverTable, DESTINATION_KEY, KEEP_SEPARATE_KEY, scanKeepSeparateStamp, FILED_INTO_KEY, type FiledInto, type StoredDestination } from "@cobblr/platform-contract/scan-triage";
+  type ScanTriageRow, type ScanRowStateContext, type ScanResolverTable, DESTINATION_KEY, KEEP_SEPARATE_KEY, scanKeepSeparateStamp, FILED_INTO_KEY, type FiledInto, type StoredDestination, filedIntoOf, isPaperworkRow } from "@cobblr/platform-contract/scan-triage";
 import { scanToolRelevance, type ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { liveTablesOf, withResolvedOffers, type LiveTable } from "../services/resolve-offers.js";
 import { resolveNativeIdentity } from "../native-identity.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { noteScanCaptured } from "../services/activation.js";
-import { downloadCatalogImage, enrichBarcodeItem, isJunkName, STORE_CODE_NOTE } from "../services/enrich.js";
+import { downloadCatalogImage, enrichBarcodeItem, guardedImageFetch, isJunkName, isUnusablePictureUrl, STORE_CODE_NOTE } from "../services/enrich.js";
 import { intakeRow, pictureSearchAfterMatch, registerMatchRunners, rowShape, typedIdentifier, type InsertValues } from "../services/intake.js";
 import { committedImagePath, commitThumbPath, itemPhotos } from "../services/committed-image.js";
 import { clampEntityName } from "../services/item-name.js";
@@ -108,6 +118,10 @@ import {
   refreshCatalogImageByName,
 } from "../services/enrich-photo.js";
 import { dropMeta, mergeMeta, standingHint, standingHints } from "../services/metadata.js";
+import { parseHintFacts } from "../services/hint-facts.js";
+import { enqueueDocumentRead } from "../services/document-read-worker.js";
+import { newPlaceAt } from "../services/tracked-stamp.js";
+import { identifyTypedIdentifier } from "../services/identify-identifier.js";
 import {
   type CatalogSource,
   type CatalogStep,
@@ -186,7 +200,7 @@ import { displayName, filingName, isBareCodeName, rejectedNamesOf, USER_NAME_KEY
 import { extractLocation, type LocationLite } from "../services/note-location.js";
 import { suggestLocationForItem } from "../services/suggest-location.js";
 import { normaliseCategory } from "@cobblr/platform-contract/category-reconcile";
-import { receiptFacts, type ReceiptMeta } from "../services/receipt-facts.js";
+import { doubtedChecks, priceDoubted, receiptFacts, sellerDoubted, type ReceiptMeta } from "../services/receipt-facts.js";
 import { receiptRecord, type ReceiptLineMeta } from "../services/receipt-record.js";
 import { runReceiptBackfill } from "../services/receipt-backfill.js";
 import { withArticle } from "@cobblr/platform-contract/plural";
@@ -925,8 +939,16 @@ const AssistantBody = z.object({
   /** Where it is, in words ("in the garage") or as a place's id. */
   place: z.string().trim().min(1).max(200).optional(),
   location_id: z.string().uuid().optional(),
-  /** Field values the agent already knows, by the table's field names. */
+  /** Field values the agent already knows, by the table's field names (or
+   *  their labels). Placed on the table the thing is routed to; each one is
+   *  reported back as kept or refused with the reason (#4537). */
   fields: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+  /** Values by what they ARE rather than what a workspace calls them: where
+   *  it was bought, who sold it, when, for how much (arrivals.md §2). */
+  roles: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+  /** The list it belongs in, said by the person ("3D Printers", or a kind id
+   *  like 3d-printers:item): their answer, so routing honours it. */
+  goes_to: z.string().trim().min(1).max(200).optional(),
   quantity: z.number().positive().max(1_000_000).optional(),
   /** File it now. Absent or false: it stays in the inbox for its person. */
   file: z.boolean().optional(),
@@ -957,6 +979,14 @@ inboxRouter.post(
     // other identifier stays with the description for the match to read.
     const code = body.identifier ? typedIdentifier(body.identifier) : null;
     const asCode = code?.kind === "code" ? code.code : null;
+    // "MakerGear M2 (from RainMotorSports)": the thing, and who it came from.
+    // The name stays the thing's, so the same thing is found and routed the
+    // same way; the person goes to the seller, where the card shows them.
+    const said = sellerInName(body.name);
+    if (said) {
+      body.name = said.name;
+      if (!body.roles?.seller) body.roles = { ...(body.roles ?? {}), seller: said.seller };
+    }
     const admitted = await admitTypedNote(req, {
       text: body.place && !body.location_id ? `${body.name} in ${body.place}` : body.name,
       door: "assistant",
@@ -975,15 +1005,55 @@ inboxRouter.post(
     });
     const itemId = admitted.row.id;
 
+    // The list it goes to, when the person (through their agent) said it:
+    // their answer, stored as a person's choice, so every door files there.
+    const menu = await assembleScanMenu(baseUrl, ctx.org.slug, token, ctx.org.id).catch(() => [] as ScanMenuEntry[]);
+    let goesToRefused: string | null = null;
+    if (body.goes_to) {
+      const said = body.goes_to.toLowerCase();
+      const entry = menu.find((e) => e.kind.toLowerCase() === said || (e.instance ?? "").toLowerCase() === said || e.label.toLowerCase() === said || e.noun.toLowerCase() === said);
+      if (!entry) goesToRefused = `no list called ${body.goes_to}; the lists are ${menu.map((e) => e.label).join(", ")}`;
+      else {
+        const stored: StoredDestination = { module: entry.module, instance: entry.instance ?? null, kind: entry.kind, label: entry.label, by: "person", at: new Date().toISOString() };
+        await db
+          .updateTable("core_scan_inbox_items")
+          .set({ suggested_metadata: mergeMeta({ [DESTINATION_KEY]: stored }) as never, updated_at: new Date() })
+          .where("id", "=", itemId)
+          .execute();
+      }
+    }
+
     // What the agent already knows rides as the person's own values do
-    // (services/user-fields.ts), through the same edit a person makes, so the
-    // card, File and confirm all read them over the intake's.
-    if (body.fields && Object.keys(body.fields).length) {
-      await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-scan/inbox/${itemId}`, {
-        method: "PATCH",
-        headers: authHeaders,
-        body: JSON.stringify({ fields: body.fields }),
-      }).catch((err) => console.error(`[core-scan] assistant add ${itemId}: fields not kept:`, (err as Error).message));
+    // (services/user-fields.ts), placed on the table the thing was ROUTED to:
+    // the values follow the route and never pick it (#4591). Each one is kept
+    // or refused with the reason, never dropped into a log (agent-fields.ts,
+    // #4537). Who it came from rides beside where (seller-split.ts, #4593).
+    let placed: ReturnType<typeof placeAgentFields> | null = null;
+    if ((body.fields && Object.keys(body.fields).length) || (body.roles && Object.keys(body.roles).length)) {
+      const now = await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", itemId).executeTakeFirstOrThrow();
+      const dest = filingDestination(now as never, destinationTables(menu), await liveTablesFor(req));
+      const entry = dest ? menu.find((e) => e.module === dest.module && (e.instance ?? null) === (dest.instance ?? null)) : undefined;
+      const kind = entry?.kind ?? dest?.kind ?? null;
+      const table = { label: entry?.label ?? dest?.label ?? "this list", fields: kind ? await agentFieldsFor(ctx.org.id, kind, entry?.fields ?? []) : (entry?.fields ?? []) };
+      placed = placeAgentFields(body.fields, body.roles, table);
+      const roles = new Map<string, string>();
+      for (const f of table.fields) if (f.field_role) roles.set(f.name, f.field_role);
+      const values = withSellersApart(placed.values, body.name, roles);
+      if (Object.keys(values).length) {
+        await db.transaction().execute(async (tx) => {
+          const cur = await tx.selectFrom("core_scan_inbox_items").select(["suggested_metadata"]).where("id", "=", itemId).forUpdate().executeTakeFirst();
+          const meta = applyUserFieldPatch((cur?.suggested_metadata ?? {}) as Record<string, unknown>, values, entry?.kind ?? dest?.kind ?? null);
+          const at = new Date().toISOString();
+          const stamps: FieldProvenanceMap = { ...fieldProvenanceOf(meta) };
+          for (const name of Object.keys(values)) stamps[name] = { by: "person", from: "assistant", at };
+          // Only the two keys this sets, merged onto the live row.
+          await tx
+            .updateTable("core_scan_inbox_items")
+            .set({ suggested_metadata: mergeMeta({ user_fields: meta.user_fields, [FIELD_PROVENANCE_KEY]: stamps }) as never, updated_at: new Date() })
+            .where("id", "=", itemId)
+            .execute();
+        });
+      }
     }
 
     const fresh = await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", itemId).executeTakeFirstOrThrow();
@@ -1005,14 +1075,96 @@ inboxRouter.post(
       }
     }
 
+    const kept = placed ? { fields_kept: placed.kept, fields_refused: placed.refused } : { fields_kept: [], fields_refused: [] };
     res.status(201).json({
       ...found,
+      ...kept,
+      ...(goesToRefused ? { goes_to_refused: goesToRefused } : {}),
       filed,
       not_filed_because: notFiled,
-      next: nextForTheAgent(found, filed, notFiled, !!body.file),
+      next: nextForTheAgent(found, filed, notFiled, !!body.file, kept.fields_refused, goesToRefused),
     });
   }),
 );
+
+/** Every field an agent may set on `kind`: the module's own (manufacturer,
+ *  notes) and the workspace's, each with its type, choices and role. The scan
+ *  menu carries only the workspace's, and refusing "notes" on a table that has
+ *  notes would be the silent loss told the other way round. */
+async function agentFieldsFor(orgId: string, kind: string, fallback: readonly AgentField[]): Promise<AgentField[]> {
+  const out = new Map<string, AgentField>();
+  const rec = (await platform().entities.listKindsForOrg(orgId).catch(() => [])).find((k) => k.id === kind);
+  for (const f of rec?.fields ?? []) {
+    if (f.readOnly || f.type === "image-path" || f.type === "object") continue;
+    out.set(f.name, { name: f.name, ...(f.label ? { label: f.label } : {}), type: f.type, ...(f.choices ? { choices: [...f.choices] } : {}), ...(f.fieldRole ? { field_role: f.fieldRole } : {}) });
+  }
+  for (const f of fallback) if (!out.has(f.name)) out.set(f.name, f);
+  for (const f of await platform().entities.fieldsFor(orgId, kind).catch(() => [])) {
+    if (f.type === "computed") continue;
+    out.set(f.name, {
+      name: f.name,
+      label: f.display_label,
+      type: f.type,
+      ...(f.choices?.length ? { choices: [...f.choices] } : {}),
+      ...(f.field_role ? { field_role: f.field_role } : {}),
+      ...(f.learns ? { learns: true } : {}),
+    });
+  }
+  return [...out.values()];
+}
+
+/** The tables other inbox rows with the same name are headed to or were
+ *  filed into: a person's choice first, then where one was filed, then its
+ *  route. Newest first, a handful, never this row. */
+async function twinTables(db: ReturnType<typeof tenantDb>, itemId: string, name: string | null | undefined, tables: ScanResolverTable[]): Promise<KeptTable[]> {
+  const said = (name ?? "").trim();
+  if (said.length < 3) return [];
+  const rows = await db
+    .selectFrom("core_scan_inbox_items")
+    .selectAll()
+    .where("id", "!=", itemId)
+    .where("status", "in", ["pending", "resolved"])
+    .where(sql<string>`lower(suggested_name)`, "=", said.toLowerCase())
+    .orderBy("created_at", "desc")
+    .limit(12)
+    .execute();
+  const out: KeptTable[] = [];
+  for (const r of rows) {
+    // Where it went, when it was filed; else where it is going, by the same
+    // one destination the card shows (a person's choice first).
+    const filed = filedIntoOf(r.suggested_metadata);
+    if (filed) {
+      out.push({ module: filed.module, instance: filed.instance, kind: filed.kind });
+      continue;
+    }
+    const d = filingDestination(r as never, tables);
+    if (d?.module) out.push({ module: d.module, instance: d.instance ?? null, kind: typeof d.kind === "string" ? d.kind : null });
+  }
+  return out;
+}
+
+/** A name the page read badly does not name the thing (#4633). */
+function nameDoubtedIn(checks: { fields?: string[] }): boolean {
+  const f = checks.fields ?? [];
+  return f.includes("name") || f.includes("make") || f.includes("model");
+}
+
+/** What the page read for each doubted value, for "Please check" to show
+ *  beside an empty field: never written into one (#4633). */
+function checkValuesOf(receipt: { vendor?: string | null; seller?: string | null; total?: number | null }, line: { manufacturer?: string | null; model?: string | null; line_total?: number | null; description?: string }, checks: { fields?: string[] }): Record<string, string | number> {
+  const out: Record<string, string | number> = {};
+  const f = new Set(checks.fields ?? []);
+  const seller = receipt.vendor ?? receipt.seller;
+  // VOCAB-ENUMERATION OK: the check words a document's checks name (scan-triage CHECK_FIELD_WORDS), not field roles
+  if (f.has("seller") && seller) out.seller = seller;
+  if (f.has("price") && line.line_total != null) out.price = line.line_total;
+  if (f.has("total") && receipt.total != null) out.total = receipt.total;
+  if (nameDoubtedIn(checks)) {
+    if (line.manufacturer) out.make = line.manufacturer;
+    if (line.model) out.model = line.model;
+  }
+  return out;
+}
 
 /** What the intake found on one row, for the agent that asked: the record
  *  already tracked, where it goes, the fields filled, the picture, the place,
@@ -1061,6 +1213,21 @@ function nextForTheAgent(
   filed: { entity_id: string | null } | null,
   notFiled: string | null,
   askedToFile: boolean,
+  refused: ReadonlyArray<{ name: string; reason: string }> = [],
+  goesToRefused: string | null = null,
+): string {
+  // What was not kept comes first: the agent must not tell its person a
+  // value was saved that was not.
+  const notKept = [...refused.map((r) => `${r.name}: ${r.reason}`), ...(goesToRefused ? [goesToRefused] : [])];
+  const lead = notKept.length ? `Not kept: ${notKept.join("; ")}. ` : "";
+  return lead + nextSentence(found, filed, notFiled, askedToFile);
+}
+
+function nextSentence(
+  found: ReturnType<typeof whatTheIntakeFound>,
+  filed: { entity_id: string | null } | null,
+  notFiled: string | null,
+  askedToFile: boolean,
 ): string {
   if (filed) return found.hints.length ? `Filed. Still empty: ${found.hints.map((h) => h.label).join(", ")}. Ask your person, then update the record.` : "Filed.";
   if (found.already_have && !filed) return `Already tracked as "${found.already_have.title}". Tell your person; add to it instead, or file again with allow_duplicate if it really is a second one.`;
@@ -1098,7 +1265,7 @@ async function materializeReceiptLines(opts: {
    *  creates can carry the same key; generated here when a caller does not care
    *  (reparse), which keeps this the only place that has to know. */
   groupId?: string;
-}): Promise<Array<{ id: string }>> {
+}): Promise<{ rows: Array<{ id: string }>; lineRows: Array<string | null> }> {
   const groupId = opts.groupId ?? randomUUID();
   const t = opts.receipt.totals;
   const baseMeta = {
@@ -1135,9 +1302,25 @@ async function materializeReceiptLines(opts: {
     // "the order's net price IS this item's price" (one line) from "it is the
     // whole basket" (many). See receipt-facts.ts.
     receipt_line_count: opts.receipt.items.length,
+    // A bill of sale says so, so its card can.
+    ...(opts.receipt.document ? { receipt_document: opts.receipt.document } : {}),
   };
   const rows: Array<{ id: string }> = [];
-  for (const line of opts.receipt.items) {
+  // rows[i] of the purchase is lines[i]: a line with no inbox row keeps its
+  // place as null.
+  const lineRows: Array<string | null> = [];
+  // What the document checks put in doubt rides the thing the document is
+  // about (its first item line), so its card says what to check (#4571).
+  const unitAt = opts.receipt.items.findIndex((l) => !l.kind);
+  const checks = opts.receipt.checks;
+  for (const [lineAt, line] of opts.receipt.items.entries()) {
+    // A charge (a fee, a tax, delivery) or a bill of sale's add-on is a line
+    // on the purchase, never a thing to triage: no inbox row, no photo search
+    // (charge-lines.ts). An add-on is promoted from the purchase if wanted.
+    if (line.kind) {
+      lineRows.push(null);
+      continue;
+    }
     // The one intake (services/intake.ts, #3049): a receipt line's plan is
     // the match, then the picture searched with the category the match
     // settled on. No picture at insert: a bare noun plus the shop's name
@@ -1160,7 +1343,10 @@ async function materializeReceiptLines(opts: {
         // catalog name and a real picture — instead of living forever as the
         // till's abbreviation. Marked AI-read below, since it was OCR'd off
         // paper and deserves the lower trust that carries.
-        ...(line.code ? { barcode_text: line.code } : {}),
+        ...(line.code ? { barcode_text: line.code } : line.decoded ? { barcode_text: line.decoded.code } : {}),
+        // A make the page's checks doubted is not the row's make: it is kept
+        // under check_values for the card to show, never filled (#4633).
+        ...(line.manufacturer && !(lineAt === unitAt && checks && nameDoubtedIn(checks)) ? { suggested_manufacturer: line.manufacturer } : {}),
         // A line sold BY WEIGHT is one thing, not four: "4.14 lb @ 1.99/lb"
         // was rounded into a quantity of 4 chicken breasts (2026-09-06).
         quantity: lineQuantity(line),
@@ -1183,22 +1369,315 @@ async function materializeReceiptLines(opts: {
           // on the receipt reaches the destination's own model column with
           // nothing further to wire - the same route a decoded VIN's model
           // takes. Before this it was read past entirely.
-          ...(line.model ? { model: line.model } : {}),
+          ...(line.model && !(lineAt === unitAt && checks && nameDoubtedIn(checks)) ? { model: line.model } : {}),
           ...(line.discount ? { line_discount: line.discount, line_net: lineNet(line) } : {}),
+          // What the document says about this thing, by field role (a VIN as
+          // `identifier`, the odometer as `usage`); receipt-facts.ts lands
+          // them on the record's own fields when it is filed.
+          ...(line.facts ? { line_facts: line.facts } : {}),
+          // A VIN the document printed, with what it said about the vehicle,
+          // in the decode shape applyDecoderFill reads; serial_number is the
+          // native column resolveNativeIdentity fills.
+          ...(line.decoded
+            ? {
+                decoded: { decoder_id: line.decoded.decoder_id, fields: line.decoded.fields },
+                serial_number: line.decoded.code,
+                barcode_source: "receipt",
+              }
+            : {}),
+          ...(checks && lineAt === unitAt ? { check_fields: checks, check_values: checkValuesOf(opts.receipt, line, checks) } : {}),
         }) as never,
         created_by_user_id: opts.userId,
       },
     });
     rows.push({ id: admitted.row.id });
+    lineRows.push(admitted.row.id);
+    // The document model was busy: it reads the page when one is free.
+    if (checks?.waiting_for_ai && lineAt === unitAt) {
+      await enqueueDocumentRead({ orgId: opts.orgId, itemId: admitted.row.id, limit: checks.waiting_reason === "limit" }).catch((e: Error) => console.error("[core-scan] document read not queued:", e.message));
+    }
   }
-  return rows;
+  return { rows, lineRows };
 }
+
+// A line on a purchase that a reader kept off the inbox (a bill of sale's
+// add-on, like wheel locks) becomes an inbox item when a person says so, in
+// the session its receipt made, linked to its order line so filing claims it
+// (#4523). Charges are never offered this; the purchase page only shows the
+// button on an add-on.
+const OrderLineToInbox = z.object({
+  order_id: z.string().uuid(),
+  order_item_id: z.string().uuid(),
+  description: z.string().trim().min(1).max(300),
+  qty: z.number().positive().max(100000).default(1),
+  unit_cost: z.number().nonnegative().nullable().optional(),
+});
+// AI-REACH: exempt — the purchase page's button for one add-on line; the assistant puts a thing in the inbox through its own add door
+inboxRouter.post(
+  "/inbox/from-order-line",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = OrderLineToInbox.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const session = sessionUser(req);
+    const b = parsed.data;
+    // Once: a second press finds the row the first one made.
+    const existing = await db
+      .selectFrom("core_scan_inbox_items")
+      .select("id")
+      .where(sql<boolean>`suggested_metadata->>'receipt_order_item_id' = ${b.order_item_id}`)
+      .executeTakeFirst();
+    if (existing) {
+      res.json({ id: existing.id, existed: true });
+      return;
+    }
+    // The session the receipt made, read off a row its purchase already stamped.
+    const sibling = await db
+      .selectFrom("core_scan_inbox_items")
+      .select(["scan_batch_id", "suggested_metadata"])
+      .where(sql<boolean>`suggested_metadata->>'receipt_order_id' = ${b.order_id}`)
+      .executeTakeFirst();
+    const siblingMeta = (sibling?.suggested_metadata ?? {}) as Record<string, unknown>;
+    const lineTotal = b.unit_cost != null ? amountOf(centsFromAmount(b.unit_cost * b.qty)) : null;
+    const admitted = await intakeRow({
+      db,
+      orgId: ctx.org.id,
+      orgSlug: ctx.org.slug,
+      userId: session.id,
+      token: bearer(req),
+      baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
+      door: "receipt",
+      values: {
+        source_kind: "receipt",
+        scan_batch_id: sibling?.scan_batch_id ?? null,
+        suggested_name: b.description,
+        quantity: b.qty,
+        suggested_metadata: JSON.stringify({
+          source: "receipt",
+          description: b.description,
+          unit_price: b.unit_cost ?? null,
+          line_total: lineTotal,
+          receipt_line_count: 1,
+          receipt_order_id: b.order_id,
+          receipt_order_item_id: b.order_item_id,
+          ...(siblingMeta.receipt_group_id ? { receipt_group_id: siblingMeta.receipt_group_id } : {}),
+          ...(siblingMeta.receipt_date ? { receipt_date: siblingMeta.receipt_date } : {}),
+          ...(siblingMeta.receipt_vendor ? { receipt_vendor: siblingMeta.receipt_vendor } : {}),
+          ...(siblingMeta.receipt_seller ? { receipt_seller: siblingMeta.receipt_seller } : {}),
+          ...(siblingMeta.receipt_currency ? { receipt_currency: siblingMeta.receipt_currency } : {}),
+        }) as never,
+        created_by_user_id: session.id,
+      },
+    });
+    res.status(201).json({ id: admitted.row.id, existed: false });
+  }),
+);
+
+// Which of one purchase's lines are already inbox items, so its page shows
+// "In the scan inbox" rather than offering the same line twice after a reload.
+inboxRouter.get(
+  "/inbox/order-lines",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member", "guest")) return;
+    const orderId = typeof req.query.order_id === "string" ? req.query.order_id : "";
+    if (!/^[0-9a-f-]{36}$/i.test(orderId)) {
+      res.status(400).json({ error: { code: "bad_request", message: "order_id is required" } });
+      return;
+    }
+    const rows = await tenantDb(req)
+      .selectFrom("core_scan_inbox_items")
+      .select(["id", sql<string>`suggested_metadata->>'receipt_order_item_id'`.as("order_item_id")])
+      .where(sql<boolean>`suggested_metadata->>'receipt_order_id' = ${orderId}`)
+      .execute();
+    res.json({ items: rows.filter((r) => r.order_item_id).map((r) => ({ order_item_id: r.order_item_id, id: r.id })) });
+  }),
+);
+
+// ── Paperwork put on a record (#4523) ───────────────────────────────────
+// A document dropped or pasted on a record's Files is read, its purchase kept
+// and claimed for the record, and the record's empty fields filled from it
+// (services/attach-paperwork.ts). Conflicts come back to be decided; what was
+// written comes back so it can be undone.
+const RecordRef = z.object({ kind: z.string().min(3).max(120), id: z.string().min(1).max(120) });
+const PaperworkBody = RecordRef.extend({ file_id: z.string().uuid() });
+const FillBody = z.object({ field: z.string().min(1).max(120), label: z.string().max(200).default(""), native: z.boolean(), value: z.union([z.string(), z.number()]), shown: z.string().max(200).default("") });
+
+function paperworkHttp(req: Parameters<Parameters<typeof asyncHandler>[0]>[0], slug: string) {
+  return {
+    baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
+    slug,
+    headers: { Authorization: `Bearer ${bearer(req)}`, "Content-Type": "application/json" },
+  };
+}
+
+// AI-ACTION: core-scan:attach-paperwork
+inboxRouter.post(
+  "/scan/paperwork",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = PaperworkBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const ctx = tenantContext(req);
+    const session = sessionUser(req);
+    const http = paperworkHttp(req, ctx.org.slug);
+    const result = await attachPaperwork({
+      orgId: ctx.org.id,
+      userId: session.id,
+      fileId: parsed.data.file_id,
+      kind: parsed.data.kind,
+      id: parsed.data.id,
+      http,
+    });
+    res.json(result);
+  }),
+);
+
+// AI-REACH: exempt — the toast's Undo for one fill; the assistant takes a fill back with the record's own update
+inboxRouter.post(
+  "/scan/paperwork/undo",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = RecordRef.extend({ fills: z.array(FillBody).max(50) }).safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const ctx = tenantContext(req);
+    const undone = await undoPaperworkFill(ctx.org.id, parsed.data.kind, parsed.data.id, parsed.data.fills);
+    res.json({ undone });
+  }),
+);
+
+// AI-REACH: exempt — "Use it" on one disagreement; the assistant sets a field through the record's own update
+inboxRouter.post(
+  "/scan/paperwork/take",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = RecordRef.extend({ field: z.string().min(1).max(120), native: z.boolean(), value: z.union([z.string(), z.number()]) }).safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const ctx = tenantContext(req);
+    const ok = await takePaperworkValue(ctx.org.id, parsed.data.kind, parsed.data.id, parsed.data);
+    if (!ok) {
+      res.status(409).json({ error: { code: "not_written", message: "That field could not be written on this record." } });
+      return;
+    }
+    res.json({ ok: true });
+  }),
+);
+
+/** The one paperwork door, whichever route found the record ("It's this
+ *  one", a name match, "Is this the same one?", the attach door): the paper
+ *  goes on that record, fills its empty fields by meaning, never one whose
+ *  check failed (those come back as `held`), its purchase line is claimed for
+ *  it, and the card is done. It never counts the paper as another unit
+ *  (#4523, #4633). */
+async function putPaperworkOn(req: Request, itemId: string, record: { kind: string; id: string }): Promise<AttachPaperworkResult | { status: number; error: { code: string; message: string } }> {
+  const db = tenantDb(req);
+  const ctx = tenantContext(req);
+  const session = sessionUser(req);
+  const row = await db
+    .selectFrom("core_scan_inbox_items")
+    .select(["id", "status", "scan_batch_id", "suggested_metadata"])
+    .where("id", "=", itemId)
+    .executeTakeFirst();
+  if (!row) return { status: 404, error: { code: "not_found", message: "inbox item not found" } };
+  const batch = row.scan_batch_id
+    ? await db.selectFrom("core_scan_batches").select(["source_file_id"]).where("id", "=", row.scan_batch_id).executeTakeFirst()
+    : null;
+  if (!batch?.source_file_id) return { status: 409, error: { code: "no_document", message: "This card did not come from a document." } };
+  const meta = (row.suggested_metadata ?? {}) as { receipt_order_id?: unknown; receipt_order_item_id?: unknown; check_fields?: unknown };
+  const existingLine =
+    typeof meta.receipt_order_id === "string" && typeof meta.receipt_order_item_id === "string"
+      ? { orderId: meta.receipt_order_id, lineId: meta.receipt_order_item_id }
+      : null;
+  const result = await attachPaperwork({
+    orgId: ctx.org.id,
+    userId: session.id,
+    fileId: batch.source_file_id,
+    kind: record.kind,
+    id: record.id,
+    http: paperworkHttp(req, ctx.org.slug),
+    existingLine,
+    // What the card already doubted stays doubted, whatever this read says.
+    doubted: [...doubtedChecks(meta)],
+  });
+  if (result.read) {
+    const [module, kindName] = record.kind.split(":");
+    await db
+      .updateTable("core_scan_inbox_items")
+      .set({
+        status: "resolved",
+        target_module: module ?? null,
+        target_kind: kindName ?? null,
+        target_entity_id: record.id,
+        resolved_at: new Date(),
+        updated_at: new Date(),
+      } as never)
+      .where("id", "=", row.id)
+      .execute();
+  }
+  return result;
+}
+
+// A web picture SHOWN through Cobblr (shown-images.ts, #4580): a search
+// result's tile and the full-size viewer load from here, so the bytes the
+// person sees are the bytes a Use it stores, and the site is asked once. The
+// address is the person's search result, so it goes through the image fetch's
+// own guard (no private addresses, every redirect checked).
+const ImageProxyQuery = z.object({
+  url: z.string().url().max(4000),
+  /** The page the result was found on, for sites that serve their pictures
+   *  only to their own pages. */
+  page: z.string().url().max(4000).optional(),
+});
+inboxRouter.get(
+  "/image-proxy",
+  asyncHandler(async (req, res) => {
+    const parsed = ImageProxyQuery.safeParse(req.query);
+    if (!parsed.success) return badBody(res, parsed.error);
+    if (!/^https?:/i.test(parsed.data.url) || isUnusablePictureUrl(parsed.data.url)) {
+      res.status(422).json({ error: { code: "image_unusable", message: "That address is not a picture Cobblr can show." } });
+      return;
+    }
+    const ctx = tenantContext(req);
+    const shown = await fetchShownImage(ctx.org.id, parsed.data.url, guardedImageFetch, parsed.data.page ?? null).catch(() => null);
+    if (!shown) {
+      res.status(502).json({ error: { code: "image_unavailable", message: "The site did not give that picture." } });
+      return;
+    }
+    res.type(shown.mime);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Cache-Control", "private, max-age=1800");
+    res.send(Buffer.from(shown.bytes));
+  }),
+);
+
+// "It's this one": an inbox card whose paper is about a thing the workspace
+// already has (a bill of sale whose VIN found the car). The paper goes to that
+// record the way pasting it there would, its purchase line is claimed for it,
+// and the card is done: there is no second car to file.
+// AI-REACH: exempt — the inbox card's button; the assistant attaches paperwork to a record through core-scan:attach-paperwork
+inboxRouter.post(
+  "/inbox/:id/its-this-one",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = RecordRef.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const result = await putPaperworkOn(req, req.params.id ?? "", parsed.data);
+    if ("status" in result) {
+      res.status(result.status).json({ error: result.error });
+      return;
+    }
+    res.json(result);
+  }),
+);
 
 const ReceiptBody = z.object({
   file_id: z.string().uuid(),
   /** Where the receipt came from — "email" makes the inbox session read
    *  "Receipt · emailed <when>". Absent → an ordinary in-app upload. */
   origin: z.enum(["email", "upload"]).optional(),
+  /** The address an emailed receipt came from; kept on the session. */
+  from: z.string().trim().max(320).optional(),
   /** Skip the "you already imported this receipt" guard and import it anyway
    *  (the user chose to, or it's a re-forward of one they'd discarded). */
   force: z.boolean().optional(),
@@ -1250,6 +1729,7 @@ inboxRouter.post(
             created_by_user_id: session.id,
             label: "Receipt · not read yet",
             origin: parsed.data.origin ?? null,
+            origin_from: parsed.data.origin === "email" ? (parsed.data.from ?? null) : null,
             source_file_id: parsed.data.file_id,
             read_state: "failed",
             read_failure: JSON.stringify(readFailureFrom(result, [])) as never,
@@ -1395,6 +1875,8 @@ inboxRouter.post(
     const sessionFields = {
       label: batchLabel,
       origin: parsed.data.origin ?? null,
+      // Only an email's own read says who sent it; a re-read keeps it.
+      ...(parsed.data.origin === "email" && parsed.data.from ? { origin_from: parsed.data.from } : {}),
       // Remember the original so the session can offer "View original" + "Re-parse".
       source_file_id: parsed.data.file_id,
       // Vendor + order # as their own fields so the order # is editable later.
@@ -1430,8 +1912,8 @@ inboxRouter.post(
     // recorded in full, but nothing is put in the inbox, because nothing needs
     // triaging. See the target_item_id comment on the body above.
     const targetItemId = parsed.data.target_item_id ?? null;
-    const rows = targetItemId
-      ? []
+    const made = targetItemId
+      ? { rows: [], lineRows: [] }
       : await materializeReceiptLines({
       db,
       orgId: ctx.org.id,
@@ -1445,6 +1927,7 @@ inboxRouter.post(
       baseUrl: receiptBaseUrl,
       groupId: receiptGroupId,
         });
+    const rows = made.rows;
 
     // THE ORDER IS BORN HERE, not at confirm. A receipt is a document and
     // documents live in Purchases, which was only true after somebody triaged
@@ -1462,12 +1945,17 @@ inboxRouter.post(
     // When Purchases is off the order is not lost: the session keeps it and
     // offers to turn Purchases on (services/receipt-purchase.ts, #3869).
     let purchase: { recorded: boolean; purchases_off: boolean } | null = null;
+    // A seller or a price the page's checks did not believe is not put on the
+    // purchase either: claiming the line fills the record from the order, and
+    // "sells/leases this vehicle 'as is'" became Bought from that way (#4633).
+    const doubts = doubtedChecks({ check_fields: receipt.checks });
+    const priceOk = !priceDoubted(doubts);
     if (batchId) {
       const outcome = await recordReceiptPurchase(
         db,
         batchId,
         {
-          vendor: receipt.vendor,
+          vendor: sellerDoubted(doubts) ? null : receipt.vendor,
           orderRef,
           orderedAt: receipt.date,
           // Nobody has typed one yet — unless a shipping notice got here first
@@ -1483,7 +1971,7 @@ inboxRouter.post(
               }
             : null,
           expectedArrival: receipt.expected_arrival ?? awaiting?.expected_arrival ?? null,
-          total: receipt.total,
+          total: priceOk ? receipt.total : null,
           groupId: receiptGroupId,
           sourceFileId: parsed.data.file_id,
           // NET of the coupon printed under each line: the order records what
@@ -1493,10 +1981,11 @@ inboxRouter.post(
           lines: receipt.items.map((line) => ({
             description: line.description,
             qty: line.qty,
-            unitCost: lineUnitCost(line.discount ? null : line.unit_price, lineNet(line), line.qty),
-            lineAmount: lineNet(line),
+            unitCost: priceOk ? lineUnitCost(line.discount ? null : line.unit_price, lineNet(line), line.qty) : null,
+            lineAmount: priceOk ? lineNet(line) : null,
+            ...(line.kind ? { kind: line.kind } : {}),
           })),
-          rowIds: targetItemId ? [] : rows.map((r) => r.id),
+          rowIds: made.lineRows,
           targetItemId,
         },
         { baseUrl: receiptBaseUrl, slug: ctx.org.slug, headers: { Authorization: `Bearer ${bearer(req)}`, "Content-Type": "application/json" } },
@@ -1625,7 +2114,7 @@ inboxRouter.post(
       .where("id", "=", batch.id)
       .execute();
 
-    const rows = await materializeReceiptLines({
+    const { rows } = await materializeReceiptLines({
       db,
       orgId: ctx.org.id,
       orgSlug: ctx.org.slug,
@@ -1803,6 +2292,10 @@ const TRIAGE_SCAN_CAP = 1000;
 interface BatchLabel {
   label: string | null;
   origin: string | null;
+  /** Who an emailed receipt came from, and the shop the read found: the
+   *  session names its document by them ("Email from eBay, Aug 12"). */
+  origin_from: string | null;
+  vendor: string | null;
   source_file_id: string | null;
   order_ref: string | null;
   tracking_number: string | null;
@@ -1845,7 +2338,7 @@ async function batchLabelsFor(
   const lines = await sessionLines(db, batchIds);
   for (const b of await db
     .selectFrom("core_scan_batches")
-    .select(["id", "label", "origin", "source_file_id", "order_ref", "tracking_number", "shipment_state", "shipment_description", "shipment_location", "read_state", "read_failure", "read_started_at", "created_at", "date_convention", "date_decided_by", "date_printed", "pending_purchase"])
+    .select(["id", "label", "origin", "origin_from", "vendor", "source_file_id", "order_ref", "tracking_number", "shipment_state", "shipment_description", "shipment_location", "read_state", "read_failure", "read_started_at", "created_at", "date_convention", "date_decided_by", "date_printed", "pending_purchase"])
     .where("id", "in", batchIds)
     .execute()) {
     batches[b.id] = batchLabelOf(b, lines.get(b.id));
@@ -1872,7 +2365,7 @@ async function sessionLines(db: ReturnType<typeof tenantDb>, batchIds: string[])
 }
 
 function batchLabelOf(b: {
-  label: string | null; origin: string | null; source_file_id: string | null; order_ref: string | null; tracking_number: string | null;
+  label: string | null; origin: string | null; origin_from?: string | null; vendor?: string | null; source_file_id: string | null; order_ref: string | null; tracking_number: string | null;
   shipment_state: string | null; shipment_description: string | null; shipment_location: string | null;
   read_state: string | null; read_failure: unknown; read_started_at: Date | null; created_at: Date;
   date_convention?: string | null; date_decided_by?: string | null; date_printed?: string | null;
@@ -1886,6 +2379,8 @@ function batchLabelOf(b: {
     date_printed: b.date_printed ?? null,
     label: b.label,
     origin: b.origin,
+    origin_from: b.origin_from ?? null,
+    vendor: b.vendor ?? null,
     source_file_id: b.source_file_id,
     order_ref: b.order_ref,
     tracking_number: b.tracking_number,
@@ -1908,7 +2403,7 @@ async function sessionsWithoutRows(db: ReturnType<typeof tenantDb>, present: Set
   const out: Record<string, BatchLabel> = {};
   const rows = await db
     .selectFrom("core_scan_batches")
-    .select(["id", "label", "origin", "source_file_id", "order_ref", "tracking_number", "shipment_state", "shipment_description", "shipment_location", "read_state", "read_failure", "read_started_at", "created_at", "date_convention", "date_decided_by", "date_printed", "pending_purchase"])
+    .select(["id", "label", "origin", "origin_from", "vendor", "source_file_id", "order_ref", "tracking_number", "shipment_state", "shipment_description", "shipment_location", "read_state", "read_failure", "read_started_at", "created_at", "date_convention", "date_decided_by", "date_printed", "pending_purchase"])
     // 'awaiting': a parcel known from its shipping notice, no lines yet. On
     // the page for the same reason a failed read is: the inbox groups by
     // item, and a session with none would otherwise not exist.
@@ -2739,6 +3234,8 @@ inboxRouter.post(
     // claimed it (see receipt-record.ts).
     const recordedReceipt = receiptRecord(meta as ReceiptLineMeta);
     let provenancePatch: Record<string, string | number> = {};
+    /** The same facts for the kind's own columns (a vehicle's Paid). */
+    let provenanceNative: Record<string, string | number> = {};
     /** The role behind each key of the patch, for the provenance stamps. */
     const provenanceRoles: Record<string, string> = {};
     try {
@@ -2751,7 +3248,8 @@ inboxRouter.post(
         const roled = await platform().entities.roledFieldsFor(ctx.org.id, effectiveKindId);
         const mapped = mapRoledFacts(facts, roled);
         provenancePatch = roledFactsPatch(mapped);
-        for (const m of mapped) if (m.key in provenancePatch) provenanceRoles[m.key] = m.role;
+        provenanceNative = roledNativePatch(mapped);
+        for (const m of mapped) if (m.key in provenancePatch || m.key in provenanceNative) provenanceRoles[m.key] = m.role;
       }
     } catch {
       /* advisory — a confirm must never fail over provenance */
@@ -2807,7 +3305,7 @@ inboxRouter.post(
       const role = stamp?.role ?? provenanceRoles[k];
       entityStamps[k] = { by: "evidence", from: c.from, ...(role ? { role } : {}), replaced: c.value };
     }
-    for (const k of Object.keys(provenancePatch)) {
+    for (const k of [...Object.keys(provenancePatch), ...Object.keys(provenanceNative)]) {
       if (entityStamps[k]?.by === "person") continue;
       entityStamps[k] = { by: "evidence", from: evidence.from ?? "receipt", ...(provenanceRoles[k] ? { role: provenanceRoles[k] } : {}), ...(entityStamps[k]?.replaced ? { replaced: entityStamps[k]!.replaced } : {}) };
     }
@@ -2994,6 +3492,9 @@ inboxRouter.post(
       (meta as { box_state?: string }).box_state !== "empty-box"
         ? { location_id: parsed.data.location_id ?? row.target_location_id }
         : {}),
+      // The receipt's facts on the kind's own columns (Paid, Purchased at,
+      // Bought from), where it keeps them; what the person sent still wins.
+      ...provenanceNative,
       ...restExtras,
     };
 
@@ -4356,7 +4857,7 @@ async function appendScanHistory(
   db: ReturnType<typeof tenantDb>,
   id: string,
   entry: {
-    action: "rerun" | "replay" | "rerun-hint" | "wrong" | "enrich" | "confirm" | "combine" | "uncombine" | "attached" | "split" | "unsplit" | "unconfirm" | "undo-rerun" | "barcode" | "confirm-guess" | "reject-guess" | "crop-again";
+    action: "rerun" | "replay" | "rerun-hint" | "hint" | "wrong" | "enrich" | "confirm" | "combine" | "uncombine" | "attached" | "split" | "unsplit" | "unconfirm" | "undo-rerun" | "barcode" | "confirm-guess" | "reject-guess" | "crop-again";
     note?: string | null;
   },
 ): Promise<void> {
@@ -4526,10 +5027,22 @@ inboxRouter.post(
 
     // Record the triage action in the item's history (covers the photo branch's
     // early return too) so the source panel can show "you asked for more detail".
+    // A hint whose count or part number is the whole of what it says is read
+    // here and asks no model (below): its history line says so, and is never
+    // settled as an AI that did not answer.
+    const earlyFacts = parseHintFacts(effectiveHint);
+    const readsHintOnly =
+      !rerun?.no_ai &&
+      !rerun?.image_file_id &&
+      !(normalizeBarcode(rerun?.barcode) ?? barcodeFromHint(effectiveHint, row.barcode_text)) &&
+      // VOCAB-ENUMERATION OK: the hint parser's kind (a part number), not a field role
+      (earlyFacts.identifierKind === "identifier" || (!!typedHint && parseHintFacts(typedHint).quantity != null && !parseHintFacts(typedHint).identifier && !parseHintFacts(typedHint).rest));
     await appendScanHistory(db, id, {
       // Say WHICH kind of run this was — "Re-ran the lookup" hid whether tokens
       // were spent, a hint was folded in, or it was a free replay.
-      action: rerun?.wrong
+      action: readsHintOnly
+        ? "hint"
+        : rerun?.wrong
         ? "wrong"
         : rerun?.enrich
           ? "enrich"
@@ -4590,6 +5103,103 @@ inboxRouter.post(
         .where("id", "=", id)
         .execute();
       row.image_file_id = attachedPhoto;
+    }
+
+    // ── the hint's own facts, read before any model ───────────────────────
+    // "8x S-12415" is eight of the S-12415. The count is the person's own
+    // word, so it is set and stamped theirs; only what they typed THIS time
+    // counts, so a later re-run never puts back a count they changed since.
+    // The part number is looked up the way a typed one is (web, for the
+    // identifier itself), never handed to the vision model as prose (#4552).
+    const typedCount = typedHint ? parseHintFacts(typedHint).quantity : null;
+    if (typedCount != null) {
+      const stamps = { ...fieldProvenanceOf(row.suggested_metadata), quantity: { by: "person" as const, from: "hint", at: new Date().toISOString() } };
+      await db
+        .updateTable("core_scan_inbox_items")
+        .set({ quantity: typedCount, suggested_metadata: mergeMeta({ [FIELD_PROVENANCE_KEY]: stamps }) as never, updated_at: new Date() })
+        .where("id", "=", id)
+        .execute();
+      row.quantity = typedCount;
+      row.suggested_metadata = { ...((row.suggested_metadata ?? {}) as Record<string, unknown>), [FIELD_PROVENANCE_KEY]: stamps } as typeof row.suggested_metadata;
+    }
+    const hintFacts = parseHintFacts(effectiveHint);
+    // VOCAB-ENUMERATION OK: "identifier" here is the hint parser's kind (a part number, not a catalog code), not a field role
+    if (hintFacts.identifier && hintFacts.identifierKind === "identifier" && !correctedBarcode && !attachedPhoto && !rerun?.no_ai) {
+      const code = hintFacts.identifier;
+      // The person said what it is: the identifier is theirs, whatever name
+      // the web then finds for it.
+      const vouched = { ...fieldProvenanceOf(row.suggested_metadata), identifier: { by: "person" as const, from: "hint", at: new Date().toISOString() } };
+      await db
+        .updateTable("core_scan_inbox_items")
+        .set({
+          suggested_metadata: sql`(coalesce(suggested_metadata, '{}'::jsonb) - 'matched_at' - 'finalized_at' - 'match_failed')
+            || ${JSON.stringify({
+              [FIELD_PROVENANCE_KEY]: vouched,
+              pipeline_started_at: new Date().toISOString(),
+              pipeline_kind: "rerun",
+              ...(effectiveHint ? { user_hint: effectiveHint } : {}),
+              // What was on screen before, for "Previously: … · Revert".
+              pre_rerun: {
+                at: new Date().toISOString(),
+                kind: "rerun",
+                name: displayName(row),
+                manufacturer: row.suggested_manufacturer,
+                sku: row.suggested_sku,
+                candidates: row.suggested_candidates ?? [],
+                category: (row.suggested_metadata as { category?: unknown } | null)?.category ?? null,
+                entity_type: (row.suggested_metadata as { entity_type?: unknown } | null)?.entity_type ?? null,
+                ai_notes: row.ai_notes,
+                catalog_image_url: row.catalog_image_url,
+                catalog_image_file_id: row.catalog_image_file_id,
+              },
+            })}::jsonb` as never,
+          updated_at: new Date(),
+        })
+        .where("id", "=", id)
+        .execute();
+      const uidHint = sessionUser(req).id;
+      const baseUrlHint = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+      const lookup = (async () => {
+        const workDb = (await platform().tenants.getDb(ctx.org.id)) as unknown as typeof db;
+        const outcome = await identifyTypedIdentifier({ db: workDb, orgId: ctx.org.id, itemId: id, code, userId: uidHint, fromHint: true });
+        const after = await workDb
+          .selectFrom("core_scan_inbox_items")
+          .select(["suggested_name", "suggested_metadata", "suggested_manufacturer", "catalog_image_url"])
+          .where("id", "=", id)
+          .executeTakeFirst();
+        // The picture follows the new identity: the web's own picture of the
+        // part when it had one, otherwise a search for the name and the
+        // identifier together, never the old name with words added to it.
+        const webPicture = outcome === "named" && !!after?.catalog_image_url && after.catalog_image_url !== row.catalog_image_url;
+        if (after && !webPicture) {
+          const name = displayName(after) ?? "";
+          const query = name.toLowerCase().includes(code.toLowerCase()) ? name : `${name} ${code}`.trim();
+          await refreshCatalogImageByName(ctx.org.id, id, query, after.suggested_manufacturer).catch((e: Error) =>
+            console.error("[core-scan] hint picture search failed:", e.message),
+          );
+        }
+        void platform().events.emit("core-scan.scan.enriched", { orgId: ctx.org.id, itemId: id });
+        await matchItem({ orgId: ctx.org.id, userId: uidHint, orgSlug: ctx.org.slug, token, baseUrl: baseUrlHint, itemId: id, force: true }).catch((e: Error) =>
+          console.error("[core-scan] hint re-run match threw:", e.message),
+        );
+        await workDb
+          .updateTable("core_scan_inbox_items")
+          .set({
+            ai_suggested_at: new Date(),
+            suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({ finalized_at: new Date().toISOString() })}::jsonb` as never,
+            updated_at: new Date(),
+          })
+          .where("id", "=", id)
+          .execute();
+      })();
+      lookup.catch((err) => console.error("[core-scan] hint lookup failed:", (err as Error)?.message ?? err));
+      res.json(await served(req, row));
+      return;
+    }
+    // A hint that only says how many ("8x") has nothing left to ask a model.
+    if (typedHint && typedCount != null && !parseHintFacts(typedHint).identifier && !parseHintFacts(typedHint).rest && !correctedBarcode && !attachedPhoto) {
+      res.json(await served(req, row));
+      return;
     }
 
     // A RECEIPT beats a barcode, and it has to be decided before this branch.
@@ -5706,7 +6316,7 @@ inboxRouter.post(
       res.status(422).json({
         error: {
           code: "image_unusable",
-          message: "That image couldn't be used (the site may block hotlinking, or it isn't a usable image). Try another.",
+          message: `${COULDNT_SAVE_WORDS}: the site would not give Cobblr the picture to keep. Try another.`,
         },
       });
       return;
@@ -6123,7 +6733,22 @@ inboxRouter.post(
     let entityDeleted = false;
     let note: string | null = null;
 
-    if (attached?.id) {
+    if (attached?.id && attached.mode === "add-place") {
+      // Another place of an item: that place's row goes, through its module's
+      // own delete (which unhooks it from the item), and the item stays.
+      const target = attached.kind ? await scanTargetOf(ctx.org.id, attached.kind, attached.instance ?? undefined).catch(() => null) : null;
+      const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+      const path = target?.instance
+        ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/instances/${target.instance}/items/${attached.id}`
+        : target
+          ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${target.scannable.createEndpoint}/${attached.id}`
+          : null;
+      const gone = path
+        ? await fetch(path, { method: "DELETE", headers: { Authorization: `Bearer ${bearer(req) ?? ""}` } }).then((r) => r.ok || r.status === 404).catch(() => false)
+        : false;
+      if (gone) entityDeleted = true;
+      else note = "The place it added couldn't be removed automatically. Remove that place from the item's page.";
+    } else if (attached?.id) {
       // An attach that restocked kept the record's own way back (the lot it
       // started, the dates it stamped, the count): put that back, while the
       // record still reads what the attach left. Otherwise, or for an older
@@ -6279,7 +6904,10 @@ const AttachBody = z.object({
    *  hears the old one consumed (or discarded, when `resolution` says it went
    *  bad) and the new one bought. The everyday re-buy, said in one tap; `+N`
    *  used to be the only door, and it counted the empty box as still there. */
-  mode: z.enum(["add-qty", "replace", "link-barcode", "move", "merge-fields", "count"]),
+  /** `add-place`: keep these at the scan's place as another place of the
+   *  same item (its kind's holdAction). An `add-qty` at a place the item is
+   *  not kept yet files this way too, decided here and not by the door. */
+  mode: z.enum(["add-qty", "replace", "link-barcode", "move", "merge-fields", "count", "add-place"]),
   /** What this re-purchase means, for the consumption ledger. Only add-qty is
    *  a purchase ("+N, more of the same"); the other modes teach or move an
    *  entity and consume nothing.
@@ -6352,6 +6980,14 @@ inboxRouter.post(
       });
       return;
     }
+    // Paperwork for one thing is put on the record, never added to it as
+    // another unit or merged field by field: the one paperwork door (#4633).
+    if (isPaperworkRow(row as never)) {
+      const result = await putPaperworkOn(req, row.id, { kind: parsed.data.kind, id: parsed.data.entity_id });
+      if ("status" in result) res.status(result.status).json({ error: result.error });
+      else res.json({ paperwork: result });
+      return;
+    }
     // ATOMIC CLAIM — the read-guard above has the same two-caller race as
     // confirm did, and attach's failure mode is worse: the target entity's
     // quantity gets bumped TWICE. CAS the status first; the loser takes the
@@ -6397,6 +7033,84 @@ inboxRouter.post(
     }
     const { scannable, baseKind } = target;
     const instance = target.instance;
+    // One item, a row per place. "+N more" of a thing scanned at a place it is
+    // not kept yet is that place's row, never N more in the kitchen while the
+    // bins are in the garage, and never a second item (#4552). Asked fresh of
+    // the record, so every door that files a match (the card, File
+    // everything, the queue) lands the same way.
+    const placeAt = parsed.data.location_id ?? row.target_location_id ?? null;
+    const newPlace =
+      parsed.data.mode === "add-place" || parsed.data.mode === "add-qty"
+        ? await newPlaceAt(ctx.org.id, parsed.data.kind, instance ?? null, parsed.data.entity_id, placeAt)
+        : null;
+    if (parsed.data.mode === "add-place" && !newPlace) {
+      res.status(409).json({
+        error: {
+          code: "not_a_new_place",
+          message: placeAt ? "It is already kept there. Add to that place's count instead." : "Say which place these are in.",
+        },
+      });
+      return;
+    }
+    if (newPlace && scannable.holdAction && placeAt) {
+      const qty = parsed.data.qty ?? filedQuantityOf(row.quantity);
+      const held = (await platform().actions.invoke(scannable.holdAction, {
+        orgId: ctx.org.id,
+        userId: sessionUser(req)?.id ?? null,
+        entity: { kind: parsed.data.kind, id: newPlace.card },
+        event: {
+          name: "core-scan.inbox.attach",
+          payload: {},
+          actor: { user_id: sessionUser(req)?.id ?? null, display_name: null, auth_method: "session" as const, api_token_id: null, api_token_name: null },
+          timestamp: new Date().toISOString(),
+          trigger_type: "user-invoked" as const,
+        },
+        args: { location_id: placeAt, qty },
+      })) as { ok?: boolean; id?: string; card_id?: string; error?: string; message?: string } | null;
+      if (!held?.ok || !held.id) {
+        res.status(409).json({ error: { code: "hold_refused", message: held?.message ?? held?.error ?? "That place could not be added." } });
+        return;
+      }
+      const [heldModule] = baseKind.split(":");
+      const cardName = await platform()
+        .entities.snapshot(ctx.org.id, parsed.data.kind, newPlace.card)
+        .then((r) => (typeof r?.name === "string" ? r.name : typeof r?.title === "string" ? r.title : undefined))
+        .catch(() => undefined);
+      const resolvedPlace = await db
+        .updateTable("core_scan_inbox_items")
+        .set({
+          status: "resolved",
+          quantity: qty,
+          target_module: heldModule ?? null,
+          target_kind: parsed.data.kind,
+          target_entity_id: held.id,
+          suggested_metadata: mergeMeta({
+            [FILED_INTO_KEY]: await filedIntoFor(req, heldModule ?? baseKind, instance ?? null, parsed.data.kind, { name: cardName }),
+            attached_to: { kind: parsed.data.kind, id: held.id, ...(instance ? { instance } : {}), mode: "add-place", card_id: newPlace.card, location_id: placeAt },
+          }) as never,
+          resolved_at: new Date(),
+          updated_at: new Date(),
+        })
+        .where("id", "=", id ?? "")
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      await appendScanHistory(db, id ?? "", { action: "attached", note: `add-place → ${cardName ?? newPlace.card}` });
+      void platform().events.emit("core-scan.scan.attached", { orgId: ctx.org.id, itemId: id, targetKind: parsed.data.kind, entityId: held.id, mode: "add-place" });
+      const placeName = await platform()
+        .entities.lookup(ctx.org.id, "core-locations:location", placeAt)
+        .then((l) => l?.title ?? null)
+        .catch(() => null);
+      res.json({
+        item: resolvedPlace,
+        entity_title: cardName ?? null,
+        new_qty: qty,
+        prev_location_id: null,
+        merged_fields: [],
+        cadence_recorded: [],
+        added_place: { id: held.id, card_id: newPlace.card, location_id: placeAt, location_name: placeName, qty },
+      });
+      return;
+    }
     const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
     // The entity's CRUD path: instance items live under /instances/:slug/items,
     // everything else under the module's own route (same rule confirm uses).
@@ -7802,11 +8516,12 @@ inboxRouter.post(
         .where("catalog_image_file_id", "is", null)
         .limit(30)
         .execute();
+      // Stored, or let go with "Couldn't save this one": an address is never
+      // left standing as the catalog photo (catalog-store.ts, #4580).
       for (const r of urlOnly) {
-        void downloadCatalogImage(
-          { db, orgId: ctx.org.id, itemId: r.id },
-          r.catalog_image_url!,
-        ).catch((err) => console.error("[core-scan] backfill localize url failed:", (err as Error).message));
+        void storeOrClearCatalogUrl({ db, orgId: ctx.org.id, itemId: r.id }, r.catalog_image_url!).catch((err) =>
+          console.error("[core-scan] backfill localize url failed:", (err as Error).message),
+        );
       }
       localized = urlOnly.length;
     }
@@ -8130,6 +8845,10 @@ interface MatchItemOpts {
    *  (see RerunBody.no_ai). The deterministic tail — heuristic routing, decoder
    *  role-fill, field mapping — re-runs against today's code either way. */
   replay?: boolean;
+  /** The caller waits for the whole plan (an assistant's add): the picture
+   *  search after the match is awaited too, so its answer says the picture
+   *  the item really has (#4591). */
+  settle?: boolean;
 }
 
 /** For a book candidate whose table has an ISBN field the match left BLANK, look
@@ -8739,6 +9458,31 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
       ),
     ).catch(() => null);
     const trackedStamp = await trackedMatchStampAt(opts.orgId, tracked, scanPlaceOf(row)).catch(() => trackedMatchStamp(tracked));
+    // What the workspace already knows outranks what the model guessed: the
+    // table the record this thing IS lives in, else the table its twins in
+    // the inbox are headed to, the most specific of them (kept-route.ts,
+    // #4591). The same thing then lands in the same place on every add,
+    // replay and re-run.
+    const keptIn = routeWhereKept(candidates, menu, {
+      tracked: trackedStamp ? { instance: trackedStamp.instance ?? null, kind: trackedStamp.kind } : null,
+      twins: await twinTables(dbAfter, opts.itemId, adoptName ? candName : row.suggested_name, destinationTables(menu)).catch(() => []),
+    });
+    if (keptIn) console.log(`[core-scan] ${opts.itemId}: routed to ${keptIn.label}, where the workspace keeps the same thing`);
+    // The values a person or their agent gave follow this route, and who it
+    // came from is read out of them into an empty seller, on a replay too, so
+    // a row kept before the split heals when it is next looked at (#4591).
+    const routedEntry = candidates[0] ? menu.find((e) => e.module === candidates[0]!.module && (e.instance ?? null) === (candidates[0]!.instance ?? null)) : undefined;
+    const followed = userFieldsAfterMatch(
+      row.suggested_metadata,
+      routedEntry?.kind ?? (candidates[0]?.kind as string | undefined) ?? null,
+      {
+        name: [row.suggested_name, (row.suggested_metadata as { description?: string } | null)?.description].filter(Boolean).join(". ") || null,
+        roles: new Map((routedEntry?.fields ?? []).filter((f) => f.field_role).map((f) => [f.name, f.field_role!] as [string, string])),
+        // Only a row that holds values pays for its table's field list.
+        fieldNames: routedEntry && userFieldsOf(row.suggested_metadata) ? new Set((await agentFieldsFor(opts.orgId, routedEntry.kind, routedEntry.fields)).map((f) => f.name)) : null,
+      },
+      (values, name, roles) => withSellersApart(values, name, roles) as typeof values,
+    );
 
     // A row the lookup could not name stays nameless (adopt-name.ts, guard
     // 0): the route and the fields are stored, the invented name on each
@@ -8795,6 +9539,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
           // The whole map, re-derived: `||` replaces the key, which is what
           // lets a stamp for a field the route no longer fills go away.
           [FIELD_PROVENANCE_KEY]: fieldProvenance,
+          ...(followed ? { user_fields: followed } : {}),
         })}::jsonb` as never,
         // The routing's sentence joins the lookup's verdict; it never replaces
         // it (routing-note.ts, cardNote). A store's own label, never looked
@@ -8939,7 +9684,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
         soldBy,
         category,
       ).catch((e) => console.error(`[core-scan] finalize image refresh for ${opts.itemId} failed:`, (e as Error).message));
-      if (adoptName) await refresh;
+      if (adoptName || opts.settle) await refresh;
     }
     // The run has settled - record on ITS history entry whether a model
     // actually answered, so the timeline stops claiming an answer it never got.

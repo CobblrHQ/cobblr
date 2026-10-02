@@ -302,6 +302,19 @@ export const PLACEMENT: PlacementRow[] = [
     ],
   },
   {
+    id: "agent-instructions",
+    what: "the rules every agent loads at start: the root CLAUDE.md",
+    keywords: ["claude.md", "agent rules", "agent instructions", "hard rule", "what agents load"],
+    dir: "CLAUDE.md (the long form is docs/architecture/platform-spec.md)",
+    exemplar: "CLAUDE.md",
+    why: "Every agent reads CLAUDE.md at every start and every compaction. At 63k characters it cost each one about 12k tokens, ran past the tool's 40k warning, and made a local-model agent slow to start (2026-10-02).",
+    lints: [],
+    notes: [
+      "A rule goes in CLAUDE.md as one short line with its why; the history, the incident and the long explanation go in docs/architecture/platform-spec.md under the rule's section, and the line points there.",
+      "Cite a rule by its spec section (\"platform-spec.md §14.6\"), never by a CLAUDE.md section number: CLAUDE.md has no numbers to keep stable.",
+    ],
+  },
+  {
     id: "api-cli",
     what: "a command run INSIDE the api container (docker exec node dist/cli/<name>.js) with the api's env and database",
     keywords: ["cli", "docker exec", "dist/cli", "on the box", "operator command", "view-as"],
@@ -356,7 +369,7 @@ export const PLACEMENT: PlacementRow[] = [
     lints: ["lint:test-affects", "lint:test-durations", "lint:test-budget-covers-signup", "lint:wall-clock-assertions"],
     notes: [
       "First line: `// affects: <module>, <module>` or `always` or `kernel`. `node scripts/test-affects.mjs --infer <file>` proposes one from the routes the test hits.",
-      "Test the consequence you fear, not the mechanism you built; name it after what it costs when wrong (CLAUDE.md 14.1a).",
+      "Test the consequence you fear, not the mechanism you built; name it after what it costs when wrong (docs/architecture/platform-spec.md §14.1a).",
       "Under ~5s if it belongs in api/tests/smoke.list; a slow smoke test is a tax on every PR.",
     ],
   },
@@ -376,12 +389,13 @@ export const PLACEMENT: PlacementRow[] = [
   {
     id: "e2e",
     what: "an asserting browser test or a demo walkthrough",
-    keywords: ["e2e", "playwright", "browser test", "walkthrough", "screenshot"],
+    keywords: ["e2e", "playwright", "browser test", "walkthrough", "screenshot", "drives the web app in a browser", "assertions", "phone and desktop", "pass/fail table", "check a page", "verify a ui change"],
     dir: "e2e/",
     exemplar: "e2e/mobile-overflow.mjs",
     why: "The nightly yardstick batch runs these on the shared box; a screenshot-only script proves nothing and belongs to the demos instead.",
-    lints: ["lint:ci-sink", "lint:driver-hooks-live", "lint:doc-shots-prod-look", "lint:scan-fixture-category", "lint:materialize-reads-its-answer", "lint:e2e-visible-probe-filters-first"],
+    lints: ["lint:ci-sink", "lint:driver-hooks-live", "lint:doc-shots-prod-look", "lint:scan-fixture-category", "lint:materialize-reads-its-answer", "lint:e2e-visible-probe-filters-first", "lint:shot-guard"],
     notes: [
+      "Checking a UI change before a pull request needs no new script: `node scripts/walk.mjs` (one-off flags, or a JSON spec with steps) asserts a page at 390 and 1440 px and prints a pass/fail table. Write an e2e/ script only for a check that must stay and gate.",
       "Add it to scripts/run-e2e-yardsticks.sh to make it gate; otherwise nobody runs it.",
       "Seed the data the assertion needs. A sweep over an empty list passes vacuously — assert a positive control first.",
       "Reach a control by a hook the product declares (data-testid, a placeholder), never by its tag or styling: the hook is checked against the source at PR time, the tag is not.",

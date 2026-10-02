@@ -1,0 +1,14 @@
+{
+  "match": "take tea off the category choices",
+  "rounds": [
+    {
+      "tool_calls": [
+        {
+          "name": "invoke_action",
+          "args": { "action_id": "platform:edit-field", "args": { "field": "category", "remove_choices": ["Tea"] } }
+        }
+      ]
+    },
+    { "content": "I can't change that list from here. You can remove it yourself under Fields & forms." }
+  ]
+}

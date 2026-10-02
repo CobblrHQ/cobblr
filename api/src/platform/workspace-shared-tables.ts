@@ -66,6 +66,9 @@ export const SHARED_WORKSPACE_TABLES: Record<string, SharedTablePolicy> = {
     mayRefuse: "an override of an action this build no longer has",
   },
   service_capability_policies: { travels: "backup", users: ["updated_by"] },
+  // An offer to reshape a kind's fields and its answer ("keep sellers as
+  // notes"): a restored workspace is not asked again what it already said.
+  field_upgrade_offers: { travels: "backup" },
   service_job_cards: { travels: "never", why: "cards a running job already sent to people; the jobs they belong to do not travel" },
   service_pending_confirms: { travels: "never", why: "a running job waiting for a yes; the job does not travel, so neither does its question" },
   service_confirm_triggers: { travels: "never", why: "a yes given to one waiting job ahead of its moment; the job does not travel, and a yes never becomes a standing permission somewhere else" },
@@ -99,6 +102,8 @@ export const SHARED_WORKSPACE_TABLES: Record<string, SharedTablePolicy> = {
   notification_subscriptions: { travels: "never", why: PERSONAL },
   notification_deferred: { travels: "never", why: PERSONAL },
   notification_audiences: { travels: "never", why: PERSONAL },
+  share_links: { travels: "never", why: "a pairing with another workspace, holding the keys both sides sign with; a restored workspace shares again by inviting again" },
+  share_suggestions: { travels: "never", why: "a friend's edits through a share, which belong to that share's pairing; a restored workspace has no pairing until it shares again" },
   api_tokens: { travels: "never", why: CREDENTIAL },
   oauth_grants: { travels: "never", why: CREDENTIAL },
   oauth_codes: { travels: "never", why: CREDENTIAL },

@@ -32,7 +32,7 @@ export interface WaitOptions {
 }
 
 /** The boot ceiling: COBBLR_BOOT_DB_WAIT_MS, or ten minutes. `||` so an empty
- *  value from compose falls back (CLAUDE.md 14.6). */
+ *  value from compose falls back (docs/architecture/platform-spec.md §14.6). */
 export function bootDbWaitMs(): number {
   return Number(process.env.COBBLR_BOOT_DB_WAIT_MS) || 600_000;
 }

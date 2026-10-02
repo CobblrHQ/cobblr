@@ -5,6 +5,7 @@
 // "Collectibles" module contributes field-defs, they'll appear as
 // extra columns automatically (no code change here).
 
+import { readRecordDisposition } from "@cobblr/platform-contract/disposition";
 import { useEffect, useState, type FormEvent } from "react";
 import { RecordPhoto } from "../components/RecordPhoto";
 import { pictureStateFor, suggestedSrcFor, usePhotoSuggestions } from "../lib/photoSuggestions";
@@ -18,9 +19,11 @@ import { queueLabelsBulk } from "../lib/queue-label";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { CustomFieldsPanel,
+  BulkGiveTo,
   EditField, EntityActionsBar, FaceSection, FieldPack, RecordFaces,
   FacesOn, faceShows, editFieldItem, moneyFieldItem, fieldNeed, EditSelect,
   useAskCobbAboutSelection,
+  useTickedRows,
   Modal,
   useToast,
   useConfirm, usePageTitle, usePageWidth, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton } from "@cobblr/platform-web";
@@ -173,8 +176,9 @@ export function AssetsPage({
     : undefined;
 
   const allRows = list.data?.items ?? [];
-  // What the register cost, over every asset on this page (priced or not).
-  const paidTotal = toCents(allRows.reduce((sum, r) => sum + (r.purchase_price_cents ?? 0), 0));
+  // What the register cost: every asset still yours, summed by the server (a
+  // sold or given-away one is out of it, and so is one past this page).
+  const paidTotal = toCents(list.data?.paid_total_cents ?? 0);
   const rows = lensName
     ? allRows.filter((m) =>
         lensFieldDefs.some((d) => {
@@ -198,7 +202,7 @@ export function AssetsPage({
   // Bulk-select state. Only enabled in list view (tile mode keeps
   // click-to-open semantics). Tracks the IDs as a Set so toggle is
   // O(1) and selectAll is one Set replacement.
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected, clearTicks] = useTickedRows(list.data ? allRows.map((r) => r.id) : null);
 
   // What is ticked IS context: with the panel open, "delete these" means the
   // ones on screen a person pointed at, and Cobb gets their ids rather than a
@@ -260,7 +264,7 @@ export function AssetsPage({
     <div className="space-y-4">
       <CollectionHeader
         title={displayName ?? "assets"}
-        count={showArchived ? `${list.data?.total ?? allRows.length} put away` : `${filtered.length} of ${list.data?.total ?? allRows.length}${paidTotal > 0 ? ` · paid ${formatMoney(paidTotal)} in all` : ""}`}
+        count={showArchived ? `${list.data?.total ?? allRows.length} gone or put away` : `${filtered.length} of ${list.data?.total ?? allRows.length}${paidTotal > 0 ? ` · paid ${formatMoney(paidTotal)} in all` : ""}`}
         hint={hint} kind={instance ? `${instance}:item` : ENTITY_KIND}
         filters={
           (list.data?.archived_count ?? 0) > 0 || showArchived ? (
@@ -270,7 +274,7 @@ export function AssetsPage({
               aria-pressed={showArchived}
               className={`${HEADER_CONTROL} px-2.5 rounded-md text-[10px] font-mono uppercase tracking-widest transition ${showArchived ? "bg-cobble-100 text-accent dark:bg-cobble-700/40 dark:text-cobble-200" : "text-muted dark:text-slate-400 hover:bg-subtle dark:hover:bg-slate-800"}`}
             >
-              {showArchived ? "Back to the register" : `Put away (${list.data?.archived_count ?? 0})`}
+              {showArchived ? "Back to the register" : `Gone or put away (${list.data?.archived_count ?? 0})`}
             </button>
           ) : lensModule ? (
             <Link
@@ -380,6 +384,7 @@ export function AssetsPage({
         actions={
           <>
             <BulkTagAction count={selected.size} placeholder="e.g. urgent, summer-2026, archive" onTag={(name) => bulkTag.mutateAsync(name)} />
+            <BulkGiveTo kind={entityKind} ids={Array.from(selected)} noun={noun} onDone={clearTicks} />
             <FooterActionPopover label="Move to…" icon={<ArrowRightLeft size={12} />} title="Move to another list" width={360} data-testid="bulk-move">
               {(close) => (
                 <div className="overflow-y-auto p-3">
@@ -392,15 +397,16 @@ export function AssetsPage({
                     noun={noun}
                     onClose={close}
                     onMoved={(n, where, undo) => {
+                      const tickAgain = clearTicks();
                       toast.action(`Moved ${countOf(n, noun)} to ${where}.`, {
                         actionLabel: "Undo",
                         duration: 10_000,
                         onAction: async () => {
                           await undo();
                           void qc.invalidateQueries({ queryKey: ["assets"] });
+                          tickAgain();
                         },
                       });
-                      setSelected(new Set());
                       void qc.invalidateQueries({ queryKey: ["assets"] });
                     }}
                   />
@@ -724,7 +730,7 @@ export function AssetDetailModal({
                   void qc.invalidateQueries({ queryKey: ["assets", activeSlug] });
                 }}
               />
-              {a.archived_at ? (
+              {a.archived_at && !readRecordDisposition(a.metadata) ? (
                 <p className="text-xs text-muted dark:text-slate-400">
                   Put away on {new Date(a.archived_at).toLocaleDateString()}. It keeps its history; Restore brings it back to the register.
                 </p>
@@ -733,6 +739,10 @@ export function AssetDetailModal({
                 entityKind={ENTITY_KIND}
                 entityId={a.id}
                 excludeActionIds={[
+                  // A thing that was sold or given away comes back through
+                  // Bring back on its line; Put away and Restore are for the
+                  // shelf, not for that.
+                  ...(readRecordDisposition(a.metadata) ? ["assets:archive", "assets:restore"] : []),
                   // Got it back only means something while it is lent out.
                   ...((a.metadata as Record<string, unknown> | null)?.assigned_to ? [] : ["assets:got-back"]),
                   a.archived_at ? "assets:archive" : "assets:restore",

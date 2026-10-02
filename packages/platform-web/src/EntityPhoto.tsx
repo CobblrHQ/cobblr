@@ -23,8 +23,9 @@
 // lint:entity-photo-frame refuses a raw <img> of a resolved entity photo
 // anywhere else.
 
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
-import { useImageSrc } from "./useImageSrc";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { reloadPicture, useImageSrc } from "./useImageSrc";
+import { reportBrokenPicture } from "./brokenPictures";
 import { pickThumb, type SwatchFieldDef } from "./swatch";
 
 export type PhotoAspect = "square" | "4/3" | "3/4" | "2/3" | "16/9";
@@ -98,6 +99,10 @@ export function EntityPhoto({
   // A broken path degrades to the placeholder, never the browser's broken-image icon.
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [resolved]);
+  const retried = useRef(false);
+  useEffect(() => {
+    retried.current = false;
+  }, [src]);
   const box: CSSProperties = fill
     ? { position: "absolute", inset: 0 }
     : size
@@ -120,8 +125,20 @@ export function EntityPhoto({
           alt={alt}
           loading={eager ? "eager" : "lazy"}
           decoding="async"
+          onLoad={(e) => {
+            // "Loaded" with nothing to draw: a body cut short can decode to
+            // an empty picture without an error. Treated as one.
+            if (e.currentTarget.naturalWidth === 0) e.currentTarget.dispatchEvent(new Event("error"));
+          }}
           onError={() => {
             setFailed(true);
+            // Once more past the browser's cache: a kept copy cut short draws
+            // nothing however often it is revalidated.
+            if (src && !retried.current) {
+              retried.current = true;
+              if (reloadPicture(src)) return;
+            }
+            if (src) reportBrokenPicture(src, "the picture would not draw");
             onBroken?.();
           }}
           className={`absolute inset-0 h-full w-full ${fit === "contain" ? "object-contain" : "object-cover"} ${imgClassName}`}

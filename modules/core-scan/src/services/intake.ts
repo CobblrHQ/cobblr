@@ -23,6 +23,7 @@
 
 import type { Insertable, Kysely, Transaction } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { ADDED_BY_KEY, addedByFromRequest, type AddedBy } from "@cobblr/platform-contract/scan-source";
 import type { CoreScanDB, CoreScanInboxItemsTable } from "../db.js";
 import { classifyScanCode } from "./scan-router.js";
 import { enrichBarcodeItem } from "./enrich.js";
@@ -168,7 +169,7 @@ export type IntakeDoor = "scan" | "note" | "receipt" | "split" | "import" | "ass
  *  import cycle. Loud when a pass runs before that. */
 export interface MatchRunners {
   /** Match now (a fresh row: force). */
-  match: (o: { orgId: string; orgSlug: string; token: string; baseUrl: string; itemId: string; userId: string | null }) => Promise<unknown>;
+  match: (o: { orgId: string; orgSlug: string; token: string; baseUrl: string; itemId: string; userId: string | null; settle?: boolean }) => Promise<unknown>;
   /** Match once the identify has landed (the barcode race, the photo wire). */
   matchWhenEnriched: (o: { orgId: string; orgSlug: string; token: string; baseUrl: string; itemId: string; userId: string | null }) => void;
 }
@@ -243,8 +244,11 @@ export async function intakeRow(opts: IntakeOpts): Promise<IntakeResult> {
     opts.door,
   );
   const plan = intakePlan(shape, opts.add);
+  // Who added it, when it was not the person's own hand: the session's
+  // header says so once ("Added by Claude", scan-source.ts).
+  const addedBy = shape === "import" ? null : addedByFromRequest((await Promise.resolve(platform().auth?.requestSource?.()).catch(() => null)) ?? null);
   const values: InsertValues =
-    shape === "import" ? v : { ...v, suggested_metadata: stampShape(v.suggested_metadata, shape) as never };
+    shape === "import" ? v : { ...v, suggested_metadata: stampShape(v.suggested_metadata, shape, addedBy) as never };
   const row = (await opts.db
     .insertInto("core_scan_inbox_items")
     .values(values)
@@ -276,9 +280,9 @@ export async function intakeRow(opts: IntakeOpts): Promise<IntakeResult> {
   return { row, shape, plan, inline };
 }
 
-function stampShape(meta: unknown, shape: RowShape): string {
+function stampShape(meta: unknown, shape: RowShape, addedBy: AddedBy | null): string {
   const base = typeof meta === "string" ? (JSON.parse(meta) as Record<string, unknown>) : ((meta as Record<string, unknown> | undefined) ?? {});
-  return JSON.stringify({ ...base, intake_shape: shape });
+  return JSON.stringify({ ...(addedBy ? { [ADDED_BY_KEY]: addedBy } : {}), ...base, intake_shape: shape });
 }
 
 interface PassContext extends IntakeOpts {
@@ -330,7 +334,7 @@ async function runPass(ctx: PassContext, pass: IntakePass): Promise<void> {
       // shape whose name is on the row already is matched now.
       // A settled plan has already awaited its identify, so a barcode or a
       // url is matched now; only a photo's identify is still out on the wire.
-      if (ctx.settle && ctx.shape !== "photo") await r.match({ ...common, token: ctx.token });
+      if (ctx.settle && ctx.shape !== "photo") await r.match({ ...common, token: ctx.token, settle: true });
       else if (ctx.shape === "barcode" || ctx.shape === "url" || ctx.shape === "photo") r.matchWhenEnriched({ ...common, token: ctx.token });
       else await r.match({ ...common, token: ctx.token });
       return;

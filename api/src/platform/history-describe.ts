@@ -52,7 +52,7 @@ interface FieldInfo extends SaidFieldType {
 }
 
 /** Bookkeeping a patch carries that is not a field anyone changed. */
-const NOT_SAID = new Set(["id", "updated_at", "created_at", "instance", "metadata", "fields", "changes", "via", "event", "updates", "order_id"]);
+const NOT_SAID = new Set(["id", "updated_at", "created_at", "instance", "metadata", "fields", "changes", "via", "event", "updates", "order_id", "said", "declined"]);
 
 /** The fields of one kind, labelled the way its forms are. */
 async function fieldsOf(orgId: string, kinds: string[]): Promise<Map<string, FieldInfo>> {
@@ -83,11 +83,13 @@ async function fieldsOf(orgId: string, kinds: string[]): Promise<Map<string, Fie
   return out;
 }
 
-/** The changes a row carries: old → new, or (an older row) the patch's new values. */
-function changesOfRow(action: string, diff: unknown): ActivityChange[] {
+/** The changes a row carries: old → new, or the row's own fields (an older
+ *  edit's new values, what a record was made with, what an action recorded),
+ *  so the Activity page's details read in words too, never as raw JSON. */
+function changesOfRow(_action: string, diff: unknown): ActivityChange[] {
   const kept = changesIn(diff);
   if (kept) return kept;
-  if (!action.endsWith("_updated") || !diff || typeof diff !== "object") return [];
+  if (!diff || typeof diff !== "object" || Array.isArray(diff)) return [];
   const d = diff as Record<string, unknown>;
   const out: ActivityChange[] = [];
   for (const [field, to] of Object.entries(d)) {

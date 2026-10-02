@@ -14,6 +14,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { readBound } from "../lib/floorplanGeometry";
 import { parseRange } from "../lib/nameRange";
 import { LocationFloorPlanTab } from "../components/LocationFloorPlanTab";
+import { SPACE_PARAM, placeItemsHref } from "../components/placeItems/useSelectedSpace";
 import { NewBinSheet } from "./NewBinSheet";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, Plus, Printer, Trash2, Pencil, Box as BoxIcon, MapPin as AreaIcon, Upload, Download, GripVertical, CheckSquare, ChevronRight, ChevronsDownUp, ChevronsUpDown, Layers, PackageOpen } from "lucide-react";
@@ -32,7 +33,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { BulkActionBar, Modal, useToast, useConfirm, usePageTitle, useAskCobbAboutSelection, RecordRow, useSelectionResolver, buildLocationForest, type LocationNode as SharedLocationNode, usePublishChatContext, SearchInput } from "@cobblr/platform-web";
+import { BulkActionBar, useTickedRows, Modal, useToast, useConfirm, usePageTitle, useAskCobbAboutSelection, RecordRow, useSelectionResolver, buildLocationForest, type LocationNode as SharedLocationNode, usePublishChatContext, SearchInput } from "@cobblr/platform-web";
 import { ApiError, api, fetchAuthBlobUrl, type Location } from "../lib/api";
 import { deleteDialogMessage, restorePlaces, restoredSentence } from "../lib/placeDelete";
 import { countOf } from "@cobblr/platform-contract/plural";
@@ -86,7 +87,6 @@ export function LocationsPage() {
   // standing in front of it rather than sitting at this page.
   const [binSheetOpen, setBinSheetOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<Location | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const [importOpen, setImportOpen] = useState(false);
   // Fold + filter (lib/tree-fold.ts). Filtering wins: while a query is typed
@@ -186,7 +186,7 @@ export function LocationsPage() {
         else failed++;
       }
     }
-    setSelected(new Set());
+    const tickAgain = clearTicks();
     const refresh = () => void qc.invalidateQueries({ queryKey: ["core-locations", activeSlug] });
     refresh();
     if (deleted.length > 0) {
@@ -196,6 +196,7 @@ export function LocationsPage() {
           try {
             const back = await restorePlaces(activeSlug, deleted);
             refresh();
+            tickAgain();
             toast.success(back.length === 1 ? restoredSentence(back[0]!) : `Put ${countOf(back.length, "place")} back.`);
           } catch (e) {
             toast.error(e instanceof ApiError ? e.message : String(e));
@@ -218,6 +219,8 @@ export function LocationsPage() {
   const usageByLocation = useLocationUsage(activeSlug);
 
   const items = useMemo(() => list.data?.items ?? [], [list.data]);
+  // Ticked rows survive a reload of this list and its filters (#4587).
+  const [selected, setSelected, clearTicks] = useTickedRows(list.data ? items.map((l) => l.id) : null);
 
   // What is on this screen, so "the tea from this page" can mean this page.
   // A page that lists one kind of record says which kind (chat-context.ts).
@@ -423,7 +426,8 @@ export function LocationsPage() {
         </div>
         <div className="flex-1 min-w-0" />
         <Link
-          to="/locations/place"
+          // The room or container open on the plan goes along (#4557).
+          to={placeItemsHref(params.get(SPACE_PARAM))}
           data-testid="place-items-link"
           title="Drag things onto the floor plan, to the exact place each one lives"
           className="inline-flex shrink-0 items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2 sm:px-2.5 py-1.5 text-sm transition"

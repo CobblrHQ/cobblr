@@ -610,7 +610,7 @@ export async function pendingMigrationSummary(): Promise<MigrationSummary> {
     filesByModule.set(moduleName, files);
     return files;
   };
-  // `||`: compose passes an unset variable as "" (CLAUDE.md 14.6).
+  // `||`: compose passes an unset variable as "" (docs/architecture/platform-spec.md §14.6).
   const peer = process.env.COBBLR_SHARED_DB_PEER?.trim() || undefined;
   let count = 0;
   const modules = new Set<string>();

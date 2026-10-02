@@ -167,7 +167,14 @@ testSupportRouter.post("/test-support/post-cardless-feedback", async (req, res, 
       return;
     }
     const { postCardlessFeedback } = await import("./feedback-card-post.js");
-    res.json({ posted: await postCardlessFeedback({ onlyIds: ids as string[] }) });
+    const { announceRouted } = await import("../platform/announce.js");
+    // Why each id was or was not posted, so a test that reads "posted: 0"
+    // also reads the reason instead of guessing at it.
+    const why: Record<string, unknown> = {};
+    for (const id of ids as string[]) why[id] = { posted: false, reason: "skipped", message: "Not picked: no such item, not open, or it already has a card." };
+    const routed = await announceRouted("feedback.new");
+    const posted = await postCardlessFeedback({ onlyIds: ids as string[], onResult: (id, r) => (why[id] = r) });
+    res.json({ posted, routed, why });
   } catch (err) {
     next(err);
   }

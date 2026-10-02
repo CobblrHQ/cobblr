@@ -326,6 +326,7 @@ export function startTrialReaper(): void {
   // twice. The per-org `trial_expiry_warned_at` guard makes the email
   // idempotent even so, but a destructive sweep should not be racing at all.
   const run = () =>
+    // SKIP-IF-BUSY OK: a timer tick; the holder reaps, the next tick finds what is still due
     runExclusive("platform.reap-trials", async () => {
       await reapExpiredTrials();
     }).catch((err) => console.error("[reap-trials] sweep failed:", (err as Error).message));

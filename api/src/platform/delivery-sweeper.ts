@@ -54,6 +54,7 @@ async function safeTick(): Promise<void> {
     // — a duplicate digest, the exact noise this feature exists to avoid
     // (audit B4c). The buckets are deleted inside the tick, so the loser's next
     // tick finds nothing rather than repeating the work.
+    // SKIP-IF-BUSY OK: a timer tick; the holder flushes the buckets, the next tick finds what is left
     await runExclusive("notify.delivery-sweep", async () => {
       await deliveryTick();
     });

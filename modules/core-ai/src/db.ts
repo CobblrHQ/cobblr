@@ -78,6 +78,8 @@ export interface CoreAiDB {
   core_ai_chat_writes: CoreAiChatWritesTable;
   core_ai_chat_turns: CoreAiChatTurnsTable;
   core_ai_chat_turn_events: CoreAiChatTurnEventsTable;
+  core_ai_offers: CoreAiOffersTable;
+  core_ai_conversations: CoreAiConversationsTable;
 }
 
 /** One chat turn: persisted so it survives the request that started it. */
@@ -224,4 +226,24 @@ export function sessionUserId(req: Request): string | null {
 export function sessionDisplayName(req: Request): string | null {
   const n = (req as unknown as RequestWithTenant).session?.display_name;
   return typeof n === "string" && n.trim() ? n.trim() : null;
+}
+
+export type OfferStatus = "open" | "confirming" | "confirmed" | "failed" | "cancelled" | "replaced";
+
+export interface CoreAiOffersTable {
+  id: Generated<string>;
+  user_id: string;
+  turn_id: string | null;
+  summary: Generated<string>;
+  proposal: unknown;
+  status: Generated<OfferStatus>;
+  outcome: unknown | null;
+  made_at: Generated<Date>;
+  answered_at: Date | null;
+}
+
+export interface CoreAiConversationsTable {
+  user_id: string;
+  messages: Generated<unknown>;
+  updated_at: Generated<Date>;
 }

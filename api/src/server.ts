@@ -51,6 +51,7 @@ import { bundlesRouter } from "./routes/bundles.js";
 import { quickstartRouter } from "./routes/quickstart.js";
 import { attentionRouter } from "./routes/attention.js";
 import { edgePairRouter, edgeRouter } from "./routes/edge.js";
+import { shareLinksOrgRouter, shareLinksRouter } from "./routes/share-links.js";
 import { blueprintRouter } from "./routes/blueprint.js";
 import { backupRouter, backupGoogleCallbackRouter } from "./routes/backup.js";
 import { uploadReportsRouter } from "./routes/upload-reports.js";
@@ -152,6 +153,18 @@ export function createApp(): AppHandles {
     req.method === "POST" && /\/modules\/core-scan\/import(\/preview)?$/.test(req.path)
       ? scanImportJson(req, res, next)
       : next(),
+  );
+  // What another Cobblr sends over a share: changes signed over their exact
+  // bytes (so the raw body is kept), photos inline (so the limit is high).
+  // Same pre-mount pattern as above, for that one path.
+  const shareOpsJson = express.json({
+    limit: "64mb",
+    verify: (req, _res, buf) => {
+      (req as unknown as { rawBody?: string }).rawBody = buf.toString("utf8");
+    },
+  });
+  app.use((req, res, next) =>
+    req.method === "POST" && /^\/api\/v1\/share-links\/[^/]+\/ops$/.test(req.path) ? shareOpsJson(req, res, next) : next(),
   );
   app.use(
     express.json({
@@ -436,6 +449,9 @@ export function createApp(): AppHandles {
   // (digifab's /modules/digifab/edge/*) remain as wire-compatible aliases.
   v1.use("/orgs/:slug/edge", edgeRouter);
   v1.use("/edge", edgePairRouter);
+  // Sharing: a workspace's shares, and the doors another Cobblr knocks on.
+  v1.use("/orgs", shareLinksOrgRouter);
+  v1.use(shareLinksRouter);
   // Blueprint (workspace setup snapshot) + Backup (setup + data + files).
   // Both sit at the workspace level above bundles. See
   // docs/architecture/blueprint-backup-export.md.

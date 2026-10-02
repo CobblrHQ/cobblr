@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/platform-contract",
-  "version": "0.5.67",
+  "version": "0.5.72",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
@@ -101,6 +101,7 @@
     "./record-mentions": "./src/record-mentions.ts",
     "./scan-fallback": "./src/scan-fallback.ts",
     "./scan-session": "./src/scan-session.ts",
+    "./scan-source": "./src/scan-source.ts",
     "./document-images": "./src/document-images.ts",
     "./ai-refusal": "./src/ai-refusal.ts",
     "./ai-answer": "./src/ai-answer.ts",
@@ -115,12 +116,17 @@
     "./identifier-check": "./src/identifier-check.ts",
     "./stock-preview": "./src/stock-preview.ts",
     "./disposition": "./src/disposition.ts",
+    "./share-offer": "./src/share-offer.ts",
+    "./share-scope": "./src/share-scope.ts",
     "./provenance-fields": "./src/provenance-fields.ts",
     "./consumption-gauge": "./src/consumption-gauge.ts",
     "./entity-saved": "./src/entity-saved.ts",
     "./library": "./src/library.ts",
     "./money": "./src/money.ts",
-    "./field-choices": "./src/field-choices.ts"
+    "./field-meaning": "./src/field-meaning.ts",
+    "./seller-upgrade": "./src/seller-upgrade.ts",
+    "./field-choices": "./src/field-choices.ts",
+    "./plan-colours": "./src/plan-colours.ts"
   },
   "types": "src/index.ts",
   "scripts": {

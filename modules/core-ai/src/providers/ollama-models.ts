@@ -67,3 +67,12 @@ export function pickInstalledModel(capability: string, installed: readonly strin
   if (pickKind(capability) === "vision") return null;
   return usable.sort((a, b) => a.length - b.length)[0]!;
 }
+
+/** The model names an Ollama-shaped /api/tags answer lists, in its order. A
+ *  chat menu leaves out what cannot hold a conversation (an embedder). */
+export function namesOfTags(body: unknown): string[] {
+  const models = (body as { models?: Array<{ name?: unknown; model?: unknown }> } | null)?.models ?? [];
+  return models
+    .map((m) => String(m.name ?? m.model ?? ""))
+    .filter((n) => n && !AVOID.test(n));
+}

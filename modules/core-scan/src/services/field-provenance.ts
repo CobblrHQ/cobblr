@@ -209,6 +209,13 @@ interface RoledFieldLike {
  * A field the route no longer fills loses its non-person stamp, so the map
  * says what stands, not what once did.
  */
+/** Facts about the row itself, not fields of its route: what a person said of
+ *  them (the name they gave or turned down, the count, the part number in a
+ *  hint) is never in user_fields, and a re-match that rebuilt the map from
+ *  user_fields alone wiped it, so a count the person set read as unclaimed and
+ *  the next label read could replace it (#4552). */
+const PERSON_ROW_FACTS = new Set(["name", "quantity", "identifier", "lot", "year_made"]);
+
 export function provenanceStamps(opts: {
   meta: Record<string, unknown> | null | undefined;
   candidates: Array<CandidateLike & { inferred?: unknown }>;
@@ -228,7 +235,7 @@ export function provenanceStamps(opts: {
   const evidence = purchaseEvidenceOf(opts.meta);
   const out: FieldProvenanceMap = {};
   for (const [name, stamp] of Object.entries(prior)) {
-    if (stamp.by === "person" && name in person) out[name] = stamp;
+    if (stamp.by === "person" && (name in person || PERSON_ROW_FACTS.has(name))) out[name] = stamp;
   }
   const top = opts.candidates[0]?.fields;
   const byName = new Map((opts.tableFields ?? []).map((f) => [f.name, f]));

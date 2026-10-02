@@ -49,6 +49,7 @@ import {
   Plug,
   Ruler,
   ScanLine,
+  Share2,
   Shield,
   Sliders,
   Sparkles,
@@ -525,6 +526,15 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
       "digifab",
       "digital fabrication",
     ],
+  },
+  {
+    section: "connections",
+    icon: Share2,
+    label: "Sharing",
+    description:
+      "Share part of this workspace with someone, on this Cobblr or another one. They get a workspace of their own for it, and things can be handed over between you.",
+    to: "/configuration/sharing",
+    keywords: ["share", "friend", "hand over", "give", "offer", "another cobblr"],
   },
   {
     section: "connections",

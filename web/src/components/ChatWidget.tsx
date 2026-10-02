@@ -16,9 +16,11 @@ import { withoutValue } from "../lib/proposal-values";
 import { PlanSections, sectionsLeft, type SectionRuns } from "./PlanSections";
 import { historyToSend } from "../lib/chat-store";
 import { chatStoreKey, useStoredConversation } from "../lib/use-stored-conversation";
+import { applyOfferStates, offerIdsToRefresh, offerOutcomeWords, type OfferOutcome } from "../lib/offer-sync";
 import { commandOrigin } from "../lib/command-origin";
 import { growToContent } from "../lib/useAutoGrowTextarea";
 import { PlanLines } from "./PlanLines";
+import { PlanSteps } from "./PlanSteps";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Send, Check, Eye, PencilLine, Trash2, Wand2, Cpu, ChevronDown, Bookmark } from "lucide-react";
 import { SaveAnswerSheet, type SavedAnswer } from "./SaveAnswerSheet";
@@ -71,6 +73,11 @@ interface Msg {
    *  rather than borrowing whatever the composer holds now. */
   sentWith?: { label: string; kind?: string; ids?: string[]; text?: string };
   proposal?: AiChatProposal; // assistant proposed a write — needs confirm
+  /** The offer this card is, as the server keeps it (core_ai_offers): Confirm
+   *  runs the kept plan, and a reload redraws the card from it. */
+  offerId?: string;
+  /** What became of the offer, when it was answered (offer-sync.ts). */
+  offerState?: OfferOutcome;
   /** A service job Cobb started; its card follows it and holds its confirm. */
   serviceJob?: { id: string; capability?: string };
   buildPreview?: BundleValidationPreview; // build-proposal: what applying enables/adds
@@ -176,13 +183,16 @@ function WriteModeChip({ mode, onCycle }: { mode: "off" | "ask" | "auto"; onCycl
  *  workspace has plus what has been shared in and approved; each provider's
  *  own short list, with what a model costs written next to it, since on a free
  *  tier the choice between Flash and Flash Lite is a quota decision. */
-function ModelChip({
+export function ModelChip({
   menu,
   onPick,
+  onRetry,
   busy,
 }: {
   menu: ChatModelMenu | undefined;
   onPick: (choice: ChatModelOption["choice"] | null) => void;
+  /** Ask the connections again, past the minute their answer is kept. */
+  onRetry: () => void;
   busy: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -229,7 +239,8 @@ function ModelChip({
   const options = menu?.groups.flatMap((g) => g.options) ?? [];
   // Nothing to choose between is not a pill: one model in one place is not a
   // decision, and a chip that opens on nothing reads as broken.
-  if (!menu || options.length < 2) return null;
+  const unlisted = menu?.groups.some((g) => g.unlisted) ?? false;
+  if (!menu || (options.length < 2 && !unlisted)) return null;
   const current = menu.current;
   // At rest the pill shows the SHORT form - "Flash Lite", not "Gemini Flash
   // Lite" - because it shares one row with two other chips and must never
@@ -271,7 +282,7 @@ function ModelChip({
             className="z-[70] min-w-[15rem] max-w-[min(20rem,calc(100vw-1rem))] outline-none rounded-lg border border-line dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg py-1 text-[12px]"
           >
             {menu.groups.map((g) => (
-              <div key={g.heading} className="py-1">
+              <div key={g.key} className="py-1">
                 <div className="px-3 pb-0.5 text-[10px] uppercase tracking-wide text-faint">
                   {g.heading}
                   {g.owner === "you" ? " · yours" : g.owner === "shared" ? " · shared with this workspace" : ""}
@@ -289,18 +300,33 @@ function ModelChip({
                         onPick(o.choice);
                       }}
                       className={
-                        "w-full text-left px-3 py-1.5 flex items-center justify-between gap-3 hover:bg-subtle dark:hover:bg-slate-800 " +
+                        "w-full text-left px-3 py-1.5 flex items-start justify-between gap-3 hover:bg-subtle dark:hover:bg-slate-800 " +
                         (on ? "text-content dark:text-mortar-100 font-medium" : "text-muted dark:text-slate-300")
                       }
                     >
-                      <span className="truncate">{o.label}</span>
-                      <span className="shrink-0 text-[10px] text-faint">
-                        {o.note ?? ""}
-                        {on ? " ✓" : ""}
+                      {/* The name whole on its own line, what it is under it:
+                          "Sonnet (newest)" and "Sonnet 5.5" must read apart at
+                          a glance, and a description cut the names short. */}
+                      <span className="min-w-0">
+                        <span className="block break-words" data-model-name>{o.label}</span>
+                        {o.note && <span className="block text-[10px] font-normal text-faint" data-model-note>{o.note}</span>}
                       </span>
+                      {on && <span className="shrink-0 text-[10px] text-faint">✓</span>}
                     </button>
                   );
                 })}
+                {g.unlisted && (
+                  <div className="px-3 py-1.5 text-[11px] text-muted dark:text-slate-400" title={g.unlisted.error} data-model-unlisted>
+                    Couldn't list models ·{" "}
+                    <button
+                      type="button"
+                      onClick={onRetry}
+                      className="underline hover:text-content dark:hover:text-mortar-100"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
             {current && (
@@ -571,7 +597,30 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   const undoMut = useMutation({
     mutationFn: (writeId: string) => api.aiChatUndo(activeSlug, writeId),
   });
-  const [messages, setMessages] = useStoredConversation<Msg>(activeSlug, CHAT_STORE_MAX);
+  // Kept on this device for the first paint, and server-side so another tab
+  // or device opens on the same conversation.
+  const conversationRemote = useMemo(
+    () =>
+      activeSlug
+        ? {
+            read: async () => (await api.aiChatConversation(activeSlug)).conversation,
+            write: async (msgs: unknown[]) => (await api.aiChatSaveConversation(activeSlug, msgs)).updated_at,
+          }
+        : undefined,
+    [activeSlug],
+  );
+  const [messages, setMessages] = useStoredConversation<Msg>(activeSlug, CHAT_STORE_MAX, conversationRemote);
+  // The cards are the offers the server keeps: whenever the set of offers the
+  // conversation names changes (a load, a reload, another tab's turn), they
+  // are read back and redrawn as they now stand.
+  const offerKey = offerIdsToRefresh(messages).join(",");
+  const refreshedKey = useRef("");
+  useEffect(() => {
+    if (!offerKey || offerKey === refreshedKey.current) return;
+    refreshedKey.current = offerKey;
+    void refreshOffers(offerKey.split(","));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [offerKey]);
   // Always-current view for code that runs outside the render (the mount
   // effect that resubscribes to an open turn).
   const messagesRef = useRef<Msg[]>([]);
@@ -764,7 +813,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
           // that match — want me to add the pattern?"): keep that text.
           ...(r.text ? [named({ role: "assistant" as const, content: r.text })] : []),
           ...planCard,
-          named({ role: "assistant", content: r.summary ?? "I can do that. Confirm?", proposal: r.proposal }),
+          named({ role: "assistant", content: r.summary ?? "I can do that. Confirm?", proposal: r.proposal, ...(r.offer_id ? { offerId: r.offer_id } : {}) }),
         ]);
       } else if (r.type === "proposals" && r.items?.length) {
         // Several writes from one turn — one confirmable card each, so the user
@@ -779,6 +828,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
               role: "assistant" as const,
               content: it.summary,
               proposal: it.proposal,
+              ...(it.offer_id ? { offerId: it.offer_id } : {}),
             }),
           ),
         ]);
@@ -1630,8 +1680,9 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
     if (!m?.proposal || busy) return;
     setBusy(true);
     try {
-      const r = await api.aiChatExecute(activeSlug, m.proposal);
+      const r = await api.aiChatExecute(activeSlug, m.proposal, undefined, m.offerId);
       markResolved(idx);
+      setMessages((prev) => prev.map((x, i) => (i === idx ? { ...x, offerState: { status: r.ok ? "confirmed" : "failed", message: r.message } } : x)));
       if (r.ok) {
         // Anything open alongside the chat (the put-away plan, pickers) can
         // react — Cobb just changed the workspace.
@@ -1640,6 +1691,13 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
       // The executed write carries its change-ledger id — the Undo handle.
       // And the record it was about: what the result names, and the record
       // the proposal ran on, so "✓ Done." still shows what it was done to.
+      // A plan answers with each step that ran, so each is a done card with
+      // the Undo its own change has, the same as inside a turn.
+      if (r.ok && r.applied?.length) {
+        const steps = appliedCards(r.applied, null);
+        setMessages((prev) => [...prev, ...steps]);
+        return;
+      }
       const refs = r.ok ? mergeRefs(refsOfResponse({ applied: [r] }), [refOfProposal(m.proposal)]) : [];
       setMessages((prev) => [
         ...prev,
@@ -1654,6 +1712,12 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
       ]);
     } catch (e) {
       markResolved(idx);
+      // Answered somewhere else (another tab, another device): the card shows
+      // what became of it there, instead of an error about this press.
+      if (e instanceof ApiError && e.status === 409 && m.offerId) {
+        await refreshOffers([m.offerId]);
+        return;
+      }
       const msg = e instanceof ApiError ? e.message : "Couldn't do that.";
       setMessages((prev) => [...prev, { role: "assistant", content: "✗ " + msg }]);
     } finally {
@@ -1662,8 +1726,24 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   }
 
   function cancel(idx: number) {
+    const m = messages[idx];
     markResolved(idx);
-    setMessages((prev) => [...prev, { role: "assistant", content: "Okay, left it alone." }]);
+    setMessages((prev) => [
+      ...prev.map((x, i) => (i === idx ? { ...x, offerState: { status: "cancelled" as const } } : x)),
+      { role: "assistant", content: "Okay, left it alone." },
+    ]);
+    if (m?.offerId) void api.aiChatCancelOffer(activeSlug, m.offerId).catch(() => undefined);
+  }
+
+  /** Redraw the cards from the offers the server keeps. */
+  async function refreshOffers(ids: string[]) {
+    if (!activeSlug || !ids.length) return;
+    try {
+      const { items } = await api.aiChatOffers(activeSlug, ids);
+      setMessages((prev) => applyOfferStates(prev, items));
+    } catch {
+      /* offline: the cards stand as this device last saw them */
+    }
   }
 
   async function undoWrite(idx: number, force = false) {
@@ -1821,6 +1901,9 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                     { onSuccess: () => void modelsQ.refetch() },
                   )
                 }
+                onRetry={() =>
+                  void api.aiChatModels(activeSlug, true).then((m) => qc.setQueryData(aiAvailabilityKeys.chatModels(activeSlug), m)).catch(() => undefined)
+                }
               />
             </div>
           )}
@@ -1906,6 +1989,14 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                   <div className="inline-block max-w-[88%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words bg-cobble-600 text-white text-left">
                     {m.content}
                   </div>
+                </div>
+              ) : m.offerState?.status === "replaced" ? (
+                // A card a later plan replaced folds to one line: never a
+                // second live-looking card beside the one that counts.
+                <div key={i} className="text-left">
+                  <p className="text-[11px] text-muted dark:text-slate-400" data-testid="offer-outcome">
+                    <span className="line-through">{m.content}</span> · {offerOutcomeWords(m.offerState)}
+                  </p>
                 </div>
               ) : (
                 <div key={i} className="text-left">
@@ -2018,6 +2109,10 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                       that names it. A card that said only "Move records into
                       another list" asked for trust; this offers a check. */}
                   {m.proposal?.kind === "action" && m.proposal.plan && !m.resolved && <PlanLines lines={m.proposal.plan.lines} />}
+                  {/* One message's changes, one card: its steps in order, each
+                      saying whether it can be undone, and one Confirm. */}
+                  {m.proposal?.kind === "plan" && !m.resolved && <PlanSteps steps={m.proposal.steps} />}
+                  {m.proposal?.kind === "file" && m.proposal.lines?.length && !m.resolved ? <PlanLines lines={m.proposal.lines} /> : null}
                   {/* Every value a create or an update will write: the card is
                       what the person approves, so it shows them all, marks the
                       ones Cobb chose, and lets one be left out (#3658). */}
@@ -2059,6 +2154,14 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                         </button>
                       ))}
                     </div>
+                  )}
+                  {/* An answered offer says what became of it, after a reload
+                      too: "Confirmed: Deleted …", "Cancelled", "Replaced by a
+                      newer plan". Never a bare title with nothing under it. */}
+                  {m.proposal && m.resolved && m.offerState && (
+                    <p className="mt-1 text-[11px] text-muted" data-testid="offer-outcome">
+                      {offerOutcomeWords(m.offerState, messages.slice(i + 1).map((x) => x.content))}
+                    </p>
                   )}
                   {m.proposal && !m.resolved && (
                     <div className="mt-2 flex items-center gap-2">

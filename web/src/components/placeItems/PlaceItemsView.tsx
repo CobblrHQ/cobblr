@@ -34,6 +34,21 @@ export function placedSaying(names: string, where: string, pinned: boolean): str
 }
 
 const keyOf = (r: PlaceableRecord) => `${r.kind}:${r.id}`;
+
+/** What a person is carrying across spaces, and how the rail is narrowed. */
+export interface PlaceSession {
+  picked: Set<string>;
+  setPicked: (next: Set<string> | ((prev: Set<string>) => Set<string>)) => void;
+  filter: RailFilter;
+  setFilter: (next: RailFilter | ((prev: RailFilter) => RailFilter)) => void;
+}
+
+/** The session, held by whatever outlives a change of space (the page). */
+export function usePlaceSession(collection: string | null = null): PlaceSession {
+  const [picked, setPicked] = useState<Set<string>>(() => new Set());
+  const [filter, setFilter] = useState<RailFilter>(() => ({ showAll: false, q: "", collection }));
+  return { picked, setPicked, filter, setFilter };
+}
 const LONG_PRESS_MS = 450;
 const DRAG_START_PX = 6;
 
@@ -60,14 +75,15 @@ export function PlaceItemsView({
   slug,
   space,
   locations,
-  initialCollection = null,
+  session,
 }: {
   slug: string;
   /** The room or container whose plan is shown. */
   space: Location;
   locations: Location[];
-  /** Open with the rail filtered to one collection (a kind id). */
-  initialCollection?: string | null;
+  /** What is picked up and how the rail is narrowed, owned by the page so a
+   *  change of space keeps both (#4561). */
+  session: PlaceSession;
 }) {
   const isDesktop = useIsDesktopWidth();
   const toast = useToast();
@@ -78,8 +94,7 @@ export function PlaceItemsView({
   const direct = useMemo(() => countsByPlace(records), [records]);
   const within = useMemo(() => countsWithin(direct, locations), [direct, locations]);
 
-  const [picked, setPicked] = useState<Set<string>>(new Set());
-  const [filter, setFilter] = useState<RailFilter>({ showAll: false, q: "", collection: initialCollection });
+  const { picked, setPicked, filter, setFilter } = session;
   const [over, setOver] = useState<string | null>(null);
   const [choose, setChoose] = useState<{ locationId: string; keys: string[] } | null>(null);
   const [ask, setAsk] = useState<{ queue: PlaceableRecord[]; locationId: string } | null>(null);

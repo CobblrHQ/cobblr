@@ -5,7 +5,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Archive, ArrowRightLeft, Download, ExternalLink, FileDown, FileUp, Plus, Printer, ScanLine, ShieldCheck, MoreHorizontal } from "lucide-react";
-import { BulkActionBar, BulkTagAction, EditableCell, EntityThumb, EntityTile, suggestedSrcFor, usePhotoSuggestions, Modal, MoveToInstanceModal, ViewModeToggle, useToast, useConfirm, usePageTitle, usePageWidth, useViewMode, usePlatformWeb, usePublishChatContext, makeAreaResolver, LOCATION_GROUP_KEY, type EditableCellDef, useAskCobbAboutSelection, useUnits, TILE_GRID, InboxWaitingStrip, SearchInput, QueryError, noteWorkspaceWrite } from "@cobblr/platform-web";
+import { BulkActionBar, BulkGiveTo, BulkTagAction, EditableCell, EntityThumb, EntityTile, suggestedSrcFor, usePhotoSuggestions, Modal, MoveToInstanceModal, ViewModeToggle, useToast, useConfirm, usePageTitle, usePageWidth, useViewMode, usePlatformWeb, usePublishChatContext, makeAreaResolver, LOCATION_GROUP_KEY, type EditableCellDef, useAskCobbAboutSelection, useTickedRows, useUnits, TILE_GRID, InboxWaitingStrip, SearchInput, QueryError, noteWorkspaceWrite } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { nothingToFilter, offeredFilters, type ListFilter } from "./list-filters";
 import { AddToListButton } from "./AddToListButton";
@@ -101,7 +101,6 @@ export function PartsListPage() {
   // One card per thing with its places nested, or one line per place (the
   // spreadsheet view). Remembered per collection.
   const [byPlace, setByPlace] = useByPlace(entityKind);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
   const toast = useToast();
   const confirm = useConfirm();
@@ -294,6 +293,8 @@ export function PartsListPage() {
         }
         return 0;
       });
+  // Ticked rows survive a reload of this list and its filters (#4587).
+  const [selected, setSelected, clearTicks] = useTickedRows(parts.data ? partItems.map((p) => p.id) : null);
   // Things filed in the catch-all wearing a category that NAMES one of this
   // module's own lists ("Teas" on a base-Inventory row, in a workspace with a
   // Teas list) belong in that list; nobody looks for tea under Inventory. The
@@ -973,9 +974,10 @@ export function PartsListPage() {
               <Printer size={12} /> {bulkLabelBusy ? "Queuing…" : "Print labels"}
             </button>
             <BulkTagAction count={selected.size} placeholder="e.g. urgent, archive, low-stock" onTag={bulkTag} />
+            <BulkGiveTo kind={instance && instance !== "inventory" ? `${instance}:item` : "inventory:part"} ids={Array.from(selected)} onDone={clearTicks} />
             <BulkMoveToPlace
               rows={partItems.filter((p) => selected.has(p.id))}
-              onMoved={() => setSelected(new Set())}
+              onMoved={clearTicks}
               listMove={otherLists ? { fromInstance: instance ?? "inventory" } : undefined}
             />
             <button
@@ -998,15 +1000,16 @@ export function PartsListPage() {
         ids={Array.from(selected)}
         noun={itemNoun}
         onMoved={(n, where, undo) => {
+          const tickAgain = clearTicks();
           toast.action(`Moved ${countOf(n, itemNoun)} to ${where}.`, {
             actionLabel: "Undo",
             duration: 10_000,
             onAction: async () => {
               await undo();
               void qc.invalidateQueries();
+              tickAgain();
             },
           });
-          setSelected(new Set());
           void qc.invalidateQueries();
         }}
       />

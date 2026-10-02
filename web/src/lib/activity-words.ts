@@ -43,6 +43,9 @@ const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? 
  *  member: "A former member", not a blank. */
 export function actorWords(e: ActivityWordsEntry): string {
   if (e.actor) return e.actor.display_name ?? e.actor.email ?? "A former member";
+  // A friend's edit from a share space: they are not a member here, and the
+  // row names them.
+  if (e.via_kind === "share") return str(e.via_label) ?? "Someone you share with";
   if (AUTOMATION_ACTIONS.has(e.action) || e.via_kind === "automation") return "Automation";
   return "Cobblr";
 }
@@ -71,6 +74,8 @@ export function viaWords(e: ActivityWordsEntry): string | null {
     case "surface":
       // A place in the app that is not the record's page: "via floor plan".
       return label ? `via ${label}` : null;
+    case "share":
+      return "through your share";
   }
   if (e.auth_method === "api_token") return token ? `via ${token}` : "via API";
   return null;
@@ -168,6 +173,15 @@ export function activityVerb(a: string): string {
     part_restocked: "restocked",
     // A spreadsheet import is one row for the whole run; its title is the file.
     sheet_imported: "imported",
+    // A thing that left, and came back (platform:mark-gone / bring-back).
+    record_sold: "sold",
+    record_given_away: "gave away",
+    record_parted_out: "parted out",
+    record_converted: "converted",
+    record_traded: "traded",
+    record_lost: "lost",
+    record_scrapped: "disposed of",
+    record_brought_back: "got back",
     sheet_import_undone: "undid the import of",
     sheet_import_partly_undone: "partly undid the import of",
     // Tags. An attach or detach is logged on the record that was tagged, so

@@ -10,8 +10,8 @@
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Flame, Loader2, MapPin, Pencil, Plus, Printer, Redo2, ScanLine, Sparkles, Tag, Undo2, X } from "lucide-react";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Check, Flame, Grid3x3, Loader2, MapPin, Pencil, Plus, Printer, Redo2, ScanLine, Sparkles, Tag, Undo2, X } from "lucide-react";
 import { diffPlaces, historyKey, planHistoryFor, type PlanChange, type PlanStep } from "../lib/planHistory";
 import { Modal, useImageSrc, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type Location } from "../lib/api";
@@ -44,8 +44,15 @@ import { useDetailRoute } from "../lib/useDetailRoute";
 import { parseRange } from "../lib/nameRange";
 import { LOCATION_KIND } from "../lib/placeItems";
 import { usePlaceableRecords } from "../lib/placeableRecords";
-import { PLACE_PLAN, PLACE_TARGET, pinAt, usePlacing } from "./placeItems/placing";
+import { PLACE_PLAN, PLACE_TARGET, pinAt, placePlanValue, usePlacing } from "./placeItems/placing";
+import { gridPitches, planPitch } from "../lib/planGrid";
 import { usePlanHeightCap } from "./plan-fits-the-screen";
+import { layoutPinLabels } from "../lib/pinLabels";
+import { PinPeek } from "./PinPeek";
+import { PLAN_COLOURS, isPlanColour, planColourOf, type PlanColour } from "@cobblr/platform-contract/plan-colours";
+import { GROUP_COLOURS, PLAN_COLOUR_STYLE } from "../lib/planColourStyles";
+import { groupPins, groupableFields, shortFor } from "../lib/pinGroups";
+import { fieldKindOf } from "@cobblr/platform-contract/kind-label";
 import { jsonbPatchBetween } from "@cobblr/platform-contract/jsonb-merge";
 
 type Sel =
@@ -347,6 +354,84 @@ function PlanFor({
       ),
     [held.data, bound],
   );
+  // The drawing's width on screen, so pin labels are laid out where they
+  // will actually be drawn (a phone's 358 px drawer is not a desk's 900).
+  const [planPx, setPlanPx] = useState(0);
+  useEffect(() => {
+    const el = planRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setPlanPx(el.clientWidth));
+    ro.observe(el);
+    setPlanPx(el.clientWidth);
+    return () => ro.disconnect();
+  }, [bound?.w_mm, bound?.d_mm]);
+  // The grid, when this plan has it on: its pitch follows the plan's units
+  // and the size it is drawn at, unless somebody chose one. Off, boxes keep
+  // snapping to the plan's own step and pins go exactly where they are put.
+  const gridOn = bound?.grid_on === true;
+  const pitch = bound ? planPitch(bound, planPx) : null;
+  const snapStep = () => (gridOn && pitch ? pitch.mm : (bound?.grid_mm ?? SNAP_MM));
+  // Grouping the pinned things by one of their own fields (a drawer by
+  // drive): the fields come from the kinds pinned here, never named.
+  const pinKinds = useMemo(() => [...new Set(pins.map((t) => fieldKindOf(t)))].sort(), [pins]);
+  const kindDefs = useQueries({
+    queries: pinKinds.map((k) => ({
+      queryKey: ["field-defs", slug, k],
+      queryFn: () => api.listFieldDefs(slug, k),
+      staleTime: 60_000,
+    })),
+    combine: (rs) => rs.flatMap((r) => r.data?.items ?? []),
+  });
+  const groupable = useMemo(() => groupableFields(kindDefs), [kindDefs]);
+  const groupField = groupable.find((f) => f.name === bound?.group_by) ?? null;
+  const pinGroups = useMemo(
+    () => (groupField ? groupPins(pins.map((t) => ({ key: `${t.kind}:${t.id}`, fields: t.fields })), groupField) : []),
+    [pins, groupField],
+  );
+  const pinGroupOf = useMemo(() => {
+    const m = new Map<string, number>();
+    pinGroups.forEach((g, i) => g.keys.forEach((k) => m.set(k, i)));
+    return m;
+  }, [pinGroups]);
+  const pinLabels = useMemo(() => {
+    if (!bound) return new Map<string, { text: string; side: "right" | "left" }>();
+    const heightPx = planPx * (bound.d_mm / bound.w_mm);
+    return layoutPinLabels(
+      pins.map((t) => {
+        const holds = holdsLabel(t.kind, t.id);
+        return {
+          id: `${t.kind}:${t.id}`,
+          x: (t.position!.x_mm / bound.w_mm) * planPx,
+          y: (t.position!.y_mm / bound.d_mm) * heightPx,
+          name: holds ? `${pinName(t, placeable)} · ${holds}` : pinName(t, placeable),
+          short: shortFor(t.fields, groupable),
+        };
+      }),
+      planPx,
+    );
+  }, [pins, bound, planPx, holdsLabel, placeable, groupable]);
+
+  const planLegend = useMemo(() => {
+    const by = new Map<PlanColour, string[]>();
+    for (const { loc } of placed) {
+      if (loc.kind === "area") continue;
+      const c = planColourOf(loc.metadata);
+      if (c) by.set(c, [...(by.get(c) ?? []), loc.name]);
+    }
+    return PLAN_COLOURS.filter((c) => by.has(c)).map((colour) => ({ colour, names: by.get(colour)! }));
+  }, [placed]);
+  // A tap on a pin with a finger opens its card first (a finger has no hover
+  // to read a packed drawer by); a mouse click opens the record, as before.
+  const [pinPeek, setPinPeek] = useState<string | null>(null);
+  const pinPointer = useRef<string>("mouse");
+  useEffect(() => {
+    if (!pinPeek) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPinPeek(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pinPeek]);
   // Peek drill-in: a placed child that owns its own plan opens zoomed in a
   // modal (kept as an id so edits inside the peek see live data).
   const [peekId, setPeekId] = useState<string | null>(null);
@@ -589,7 +674,7 @@ function PlanFor({
     const onMove = (ev: PointerEvent) => {
       const dx = (ev.clientX - startX) * scale;
       const dy = (ev.clientY - startY) * scale;
-      const g = bound.grid_mm ?? SNAP_MM;
+      const g = snapStep();
       const next =
         mode === "move"
           ? { ...orig, x_mm: snap(orig.x_mm + dx, g), y_mm: snap(orig.y_mm + dy, g) }
@@ -660,7 +745,7 @@ function PlanFor({
     const onMove = (ev: PointerEvent) => {
       const dx = (ev.clientX - startX) * scale;
       const dy = (ev.clientY - startY) * scale;
-      const g = bound.grid_mm ?? SNAP_MM;
+      const g = snapStep();
       const next =
         mode === "move"
           ? { ...orig, x_mm: snap(orig.x_mm + dx, g), y_mm: snap(orig.y_mm + dy, g) }
@@ -791,7 +876,7 @@ function PlanFor({
 
   const unit: LengthUnit = bound.unit ?? "ft";
   const view = bound.view ?? defaultView;
-  const grid = bound.grid_mm ?? SNAP_MM;
+  const grid = snapStep();
   const walls = liveWall
     ? (bound.walls ?? []).map((w, i) => (i === liveWall.idx ? liveWall.wall : w))
     : (bound.walls ?? []);
@@ -817,6 +902,35 @@ function PlanFor({
         >
           <Flame size={12} /> heat
         </button>
+        <button
+          type="button"
+          aria-pressed={gridOn}
+          onClick={() => saveBound({ ...bound, grid_on: !gridOn }, gridOn ? `Turned the grid off on ${room.name}` : `Turned the grid on on ${room.name}`)}
+          className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition ${gridOn ? "border-accent text-accent" : "border-line dark:border-slate-600 text-muted hover:text-content"}`}
+          title="A grid to place things by, remembered on this plan"
+        >
+          <Grid3x3 size={12} /> grid{gridOn && pitch ? ` · ${pitch.label}` : ""}
+        </button>
+        {groupable.length > 0 && pins.length > 0 && (
+          <label className="inline-flex items-center gap-1 rounded-md border border-line dark:border-slate-600 px-2 py-0.5 text-xs text-muted">
+            group
+            <select
+              aria-label="Group pinned things by"
+              value={groupField?.name ?? ""}
+              onChange={(e) =>
+                saveBound({ ...bound, group_by: e.target.value || undefined }, e.target.value ? `Grouped ${room.name} by ${groupable.find((f) => f.name === e.target.value)?.label ?? e.target.value}` : `Stopped grouping ${room.name}`)
+              }
+              className="bg-transparent text-xs text-content dark:text-slate-200"
+            >
+              <option value="">none</option>
+              {groupable.map((f) => (
+                <option key={f.name} value={f.name}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <button
           type="button"
           onClick={() => navigate(`/scan/camera?bin=${room.id}`)}
@@ -957,7 +1071,8 @@ function PlanFor({
       {/* ── the plan ── */}
       <div
         ref={planRef}
-        className={`relative mx-auto border-2 border-slate-400 dark:border-slate-500 rounded bg-subtle/40 dark:bg-[#0d1526] select-none ${edit ? "bg-[radial-gradient(circle,rgba(100,116,139,.25)_1px,transparent_1px)]" : ""}`}
+        data-grid={gridOn && pitch ? pitch.label : undefined}
+        className={`relative mx-auto border-2 border-slate-400 dark:border-slate-500 rounded bg-subtle/40 dark:bg-[#0d1526] select-none ${gridOn ? "bg-[linear-gradient(to_right,rgba(100,116,139,.22)_1px,transparent_1px),linear-gradient(to_bottom,rgba(100,116,139,.22)_1px,transparent_1px)]" : edit ? "bg-[radial-gradient(circle,rgba(100,116,139,.25)_1px,transparent_1px)]" : ""}`}
         style={{
           aspectRatio: `${bound.w_mm} / ${bound.d_mm}`,
           // The whole room on one screen: as wide as it can be while its
@@ -968,18 +1083,22 @@ function PlanFor({
               : `min(100%, calc(${capVh}dvh * ${(bound.w_mm / bound.d_mm).toFixed(4)}))`,
           // Edit-mode dots sit at the layout's REAL pitch — a 42mm Gridfinity
           // drawer shows its actual cells, not a decorative texture.
-          ...(edit
+          ...(edit || gridOn
             ? { backgroundSize: `${(grid / bound.w_mm) * 100}% ${(grid / bound.d_mm) * 100}%` }
             : {}),
         }}
         onPointerDown={() => edit && setSel(null)}
-        {...(placing ? { [PLACE_TARGET]: room.id, [PLACE_PLAN]: `${bound.w_mm}x${bound.d_mm}` } : {})}
+        {...(placing ? { [PLACE_TARGET]: room.id, [PLACE_PLAN]: placePlanValue(bound.w_mm, bound.d_mm, gridOn ? grid : null) } : {})}
         onClick={(e) => {
           // The bare floor: right here, at this spot.
+          if (e.target === e.currentTarget) setPinPeek(null);
           if (placing && e.target === e.currentTarget) placing.pick(room.id, placing.armed ? pinAt(e.currentTarget, e.clientX, e.clientY) : null);
         }}
       >
-        {placed.length === 0 && placedOccupants.length === 0 && !placing && (
+        {/* "Nothing drawn" only when the place holds nothing at all, and only
+            once its contents are known: a drawer with sockets pinned in it
+            said "Nothing drawn in Sockets drawer yet" over the pins (#4562). */}
+        {placed.length === 0 && placedOccupants.length === 0 && !placing && held.isSuccess && (held.data?.items ?? []).length === 0 && (
           <div className="absolute inset-0 grid place-items-center p-4 pointer-events-none" data-testid="plan-empty-hint">
             <p className="max-w-xs text-center text-xs text-muted dark:text-slate-400">
               {edit
@@ -989,6 +1108,20 @@ function PlanFor({
                 : `Nothing drawn in ${room.name} yet. Tap Edit to add what is in it.`}
             </p>
           </div>
+        )}
+        {/* A drawer or bin seen from above has no walls or door to tell its
+            front from its back, and a phone held either way reads it upside
+            down. The near edge is the front: say so on both edges. */}
+        {room.kind === "container" && view === "plan" && (
+          <>
+            <span data-testid="plan-edge-back" className="pointer-events-none absolute top-0.5 left-1/2 -translate-x-1/2 text-[9px] uppercase tracking-wide text-faint dark:text-slate-500">
+              back
+            </span>
+            <span data-testid="plan-edge-front" className="pointer-events-none absolute bottom-0 left-0 right-0 h-1.5 bg-slate-400/70 dark:bg-slate-500/70" />
+            <span className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 text-[9px] uppercase tracking-wide text-faint dark:text-slate-500">
+              front
+            </span>
+          </>
         )}
         {/* walls, minus their door openings */}
         {walls.map((w, idx) =>
@@ -1170,9 +1303,10 @@ function PlanFor({
                 title={loc.name}
                 {...(placing ? { [PLACE_TARGET]: loc.id } : {})}
                 data-collides={colliding.has(loc.id) ? "true" : undefined}
-                className={`absolute rounded border overflow-hidden text-[11px] leading-tight px-1 py-0.5
+                data-plan-colour={planColourOf(loc.metadata) ?? undefined}
+                className={`absolute rounded overflow-hidden text-[11px] leading-tight px-1 py-0.5
                   ${r.wall_mounted ? "bg-slate-200/80 dark:bg-slate-700/70" : "bg-white dark:bg-slate-800"}
-                  border-slate-400 dark:border-slate-500 text-content dark:text-slate-200
+                  ${planColourOf(loc.metadata) ? `border-2 ${PLAN_COLOUR_STYLE[planColourOf(loc.metadata)!].border}` : "border border-slate-400 dark:border-slate-500"} text-content dark:text-slate-200
                   ${edit ? "cursor-move touch-none" : "cursor-pointer hover:border-accent hover:text-accent"}
                   ${colliding.has(loc.id) ? "border-dashed !border-ember-500 ring-1 ring-ember-500/60" : ""}
                   ${selected ? "ring-1 ring-accent border-accent" : ""}
@@ -1211,6 +1345,9 @@ function PlanFor({
           // pin on the floor was a question nobody could answer (#4147).
           const holds = holdsLabel(t.kind, t.id);
           const name = holds ? `${pinName(t, placeable)} · ${holds}` : pinName(t, placeable);
+          // Full name where it fits, else its size, else the pin alone; the
+          // full name is always the title and the accessible name (#4560).
+          const label = pinLabels.get(`${t.kind}:${t.id}`);
           return (
           <button
             key={`pin:${t.kind}:${t.id}`}
@@ -1218,23 +1355,51 @@ function PlanFor({
             data-pin={t.id}
             title={name}
             aria-label={`${name}, pinned here`}
+            onPointerDown={(e) => {
+              pinPointer.current = e.pointerType;
+            }}
             onClick={(e) => {
               e.stopPropagation();
+              if (placing) return;
+              const key = `${t.kind}:${t.id}`;
+              if (pinPointer.current === "touch" && pinPeek !== key) {
+                setPinPeek(key);
+                return;
+              }
               const href = routeFor(t.kind, t.id);
-              if (href && !placing) navigate(href);
+              if (href) navigate(href);
             }}
-            className={`absolute -translate-x-2 -translate-y-full flex items-end gap-0.5 text-cobble-600 dark:text-cobble-300 ${placing ? "pointer-events-none" : ""}`}
+            className={`absolute -translate-y-full flex items-end gap-0.5 text-cobble-600 dark:text-cobble-300 ${label?.side === "left" ? "-translate-x-[calc(100%-0.5rem)] flex-row-reverse" : "-translate-x-2"} ${placing ? "pointer-events-none" : ""}`}
             style={{ left: pct(t.position!.x_mm, bound.w_mm), top: pct(t.position!.y_mm, bound.d_mm) }}
           >
-            <MapPin size={16} className="shrink-0 fill-cobble-100 dark:fill-cobble-900" />
-            {pins.length <= PIN_LABELS_UP_TO && (
-              <span className="max-w-[9rem] truncate rounded bg-surface/90 dark:bg-slate-900/90 px-1 text-[10px] leading-4 text-content dark:text-mortar-100 shadow-sm">
-                {name}
+            <MapPin
+              size={16}
+              data-pin-group={pinGroupOf.has(`${t.kind}:${t.id}`) ? pinGroups[pinGroupOf.get(`${t.kind}:${t.id}`)!]!.label : undefined}
+              className={`shrink-0 fill-cobble-100 dark:fill-cobble-900 ${pinGroupOf.has(`${t.kind}:${t.id}`) ? PLAN_COLOUR_STYLE[GROUP_COLOURS[pinGroupOf.get(`${t.kind}:${t.id}`)! % GROUP_COLOURS.length]!].text : ""}`}
+            />
+            {pins.length <= PIN_LABELS_UP_TO && label && (
+              <span data-pin-label="" className="max-w-[9rem] truncate rounded bg-surface/90 dark:bg-slate-900/90 px-1 text-[10px] leading-4 text-content dark:text-mortar-100 shadow-sm">
+                {label.text}
               </span>
             )}
           </button>
           );
         })}
+
+        {(() => {
+          const t = pinPeek ? pins.find((p) => `${p.kind}:${p.id}` === pinPeek) : null;
+          if (!t || placing) return null;
+          const href = routeFor(t.kind, t.id);
+          return (
+            <PinPeek
+              thing={{ name: pinName(t, placeable), size: shortFor(t.fields, groupable), qty: t.fields?.qty, unit: t.fields?.unit, holds: holdsLabel(t.kind, t.id) }}
+              placeName={room.name}
+              at={{ x: t.position!.x_mm / bound.w_mm, y: t.position!.y_mm / bound.d_mm }}
+              onOpen={href ? () => navigate(href) : null}
+              onClose={() => setPinPeek(null)}
+            />
+          );
+        })()}
 
         {/* entity occupants — the THINGS themselves (ratchets, guns, parts),
             placed via their own metadata rect. Cobble-tinted = a thing;
@@ -1284,6 +1449,31 @@ function PlanFor({
           );
         })}
       </div>
+      {/* What each colour on the plan means: the places that carry it. A
+          colour is the person's own grouping, never the only label. */}
+      {groupField && pinGroups.length > 0 && (
+        <div data-testid="pin-groups" className="mt-2 flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs text-muted dark:text-slate-400">
+          <span className="font-medium text-content dark:text-slate-200">{groupField.label}:</span>
+          {pinGroups.map((g, i) => (
+            <span key={g.label} className="inline-flex items-center gap-1">
+              <MapPin aria-hidden size={12} className={PLAN_COLOUR_STYLE[GROUP_COLOURS[i % GROUP_COLOURS.length]!].text} />
+              {g.label} ({g.keys.length})
+            </span>
+          ))}
+        </div>
+      )}
+      {planLegend.length > 0 && (
+        <div data-testid="plan-legend" className="mt-2 flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs text-muted dark:text-slate-400">
+          {planLegend.map(({ colour, names }) => (
+            <span key={colour} className="inline-flex items-center gap-1.5">
+              <span aria-hidden className={`inline-block h-2.5 w-2.5 rounded-sm ${PLAN_COLOUR_STYLE[colour].swatch}`} />
+              <span>
+                <span className="font-medium text-content dark:text-slate-200">{PLAN_COLOUR_STYLE[colour].label}</span>: {names.join(", ")}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* ── edit panel: docked to the bottom of the screen while the plan
           is on it, so selecting something visibly does something ── */}
@@ -1706,6 +1896,7 @@ function EditPanel({
         <DecorControls
           fp={(loc.metadata?.floorplan as Record<string, unknown>) ?? {}}
           onPatch={(patch) => onFloorplanPatch(loc, patch)}
+          withColour={loc.kind !== "area"}
         />
         <div className="flex-1" />
         <button type="button" onClick={() => onRect(loc, null)} className="text-xs text-faint hover:text-ember-500">
@@ -1744,9 +1935,29 @@ function EditPanel({
           <option value="front">front (elevation)</option>
         </select>
       </label>
-      {/* Snap pitch: 42mm = exact Gridfinity; anything = "1 square". */}
+      {/* The grid's size: auto follows the plan's units and zoom; a step of
+          its units, Gridfinity's 42 mm, or any size typed beside it. */}
+      <label className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400">
+        grid
+        <select
+          aria-label="Grid size"
+          value={bound.grid_mm ? String(bound.grid_mm) : "auto"}
+          onChange={(e) => onBound({ ...bound, grid_mm: e.target.value === "auto" ? undefined : Number(e.target.value) })}
+          className="rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1 py-0.5 text-xs text-content dark:text-slate-200"
+        >
+          <option value="auto">auto</option>
+          {gridPitches(bound.unit).map((p) => (
+            <option key={p.mm} value={String(p.mm)}>
+              {p.label}
+            </option>
+          ))}
+          {bound.grid_mm && !gridPitches(bound.unit).some((p) => Math.abs(p.mm - bound.grid_mm!) < 0.01) && (
+            <option value={String(bound.grid_mm)}>{Math.round(bound.grid_mm * 10) / 10} mm</option>
+          )}
+        </select>
+      </label>
       <DimInput
-        label="grid"
+        label="custom grid"
         mm={grid}
         unit="mm"
         onCommit={(v) => onBound({ ...bound, grid_mm: Math.max(5, Math.min(1000, v)) })}
@@ -2279,10 +2490,14 @@ function RectDecor({
 function DecorControls({
   fp,
   onPatch,
+  withColour,
 }: {
   fp: Record<string, unknown>;
   onPatch: (patch: Record<string, unknown>) => void;
+  /** A place can wear a colour on the plan (its legend says which). */
+  withColour?: boolean;
 }) {
+  const colour = isPlanColour(fp.color) ? fp.color : null;
   const currentOutline = readOutline(fp);
   const currentPreset =
     Object.entries(OUTLINE_PRESETS).find(
@@ -2290,6 +2505,31 @@ function DecorControls({
     )?.[0] ?? (currentOutline ? "custom" : "none");
   return (
     <>
+      {withColour && (
+        <span role="group" aria-label="Colour on the plan" className="inline-flex items-center gap-1 text-xs text-muted dark:text-slate-400">
+          colour
+          <button
+            type="button"
+            aria-label="No colour"
+            aria-pressed={!colour}
+            onClick={() => onPatch({ color: null })}
+            className={`h-6 w-6 rounded-full border border-line dark:border-slate-500 bg-surface dark:bg-slate-900 text-[10px] leading-none ${!colour ? "ring-2 ring-accent" : ""}`}
+          >
+            ×
+          </button>
+          {PLAN_COLOURS.map((c) => (
+            <button
+              key={c}
+              type="button"
+              aria-label={`Colour: ${PLAN_COLOUR_STYLE[c].label}`}
+              aria-pressed={colour === c}
+              title={PLAN_COLOUR_STYLE[c].label}
+              onClick={() => onPatch({ color: c })}
+              className={`h-6 w-6 rounded-full ${PLAN_COLOUR_STYLE[c].swatch} ${colour === c ? "ring-2 ring-offset-1 ring-accent dark:ring-offset-slate-800" : ""}`}
+            />
+          ))}
+        </span>
+      )}
       <label className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400">
         <input
           type="checkbox"

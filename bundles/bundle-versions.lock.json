@@ -19,6 +19,10 @@
     "version": "0.1.1",
     "hash": "655d5b060fc62c6adefa58f71fb9a5b770a4b09513f40d0de6f6503c47964ed2"
   },
+  "cobblr.community.hand-tools": {
+    "version": "0.1.0",
+    "hash": "8319dbb0fd76611ebd1b7d8c1c5b49e4cb44f88963fb6ecbed3ebae0e5a504d2"
+  },
   "cobblr.community.laser-cutters": {
     "version": "0.3.3",
     "hash": "a0820f71685331d51eee0c07c92439bbf2dca21a1025fb91a0fa8904d4fcead6"
@@ -128,8 +132,8 @@
     "hash": "850c521d2fb02e25d651de879f4020d7ab651c65396fe70d2841a3131dd338e9"
   },
   "cobblr.flagship.vehicles": {
-    "version": "0.4.4",
-    "hash": "207c40d9c33044bb8ecd73f6262625c8a39d5e9f67dccf59eade522bbde6bc16"
+    "version": "0.4.5",
+    "hash": "6d2fb23d66ed4ddcc02d88fc94acce38df69949159cf3525779fd595ffcef07e"
   },
   "cobblr.flagship.wardrobe": {
     "version": "0.1.6",

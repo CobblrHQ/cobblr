@@ -73,6 +73,18 @@ export interface VocabularyCapability extends Base {
 export const CAPABILITIES: Capability[] = [
   {
     kind: "owns",
+    id: "locations:the-open-space",
+    what: "which room or container a floor-plan page has open: the address's `space`, read and set only through useSelectedSpace (web/src/components/placeItems/useSelectedSpace.ts)",
+    why:
+      "the Floor Plan tab kept its room in its own state and Place items read the address, so the button between them carried nothing " +
+      "and a person who had just drawn the Garage landed on the Bathroom's empty plan (#4557)",
+    owner: "web/src/components/placeItems/useSelectedSpace.ts",
+    scope: ["web/src/**/*.tsx", "web/src/**/*.ts"],
+    detect: /\.get\(\s*["']space["']\s*\)|\.set\(\s*["']space["']/,
+    use: "useSelectedSpace(items) for the open space and its setter; placeItemsHref / floorPlanHref to link to a page with one open.",
+  },
+  {
+    kind: "owns",
     id: "fields:choice-picker",
     what: "a field's list of values that grows when someone types a new one: ChoiceCombobox in packages/platform-web/src/ChoiceCombobox.tsx (bound to a field by ChoiceField)",
     why:
@@ -1623,6 +1635,17 @@ export const CAPABILITIES: Capability[] = [
     scope: ["web/src/pages/Dashboard.tsx", "web/src/pages/ActivityPage.tsx"],
     detect: /\.token\??\.name\b|actor\??\.display_name\s*\?\?|"someone"/,
     use: "Render the actor cell with <ActorVia> / <GroupActorVia> (web/src/components/ActorVia.tsx), whose words are actorWords / viaWords in activity-words.ts.",
+  },
+  {
+    id: "lists:ticked-rows",
+    kind: "owns",
+    what: "The rows ticked on a list with a selection bar: kept for the tab through a reload, keyed by the page and its filters, dropped when the row is gone, cleared by × or a finished bulk action with Undo ticking them again.",
+    why: "Every list kept its ticks in component state, so a refresh unticked the eleven inbox items a person had just asked Cobb about (#4587).",
+    owner: "packages/platform-web/src/ticked-rows.ts",
+    scope: ["web/src/pages/*.tsx", "modules/*/src/ui/*.tsx"],
+    detect: /\[selected, setSelected\]\s*=\s*useState<Set<string>>/,
+    also: /<BulkActionBar\b/,
+    use: "const [selected, setSelected, clearTicks] = useTickedRows(loaded ? ids : null) from @cobblr/platform-web; call clearTicks() when a bulk action finishes and hand what it returns to that action's Undo.",
   },
   {
     id: "camera:torch-on",

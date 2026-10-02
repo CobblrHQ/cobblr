@@ -143,6 +143,7 @@ export function startDeletionReaper(): void {
   }
   if (timer) return;
   const run = () =>
+    // SKIP-IF-BUSY OK: a timer tick; the holder reaps, the next tick finds what is still due
     runExclusive("platform.reap-deletions", async () => {
       await reapRequestedDeletions();
       const { expireFinalExports } = await import("./workspace-final-export.js");

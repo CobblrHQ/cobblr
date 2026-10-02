@@ -130,7 +130,7 @@ function main(): void {
         "    -- PHASE: contract\n" +
         "    -- SAFE WHEN: <the condition you verified, e.g. cobblr.me promoted past <sha>;\n" +
         "    --            nothing in api/ or modules/ still reads <table>.<column>>\n\n" +
-        "  Background: docs/design-decisions/canary-channel.md, CLAUDE.md §14.3.",
+        "  Background: docs/design-decisions/canary-channel.md, docs/architecture/platform-spec.md §14.3.",
     );
     process.exit(1);
   }

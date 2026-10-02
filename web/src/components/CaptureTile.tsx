@@ -43,7 +43,7 @@ export function CaptureTile({ slug, it }: { slug: string; it: CaptureTileItem })
   const candidates = useMemo(() => {
     const file = (id: string) => `/api/v1/orgs/${slug}/modules/core-files/files/${id}/raw?variant=thumb`;
     const byRole = {
-      catalog: [it.catalog_image_file_id ? file(it.catalog_image_file_id) : null, it.catalog_image_url],
+      catalog: [it.catalog_image_file_id ? file(it.catalog_image_file_id) : null],
       yours: [it.image_file_id ? file(it.image_file_id) : null],
       frame: [],
     };

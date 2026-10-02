@@ -57,3 +57,14 @@ html[data-covering-open] .fc-yield-covered {
     display: none;
   }
 }
+
+/* A selection bar squeezed beside a side panel keeps every action and drops
+ * the words: an action with an icon shows the icon alone, named by its
+ * tooltip (BulkActionBar). An action with no icon keeps its words. */
+.fc-bar-icons button:has(> svg) {
+  font-size: 0;
+  gap: 0;
+}
+.fc-bar-icons .fc-bar-words {
+  display: none;
+}

@@ -700,10 +700,10 @@ export async function runReconcile(
   // id-map's unique constraint (CI, 2026-09-01) and the counts returned to the
   // caller were whatever its own half managed.
   let out: ReconcileResult | null = null;
-  const ran = await platform().exclusive.run(reconcileLockName(ref.connectorRowId, type.key), async () => {
+  const run = await platform().exclusive.run(reconcileLockName(ref.connectorRowId, type.key), async () => {
     out = await reconcileOnce(db, ref, type, opts);
   });
-  if (!ran || !out) throw new ReconcileBusyError();
+  if (!run.ran || !out) throw new ReconcileBusyError();
   return out;
 }
 

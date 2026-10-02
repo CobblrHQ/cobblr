@@ -4,7 +4,8 @@
 // restored. Each is the other's undo.
 
 import type { Kysely } from "kysely";
-import { platform, requireActionEntity } from "@cobblr/platform-contract";
+import { mergeRowMetadata, platform, requireActionEntity } from "@cobblr/platform-contract";
+import { DISPOSITION_KEY } from "@cobblr/platform-contract/disposition";
 import type { AssetsDB } from "../db.js";
 
 async function setArchived(orgId: string, id: string, at: Date | null): Promise<{ name: string; was: Date | null } | null> {
@@ -13,6 +14,9 @@ async function setArchived(orgId: string, id: string, at: Date | null): Promise<
   if (!before) return null;
   if ((before.archived_at === null) === (at === null)) return { name: before.name, was: before.archived_at };
   await db.updateTable("assets_assets").set({ archived_at: at, updated_at: new Date() }).where("id", "=", id).execute();
+  // Back in the register is no longer sold or given away: one fact, so the
+  // record's line about how it left goes with it.
+  if (!at) await mergeRowMetadata(db, "assets_assets", id, { [DISPOSITION_KEY]: null });
   await platform().events.emit(at ? "assets.asset.archived" : "assets.asset.restored", { orgId, assetId: id, name: before.name });
   return { name: before.name, was: before.archived_at };
 }

@@ -87,6 +87,20 @@ export async function applyContributedFieldDefs(
       .returning("id")
       .execute();
     added += rows.length;
+    // Whether the list learns is the module's to say (lint:field-learns-declared),
+    // so a row it made before it said so follows the manifest: a workspace
+    // born today and one from last month read the same field the same way.
+    const learns = (fd as { learns?: boolean }).learns;
+    if (typeof learns === "boolean") {
+      await meta
+        .updateTable("module_field_defs")
+        .set({ learns })
+        .where("org_id", "in", orgIds)
+        .where("source_module", "=", moduleName)
+        .where("name", "=", fd.name)
+        .where((eb) => eb.or([eb("learns", "is", null), eb("learns", "!=", learns)]))
+        .execute();
+    }
   }
   // A contributed def may be server_managed, a relation or a member: drop the
   // per-kind caches so the next read/write sees it, not after the TTL.

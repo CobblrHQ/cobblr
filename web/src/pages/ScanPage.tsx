@@ -26,7 +26,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle, ChevronDown, ExternalLink, Image as ImagePlus, LayoutGrid, List, Loader2, MapPin, MonitorSmartphone, Pencil, ReceiptText, RotateCcw, ScanLine, Search, Sparkles, Tag, Trash2, Truck, X, Zap, MoreHorizontal, Undo2 } from "lucide-react";
-import { useLater, Modal, useToast, usePageTitle, PopoverLayer, OverlayLayer, relativeTime, TILE_GRID, useEscapeToClose } from "@cobblr/platform-web";
+import { useLater, useTickedRows, useAskCobbAboutSelection, Modal, useToast, usePageTitle, PopoverLayer, OverlayLayer, relativeTime, TILE_GRID, useEscapeToClose } from "@cobblr/platform-web";
 import { ScanImportModal } from "../components/ScanImportModal";
 import { ExportInboxModal } from "../components/ExportInboxModal";
 import { } from "../components/CameraCaptureSheet";
@@ -42,7 +42,17 @@ import { } from "../components/CropPhotoModal";
 import { } from "../components/pastedImage";
 import { ReceiptSourceViewer, type ReceiptMoney } from "../components/ReceiptSourceViewer";
 import { ReceiptPeek } from "../components/ReceiptPeek";
-import { DocumentSessionCard, sessionFileKey } from "../components/DocumentSessionCard";
+import { DocumentSessionCard, SessionAddedByChip, SessionDocumentChip, sessionFileKey } from "../components/DocumentSessionCard";
+import {
+  addedByHow,
+  addedByWords,
+  documentChipWords,
+  documentKindWords,
+  documentNeedsPerson,
+  sessionAddedBy,
+  sessionDocumentName,
+  type AddedBy,
+} from "@cobblr/platform-contract/scan-source";
 import { documentStateWords } from "../lib/documentState";
 import { } from "../lib/scanRerun";
 import { } from "../lib/identifySentence";
@@ -951,6 +961,8 @@ export function ScanPage() {
       area: string | null;
       label: string | null; // session title (e.g. "Receipt · Home Depot")
       origin: string | null; // "email" → the header says "emailed <when>"
+      originFrom: string | null; // who an emailed receipt came from
+      vendor: string | null; // the shop the read found
       sourceFileId: string | null; // the receipt's stored original (View / Re-parse)
       orderRef: string | null; // editable order/invoice number
       trackingNumber: string | null; // set = the parcel is still on its way
@@ -979,13 +991,13 @@ export function ScanPage() {
         if (existing) g = existing;
         else {
           const meta = batchMeta[it.scan_batch_id];
-          g = { key: it.scan_batch_id, isBatch: true, batchId: it.scan_batch_id, items: [], shown: [], latest: 0, lastTouched: 0, area: null, label: meta?.label ?? null, origin: meta?.origin ?? null, sourceFileId: meta?.source_file_id ?? null, orderRef: meta?.order_ref ?? null, trackingNumber: meta?.tracking_number ?? null, shipmentState: meta?.shipment_state ?? null, shipmentDescription: meta?.shipment_description ?? null, shipmentLocation: meta?.shipment_location ?? null, verdict: { kind: "plain" }, dateReading: null };
+          g = { key: it.scan_batch_id, isBatch: true, batchId: it.scan_batch_id, items: [], shown: [], latest: 0, lastTouched: 0, area: null, label: meta?.label ?? null, origin: meta?.origin ?? null, originFrom: meta?.origin_from ?? null, vendor: meta?.vendor ?? null, sourceFileId: meta?.source_file_id ?? null, orderRef: meta?.order_ref ?? null, trackingNumber: meta?.tracking_number ?? null, shipmentState: meta?.shipment_state ?? null, shipmentDescription: meta?.shipment_description ?? null, shipmentLocation: meta?.shipment_location ?? null, verdict: { kind: "plain" }, dateReading: null };
           byBatch.set(it.scan_batch_id, g);
           groups.push(g);
         }
       } else {
         if (!pseudo || !Number.isFinite(t) || pseudoLastT - t > SESSION_GAP_MS) {
-          pseudo = { key: `gap:${it.id}`, isBatch: false, batchId: null, items: [], shown: [], latest: 0, lastTouched: 0, area: null, label: null, origin: null, sourceFileId: null, orderRef: null, trackingNumber: null, shipmentState: null, shipmentDescription: null, shipmentLocation: null, verdict: { kind: "plain" }, dateReading: null };
+          pseudo = { key: `gap:${it.id}`, isBatch: false, batchId: null, items: [], shown: [], latest: 0, lastTouched: 0, area: null, label: null, origin: null, originFrom: null, vendor: null, sourceFileId: null, orderRef: null, trackingNumber: null, shipmentState: null, shipmentDescription: null, shipmentLocation: null, verdict: { kind: "plain" }, dateReading: null };
           groups.push(pseudo);
         }
         if (Number.isFinite(t)) pseudoLastT = t;
@@ -1018,7 +1030,7 @@ export function ScanPage() {
       const v = sessionVerdict(meta, { pending: 0, ever: 0 });
       if (v.kind !== "failed" && v.kind !== "in_flight") continue;
       const t = meta.created_at ? Date.parse(meta.created_at) : 0;
-      groups.push({ key: id, isBatch: true, batchId: id, items: [], shown: [], latest: Number.isFinite(t) ? t : 0, lastTouched: 0, area: null, label: meta.label ?? null, origin: meta.origin ?? null, sourceFileId: meta.source_file_id ?? null, orderRef: meta.order_ref ?? null, trackingNumber: meta.tracking_number ?? null, shipmentState: meta.shipment_state ?? null, shipmentDescription: meta.shipment_description ?? null, shipmentLocation: meta.shipment_location ?? null, verdict: v, dateReading: null });
+      groups.push({ key: id, isBatch: true, batchId: id, items: [], shown: [], latest: Number.isFinite(t) ? t : 0, lastTouched: 0, area: null, label: meta.label ?? null, origin: meta.origin ?? null, originFrom: meta.origin_from ?? null, vendor: meta.vendor ?? null, sourceFileId: meta.source_file_id ?? null, orderRef: meta.order_ref ?? null, trackingNumber: meta.tracking_number ?? null, shipmentState: meta.shipment_state ?? null, shipmentDescription: meta.shipment_description ?? null, shipmentLocation: meta.shipment_location ?? null, verdict: v, dateReading: null });
     }
     return groups.sort((a, b) => b.latest - a.latest);
   }, [shownItems, filedIds, batchMeta, rowlessSessions]);
@@ -1061,6 +1073,26 @@ export function ScanPage() {
     const f = sourceFileQueries[i]?.data;
     if (f?.filename) sourceFileNames.set(id, f.filename);
   });
+  // Where each session came from, said once (platform-contract scan-source,
+  // #4581): its document by what it is, and who added it. The cards read the
+  // same answer, so a card repeats it only when its own source differs.
+  const sessionSourceOf = (g: (typeof sessionGroups)[number]) => {
+    const addedBy = sessionAddedBy(g.items, { origin: g.origin, from: g.originFrom });
+    const vendor = g.vendor ?? vendorOfItems(g.items);
+    const docName = g.sourceFileId
+      ? sessionDocumentName({ origin: g.origin, vendor, from: g.originFrom, date: documentDateOf(g.items) ?? (g.latest ? new Date(g.latest) : null), filename: sourceFileNames.get(g.sourceFileId) ?? null })
+      : null;
+    const kind = documentKindWords({ origin: g.origin, vendor, billOfSale: isBillOfSaleSession(g.items), source: receiptSourceOf(g.items) });
+    return { addedBy, docName, chipWords: documentChipWords(kind, g.items.length), needsPerson: documentNeedsPerson(g.verdict, g.items) };
+  };
+  const sessionSourceByItem = new Map<string, { addedBy: AddedBy | null; emailed: boolean }>();
+  const documentNames = new Map<string, string>();
+  for (const g of sessionGroups) {
+    const src = sessionSourceOf(g);
+    for (const it of g.shown) sessionSourceByItem.set(it.id, { addedBy: src.addedBy, emailed: g.origin === "email" });
+    if (g.sourceFileId && src.docName) documentNames.set(g.sourceFileId, src.docName);
+  }
+  const [addedByOpen, setAddedByOpen] = useState<string | null>(null);
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
   // Sessions whose "Do these belong together?" was pressed in the ⋯ (#3064).
   const [themeAsked, setThemeAsked] = useState<Set<string>>(new Set());
@@ -1616,9 +1648,20 @@ export function ScanPage() {
   // Bulk triage: select N items, then confirm / discard the whole selection at
   // once (each confirm routes to its own matchmaker top candidate, fields and
   // all). Loops the existing per-item endpoints — no server change.
-  // SELECTION-NOT-CONTEXT: scan-inbox rows are not workspace records yet — they are pending things
-  //   waiting to BECOME records, and their ids mean nothing to the tools
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected, clearTicks] = useTickedRows(list.data ? items.map((i) => i.id) : null);
+  // What is ticked is what Cobb is talking about: "file these in Mugs" means
+  // exactly these, and Cobb reads each by its id (list_scan_inbox, the item's
+  // own read), never asks "which ones?".
+  // With nothing ticked, a list narrowed to one session, a search or a filter
+  // is what "these" means: the rows it shows go to Cobb.
+  const narrowed = !!batchId || searchTokens.length > 0 || !!facet;
+  useAskCobbAboutSelection(
+    selected,
+    items.map((i) => ({ id: i.id, name: i.suggested_name })),
+    "core-scan:item",
+    "inbox item",
+    narrowed ? visibleItems.map((i) => ({ id: i.id, name: i.suggested_name })) : null,
+  );
   const [bulkBusy, setBulkBusy] = useState(false);
   /** "Filing 12 of 40…" while a long batch runs - the only honest feedback a
    *  serial loop can give. Null when nothing is in flight. */
@@ -1711,6 +1754,7 @@ export function ScanPage() {
         pageTarget={target}
         menu={menu}
         sessionCategoryLabel={sessionCategoryByItem.get(it.id) ?? null}
+                sessionSource={sessionSourceByItem.get(it.id) ?? null}
         hasLocations={hasLocations}
         defaultExpanded
         planContext
@@ -1762,7 +1806,7 @@ export function ScanPage() {
       }
     }
     setBulkBusy(false);
-    clearSelected();
+    const tickAgain = clearTicks();
     void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
     // Undo inline — restores the whole batch if it was a mis-tap.
     toast.action(`Removed ${done.length} item${done.length === 1 ? "" : "s"}.`, {
@@ -1771,6 +1815,7 @@ export function ScanPage() {
       onAction: async () => {
         await Promise.allSettled(done.map((id) => api.restoreScanItem(activeSlug, id)));
         void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
+        tickAgain();
       },
     });
   };
@@ -3380,6 +3425,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                   pageTarget={target}
                   menu={menu}
                   sessionCategoryLabel={sessionCategoryByItem.get(item.id) ?? null}
+                sessionSource={sessionSourceByItem.get(item.id) ?? null}
                   hasLocations={hasLocations}
                   selected={selected.has(item.id)}
                   onToggleSelect={() => toggleSelected(item.id)}
@@ -3541,10 +3587,12 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             // question.
             const isReceiptSession = g.isBatch && !!g.batchId && !!g.label?.startsWith("Receipt");
             // A document that has not been read yet is named by its file.
+            const source = sessionSourceOf(g);
             const unreadDocName =
-              g.sourceFileId && (g.verdict.kind === "failed" || g.verdict.kind === "in_flight")
-                ? (sourceFileNames.get(g.sourceFileId) ?? null)
-                : null;
+              g.sourceFileId && (g.verdict.kind === "failed" || g.verdict.kind === "in_flight") ? source.docName : null;
+            // A document that needs nothing is a chip in this row; the card
+            // under it is for one that needs the person.
+            const docChip = !!g.sourceFileId && !source.needsPerson && !!source.docName;
             // What the receipt promised, for the parcel control's label. A live
             // carrier state outranks it there; this is what fills the usual gap
             // before any carrier has said anything.
@@ -3641,7 +3689,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       spending a whole separate control on: tapping it opens the
                       original its lines were read from. Two elements out, one
                       in (2026-08-24). */}
-                  {isReceiptSession &&
+                  {isReceiptSession && !docChip &&
                     (g.sourceFileId ? (
                       // Hover shows the paper, click opens it - the one place on
                       // the row that stands for the receipt itself (2026-09-06).
@@ -3727,6 +3775,24 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                         count={g.verdict.kind !== "failed" && g.verdict.kind !== "in_flight" ? g.items.length : null}
                       />
                     </SessionIdentity>
+                  {docChip && (
+                    <SessionDocumentChip
+                      slug={activeSlug}
+                      fileId={g.sourceFileId!}
+                      name={source.docName!}
+                      words={source.chipWords}
+                      onOpen={setViewSource}
+                    />
+                  )}
+                  {/* An unread email's headline already names its sender. */}
+                  {source.addedBy && !(unreadDocName && source.addedBy.kind === "email") && (
+                    <SessionAddedByChip
+                      by={source.addedBy}
+                      words={addedByWords(source.addedBy)}
+                      open={addedByOpen === g.key}
+                      onToggle={() => setAddedByOpen((k) => (k === g.key ? null : g.key))}
+                    />
+                  )}
                   {/* ...and the offer to add one takes the SAME slot when there
                       is none. They are one fact in one place: an "+ #" sitting
                       over with the actions, while the number it creates appears
@@ -4391,13 +4457,22 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                 </div>
                 {!collapsed && (
                   <div className="space-y-2">
+                    {/* The header's "Added by", opened: when, and how. */}
+                    {source.addedBy && addedByOpen === g.key && (
+                      <div data-testid="session-added-by-detail" className="px-2.5 text-xs text-muted">
+                        {addedByWords(source.addedBy)}, {formatSessionTime(g.latest)}
+                        {source.addedBy.kind === "email" ? "" : `, ${addedByHow(source.addedBy)}`}.
+                      </div>
+                    )}
                     {g.batchId && batchMeta[g.batchId]?.purchase_pending && <KeepAsPurchase slug={activeSlug} batchId={g.batchId} />}
-                    {/* The document itself, read or not: its first page, its
-                        name, and where the reading stands (#4523). */}
-                    {g.sourceFileId && (
+                    {/* The document itself, when it needs the person: its
+                        first page, its name, and where the reading stands
+                        (#4523). One that needs nothing is the header's chip. */}
+                    {g.sourceFileId && source.needsPerson && (
                       <DocumentSessionCard
                         slug={activeSlug}
                         fileId={g.sourceFileId}
+                        name={source.docName ?? "Document"}
                         state={documentStateWords(g.verdict, g.items)}
                         onOpen={setViewSource}
                       />
@@ -4527,6 +4602,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                 pageTarget={target}
                 menu={menu}
                 sessionCategoryLabel={sessionCategoryByItem.get(focus.id) ?? null}
+                sessionSource={sessionSourceByItem.get(focus.id) ?? null}
                 hasLocations={hasLocations}
                 defaultExpanded
                 defaultCand={focusCand}
@@ -4803,7 +4879,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
           fileId={viewSource}
           money={viewSourceMoney?.money ?? null}
           soldBy={viewSourceMoney?.soldBy ?? null}
-          filename={sourceFileNames.get(viewSource) ?? null}
+          filename={documentNames.get(viewSource) ?? sourceFileNames.get(viewSource) ?? null}
           onClose={() => setViewSource(null)}
         />
       )}
@@ -4842,6 +4918,41 @@ function receiptDateOf(g: { items: ScanInboxItem[] }): string | null {
     // midnight, which renders as the 17th anywhere west of Greenwich.
     const [y, m, day] = d.split("-").map(Number);
     return new Date(y!, m! - 1, day!).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+  return null;
+}
+
+type SessionLine = { suggested_metadata?: unknown };
+const metaOf = (i: SessionLine) => (i.suggested_metadata ?? {}) as { receipt_vendor?: unknown; receipt_date?: unknown; receipt_document?: unknown; receipt_source?: unknown };
+
+/** The shop a session's lines were read from, when the batch did not keep it. */
+function vendorOfItems(items: readonly SessionLine[]): string | null {
+  for (const i of items) {
+    const v = metaOf(i).receipt_vendor;
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+/** The date printed on the document, as a local calendar day. */
+function documentDateOf(items: readonly SessionLine[]): Date | null {
+  for (const i of items) {
+    const d = metaOf(i).receipt_date;
+    if (typeof d !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+    const [y, m, day] = d.split("-").map(Number);
+    return new Date(y!, m! - 1, day!);
+  }
+  return null;
+}
+
+function isBillOfSaleSession(items: readonly SessionLine[]): boolean {
+  return items.some((i) => metaOf(i).receipt_document === "bill-of-sale");
+}
+
+function receiptSourceOf(items: readonly SessionLine[]): "scanned-pdf" | "pdf" | "photo" | "text" | null {
+  for (const i of items) {
+    const v = metaOf(i).receipt_source;
+    if (v === "scanned-pdf" || v === "pdf" || v === "photo" || v === "text") return v;
   }
   return null;
 }

@@ -19,6 +19,8 @@
 // metadata.barcode - so an eBay item number off a receipt would have been
 // recorded as the product's barcode. One predicate, one vocabulary.
 
+import { codeSourceNote } from "@cobblr/platform-contract/scan-source";
+
 export type BarcodeSource = "ai-photo" | "receipt" | "user";
 
 /** Every value that may be stamped. Asserted against the writers by a test. */
@@ -35,13 +37,9 @@ export function isMachineReadCode(source: string | null | undefined): boolean {
   return source === "ai-photo" || source === "receipt";
 }
 
-/** How to SAY where it came from, to a person. Absent when there is nothing
- *  worth saying (a scan is the default and needs no note). */
-export function barcodeSourceNote(source: string | null | undefined): string | null {
-  if (source === "ai-photo") return "read from photo";
-  // Not "photo": the receipt is usually an email or a PDF, and calling that a
-  // photo is simply wrong - "what read from photo? I sent an ebay receipt
-  // email" (the operator, 2026-08-31).
-  if (source === "receipt") return "read from the receipt";
-  return null;
+/** How to SAY where it came from, to a person: the contract's one wording
+ *  (scan-source.ts), which the inbox card reads too. Absent when there is
+ *  nothing worth saying (a scan is the default and needs no note). */
+export function barcodeSourceNote(source: string | null | undefined, opts: { emailed?: boolean } = {}): string | null {
+  return codeSourceNote(source === "ai-photo" || source === "receipt" || source === "user" ? source : null, opts);
 }

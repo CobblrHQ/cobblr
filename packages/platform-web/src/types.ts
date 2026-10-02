@@ -185,6 +185,9 @@ export interface PlatformWebApi {
     bindings: PlatformActionBinding[];
     /** What an off module would add here; a host that omits it shows none. */
     dormant?: PlatformDormantAction[];
+    /** The kind's records can be marked as sold or given away and brought
+     *  back (its writer retires and unretires). */
+    lifecycle?: boolean;
   }>;
   /** Turn a module on for the workspace (an owner's or admin's act). Optional:
    *  a host without it offers the ask instead. */
@@ -205,6 +208,10 @@ export interface PlatformWebApi {
     },
   ): Promise<{ ok: boolean; result: unknown; undo?: unknown; affected?: { kinds: string[]; entity?: { kind: string; id: string } } }>;
   lookupEntity(slug: string, kind: string, id: string): Promise<PlatformResolvedEntity>;
+  /** Who this workspace can hand things to (its shares), and what it has
+   *  handed over. Optional: a host without sharing offers no Give to. */
+  listShareOffers?(slug: string): Promise<{ items: Array<{ id: string; direction: "out" | "in"; status: string; can_withdraw: boolean }>; targets: Array<{ link_id: string; to: string }> }>;
+  withdrawShareOffer?(slug: string, id: string): Promise<unknown>;
   /** The workspace's printers. Needed only to honour a `ui.print` directive,
    *  which is how walk-up printing reaches a browser-driven printer. Optional:
    *  a host that doesn't wire it never walk-up prints, and the module's normal
@@ -236,7 +243,13 @@ export interface PlatformWebApi {
   listPeople?(slug: string): Promise<{ items: PlatformPerson[] }>;
   /** Add someone by name from a person picker ("+ Someone else…"). */
   addPerson?(slug: string, name: string): Promise<PlatformPerson>;
-  listFieldDefs(slug: string, kind: string): Promise<{ items: PlatformFieldDef[]; sections?: FieldSection[] }>;
+  listFieldDefs(slug: string, kind: string): Promise<{
+    items: PlatformFieldDef[];
+    sections?: FieldSection[];
+    /** The kind's own columns that carry a meaning (a vehicle's Bought from
+     *  is its seller), so a form does not offer that meaning twice. */
+    native_roles?: Array<{ name: string; label: string; field_role: string | null }>;
+  }>;
   /** The workspace's wires, and the door to make or remove one: the same one
    *  the Wires page uses. A module offers a wire here only on a person's
    *  say-so (an update never opts anyone in). Optional: a host without them
@@ -265,6 +278,9 @@ export interface PlatformWebApi {
     field: string,
     opts?: { detail?: string | null; note?: boolean },
   ): Promise<FieldValuesUsedBody>;
+  /** Whether a kind's sellers, noted beside where things came from, have
+   *  earned a field of their own (GET /field-defs/seller-offer). */
+  sellerOffer?(slug: string, kind: string): Promise<{ offer: { entity_kind: string; seller: string; places: string[]; times: number; host: { name: string; label: string } } | null }>;
   /** core-units vocabulary: built-in + custom units + the workspace's
    *  display mode. Optional — the UnitInput / formatting helpers degrade
    *  to free-text when a host doesn't wire it. */

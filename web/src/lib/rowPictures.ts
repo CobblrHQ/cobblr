@@ -19,8 +19,8 @@ export { yourPictures, leadYours, currentPicture, catalogCaption };
 export type PictureVariant = "thumb" | "med";
 
 export interface PictureUrls {
-  /** The address to render: the stored file at the variant, else the
-   *  picture's own address (a web tile, a catalog picture not stored yet). */
+  /** The address to render: the stored file at the variant, else a web
+   *  tile's address through the workspace's image proxy. */
   src: (p: RowPicture, variant?: PictureVariant) => string | null;
 }
 
@@ -29,11 +29,26 @@ export function scanFileUrl(slug: string, fileId: string, variant: PictureVarian
   return `/api/v1/orgs/${slug}/modules/core-files/files/${fileId}/raw?variant=${variant}`;
 }
 
+/** A picture from the web, shown through this workspace's own copy of it
+ *  (core-scan's image proxy) rather than straight from its site: the site is
+ *  asked once, and the copy kept is the one a pick stores, so a picture the
+ *  person can see is never refused when they choose it (#4580). */
+export function shownPictureUrl(slug: string, url: string, page?: string | null): string {
+  if (!/^https?:\/\//i.test(url)) return url;
+  const q = new URLSearchParams({ url });
+  if (page && /^https?:\/\//i.test(page)) q.set("page", page);
+  return `/api/v1/orgs/${slug}/modules/core-scan/image-proxy?${q.toString()}`;
+}
+
 /** The row's pictures, resolved once, with `src` for each. */
 export function rowPictures(slug: string, row: PictureRow, ctx: PicturesContext = {}): { pictures: RowPicture[] } & PictureUrls {
   const pictures = resolve(row, ctx);
   return {
     pictures,
-    src: (p, variant = "med") => (p.fileId ? scanFileUrl(slug, p.fileId, variant) : p.role === "web" && variant === "thumb" && p.thumbUrl ? p.thumbUrl : p.url),
+    src: (p, variant = "med") => {
+      if (p.fileId) return scanFileUrl(slug, p.fileId, variant);
+      const u = p.role === "web" && variant === "thumb" && p.thumbUrl ? p.thumbUrl : p.url;
+      return u ? shownPictureUrl(slug, u, p.source) : null;
+    },
   };
 }

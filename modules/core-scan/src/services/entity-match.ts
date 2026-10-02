@@ -289,8 +289,17 @@ interface OrgKind {
   kind: string;
   noun: string;
   qtyField?: string;
-  /** The kind's NATIVE identifier fields (a part's serial_number), by role. */
-  nativeIdentifiers: string[];
+  /** The kind's NATIVE identifier fields (a part's serial_number), by role,
+   *  with the words a person reads for each ("VIN" on a vehicle). */
+  nativeIdentifiers: Array<{ name: string; label: string }>;
+}
+
+/** What a person calls a native field: the label the kind (or the workspace's
+ *  instance) gives it, else its name in words. Never the column name: a match
+ *  card read "same serial_number" over a car whose field says VIN (#4523). */
+function nativeLabel(record: { fields?: Array<{ name: string; label?: string | null }> }, name: string): string {
+  const f = (record.fields ?? []).find((x) => x.name === name);
+  return f?.label?.trim() || name.replace(/_/g, " ");
 }
 
 async function kindsForOrg(orgId: string): Promise<OrgKind[]> {
@@ -304,7 +313,7 @@ async function kindsForOrg(orgId: string): Promise<OrgKind[]> {
     kind: k.kind,
     noun: k.noun,
     ...(k.qtyField ? { qtyField: k.qtyField } : {}),
-    nativeIdentifiers: identifierFieldNames(k.record),
+    nativeIdentifiers: identifierFieldNames(k.record).map((name) => ({ name, label: nativeLabel(k.record, name) })),
   }));
 }
 
@@ -359,6 +368,10 @@ export async function findTracked(
      *  never evidence they are one record (#3065). */
     brand?: string | null;
     category?: string | null;
+    /** A model or part number a person gave for the scan ("S-12415"). As
+     *  exact as a barcode: a record whose part number, or identifier-role
+     *  field, is this one is the same thing, wherever it is kept. */
+    identifier?: string | null;
   },
 ): Promise<{ barcode_matches: TrackedMatch[]; name_matches: TrackedMatch[] }> {
   const kinds = await kindsForOrg(orgId);
@@ -393,7 +406,7 @@ export async function findTracked(
           // post-verified the same way, since a resolver may ignore the filter.
           const idFields = [
             ...(identifierByKind.get(k.kind) ?? []),
-            ...k.nativeIdentifiers.map((name) => ({ name, label: name })),
+            ...k.nativeIdentifiers,
           ];
           const seen = new Set(byBarcode.map((m) => `${m.kind}:${m.id}`));
           const byIdentifier: TrackedMatch[] = [];
@@ -415,6 +428,47 @@ export async function findTracked(
         } catch {
           return [];
         }
+      }),
+    );
+    barcodeMatches.push(...perKind.flat());
+  }
+
+  // Part-number tier. Every filing stamps the scan's part number on the record
+  // (`metadata.sku`) the way it stamps the barcode, so the same probe-and-verify
+  // finds it; an identifier-role field carrying it counts too. Eight bins
+  // scanned in the kitchen and four in the garage are one thing in two places
+  // (core#4552), and a name ("Storage Bin") cannot tell them from any other bin.
+  const partNumber = opts.identifier?.trim() || null;
+  if (partNumber && !(barcode && identifierEquals(barcode, partNumber))) {
+    const identifierByKind = await identifierFieldsByKind(orgId);
+    const seen = new Set(barcodeMatches.map((m) => `${m.kind}:${m.id}`));
+    const spellings = [...new Set([partNumber, partNumber.toUpperCase(), partNumber.toLowerCase()])];
+    const perKind = await Promise.all(
+      kinds.map(async (k) => {
+        const out: TrackedMatch[] = [];
+        const probe = async (field: string, label: string, read: (e: ResolvedEntity) => unknown) => {
+          for (const form of spellings) {
+            const r = await platform()
+              // SYSTEM-READ: verifies the part number on the row, hidden or not.
+              .entities.list(orgId, k.kind, { filter: { [field]: form }, limit: 5 }, SYSTEM_VIEWER)
+              .catch(() => ({ items: [] as ResolvedEntity[] }));
+            for (const e of r.items) {
+              const key = `${e.kind}:${e.id}`;
+              if (seen.has(key) || !identifierEquals(read(e), partNumber)) continue;
+              seen.add(key);
+              out.push({ ...toMatch(e, k, "identifier", expiryByKind.get(e.kind)), matched_label: label });
+            }
+          }
+        };
+        try {
+          await probe("sku", "part number", (e) => (e.fields.metadata as Record<string, unknown> | null | undefined)?.sku);
+          for (const f of [...(identifierByKind.get(k.kind) ?? []), ...k.nativeIdentifiers]) {
+            await probe(f.name, f.label, (e) => fieldValue(e.fields, f.name));
+          }
+        } catch {
+          // a kind that cannot be probed has no match to offer
+        }
+        return out;
       }),
     );
     barcodeMatches.push(...perKind.flat());

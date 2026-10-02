@@ -108,7 +108,9 @@ const CLAIM = "posting";
  *  Runs when Discord routing for feedback is on: at boot, and the moment an
  *  admin turns it on. `onlyIds` narrows it (a test's own items). Returns how
  *  many were posted. */
-export async function postCardlessFeedback(opts: { limit?: number; onlyIds?: string[] } = {}): Promise<number> {
+export async function postCardlessFeedback(
+  opts: { limit?: number; onlyIds?: string[]; onResult?: (id: string, result: LateCardResult | { posted: false; reason: "failed"; message: string }) => void } = {},
+): Promise<number> {
   if (!(await announceRouted("feedback.new"))) return 0;
   let q = meta
     .selectFrom("feedback")
@@ -128,6 +130,7 @@ export async function postCardlessFeedback(opts: { limit?: number; onlyIds?: str
       console.error(`[feedback] late card for ${r.id} failed:`, err);
       return null;
     });
+    opts.onResult?.(r.id, res ?? { posted: false, reason: "failed", message: "The late card threw; see the api log." });
     if (res?.posted) n++;
   }
   if (n) console.log(`[feedback] posted ${n} card(s) for items filed while Discord was off`);

@@ -21,6 +21,7 @@ import { MachinesPage } from "./MachinesPage";
 import { AssetsPage } from "./AssetsPage";
 import { RecordsPage } from "./RecordsPage";
 import { BundleFeaturesStrip } from "../components/BundleFeaturesStrip";
+import { RemoveEmptyList } from "../components/RemoveEmptyList";
 import { api, getToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { navTargetFor, INSTANCE_PREFIX } from "../components/useNavModules";
@@ -279,6 +280,8 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
           not-yet-enabled features (maintenance, connected-car…) + opens the
           bundle modal to enable them. Renders nothing when there's nothing more. */}
       <BundleFeaturesStrip slug={activeSlug} instance={inst.instance_name} />
+      {/* An empty list made from a module can be taken away from here. */}
+      {!showsOneThing && <RemoveEmptyList slug={activeSlug} inst={inst} />}
       {shownView && showsOneThing && (
         <Link
           to={collectionPath || "."}

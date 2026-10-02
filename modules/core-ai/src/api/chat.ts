@@ -19,7 +19,7 @@ import { noneFromOneList } from "./none-from-one-list.js";
 import { answeredNotProposed } from "./answer-dont-propose.js";
 import { askDontRank } from "./ask-dont-rank.js";
 import { misreportedWrites } from "./reported-truthfully.js";
-import { chatModelMenu, type RoutedConnection } from "./chat-model-menu.js";
+import { chatModelMenu, type ReportedModels, type RoutedConnection } from "./chat-model-menu.js";
 import { describedInsteadOfActing } from "./act-dont-describe.js";
 import { escortCoveredByAction, resolveActionId, ESCORT_COVERAGE } from "./act-dont-escort.js";
 import { buildSystemPrompt, situationalSuffix, type PromptWorkspace, type PromptOptions } from "./system-prompt.js";
@@ -48,6 +48,7 @@ import {
 import { runAgentLoop, type AgentLoopDeps, type AgentLoopOutcome, type AppliedWrite } from "./agent-loop.js";
 import { recordsFromToolResult, withMentions, type ChatMention } from "./mentions.js";
 import { createTurn, emitTurnEvent, finishTurn, readTurn, eventsAfter, openTurnFor, subscribe, sweepTurns } from "./turns.js";
+import { answerOffer, claimOffer, offerAnsweredSentence, readConversation, readOffers, sweepOffers, withOffers, writeConversation } from "./offers.js";
 import { recordRound } from "../providers/replay.js";
 import { performWrite, performWrites, undoWrite, undoableOf, type WriteRequest, type WriteOutcome } from "./chat-ledger.js";
 import type { ToolCall, ChatTurn } from "../providers/tool-wire.js";
@@ -56,6 +57,10 @@ import { actionArgValues, writeValues } from "./write-values.js";
 import { actionRunsUnconfirmed, type ActionConsent } from "@cobblr/platform-contract/action-consent";
 import { inferMoveFromToolShape, jsonBlockIn } from "./tool-shaped-move.js";
 import { withArticle } from "@cobblr/platform-contract/plural";
+import { asksForAChange, proposesSeriousChange } from "./plan-tier.js";
+import type { PlanStepBefore } from "@cobblr/platform-contract";
+import { WHOLE, cardsOf, planTitle, withCards, type Card } from "./one-plan.js";
+import { inPlainWords } from "./says-something.js";
 
 /** ToolCall → the ledgered write request shape (null = not a known write). */
 /** The writes a tool call MEANS — one for a single write, many for a bulk one.
@@ -109,6 +114,10 @@ function writeRequestOf(call: ToolCall): WriteRequest | null {
     case "add_thing":
       // The kind is the intake's to decide; the ledger records the one it filed.
       return typeof a.name === "string" && a.name.trim() ? { tool: "create", via: "add_thing", entity_kind: "", args: a } : null;
+    case "file_inbox_items":
+      return Array.isArray(a.ids) && a.ids.length && typeof a.list === "string" && a.list.trim()
+        ? { tool: "create", via: "file_inbox", entity_kind: "", args: { ids: a.ids, list: a.list } }
+        : null;
     case "update_record":
       return kind && a.id
         ? { tool: "update", entity_kind: kind, entity_id: String(a.id), fields: (a.fields as Record<string, unknown>) ?? {} }
@@ -418,12 +427,14 @@ async function actionPlan(
   actionId: string,
   args: Record<string, unknown>,
   on: { kind: string; id: string } | null,
+  before: PlanStepBefore[] = [],
 ): Promise<{ plan: { title: string; lines: string[] } } | { error: string } | null> {
   try {
     const r = await callApi(c, "POST", "/actions/plan", {
       actionId,
       args,
       ...(on ? { entityKind: on.kind, entityId: on.id } : {}),
+      ...(before.length ? { before } : {}),
     });
     // The planner's reason is the model's correction. It reaches the model
     // through validateWrite, and if the model still cannot plan it, the person
@@ -489,6 +500,54 @@ async function labelOf(wsApi: WorkspaceApi, kind: string, id: string): Promise<s
   return id;
 }
 
+/** The changes one message asks for, as one card (one-plan.ts says why).
+ *  Each action step is planned again after the steps before it, so its words
+ *  count what they leave; each step says whether it can be undone, from what
+ *  its action declares. "As a whole" puts the records in a bundle's removal. */
+async function asOnePlan(c: Ctx, result: unknown, asked: string): Promise<unknown> {
+  if (!result || typeof result !== "object") return result;
+  const r = result as Record<string, unknown>;
+  const cards = cardsOf(r);
+  if (cards.length === 0) return result;
+  const whole = WHOLE.test(asked);
+  let changed = false;
+  const before: PlanStepBefore[] = [];
+  const steps: Array<Card & { undoable: boolean | null }> = [];
+  for (const card of cards) {
+    let { summary, proposal } = card;
+    if (proposal.kind === "action" && typeof proposal.action_id === "string") {
+      const args = { ...((proposal.args as Record<string, unknown> | undefined) ?? {}) };
+      const rewhole = whole && proposal.action_id === "platform:remove-bundle" && args.delete_records === undefined;
+      if (rewhole) args.delete_records = true;
+      if (rewhole || before.length) {
+        const on = typeof proposal.entity_kind === "string" && typeof proposal.entity_id === "string" ? { kind: proposal.entity_kind, id: proposal.entity_id } : null;
+        const planned = await actionPlan(c, proposal.action_id, args, on, before);
+        if (planned && "plan" in planned) {
+          proposal = { ...proposal, args, plan: planned.plan };
+          summary = planned.plan.title;
+          changed = true;
+        }
+      }
+    }
+    const undoable =
+      proposal.kind === "action" && typeof proposal.action_id === "string"
+        ? ((await actionCopy(c, proposal.action_id))?.undoable ?? null)
+        : proposal.kind === "build"
+          ? false
+          : true;
+    // A step says once whether it comes back: "(permanent)" beside "Can be
+    // undone" was the card arguing with itself.
+    if (undoable === true) summary = summary.replace(/\s*\(permanent\)\s*$/i, "");
+    steps.push({ summary, proposal, undoable });
+    if (proposal.kind === "delete" && typeof proposal.entity_kind === "string" && typeof proposal.entity_id === "string") {
+      before.push({ op: "delete", kind: proposal.entity_kind, id: proposal.entity_id });
+    }
+  }
+  if (steps.length === 1) return changed ? withCards(r, [{ summary: steps[0]!.summary, proposal: steps[0]!.proposal }]) : result;
+  const title = planTitle(steps.map((x) => x.summary));
+  return withCards(r, [{ summary: title, proposal: { kind: "plan", title, steps } }]);
+}
+
 /** Turn one WRITE tool call into a user-facing proposal — or an honest error
  *  when the call couldn't succeed on confirm (undeclared kind, missing args). */
 async function proposalOf(
@@ -519,6 +578,28 @@ async function proposalOf(
       return {
         summary: `Create ${/^[aeiou]/i.test(words.one) ? "an" : "a"} ${words.one}${name ? `: “${name}”` : ""}`,
         proposal: { kind: "create", entity_kind: kind, fields, ...(values.length ? { values } : {}) },
+      };
+    }
+    case "file_inbox_items": {
+      const ids = Array.isArray(a.ids) ? a.ids.map(String).filter(Boolean) : [];
+      const list = String(a.list ?? "").trim();
+      if (!ids.length) return { error: "Which inbox items? Tick them, or name them." };
+      if (!list) return { error: "Which list should they go into?" };
+      // The list as the app names it, when it exists already; a list made by
+      // an earlier step of the same plan is named the way it was asked for.
+      const lists = ((await callApi(c, "GET", "/instances").catch(() => ({ body: {} }))).body as { items?: Array<{ instance_name: string; display_name?: string | null }> }).items ?? [];
+      const hit = lists.find((l) => l.instance_name === list.toLowerCase() || (l.display_name ?? "").toLowerCase() === list.toLowerCase());
+      const label = hit?.display_name ?? (list.length > 1 ? list[0]!.toUpperCase() + list.slice(1) : list);
+      const names: string[] = [];
+      for (const id of ids.slice(0, 50)) {
+        const r = await getTool("get_scan_item")?.execute(wsApi, { id }).catch(() => null);
+        const d = r?.ok ? (r.data as { name?: string; suggested_name?: string } | undefined) : undefined;
+        names.push(d?.name ?? d?.suggested_name ?? "an inbox item");
+      }
+      if (ids.length > 50) names.push(`and ${ids.length - 50} more`);
+      return {
+        summary: `File ${ids.length === 1 ? "1 inbox item" : `${ids.length} inbox items`} into ${label}`,
+        proposal: { kind: "file", ids, list, list_label: label, lines: names },
       };
     }
     case "add_thing": {
@@ -742,37 +823,55 @@ async function answerTurn(
   // The kinds, read once per turn and only when a record write needs them.
   let kindsForWrites: Promise<KindRec[]> | null = null;
   const kindsOnce = () => (kindsForWrites ??= fetchKinds(wsApi).catch(() => [] as KindRec[]));
+  const askModel = async (capability: "chat" | "plan-changes", turns: ChatTurn[]) => {
+    const r = await platform().ai.invoke({
+      orgId,
+      capability,
+      // The model pill: this person's choice for THEIR chat, when they
+      // made one. A provider_id names a workspace connection, a
+      // credential_id names a personal one routed here; null is the
+      // workspace's default, which is the whole path below untouched.
+      ...(prefs.credential_id ? { credential_id: prefs.credential_id } : {}),
+      ...(prefs.provider_id && !prefs.credential_id ? { provider_id: prefs.provider_id } : {}),
+      ...(prefs.model && (prefs.provider_id || prefs.credential_id) ? { model: prefs.model } : {}),
+      // Show the answer being written. Only when somebody is listening to
+      // this turn (the persisted-turn path); the blocking POST has nobody
+      // to show it to.
+      ...(onEvent ? { onDelta: (text: string) => void onEvent({ kind: "text-delta", text }) } : {}),
+      // system rides as a first-class field (Anthropic drops a
+      // "system"-role message); tools are the neutral defs every adapter
+      // translates to its native dialect (tool-wire.ts).
+      input: { system, messages: turns, ...(toolDefs.length ? { tools: toolDefs } : {}) },
+      source: { kind: "core-ai:chat", id: orgId },
+      userId: sessionUserId(req),
+    });
+    const calls = typeof r.result === "object" && r.result !== null ? (r.result as { tool_calls?: ToolCall[] }).tool_calls : undefined;
+    const round = { content: r.text, tool_calls: calls };
+    // Cassette recording (COBBLR_AI_REPLAY_RECORD): capture what a REAL
+    // model said, per round, to build replay fixtures. No-op unless set,
+    // and the provider id is what keeps a replay from recording itself.
+    recordRound(turns, round, r.provider_id);
+    return round;
+  };
+  // The fuller model plans a change; the chat model answers the rest. A
+  // message that asks for one starts there; a round that proposes one moves
+  // the turn there (plan-tier.ts).
+  let tier: "chat" | "plan-changes" = asksForAChange(askedFor) ? "plan-changes" : "chat";
+  const actionIsSerious = async (actionId: string): Promise<boolean> => {
+    const safety = await actionSafety(c, actionId);
+    return !safety?.undoable || (await isWorkspaceAction(c, actionId));
+  };
   let outcome: AgentLoopOutcome;
   try {
     outcome = await runAgentLoop(parsed.data.messages as ChatTurn[], {
       callModel: async (turns) => {
-        const r = await platform().ai.invoke({
-          orgId,
-          capability: "chat",
-          // The model pill: this person's choice for THEIR chat, when they
-          // made one. A provider_id names a workspace connection, a
-          // credential_id names a personal one routed here; null is the
-          // workspace's default, which is the whole path below untouched.
-          ...(prefs.credential_id ? { credential_id: prefs.credential_id } : {}),
-          ...(prefs.provider_id && !prefs.credential_id ? { provider_id: prefs.provider_id } : {}),
-          ...(prefs.model && (prefs.provider_id || prefs.credential_id) ? { model: prefs.model } : {}),
-          // Show the answer being written. Only when somebody is listening to
-          // this turn (the persisted-turn path); the blocking POST has nobody
-          // to show it to.
-          ...(onEvent ? { onDelta: (text: string) => void onEvent({ kind: "text-delta", text }) } : {}),
-          // system rides as a first-class field (Anthropic drops a
-          // "system"-role message); tools are the neutral defs every adapter
-          // translates to its native dialect (tool-wire.ts).
-          input: { system, messages: turns, ...(toolDefs.length ? { tools: toolDefs } : {}) },
-          source: { kind: "core-ai:chat", id: orgId },
-          userId: sessionUserId(req),
-        });
-        const calls = typeof r.result === "object" && r.result !== null ? (r.result as { tool_calls?: ToolCall[] }).tool_calls : undefined;
-        const round = { content: r.text, tool_calls: calls };
-        // Cassette recording (COBBLR_AI_REPLAY_RECORD): capture what a REAL
-        // model said, per round, to build replay fixtures. No-op unless set,
-        // and the provider id is what keeps a replay from recording itself.
-        recordRound(turns, round, r.provider_id);
+        // The chat model answers, unless this round plans a change: then the
+        // fuller one does, asked again before anything is offered (plan-tier.ts).
+        let round = await askModel(tier, turns);
+        if (tier === "chat" && (await proposesSeriousChange(round.tool_calls, actionIsSerious))) {
+          tier = "plan-changes";
+          round = await askModel(tier, turns);
+        }
         return round;
       },
       executeRead: async (name, args) => {
@@ -955,7 +1054,7 @@ async function answerTurn(
     if (items.length === 0) {
       return {
         type: "reply",
-        text: problems.join(" ") || outcome.text || "I couldn't line that up — can you rephrase?",
+        text: inPlainWords(problems.join(" "), kinds) || outcome.text || "I couldn't line that up — can you rephrase?",
         ...(done.length ? { applied: done } : {}),
         ...(escorts.length ? { escorts } : {}), ...(serviceJobs.length ? { service_jobs: serviceJobs } : {}),
       };
@@ -1103,7 +1202,7 @@ async function answerTurn(
  *  where anybody was looking. Same class as lint:error-body-kept, one layer up:
  *  there the body was unreadable, here it was readable and in the wrong shape.
  */
-function sendOutcome(res: Response, out: { ok: boolean; message: string }): void {
+function sendWriteOutcome(res: Response, out: { ok: boolean; message: string }): void {
   res
     .status(out.ok ? 200 : 400)
     .json(out.ok ? out : { ...(out as object), error: { code: "write_failed", message: out.message } });
@@ -1174,7 +1273,7 @@ chatRouter.post(
     const asTurn = req.query.mode === "turn";
     if (!asTurn) {
       try {
-        res.json(withDeleteThisCard(withPlanCard(await runTurn(req, parsed, system, c, orgId), hit, asked), asked, parsed.data.selection));
+        res.json(await withOffers(tenantDb(req), sessionUserId(req) ?? "", null, await asOnePlan(c, withDeleteThisCard(withPlanCard(await runTurn(req, parsed, system, c, orgId), hit, asked), asked, parsed.data.selection), asked)));
       } catch (err) {
         const status = err instanceof TurnError ? err.status : 502;
         const msg = err instanceof Error ? err.message : String(err);
@@ -1186,7 +1285,7 @@ chatRouter.post(
         // A plan worked out before the model was asked does not need it: the
         // reply is the refusal, and the card is still the plan.
         if (hit) {
-          res.json(replyDespiteRefusal(human, hit, asked));
+          res.json(await withOffers(tenantDb(req), sessionUserId(req) ?? "", null, replyDespiteRefusal(human, hit, asked)));
           return;
         }
         res.status(status).json({
@@ -1212,7 +1311,7 @@ chatRouter.post(
     // day, and anything stranded "running" for an hour (a process died mid-turn)
     // is marked failed so a tab does not sit on it forever. A per-tenant timer
     // would need a pool per tenant held open; this needs nothing.
-    if (Math.random() < 0.02) void sweepTurns(tdb).catch(() => {});
+    if (Math.random() < 0.02) void sweepTurns(tdb).then(() => sweepOffers(tdb)).catch(() => {});
 
     // Detached. The request is answered; this continues on its own. Every
     // outcome - success, a refused provider, a thrown error - lands in the
@@ -1234,7 +1333,9 @@ chatRouter.post(
           TURN_DEADLINE_MS,
           `this took longer than ${Math.round(TURN_DEADLINE_MS / 60000)} minutes, so I stopped waiting. Nothing was changed. If your AI is a local model or a bridge it may be busy or wedged; try again, or check Configuration → AI.`,
         );
-        await finishTurn(tdb, turnId, { ok: true, result: withDeleteThisCard(withPlanCard(result, hit, asked), asked, parsed.data.selection) });
+        // Every offer the turn makes is kept as a record before the turn is
+        // finished, so the card a reload draws is the one this turn drew.
+        await finishTurn(tdb, turnId, { ok: true, result: await withOffers(tdb, userId, turnId, await asOnePlan(c, withDeleteThisCard(withPlanCard(result, hit, asked), asked, parsed.data.selection), asked)) });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (!(err instanceof TurnError) || err.status === 502) console.error(`[core-ai] chat failed: ${msg}`);
@@ -1244,7 +1345,7 @@ chatRouter.post(
         if (hit) {
           // The plan needed no model; the turn ends on it, with the refusal as
           // what the reply says.
-          await finishTurn(tdb, turnId, { ok: true, result: replyDespiteRefusal(human, hit, asked) }).catch(() => {});
+          await finishTurn(tdb, turnId, { ok: true, result: await withOffers(tdb, userId, turnId, replyDespiteRefusal(human, hit, asked)) }).catch(() => {});
           return;
         }
         await finishTurn(tdb, turnId, {
@@ -1364,36 +1465,60 @@ chatRouter.post(
     }
 
     const prefs = await chatPrefsOf(req);
-    if (prefs.write_mode !== "auto") {
+    if (prefs.write_mode === "off") {
       res.status(403).json({
         error: {
-          code: "writes_not_auto",
-          message:
-            'Changes are not set to apply automatically for this chat, and a relayed connection cannot show a confirmation. The user can switch "Changes" to Auto, or make this one in Cobblr directly.',
+          code: "writes_off",
+          message: 'Changes are turned off for this chat. The person can allow them in the chat\'s settings ("Changes" to Ask or Auto).',
         },
       });
       return;
     }
-
-    // The in-app rule at "auto", asked here as well: a delete waits for a
-    // person, and this door cannot show one a confirmation. Actions are
-    // judged per action at the invoke route.
-    if (ws[0]?.tool !== "action" && autoWriteMustHold(ws)) {
-      res.status(403).json({
-        error: {
-          code: "needs_a_person",
-          message: "Deleting needs a person to confirm it, and a relayed connection cannot show a confirmation. Delete it in Cobblr, where the confirm step appears.",
-        },
-      });
-      return;
-    }
-
     const db = tenantDb(req);
     const userId = sessionUserId(req) ?? "";
     // The turn gives the write its two halves of a worked example — the
     // sentence that asked for it, and the turn it belongs to — so a relayed
     // change teaches the workspace exactly as an in-app one does.
     const turn = await openTurnFor(db, userId);
+
+    // A change that may not apply on its own (Changes is Ask, a delete, an
+    // action that cannot be undone or acts outside the workspace) is OFFERED,
+    // not refused. This door is always an in-app chat turn with a person
+    // watching it, so the change becomes the same confirm card the built-in
+    // path makes, on that turn: "this connection has no way to show you a
+    // confirm step" was never true of it (the owner, 2026-10-02, on the
+    // Claude bridge). The model is told it was offered and nothing changed.
+    let hold = prefs.write_mode !== "auto" || (ws[0]?.tool !== "action" && autoWriteMustHold(ws));
+    if (!hold && ws[0]?.tool === "action") {
+      const actionId = String((body.data.args as Record<string, unknown>).action_id ?? "");
+      hold = !actionRunsUnconfirmed(await actionCopy(ctxOf(req), actionId));
+    }
+    if (hold) {
+      const wsApiOffer = chatWorkspaceApi(ctxOf(req));
+      const kinds = await fetchKinds(wsApiOffer).catch(() => [] as KindRec[]);
+      const built = await proposalOf(ctxOf(req), wsApiOffer, kinds, { id: "relay", name: body.data.tool, args: body.data.args as Record<string, unknown> }, turn?.prompt ?? "");
+      if ("error" in built) {
+        // Adding several at once has no single card yet; say so in words the
+        // assistant can pass on, never "an operation I don't have".
+        const message =
+          body.data.tool === "create_records"
+            ? "Adding several at once needs Changes set to Auto in this chat for now. Offer them one at a time instead, each as its own change for the person to confirm."
+            : built.error;
+        res.status(400).json({ ok: false, message, error: { code: "not_offerable", message } });
+        return;
+      }
+      const kept = (await withOffers(db, userId, turn?.id ?? null, { type: "proposal", summary: built.summary, proposal: built.proposal })) as { offer_id?: string };
+      if (turn) await emitTurnEvent(db, turn.id, "tool-result", { name: body.data.tool, ok: true, summary: `Offered: ${built.summary}` }).catch(() => {});
+      res.json({
+        ok: true,
+        offered: true,
+        offer_id: kept.offer_id ?? null,
+        summary: built.summary,
+        message: `Offered for the person to confirm: ${built.summary}. Nothing has changed yet. A Confirm card shows under your reply, so tell them in one sentence what it will do.`,
+      });
+      return;
+    }
+
     const opts = {
       auto: true,
       orgId: tenantContext(req).org.id,
@@ -1423,7 +1548,7 @@ chatRouter.post(
         ...(out.destination ? { destination: out.destination } : {}),
       }).catch(() => {});
     }
-    sendOutcome(res, out);
+    sendWriteOutcome(res, out);
   }),
 );
 
@@ -1711,8 +1836,21 @@ chatRouter.get(
       : firstEnabled?.defaultModel
         ? { provider_id: firstEnabled.id, model: firstEnabled.defaultModel }
         : null;
+    // What each connection that can be asked says it serves, asked together
+    // (each answer cached a minute). `?fresh=1` is the menu's Retry.
+    const fresh = req.query.fresh === "1";
+    const routedConns = chain ? routedFromChain(chain.steps) : routed;
+    const askable: Array<[string, { providerId?: string; credentialId?: string }]> = [
+      ...rows.filter((r) => r.enabled).map((r) => [`ws:${r.provider_id}`, { providerId: r.provider_id }] as [string, { providerId: string }]),
+      ...routedConns.filter((c) => c.approved).map((c) => [c.credentialId, { credentialId: c.credentialId }] as [string, { credentialId: string }]),
+    ];
+    const answers = await Promise.all(
+      askable.map(async ([key, ref]) => [key, await platform().ai.modelsReportedBy(orgId, userId || null, ref, { fresh }).catch(() => null)] as const),
+    );
+    const reported: ReportedModels = Object.fromEntries(answers.filter((a): a is readonly [string, NonNullable<(typeof a)[1]>] => a[1] !== null));
     const menu = chatModelMenu({
       providers,
+      reported,
       workspaceDefault,
       workspace: rows.map((r) => ({
         provider_id: r.provider_id,
@@ -1720,7 +1858,7 @@ chatRouter.get(
         enabled: !!r.enabled,
         model: typeof (r.config as Record<string, unknown> | null)?.model === "string" ? String((r.config as Record<string, unknown>).model) : null,
       })),
-      routed: chain ? routedFromChain(chain.steps) : routed,
+      routed: routedConns,
       ...(chain ? { order: chainOrder(chain.steps) } : {}),
       viewerUserId: userId,
       prefs,
@@ -1777,7 +1915,7 @@ chatRouter.post(
       return;
     }
     const out = await undoWrite(chatWorkspaceApi(c), tenantDb(req), userId, String(req.params.id), tenantContext(req).org.id);
-    sendOutcome(res, out);
+    sendWriteOutcome(res, out);
   }),
 );
 
@@ -1863,36 +2001,61 @@ chatRouter.post(
 );
 
 // ── POST /chat/execute — run a confirmed proposal ──
+const ExecStep = z.union([
+  z.object({ kind: z.literal("create"), entity_kind: z.string(), fields: z.record(z.unknown()) }),
+  z.object({
+    kind: z.literal("update"),
+    entity_kind: z.string(),
+    entity_id: z.string(),
+    fields: z.record(z.unknown()),
+  }),
+  z.object({ kind: z.literal("delete"), entity_kind: z.string(), entity_id: z.string() }),
+  z.object({
+    kind: z.literal("action"),
+    action_id: z.string(),
+    // Optional: a workspace-scoped action runs on the workspace, not a
+    // record. Requiring them here rejected the proposal at the confirm step.
+    entity_kind: z.string().optional(),
+    entity_id: z.string().optional(),
+    args: z.record(z.unknown()).optional(),
+    // What the card showed. Carried back so the execute step is the same
+    // object the person confirmed; nothing reads it server-side.
+    plan: z.object({ title: z.string(), lines: z.array(z.string()) }).optional(),
+  }),
+  z.object({ kind: z.literal("build"), draft_id: z.string() }),
+  // add_thing (#4472): what the agent asked to add, run through the inbox.
+  z.object({ kind: z.literal("add"), args: z.record(z.unknown()) }),
+  // file_inbox_items: inbox items filed into one list, each its record there.
+  z.object({
+    kind: z.literal("file"),
+    ids: z.array(z.string()).min(1).max(200),
+    list: z.string().min(1),
+    list_label: z.string().optional(),
+    lines: z.array(z.string()).optional(),
+  }),
+]);
+type ExecStepT = z.infer<typeof ExecStep>;
+
+// One request's changes as one card (one-plan.ts): its steps, run in order.
+const ExecProposal = z.union([
+  ExecStep,
+  z.object({
+    kind: z.literal("plan"),
+    title: z.string(),
+    steps: z.array(z.object({ summary: z.string(), proposal: ExecStep, undoable: z.boolean().nullable().optional() })).min(2).max(20),
+  }),
+]);
+
 const ExecBody = z.object({
+  // The offer being confirmed. Its stored plan is what runs, never the copy
+  // the browser sends back; the copy stays accepted for a panel loaded before
+  // offers were kept, and for callers (the MCP server) that make none.
+  offer_id: z.string().uuid().optional(),
   // What the user asked, so a CONFIRMED write is a worked example too. The
   // widget knows it; the server cannot, because a proposal arrives on its own
   // request. Optional, and only ever used as a label on the ledger row.
   prompt: z.string().max(2000).optional(),
-  proposal: z.union([
-    z.object({ kind: z.literal("create"), entity_kind: z.string(), fields: z.record(z.unknown()) }),
-    z.object({
-      kind: z.literal("update"),
-      entity_kind: z.string(),
-      entity_id: z.string(),
-      fields: z.record(z.unknown()),
-    }),
-    z.object({ kind: z.literal("delete"), entity_kind: z.string(), entity_id: z.string() }),
-    z.object({
-      kind: z.literal("action"),
-      action_id: z.string(),
-      // Optional: a workspace-scoped action runs on the workspace, not a
-      // record. Requiring them here rejected the proposal at the confirm step.
-      entity_kind: z.string().optional(),
-      entity_id: z.string().optional(),
-      args: z.record(z.unknown()).optional(),
-      // What the card showed. Carried back so the execute step is the same
-      // object the person confirmed; nothing reads it server-side.
-      plan: z.object({ title: z.string(), lines: z.array(z.string()) }).optional(),
-    }),
-    z.object({ kind: z.literal("build"), draft_id: z.string() }),
-    // add_thing (#4472): what the agent asked to add, run through the inbox.
-    z.object({ kind: z.literal("add"), args: z.record(z.unknown()) }),
-  ]),
+  proposal: ExecProposal.optional(),
 });
 
 // AI-REACH: this module IS the assistant; its own configuration is not a thing it should reach into
@@ -1903,71 +2066,201 @@ chatRouter.post(
     const parsed = ExecBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const c = ctxOf(req);
-    const p = parsed.data.proposal;
-
-    // Every record write + action runs through performWrite → the AI change
-    // ledger (before-image captured, undo available). One path, confirmed or
-    // auto — the ONLY way chat writes happen.
-    if (p.kind === "create" || p.kind === "update" || p.kind === "delete") {
-      const userId = sessionUserId(req) ?? "";
-      const out = await performWrite(
-        chatWorkspaceApi(c),
-        tenantDb(req),
-        userId,
-        {
-          tool: p.kind,
-          entity_kind: p.entity_kind,
-          ...(p.kind !== "create" ? { entity_id: p.entity_id } : {}),
-          ...(p.kind !== "delete" ? { fields: p.fields } : {}),
-        },
-        { auto: false, orgId: tenantContext(req).org.id, ...(parsed.data.prompt ? { prompt: parsed.data.prompt } : {}) },
-      );
-      sendOutcome(res, out);
-      return;
-    }
-
-    if (p.kind === "add") {
-      const out = await performWrite(
-        chatWorkspaceApi(c),
-        tenantDb(req),
-        sessionUserId(req) ?? "",
-        { tool: "create", via: "add_thing", entity_kind: "", args: p.args },
-        { auto: false, orgId: tenantContext(req).org.id, ...(parsed.data.prompt ? { prompt: parsed.data.prompt } : {}) },
-      );
-      sendOutcome(res, out);
-      return;
-    }
-
-    if (p.kind === "build") {
-      // Apply the validated design-workspace draft (install re-validates +
-      // enables the required modules, then seeds any planned starter records).
-      const r = await callApi(c, "POST", `/modules/core-authoring/drafts/${p.draft_id}/apply`, { confirm: true });
-      if (r.status >= 400) {
-        res.status(r.status).json({
-          ok: false,
-          message: (r.body.error as { message?: string } | undefined)?.message ?? "Couldn't set up the workspace.",
-        });
+    const me = sessionUserId(req) ?? "";
+    const odb = tenantDb(req);
+    const offerId = parsed.data.offer_id;
+    let p = parsed.data.proposal;
+    if (offerId) {
+      // The offer kept when it was made is what runs. Claimed first, so a
+      // second press (another tab, a double click) finds it answered.
+      const claimed = await claimOffer(odb, me, offerId);
+      if (!claimed) {
+        const [was] = await readOffers(odb, me, [offerId]);
+        const message = was ? offerAnsweredSentence(was.status) : "That offer is not there any more. Ask again.";
+        res.status(409).json({ ok: false, message, offer: was ?? null, error: { code: "offer_answered", message } });
         return;
       }
-      const created = (r.body.seeded as { created?: number } | undefined)?.created ?? 0;
-      res.json({
-        ok: true,
-        message:
-          "Your workspace is set up — modules enabled and fields added" +
-          (created > 0 ? `, plus ${created} starter record${created === 1 ? "" : "s"} created.` : "."),
-      });
+      const stored = ExecProposal.safeParse(typeof claimed.proposal === "string" ? JSON.parse(claimed.proposal) : claimed.proposal);
+      if (!stored.success) {
+        await answerOffer(odb, me, offerId, "failed", { ok: false, message: "That offer could not be read back." });
+        res.status(400).json({ ok: false, message: "That offer could not be read back. Ask again.", error: { code: "offer_unreadable", message: "That offer could not be read back." } });
+        return;
+      }
+      p = stored.data;
+    }
+    if (!p) {
+      res.status(400).json({ error: { code: "bad_body", message: "an offer_id or a proposal is required" } });
       return;
     }
+    // What happened, kept on the offer, then sent: a reload shows the same
+    // outcome the press did.
+    const sendOutcome = async (r: Response, said: { ok: boolean; message: string; applied?: unknown[] }): Promise<void> => {
+      // A refusal is the action's own sentence, written for whoever called
+      // it; the person who pressed Confirm reads it in the workspace's words.
+      const out = said.ok ? said : { ...said, message: inPlainWords(said.message, await fetchKinds(chatWorkspaceApi(c)).catch(() => [])) };
+      if (offerId) await answerOffer(odb, me, offerId, out.ok ? "confirmed" : "failed", out).catch(() => undefined);
+      sendWriteOutcome(r, out);
+    };
+    const prompt = parsed.data.prompt ? { prompt: parsed.data.prompt } : {};
+    // One change, run. Every record write + action runs through performWrite
+    // → the AI change ledger (before-image captured, undo available). One
+    // path, confirmed or auto — the ONLY way chat writes happen.
+    const runOne = async (step: ExecStepT): Promise<WriteOutcome & { status?: number }> => {
+      if (step.kind === "create" || step.kind === "update" || step.kind === "delete") {
+        return performWrite(
+          chatWorkspaceApi(c),
+          tenantDb(req),
+          me,
+          {
+            tool: step.kind,
+            entity_kind: step.entity_kind,
+            ...(step.kind !== "create" ? { entity_id: step.entity_id } : {}),
+            ...(step.kind !== "delete" ? { fields: step.fields } : {}),
+          },
+          { auto: false, orgId: tenantContext(req).org.id, ...prompt },
+        );
+      }
+      if (step.kind === "file") {
+        return performWrite(
+          chatWorkspaceApi(c),
+          tenantDb(req),
+          me,
+          { tool: "create", via: "file_inbox", entity_kind: "", args: { ids: step.ids, list: step.list } },
+          { auto: false, orgId: tenantContext(req).org.id, ...prompt },
+        );
+      }
+      if (step.kind === "add") {
+        return performWrite(
+          chatWorkspaceApi(c),
+          tenantDb(req),
+          me,
+          { tool: "create", via: "add_thing", entity_kind: "", args: step.args },
+          { auto: false, orgId: tenantContext(req).org.id, ...prompt },
+        );
+      }
+      if (step.kind === "build") {
+        // Apply the validated design-workspace draft (install re-validates +
+        // enables the required modules, then seeds any planned starter records).
+        const r = await callApi(c, "POST", `/modules/core-authoring/drafts/${step.draft_id}/apply`, { confirm: true });
+        if (r.status >= 400) {
+          return { ok: false, status: r.status, message: (r.body.error as { message?: string } | undefined)?.message ?? "Couldn't set up the workspace." };
+        }
+        const created = (r.body.seeded as { created?: number } | undefined)?.created ?? 0;
+        return {
+          ok: true,
+          message:
+            "Your workspace is set up — modules enabled and fields added" +
+            (created > 0 ? `, plus ${created} starter record${created === 1 ? "" : "s"} created.` : "."),
+        };
+      }
+      // action — ledgered too (recorded, not undoable).
+      return performWrite(
+        chatWorkspaceApi(c),
+        tenantDb(req),
+        me,
+        { tool: "action", entity_kind: step.entity_kind ?? "", entity_id: step.entity_id, action_id: step.action_id, args: step.args },
+        { auto: false, ...prompt },
+      );
+    };
+    try {
+      if (p.kind === "plan") {
+        // In order, and no further than the first step that does not go
+        // through: what came before it is done (and undoable as each says),
+        // what comes after is not started, and the outcome says which.
+        const done: string[] = [];
+        // Each step that ran is a done card with its own Undo where it has
+        // one, the same as a change Cobb made inside a turn.
+        const applied: ReturnType<typeof appliedSummaries> = [];
+        for (const [i, step] of p.steps.entries()) {
+          const out = await runOne(step.proposal);
+          const said = out.message.replace(/^[✓✗]\s*/, "");
+          if (!out.ok) {
+            const rest = p.steps.length - i - 1;
+            await sendOutcome(res, {
+              ok: false,
+              ...(applied.length ? { applied } : {}),
+              message: [
+                done.length ? `Done: ${done.join(" ")}` : "",
+                `Not done: ${step.summary}. ${said}`,
+                rest ? (rest === 1 ? "The step after it was not started." : `The ${rest} steps after it were not started.`) : "",
+              ]
+                .filter(Boolean)
+                .join(" "),
+            });
+            return;
+          }
+          done.push(/[.!?]$/.test(said) ? said : `${said}.`);
+          applied.push(...appliedSummaries([{ call: { id: `step-${i}`, name: step.proposal.kind, args: {} }, result: out }]));
+        }
+        await sendOutcome(res, { ok: true, message: done.join(" "), applied });
+        return;
+      }
+      const out = await runOne(p);
+      if (p.kind === "build") {
+        if (offerId) await answerOffer(odb, me, offerId, out.ok ? "confirmed" : "failed", { ok: out.ok, message: out.message }).catch(() => undefined);
+        if (out.ok) res.json({ ok: true, message: out.message });
+        else res.status(out.status ?? 400).json({ ok: false, message: out.message });
+        return;
+      }
+      await sendOutcome(res, out);
+    } catch (err) {
+      // A run that threw is answered as failed, never left "confirming".
+      if (offerId) await answerOffer(odb, me, offerId, "failed", { ok: false, message: err instanceof Error ? err.message : String(err) }).catch(() => undefined);
+      throw err;
+    }
+  }),
+);
 
-    // action — ledgered too (recorded, not undoable).
-    const out = await performWrite(
-      chatWorkspaceApi(c),
-      tenantDb(req),
-      sessionUserId(req) ?? "",
-      { tool: "action", entity_kind: p.entity_kind ?? "", entity_id: p.entity_id, action_id: p.action_id, args: p.args },
-      { auto: false, ...(parsed.data.prompt ? { prompt: parsed.data.prompt } : {}) },
-    );
-    sendOutcome(res, out);
+// GET /chat/offers?ids=a,b       → my offers, with what became of each: what
+//                                  a reloaded panel redraws its cards from.
+chatRouter.get(
+  "/offers",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const ids = String(req.query.ids ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+    res.json({ items: await readOffers(tenantDb(req), sessionUserId(req) ?? "", ids) });
+  }),
+);
+
+// POST /chat/offers/:id/cancel   → the person said no. Kept, so another tab or
+//                                  a reload shows "Cancelled", not a live card.
+// AI-REACH: exempt the person's own answer to Cobb's offer; asking Cobb to press its own Confirm would defeat the confirm
+chatRouter.post(
+  "/offers/:id/cancel",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const id = String(req.params.id ?? "");
+    const me = sessionUserId(req) ?? "";
+    const done = /^[0-9a-f-]{36}$/i.test(id) && (await answerOffer(tenantDb(req), me, id, "cancelled", { ok: true, message: "Okay, left it alone." }, ["open"]));
+    const [now] = await readOffers(tenantDb(req), me, [id]);
+    res.status(done || now?.status === "cancelled" ? 200 : 409).json({ ok: done, offer: now ?? null });
+  }),
+);
+
+const ConversationBody = z.object({ messages: z.array(z.record(z.unknown())).max(200) });
+
+// GET /chat/conversation         → my conversation, as the panel keeps it, so
+//                                  another tab or device opens on the same one.
+// PUT /chat/conversation         → replace it (the panel writes what it shows).
+chatRouter.get(
+  "/conversation",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    res.json({ conversation: await readConversation(tenantDb(req), sessionUserId(req) ?? "") });
+  }),
+);
+// AI-REACH: exempt internal: the panel keeps its own conversation here; nothing in it is a change to the workspace
+chatRouter.put(
+  "/conversation",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = ConversationBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    if (JSON.stringify(parsed.data.messages).length > 1_000_000) {
+      res.status(413).json({ error: { code: "too_large", message: "That conversation is too long to keep; the newest part is kept on this device." } });
+      return;
+    }
+    res.json({ updated_at: await writeConversation(tenantDb(req), sessionUserId(req) ?? "", parsed.data.messages) });
   }),
 );
 

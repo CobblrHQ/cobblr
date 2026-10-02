@@ -73,6 +73,9 @@ export interface UsersTable {
 
 export interface OrgsTable {
   id: Generated<string>;
+  /** "share": a share space, a small workspace holding what someone shares
+   *  with its member, linked to the sharer's workspace (share_links). */
+  kind: Generated<"workspace" | "share">;
   name: string;
   slug: string;
   db_name: string;
@@ -453,6 +456,16 @@ export interface ServiceManifestsTable {
   manifest_version: string;
   etag: string | null;
   fetched_at: Generated<Date>;
+}
+
+/** An offer to reshape a kind's fields, made once and answered once
+ *  (field_upgrade_offers; seller-upgrade.ts). */
+export interface FieldUpgradeOffersTable {
+  org_id: string;
+  entity_kind: string;
+  offer: string;
+  state: "offered" | "declined" | "accepted";
+  at: Generated<Date>;
 }
 
 export interface PlatformAnnounceSettingsTable {
@@ -1196,6 +1209,10 @@ export interface FieldOverrideBlob {
   field_role?: string;
   /** A person's own say on whether a bundle's field learns new choices. */
   learns?: boolean;
+  /** The owner marked it private: it never leaves the workspace (a share, a
+   *  public page) unless that share shows private notes
+   *  (@cobblr/platform-contract/share-scope). Any field, shipped or not. */
+  private?: boolean;
 }
 
 /** One iCal feed token per workspace, in meta so the unauthenticated
@@ -1476,7 +1493,126 @@ export interface ServiceJobCardsTable {
   settled_at: Date | null;
 }
 
+export interface ShareLinksTable {
+  id: Generated<string>;
+  org_id: string;
+  side: "owner" | "share";
+  status: Generated<"pending" | "active" | "revoked">;
+  peer_url: string | null;
+  peer_link_id: string | null;
+  peer_name: string | null;
+  peer_workspace_name: string | null;
+  label: string | null;
+  send_key_encrypted: string | null;
+  receive_key_id: string | null;
+  receive_secret_encrypted: string | null;
+  invite_code_hash: string | null;
+  invite_expires_at: Date | null;
+  created_by: string | null;
+  peer_version: number | null;
+  last_synced_at: Date | null;
+  last_error: string | null;
+  last_error_at: Date | null;
+  settings: Generated<Record<string, unknown>>;
+  created_at: Generated<Date>;
+  revoked_at: Date | null;
+  mirror_due_at: Date | null;
+  mirrored_at: Date | null;
+  edits_due_at: Date | null;
+}
+
+/** A copy in a share space as the mirror last left it (20261003-186). */
+export interface ShareCopyBaseTable {
+  link_id: string;
+  origin_kind: string;
+  origin_id: string;
+  copy_kind: string;
+  copy_id: string;
+  fields: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  updated_at: Generated<Date>;
+}
+
+export type ShareSuggestionStatus = "pending" | "conflict" | "applied" | "undone" | "accepted" | "rejected";
+
+/** One field of one record a friend changed in a share space (20261003-186). */
+export interface ShareSuggestionsTable {
+  id: Generated<string>;
+  org_id: string;
+  link_id: string;
+  entity_kind: string;
+  entity_id: string;
+  field: string;
+  in_metadata: Generated<boolean>;
+  base: unknown;
+  proposed: unknown;
+  owner_before: unknown;
+  status: Generated<ShareSuggestionStatus>;
+  by_name: string | null;
+  created_at: Generated<Date>;
+  decided_at: Date | null;
+  decided_by: string | null;
+}
+
+export interface ShareMirrorStateTable {
+  link_id: string;
+  entity_kind: string;
+  entity_id: string;
+  digest: string;
+  photo_digest: string | null;
+  sent_at: Generated<Date>;
+}
+
+export interface ShareOutboxTable {
+  id: Generated<string>;
+  link_id: string;
+  key: string;
+  op: string;
+  payload: unknown;
+  attempts: Generated<number>;
+  next_at: Generated<Date>;
+  sent_at: Date | null;
+  last_error: string | null;
+  created_at: Generated<Date>;
+}
+
+export interface ShareReceivedTable {
+  link_id: string;
+  key: string;
+  received_at: Generated<Date>;
+}
+
+export interface ShareNoncesTable {
+  key_id: string;
+  nonce: string;
+  seen_at: Generated<Date>;
+}
+
+export interface ShareOffersTable {
+  id: Generated<string>;
+  link_id: string;
+  direction: "out" | "in";
+  peer_offer_id: string | null;
+  batch: string;
+  title: string;
+  status: Generated<"offered" | "maybe" | "taken" | "passed" | "withdrawn" | "returned">;
+  source: unknown;
+  landed: unknown;
+  created_by: string | null;
+  created_at: Generated<Date>;
+  decided_at: Date | null;
+  taken_at: Date | null;
+}
+
 export interface MetaDB {
+  share_links: ShareLinksTable;
+  share_offers: ShareOffersTable;
+  share_mirror_state: ShareMirrorStateTable;
+  share_copy_base: ShareCopyBaseTable;
+  share_suggestions: ShareSuggestionsTable;
+  share_outbox: ShareOutboxTable;
+  share_received: ShareReceivedTable;
+  share_nonces: ShareNoncesTable;
   feedback: FeedbackTable;
   edge_bridges: EdgeBridgesTable;
   edge_pairing_codes: EdgePairingCodesTable;
@@ -1521,6 +1657,7 @@ export interface MetaDB {
   };
   service_watched_jobs: { org_id: string; job_id: string; status: string; since: Generated<Date> };
   platform_announce_settings: PlatformAnnounceSettingsTable;
+  field_upgrade_offers: FieldUpgradeOffersTable;
   impersonation_sessions: ImpersonationSessionsTable;
   backup_destinations: BackupDestinationsTable;
   org_outbound_email: OrgOutboundEmailTable;

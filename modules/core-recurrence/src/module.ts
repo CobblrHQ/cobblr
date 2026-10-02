@@ -19,7 +19,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-recurrence",
-  version: "0.1.1",
+  version: "0.1.2",
   displayName: "Recurrence",
   description:
     "Run an automation on a schedule: every Monday morning, the first of the month, whenever you set.",

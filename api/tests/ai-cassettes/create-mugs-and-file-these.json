@@ -1,0 +1,22 @@
+{
+  "match": "create mugs and file these",
+  "rounds": [
+    { "tool_calls": [{ "name": "list_scan_inbox", "args": { "q": "royal doulton" } }] },
+    {
+      "tool_calls": [
+        {
+          "name": "invoke_action",
+          "args": { "action_id": "platform:create-instance", "args": { "module_name": "assets", "display_name": "Mugs", "instance_name": "mugs" } }
+        },
+        {
+          "name": "file_inbox_items",
+          "args": {
+            "ids": ["$result.list_scan_inbox.data.items[0].id", "$result.list_scan_inbox.data.items[1].id"],
+            "list": "mugs"
+          }
+        }
+      ]
+    },
+    { "content": "Here is the plan: a Mugs list, then these two filed into it." }
+  ]
+}

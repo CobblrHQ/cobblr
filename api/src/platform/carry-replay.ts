@@ -83,7 +83,7 @@ export function acceptedSource(from: string): string | null {
 }
 
 /** Fetch the package from a listed source. Plain fetch on purpose: the source
- *  is operator-configured, not a URL a visitor chose (CLAUDE.md §14.1). */
+ *  is operator-configured, not a URL a visitor chose (docs/architecture/platform-spec.md §14.1). */
 export async function fetchCarryPackage(from: string, token: string): Promise<{ source: string; pkg: CarryPackage }> {
   if (carrySources().length === 0) throw new CarryError("not_accepted", "This server does not take trials from anywhere.");
   const source = acceptedSource(from);

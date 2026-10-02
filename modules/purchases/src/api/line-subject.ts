@@ -16,6 +16,7 @@ import {
   mapRoledFacts,
   platform,
   roledFactsPatch,
+  roledNativePatch,
   type RoledFacts,
 } from "@cobblr/platform-contract";
 import {
@@ -68,7 +69,12 @@ export function orderFacts(e: OrderEvidence): RoledFacts {
  *  left alone; a field this workspace does not have is simply not there. */
 export async function stampFromOrder(orgId: string, subject: LineSubject, e: OrderEvidence): Promise<string[]> {
   const roled = await platform().entities.roledFieldsFor(orgId, subject.kind);
-  const patch = roledFactsPatch(mapRoledFacts(orderFacts(e), roled));
+  const mapped = mapRoledFacts(orderFacts(e), roled);
+  // The record's own columns (a vehicle's Paid, Purchased at, Bought from)
+  // and its metadata fields, judged by the same rules and written each
+  // through its own door.
+  const nativePatch = roledNativePatch(mapped);
+  const patch = { ...roledFactsPatch(mapped), ...nativePatch };
   if (Object.keys(patch).length === 0) return [];
   // The whole row, not the projected lookup: what the record holds now and
   // who put it there are both in metadata, which a lookup does not expose.
@@ -81,7 +87,7 @@ export async function stampFromOrder(orgId: string, subject: LineSubject, e: Ord
   const writes: Record<string, unknown> = {};
   const at = new Date().toISOString();
   for (const [field, value] of Object.entries(patch)) {
-    const had = meta[field];
+    const had = field in nativePatch ? (row as Record<string, unknown>)[field] : meta[field];
     const hasValue = had !== null && had !== undefined && had !== "";
     if (!mayWriteField(prov[field], "evidence", { hasEvidence: true, hasValue })) continue;
     // Another source's evidence stays: a receipt writes Paid only when its
@@ -94,8 +100,21 @@ export async function stampFromOrder(orgId: string, subject: LineSubject, e: Ord
     prov[field] = { by: "evidence", from: "order", ref: { kind: ORDER_KIND, id: e.orderId }, at, ...(roleOf.get(field) ? { role: String(roleOf.get(field)) } : {}) };
   }
   if (Object.keys(writes).length === 0) return [];
-  const ok = await platform().entities.mergeMetadata(orgId, subject.kind, subject.id, { ...writes, [FIELD_PROVENANCE_KEY]: prov });
-  return ok ? Object.keys(writes) : [];
+  const nativeWrites = Object.fromEntries(Object.entries(writes).filter(([k]) => k in nativePatch));
+  const metaWrites = Object.fromEntries(Object.entries(writes).filter(([k]) => !(k in nativePatch)));
+  let nativeWritten: string[] = [];
+  if (Object.keys(nativeWrites).length) {
+    const writer = await platform().entities.getWriter(orgId, subject.kind);
+    if (writer) {
+      await writer.update(orgId, subject.id, nativeWrites);
+      nativeWritten = Object.keys(nativeWrites);
+    } else {
+      // Nothing can write the kind's own column: no stamp claims it was.
+      for (const k of Object.keys(nativeWrites)) delete prov[k];
+    }
+  }
+  const ok = await platform().entities.mergeMetadata(orgId, subject.kind, subject.id, { ...metaWrites, [FIELD_PROVENANCE_KEY]: prov });
+  return [...(ok ? Object.keys(metaWrites) : []), ...nativeWritten];
 }
 
 /** The thing is bought in the order: once, whichever door claims it. */

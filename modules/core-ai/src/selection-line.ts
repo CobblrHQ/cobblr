@@ -26,6 +26,6 @@ export function selectionLine(sel?: {
   return (
     `\n\nSELECTED: the user has picked out "${sel.label}"${kind} on that screen.${named}${which} ` +
     `When they say "these", "them", "the selected ones" or say nothing at all about WHICH, they mean exactly this set — ` +
-    `act on it directly rather than searching for it again. If they clearly mean something else, follow what they said.`
+    `act on it directly rather than searching for it again, and never ask "which ones?" while it is set. If they clearly mean something else, follow what they said.`
   );
 }

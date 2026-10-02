@@ -79,7 +79,8 @@ export const BUILTIN_UNITS: UnitDef[] = [
   { code: "day", symbol: "d", name: "day", plural: "days", category: "time", factor: 86400 },
   // electrical: distinct dimensions, NOT interconvertible, so no factor. The
   // same codes a measured value carries ("4k7" is 4700 ohm), from the one list.
-  ...MEASURE_UNITS.map((u) => ({ code: u.code, symbol: u.symbol, name: u.name, plural: u.plural, category: "electrical" as const })),
+  // Its lengths (millimeter, inch) are the ones listed under length above.
+  ...MEASURE_UNITS.filter((u) => u.category === "electrical").map((u) => ({ code: u.code, symbol: u.symbol, name: u.name, plural: u.plural, category: "electrical" as const })),
   // digital — base = MB
   { code: "megabyte", symbol: "MB", name: "megabyte", plural: "megabytes", category: "digital", factor: 1 },
   { code: "gigabyte", symbol: "GB", name: "gigabyte", plural: "gigabytes", category: "digital", factor: 1000 },

@@ -9,6 +9,7 @@ import { ActionOutcome } from "./ActionOutcome";
 import { AskCobbAbout } from "./AskCobbAbout";
 import { HEADER_ACTION_IDS } from "./RecordHeaderChips";
 import { DormantActionButton } from "./DormantActionButton";
+import { RecordDisposition } from "./RecordDisposition";
 import type { PlatformAction, PlatformActionBinding } from "./types";
 
 interface Props {
@@ -88,8 +89,16 @@ export function EntityActionsBar({ entityKind, entityId, entityLabel, className,
     ...actions.map((a) => <ActionButton key={a.id} entityKind={entityKind} entityId={entityId} action={a} runNow={armed === a.id} onRan={disarm} />),
     ...dormant.map((a) => <DormantActionButton key={`off:${a.id}`} entityKind={entityKind} action={a} onTurnedOn={arm} />),
   ];
+  // Sold, given away, thrown out: on every record whose kind can leave, placed
+  // here so no record page has to remember it.
+  const lifecycle = data?.lifecycle ? <RecordDisposition key="lifecycle" kind={entityKind} id={entityId} /> : null;
   if (buttons.length === 0) {
-    return ask ? <div className={`flex flex-wrap gap-2 ${className ?? ""}`}>{ask}</div> : null;
+    return ask || lifecycle ? (
+      <div className={`flex flex-wrap gap-2 ${className ?? ""}`}>
+        {ask}
+        {lifecycle}
+      </div>
+    ) : null;
   }
   const folded = !showAll && buttons.length > ACTIONS_IN_THE_OPEN + 1;
   const shown = folded ? buttons.slice(0, ACTIONS_IN_THE_OPEN) : buttons;
@@ -97,6 +106,7 @@ export function EntityActionsBar({ entityKind, entityId, entityLabel, className,
     <div className={`flex flex-wrap gap-2 ${className ?? ""}`}>
       {ask}
       {shown}
+      {lifecycle}
       {folded && (
         <button
           type="button"

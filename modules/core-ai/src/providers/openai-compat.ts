@@ -15,7 +15,7 @@
 // The whole provider body is exported as buildCompatProvider() so shaped
 // presets (OpenRouter) register the same machinery with a fixed base URL.
 
-import { platform, type AiCapability, type AiProviderDef } from "@cobblr/platform-contract";
+import { platform, type AiCapability, type AiProviderDef, isChatTurn } from "@cobblr/platform-contract";
 import { providerError, providerSentence, reasonFromResponse, reasonFromTransportError, redactSecrets, retryAfterSecOf } from "@cobblr/platform-contract/provider-reason";
 import { assertSafeAiEndpoint, pinnedFetch, type PinnedResponse } from "../ssrf.js";
 import { TRANSIT_FIELD, viaBridge, edgeKeyFor, edgeFetch } from "./edge-transit.js";
@@ -25,6 +25,7 @@ import { promptFingerprint } from "./prompt-fingerprint.js";
 
 export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
   chat: { models: ["default"], defaultModel: "default" },
+  "plan-changes": { models: ["default"], defaultModel: "default" },
   summarise: { models: ["default"], defaultModel: "default" },
   "classify-image": { models: ["default"], defaultModel: "default" },
   "identify-image": { models: ["default"], defaultModel: "default" },
@@ -35,6 +36,7 @@ export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; default
   "match-to-catalog": { models: ["default"], defaultModel: "default" },
   "embed-text": { models: ["default"], defaultModel: "default" },
   "design-workspace": { models: ["default"], defaultModel: "default" },
+  "document-read": { models: ["default"], defaultModel: "default" },
 };
 
 export function baseOf(credentials: Record<string, unknown>): string {
@@ -112,6 +114,9 @@ export interface CompatPresetOpts {
   describeCredentials: AiProviderDef["describeCredentials"];
   /** Resolve the base URL from credentials (a preset returns its fixed URL). */
   resolveBase: (credentials: Record<string, unknown>) => string;
+  /** The endpoint's own /models is what it serves (a self-hosted server), so
+   *  menus ask it. A hosted preset keeps its curated list and leaves this off. */
+  liveModels?: boolean;
   /** Gateways with no default model refuse early with a helpful message
    *  instead of relaying an opaque 4xx. */
   requireModel?: boolean;
@@ -140,8 +145,9 @@ export interface CompatPresetOpts {
   /** Labels and one-line notes for those ids, for the picker. */
   modelNotes?: Record<string, { label: string; note?: string; short?: string }>;
   /** Sibling models on the same key to try when a DEFAULT model stays busy
-   *  (AiProviderDef.busyAlternates). Keyed by the busy model. */
-  busyAlternates?: Record<string, string[]>;
+   *  (AiProviderDef.busyAlternates). Keyed by the busy model, or a function
+   *  of the model and the job when a sibling suits one job and not another. */
+  busyAlternates?: Record<string, string[]> | ((model: string, capability: AiCapability) => string[]);
 }
 
 /** One OpenAI-v1 provider body, parameterised for shaped presets. */
@@ -178,7 +184,14 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
         chosen: !!connModel || (!!model && model !== "default"),
       };
     },
-    ...(opts.busyAlternates ? { busyAlternates: (m: string) => opts.busyAlternates?.[m] ?? [] } : {}),
+    ...(opts.busyAlternates
+      ? {
+          busyAlternates: (m: string, capability: AiCapability) => {
+            const alt = opts.busyAlternates!;
+            return typeof alt === "function" ? alt(m, capability) : (alt[m] ?? []);
+          },
+        }
+      : {}),
     invoke: async (ctx) => {
       const base = resolveBase(ctx.credentials);
       const model = effectiveModel(
@@ -250,11 +263,16 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
             cost_cents: 0, // self-hosted / user-billed — Cobblr never estimates it
           };
         }
+        // The builder sends a conversation like chat does (no tools), and reads
+        // the answer the same way.
+        case "design-workspace":
         case "chat":
+        case "plan-changes":
         case "summarise":
         case "classify-image":
         case "split-image":
         case "identify-glance":
+        case "document-read":
         case "identify-image":
         case "rank-images":
         case "extract-text":
@@ -266,20 +284,20 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
           // Native tool-calling for chat: forward the neutral tool defs. A
           // server that doesn't support tools 4xxes on the field — retried
           // once without them (graceful no-tools degrade for local models).
-          const toolDefs = ctx.capability === "chat" ? toolsOf(ctx.input) : null;
+          const toolDefs = isChatTurn(ctx.capability) ? toolsOf(ctx.input) : null;
           if (toolDefs) body.tools = openAiToolsOf(toolDefs);
           // Stream when somebody is watching AND there are no tools in play:
           // a tool call arrives as its own delta shape, and half-parsing one
           // to show it typing is a way to run the wrong tool. A tool-using
           // round is short anyway; it is the long prose answer that needs to
           // show up as it is written.
-          const streamText = ctx.capability === "chat" && typeof ctx.onDelta === "function" && !toolDefs;
+          const streamText = isChatTurn(ctx.capability) && typeof ctx.onDelta === "function" && !toolDefs;
           if (streamText) body.stream = true;
           // MCP tool relay (a Claude-subscription bridge behind the OpenAI wire):
           // forward the per-request grant so the bridge spawns `claude -p
           // --mcp-config`. A real OpenAI-compatible server ignores this field.
           const mcpRelay = (ctx.input as Record<string, unknown>).mcp;
-          if (ctx.capability === "chat" && mcpRelay && typeof mcpRelay === "object") body.mcp = mcpRelay;
+          if (isChatTurn(ctx.capability) && mcpRelay && typeof mcpRelay === "object") body.mcp = mcpRelay;
           // response_format json_object is OpenAI-specific; local servers vary.
           // The JSON-shaped prompts already instruct the model, and every
           // consumer robust-parses (parseJsonReply) — so it is NOT sent by
@@ -288,7 +306,7 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
           // one case where the shape matters more than the widest server set,
           // and a server that rejects the field is retried without it below.
           const outputSchema = (ctx.input as Record<string, unknown>).output_schema;
-          const constrained = ctx.capability === "chat" && outputSchema && typeof outputSchema === "object";
+          const constrained = isChatTurn(ctx.capability) && outputSchema && typeof outputSchema === "object";
           if (constrained) {
             body.response_format = { type: "json_schema", json_schema: { name: "cobblr_output", schema: outputSchema } };
           }
@@ -377,6 +395,22 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
           throw new Error(`${id}: capability ${ctx.capability} not implemented`);
       }
     },
+    // What this endpoint serves (/models): a self-hosted server lists what it
+    // has loaded, which is the menu, not a guess about it.
+    ...(opts.liveModels ? { listModels: async (credentials: Record<string, unknown>) => {
+      const base = resolveBase(credentials);
+      const headers = { ...extraHeaders, ...authHeadersFor(credentials) };
+      let res: PinnedResponse;
+      if (viaBridge(credentials)) {
+        res = await edgeFetch(edgeKeyFor(credentials), base, "/models", { headers });
+      } else {
+        const pin = await assertSafeAiEndpoint(base, platform().ai.getEndpointPolicy());
+        res = await pinnedFetch(`${base}/models`, pin, { headers });
+      }
+      if (!res.ok) throw new Error(providerSentence(reasonFromResponse(res.status, await res.text().catch(() => "")), { provider: id }));
+      const body = (await res.json()) as { data?: Array<{ id?: unknown }> };
+      return (body.data ?? []).map((m) => String(m.id ?? "")).filter(Boolean);
+    } } : {}),
     testConnection: async (credentials) => {
       const secrets = Object.values(credentials);
       try {
@@ -445,6 +479,7 @@ export function register(): void {
         ...TRANSIT_FIELD,
       }),
       resolveBase: baseOf,
+      liveModels: true,
     }),
   );
 }

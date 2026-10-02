@@ -45,12 +45,30 @@ const FORM_FACTORS = [
   "case",
 ] as const;
 
+/** Where an observation stops describing the thing and starts describing
+ *  what is in it or around it. */
+const BEYOND_THE_THING = /\b(?:contain(?:s|ing|ed)?|inside|filled with|full of|holding|holds|with .{0,40}\bin (?:it|them)|behind|in the background|next to|beside)\b/;
+
+/** The part of an observation that describes the thing itself: its first
+ *  sentence, up to where it turns to the contents or the surroundings. The
+ *  photo pass describes everything in frame, and the shape of something else
+ *  is the wrong word to search with: stacked storage bins holding "a roll of
+ *  tape" were searched as "Storage Bin roll" and came back as paper-towel
+ *  racks. */
+export function subjectOf(observation: string | null | undefined): string {
+  const t = (observation ?? "").toLowerCase().trim();
+  if (!t) return "";
+  const first = t.split(/[.!?](?:\s|$)/)[0] ?? "";
+  const cut = BEYOND_THE_THING.exec(first);
+  return (cut ? first.slice(0, cut.index) : first).trim();
+}
+
 /** The form factor named in an observation, or null.
  *
  *  Returns ONE term: the search is a name plus a couple of sharpening words,
  *  and a pile of near-synonyms makes it worse rather than better. */
 export function formFactorFromObservation(observation: string | null | undefined): string | null {
-  const t = (observation ?? "").toLowerCase();
+  const t = subjectOf(observation);
   if (!t) return null;
   for (const f of FORM_FACTORS) {
     // Word-boundary: "can" must not match "candle", and "tin" must not match

@@ -23,7 +23,7 @@
 // A fix at the source only helps the NEXT scan. Every bookshelf, film shelf,
 // wardrobe and collection already scanned into still shows a quantity stepper,
 // cost, supplier URL, serial number and fifteen stock actions on a paperback,
-// and will forever. That is what CLAUDE.md §8.1 exists for: found on the live
+// and will forever. That is what docs/architecture/platform-spec.md §8.1 exists for: found on the live
 // demo, where all nine books had done it.
 //
 // What it unlatches, and what it must not:
@@ -114,7 +114,7 @@ export async function healCatalogStockLatch(): Promise<number> {
   for (const [orgId, candidates] of byOrg) {
     // Per-org try/catch: one workspace's failure never blocks the rest.
     // withDb releases the tenant pool for us — a boot sweep that holds one pool
-    // per tenant exhausts Postgres (CLAUDE.md §8.1).
+    // per tenant exhausts Postgres (docs/architecture/platform-spec.md §8.1).
     try {
       const verdicts = await platform().tenants.withDb(orgId, async (raw) => {
         const db = raw as Kysely<Record<string, never>>;

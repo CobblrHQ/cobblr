@@ -24,10 +24,19 @@ import { useTrackedMatchList } from "../lib/useTrackedMatchList";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useBestTrackedMatch } from "./RepurchaseControls";
 import { ScanCountBlock } from "./ScanCountBlock";
+import { AddPlaceBlock } from "./AddPlaceBlock";
+
+/** The thing this scan matched, when the scan is at a place it is not kept
+ *  yet: filing adds the place, and the count control would add to another. */
+function newPlaceOf(item: Parameters<typeof scanRowState>[0]) {
+  const m = scanRowState(item).merge;
+  return m?.new_place ? m : null;
+}
 import type { ScanCountMode } from "@cobblr/platform-contract/scan-count";
 import { EntityThumb } from "@cobblr/platform-web";
 import { useHandheld } from "../lib/useHandheld";
 import { TrackedMatchNudges } from "./TrackedMatchNudges";
+import { PaperworkThisOne, isPaperworkMatch } from "./PaperworkThisOne";
 import { scanRowState, scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
 import { evidencedFill } from "@cobblr/platform-contract/scan-evidence";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
@@ -117,7 +126,15 @@ export function TrackedMatchLine({
         </div>
       </div>
       {match && !possible && <TrackedMatchNudges item={item} match={match} />}
-      {counted && !possible && <ScanCountBlock itemId={item.id} match={counted} where={where} scanned={quantity} />}
+      {match && isPaperworkMatch(item, match) ? (
+        <PaperworkThisOne item={item} match={match} />
+      ) : counted && !possible && newPlaceOf(item) ? (
+        // The card's own button says "Add as another place"; a count here
+        // would add to the place it is kept already.
+        null
+      ) : (
+        counted && !possible && <ScanCountBlock itemId={item.id} match={counted} where={where} scanned={quantity} />
+      )}
       <div className="flex flex-wrap items-center gap-1.5">
         {possible ? (
           <button
@@ -284,7 +301,9 @@ export function TrackedMatchBanner({
     : { fill: {}, held: [] as string[] };
   const mergeEntries = Object.entries(mergeFill.fill);
   const mergeHeld = mergeFill.held.map((k) => [k, mergeCand?.fields?.[k]] as const);
-  const canMerge = best.matched_by === "name" && mergeEntries.length > 0;
+  // Paperwork goes through its own door (every field by meaning, the
+  // purchase linked); the generic merge would fill a fraction of it (#4633).
+  const canMerge = best.matched_by === "name" && mergeEntries.length > 0 && !isPaperworkMatch(item, best);
 
   // On a phone the card must not grow (#3339): the "same barcode" tag that
   // wrapped alone onto its own line rides in the tick's label instead, Open
@@ -413,8 +432,17 @@ export function TrackedMatchBanner({
         </div>
       )}
       <TrackedMatchNudges item={item} match={best} />
+      {isPaperworkMatch(item, best) && <PaperworkThisOne item={item} match={best} />}
       {/* Counting into one of several places waits for the place. */}
-      {best.qty != null && (!several || picked) && (
+      {best.qty != null && newPlaceOf(item) && !isPaperworkMatch(item, best) && (
+        <AddPlaceBlock
+          itemId={item.id}
+          merge={newPlaceOf(item)!}
+          sentence={scanRowState(item).sentence}
+          scanned={Math.max(1, item.quantity || 1)}
+        />
+      )}
+      {best.qty != null && (!several || picked) && !isPaperworkMatch(item, best) && !newPlaceOf(item) && (
         <ScanCountBlock
           itemId={item.id}
           match={best}

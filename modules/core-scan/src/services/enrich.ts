@@ -9,6 +9,7 @@
 // resolver is slow we return the bare row immediately and let
 // this finish detached.
 
+import { shownImage } from "./shown-images.js";
 import { noteSharedName, sharedTitleOf } from "./shared-title.js";
 import { pictureColour, pictureColours, colourContradiction, colourShows, looksDifferent } from "./picture-colour.js";
 import { ownPhotoColours } from "./withhold-picture.js";
@@ -1683,34 +1684,49 @@ export async function downloadCatalogImage(
   // A stock "no image" graphic is not a photo, and an agency's preview is a
   // watermark. Refuse before spending a fetch.
   if (isUnusablePictureUrl(imageUrl)) return false;
-  try {
-    await assertSafeOutboundUrl(imageUrl);
-  } catch {
-    return false; // not a safe outbound target — never retry
+  // The picture the person was SHOWN, through Cobblr's proxy: stored as it
+  // was shown, and the site is not asked again (shown-images.ts, #4580). A
+  // site that serves an image once and refuses the second ask was "That image
+  // couldn't be used" on a picture the person was looking at full size.
+  const kept = shownImage(ctx.orgId, imageUrl);
+  if (!kept) {
+    try {
+      await assertSafeOutboundUrl(imageUrl);
+    } catch {
+      return false; // not a safe outbound target — never retry
+    }
   }
   const MAX = 10 * 1024 * 1024;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < (kept ? 1 : 3); attempt++) {
     if (attempt > 0) await new Promise((r) => setTimeout(r, 500 * attempt));
     try {
-      const dlRes = await guardedImageFetch(imageUrl, {
-        // Look like a BROWSER, not a bot: a real UA + a same-origin Referer +
-        // an image Accept. Hotlink protection keys on exactly these — a missing
-        // Referer / bot UA is why an image the user can SEE full-screen (their
-        // browser sends them) 403s when WE fetch it (reported 2026-07-24).
-        // guardedImageFetch re-validates each redirect hop.
-        headers: browserImageHeaders(imageUrl),
-        signal: AbortSignal.timeout(8_000),
-      });
-      if (!dlRes.ok) continue; // 5xx/timeout/blocked → try again
-      if (Number(dlRes.headers.get("content-length") ?? 0) > MAX) return false; // too big — don't retry
-      const blob = await dlRes.blob();
-      if (blob.size === 0 || blob.size > MAX) return false;
+      let raw: Uint8Array;
+      let fetchedType: string;
+      if (kept) {
+        raw = kept.bytes;
+        fetchedType = kept.mime;
+      } else {
+        const dlRes = await guardedImageFetch(imageUrl, {
+          // Look like a BROWSER, not a bot: a real UA + a same-origin Referer +
+          // an image Accept. Hotlink protection keys on exactly these — a missing
+          // Referer / bot UA is why an image the user can SEE full-screen (their
+          // browser sends them) 403s when WE fetch it (reported 2026-07-24).
+          // guardedImageFetch re-validates each redirect hop.
+          headers: browserImageHeaders(imageUrl),
+          signal: AbortSignal.timeout(8_000),
+        });
+        if (!dlRes.ok) continue; // 5xx/timeout/blocked → try again
+        if (Number(dlRes.headers.get("content-length") ?? 0) > MAX) return false; // too big — don't retry
+        const blob = await dlRes.blob();
+        if (blob.size === 0 || blob.size > MAX) return false;
+        raw = new Uint8Array(await blob.arrayBuffer());
+        fetchedType = blob.type;
+      }
       const filename = imageUrl.split("/").pop()?.split("?")[0] || "catalog.jpg";
       // Store server-side via the platform files seam (in-process; generates
       // variants + the DB row), NOT the HTTP upload route — that route is the
       // USER upload surface and may be entitlement-gated (e.g. the trial tier
       // withholds user uploads). A fetched catalog image is not a user upload.
-      const raw = new Uint8Array(await blob.arrayBuffer());
       // A clean studio shot is what the search was asked for, and what it often
       // returns is a small product adrift in a white field — correct, and
       // unreadable as a thumbnail. Trim the dead border so the product fills
@@ -1766,7 +1782,7 @@ export async function downloadCatalogImage(
       }
       const written = await platform().files.write(ctx.orgId, trimmed, {
         filename,
-        mimeType: trimmed === raw ? blob.type || "image/jpeg" : "image/jpeg",
+        mimeType: trimmed === raw ? fetchedType || "image/jpeg" : "image/jpeg",
         photoSource: { kind: "catalog", original_url: imageUrl, at: new Date().toISOString() },
       });
       if (!written) continue;

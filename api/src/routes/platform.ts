@@ -4,6 +4,7 @@
 // consume these to discover what kinds/actions exist, look up
 // entities polymorphically, manage bindings, and run actions.
 
+import { choiceLearns } from "@cobblr/platform-contract/field-choices";
 import { detailPathForEntity, titleForEntity } from "../platform/entities.js";
 import { Router, type Request } from "express";
 import { PLATFORM_ACTIONS } from "../platform/platform-actions.js";
@@ -38,15 +39,19 @@ import { templateDataOf } from "@cobblr/platform-contract/entity-metadata";
 import { namePeopleForTemplate } from "../platform/member-fields.js";
 import type { ActionAppliesToDecl } from "@cobblr/platform-contract";
 import {
+  FIELD_ROLE_LABELS,
   FIELD_SCOPE_PRESETS,
   fieldScopeProfiles,
   fieldScopeSentinel,
 } from "@cobblr/platform-contract";
+import { fieldWithMeaning, meaningFromWords, sameMeaningGroups } from "@cobblr/platform-contract/field-meaning";
+import { offerOnce, sellerOffer } from "../platform/seller-upgrade.js";
 import {
   FieldDefCreate,
   FieldDefPatch,
   createFieldDef,
   deleteFieldDef,
+  kindFieldsWithMeaning,
   listAllFieldDefs,
   resolveFieldDefsForKind,
   updateFieldDef,
@@ -89,7 +94,7 @@ platformOrgRouter.get(
       if (String(req.query.include ?? "").split(",").includes("custom_fields")) {
         const defs = await meta
           .selectFrom("module_field_defs")
-          .select(["entity_kind", "name", "display_label", "type", "required", "choices", "help", "applies_to", "unit", "field_role"])
+          .select(["entity_kind", "name", "display_label", "type", "required", "choices", "help", "applies_to", "unit", "field_role", "learns", "bundle_id", "source_module"])
           .where("org_id", "=", req.tenant!.org.id)
           .orderBy("position")
           .execute();
@@ -116,6 +121,7 @@ platformOrgRouter.get(
                   ...(d.help ? { help: d.help } : {}),
                   ...(d.unit ? { unit: d.unit } : {}),
                   ...(d.field_role ? { field_role: d.field_role } : {}),
+                  ...(choiceLearns(d as never) ? { learns: true } : {}),
                   scope: d.scope_label ?? d.scope,
                 })),
               );
@@ -139,6 +145,10 @@ platformOrgRouter.get(
             // so a reader shows "$4,300" (@cobblr/platform-contract/money).
             ...(d.unit ? { unit: d.unit } : {}),
             ...(d.field_role ? { field_role: d.field_role } : {}),
+            // A list that takes a new value (and so learns it), against one
+            // that only takes its own choices: an agent reads this before it
+            // sends a spelling (#4537).
+            ...(choiceLearns(d) ? { learns: true } : {}),
           });
           byKind.set(d.entity_kind, list);
         }
@@ -522,10 +532,12 @@ platformOrgRouter.get(
       // the doors, never the record's real actions.
       const dormant = await listDormant(kind, req.tenant!.org.id).catch(() => []);
       const choose = await argChoicesFor(req.tenant!.org.id, kind, [...applicable.map((a) => a.args_schema), ...bindings.map((b) => b.args_schema)]);
+      const writer = await platform().entities.getWriter(req.tenant!.org.id, kind).catch(() => null);
       res.json({
         items: applicable.filter((a) => installedSet.has(a.module_name)).map((a) => ({ ...a, args_schema: choose(a.args_schema) })),
         dormant: dormant.map((a) => ({ id: a.id, label: a.label, description: a.description, icon: a.icon, module_name: a.module_name, module_label: a.module_label })),
         bindings: bindings.map((b) => ({ ...b, args_schema: choose(b.args_schema), ask: bindingAskOf(b.ask) })),
+        lifecycle: !!(writer?.retire && writer.unretire),
       });
     } catch (err) {
       next(err);
@@ -614,6 +626,12 @@ function argsOf(body: z.infer<typeof InvokeBody>, isWorkspaceAction: boolean): R
   return body.args;
 }
 
+/** A plan is asked with the same body as a run, plus what the earlier steps
+ *  of the same plan will have done (`ActionInvokeContext.before`). */
+const PlanBody = InvokeBody.extend({
+  before: z.array(z.object({ op: z.literal("delete"), kind: z.string().min(1), id: z.string().min(1) })).max(200).optional(),
+});
+
 // POST /:slug/actions/plan — what an action WOULD touch, before anyone runs
 // it: the list a confirm card shows. Same body and same gate as invoke; it
 // writes nothing. An action with no planner answers { plan: null } and its
@@ -625,7 +643,7 @@ platformOrgRouter.post(
   withTenant,
   async (req, res, next) => {
     try {
-      const parsed = InvokeBody.safeParse(req.body);
+      const parsed = PlanBody.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
           error: { code: "invalid_body", message: "Bad plan payload", details: parsed.error.issues },
@@ -656,6 +674,7 @@ platformOrgRouter.post(
           trigger_type: "user-invoked",
         },
         args: args ?? {},
+        ...(parsed.data.before?.length ? { before: parsed.data.before } : {}),
       });
       // { plan } or { plan: null, error }: the reason travels, so the caller
       // can hand it to the model instead of falling back to a bare label.
@@ -1405,27 +1424,29 @@ platformOrgRouter.get(
             .execute()
         : [];
       const bundleById = new Map(bundleRows.map((b) => [b.id, b]));
-      // A shipped field's choices and "remember new entries" are the workspace's
-      // own once changed, kept in the override layer (updateFieldDef routes them
-      // there). The config read shows them too, or the field's settings would
-      // read back the bundle's list after someone saved theirs.
+      // A shipped field's "remember new entries" is the workspace's own once
+      // switched, kept in the override layer (updateFieldDef routes it there),
+      // and the field's settings page reads it here. Its choices stay the
+      // shipped list on this read: the config surfaces manage the raw defs, and
+      // the effective read carries the workspace's list.
+      // Whether a field is private is a person's own mark on ANY field, kept
+      // there too, so the layer is read for every field.
       const ownBlob = new Map(
-        bundleIds.length
-          ? (
-              await meta
-                .selectFrom("native_field_overrides")
-                .select(["entity_kind", "name", "overrides"])
-                .where("org_id", "=", req.tenant!.org.id)
-                .execute()
-            ).map((o) => [`${o.entity_kind} ${o.name}`, o.overrides] as const)
-          : [],
+        (
+          await meta
+            .selectFrom("native_field_overrides")
+            .select(["entity_kind", "name", "overrides"])
+            .where("org_id", "=", req.tenant!.org.id)
+            .execute()
+        ).map((o) => [`${o.entity_kind} ${o.name}`, o.overrides] as const),
       );
       const items = rawItems.map((f) => {
-        const own = f.bundle_id ? ownBlob.get(`${f.entity_kind} ${f.name}`) : undefined;
+        const blob = ownBlob.get(`${f.entity_kind} ${f.name}`);
+        const own = f.bundle_id ? blob : undefined;
         return {
           ...f,
-          ...(own?.choices !== undefined ? { choices: own.choices } : {}),
           ...(own?.learns !== undefined ? { learns: own.learns } : {}),
+          private: blob?.private === true,
           bundle_external_id: f.bundle_id ? (bundleById.get(f.bundle_id)?.external_id ?? null) : null,
           bundle_name: f.bundle_id ? (bundleById.get(f.bundle_id)?.name ?? null) : null,
         };
@@ -1448,6 +1469,10 @@ platformOrgRouter.get(
         res.json({
           items,
           sections: await sectionsOf(),
+          // The kind's own columns that carry a meaning (Bought from is the
+          // seller on a vehicle): a record's form reads them so a meaning a
+          // column already answers is not offered again as a note.
+          ...(kind ? { native_roles: (await kindFieldsWithMeaning(req.tenant!.org.id, kind)).filter((f) => f.source === "built-in").map((f) => ({ name: f.name, label: f.label, field_role: f.field_role })) } : {}),
           scopes: [
             ...FIELD_SCOPE_PRESETS.map((p) => ({
               key: fieldScopeSentinel(p.traits),
@@ -1487,6 +1512,7 @@ platformOrgRouter.get(
             // schema change — exactly the seam decode_role opened for the VIN fields.
             field_role: o.overrides?.field_role ?? f.field_role,
             learns: o.overrides?.learns ?? f.learns,
+            private: o.overrides?.private === true,
             _hidden: o.hidden,
           };
         })
@@ -2016,6 +2042,91 @@ platformOrgRouter.delete(
   },
 );
 
+// What a field about to be made would mean, read from its label, and the
+// field this kind already has with that meaning: the Fields form asks this
+// while the label is typed ("Looks like where it came from: right?", "This
+// kind already has Bought from"). A read, as the person asking.
+// AI-REACH: reads
+platformOrgRouter.get(
+  "/:slug/field-defs/meaning",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      const kind = typeof req.query.kind === "string" ? req.query.kind : "";
+      const label = typeof req.query.label === "string" ? req.query.label : "";
+      const name = typeof req.query.name === "string" ? req.query.name : "";
+      const roleAsked = typeof req.query.role === "string" && req.query.role ? req.query.role : null;
+      const role = roleAsked ?? meaningFromWords(label, name);
+      const pickable = role ? (FIELD_ROLE_LABELS as Record<string, { label: string; pickable: boolean }>)[role] : undefined;
+      if (!role || !pickable?.pickable) {
+        res.json({ role: null, role_label: null, same_as: null });
+        return;
+      }
+      const same = kind && !kind.startsWith("@") ? fieldWithMeaning(await kindFieldsWithMeaning(req.tenant!.org.id, kind), role, name || null) : null;
+      res.json({ role, role_label: pickable.label, read_from_label: !roleAsked, same_as: same ? { name: same.name, label: same.label, source: same.source } : null });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// Whether a kind's sellers, noted beside where things came from, have earned
+// a field of their own (seller-upgrade.ts). Read wherever a person is working
+// with that field; the first time it is due for this workspace and kind, the
+// person is told once. Answered through platform:track-sellers / decline.
+// AI-REACH: reads
+platformOrgRouter.get(
+  "/:slug/field-defs/seller-offer",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      const kind = typeof req.query.kind === "string" ? req.query.kind : "";
+      if (!kind) {
+        res.status(400).json({ error: { code: "invalid_query", message: "kind is required" } });
+        return;
+      }
+      const orgId = req.tenant!.org.id;
+      const offer = await sellerOffer(orgId, kind, { userId: req.session?.id, role: req.tenant!.role });
+      if (offer && !offer.state && roleSatisfies(req.tenant!.role, ["owner", "admin"])) await offerOnce(orgId, offer, req.session?.id ?? null);
+      res.json({ offer: offer && offer.state !== "declined" && offer.state !== "accepted" ? offer : null });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// The kinds that hold two fields meaning one thing, to settle once: the
+// Fields page shows each as one notice (Use this one / Keep that one), and the
+// assistant reads the same list. Never merged on its own.
+// AI-REACH: reads
+platformOrgRouter.get(
+  "/:slug/field-defs/same-meaning",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      const orgId = req.tenant!.org.id;
+      const only = typeof req.query.kind === "string" && req.query.kind ? [req.query.kind] : (await platform().entities.listKindsForOrg(orgId)).map((k) => k.id);
+      const items: Array<{ entity_kind: string; role: string; role_label: string; fields: Array<{ name: string; label: string; source: string }> }> = [];
+      for (const kind of only) {
+        for (const g of sameMeaningGroups(await kindFieldsWithMeaning(orgId, kind))) {
+          items.push({
+            entity_kind: kind,
+            role: g.role,
+            role_label: (FIELD_ROLE_LABELS as Record<string, { label: string }>)[g.role]?.label ?? g.role,
+            fields: g.fields.map((f) => ({ name: f.name, label: f.label, source: f.source })),
+          });
+        }
+      }
+      res.json({ items });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // AI-ACTION: platform:add-field
 platformOrgRouter.post(
   "/:slug/field-defs",
@@ -2038,8 +2149,14 @@ platformOrgRouter.post(
       if (!result.ok) {
         // duplicate_name is a conflict, not a bad request — a retry with the
         // same body will conflict again for a different reason than malformed.
-        res.status(result.code === "duplicate_name" ? 409 : 400).json({
-          error: { code: result.code, message: result.message },
+        // same_meaning carries the field to use instead, so the form can offer
+        // it ("Use Bought from") rather than only say no.
+        res.status(result.code === "duplicate_name" || result.code === "same_meaning" ? 409 : 400).json({
+          error: {
+            code: result.code,
+            message: result.message,
+            ...(result.code === "same_meaning" ? { existing: result.existing, role: result.role, inferred: result.inferred } : {}),
+          },
         });
         return;
       }

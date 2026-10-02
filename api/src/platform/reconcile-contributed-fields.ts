@@ -13,9 +13,12 @@
 // Every boot, each registered module's contributed defs are written, in one
 // statement per def, into every workspace with that module on that lacks
 // them, on the kind and on each named collection of it (`tools:item` for a
-// collection of assets). Cost on a current instance: two small reads and one
-// INSERT per contributed def that adds no rows. cobblr_meta only: it opens no
-// tenant pool.
+// collection of assets). A def that says whether its list learns brings the
+// rows it made earlier into line with that, so the answer does not depend on
+// when the workspace enabled the module (#4516). Cost on a current instance:
+// two small reads, one INSERT per contributed def that adds no rows, and one
+// UPDATE per def that declares `learns` that changes none. cobblr_meta only:
+// it opens no tenant pool.
 
 import { meta } from "../db/meta.js";
 import { list } from "../modules/registry.js";

@@ -50,6 +50,9 @@ export interface ChipFieldDef {
   onActivate?: () => void;
   /** Rendered before the value — a location pin, a status dot. */
   icon?: React.ReactNode;
+  /** What the chip shows when it differs from the value it commits: a value
+   *  with its seller beside it ("3DPrintopia 2026 · Jai"). Never written. */
+  display?: string;
 }
 
 interface Props {
@@ -341,7 +344,7 @@ function Chip({
   // A rich control owns the whole row: a swatch picker or a checkbox with help
   // beneath it has no business being squeezed into a chip's width.
   const hosting = editing && !!customEditor;
-  const shown = def.value || def.emptyHint || "—";
+  const shown = (def.value && def.display) || def.value || def.emptyHint || "—";
 
   return (
     <span
@@ -368,7 +371,7 @@ function Chip({
         wide || forceWide || hosting ? "w-full" : "",
       ].join(" ")}
       data-chip-field={def.key}
-      title={editing ? undefined : `${def.label}: ${def.value || "empty"} (tap to edit)`}
+      title={editing ? undefined : `${def.label}: ${(def.value && def.display) || def.value || "empty"} (tap to edit)`}
     >
       <span className="shrink-0 text-[10px] uppercase tracking-wide text-faint">{def.label}</span>
       {/* text-sm in BOTH states. Dropping it while editing changed the line

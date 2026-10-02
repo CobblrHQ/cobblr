@@ -12,6 +12,7 @@
 // Six modules and two kernel files each carried their own copy, identical
 // today and free to drift apart (#3499). They import these now.
 
+import { fieldKindOf } from "@cobblr/platform-contract/kind-label";
 import { asMeasure } from "@cobblr/platform-contract/measure";
 import { parseMoney } from "@cobblr/platform-contract/money";
 import { isListedChoice, platform } from "@cobblr/platform-contract";
@@ -392,7 +393,7 @@ export async function refuseUnknownFields(req: unknown, body: unknown, nativeKey
   const r = req as { tenant?: { org?: { id?: string } }; instance?: string; query?: Record<string, unknown> };
   const orgId = r.tenant?.org?.id;
   if (!orgId) return;
-  const kind = r.instance ? `${r.instance}:item` : baseKind;
+  const kind = fieldKindOf({ kind: baseKind, instance: r.instance });
   const defs = await platform().entities.fieldsFor(orgId, kind);
   const names = defs.map((f) => f.name);
   const { unknown, suggestions } = unknownFieldsOf(body, nativeKeys, names);

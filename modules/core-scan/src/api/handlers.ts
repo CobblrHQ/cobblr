@@ -16,6 +16,8 @@ import { answerWindow, claimGlanceAnswer, glanceItem, readContextFor, readGlance
 import { routeScannedReceiptPhoto } from "../services/receipt-photo.js";
 import { autoRankCatalogPhoto, readPhotoRankEnabled } from "../services/auto-rank.js";
 import { runReceiptBackfill } from "../services/receipt-backfill.js";
+import { attachPaperwork } from "../services/attach-paperwork.js";
+import { landedFills, planKnownFill, sayFilled, writeKnownFill, type KnownFill } from "../services/fill-known.js";
 
 let registered = false;
 
@@ -44,6 +46,59 @@ export function registerScanHandlers(): void {
       .where("id", "=", batchId)
       .execute();
     return { ok: true, confirmed: true };
+  });
+
+  platform().actions.registerHandler("core-scan.attach-paperwork", async (ctx) => {
+    const args = (ctx.args ?? {}) as { file_id?: unknown; kind?: unknown; id?: unknown };
+    const fileId = typeof args.file_id === "string" ? args.file_id : "";
+    const kind = typeof args.kind === "string" ? args.kind : "";
+    const id = typeof args.id === "string" ? args.id : "";
+    if (!fileId || !kind || !id) return { ok: false, error: "Say which document and which record it belongs to." };
+    const r = await attachPaperwork({ orgId: ctx.orgId, userId: ctx.userId ?? null, fileId, kind, id, http: null });
+    if (!r.read) return { ok: false, skipped: true, error: `Kept it as a file on the record. ${r.reason}` };
+    const filled = r.filled.map((f) => f.label).join(", ");
+    const asked = r.conflicts.map((c) => `${c.label}: the paper says ${c.shown_document}, the record has ${c.shown_current}`).join("; ");
+    return {
+      ok: true,
+      summary: [
+        `Attached the ${r.document === "bill-of-sale" ? "bill of sale" : "receipt"}${r.from ? ` from ${r.from}` : ""}.`,
+        filled ? `Filled ${filled}.` : "Nothing to fill: those fields already had values.",
+        asked ? `Left as they were, to ask about: ${asked}.` : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+      data: r,
+    };
+  });
+  // Fill what a record already says about itself: its VIN (or another
+  // identifier a decoder reads) and its own name, into its EMPTY fields only.
+  // A bundle wires it to its table's created/updated events.
+  platform().actions.registerHandler("core-scan.fill-known", async (ctx) => {
+    if (!ctx.entity) return { ok: true, skipped: "no record in scope" };
+    const fills = await planKnownFill(ctx.orgId, ctx.entity.kind, ctx.entity.id);
+    if (fills.length === 0) return { ok: true, skipped: "nothing to fill", data: { filled: [] } };
+    const wrote = await writeKnownFill(ctx.orgId, ctx.entity.kind, ctx.entity.id, fills);
+    if (!wrote) return { ok: false, error: "This record cannot be written from here." };
+    const landed = await landedFills(ctx.orgId, ctx.entity.kind, ctx.entity.id, fills);
+    if (landed.length === 0) return { ok: false, error: "Those fields could not be filled on this record.", data: { filled: [] } };
+    return { ok: true, summary: sayFilled(landed), data: { filled: landed } };
+  });
+  platform().actions.registerUndo("core-scan.fill-known", (result, ctx) => {
+    const filled = (result as { data?: { filled?: KnownFill[] } } | null)?.data?.filled;
+    if (!filled?.length || !ctx.entity) return null;
+    return { action_id: "core-scan:unfill-known", args: { filled }, entity_kind: ctx.entity.kind, entity_id: ctx.entity.id };
+  });
+  // Its undo: empty what it filled, but only where the value is still the one
+  // it put there, so a correction made since is never taken away.
+  platform().actions.registerHandler("core-scan.unfill-known", async (ctx) => {
+    if (!ctx.entity) return { ok: true, skipped: "no record in scope" };
+    const filled = ((ctx.args ?? {}) as { filled?: KnownFill[] }).filled ?? [];
+    const rec = await platform().entities.lookup(ctx.orgId, ctx.entity.kind, ctx.entity.id);
+    const f = (rec?.fields ?? {}) as Record<string, unknown>;
+    const meta = (f.metadata && typeof f.metadata === "object" ? f.metadata : {}) as Record<string, unknown>;
+    const still = filled.filter((x) => String((x.native ? f[x.name] : meta[x.name]) ?? "") === String(x.value));
+    await writeKnownFill(ctx.orgId, ctx.entity.kind, ctx.entity.id, still, true);
+    return { ok: true, summary: still.length ? `Emptied ${still.map((x) => x.label).join(", ")} again` : "Nothing to put back", data: { emptied: still.map((x) => x.name) } };
   });
 
   platform().actions.registerHandler("core-scan.fill-fields-from-receipts", async (ctx) => {

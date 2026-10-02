@@ -36,6 +36,8 @@ export async function listMembershipsForUser(userId: string) {
       // When the workspace was made: the carry page brings a sandbox straight
       // into a workspace made moments ago, and asks about any other.
       "o.created_at",
+      // "share": a workspace someone shared with this person (share spaces).
+      "o.kind",
       "m.role",
       "m.position",
       "m.is_default",

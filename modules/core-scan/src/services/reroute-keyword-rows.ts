@@ -6,7 +6,7 @@
 // outranks a word the name grazed; a route the category contradicts is
 // dropped); the rule fixed every row matched after it and left every row
 // matched before it as it was. Same rule as the retrim of stored pictures
-// and CLAUDE.md §8.1: what was stored before heals itself.
+// and docs/architecture/platform-spec.md §8.1: what was stored before heals itself.
 //
 // What it does, per pending row whose route came from the keyword tier and
 // that nobody has answered over: re-run the matchmaker's no-AI plan on the

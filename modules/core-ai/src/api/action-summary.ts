@@ -14,6 +14,10 @@ export interface ActionCopy {
   label?: string | null;
   /** argsSchema: name → { label }. */
   args_schema?: Record<string, { label?: string; type?: string }> | null;
+  /** Whether it can be put right again, and what it does outside the
+   *  workspace: the consent rule's two facts (action-consent.ts). */
+  undoable?: boolean | null;
+  effect?: string | null;
 }
 
 /** The one value worth putting in the summary: what the thing will be called.

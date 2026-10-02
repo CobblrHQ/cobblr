@@ -25,6 +25,7 @@ import { IDENTIFY_PROMPT, measurementContext, visionPromptFor } from "./identify
 import { rankImagesPromptFor } from "./rank-images-prompt.js";
 import { toolsOf, turnsOf, openAiToolsOf, ollamaMessagesOf, parseOllamaToolCalls, bridgeUsage } from "./tool-wire.js";
 import { promptFingerprint } from "./prompt-fingerprint.js";
+import { namesOfTags } from "./ollama-models.js";
 
 /** The personal-connections resolver injects the channel owner's user id here. */
 const CONNECTION_USER_KEY = "__connection_user_id";
@@ -43,6 +44,8 @@ export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; default
   // newest of that tier. Both are offered: "Sonnet 5.5" means that model
   // even after a newer Sonnet ships.
   chat: { models: ["sonnet", "claude-sonnet-5-5", "opus", "haiku", "llama3.2", "qwen2.5"], defaultModel: "sonnet" },
+  // Never haiku for a plan that deletes or reshapes.
+  "plan-changes": { models: ["sonnet", "claude-sonnet-5-5", "opus"], defaultModel: "sonnet" },
   "design-workspace": { models: ["opus", "sonnet", "haiku", "llama3.2", "qwen2.5"], defaultModel: "sonnet" },
   summarise: { models: ["sonnet", "llama3.2", "qwen2.5"], defaultModel: "sonnet" },
   "classify-image": { models: ["sonnet", "llava", "llama3.2-vision"], defaultModel: "sonnet" },
@@ -51,6 +54,8 @@ export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; default
   "identify-glance": { models: ["sonnet", "llava", "llama3.2-vision"], defaultModel: "sonnet" },
   "split-image": { models: ["sonnet", "llava", "llama3.2-vision"], defaultModel: "sonnet" },
   "rank-images": { models: ["sonnet", "llava", "llama3.2-vision"], defaultModel: "sonnet" },
+  // Sonnet, never haiku: a document's values are kept.
+  "document-read": { models: ["sonnet", "opus", "llama3.2-vision"], defaultModel: "sonnet" },
   "match-to-catalog": { models: ["sonnet", "llama3.2", "qwen2.5"], defaultModel: "sonnet" },
   "embed-text": { models: ["nomic-embed-text", "mxbai-embed-large"], defaultModel: "nomic-embed-text" },
 };
@@ -125,7 +130,15 @@ function release(key: string): void {
  *  per channel + retries transient gateway codes AND a momentarily-disconnected
  *  edge channel, with backoff. */
 async function edgePost(channelKey: string, path: string, body: unknown): Promise<Record<string, unknown>> {
-  const req: EdgeRequest = { path, method: "POST", body, timeoutMs: EDGE_TIMEOUT_MS };
+  return edgeCall(channelKey, { path, method: "POST", body, timeoutMs: EDGE_TIMEOUT_MS });
+}
+
+/** The same, for a read: what the bridge's own target says it serves. */
+async function edgeGet(channelKey: string, path: string): Promise<Record<string, unknown>> {
+  return edgeCall(channelKey, { path, method: "GET", timeoutMs: EDGE_TIMEOUT_MS });
+}
+
+async function edgeCall(channelKey: string, req: EdgeRequest): Promise<Record<string, unknown>> {
   await acquire(channelKey);
   try {
     let lastStatus = 0;
@@ -212,7 +225,11 @@ export function register(): void {
           const embedding = (body as { embedding?: number[] }).embedding ?? [];
           return { result: { vector: embedding }, cost_cents: 0 };
         }
-        case "chat": {
+        // The builder sends a conversation like chat does (no tools), and reads
+        // the answer the same way.
+        case "design-workspace":
+        case "chat":
+        case "plan-changes": {
           // Ollama dialect over the tunnel (see tool-wire.ts). Tool defs ride
           // along when supplied; a bridge target that ignores/lacks tools just
           // answers text — the chat loop treats that as a plain reply (graceful
@@ -285,6 +302,7 @@ export function register(): void {
         case "extract-text":
         case "split-image":
         case "identify-glance":
+        case "document-read":
         case "identify-image":
         case "rank-images":
         case "match-to-catalog": {
@@ -296,7 +314,7 @@ export function register(): void {
           const prompt =
             typeof ctx.input.prompt === "string" && ctx.input.prompt.trim()
               ? ctx.input.prompt
-              : (ctx.capability === "identify-image" || ctx.capability === "split-image" || ctx.capability === "identify-glance")
+              : (ctx.capability === "identify-image" || ctx.capability === "document-read" || ctx.capability === "split-image" || ctx.capability === "identify-glance")
                 ? visionPromptFor(ctx.capability, ctx.input)
                 : ctx.capability === "rank-images"
                   ? rankImagesPromptFor(ctx.input)
@@ -368,6 +386,18 @@ export function register(): void {
         photos = { read: false, said: (err as Error).message };
       }
       return { ok: true, models: [model], photos };
+    },
+    // What the bridge's target reports (an Ollama-shaped /api/tags): a Claude
+    // bridge answers sonnet, opus and haiku, a local Ollama what it pulled.
+    listModels: async (credentials) => {
+      const channelKey = channelKeyOf(credentials);
+      // An agent that is not connected is said at once: the menu waits on
+      // this answer, and the send's retries are for a poll gap, not an absence.
+      if (!(await platform().edge.hasChannel(channelKey).catch(() => false))) {
+        throw new Error("The bridge is not connected right now.");
+      }
+      const body = await edgeGet(channelKey, "/api/tags");
+      return namesOfTags(body);
     },
   });
 }

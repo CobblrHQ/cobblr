@@ -83,12 +83,15 @@ export function registerAssetsResolvers(): void {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<AssetsDB>;
     const limit = Math.min(query.limit ?? 50, 200);
     const offset = query.offset ?? 0;
-    // An archived thing is put away: not in a view, search or Needs you.
-    let q = db.selectFrom("assets_assets").selectAll().where("archived_at", "is", null);
+    // An archived thing is put away (or sold, or given away): not in a view or
+    // Needs you. Search asks for it by name (include_retired) and ranks it
+    // last, so "the camera I sold" is still found.
+    let q = db.selectFrom("assets_assets").selectAll();
+    if (query.include_retired !== true) q = q.where("archived_at", "is", null);
     if (instance) q = q.where("instance", "=", instance as never);
     if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "short_name", "manufacturer", "model", "serial_number", "type", "notes", "state"], json: ["metadata"] })!);
     if (query.filter) {
-      const NATIVE = columnSet<AssetsDB["assets_assets"]>()(["state", "location_id", "type", "manufacturer"]);
+      const NATIVE = columnSet<AssetsDB["assets_assets"]>()(["state", "location_id", "type", "manufacturer", "model", "serial_number"]);
       for (const [key, val] of Object.entries(query.filter)) {
         if (val === undefined || val === null) continue;
         if (key === "_tag") {

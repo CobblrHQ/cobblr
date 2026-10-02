@@ -187,7 +187,7 @@ export function standingHints(meta: Record<string, unknown> | null | undefined):
     ? ((m as { history: Array<Record<string, unknown>> }).history)
     : [];
   for (const e of history) {
-    if (e && e.action === "rerun-hint" && typeof e.note === "string" && e.note.trim()) {
+    if (e && (e.action === "rerun-hint" || e.action === "hint") && typeof e.note === "string" && e.note.trim()) {
       out.push(e.note.trim());
     }
   }

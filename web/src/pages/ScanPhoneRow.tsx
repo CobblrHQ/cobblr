@@ -12,7 +12,7 @@ import { displayName } from "@cobblr/platform-contract/display-identity";
 import { scanToolsFold, scanToolsFoldGroups } from "@cobblr/platform-contract/scan-triage";
 import { thumbnailFit, thumbnailTextHeavy, type ThumbFit } from "@cobblr/platform-contract/thumbnail-fit";
 import type { ScanTool, ScanToolHints } from "@cobblr/platform-contract/scan-tools";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Camera, CheckCircle, ChevronDown, ChevronRight, Download, Loader2, MoreHorizontal, PackagePlus, RotateCcw, ScanLine, Scissors } from "lucide-react";
 import type { ScanInboxItem } from "../lib/api";
@@ -39,6 +39,9 @@ export interface ScanPhoneRowAction {
 export interface ScanPhoneRowProps {
   item: ScanInboxItem;
   thumb: string | null;
+  /** Said in the picture's place when there is none: a picture that could
+   *  not be kept. */
+  pictureNote?: ReactNode;
   onThumbBroken: () => void;
   /** Tap the picture: see it full size. Null when there is no picture. */
   onViewImage: (() => void) | null;
@@ -171,7 +174,7 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
             />
           </span>
         ) : (
-          <span className="flex h-16 w-full items-center justify-center"><ScanLine size={22} className="text-faint dark:text-slate-600" /></span>
+          <span className="flex h-16 w-full items-center justify-center">{p.pictureNote ?? <ScanLine size={22} className="text-faint dark:text-slate-600" />}</span>
         )}
       </button>
       {p.selection?.active && (

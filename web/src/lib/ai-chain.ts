@@ -55,10 +55,10 @@ export const AI_JOB_GROUPS: AiJobGroup[] = [
     id: "photos",
     title: "Reading photos",
     shows: "identify-image",
-    capabilities: ["identify-image", "identify-glance", "split-image", "rank-images", "classify-image", "extract-text"],
+    capabilities: ["identify-image", "identify-glance", "split-image", "rank-images", "classify-image", "extract-text", "document-read"],
     waits: "scanning waits",
   },
-  { id: "chat", title: "Chat", shows: "chat", capabilities: ["chat", "design-workspace"], waits: "Cobb stops answering" },
+  { id: "chat", title: "Chat", shows: "chat", capabilities: ["chat", "plan-changes", "design-workspace"], waits: "Cobb stops answering" },
   { id: "text", title: "Organising and text", shows: "summarise", capabilities: ["summarise", "match-to-catalog"], waits: "matching and summaries wait" },
   { id: "search", title: "Search", shows: "embed-text", capabilities: ["embed-text"], waits: "search falls back to plain words" },
 ];

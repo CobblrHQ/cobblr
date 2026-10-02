@@ -68,7 +68,18 @@ export function glancePromptFor(input: Record<string, unknown>): string {
  * cached under the hash of a prompt it never sent.
  */
 export function visionPromptFor(capability: string, input: Record<string, unknown>): string {
+  if (capability === "document-read") return documentPromptFor(input);
   return capability === "identify-glance" ? glancePromptFor(input) : identifyPromptFor(input);
+}
+
+/** A document is read for what its CALLER needs from it (a bill of sale's
+ *  VIN and price, every line of an invoice), so the caller says so. There is
+ *  no default: reading paperwork with the identify prompt would name the
+ *  piece of paper instead of reading it. */
+export function documentPromptFor(input: Record<string, unknown>): string {
+  const prompt = typeof input.prompt === "string" ? input.prompt.trim() : "";
+  if (!prompt) throw new Error("document-read needs the caller's prompt: what to read from the document");
+  return prompt;
 }
 
 export const IDENTIFY_PROMPT =

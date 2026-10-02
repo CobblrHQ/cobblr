@@ -35,6 +35,12 @@ import {
   DUPLICATE_SENTENCE,
   AMBIGUOUS_MATCH_SENTENCE,
   WHICH_PLACE_SENTENCE,
+  NEW_PLACE_SENTENCE,
+  NEW_PLACE_BARE_SENTENCE,
+  CHECK_FIELDS_SENTENCE,
+  CHECK_FIELDS_WAITING_SENTENCE, CHECK_FIELDS_LIMIT_SENTENCE,
+  PAPERWORK_SENTENCE,
+  ACTION_ADD_PLACE,
   HELD_GUESS_BECAUSE,
   HELD_GUESS_PROMPT,
   HELD_GUESS_SOURCE,
@@ -87,6 +93,33 @@ export interface ScanTriageRow {
   /** The row's own picture: what a photo read (`photo_read`) is evidence
    *  about only while it is about THIS picture (scan-evidence.ts). */
   image_file_id?: string | null;
+  /** How the row came in ("receipt" for a line read off a document). */
+  source_kind?: string | null;
+  /** How many things the row stands for. */
+  quantity?: number | null;
+}
+
+/**
+ * Is this row the PAPERWORK for one thing, rather than a thing? A bill of
+ * sale is one thing and its purchase: matched to a car the workspace already
+ * has, it is that car's paperwork, never a second car (#4523, #4633). Unless
+ * the paper itself says it sold several.
+ */
+export function isPaperworkRow(row: Pick<ScanTriageRow, "source_kind" | "quantity" | "suggested_metadata">): boolean {
+  if (row.source_kind !== "receipt") return false;
+  if ((row.quantity ?? 1) > 1) return false;
+  return (metaOf(row as ScanTriageRow) as { receipt_document?: unknown }).receipt_document === "bill-of-sale";
+}
+
+/**
+ * Does this row's match make it paperwork for the matched record? A line off
+ * a document whose code found the record (a VIN), or a bill of sale matched by
+ * ANY route: by name, "Is this the same one?", "It's this one". Every route
+ * then goes through the one paperwork door: fills by meaning, no "+1 more".
+ */
+export function isPaperworkMatch(row: Pick<ScanTriageRow, "source_kind" | "quantity" | "suggested_metadata">, match: { matched_by?: string | null } | null | undefined): boolean {
+  if (!match || row.source_kind !== "receipt") return false;
+  return match.matched_by === "identifier" || isPaperworkRow(row);
 }
 
 /** The row columns the predicates above read. A server select that feeds
@@ -228,6 +261,41 @@ export function scanTopCandidate(row: ScanTriageRow): ScanTopCandidate | null {
  *  purchase evidence contradicts (acquisition-source.ts, #3008). "Looks
  *  fine" (a human eyeballed it) clears the flag — the point is to stop
  *  nagging, not to record a permanent doubt. */
+/**
+ * A row matched to a thing the workspace has, by an identifier the PERSON gave
+ * (a part number in a hint, core#4552), files into that thing under its own
+ * name: how sure the web was of a name for the identifier decides nothing
+ * about it. Only that doubt is set aside (the confidence number, the low-trust
+ * flag); a source or evidence conflict still holds the row.
+ */
+export function withoutVouchedNameDoubt(row: ScanTriageRow): ScanTriageRow {
+  const meta = metaOf(row) as Record<string, unknown>;
+  const stamps = (meta.field_provenance ?? {}) as Record<string, { by?: unknown } | undefined>;
+  if (stamps.identifier?.by !== "person" || scanTrackedMatch(row)?.matched_by !== "identifier") return row;
+  return { ...row, ai_confidence: null, suggested_metadata: { ...meta, low_trust: false } };
+}
+
+/** The fields a document read put in doubt (its own checks did not pass on
+ *  them), and whether the document model is still to read the page. Null
+ *  when nothing is in doubt. Written by the receipt reader (document-read.ts)
+ *  on the item the document is about. */
+export function scanCheckFields(row: ScanTriageRow): { fields: string[]; waiting: boolean; limit?: boolean } | null {
+  const c = (metaOf(row) as { check_fields?: { fields?: unknown; waiting_for_ai?: unknown; waiting_reason?: unknown } }).check_fields;
+  const fields = Array.isArray(c?.fields) ? (c!.fields as unknown[]).filter((f): f is string => typeof f === "string" && !!f) : [];
+  return fields.length ? { fields, waiting: c?.waiting_for_ai === true, ...(c?.waiting_for_ai === true && c?.waiting_reason === "limit" ? { limit: true } : {}) } : null;
+}
+
+// VOCAB-ENUMERATION OK: the words for the fields a sale document's checks name
+const CHECK_FIELD_WORDS: Record<string, string> = { vin: "the VIN", year: "the year", name: "the name", make: "the make", model: "the model", price: "the price", total: "the total", deposit: "the deposit", seller: "the seller" };
+
+/** "Please check the VIN and the year: the page did not read clearly." */
+export function checkFieldsWords(checks: { fields: string[]; waiting: boolean; limit?: boolean }, fieldLabel?: (name: string) => string): string {
+  if (checks.limit) return CHECK_FIELDS_LIMIT_SENTENCE;
+  const words = checks.fields.map((f) => CHECK_FIELD_WORDS[f] ?? `the ${(fieldLabel?.(f) ?? f.replace(/_/g, " ")).toLowerCase()}`);
+  const list = words.length <= 1 ? (words[0] ?? "") : `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
+  return fillSentence(checks.waiting ? CHECK_FIELDS_WAITING_SENTENCE : CHECK_FIELDS_SENTENCE, { fields: list });
+}
+
 export function needsScanReview(row: ScanTriageRow): boolean {
   if (!isPending(row)) return false;
   // An unmet requirement is not a doubt: nothing files without a name, so
@@ -242,6 +310,7 @@ export function needsScanReview(row: ScanTriageRow): boolean {
     !!meta.rate_limited ||
     (confidence != null && !Number.isNaN(confidence) && confidence < SCAN_REVIEW_CONFIDENCE) ||
     scanSourceConflict(row) !== null ||
+    scanCheckFields(row) !== null ||
     // A field the row's own evidence contradicts (the cover, the decoded
     // code) holds the row whatever the confidence number says: the number
     // is the identification's, not the field's (#3070, scan-evidence.ts).
@@ -363,6 +432,8 @@ export function scanReviewReason(
   if (conflict) return sourceConflictWords(conflict, opts.fieldLabel?.(conflict.field));
   const contradicted = scanEvidenceConflicts(row)[0];
   if (contradicted) return evidenceConflictWords(contradicted, opts.fieldLabel?.(contradicted.field));
+  const checks = scanCheckFields(row);
+  if (checks) return checkFieldsWords(checks, opts.fieldLabel);
   if (meta.low_trust) return scanDoubtWords(row) ?? UNTRUSTED_DOUBT;
   const confidence = Number(row.ai_confidence);
   return fillSentence(LOW_CONFIDENCE_SENTENCE, { pct: Math.round(confidence * 100) });
@@ -708,6 +779,11 @@ export function scanBetterTable(item: FitItem, currentKind: string | null | unde
   const head = normaliseTargetKind(currentKind, module).split(":")[0] ?? "";
   const fits = rankFits(item, fit);
   if (fits.length === 0) return null;
+  // A module's catch-all yields to a list of its own that fits: the most
+  // specific collection wins, 3D Printers over Machines (#4591).
+  const onCatchAll = !!module && head === module;
+  const ownList = onCatchAll ? fits.find((f) => (f.table.module_name ?? null) === module && f.table.instance_name !== head) : undefined;
+  if (ownList) return ownList.table;
   if (fits.some((f) => f.table.instance_name === head)) return null;
   const best = fits[0]!.table;
   return best.instance_name === head ? null : best;
@@ -873,10 +949,15 @@ export interface ScanTrackedMatch {
    *  somebody picked, or the place being worked in. Only matters when
    *  `places` is above 1. */
   placeChosen: boolean;
+  /** The place this scan is at, when the matched thing is not kept there
+   *  yet: filing it adds that place to the thing. */
+  newPlace: string | null;
+  /** Where the thing is kept already, in words ("8 in Kitchen"). */
+  held: string | null;
 }
 export function scanTrackedMatch(row: ScanTriageRow): ScanTrackedMatch | null {
   const m = ((row.suggested_metadata ?? {}) as {
-    tracked_match?: { title?: unknown; matched_by?: unknown; kind?: unknown; id?: unknown; instance?: unknown; qty?: unknown; of?: unknown; places?: unknown; place_chosen?: unknown } | null;
+    tracked_match?: { title?: unknown; matched_by?: unknown; kind?: unknown; id?: unknown; instance?: unknown; qty?: unknown; of?: unknown; places?: unknown; place_chosen?: unknown; new_place?: unknown; held?: unknown } | null;
   }).tracked_match;
   if (!m || typeof m !== "object" || typeof m.title !== "string" || !m.title.trim()) return null;
   const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : null);
@@ -890,6 +971,8 @@ export function scanTrackedMatch(row: ScanTriageRow): ScanTrackedMatch | null {
     of: typeof m.of === "number" && Number.isFinite(m.of) && m.of > 1 ? Math.floor(m.of) : 1,
     places: typeof m.places === "number" && Number.isFinite(m.places) && m.places > 1 ? Math.floor(m.places) : 1,
     placeChosen: m.place_chosen === true,
+    newPlace: str(m.new_place),
+    held: str(m.held),
   };
 }
 
@@ -901,6 +984,12 @@ export interface ScanMergeTarget {
   id: string;
   instance: string | null;
   title: string;
+  /** The scan is of this thing at a place it is not kept yet: filing adds a
+   *  row for that place under the same item, never a second item and never
+   *  a count on a place the scan is not at. */
+  new_place?: string | null;
+  /** Where it is kept already, in words ("8 in Kitchen"). */
+  held?: string | null;
 }
 
 /** "Not the same, keep separate": the person's answer that this scan is not
@@ -983,6 +1072,8 @@ export function scanRebuy(row: ScanTriageRow, ctx: ScanDestinationContext = {}):
   if (!isPending(row) || metaOf(row).reviewed) return { kind: "none" };
   const t = scanTrackedMatch(row);
   if (!t) return { kind: "none" };
+  // Paperwork for a thing you have is put on it, never counted as another.
+  if (isPaperworkMatch(row, t)) return { kind: "hold", sentence: fillSentence(PAPERWORK_SENTENCE, { title: t.title }) };
   const tables = ctx.tables ?? [];
   // "Not A" is no evidence for B: turning down one of several equal matches
   // still leaves a choice only a person can make.
@@ -992,12 +1083,16 @@ export function scanRebuy(row: ScanTriageRow, ctx: ScanDestinationContext = {}):
   // place, and "+1 more" into a place nobody chose files a vehicle's delivery
   // in the closet. Asked once; the pick (or the place being worked in) is
   // what the stamp's record already is.
-  if (t.places > 1 && !t.placeChosen) return { kind: "hold", sentence: fillSentence(WHICH_PLACE_SENTENCE, { n: t.places }) };
+  if (t.places > 1 && !t.placeChosen && !t.newPlace) return { kind: "hold", sentence: fillSentence(WHICH_PLACE_SENTENCE, { n: t.places }) };
   // A record with no count is one unique thing, and "+1" would double it.
   if (!t.counted || !t.kind || !t.id) return { kind: "hold", sentence: DUPLICATE_SENTENCE };
   const home = trackedTable(t, tables);
   if (!home) return { kind: "hold", sentence: DUPLICATE_SENTENCE };
-  return { kind: "adds", to: { module: home.module, kind: t.kind, id: t.id, instance: t.instance, title: t.title }, matchedBy: t.matched_by };
+  return {
+    kind: "adds",
+    to: { module: home.module, kind: t.kind, id: t.id, instance: t.instance, title: t.title, ...(t.newPlace ? { new_place: t.newPlace, held: t.held } : {}) },
+    matchedBy: t.matched_by,
+  };
 }
 
 export interface ScanRowState {
@@ -1078,7 +1173,7 @@ export function scanRowState(row: ScanTriageRow, ctx: ScanRowStateContext = {}):
   // No grant makes a table in an app this deployment lacks: another table is
   // the only next step, for a person with or without the permission.
   if (permitted === false) return moduleOff === "absent" && destination ? review(fillSentence(UNAVAILABLE_SENTENCE, { table: destination.label })) : blocked(BLOCKED_SENTENCE);
-  if (needsScanReview(row)) return review(scanReviewReason(row, { fieldLabel: ctx.fieldLabel }) ?? UNTRUSTED_DOUBT);
+  if (needsScanReview(withoutVouchedNameDoubt(row))) return review(scanReviewReason(row, { fieldLabel: ctx.fieldLabel }) ?? UNTRUSTED_DOUBT);
   if (!meta.reviewed) {
     // Another of a thing the workspace COUNTS is a re-purchase: +1 more, one
     // tap, the same on the card, the row and File N. A record with no count
@@ -1090,6 +1185,17 @@ export function scanRowState(row: ScanTriageRow, ctx: ScanRowStateContext = {}):
     // person turned down is a new item like any other.
     const rebuy = scanRebuy(row, ctx);
     const updates = destination?.updates;
+    if (rebuy.kind === "adds" && updates?.new_place) {
+      const sentence = updates.held ? fillSentence(NEW_PLACE_SENTENCE, { title: updates.title, held: updates.held }) : NEW_PLACE_BARE_SENTENCE;
+      return {
+        eligibility: "ready",
+        sentence,
+        action: { kind: "merge", label: ACTION_ADD_PLACE, title: `Keeps these here as another place of ${updates.title} in ${destLabel}, the one you already have` },
+        destination,
+        merge: updates,
+        ask: null,
+      };
+    }
     if (rebuy.kind === "adds" && updates) {
       return {
         eligibility: "ready",

@@ -10,7 +10,8 @@ import { useRef, useState } from "react";
 import { openAuthedFile } from "../lib/authed-file";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, Plus, Star, Tag as TagIcon, Trash2, Upload, X } from "lucide-react";
-import { ApiError, api, type TagRecord } from "../lib/api";
+import { ApiError, api, type PaperworkConflict, type TagRecord } from "../lib/api";
+import { PaperworkConflicts, paperworkNoun, useAnnouncePaperwork } from "./PaperworkConflicts";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { Modal, useToast, useConfirm, EntityPhoto, usePasteImage, SelectableTile, PhotoSourceBadge } from "@cobblr/platform-web";
 import type { PhotoSource } from "@cobblr/platform-contract/photo-source";
@@ -77,6 +78,10 @@ export function EntityAttachments({ kind, entityId, collection, compact = false,
 }
 
 /** Shared small dashed add-pill used by the compact empty states. */
+/** A document the paperwork reader can read: a PDF, a spreadsheet export or
+ *  plain text. Anything else (a model, a G-code file) is only kept. */
+const READABLE_DOCUMENT = /application\/pdf|text\/|csv|\.(pdf|csv|txt)\b/i;
+
 /** A PDF by its stored type (which the store sets from the bytes) or its name. */
 function isPdfAttachment(att: { mime_type: string; filename: string }): boolean {
   return att.mime_type === "application/pdf" || /\.pdf$/i.test(att.filename);
@@ -310,7 +315,7 @@ function TagPickerModal({
 
 // ──────────────── Files ─────────────────────────────────────────────
 
-function FilesSection({
+export function FilesSection({
   sourceModule,
   sourceType,
   sourceId,
@@ -359,6 +364,15 @@ function FilesSection({
     enabled: !!activeSlug,
   });
 
+  const [paperwork, setPaperwork] = useState<{ noun: string; conflicts: PaperworkConflict[] } | null>(null);
+  const record = { kind: `${sourceModule}:${sourceType}`, id: sourceId };
+  // Whatever shows this record's fields reads them again.
+  const refreshFields = () => {
+    refreshRecord();
+    void qc.invalidateQueries({ predicate: (q) => JSON.stringify(q.queryKey).includes(sourceId) });
+  };
+  const announcePaperwork = useAnnouncePaperwork(activeSlug, record, refreshFields);
+
   const uploadAndAttach = useMutation({
     mutationFn: async (file: File) => {
       // Snapshot BEFORE the upload: does the entity already have a photo?
@@ -385,6 +399,25 @@ function FilesSection({
         },
       );
       if (!res.ok) throw new Error(`attach failed ${res.status}`);
+      // A document is read for what it says about this record (a bill of
+      // sale's price, date, seller; a vehicle's VIN): its empty fields are
+      // filled and any disagreement is asked about (#4523). A manual or a
+      // card that is not a sale is just kept: the reader says so and no model
+      // is asked about it.
+      if (!file.type.startsWith("image/") && READABLE_DOCUMENT.test(`${file.type} ${file.name}`)) {
+        const reading = toast.info(`Reading ${file.name}…`);
+        try {
+          const r = await api.attachPaperwork(activeSlug, { file_id: f.id, kind: `${sourceModule}:${sourceType}`, id: sourceId });
+          toast.dismiss(reading);
+          if (r.read) {
+            announcePaperwork(r);
+            setPaperwork(r.conflicts.length ? { noun: paperworkNoun(r), conflicts: r.conflicts } : null);
+            refreshFields();
+          }
+        } catch {
+          toast.dismiss(reading);
+        }
+      }
       // The FIRST photo on an entity auto-becomes its cover — uploading a photo
       // should "just show" without a separate Set-as-cover tap (beta feedback,
       // "uploaded a yarn photo, it did not retain"). Best-effort: a failure here
@@ -721,6 +754,9 @@ function FilesSection({
           onChange={(e) => void handleFiles(e.target.files)}
         />
       </div>
+      {paperwork && (
+        <PaperworkConflicts slug={activeSlug} record={record} noun={paperwork.noun} conflicts={paperwork.conflicts} onChanged={refreshFields} />
+      )}
 
       {preview && (
         <Modal open onClose={() => setPreview(null)} title={preview.filename} size="lg">

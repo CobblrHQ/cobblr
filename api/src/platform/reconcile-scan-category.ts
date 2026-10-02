@@ -6,7 +6,7 @@
 // five electrical parts across four near-synonym tables. The axis is the fix, so
 // every workspace needs one, including the ones that already exist.
 //
-// Self-healing per CLAUDE.md §8.1: signup only provisions what existed when the
+// Self-healing per docs/architecture/platform-spec.md §8.1: signup only provisions what existed when the
 // workspace was created, so a change every workspace needs must reconcile at
 // boot. A user must never have to run anything.
 //

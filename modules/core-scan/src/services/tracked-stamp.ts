@@ -15,7 +15,10 @@
 
 import { sql, type Kysely } from "kysely";
 import { personNameOf } from "@cobblr/platform-contract/display-identity";
+import { platform } from "@cobblr/platform-contract";
+import { HOLDING_OF } from "@cobblr/platform-contract/holdings";
 import { findTracked, placesOfCard, type TrackedMatch } from "./entity-match.js";
+import { scanTargetOf } from "./scan-target.js";
 
 export interface TrackedMatchStamp {
   kind: string;
@@ -34,6 +37,11 @@ export interface TrackedMatchStamp {
   /** The stamp's record is the place this scan belongs to (picked, or the
    *  place being worked in). */
   place_chosen?: boolean;
+  /** The place this scan is at, when the thing is not kept there yet:
+   *  filing adds it as another place of the same item. */
+  new_place?: string | null;
+  /** Where the thing is kept already, in words ("8 in Kitchen"). */
+  held?: string | null;
 }
 
 /** Where this scan is being filed, as far as a place of the matched thing is
@@ -89,11 +97,66 @@ export async function trackedMatchStampAt(
   const tier = tracked.barcode_matches.length > 0 ? tracked.barcode_matches : tracked.name_matches;
   const card = tier[0]?.card_id ?? stamp.id;
   const places = await placesOfCard(orgId, stamp.kind, card).catch(() => []);
+  if (!at.place_choice) {
+    const fresh = await newPlaceAmong(orgId, stamp.kind, stamp.instance, places, at.location_id ?? null);
+    if (fresh) return { ...stamp, id: card, places: Math.max(places.length, 1), place_chosen: true, new_place: at.location_id ?? null, held: fresh.held };
+  }
   if (places.length <= 1) return stamp;
   const chosen =
     places.find((p) => p.id === at.place_choice) ?? (at.location_id ? places.find((p) => p.location_id === at.location_id) : undefined);
   if (!chosen) return { ...stamp, id: card, places: places.length, place_chosen: false };
   return { ...stamp, id: chosen.id, qty: chosen.qty ?? stamp.qty, places: places.length, place_chosen: true };
+}
+
+type Place = { id: string; location_id: string | null; qty: number | null };
+
+/** Whether a scan at `locationId` is a place the thing is not kept yet: it is
+ *  kept somewhere (a located row), not here, and its kind can keep a thing in
+ *  several places (a declared holdAction). The words for where it is kept,
+ *  for the card. Null when filing should add to a place it already has. */
+async function newPlaceAmong(
+  orgId: string,
+  kind: string,
+  instance: string | null,
+  places: Place[],
+  locationId: string | null,
+): Promise<{ held: string | null } | null> {
+  if (!locationId) return null;
+  const located = places.filter((p) => p.location_id);
+  if (!located.length || located.some((p) => p.location_id === locationId)) return null;
+  const target = await scanTargetOf(orgId, kind, instance ?? undefined).catch(() => null);
+  if (!target?.scannable.holdAction || !target.scannable.qtyField) return null;
+  const names = await platform()
+    .entities.lookupMany(orgId, [...new Set(located.map((p) => p.location_id!))].map((id) => ({ kind: "core-locations:location", id })))
+    .then((ls) => new Map(ls.map((l) => [l.id, l.title])))
+    .catch(() => new Map<string, string>());
+  const held = located
+    .map((p) => {
+      const where = names.get(p.location_id!);
+      return where ? `${p.qty ?? 0} in ${where}` : null;
+    })
+    .filter(Boolean)
+    .join(", ");
+  return { held: held || null };
+}
+
+/** The same question at filing time, asked fresh of the record the door was
+ *  handed (a card or one of its places): the item's card when a scan at
+ *  `locationId` is a new place of it, else null. */
+export async function newPlaceAt(
+  orgId: string,
+  kind: string,
+  instance: string | null,
+  recordId: string,
+  locationId: string | null,
+): Promise<{ card: string } | null> {
+  if (!locationId) return null;
+  const pairs = await platform()
+    .pairings.findBySources({ orgId, sourceKind: kind, sourceIds: [recordId], targetKind: kind, relationshipKind: HOLDING_OF })
+    .catch(() => [] as Array<{ targetId: string }>);
+  const card = pairs[0]?.targetId ?? recordId;
+  const places = await placesOfCard(orgId, kind, card).catch(() => []);
+  return (await newPlaceAmong(orgId, kind, instance, places, locationId)) ? { card } : null;
 }
 
 export interface MatchInput {
@@ -109,9 +172,18 @@ export interface MatchInput {
  *  person's own over the model's), its code, maker, and the destination's
  *  fields. `modelName` is the name the model's pass settled on, when the
  *  caller has a newer one than the column. */
+/** The part number a person gave for a scan, when they gave one. */
+export function givenIdentifierOf(meta: unknown): string | null {
+  const v = (meta as { identifier?: unknown } | null | undefined)?.identifier;
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
 export function matchQuery(row: MatchInput, fields: Record<string, unknown> | null | undefined, category: string | null | undefined, modelName?: string | null) {
   return {
     barcode: row.barcode_text,
+    // A part number the person gave (a hint, a typed identifier): matched as
+    // exactly as a barcode.
+    identifier: givenIdentifierOf(row.suggested_metadata),
     name: personNameOf(row.suggested_metadata) ?? modelName ?? row.suggested_name,
     fields: fields ?? {},
     brand: row.suggested_manufacturer,

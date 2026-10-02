@@ -107,6 +107,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     undoable: false,
     examples: ["add a Purchase Date field to parts", "track a colour on every physical thing"],
     args_schema: {
+      without_meaning: { label: "Add it as a field of its own even though the kind already has one meaning the same (it is made without that meaning)", type: "boolean" },
       entity_kind: { label: "Which kind of record (or a trait scope like @physical)", type: "text", required: true },
       display_label: { label: "The field's label (e.g. Purchase Date)", type: "text", required: true },
       name: { label: "Storage name (lowercase; derived from the label if omitted)", type: "text" },
@@ -116,6 +117,101 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
       ref_kind: { label: "For a relation: the kind it points at", type: "text" },
     },
     version: "0.1.0",
+  },
+  {
+    id: "platform:track-sellers",
+    label: "Track sellers as their own field",
+    icon: "store",
+    version: "0.1.0",
+    description:
+      "Give a kind of record a Seller field of its own and move every seller noted beside where things came from (eBay · detroitaxle) into it, so a seller can be filtered and grouped across places. Undoable. Args: { entity_kind }.",
+    examples: ["track sellers as their own field on my parts", "make the seller its own field"],
+    // UI-SCREEN: /fields
+    scope: "workspace",
+    min_role: "admin",
+    invoke_handler: "platform.track-sellers",
+    user_invokable: true,
+    undoable: true,
+    args_schema: {
+      entity_kind: { label: "The kind of record", type: "text", required: true },
+    },
+  },
+  {
+    // NO-PHRASING: the undo step of track-sellers, handed back on its card
+    // UI-REACH: an undo step; the toast after Track sellers runs it
+    id: "platform:untrack-sellers",
+    label: "Put sellers back as notes",
+    icon: "undo-2",
+    version: "0.1.0",
+    description: "Undo of track-sellers: every seller back as a note beside where it came from, and the Seller field removed.",
+    scope: "workspace",
+    min_role: "admin",
+    invoke_handler: "platform.untrack-sellers",
+    user_invokable: true,
+    wire_only: true,
+    undoable: false,
+    args_schema: {
+      entity_kind: { label: "The kind of record", type: "text", required: true },
+      field_id: { label: "The Seller field's id", type: "text", required: true },
+    },
+  },
+  {
+    id: "platform:decline-seller-field",
+    label: "Keep sellers as notes",
+    icon: "x",
+    version: "0.1.0",
+    description: "Answer no to tracking sellers as their own field on a kind of record: it is not offered again for that kind (the Fields page still has it). Args: { entity_kind }.",
+    examples: ["no, keep sellers as notes"],
+    // UI-SCREEN: /fields
+    scope: "workspace",
+    min_role: "admin",
+    invoke_handler: "platform.decline-seller-field",
+    user_invokable: true,
+    undoable: false,
+    args_schema: {
+      entity_kind: { label: "The kind of record", type: "text", required: true },
+    },
+  },
+  {
+    id: "platform:settle-same-meaning",
+    label: "Settle two fields that mean one thing",
+    icon: "merge",
+    version: "0.1.0",
+    description:
+      "When one kind of record has two fields with the same meaning (say Store and Acquired from), keep one: the other's values move into it where it is empty, and the other is hidden and loses the meaning. Only a field the workspace made can be let go. Undoable. Args: { entity_kind, keep, drop } (fields by name or label).",
+    examples: ["keep Acquired from and get rid of Store on my parts", "merge the two where-it-came-from fields"],
+    // UI-SCREEN: /fields
+    scope: "workspace",
+    min_role: "admin",
+    invoke_handler: "platform.settle-same-meaning",
+    user_invokable: true,
+    undoable: true,
+    args_schema: {
+      entity_kind: { label: "The kind of record", type: "text", required: true },
+      keep: { label: "The field to keep", type: "text", required: true },
+      drop: { label: "The field to let go", type: "text", required: true },
+    },
+  },
+  {
+    // NO-PHRASING: the undo step of settle-same-meaning, handed back on its card
+    // UI-REACH: an undo step; the toast after Keep runs it
+    id: "platform:unsettle-same-meaning",
+    label: "Put two fields back as they were",
+    icon: "undo-2",
+    version: "0.1.0",
+    undoable: false,
+    description: "Undo of settle-same-meaning: values moved back, the meaning and visibility restored.",
+    scope: "workspace",
+    min_role: "admin",
+    invoke_handler: "platform.unsettle-same-meaning",
+    user_invokable: true,
+    wire_only: true,
+    args_schema: {
+      entity_kind: { label: "The kind of record", type: "text", required: true },
+      keep: { label: "The field that was kept", type: "text", required: true },
+      drop: { label: "The field that was let go", type: "text", required: true },
+      drop_id: { label: "The let-go field's id", type: "text", required: true },
+    },
   },
   {
     // UI-SCREEN: /fields
@@ -270,13 +366,33 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     scope: "workspace",
     invoke_handler: "platform.create-instance",
     user_invokable: true,
-    // a whole list, its nav entry and its label-code group; undoing it is not one step
-    undoable: false,
-    examples: ["make a separate list for CNC machines", "I want 3D printers and laser cutters kept apart"],
+    // Its undo is platform:remove-list, which takes a list away again while
+    // nothing is filed in it: the list, its menu entry and its label codes.
+    undoable: true,
+    examples: ["make a separate list for CNC machines", "I want 3D printers and laser cutters kept apart", "create Mugs and file these in it"],
     args_schema: {
       module_name: { label: "The module to make a list from (e.g. machines)", type: "text", required: true },
       display_name: { label: "What to call the list (e.g. CNC Machines)", type: "text", required: true },
       instance_name: { label: "Short name (lowercase; derived from the display name if omitted)", type: "text" },
+    },
+    version: "0.1.0",
+  },
+  {
+    id: "platform:remove-list",
+    min_role: "grantable",
+    label: "Remove an empty list",
+    description:
+      "Take away a list made from a module (an instance such as Mugs or CNC Machines) while nothing is filed in it: the list, its menu entry and its label codes go. A list that still holds records is refused, naming how many; move or delete them first. Runs on the workspace, not a record.",
+    icon: "layout-grid",
+    scope: "workspace",
+    invoke_handler: "platform.remove-list",
+    user_invokable: true,
+    // Its undo makes the same list again (platform:create-instance), and it
+    // only ever removes a list with nothing in it, so nothing else is lost.
+    undoable: true,
+    examples: ["remove the Mugs list", "I don't need the CNC list any more, it's empty"],
+    args_schema: {
+      list: { label: "The list, by its name in the app (e.g. Mugs)", type: "text", required: true },
     },
     version: "0.1.0",
   },
@@ -342,6 +458,72 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
       ids: { label: "The records to move, by id (read them first)", type: "list", required: true },
       to: { label: "The list to move them into (e.g. Tea)", type: "text", required: true },
       from: { label: "The list they are in now (optional; worked out from the records when left blank)", type: "text" },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /assets (and every record page: "No longer mine…" under its actions)
+    id: "platform:mark-gone",
+    min_role: "grantable",
+    label: "Mark as sold or given away",
+    description:
+      "Record that things are no longer the person's: sold, given away, parted out, traded, lost, or thrown out (how: sold, given away, parted out, converted, traded, lost, disposed of). They leave the lists and the totals and stay findable, with their history, photos and printed labels kept; nothing is deleted. Give the day (on, YYYY-MM-DD; today when left out), the price when it was sold, and who has it now (to) when it is known. Read the records first and pass their real ids and their kind.",
+    icon: "hand-coins",
+    scope: "workspace",
+    invoke_handler: "platform.mark-gone",
+    user_invokable: true,
+    // platform:bring-back puts it back exactly, and is registered as its undo
+    undoable: true,
+    examples: ["I sold the old Ender 3 for $120", "I gave the drill press to my brother", "the blue kettle broke, I threw it out"],
+    args_schema: {
+      entity_kind: { label: "The kind of record (e.g. machines:machine)", type: "text", required: true },
+      ids: { label: "The records, by id (read them first)", type: "list", required: true },
+      how: { label: "How it left: sold, given away, parted out, converted, traded, lost, disposed of", type: "text", required: true },
+      on: { label: "The day it left (YYYY-MM-DD; today when left out)", type: "text" },
+      price: { label: "What it sold for", type: "number" },
+      to: { label: "Who has it now", type: "text" },
+      note: { label: "A note", type: "text" },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /assets (and every record page: Bring back, on the line of a thing that left)
+    id: "platform:bring-back",
+    min_role: "grantable",
+    label: "Bring back",
+    description:
+      "Things marked as sold or given away are the person's again: back in the lists and the totals, as they were before. For when something comes home, or was marked by mistake. Read the records first and pass their real ids and their kind.",
+    icon: "undo-2",
+    scope: "workspace",
+    invoke_handler: "platform.bring-back",
+    user_invokable: true,
+    // platform:mark-gone with what each record said before is its undo
+    undoable: true,
+    examples: ["I got the drill press back", "I didn't sell the camera after all"],
+    args_schema: {
+      entity_kind: { label: "The kind of record", type: "text", required: true },
+      ids: { label: "The records, by id (read them first)", type: "list", required: true },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /configuration/sharing (and every record page: "Give to…")
+    id: "platform:offer-to",
+    min_role: "grantable",
+    label: "Give to someone you share with",
+    description:
+      "Offer records to a person this workspace is shared with (or, from a workspace of your own, to someone who shared with you): they arrive in that person's scan inbox, where they take them, pass, or leave them for later. Taken, a record here becomes 'Given away to <them>' with its history kept. Name the person (to) as their name or the share's id. Read the records first and pass their real ids and their kind.",
+    icon: "gift",
+    scope: "workspace",
+    invoke_handler: "platform.offer-to",
+    user_invokable: true,
+    // it reaches another person's inbox, which no undo here can take back
+    undoable: false,
+    examples: ["give the spare PSU to Sam", "offer these three printers to Vince"],
+    args_schema: {
+      entity_kind: { label: "The kind of record", type: "text", required: true },
+      ids: { label: "The records, by id (read them first)", type: "list", required: true },
+      to: { label: "Who to offer them to: the person's name, or the share's id", type: "text", required: true },
     },
     version: "0.1.0",
   },

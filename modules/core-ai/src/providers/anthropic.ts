@@ -1,6 +1,6 @@
 // anthropic — Claude provider. Messages API.
 
-import { platform, type AiCapability } from "@cobblr/platform-contract";
+import { platform, type AiCapability, isChatTurn } from "@cobblr/platform-contract";
 import { providerError, providerSentence, reasonFromResponse, reasonFromTransportError, redactSecrets, retryAfterSecOf } from "@cobblr/platform-contract/provider-reason";
 import { identifyPromptFor, visionPromptFor } from "./identify-prompt.js";
 import { rankImagesPromptFor } from "./rank-images-prompt.js";
@@ -14,6 +14,11 @@ export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; default
   },
   // Sonnet rather than Haiku by default: this job runs a handful of times per
   // workspace and its answer is the whole first impression of the product.
+  // Sonnet: a plan that deletes or reshapes is the fuller model's to make.
+  "plan-changes": {
+    models: ["claude-sonnet-4-5", "claude-opus-4-5"],
+    defaultModel: "claude-sonnet-4-5",
+  },
   "design-workspace": {
     models: ["claude-sonnet-4-5", "claude-haiku-4-5", "claude-opus-4-5"],
     defaultModel: "claude-sonnet-4-5",
@@ -49,6 +54,11 @@ export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; default
   "match-to-catalog": {
     models: ["claude-sonnet-4-5", "claude-haiku-4-5"],
     defaultModel: "claude-haiku-4-5",
+  },
+  // Sonnet: a document's values are kept, so the read gets the fuller model.
+  "document-read": {
+    models: ["claude-sonnet-4-5", "claude-opus-4-5"],
+    defaultModel: "claude-sonnet-4-5",
   },
 };
 
@@ -122,7 +132,7 @@ export function register(): void {
             : system;
       }
       // Native tool-calling for chat: forward the neutral tool defs.
-      const toolDefs = ctx.capability === "chat" ? toolsOf(ctx.input) : null;
+      const toolDefs = isChatTurn(ctx.capability) ? toolsOf(ctx.input) : null;
       if (toolDefs) body.tools = anthropicToolsOf(toolDefs);
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -147,7 +157,7 @@ export function register(): void {
         result:
           ctx.capability === "embed-text"
             ? { vector: [] }
-            : ctx.capability === "chat"
+            : isChatTurn(ctx.capability)
               ? { role: "assistant", content: text, ...(parsed.tool_calls ? { tool_calls: parsed.tool_calls } : {}) }
               : ctx.capability === "summarise"
                 ? { text }
@@ -215,6 +225,7 @@ function buildMessages(
     }
     case "split-image":
     case "identify-glance":
+    case "document-read":
     case "identify-image": {
       const imageB64 = typeof input.image_b64 === "string" ? input.image_b64 : null;
       const mediaType = String(input.image_media_type ?? "image/jpeg");
@@ -276,6 +287,7 @@ function buildMessages(
       };
     }
     case "chat":
+    case "plan-changes":
     default: {
       // Tool-aware turn mapping: assistant tool_calls → tool_use blocks; tool
       // results → user turns with tool_result blocks (Anthropic's dialect of

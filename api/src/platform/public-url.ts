@@ -15,3 +15,18 @@ export function absoluteAppUrl(path: string | null | undefined): string {
   if (!BASE) return path;
   return `${BASE}/${path.replace(/^\/+/, "")}`;
 }
+
+/** Where an assistant bridge reaches THIS api's MCP endpoint, or "" to let
+ *  the bridge use its own default.
+ *
+ *  Usually the public origin. Not always: a canary shares its release's public
+ *  address (links in emails must point at the release), and a relay sent there
+ *  is answered by the release's older code. COBBLR_MCP_RELAY_URL names the
+ *  instance's own endpoint for that case, typically an internal address the
+ *  bridge reaches directly. */
+export function mcpRelayUrl(): string {
+  const own = (process.env.COBBLR_MCP_RELAY_URL || "").trim().replace(/\/+$/, "");
+  if (own) return own;
+  const base = publicBaseUrl();
+  return base ? `${base}/api/v1/hooks/mcp` : "";
+}

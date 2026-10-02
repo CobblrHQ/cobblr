@@ -30,7 +30,8 @@ export function placeChoices(locations: Location[]): PlaceChoice[] {
  *  not a place), offered as a second step in the same popover. */
 type ListMove = { fromInstance: string };
 
-export function BulkMoveToPlace({ rows, onMoved, listMove }: { rows: Row[]; onMoved: () => void; listMove?: ListMove }) {
+/** `onMoved` clears the list's ticks and may return what Undo calls to tick them again. */
+export function BulkMoveToPlace({ rows, onMoved, listMove }: { rows: Row[]; onMoved: () => (() => void) | void; listMove?: ListMove }) {
   return (
     <FooterActionPopover label="Move to…" icon={<ArrowRightLeft size={12} />} title="Move to a place" data-testid="bulk-move">
       {(close) => <MoveBody rows={rows} close={close} onMoved={onMoved} listMove={listMove} />}
@@ -38,7 +39,7 @@ export function BulkMoveToPlace({ rows, onMoved, listMove }: { rows: Row[]; onMo
   );
 }
 
-function MoveBody({ rows, close, onMoved, listMove }: { rows: Row[]; close: () => void; onMoved: () => void; listMove?: ListMove }) {
+function MoveBody({ rows, close, onMoved, listMove }: { rows: Row[]; close: () => void; onMoved: () => (() => void) | void; listMove?: ListMove }) {
   const { api, orgSlug, itemNoun, getToken } = useInventory();
   const [toList, setToList] = useState(false);
   const qc = useQueryClient();
@@ -80,7 +81,7 @@ function MoveBody({ rows, close, onMoved, listMove }: { rows: Row[]; close: () =
     }
     noteRecentPlace(orgSlug, to);
     close();
-    onMoved();
+    const tickAgain = onMoved();
     const said = moved.length === rows.length ? `Moved ${things} to ${to.name}.` : `Moved ${moved.length} of ${rows.length} to ${to.name}. ${failure}`;
     toast.action(said, {
       actionLabel: "Undo",
@@ -96,6 +97,7 @@ function MoveBody({ rows, close, onMoved, listMove }: { rows: Row[]; close: () =
           }
         }
         refresh();
+        tickAgain?.();
         if (back === moved.length) toast.success(`Put ${countOf(back, itemNoun)} back.`);
         else toast.error(`Put ${back} of ${moved.length} back; the rest had moved again or are gone.`);
       },
@@ -115,7 +117,7 @@ function MoveBody({ rows, close, onMoved, listMove }: { rows: Row[]; close: () =
           onClose={() => setToList(false)}
           onMoved={(n, where, undo) => {
             close();
-            onMoved();
+            const tickAgain = onMoved();
             void qc.invalidateQueries();
             toast.action(`Moved ${countOf(n, itemNoun)} to ${where}.`, {
               actionLabel: "Undo",
@@ -123,6 +125,7 @@ function MoveBody({ rows, close, onMoved, listMove }: { rows: Row[]; close: () =
               onAction: async () => {
                 await undo();
                 void qc.invalidateQueries();
+                tickAgain?.();
               },
             });
           }}

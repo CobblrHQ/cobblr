@@ -16,7 +16,7 @@
 // fixtures pin its exact text.
 //
 // Operator-configured internal service ⇒ plain fetch, strict-egress-safe
-// (the env-set-URL convention, CLAUDE.md §14.1).
+// (the env-set-URL convention, docs/architecture/platform-spec.md §14.1).
 import { parseProductRegion } from "./image-ops.js";
 import { parseListing } from "./listing-evidence.js";
 import type { PhotoIdentity } from "./enrich-photo.js";

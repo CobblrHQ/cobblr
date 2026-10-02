@@ -70,14 +70,13 @@ export function listMismatch(
 }
 
 export interface PictureOffer {
-  file_id?: string;
-  image_url?: string;
+  file_id: string;
 }
 
 /** The tracked record has no picture and this scan has one to give it.
  *  WHICH picture is the one rule every scan surface answers with
- *  (lib/scanPhoto.ts): the catalog art it found (a stored file first, so no
- *  second download; else the external url), unless the cross-check found
+ *  (lib/scanPhoto.ts): the catalog art it found (the stored file: an address
+ *  nobody stored is not a picture to give, #4580), unless the cross-check found
  *  that art WRONG, in which case the person's own photo. Nothing when the
  *  record already has a picture: this is an offer, never an overwrite. */
 export function pictureOffer(
@@ -86,9 +85,9 @@ export function pictureOffer(
 ): PictureOffer | null {
   if (!best || best.image_path) return null;
   const lead = leadPhoto(item, {
-    catalog: [item.catalog_image_file_id ? `file:${item.catalog_image_file_id}` : null, item.catalog_image_url ? `url:${item.catalog_image_url}` : null],
+    catalog: [item.catalog_image_file_id ? `file:${item.catalog_image_file_id}` : null],
     yours: item.image_file_id ? `file:${item.image_file_id}` : null,
   });
   if (!lead.src) return null;
-  return lead.src.startsWith("file:") ? { file_id: lead.src.slice(5) } : { image_url: lead.src.slice(4) };
+  return { file_id: lead.src.slice(5) };
 }

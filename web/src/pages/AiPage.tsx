@@ -22,7 +22,7 @@
 //     switch. They live here now, next to everything else about AI.
 
 import { aiAvailabilityKeys } from "../lib/ai-availability-keys";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CredentialFields } from "../components/CredentialFields";
 import { ProviderSetupSteps } from "../components/ProviderSetupSteps";
 import { Link } from "react-router-dom";
@@ -680,8 +680,27 @@ function CapabilityDefaultModal({
     ? (usable.find((c) => c.credential_id === chosenCredentialId)?.provider_id ?? "")
     : choice.slice("provider:".length);
   const def = catalogue.find((d) => d.id === providerId);
-  const supportedModels = (def?.capabilities[capability as never] as { models: string[] } | undefined)?.models ?? [];
+  const curated = (def?.capabilities[capability as never] as { models: string[] } | undefined)?.models ?? [];
+  // A connection that can be asked what it serves offers exactly that (a box's
+  // pulled models, a bridge's sonnet/opus/haiku), the same answer the save is
+  // checked against; one with a curated list keeps it.
+  const ref = chosenCredentialId ? { credential_id: chosenCredentialId } : { provider_id: providerId };
+  const reportedQ = useQuery({
+    queryKey: ["ai-reported-models", activeSlug, ref.credential_id ?? ref.provider_id ?? ""],
+    queryFn: () => api.aiReportedModels(activeSlug, ref),
+    enabled: !!activeSlug && !!(ref.credential_id || ref.provider_id),
+    staleTime: 60_000,
+  });
+  const reported = reportedQ.data?.reported ?? null;
+  const supportedModels = reported ? reported.models : curated;
   const [model, setModel] = useState(existing?.model ?? supportedModels[0] ?? "");
+  // The list arrives after the dialog opens: pick its first when nothing valid is chosen yet.
+  useEffect(() => {
+    if (reported?.ok && reported.models.length && !reported.models.includes(model)) setModel(reported.models[0]!);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reported]);
+  const retryModels = () =>
+    void api.aiReportedModels(activeSlug, ref, true).then((r) => qc.setQueryData(["ai-reported-models", activeSlug, ref.credential_id ?? ref.provider_id ?? ""], r)).catch(() => undefined);
 
   const saveM = useMutation({
     mutationFn: () =>
@@ -807,9 +826,18 @@ function CapabilityDefaultModal({
           </div>
           <div>
             <label className="block text-sm font-medium mb-1">Model</label>
+            {reported && !reported.ok && (
+              <div className="mb-1 text-xs text-muted" title={reported.error} data-models-unlisted>
+                Couldn't list models ·{" "}
+                <button type="button" onClick={retryModels} className="underline hover:text-content">
+                  Retry
+                </button>
+              </div>
+            )}
             <select
               value={model}
               onChange={(e) => setModel(e.target.value)}
+              disabled={supportedModels.length === 0}
               className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900 font-mono"
             >
               {supportedModels.map((m) => (

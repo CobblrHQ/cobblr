@@ -18,7 +18,7 @@ import { QueryError } from "../components/QueryError";
 import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
 import { ModulePurposeHint } from "../components/ModulePurposeHint";
 import { usePublishChatContext, useAskCobbAboutSelection } from "../lib/chat-context";
-import { BulkActionBar, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton } from "@cobblr/platform-web";
+import { BulkActionBar, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton } from "@cobblr/platform-web";
 import { ContributedDetailPanels } from "../panels/registry";
 import { receiptGroupSummary } from "./receiptLabel";
 import { ReceiptAddressChip } from "../components/ReceiptAddressChip";
@@ -291,7 +291,7 @@ export function PurchasesPage() {
 
   const [newOpen, setNewOpen] = useState(false);
   const [vendorsOpen, setVendorsOpen] = useState(false);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useTickedRows(orders.data ? filtered.map((o) => o.id) : null);
 
   // What is ticked IS context: with the panel open, "delete these" means the
   // ones on screen a person pointed at, and Cobb gets their ids rather than a

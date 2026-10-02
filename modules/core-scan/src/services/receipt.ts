@@ -41,7 +41,11 @@ import {
   parsePdfTableReceipt,
 } from "./receipt-deterministic.js";
 import { detectOrderRef, parseTextReceipt } from "./receipt-text.js";
+import { asBillOfSale, looksLikeBillOfSale, looksLikeTransaction, markCharges, readBillOfSale } from "./bill-of-sale.js";
 import { ocrImageText } from "./ocr.js";
+import { looksLikeFullPage, ocrFormText } from "./form-ocr.js";
+import { readCheckedDocument, withTextChecks } from "./document-read.js";
+import sharp from "sharp";
 import { documentImages } from "@cobblr/platform-contract/document-images";
 import { readReceiptDate, workspaceConventionFrom, type DateConvention, type ReceiptDateReading } from "./receipt-date.js";
 
@@ -252,6 +256,9 @@ async function workspaceDateConvention(orgId: string): Promise<DateConvention | 
  */
 export function printedReceiptMeta(receipt: ParsedReceipt, text: string | null | undefined): ParsedReceipt {
   if (!text?.trim()) return receipt;
+  // A document read by its own labels (a bill of sale) already took what it
+  // prints; a till's header rules would read the form's title as the shop.
+  if (receipt.document) return receipt;
   const withRef = { ...receipt, order_ref: receipt.order_ref ?? detectOrderRef(text) };
   return enrichReceiptFromText(enrichReceiptMeta(withRef, text), text);
 }
@@ -271,7 +278,14 @@ export async function parseReceipt(
   fileId: string,
   userId?: string | null,
   visitorIp?: string | null,
+  /** `requireTransaction`: a document put on a RECORD may be a manual, a
+   *  warranty card or a photo of a label, not a sale. The model is asked only
+   *  when the text shows one (a price, a total, a bill of sale), so pasting a
+   *  manual never spends an AI read, and a picture with no text to judge is
+   *  not sent at all. The inbox's own reads keep today's behaviour. */
+  opts: { requireTransaction?: boolean } = {},
 ): Promise<ReceiptResult> {
+  const mayAsk = (text: string | null | undefined): boolean => !opts.requireTransaction || (!!text && looksLikeTransaction(text));
   const file = await platform().files.read(orgId, fileId, "original");
   if (!file) return { ok: false, reason: "Couldn't read that file.", code: "unreadable" };
   const bytes = Buffer.from(file.bytes);
@@ -290,7 +304,10 @@ export async function parseReceipt(
   // fills only what the tier left null. A tier with no text (vision on a
   // machine with no OCR engine) keeps the model's answer and says so.
   const done = async (parsed: ParsedReceipt, method: ParseMethod, text: string | null, source: ReceiptSource): Promise<ReceiptResult> => {
-    const receipt = printedReceiptMeta(parsed, text);
+    // Whatever read the lines, a bill of sale is one thing and its charges,
+    // and on any receipt a fee or a tax is a line on the purchase, never an
+    // inbox item (charge-lines.ts).
+    const receipt = printedReceiptMeta(markCharges(asBillOfSale(parsed, text)), text);
     const reading: ReceiptDateReading = readReceiptDate({
       text,
       iso: receipt.date,
@@ -304,7 +321,34 @@ export async function parseReceipt(
 
   // A picture of a receipt: the OCR engine and the line parser first, then the
   // model looking at the picture. A photo, and the page of a scanned PDF.
+  // A sale document read off a page: checked, made right by its VIN, and
+  // read by the document model when a check fails (document-read.ts). Busy
+  // models mean the engine's read is filed with its doubts marked and the
+  // page waits for one; nothing at all to file is "the AI is busy".
+  const readDocument = async (img: Buffer, ocr: { receipt: ParsedReceipt; text: string } | null, method: ParseMethod, source: ReceiptSource): Promise<ReceiptResult | null> => {
+    const checked = await readCheckedDocument({ orgId, page: img, sourceId: fileId, userId, ocr });
+    if (!checked) return null;
+    if ("busy" in checked) {
+      if (checked.partial) return done(checked.partial.receipt, method, checked.partial.text, source);
+      return failed({ ok: false, reason: "Every AI that reads documents is busy. It will read this when one is free.", code: "ai_unavailable" }, source);
+    }
+    return done(checked.receipt, checked.method === "ai-document" ? "ai-document" : method, checked.text, source);
+  };
+
   const readPicture = async (img: Buffer, imgMime: string, source: ReceiptSource): Promise<ReceiptResult> => {
+    // A full page (a scanned sheet) is a form, not a till receipt: read the
+    // way a form is (form-ocr.ts). A dealer's carbon copy read the receipt way
+    // came back as "C1yTe WATCU Ey oL 4" (#4571).
+    const meta = await sharp(img).metadata().catch(() => null);
+    const fullPage = source === "scanned-pdf" || (meta?.width && meta.height ? looksLikeFullPage(meta.width, meta.height) : false);
+    if (fullPage) {
+      const form = await ocrFormText(img).catch(() => null);
+      if (form && looksLikeBillOfSale(form.text)) {
+        const sale = readBillOfSale(form.text);
+        const read = await readDocument(img, sale ? { receipt: sale, text: form.text } : null, "ocr-form", source);
+        if (read) return read;
+      }
+    }
     // The engine is optional and the parse is gated: it only wins when the
     // lines add up to the receipt's own subtotal, so a mangled read declines
     // to the model rather than shipping a wrong answer that looks right. The
@@ -313,9 +357,17 @@ export async function parseReceipt(
     // look at the picture itself (no-ai-receipt-reading.md §5.3).
     const read = await ocrImageText(img);
     if (read) {
+      // A bill of sale has one thing on it and no lines to add up; it is read
+      // by its own labels before the till parser looks for line items.
+      const sale = readBillOfSale(read.text);
+      if (sale) {
+        const checked = await readDocument(img, { receipt: sale, text: read.text }, "ocr-lines", source);
+        if (checked) return checked;
+      }
       const byLine = parseTextReceipt(read.text);
       if (byLine) return done(byLine.receipt, "ocr-lines", read.text, source);
     }
+    if (!mayAsk(read?.text)) return failed({ ok: false, reason: "It does not read as a sale.", code: "no_line_items" }, source);
     try {
       const receipt = shapeReceipt(await visionExtract(orgId, img.toString("base64"), imgMime, fileId, userId, visitorIp));
       if (!receipt) return failed({ ok: false, reason: "Couldn't find any line items on that receipt.", code: "no_line_items" }, source);
@@ -355,10 +407,13 @@ export async function parseReceipt(
         "scanned-pdf",
       );
     }
+    const sale = readBillOfSale(pdf.text);
+    if (sale) return done(withTextChecks(sale), "text-lines", pdf.text, "pdf");
     // No ruled table, but a till-style PDF is still line-structured. Free, and
     // it only accepts a parse whose items reconcile.
     const byLine = parseTextReceipt(pdf.text);
     if (byLine) return done(byLine.receipt, "text-lines", pdf.text, "pdf");
+    if (!mayAsk(pdf.text)) return failed({ ok: false, reason: "It does not read as a sale.", code: "no_line_items" }, "pdf");
     try {
       const receipt = shapeReceipt(await chatExtract(orgId, pdf.text, fileId, userId));
       if (!receipt) return failed({ ok: false, reason: "Couldn't find any line items on that receipt.", code: "no_line_items" }, "pdf");
@@ -375,8 +430,11 @@ export async function parseReceipt(
 
   // ── Non-CSV text file → line-wise parse first, AI on the raw text ──────────
   const asText = bytes.toString("utf8");
+  const sale = readBillOfSale(asText);
+  if (sale) return done(withTextChecks(sale), "text-lines", asText, "text");
   const byLine = parseTextReceipt(asText);
   if (byLine) return done(byLine.receipt, "text-lines", asText, "text");
+  if (!mayAsk(asText)) return failed({ ok: false, reason: "It does not read as a sale.", code: "no_line_items" }, "text");
   try {
     const receipt = shapeReceipt(await chatExtract(orgId, asText, fileId, userId));
     if (!receipt) return failed({ ok: false, reason: "Couldn't find any line items on that receipt.", code: "no_line_items" }, "text");

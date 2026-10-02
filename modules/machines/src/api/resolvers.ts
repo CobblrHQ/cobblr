@@ -21,7 +21,7 @@ const SORTABLE = columnSet<MachinesDB["machines_machines"]>()([
 
 // A machine in one of these states has left the fleet: it keeps its page and
 // its history, and nothing should schedule work for it (ResolvedEntity.retired).
-const GONE_STATES = new Set<string>([...Object.values(DISPOSITION_LABELS), "decommissioned"]);
+export const GONE_STATES: ReadonlySet<string> = new Set<string>([...Object.values(DISPOSITION_LABELS), "decommissioned"]);
 
 let registered = false;
 

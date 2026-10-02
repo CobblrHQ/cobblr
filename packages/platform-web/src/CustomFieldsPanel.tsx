@@ -19,6 +19,7 @@ import { usePlatformWeb } from "./context";
 import type { PlatformFieldDef } from "./types";
 import { fieldControl, fieldInputText, valueFromInput } from "./fieldControl";
 import { ChoiceField } from "./ChoiceField";
+import { SellerOfferNotice } from "./SellerOfferNotice";
 import { MoneyInput } from "./MoneyInput";
 import { moneyStorageOf } from "@cobblr/platform-contract/money";
 import { formatMeasure, parseMeasure } from "@cobblr/platform-contract/measure";
@@ -191,6 +192,7 @@ export function CustomFieldsPanel({
   // An explicit seller field wins over the clarifier (arrivals.md): the
   // picker of where a thing came from writes the seller there.
   const sellerDef = (data?.items ?? []).find((d) => d.field_role === "seller");
+  const nativeSeller = (data?.native_roles ?? []).some((r) => r.field_role === "seller");
   const sellerBeside = (f: PlatformFieldDef) =>
     f.field_role === "acquired-from" && sellerDef
       ? {
@@ -223,7 +225,9 @@ export function CustomFieldsPanel({
               onCommit={(v) => commitField(f.name, v)}
               evidence={stamps[f.name]}
               note={noteOf(values, f.name)}
-              onCommitNote={(v) => onCommit(noteKey(f.name), v)}
+              // The kind's own column already answers who sold it: a note
+              // stored before still shows and can change, but none is offered.
+              onCommitNote={nativeSeller && f.field_role === "acquired-from" && !noteOf(values, f.name) ? undefined : (v) => onCommit(noteKey(f.name), v)}
               kind={entityKind}
               detailField={sellerBeside(f)}
             />
@@ -245,6 +249,9 @@ export function CustomFieldsPanel({
     // distinction — every field they configured is just a field, grouped under
     // the sections they arranged in the form builder.
     <div className={"space-y-4 " + (className ?? "")}>
+      {/* The seller upgrade is asked where the seller notes are written: a
+          kind with a where-it-came-from field and no seller field yet. */}
+      {fields.some((f) => f.field_role === "acquired-from") && !fields.some((f) => f.field_role === "seller") && !nativeSeller && <SellerOfferNotice kind={entityKind} />}
       {ungrouped.length > 0 && grid(ungrouped)}
       {grouped.map(({ s, fs }) => {
         const open = !folded.has(s.id);

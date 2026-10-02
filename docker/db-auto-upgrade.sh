@@ -5,7 +5,7 @@
 # WHY THIS EXISTS: a major Postgres bump was the one update an instance could
 # not take by itself. The server refuses to start on an older data dir, so
 # somebody had to stop the stack, dump, wipe, restore. That breaks the platform
-# rule that updates self-heal (CLAUDE.md §8.1) and it breaks worst for
+# rule that updates self-heal (docs/architecture/platform-spec.md §8.1) and it breaks worst for
 # SELF-HOSTED instances, where there is no operator with a runbook — a routine
 # `docker compose pull` would leave them with a database that will not start.
 #

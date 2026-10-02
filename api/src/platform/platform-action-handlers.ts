@@ -11,7 +11,7 @@
 
 import { contentsWordOf, setContentsWord } from "./contents-word.js";
 import { contentsWordText } from "@cobblr/platform-contract";
-import { isFieldScope, platform, pluralise, readListArg, type ActionInvokeContext } from "@cobblr/platform-contract";
+import { SYSTEM_VIEWER, isFieldScope, platform, pluralise, readListArg, type ActionInvokeContext } from "@cobblr/platform-contract";
 import { matchByLabel, splitNames } from "@cobblr/platform-contract/said-names";
 import { kindWordsFrom, type KindWords } from "@cobblr/platform-contract/kind-label";
 import { disableModuleForOrg, enableModuleForOrg } from "../modules/enable.js";
@@ -19,14 +19,20 @@ import { listEntries } from "../modules/registry.js";
 import { meta } from "../db/meta.js";
 import { actionLabelOf, registerHandler, registerPlanner, registerUndo } from "./actions.js";
 import { getMover, instancesHolding, moveRecords } from "./move-records.js";
+import { bringBack, markGone } from "./dispositions.js";
+import { offerRecords, offerTargets } from "./share-offers.js";
+import { DISPOSITION_LABELS, dispositionOf, type RecordDisposition } from "@cobblr/platform-contract/disposition";
 import * as activity from "./activity.js";
 import { upsertNativeFieldOverride } from "./native-field-overrides.js";
+import { moveFieldValues, unmoveFieldValues, type FieldMove } from "./move-field-values.js";
+import { declineSellers, trackSellers, untrackSellers } from "./seller-upgrade.js";
 import { USER_SOURCE, claimsForSource } from "./bundle-claims.js";
-import { listKindsForOrg, lookup } from "./entities.js";
+import { listAll, listKindsForOrg, lookup } from "./entities.js";
 import {
   FieldDefCreate,
   createFieldDef,
   deleteFieldDef,
+  kindFieldsWithMeaning,
   effectiveFieldDef,
   resolveFieldDefsForKind,
   updateFieldDef,
@@ -38,7 +44,7 @@ import { turnPresetOff, turnPresetOn } from "./field-preset-switch.js";
 import { groupFields, ungroupFields } from "./field-sections.js";
 import { demoteInstance, promoteCategory } from "./instance-promote.js";
 import { listInstances } from "./instances.js";
-import { provisionInstance } from "./instances.js";
+import { countInstanceItems, getInstance, provisionInstance, tearDownInstance } from "./instances.js";
 import { setWireEnabled } from "./wires.js";
 import { decideApprovalRequest } from "./approvals.js";
 import { confirmHeldChange, keepHeldChange } from "./ai-held-changes.js";
@@ -155,6 +161,13 @@ function fieldsBackWhereTheyWere(entityKind: string, before: Array<{ field: stri
  *  JSON list the invoke tool says any value may be. A list used to read as
  *  no names at all, and the refusal for that ("nothing to change") sent the
  *  model round again (#3087). */
+/** Whether a list offers a choice named the way a person names it: the same
+ *  match a removal uses (exact, case aside, a unique prefix). */
+function hasChoice(choices: readonly string[], said: string): boolean {
+  const hit = matchByLabel(said, choices.map((c) => ({ label: c })));
+  return !!hit && !("ambiguous" in hit);
+}
+
 function namesOf(v: unknown): string[] {
   if (Array.isArray(v)) return v.flatMap((x) => (typeof x === "string" ? splitNames(x) : []));
   return splitNames(str(v));
@@ -278,6 +291,7 @@ export function registerPlatformActionHandlers(): void {
       ...(choices || mapped.impliesChoices ? { choices: choices ?? [] } : {}),
       ...(str(args.unit) ? { unit: str(args.unit) } : {}),
       ...(str(args.ref_kind) ? { ref_kind: str(args.ref_kind) } : {}),
+      ...(args.without_meaning === true ? { without_meaning: true } : {}),
     });
     if (!parsed.success) {
       return {
@@ -289,7 +303,12 @@ export function registerPlatformActionHandlers(): void {
       return { ok: false, error: "a dropdown needs its choices — pass them comma-separated" };
     }
     const result = await createFieldDef(ctx.orgId, parsed.data);
-    if (!result.ok) return { ok: false, error: result.message };
+    if (!result.ok) {
+      // A field meaning what one the kind has is not made twice: say which, so
+      // the answer can offer it (or ask again with without_meaning).
+      if (result.code === "same_meaning") return { ok: false, error: result.message, data: { existing: result.existing, role: result.role } };
+      return { ok: false, error: result.message };
+    }
     return {
       ok: true,
       summary: `"${result.def.display_label}" (${result.def.type}) added to ${(await kindWords(ctx.orgId, result.def.entity_kind)).many}`,
@@ -401,37 +420,78 @@ export function registerPlatformActionHandlers(): void {
    *  category from inventory" names the field and not inventory:part, and the
    *  model sent it that way; refusing for the kind's id sent it round three
    *  times and then to the settings page (#3087). One kind carrying the field
-   *  is the answer; two is a question back, naming both; none is the usual
-   *  refusal. */
-  const kindOfField = async (orgId: string, said: string): Promise<{ kind: string } | { error: string }> => {
+   *  is the answer. Several are narrowed by the choices being taken off: only
+   *  one Category list holds Tea, so "take Tea off Category" means that one
+   *  (#4574). Still several is a question back, naming them the way the
+   *  workspace does; none is the usual refusal. */
+  const kindOfField = async (
+    orgId: string,
+    said: string,
+    args: Record<string, unknown> = {},
+  ): Promise<{ kind: string } | { error: string }> => {
     const kinds = await listKindsForOrg(orgId);
-    const carrying: string[] = [];
+    const carrying: Array<{ kind: string; choices: string[] | null }> = [];
     const defIds = new Set<string>();
     let nativeHits = 0;
     for (const k of kinds) {
       const custom = await findField(orgId, k.id, said);
       if (!("error" in custom)) {
-        carrying.push(k.id);
+        const def = (await resolveFieldDefsForKind(orgId, k.id)).find((d) => d.id === custom.id);
+        carrying.push({ kind: k.id, choices: def?.choices ?? null });
         defIds.add(custom.id);
         continue;
       }
-      if (await findNativeField(orgId, k.id, said)) {
-        carrying.push(k.id);
+      const native = await findNativeField(orgId, k.id, said);
+      if (native) {
+        carrying.push({ kind: k.id, choices: (await readFieldOverride(orgId, k.id, native.name)).choices });
         nativeHits += 1;
       }
     }
     // One def on many kinds is a class-wide field, not an ambiguity; the scope
     // refusal downstream says what it covers.
     if (carrying.length === 1 || (carrying.length > 1 && defIds.size === 1 && nativeHits === 0)) {
-      return { kind: carrying[0]! };
+      return { kind: carrying[0]!.kind };
     }
-    // Read by a model (which passes entity_kind on the next call) and by a
-    // person whose phrase command ran it (who reads it on the card), so it
-    // says the fact in words both can act on and no tool name.
+    const many = async (ks: Array<{ kind: string }>) =>
+      inWords(await Promise.all(ks.map(async (k) => (await kindWords(orgId, k.kind)).many)));
     if (carrying.length > 1) {
-      return { error: `"${said}" is on ${carrying.join(" and ")}; say which kind of record (entity_kind)` };
+      const gone = namesOf(args.remove_choices);
+      if (gone.length) {
+        const holding = carrying.filter((c) => gone.every((g) => !!c.choices && hasChoice(c.choices, g)));
+        if (holding.length === 1) return { kind: holding[0]!.kind };
+        if (holding.length > 1) {
+          return { error: `${gone.map((g) => `"${g}"`).join(" and ")} is a choice of "${said}" on ${await many(holding)}. Which kind of record do you mean?` };
+        }
+      }
+      // Read by a model (which names the kind on the next call) and by a
+      // person whose phrase command ran it (who reads it on the card), so it
+      // says the fact in words both can act on and no argument name.
+      return { error: `"${said}" is on ${await many(carrying)}. Which kind of record do you mean?` };
     }
     return { error: `no field called "${said}" on any kind of record; name it the way it appears on the form` };
+  };
+
+  /** How many records of a kind hold each of these values in a field, so a
+   *  card that takes a choice off can say who still uses it. Records keep the
+   *  value either way: a choice list is what is offered, not what is stored. */
+  const recordsHolding = async (
+    orgId: string,
+    kind: string,
+    field: { name: string; native: boolean },
+    values: readonly string[],
+  ): Promise<Map<string, number>> => {
+    const counts = new Map(values.map((v) => [v, 0]));
+    if (!values.length) return counts;
+    // SYSTEM-READ: a count for the card about a field's choices, over every record of the kind; no record is shown.
+    const { items } = await listAll(orgId, kind, {}, SYSTEM_VIEWER, { cap: 20_000 }).catch(() => ({ items: [] }));
+    for (const it of items) {
+      const f = (it.fields ?? {}) as Record<string, unknown>;
+      const bag = (f.metadata && typeof f.metadata === "object" ? f.metadata : {}) as Record<string, unknown>;
+      const v = field.native ? f[field.name] : bag[field.name];
+      if (typeof v !== "string") continue;
+      for (const want of values) if (sameChoice(v, want)) counts.set(want, (counts.get(want) ?? 0) + 1);
+    }
+    return counts;
   };
 
   /** What an edit-field call would touch, worked out BEFORE a card exists.
@@ -448,7 +508,7 @@ export function registerPlatformActionHandlers(): void {
     if (!said) return { error: "field is required" };
     let entityKind = str(args.entity_kind);
     if (!entityKind) {
-      const worked = await kindOfField(ctx.orgId, said);
+      const worked = await kindOfField(ctx.orgId, said, args);
       if ("error" in worked) return { error: worked.error };
       entityKind = worked.kind;
     }
@@ -471,6 +531,14 @@ export function registerPlatformActionHandlers(): void {
       const gone = (current ?? []).filter((c) => !edited.choices.includes(c));
       const added = edited.choices.filter((c) => !(current ?? []).includes(c));
       if (gone.length) lines.push(`Take off: ${gone.join(", ")}`);
+      if (gone.length) {
+        const field = "error" in found ? { name: native!.name, native: true } : { name: found.name, native: false };
+        const using = await recordsHolding(ctx.orgId, entityKind, field, gone);
+        const kw = await kindWords(ctx.orgId, entityKind);
+        for (const [choice, n] of using) {
+          if (n > 0) lines.push(`${n} ${n === 1 ? kw.one : kw.many} ${n === 1 ? "uses" : "use"} ${choice}: ${n === 1 ? "it keeps" : "they keep"} it, but it is no longer offered`);
+        }
+      }
       if (added.length) lines.push(`Add: ${added.join(", ")}`);
       lines.push(`Choices after: ${edited.choices.length ? edited.choices.join(", ") : "none"}`);
     } else if (namesOf(args.choices).length) {
@@ -488,7 +556,7 @@ export function registerPlatformActionHandlers(): void {
     if (!said) return { ok: false, error: "field is required" };
     let entityKind = str(args.entity_kind);
     if (!entityKind) {
-      const worked = await kindOfField(ctx.orgId, said);
+      const worked = await kindOfField(ctx.orgId, said, args);
       if ("error" in worked) return { ok: false, error: worked.error };
       entityKind = worked.kind;
     }
@@ -660,13 +728,100 @@ export function registerPlatformActionHandlers(): void {
     return Object.keys(args).length > 2 ? { action_id: "platform:edit-field", args } : null;
   });
 
+  // Two fields on one kind that mean one thing, settled into one (#4518): the
+  // values of the one let go move into the one kept (only where it is empty),
+  // and the one let go is hidden and loses the meaning, so the kind holds one
+  // field per meaning again. A person's yes, never automatic; undoable.
+  registerHandler("platform.settle-same-meaning", async (ctx: ActionInvokeContext) => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const entityKind = str(args.entity_kind);
+    const keepSaid = str(args.keep);
+    const dropSaid = str(args.drop);
+    if (!entityKind || !keepSaid || !dropSaid) return { ok: false, error: "entity_kind, keep and drop are required" };
+    const fields = await kindFieldsWithMeaning(ctx.orgId, entityKind);
+    const pick = (said: string) => fields.find((f) => f.name === said) ?? fields.find((f) => f.label.toLowerCase() === said.toLowerCase());
+    const keep = pick(keepSaid);
+    const drop = pick(dropSaid);
+    const words = await kindWords(ctx.orgId, entityKind);
+    if (!keep || !drop) return { ok: false, error: `${words.many} have no field called "${!keep ? keepSaid : dropSaid}"` };
+    if (keep.name === drop.name) return { ok: false, error: "Those are the same field." };
+    if (!keep.field_role || keep.field_role !== drop.field_role) {
+      return { ok: false, error: `"${keep.label}" and "${drop.label}" do not mean the same thing, so there is nothing to settle.` };
+    }
+    if (drop.source !== "custom") {
+      return { ok: false, error: `"${drop.label}" comes with the table, so it stays. Keep it and let "${keep.label}" go instead, or hide it from the field's settings.` };
+    }
+    const dropDef = (await resolveFieldDefsForKind(ctx.orgId, entityKind)).find((d) => d.name === drop.name);
+    if (!dropDef) return { ok: false, error: `"${drop.label}" could not be found to settle.` };
+    const moves = await moveFieldValues(ctx.orgId, entityKind, drop.name, keep.name, { nativeTo: keep.source === "built-in" });
+    const wasHidden = (await readFieldOverride(ctx.orgId, entityKind, drop.name)).hidden;
+    await meta.updateTable("module_field_defs").set({ field_role: null }).where("id", "=", dropDef.id).where("org_id", "=", ctx.orgId).execute();
+    await upsertNativeFieldOverride(ctx.orgId, entityKind, drop.name, { hidden: true });
+    const moved = moves.filter((m) => m.wrote).length;
+    const left = moves.length - moved;
+    return {
+      ok: true,
+      summary:
+        `"${keep.label}" is the one ${words.many} use now: ${moved} value${moved === 1 ? "" : "s"} moved from "${drop.label}", which is hidden` +
+        (left ? `; ${left} stayed in "${drop.label}" because "${keep.label}" already had a value there` : "") +
+        ".",
+      data: { entity_kind: entityKind, keep: keep.name, keep_native: keep.source === "built-in", drop: drop.name, drop_id: dropDef.id, drop_role: drop.field_role, was_hidden: wasHidden, moves },
+    };
+  });
+  registerUndo("platform.settle-same-meaning", (result) => {
+    const d = (result as { data?: Record<string, unknown> } | null)?.data;
+    if (!d?.drop_id) return null;
+    return { action_id: "platform:unsettle-same-meaning", args: { ...d } };
+  });
+  registerHandler("platform.unsettle-same-meaning", async (ctx: ActionInvokeContext) => {
+    const a = (ctx.args ?? {}) as { entity_kind?: string; keep?: string; keep_native?: boolean; drop?: string; drop_id?: string; drop_role?: string; was_hidden?: boolean; moves?: FieldMove[] };
+    if (!a.entity_kind || !a.keep || !a.drop || !a.drop_id) return { ok: false, error: "entity_kind, keep, drop and drop_id are required" };
+    const back = await unmoveFieldValues(ctx.orgId, a.entity_kind, a.drop, a.keep, a.moves ?? [], { nativeTo: !!a.keep_native });
+    await meta.updateTable("module_field_defs").set({ field_role: a.drop_role ?? null }).where("id", "=", a.drop_id).where("org_id", "=", ctx.orgId).execute();
+    await upsertNativeFieldOverride(ctx.orgId, a.entity_kind, a.drop, { hidden: !!a.was_hidden });
+    return { ok: true, summary: `Both fields are back as they were (${back} value${back === 1 ? "" : "s"} put back).`, data: { put_back: back } };
+  });
+
+  // The seller upgrade (#4518): yes moves every seller note into a Seller
+  // field of its own; no is never asked again for the kind.
+  registerHandler("platform.track-sellers", async (ctx: ActionInvokeContext) => {
+    const kind = str(((ctx.args ?? {}) as Record<string, unknown>).entity_kind);
+    if (!kind) return { ok: false, error: "entity_kind is required" };
+    const r = await trackSellers(ctx.orgId, kind);
+    if (!r.ok) return { ok: false, error: r.error };
+    const moved = r.moves.filter((m) => m.wrote).length;
+    const words = await kindWords(ctx.orgId, kind);
+    return {
+      ok: true,
+      summary: `${words.many} track sellers as their own field now: ${moved} seller${moved === 1 ? "" : "s"} moved into "${r.field.label}".`,
+      data: { entity_kind: kind, field_id: r.field.id, field_name: r.field.name, host: r.host, moves: r.moves, previous: r.previous },
+    };
+  });
+  registerUndo("platform.track-sellers", (result) => {
+    const d = (result as { data?: Record<string, unknown> } | null)?.data;
+    if (!d?.field_id) return null;
+    return { action_id: "platform:untrack-sellers", args: { ...d } };
+  });
+  registerHandler("platform.untrack-sellers", async (ctx: ActionInvokeContext) => {
+    const a = (ctx.args ?? {}) as { entity_kind?: string; field_id?: string; field_name?: string; host?: string; moves?: FieldMove[]; previous?: "offered" | "declined" | "accepted" | null };
+    if (!a.entity_kind || !a.field_id || !a.field_name || !a.host) return { ok: false, error: "entity_kind, field_id, field_name and host are required" };
+    const back = await untrackSellers(ctx.orgId, a.entity_kind, { field_id: a.field_id, field_name: a.field_name, host: a.host, moves: a.moves ?? [], previous: a.previous ?? null });
+    return { ok: true, summary: `Sellers are notes beside where things came from again (${back} put back).`, data: { put_back: back } };
+  });
+  registerHandler("platform.decline-seller-field", async (ctx: ActionInvokeContext) => {
+    const kind = str(((ctx.args ?? {}) as Record<string, unknown>).entity_kind);
+    if (!kind) return { ok: false, error: "entity_kind is required" };
+    await declineSellers(ctx.orgId, kind);
+    return { ok: true, summary: `Not asked again for ${(await kindWords(ctx.orgId, kind)).many}. The Fields page still offers it.` };
+  });
+
   registerHandler("platform.remove-field", async (ctx: ActionInvokeContext) => {
     const args = (ctx.args ?? {}) as Record<string, unknown>;
     const said = str(args.field);
     if (!said) return { ok: false, error: "field is required" };
     let entityKind = str(args.entity_kind);
     if (!entityKind) {
-      const worked = await kindOfField(ctx.orgId, said);
+      const worked = await kindOfField(ctx.orgId, said, args);
       if ("error" in worked) return { ok: false, error: worked.error };
       entityKind = worked.kind;
     }
@@ -827,6 +982,80 @@ export function registerPlatformActionHandlers(): void {
     };
   });
 
+  // A new list is the lightest shape that fits a new kind of thing: the same
+  // records as a module the workspace has, under a name of its own. The card
+  // says which module it is kept like and what that brings, so "a Mugs list"
+  // is never a mystery shape (#4574).
+  registerPlanner("platform.create-instance", async (ctx: ActionInvokeContext) => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const moduleName = str(args.module_name).toLowerCase();
+    const displayName = str(args.display_name);
+    if (!moduleName || !displayName) return { error: "module_name and display_name are required" };
+    const like = findModule(moduleName);
+    if ("error" in like) return { error: like.error };
+    const instanceName = str(args.instance_name).toLowerCase() || instanceSlugFromName(displayName);
+    if (instanceName && (await getInstance(ctx.orgId, instanceName))) return { error: `There is already a list called ${displayName}.` };
+    const kind = (await listKindsForOrg(ctx.orgId)).find((k) => k.module_name === like.name && !k.instance_name);
+    const fields = (kind?.fields ?? []).filter((f) => !f.readOnly).slice(0, 5).map((f) => humanise(f.name));
+    return {
+      title: `Make a list called ${displayName}, kept like ${like.label}`,
+      lines: [
+        `${displayName} keeps the same kind of record as ${like.label}${fields.length ? `: ${inWords(fields)}` : ""}.`,
+        "It gets its own place in the menu and its own label codes.",
+        "It can be taken away again while nothing is filed in it.",
+      ],
+    };
+  });
+  registerUndo("platform.create-instance", (result) => {
+    const d = (result as { data?: { instance?: unknown } } | null)?.data;
+    return typeof d?.instance === "string" ? { action_id: "platform:remove-list", args: { list: d.instance } } : null;
+  });
+
+  /** A list made from a module, taken away while it is empty. A list with
+   *  records in it is refused with their count: removing it would take them
+   *  too, and that is a different, bigger thing to ask for. */
+  const emptyList = async (orgId: string, said: string): Promise<{ name: string; label: string; module: string; display: string } | { error: string }> => {
+    const found = await findInstance(orgId, said);
+    if ("error" in found) return found;
+    const inst = await getInstance(orgId, found.name);
+    if (!inst) return { error: `no list called "${said}"` };
+    if (inst.is_default) return { error: `${found.label} is the feature's own list; turn the feature off instead.` };
+    const held = await countInstanceItems(orgId, found.module, found.name);
+    if (held === null) return { error: `Couldn't check what is in ${found.label}, so it was left alone.` };
+    if (held > 0) return { error: `${found.label} still holds ${countOf(held, "record")}. Move or delete them first.` };
+    return { ...found, display: inst.display_name ?? found.label };
+  };
+  registerPlanner("platform.remove-list", async (ctx: ActionInvokeContext) => {
+    const said = str((ctx.args ?? {}).list);
+    if (!said) return { error: "list is required (its name, e.g. Mugs)" };
+    const found = await emptyList(ctx.orgId, said);
+    if ("error" in found) return { error: found.error };
+    return {
+      title: `Remove the ${found.display} list`,
+      lines: ["It is empty, so nothing filed is lost.", "Its place in the menu and its label codes go with it."],
+    };
+  });
+  registerHandler("platform.remove-list", async (ctx: ActionInvokeContext) => {
+    const said = str((ctx.args ?? {}).list);
+    if (!said) return { ok: false, error: "list is required (its name, e.g. Mugs)" };
+    const found = await emptyList(ctx.orgId, said);
+    if ("error" in found) return { ok: false, error: found.error };
+    await tearDownInstance(ctx.orgId, found.name);
+    return {
+      ok: true,
+      summary: `Removed the ${found.display} list.`,
+      data: { instance: found.name, module: found.module, display_name: found.display },
+    };
+  });
+  registerUndo("platform.remove-list", (result) => {
+    const d = (result as { data?: { instance?: unknown; module?: unknown; display_name?: unknown } } | null)?.data;
+    if (typeof d?.instance !== "string" || typeof d.module !== "string") return null;
+    return {
+      action_id: "platform:create-instance",
+      args: { module_name: d.module, display_name: typeof d.display_name === "string" ? d.display_name : d.instance, instance_name: d.instance },
+    };
+  });
+
   /** The feature a person NAMED. They say "Purchases" or "purchase orders",
    *  never "purchases" the package name, so both are matched — and a word that
    *  fits two features asks rather than picking. */
@@ -940,17 +1169,26 @@ export function registerPlatformActionHandlers(): void {
     const { previewBundleUninstall } = await import("../routes/bundles.js");
     const p = await previewBundleUninstall(ctx.orgId, found.external_id);
     const gone = wantsRecordsGone(ctx.args);
-    const records = p.instances.reduce((n, i) => n + i.item_count, 0);
+    // Counted after the plan's earlier steps: a record a step before deletes
+    // is not one this removal deletes or keeps.
+    const goneBefore = (name: string) => (ctx.before ?? []).filter((b) => b.op === "delete" && b.kind.split(":")[0] === name).length;
+    const left = p.instances.map((i) => ({ ...i, before: Math.min(goneBefore(i.name), i.item_count), item_count: Math.max(0, i.item_count - goneBefore(i.name)) }));
+    const records = left.reduce((n, i) => n + i.item_count, 0);
     const lines: string[] = [];
-    for (const i of p.instances) {
+    for (const i of left) {
+      const emptied = i.before > 0 ? ` The step before deletes ${i.before === 1 ? "its record" : `${i.before} of its records`}.` : "";
       lines.push(
         i.item_count === 0
           ? gone
-            ? `${i.display_name} is deleted. It holds no records yet.`
-            : `${i.display_name} stays. It holds no records yet.`
+            ? i.before > 0
+              ? `${i.display_name} is deleted, with nothing left in it.${emptied}`
+              : `${i.display_name} is deleted. It holds no records yet.`
+            : i.before > 0
+              ? `The ${i.display_name} list stays, empty.${emptied}`
+              : `The ${i.display_name} list stays. It holds no records yet.`
           : gone
-            ? `${i.display_name} is deleted with its ${countOf(i.item_count, "record")}. This cannot be undone.`
-            : `${i.display_name} stays, with its ${countOf(i.item_count, "record")}.`,
+            ? `${i.display_name} is deleted with its ${countOf(i.item_count, "record")}. This cannot be undone.${emptied}`
+            : `Your ${countOf(i.item_count, `${i.display_name.toLowerCase()} record`)} ${i.item_count === 1 ? "stays" : "stay"}, and can still be found and opened.${emptied}`,
       );
     }
     lines.push(`The fields, views and automations that came with ${found.name} are removed.`);
@@ -958,7 +1196,14 @@ export function registerPlatformActionHandlers(): void {
     if (p.places.length) lines.push(`Empty places it made are removed: ${p.places.map((x) => x.name).join(", ")}.`);
     for (const k of p.kept) lines.push(`Kept: ${k.name} (${k.reason}).`);
     return {
-      title: gone && records > 0 ? `Remove ${found.name} and its ${countOf(records, "record")} (permanent)` : gone ? `Remove ${found.name} (permanent)` : `Remove ${found.name}, keeping its records`,
+      title:
+        gone && records > 0
+          ? `Remove ${found.name} and its ${countOf(records, "record")} (permanent)`
+          : gone
+            ? `Remove ${found.name} (permanent)`
+            : records > 0
+              ? `Remove what ${found.name} added; your records stay`
+              : `Remove what ${found.name} added`,
       lines,
     };
   });
@@ -1406,6 +1651,122 @@ export function registerPlatformActionHandlers(): void {
     const ids = (d?.touched ?? []).map((t) => t.id).filter((id): id is string => typeof id === "string");
     if (!ids.length || typeof d?.to !== "string" || typeof d?.from !== "string") return null;
     return { action_id: "platform:move-records", args: { ids, to: d.from, from: d.to } };
+  });
+
+  // A thing that left: sold, given away, thrown out. One door for every kind
+  // whose writer can retire a record (dispositions.ts).
+  const goneArgs = (ctx: ActionInvokeContext) => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const kind = str(args.entity_kind);
+    const ids = readListArg(args, "ids");
+    return { args, kind, ids };
+  };
+  const goneTitles = async (orgId: string, kind: string, ids: readonly string[]) => {
+    const lines: string[] = [];
+    for (const id of ids.slice(0, 200)) lines.push((await lookup(orgId, kind, id).catch(() => null))?.title ?? `a record that no longer exists (${id.slice(0, 8)})`);
+    return lines;
+  };
+  const priceArg = (v: unknown): number | null => {
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    const n = Number(String(v ?? "").replace(/[^0-9.]/g, ""));
+    return String(v ?? "").trim() && Number.isFinite(n) ? n : null;
+  };
+
+  registerHandler("platform.mark-gone", async (ctx: ActionInvokeContext) => {
+    const { args, kind, ids } = goneArgs(ctx);
+    if (!kind) return { ok: false, error: "entity_kind (the kind of record) is required" };
+    if (!ids.length) return { ok: false, error: "ids are required - read the records first and pass their real ids, never their names" };
+    const how = dispositionOf(args.how);
+    if (!how) return { ok: false, error: "how is required: sold, given away, parted out, converted, traded, lost or disposed of" };
+    const r = await markGone(ctx.orgId, ctx.userId, kind, ids, { how, on: str(args.on) || null, price: priceArg(args.price), to: str(args.to) || null, note: str(args.note) || null });
+    if (!r.ok) return { ok: false, error: r.error };
+    const n = r.done.length;
+    const word = DISPOSITION_LABELS[how];
+    return {
+      ok: true,
+      summary: n === 1 ? `Marked ${r.done[0]!.title} as ${word}.` : `Marked ${n} records as ${word}.`,
+      data: { kind, how, touched: r.done.map((d) => ({ kind, id: d.id })), before: r.done.map((d) => ({ id: d.id, before: d.before })) },
+    };
+  });
+  registerPlanner("platform.mark-gone", async (ctx: ActionInvokeContext) => {
+    const { args, kind, ids } = goneArgs(ctx);
+    if (!kind) return { error: "entity_kind (the kind of record) is required" };
+    if (!ids.length) return { error: "ids are required - read the records first and pass their real ids, never their names" };
+    const how = dispositionOf(args.how);
+    if (!how) return { error: "how is required: sold, given away, parted out, converted, traded, lost or disposed of" };
+    const lines = await goneTitles(ctx.orgId, kind, ids);
+    return { title: `Mark ${countOf(lines.length, "record")} as ${DISPOSITION_LABELS[how]}`, lines };
+  });
+  registerUndo("platform.mark-gone", (result) => {
+    const d = (result as { data?: { kind?: unknown; touched?: Array<{ id?: unknown }> } } | null)?.data;
+    const ids = (d?.touched ?? []).map((t) => t.id).filter((id): id is string => typeof id === "string");
+    if (!ids.length || typeof d?.kind !== "string") return null;
+    return { action_id: "platform:bring-back", args: { entity_kind: d.kind, ids } };
+  });
+
+  registerHandler("platform.bring-back", async (ctx: ActionInvokeContext) => {
+    const { kind, ids } = goneArgs(ctx);
+    if (!kind) return { ok: false, error: "entity_kind (the kind of record) is required" };
+    if (!ids.length) return { ok: false, error: "ids are required - read the records first and pass their real ids, never their names" };
+    const r = await bringBack(ctx.orgId, ctx.userId, kind, ids);
+    if (!r.ok) return { ok: false, error: r.error };
+    const n = r.done.length;
+    return {
+      ok: true,
+      summary: n === 1 ? `${r.done[0]!.title} is yours again.` : `${n} records are yours again.`,
+      data: { kind, touched: r.done.map((d) => ({ kind, id: d.id })), before: r.done.map((d) => ({ id: d.id, before: d.before })) },
+    };
+  });
+  registerPlanner("platform.bring-back", async (ctx: ActionInvokeContext) => {
+    const { kind, ids } = goneArgs(ctx);
+    if (!kind) return { error: "entity_kind (the kind of record) is required" };
+    if (!ids.length) return { error: "ids are required - read the records first and pass their real ids, never their names" };
+    const lines = await goneTitles(ctx.orgId, kind, ids);
+    return { title: `Bring back ${countOf(lines.length, "record")}`, lines };
+  });
+  // Back to exactly what it said before: one undo per call, so it is offered
+  // only when every record had left the same way.
+  registerUndo("platform.bring-back", (result) => {
+    const d = (result as { data?: { kind?: unknown; before?: Array<{ id?: unknown; before?: RecordDisposition | null }> } } | null)?.data;
+    const rows = (d?.before ?? []).filter((b): b is { id: string; before: RecordDisposition } => typeof b.id === "string" && !!b.before);
+    if (!rows.length || typeof d?.kind !== "string" || rows.length !== (d?.before ?? []).length) return null;
+    const first = rows[0]!.before;
+    const same = rows.every((r) => JSON.stringify({ ...r.before, held_since: null }) === JSON.stringify({ ...first, held_since: null }));
+    if (!same) return null;
+    return {
+      action_id: "platform:mark-gone",
+      args: { entity_kind: d.kind, ids: rows.map((r) => r.id), how: first.how, on: first.on, price: first.price, to: first.to, note: first.note },
+    };
+  });
+
+  // Hand records over to someone a share links to (share-offers.ts).
+  const offerArgs = async (ctx: ActionInvokeContext): Promise<{ error: string } | { kind: string; ids: string[]; target: { link_id: string; to: string }; userId: string }> => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const kind = str(args.entity_kind);
+    const ids = readListArg(args, "ids");
+    const said = str(args.to);
+    if (!kind) return { error: "entity_kind (the kind of record) is required" };
+    if (!ids.length) return { error: "ids are required - read the records first and pass their real ids, never their names" };
+    if (!ctx.userId) return { error: "a hand-over is made by a person" };
+    const targets = await offerTargets(ctx.orgId, ctx.userId);
+    if (!targets.length) return { error: "This workspace is not shared with anyone. Share it first in Settings, Sharing." };
+    const target = targets.find((t) => t.link_id === said) ?? targets.find((t) => t.to.toLowerCase() === said.toLowerCase());
+    if (!target) return { error: `Not shared with "${said}". Shared with: ${targets.map((t) => t.to).join(", ")}.` };
+    return { kind, ids, target, userId: ctx.userId };
+  };
+  registerHandler("platform.offer-to", async (ctx: ActionInvokeContext) => {
+    const a = await offerArgs(ctx);
+    if ("error" in a) return { ok: false, error: a.error };
+    const r = await offerRecords(ctx.orgId, a.userId, a.target.link_id, a.kind, a.ids);
+    if (!r.ok) return { ok: false, error: r.error };
+    return { ok: true, summary: r.offered === 1 ? `Offered it to ${r.to}.` : `Offered ${r.offered} things to ${r.to}.`, data: { offered: r.offered, to: r.to } };
+  });
+  registerPlanner("platform.offer-to", async (ctx: ActionInvokeContext) => {
+    const a = await offerArgs(ctx);
+    if ("error" in a) return { error: a.error };
+    const lines: string[] = [];
+    for (const id of a.ids.slice(0, 200)) lines.push((await lookup(ctx.orgId, a.kind, id).catch(() => null))?.title ?? `a record that no longer exists (${id.slice(0, 8)})`);
+    return { title: `Offer ${countOf(lines.length, "thing")} to ${a.target.to}`, lines };
   });
 
   registerHandler("platform.demote-category", async (ctx: ActionInvokeContext) => {

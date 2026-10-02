@@ -2,7 +2,7 @@
 // embed / classify-image / extract-text. Cost is per-model from a
 // static price table (rough, updated on doc-PR cadence).
 
-import { platform, type AiCapability } from "@cobblr/platform-contract";
+import { platform, type AiCapability, isChatTurn } from "@cobblr/platform-contract";
 import { providerError, providerSentence, reasonFromResponse, reasonFromTransportError, redactSecrets, retryAfterSecOf } from "@cobblr/platform-contract/provider-reason";
 import { visionPromptFor } from "./identify-prompt.js";
 import { rankImagesPromptFor } from "./rank-images-prompt.js";
@@ -11,6 +11,8 @@ import { promptFingerprint } from "./prompt-fingerprint.js";
 
 export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
   chat: { models: ["gpt-4o", "gpt-4o-mini", "o1-mini"], defaultModel: "gpt-4o-mini" },
+  // The full model: a plan that deletes or reshapes is a serious action.
+  "plan-changes": { models: ["gpt-4o"], defaultModel: "gpt-4o" },
   // The bigger model by default: rare, heavy, and the answer is either
   // recognisable as their own things or they give up.
   "design-workspace": { models: ["gpt-4o", "gpt-4o-mini", "o1-mini"], defaultModel: "gpt-4o" },
@@ -21,6 +23,8 @@ export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; default
   "split-image": { models: ["gpt-4o", "gpt-4o-mini"], defaultModel: "gpt-4o-mini" },
   "rank-images": { models: ["gpt-4o", "gpt-4o-mini"], defaultModel: "gpt-4o-mini" },
   "extract-text": { models: ["gpt-4o", "gpt-4o-mini"], defaultModel: "gpt-4o-mini" },
+  // The full model: a document's values are kept.
+  "document-read": { models: ["gpt-4o"], defaultModel: "gpt-4o" },
   "embed-text": {
     models: ["text-embedding-3-small", "text-embedding-3-large"],
     defaultModel: "text-embedding-3-small",
@@ -89,11 +93,16 @@ export function register(): void {
             cost_cents: estimateCost(ctx.model, body.usage.prompt_tokens, 0),
           };
         }
+        // The builder sends a conversation like chat does (no tools), and reads
+        // the answer the same way.
+        case "design-workspace":
         case "chat":
+        case "plan-changes":
         case "summarise":
         case "classify-image":
         case "split-image":
         case "identify-glance":
+        case "document-read":
         case "identify-image":
         case "rank-images":
         case "extract-text":
@@ -107,11 +116,11 @@ export function register(): void {
             messages,
           };
           // Native tool-calling for chat: forward the neutral tool defs.
-          const toolDefs = ctx.capability === "chat" ? toolsOf(ctx.input) : null;
+          const toolDefs = isChatTurn(ctx.capability) ? toolsOf(ctx.input) : null;
           if (toolDefs) body.tools = openAiToolsOf(toolDefs);
           if (
             ctx.capability === "classify-image" ||
-            (ctx.capability === "identify-image" || ctx.capability === "split-image" || ctx.capability === "identify-glance") ||
+            (ctx.capability === "identify-image" || ctx.capability === "document-read" || ctx.capability === "split-image" || ctx.capability === "identify-glance") ||
             ctx.capability === "rank-images" ||
             ctx.capability === "match-to-catalog"
           ) {
@@ -211,6 +220,7 @@ export function buildMessages(
     }
     case "split-image":
     case "identify-glance":
+    case "document-read":
     case "identify-image": {
       const mediaType = String(input.image_media_type ?? "image/jpeg");
       const imageUrl = typeof input.image_url === "string" ? input.image_url : null;
@@ -269,7 +279,11 @@ export function buildMessages(
       if (imageUrl) content.push({ type: "image_url", image_url: { url: imageUrl } });
       return [{ role: "user", content }];
     }
+    // The builder sends a conversation like chat does (no tools), and reads
+    // the answer the same way.
+    case "design-workspace":
     case "chat":
+    case "plan-changes":
     default: {
       // Tool-aware turn mapping (assistant tool_calls / role:"tool" results) —
       // OpenAI's dialect of the neutral wire; see tool-wire.ts.

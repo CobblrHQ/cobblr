@@ -11,14 +11,24 @@
 /** The units a measured value is in: catalog codes, with every spelling a
  *  person might type for them. The core-units catalog lists these same codes. */
 export const MEASURE_UNITS = [
-  { code: "ohm", symbol: "Ω", name: "ohm", plural: "ohms", spellings: ["Ω", "ω", "ohm", "ohms", "Ohm", "Ohms", "R"] },
-  { code: "farad", symbol: "F", name: "farad", plural: "farads", spellings: ["F", "f", "farad", "farads"] },
-  { code: "henry", symbol: "H", name: "henry", plural: "henries", spellings: ["H", "h", "henry", "henries", "henrys"] },
-  { code: "volt", symbol: "V", name: "volt", plural: "volts", spellings: ["V", "v", "volt", "volts"] },
-  { code: "amp", symbol: "A", name: "amp", plural: "amps", spellings: ["A", "a", "amp", "amps", "ampere", "amperes"] },
-  { code: "watt", symbol: "W", name: "watt", plural: "watts", spellings: ["W", "w", "watt", "watts"] },
-  { code: "hertz", symbol: "Hz", name: "hertz", plural: "hertz", spellings: ["Hz", "hz", "HZ", "hertz"] },
+  { code: "ohm", symbol: "Ω", name: "ohm", plural: "ohms", category: "electrical", spellings: ["Ω", "ω", "ohm", "ohms", "Ohm", "Ohms", "R"] },
+  { code: "farad", symbol: "F", name: "farad", plural: "farads", category: "electrical", spellings: ["F", "f", "farad", "farads"] },
+  { code: "henry", symbol: "H", name: "henry", plural: "henries", category: "electrical", spellings: ["H", "h", "henry", "henries", "henrys"] },
+  { code: "volt", symbol: "V", name: "volt", plural: "volts", category: "electrical", spellings: ["V", "v", "volt", "volts"] },
+  { code: "amp", symbol: "A", name: "amp", plural: "amps", category: "electrical", spellings: ["A", "a", "amp", "amps", "ampere", "amperes"] },
+  { code: "watt", symbol: "W", name: "watt", plural: "watts", category: "electrical", spellings: ["W", "w", "watt", "watts"] },
+  { code: "hertz", symbol: "Hz", name: "hertz", plural: "hertz", category: "electrical", spellings: ["Hz", "hz", "HZ", "hertz"] },
+  // Lengths: a socket, a bolt, a shelf. Kept in the unit they are measured
+  // in, never moved to SI metres, so an inch stays an inch ("3/8 in", not
+  // "9.525 mm"). The codes are the units catalog's own.
+  { code: "millimeter", symbol: "mm", name: "millimetre", plural: "millimetres", category: "length", spellings: ["mm", "millimetre", "millimeter", "millimetres", "millimeters"] },
+  { code: "inch", symbol: "in", name: "inch", plural: "inches", category: "length", spellings: ["in", "inch", "inches", '"', "″"] },
 ] as const;
+
+
+/** Units counted as they are, without SI prefixes: 25.4 mm is never "2.54 cm"
+ *  and an inch is shown as the fraction a tool is sold by. */
+const UNPREFIXED = new Set<string>(["millimeter", "inch"]);
 
 export type MeasureUnitCode = (typeof MEASURE_UNITS)[number]["code"];
 
@@ -92,6 +102,17 @@ export function parseMeasure(input: unknown, opts: { unit?: string | null } = {}
   if (!text || text.length > 40) return null;
   const compact = text.replace(/\s+/g, " ");
 
+  // A fraction, as inch sizes are written: "3/8", "3/8 in", "5/8\"", and a
+  // whole number with one, "1-1/4 in". A bare fraction takes the field's unit.
+  const frac = /^(?:(\d+)[- ])?(\d+)\s*\/\s*(\d+)\s*(.*)$/.exec(compact);
+  if (frac) {
+    const [, whole, top, bottom, unitText] = frac as unknown as [string, string | undefined, string, string, string];
+    if (Number(bottom) === 0) return null;
+    const unit = unitText ? unitOf(unitText.trim()) : fieldUnit;
+    if (unitText && !unit) return null;
+    return { value: clean(Number(whole ?? 0) + Number(top) / Number(bottom)), unit, text };
+  }
+
   // RKM (IEC 60062): the prefix letter stands for the decimal point.
   // "4k7" = 4.7 k, "2R2" = 2.2 Ω, "1M5" = 1.5 M, "4n7" = 4.7 n.
   const rkm = /^(\d+)([RKkMGmunpµμ])(\d+)\s*([A-Za-zΩω]*)$/.exec(compact);
@@ -112,6 +133,9 @@ export function parseMeasure(input: unknown, opts: { unit?: string | null } = {}
   let rest = (m[2] ?? "").trim();
   if (!rest) return { value: n, unit: fieldUnit, text };
 
+  // The whole rest is a unit ("16 V", "10 ohm", "50 Hz", "10 mm").
+  const whole = unitOf(rest);
+  if (whole) return { value: n, unit: whole, text };
   // A prefix word ("kilo" in "kilohm", "micro" in "microfarad").
   for (const [word, scale] of Object.entries(PREFIX_WORDS)) {
     if (rest.toLowerCase().startsWith(word)) {
@@ -121,9 +145,6 @@ export function parseMeasure(input: unknown, opts: { unit?: string | null } = {}
       return { value: clean(n * scale), unit: unit ?? fieldUnit, text };
     }
   }
-  // The whole rest is a unit ("16 V", "10 ohm", "50 Hz").
-  const whole = unitOf(rest);
-  if (whole) return { value: n, unit: whole, text };
   // A one-letter prefix, then a unit or nothing ("100n", "100nF", "2.2µF", "10k").
   const p = rest[0]!;
   if (p in PREFIXES) {
@@ -141,6 +162,22 @@ function clean(v: number): number {
   return Number(v.toPrecision(12));
 }
 
+/** Inches the way a tool is labelled: 0.375 is "3/8", 1.25 is "1-1/4", and a
+ *  size no 64th describes is a decimal. */
+function inchText(v: number): string {
+  const sixtyfourths = Math.round(v * 64);
+  if (Math.abs(sixtyfourths - v * 64) > 1e-6) return String(Number(v.toPrecision(4)));
+  const whole = Math.floor(sixtyfourths / 64);
+  let top = sixtyfourths % 64;
+  let bottom = 64;
+  while (top > 0 && top % 2 === 0) {
+    top /= 2;
+    bottom /= 2;
+  }
+  if (top === 0) return String(whole);
+  return whole ? `${whole}-${top}/${bottom}` : `${top}/${bottom}`;
+}
+
 const DISPLAY_PREFIXES: Array<[number, string]> = [
   [1e9, "G"],
   [1e6, "M"],
@@ -155,6 +192,8 @@ const DISPLAY_PREFIXES: Array<[number, string]> = [
 /** The value with the prefix that reads best: 1e-4 F is "100 µF", 4700 Ω is
  *  "4.7 kΩ", a value with no unit "4.7k". */
 export function formatMeasure(m: Pick<Measure, "value" | "unit">): string {
+  if (m.unit === "inch") return `${inchText(m.value)} in`;
+  if (m.unit && UNPREFIXED.has(m.unit)) return `${Number(m.value.toPrecision(4))} ${MEASURE_UNITS.find((u) => u.code === m.unit)?.symbol ?? m.unit}`;
   const sym = m.unit ? (MEASURE_UNITS.find((u) => u.code === m.unit)?.symbol ?? m.unit) : "";
   const abs = Math.abs(m.value);
   if (abs === 0) return sym ? `0 ${sym}` : "0";
@@ -189,7 +228,10 @@ export function measureMatches(query: Measure, stored: Pick<Measure, "value" | "
 export function asMeasure(v: unknown, unit?: string | null): Measure | null {
   if (v && typeof v === "object" && typeof (v as { value?: unknown }).value === "number") {
     const o = v as { value: number; unit?: unknown; text?: unknown };
-    return { value: o.value, unit: typeof o.unit === "string" ? o.unit : null, text: typeof o.text === "string" ? o.text : formatMeasure({ value: o.value, unit: typeof o.unit === "string" ? o.unit : null }) };
+    // A value kept before its unit was in the list ("mm") reads as the code
+    // the list gives it now ("millimeter").
+    const u = typeof o.unit === "string" ? measureUnitCode(o.unit) : null;
+    return { value: o.value, unit: u, text: typeof o.text === "string" ? o.text : formatMeasure({ value: o.value, unit: u }) };
   }
   return parseMeasure(v, { unit: unit ?? null });
 }
@@ -210,7 +252,10 @@ export function measureTokens(q: string): { values: Array<{ text: string; measur
     const alone = parseMeasure(one);
     if (next !== undefined && (!alone || !alone.unit)) {
       const pair = parseMeasure(`${one} ${next}`);
-      if (pair?.unit) {
+      // "100 in a box" is not a hundred inches: in running text a spaced
+      // "in" counts after a fraction or a decimal ("3/8 in", "0.5 in") only.
+      const looseIn = next === "in" && /^\d+$/.test(one);
+      if (pair?.unit && !looseIn) {
         values.push({ text: `${one} ${next}`, measure: pair });
         i++;
         continue;

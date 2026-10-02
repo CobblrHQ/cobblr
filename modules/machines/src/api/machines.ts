@@ -5,6 +5,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
+import { GONE_STATES } from "./resolvers.js";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
@@ -59,20 +60,31 @@ machinesRouter.get(
     const db = tenantDb(req);
     const units = await unitIdsIn(db, tenantContext(req).org.id, instanceOf(req));
     const page = readListPage(req.query);
+    // A machine sold, given away or scrapped has left: out of the list unless
+    // asked for (?gone=1, the list's "Gone" toggle), as the resolver does.
+    const gone = req.query.gone === "1" || req.query.gone === "true";
+    const isGone = sql<boolean>`lower(coalesce(state, '')) in (${sql.join([...GONE_STATES])})`;
     const rows = await db
       .selectFrom("machines_machines")
       .selectAll()
       .select(sql<string>`count(*) over()`.as(TOTAL_COLUMN))
       .where("instance", "=", instanceOf(req))
       .$if(units.length > 0, (q) => q.where("id", "not in", units))
+      .where(gone ? isGone : sql<boolean>`not ${isGone}`)
       .orderBy("name")
       .orderBy("id")
       .limit(page.limit)
       .offset(page.offset)
       .execute();
+    const left = await db
+      .selectFrom("machines_machines")
+      .select(sql<string>`count(*)`.as("n"))
+      .where("instance", "=", instanceOf(req))
+      .where(isGone)
+      .executeTakeFirst();
     const answer = pagedAnswer(rows, page);
     // A unit is one of its parent's N, never a machine of its own in the list.
-    res.json({ ...answer, items: await liftUnits(db, tenantContext(req).org.id, answer.items) });
+    res.json({ ...answer, items: await liftUnits(db, tenantContext(req).org.id, answer.items), gone_count: Number(left?.n ?? 0) });
   }),
 );
 

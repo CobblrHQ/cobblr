@@ -15,24 +15,26 @@
 
 import { askInOrder, listInOrder } from "./chain.js";
 import { aiRefusal, refusalCodeOf, type AiAttempt } from "@cobblr/platform-contract/ai-refusal";
-import { providerReasonOf, REASONS_ANOTHER_PROVIDER_MAY_ANSWER } from "@cobblr/platform-contract/provider-reason";
+import { providerError, providerReasonOf, redactSecrets, REASONS_ANOTHER_PROVIDER_MAY_ANSWER } from "@cobblr/platform-contract/provider-reason";
 import { createHash } from "node:crypto";
 import type {
   AiCapability,
   AiEndpointPolicy,
   AiEntitlementGuard,
   AiProviderDef,
+  AiReportedModels,
   PlatformAi,
 } from "@cobblr/platform-contract";
-import { aiCapabilityChain, isFloatingModel, type AiChainStep } from "@cobblr/platform-contract";
+import { aiCapabilityChain, isChatTurn, isFloatingModel, type AiChainStep } from "@cobblr/platform-contract";
 import { getTenantDb } from "../db/tenant.js";
 import { meta } from "../db/meta.js";
 import * as integrationsImpl from "./integrations.js";
 import { resolvePersonalProvider, type ResolvedPersonalProvider } from "./user-credentials.js";
 import { signMcpReadGrant } from "../auth/jwt.js";
-import { publicBaseUrl } from "./public-url.js";
+import { mcpRelayUrl } from "./public-url.js";
 import { env } from "../env.js";
 import { fullText, thumbnailImages } from "./ai-log.js";
+import { isCooling, noteAnswered, noteBusy } from "./ai-busy-cooldown.js";
 import { aiAnswerText } from "@cobblr/platform-contract/ai-answer";
 
 /** True when the chat input carries workspace tool defs (the AI wants to read
@@ -241,17 +243,25 @@ async function workspaceJobChoice(
         };
       };
     };
-    const row = await tdb
-      .selectFrom("core_ai_capability_defaults")
-      .select(["credential_id", "provider_id", "model"])
-      .where("capability", "=", capability)
-      .executeTakeFirst();
-    if (!row) return null;
-    return {
-      credentialId: row.credential_id ?? null,
-      providerId: row.provider_id ?? null,
-      model: row.model ?? null,
-    };
+    // A job split out of an older one (planning a change out of chat) asks
+    // the AI the workspace chose for the older job, with the new job's own
+    // model: choosing Claude for chat means a change is planned by Claude
+    // too, by its fuller model, not by whichever provider was added first.
+    const chain = aiCapabilityChain(capability);
+    for (const [i, served] of chain.entries()) {
+      const row = await tdb
+        .selectFrom("core_ai_capability_defaults")
+        .select(["credential_id", "provider_id", "model"])
+        .where("capability", "=", served)
+        .executeTakeFirst();
+      if (!row) continue;
+      return {
+        credentialId: row.credential_id ?? null,
+        providerId: row.provider_id ?? null,
+        model: i === 0 ? (row.model ?? null) : null,
+      };
+    }
+    return null;
   } catch {
     return null;
   }
@@ -263,7 +273,7 @@ async function resolveProviderAndModel(
   override?: { provider_id?: string; model?: string },
   /** Workspace providers already asked for this call (the fallback, #3819). */
   exclude?: ReadonlySet<string>,
-): Promise<{ row: ProviderRow; model: string }> {
+): Promise<{ row: ProviderRow; model: string; picked: boolean }> {
   const tdb = (await getTenantDb(orgId)) as unknown as {
     selectFrom: (t: string) => {
       selectAll: () => {
@@ -288,6 +298,9 @@ async function resolveProviderAndModel(
   };
   let providerId = override?.provider_id;
   let model = override?.model;
+  // A model somebody NAMED (the call, or the workspace's choice for the job)
+  // is never swapped behind their back; a provider's own default may be.
+  let picked = !!override?.model;
   if (!providerId) {
     const defaultRow = await tdb
       .selectFrom("core_ai_capability_defaults")
@@ -296,8 +309,15 @@ async function resolveProviderAndModel(
       .executeTakeFirst();
     if (defaultRow && !exclude?.has(defaultRow.provider_id)) {
       providerId = defaultRow.provider_id;
+      picked = picked || !!defaultRow.model;
       model = model ?? defaultRow.model;
     }
+  }
+  if (!providerId) {
+    // The choice made for the older job a new one was split from (planning a
+    // change out of chat): the same rule the personal-connection path reads.
+    const inherited = await workspaceJobChoice(orgId, capability);
+    if (inherited?.providerId && !inherited.credentialId && !exclude?.has(inherited.providerId)) providerId = inherited.providerId;
   }
   if (!providerId) {
     // Fallback: the INSTALLED providers that support this capability, the
@@ -385,7 +405,7 @@ async function resolveProviderAndModel(
   if (!model) {
     throw aiRefusal("no_provider", `provider ${providerId} does not support ${capability}`);
   }
-  return { row, model };
+  return { row, model, picked };
 }
 
 function truncate(s: string, n = 200): string {
@@ -594,7 +614,7 @@ export function setBusyRetryDelaysForTest(delays: readonly number[]): void {
 async function nextCandidate(
   req: Pick<Parameters<PlatformAi["invoke"]>[0], "orgId" | "userId" | "capability" | "provider_id" | "model" | "credential_id">,
   tried: readonly TriedProvider[],
-): Promise<{ row: ProviderRow; model: string; personalCredentials?: Record<string, unknown>; personal: ResolvedPersonalProvider | null }> {
+): Promise<{ row: ProviderRow; model: string; picked: boolean; personalCredentials?: Record<string, unknown>; personal: ResolvedPersonalProvider | null }> {
   const triedPersonal = new Set(tried.filter((t) => t.rowId.startsWith("personal:")).map((t) => t.rowId.slice("personal:".length)));
   const triedWorkspace = new Set(tried.filter((t) => !t.rowId.startsWith("personal:")).map((t) => t.provider_id));
   // Instance kill-switch: when AI is disabled for the whole deployment,
@@ -612,7 +632,7 @@ async function nextCandidate(
   // provider override (e.g. the eval harness) always wins over a personal cred.
   let personalCredentials: Record<string, unknown> | undefined;
   let personalServed: ResolvedPersonalProvider | null = null;
-  let resolved: { row: ProviderRow; model: string } | null = null;
+  let resolved: { row: ProviderRow; model: string; picked: boolean } | null = null;
   // What did this workspace SAY should do this job? An explicit choice decides,
   // and only when there is none does a personal connection win by default.
   const choice = req.provider_id ? null : await workspaceJobChoice(req.orgId, req.capability);
@@ -668,6 +688,7 @@ async function nextCandidate(
             label: req.userId && personal.ownerUserId === req.userId ? personal.label : null,
           },
           model: pmodel,
+          picked: !!(req.model ?? chosenModel),
         };
         personalCredentials = personal.credentials;
       }
@@ -685,7 +706,7 @@ async function nextCandidate(
       throw aiRefusal("workspace_disabled", "no provider configured: AI is turned off for this workspace");
     }
   }
-  const { row, model } =
+  const { row, model, picked } =
     resolved ??
     (await resolveProviderAndModel(
       req.orgId,
@@ -693,7 +714,7 @@ async function nextCandidate(
       { provider_id: req.provider_id, model: req.model },
       triedWorkspace,
     ));
-  return { row, model, personalCredentials, personal: personalServed };
+  return { row, model, picked, personalCredentials, personal: personalServed };
 }
 
 export type { AiChainStep } from "@cobblr/platform-contract";
@@ -752,7 +773,7 @@ const invokeRaw = async (
   current: { rowId?: string; providerId?: string; model?: string; label?: string } = {},
 ): Promise<Omit<Awaited<ReturnType<PlatformAi["invoke"]>>, "text">> => {
   const next = await nextCandidate(req, tried);
-  const { row, model } = next;
+  const { row, model, picked } = next;
   const personalCredentials = next.personalCredentials;
   current.rowId = row.id;
   current.providerId = row.provider_id;
@@ -766,7 +787,7 @@ const invokeRaw = async (
   // can't) — so instead we mint a short-lived, read-only, workspace-pinned grant
   // and pass it as `input.mcp`; the adapters forward it, and the bridge spawns
   // `claude -p --mcp-config` pointed at THIS instance's MCP endpoint. The `url`
-  // is THIS instance's own public origin (publicBaseUrl) so one shared bridge can
+  // is THIS instance's own MCP address (mcpRelayUrl) so one shared bridge can
   // serve many Cobblr instances — each grant is minted + validated by its own
   // instance (a staging grant never validates on prod). The grant is clamped
   // server-side (auth middleware `mcp-read:<slug>` → GET reads only), so
@@ -774,7 +795,7 @@ const invokeRaw = async (
   // credentials below so we decrypt once. See
   // docs/design-decisions/ask-cobb-bridge-mcp-tools.md.
   let earlyCredentials: Record<string, unknown> | undefined;
-  if (req.capability === "chat" && req.userId && inputHasTools(req.input)) {
+  if (isChatTurn(req.capability) && req.userId && inputHasTools(req.input)) {
     earlyCredentials =
       personalCredentials ??
       (row.credentials_enc ? await integrationsImpl.decryptCredentials(req.orgId, row.credentials_enc) : {});
@@ -789,11 +810,10 @@ const invokeRaw = async (
       const slug = await orgSlugOf(req.orgId);
       if (slug) {
         const grant = await signMcpReadGrant(req.userId, slug);
-        // Endpoint = this instance's own hosted MCP surface. When the public
-        // origin isn't configured (publicBaseUrl unset), send no url and let the
-        // bridge fall back to its own BRIDGE_MCP_RELAY_URL env.
-        const base = publicBaseUrl();
-        const url = base ? `${base}/api/v1/hooks/mcp` : undefined;
+        // Endpoint = this instance's own hosted MCP surface (mcpRelayUrl).
+        // When it has none, send no url and let the bridge fall back to its
+        // own BRIDGE_MCP_RELAY_URL env.
+        const url = mcpRelayUrl() || undefined;
         (req.input as Record<string, unknown>).mcp = { token: grant, workspace: slug, ...(url ? { url } : {}) };
         req.bypass_cache = true; // per-request grant — a tool-relay chat is never cacheable
       } else {
@@ -965,16 +985,29 @@ const invokeRaw = async (
   let duration_ms = 0;
   // The model actually sent, not the router's placeholder: the log, the
   // failure line and the refusal name it (#3819).
-  const resolved = def.resolveModel?.({ capability: req.capability, model, credentials }) ?? { model, chosen: true };
-  let sent = resolved.model;
-  // Siblings on the same key for a default nobody chose, tried once each when
-  // it stays busy, before the router moves to another provider.
-  const alternates = resolved.chosen ? [] : [...(def.busyAlternates?.(sent) ?? [])];
-  let onAlternate = false;
+  // A model nobody named is handed to the adapter as "default", so its own
+  // choice for the job applies and the result says so (chosen: false). A
+  // job's menu default used to arrive here as a name, read as somebody's
+  // choice, and never got a sibling when it was busy (#4573).
+  const resolved = def.resolveModel?.({ capability: req.capability, model: picked ? model : "default", credentials }) ?? { model, chosen: true };
+  // The LADDER: the model, then, for one nobody chose, the provider's other
+  // models on the same key for this job, in its order (busyAlternates: a
+  // floating alias, then pinned older versions). A rung that answered busy
+  // lately is cooling down (ai-busy-cooldown.ts) and is skipped, so the call
+  // starts where the last one was answered. A person's choice is always
+  // asked, and only it.
+  const ladder = resolved.chosen ? [resolved.model] : [...new Set([resolved.model, ...(def.busyAlternates?.(resolved.model, req.capability) ?? [])])];
+  const rungs = resolved.chosen ? ladder : ladder.filter((m) => !isCooling(row.id, m, req.capability));
+  let sent = rungs[0] ?? resolved.model;
+  if (rungs.length && sent !== resolved.model) {
+    console.warn(`[core-ai] ${req.capability} ${row.provider_id}: ${ladder.slice(0, ladder.indexOf(sent)).join(", ")} cooling down after "busy"; starting on ${sent}`);
+  }
+  let rung = 0;
   // A busy provider is asked again inside this one call before anything
   // gives up (#3819): it answered, it is only turning calls away for now.
+  // Only the first rung is asked again; a rung after it is asked once.
   // Every ask is its own row in the AI log.
-  for (let attempt = 0; ; attempt++) {
+  for (let attempt = 0; rungs.length > 0; attempt++) {
   const start = Date.now();
   ok = false;
   errMsg = null;
@@ -1022,23 +1055,41 @@ const invokeRaw = async (
     input_tokens: payload.input_tokens ?? null,
     output_tokens: payload.output_tokens ?? null,
   });
-  if (ok) break;
+  if (ok) {
+    // A real answer of this job is what proves the model free again.
+    if (!resolved.chosen) noteAnswered(row.id, sent, req.capability);
+    if (sent !== resolved.model) console.warn(`[core-ai] ${req.capability} ${row.provider_id}/${resolved.model} busy; answered by ${sent}`);
+    break;
+  }
   const failedReason = providerReasonOf(failure);
   // Which provider, which model, and why: the line a person reading the log
   // needs, and the model was the part it never said.
   console.warn(`[core-ai] ${req.capability} ${row.provider_id}/${sent} failed (${failedReason ?? "unknown"}), attempt ${attempt + 1}: ${errMsg}`);
   if (failedReason !== "busy") break;
-  const pause = onAlternate ? undefined : busyRetryDelaysMs[attempt];
+  const pause = rung === 0 ? busyRetryDelaysMs[attempt] : undefined;
   if (pause === undefined) {
-    const next = alternates.shift();
+    if (!resolved.chosen) {
+      const ms = noteBusy(row.id, sent, req.capability);
+      console.warn(`[core-ai] ${req.capability} ${row.provider_id}/${sent} stayed busy; cooling down for ${Math.round(ms / 60_000)} min`);
+    }
+    rung++;
+    const next = rungs[rung];
     if (!next) break;
     console.warn(`[core-ai] ${req.capability} ${row.provider_id}/${sent} stayed busy; asking ${next} on the same key`);
     sent = next;
-    onAlternate = true;
     continue;
   }
   const asked = (failure as { retryAfterSec?: number } | null)?.retryAfterSec;
   await new Promise((r) => setTimeout(r, asked && asked * 1000 <= 10_000 ? asked * 1000 : pause));
+  }
+  if (rungs.length === 0) {
+    // Every model this key offers for the job is cooling down: the provider
+    // is busy without being asked, and the router moves on, or the caller
+    // waits (a document is never read by a lighter model instead).
+    sent = resolved.model;
+    errMsg = `${row.provider_id}: every model for ${req.capability} answered "busy" lately (${ladder.join(", ")}); cooling down`;
+    failure = providerError(row.provider_id, "busy", errMsg, 503);
+    console.warn(`[core-ai] ${errMsg}`);
   }
 
   if (!ok) {
@@ -1145,4 +1196,64 @@ async function writeAuditRow(
   } catch (err) {
     console.error("[core-ai] audit insert failed:", err);
   }
+}
+
+// ── What a connection says it serves ─────────────────────────────────────────
+//
+// A menu built from a provider TYPE's suggestions offered llama3.2 and qwen2.5
+// under a Claude bridge that serves sonnet, opus and haiku, and the settings
+// refused a model the box had pulled because it was not on the type's list
+// (#4586). A provider whose models depend on its endpoint implements
+// listModels; this asks it, for the workspace's own connection or a personal
+// one routed here, and keeps the answer for a minute so a menu opened twice
+// does not ask twice.
+
+const REPORTED_TTL_MS = 60_000;
+
+/** The model typed on the connection itself, if any: the person's own pin. */
+function pinnedOf(credentials: Record<string, unknown>): string[] {
+  const m = typeof credentials.model === "string" ? credentials.model.trim() : "";
+  return m ? [m] : [];
+}
+const reported = new Map<string, { at: number; value: AiReportedModels }>();
+
+export async function modelsReportedBy(
+  orgId: string,
+  userId: string | null,
+  ref: { providerId?: string; credentialId?: string },
+  opts: { fresh?: boolean } = {},
+): Promise<AiReportedModels | null> {
+  let providerId = ref.providerId ?? null;
+  let credentials: Record<string, unknown> | null = null;
+  if (ref.credentialId) {
+    const personal = await resolvePersonalProvider(orgId, userId, () => true, "ai-provider", "chat", ref.credentialId).catch(() => null);
+    if (!personal || personal.credentialId !== ref.credentialId) return null;
+    providerId = personal.providerId;
+    credentials = personal.credentials;
+  }
+  if (!providerId) return null;
+  const def = providers.get(providerId);
+  if (!def?.listModels) return null;
+  const key = `${orgId}|${ref.credentialId ?? `ws:${providerId}`}`;
+  const hit = reported.get(key);
+  if (hit && !opts.fresh && Date.now() - hit.at < REPORTED_TTL_MS) return hit.value;
+  let value: AiReportedModels;
+  try {
+    if (!credentials) {
+      const tdb = (await getTenantDb(orgId)) as unknown as {
+        selectFrom: (t: string) => {
+          select: (c: string[]) => { where: (c: string, op: string, v: unknown) => { where: (c: string, op: string, v: unknown) => { executeTakeFirst: () => Promise<{ credentials_enc: string | null } | undefined> } } };
+        };
+      };
+      const row = await tdb.selectFrom("core_ai_providers").select(["credentials_enc"]).where("provider_id", "=", providerId).where("enabled", "=", true).executeTakeFirst();
+      if (!row) return null;
+      credentials = row.credentials_enc ? await integrationsImpl.decryptCredentials(orgId, row.credentials_enc) : {};
+    }
+    const live = await def.listModels(credentials);
+    value = { ok: true, models: [...new Set([...live, ...pinnedOf(credentials)])] };
+  } catch (err) {
+    value = { ok: false, error: redactSecrets((err as Error)?.message ?? String(err), Object.values(credentials ?? {})), models: pinnedOf(credentials ?? {}) };
+  }
+  reported.set(key, { at: Date.now(), value });
+  return value;
 }

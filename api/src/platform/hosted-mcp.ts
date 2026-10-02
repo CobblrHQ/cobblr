@@ -23,11 +23,11 @@
 import { platform } from "@cobblr/platform-contract";
 import { READ_TOOLS_THAT_POST, WORKSPACE_TOOLS, jsonSchemaOf, mcpToolName, toolFromMcpName, workspaceLinks, type WorkspaceApi } from "@cobblr/workspace-tools";
 import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
-import { signMcpWriteGrant, verifySession } from "../auth/jwt.js";
+import { instanceOfGrants, signMcpWriteGrant, verifySession } from "../auth/jwt.js";
 import { resolveApiToken } from "../auth/api-tokens.js";
 import { MCP_PATH, originOf, protectedResourceMetadataUrl } from "../auth/oauth.js";
 import { mcpProxyHeaders } from "../auth/mcp-proxy.js";
-import { actionRefusal, actionSafety } from "./ai-action-door.js";
+import { actionRefusal } from "./ai-action-door.js";
 
 const SELF_BASE = `http://127.0.0.1:${process.env.API_PORT || "4000"}/api/v1`;
 const SERVER_INFO = { name: "cobblr", version: "0.1.0" };
@@ -100,12 +100,6 @@ async function rest(token: string, method: string, path: string, body?: unknown)
     throw new Error(typeof err === "string" ? err : JSON.stringify(err));
   }
   return parsed;
-}
-
-/** One string argument, if the caller sent one. */
-function argString(args: Json, name: string): string {
-  const v = args[name];
-  return typeof v === "string" ? v.trim() : "";
 }
 
 /** A held token names its workspace; a call aimed at another is refused in
@@ -184,6 +178,19 @@ type Caller =
    *  write it will be refused. */
   | { kind: "held"; slug: string | null; lookOnly: boolean };
 
+/** A relay grant another instance minted. Not caught with the other verify
+ *  failures: it is the configuration fault to name, not a token to let the
+ *  api reject later in words about permissions. */
+export class GrantFromElsewhere extends Error {
+  constructor(minted: string, here: string) {
+    super(
+      `This chat was started on the ${minted || "unnamed"} instance, but its assistant reached the ${here || "unnamed"} one. ` +
+        `Nothing was read or changed. The ${minted || "starting"} instance must hand its bridge its own address (COBBLR_MCP_RELAY_URL).`,
+    );
+    this.name = "GrantFromElsewhere";
+  }
+}
+
 async function callerOf(token: string): Promise<Caller> {
   if (token.startsWith("cbt_")) {
     const t = await resolveApiToken(token).catch(() => null);
@@ -194,9 +201,25 @@ async function callerOf(token: string): Promise<Caller> {
     const claims = await verifySession(token);
     const aud = typeof claims.aud === "string" ? claims.aud : "";
     if (aud.startsWith("mcp-read:") && claims.sub) {
+      // Two instances can share a database and a signing secret (a canary
+      // beside its release). A grant minted by the other one verifies here,
+      // and its chat would then be answered by THIS instance's code, which
+      // may be older: the canary's offered-change fix was invisible for a
+      // day because its bridge was handed the release's address. Refuse it
+      // by name instead of answering with the wrong build.
+      // A grant from before grants said where they came from has no claim
+      // to compare, and expires within the quarter hour.
+      const minted = claims.ins;
+      if (minted !== undefined && minted !== instanceOfGrants()) {
+        throw new GrantFromElsewhere(minted, instanceOfGrants());
+      }
       return { kind: "grant", slug: aud.slice("mcp-read:".length), userId: String(claims.sub) };
     }
-  } catch {
+  } catch (err) {
+    if (err instanceof GrantFromElsewhere) {
+      console.error(`[mcp] ${err.message}`);
+      throw err;
+    }
     // Not a JWT we can read — let the api's own auth reject it per call.
   }
   return { kind: "full" };
@@ -249,6 +272,21 @@ export function writeRefusal(tool: string, mode: WriteMode): string | null {
 
 export { actionRefusal };
 
+/** Why a RELAY grant (an in-app chat turn on a bridge) may not call this
+ *  write tool at all, or null. The one answer the tool list and the call path
+ *  both read, so the list can never offer a tool the call refuses.
+ *
+ *  A record write goes to the chat's own write door in every mode but "off":
+ *  that door applies it, or OFFERS it to the person watching the turn when it
+ *  may not apply on its own (#4574), so "no way to confirm" is never a reason
+ *  to refuse it here. */
+export function relayRefusal(tool: string, mode: WriteMode): string | null {
+  if (LEDGERED_TOOLS.has(tool)) {
+    return mode === "off" ? (writeRefusal(tool, "off") ?? "Changes are turned off for this chat.") : null;
+  }
+  return writeRefusal(tool, mode);
+}
+
 // Read tools that POST to read, shared with the stdio MCP server.
 export { READ_TOOLS_THAT_POST };
 
@@ -265,7 +303,7 @@ export function toolsForWriteMode(mode: WriteMode): typeof HOSTED_MCP_TOOLS {
     // refused there with what to do instead.
     if (!reg || reg.consentBy) return true;
     if (reg.mode === "read") return !READ_TOOLS_THAT_POST.has(reg.name);
-    return writeRefusal(reg.name, mode) === null;
+    return relayRefusal(reg.name, mode) === null;
   });
 }
 
@@ -304,6 +342,7 @@ function nameOf(data: unknown): string {
  *  arrived. A test holds this set against the registry's write tools. */
 export const LEDGERED_TOOLS = new Set([
   "add_thing",
+  "file_inbox_items",
   "create_record",
   "create_records",
   "update_record",
@@ -340,12 +379,11 @@ async function callTool(name: string, args: Json, token: string, defaultSlug: st
   // handed back to the bridge.
   let execToken = token;
   if (caller.kind === "grant" && tool.mode === "write") {
-    const refusal = tool.consentBy ? null : writeRefusal(tool.name, await writeModeFor(token, caller.slug));
+    // A record write goes to the chat's own door, which applies it or offers
+    // it for the person to confirm on the turn they are watching: a relayed
+    // chat HAS a confirm step (#4574). Everything else is judged as before.
+    const refusal = tool.consentBy ? null : relayRefusal(tool.name, await writeModeFor(token, caller.slug));
     if (refusal) throw new Error(refusal);
-    if (tool.name === "invoke_action") {
-      const actionRefused = actionRefusal(await actionSafety(argString(args, "action_id")));
-      if (actionRefused) throw new Error(actionRefused);
-    }
     execToken = await signMcpWriteGrant(caller.userId, caller.slug);
   }
 
@@ -398,7 +436,9 @@ function rpcErr(id: unknown, code: number, message: string): Json {
   return { jsonrpc: "2.0", id, error: { code, message } };
 }
 
-async function dispatch(msg: Json, token: string, defaultSlug: string | null): Promise<Json | null> {
+/** One JSON-RPC message, answered. Exported so a test can ask the endpoint
+ *  what it answers a grant without going over HTTP. */
+export async function dispatch(msg: Json, token: string, defaultSlug: string | null): Promise<Json | null> {
   const { method, id, params } = msg as { method?: string; id?: unknown; params?: Json };
   // Notifications (no id) get no response body.
   if (id === undefined || id === null) {
@@ -414,7 +454,12 @@ async function dispatch(msg: Json, token: string, defaultSlug: string | null): P
     case "ping":
       return rpcResult(id, {});
     case "tools/list":
-      return rpcResult(id, { tools: await toolsFor(await callerOf(token), token) });
+      try {
+        return rpcResult(id, { tools: await toolsFor(await callerOf(token), token) });
+      } catch (e) {
+        if (e instanceof GrantFromElsewhere) return rpcErr(id, -32001, e.message);
+        throw e;
+      }
     case "tools/call": {
       const name = params?.name as string;
       const args = (params?.arguments as Json) ?? {};

@@ -10,8 +10,10 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { usePageTitle } from "@cobblr/platform-web";
 import { QueryError } from "../components/QueryError";
 import { FEED_SCROLL_PAGE } from "../lib/feed";
-import { ACTIVITY_ROW } from "../components/ActorVia";
+import { ACTIVITY_ROW, ActorVia } from "../components/ActorVia";
 import { ActivitySentence, type KindLabels } from "../components/ActivitySentence";
+import { SaidList } from "../features/core-activity-log/history";
+import { activityKind } from "../lib/activityKind";
 import { useKindLabels } from "../lib/useKindLabels";
 
 type AuthMethod = "session" | "api_token" | "system";
@@ -121,25 +123,17 @@ function ActivityRow({ entry, labels }: { entry: ActivityEntry; labels: KindLabe
           {new Date(entry.occurred_at).toLocaleString()}
         </time>
       </div>
-      {/* What an admin needs to trace it, a tap down: the action as recorded,
-          how it was signed in, which record, which module, and the diff. */}
+      {/* What an admin needs to trace it, a tap down, in words: how it was
+          made, which record, and what it changed or recorded, said the way
+          the record's History says it. Never the raw diff, ids or keys. */}
       <details className="mt-1">
         <summary className="text-[10px] font-mono text-faint cursor-pointer hover:text-accent">details</summary>
-        <div className="flex items-baseline gap-2 flex-wrap mt-1 text-[10px] text-muted dark:text-slate-400">
+        <div className="flex items-baseline gap-2 flex-wrap mt-1 text-[11px] text-muted dark:text-slate-400">
           <AuthBadge method={entry.auth_method} />
-          <span className="font-mono text-accent dark:text-cobble-300">{entry.action}</span>
-          <span className="font-mono">
-            {entry.entity_type}
-            {entry.entity_id ? `:${entry.entity_id.slice(0, 8)}` : ""}
-          </span>
-          {entry.token?.prefix && <span className="font-mono">({entry.token.prefix}…)</span>}
-          {entry.module_name && <span className="font-mono">· module: {entry.module_name}</span>}
+          <ActorVia entry={entry} />
+          {entry.entity_title && <span>· {entry.entity_title}</span>}
         </div>
-        {entry.diff != null && (
-          <pre className="mt-1 p-2 rounded bg-subtle/60 dark:bg-slate-800/60 font-mono text-[10px] overflow-x-auto text-content dark:text-mortar-200">
-            {JSON.stringify(entry.diff, null, 2)}
-          </pre>
-        )}
+        <SaidList entry={entry} name={entry.entity_title || labels.noun(activityKind(entry))} />
       </details>
     </li>
   );

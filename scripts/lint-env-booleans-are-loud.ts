@@ -17,7 +17,7 @@
 //   z.enum(["true", "false"]).default("false").transform((v) => v === "true")
 // (COBBLR_AI_ENABLED and COBBLR_DISABLE_EXPERIMENTAL_MODULES in api/src/env.ts
 // are the precedent), so a wrong value fails boot naming the value and the
-// two it accepts. This is the same rule as CLAUDE.md 14.6's `||` not `??`:
+// two it accepts. This is the same rule as docs/architecture/platform-spec.md §14.6's `||` not `??`:
 // an env var that silently takes a wrong value is invisible until it is
 // expensive; a wrong value must be loud, never plausible. A genuine
 // exception (a non-env boolean that really wants Boolean(x) semantics) says

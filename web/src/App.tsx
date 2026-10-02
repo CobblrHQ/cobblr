@@ -132,6 +132,8 @@ const OAuthConsentPage = lazy(() => import("./pages/OAuthConsentPage").then((m) 
 const ApiRecipesPage = lazy(() => import("./pages/ApiRecipesPage").then((m) => ({ default: m.ApiRecipesPage })));
 const QueuePage = lazy(() => import("./pages/QueuePage").then((m) => ({ default: m.QueuePage })));
 const LinksPage = lazy(() => import("./pages/LinksPage").then((m) => ({ default: m.LinksPage })));
+const SharingPage = lazy(() => import("./pages/SharingPage").then((m) => ({ default: m.SharingPage })));
+const ShareJoinPage = lazy(() => import("./pages/ShareJoinPage").then((m) => ({ default: m.ShareJoinPage })));
 const LocationsPage = lazy(() => import("./pages/LocationsPage").then((m) => ({ default: m.LocationsPage })));
 const PlaceItemsPage = lazy(() => import("./pages/PlaceItemsPage").then((m) => ({ default: m.PlaceItemsPage })));
 const LocationDetailPage = lazy(() => import("./pages/LocationDetailPage").then((m) => ({ default: m.LocationDetailPage })));
@@ -337,6 +339,7 @@ function PublicRoutes() {
   return (
     <Routes>
       <Route path="/invite/:token" element={<InviteAcceptPage />} />
+      <Route path="/share/join" element={<ShareJoinPage />} />
       {/* /oauth/authorize — an AI assistant's connector (claude.ai, the phone
           apps) sends a person here to approve it; signed out, it asks them to
           sign in and comes back. */}
@@ -638,6 +641,8 @@ function ActiveOrgScopedRoutes() {
         upsertOverride: (slug, body) => api.upsertOverride(slug, body),
         invokeAction: (slug, body) => api.invokeAction(slug, body),
         lookupEntity: (slug, kind, id) => api.lookupEntity(slug, kind, id),
+        listShareOffers: (slug) => api.listShareOffers(slug),
+        withdrawShareOffer: (slug, id) => api.withdrawShareOffer(slug, id),
         // Walk-up printing: platform-web needs the printer list to spot a
         // browser-driven default, and a way to call a module back once paper
         // exists. Both optional in the contract; wiring them turns it on.
@@ -679,6 +684,7 @@ function ActiveOrgScopedRoutes() {
             .orgModules(slug)
             .then((r) => [...KERNEL_PANELS, ...r.items.filter((m) => m.enabled).flatMap((m) => m.panels ?? [])]),
         fieldValues: (slug, kind, field, opts) => api.fieldValues(slug, kind, field, opts),
+        sellerOffer: (slug, kind) => api.sellerOffer(slug, kind),
         listUnits: (slug) => api.listUnits(slug),
         addUnit: (slug, unit) => api.addUnit(slug, unit),
         deleteUnit: (slug, code) => api.deleteUnit(slug, code).then(() => undefined),
@@ -905,6 +911,7 @@ function ActiveOrgScopedRoutes() {
             <Route path="/configuration/api-recipes" element={<ApiRecipesPage />} />
             <Route path="/configuration/queue" element={<QueuePage />} />
             <Route path="/configuration/links" element={<LinksPage />} />
+            <Route path="/configuration/sharing" element={<SharingPage />} />
             {/* Settings FAMILY pages that live outside /configuration/* render
                 inside the same sidebar — a sidebar link must never drop the
                 sidebar. Files / Tags / Views used to be here too; they are

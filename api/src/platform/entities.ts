@@ -1096,6 +1096,14 @@ export async function resolvedKindForEntity(orgId: string, kind: string, id: str
  *  Fixes the pre-2026-07-10 gap where instance items were invisible to every
  *  registry consumer (search detail routes, MCP kind listing, generic
  *  surfaces). */
+/** One kind's record as a workspace sees it (an instance kind included), or
+ *  null. For a caller that needs the kind's own field declarations: which
+ *  native columns carry a field role, and how a money column stores it. */
+export async function kindRecordForOrg(orgId: string, kind: string): Promise<EntityKindRecord | null> {
+  const recs = await listKindsForOrg(orgId).catch(() => [] as EntityKindRecord[]);
+  return recs.find((r) => (r.id.includes(":") ? r.id : `${r.module_name}:${r.id}`) === kind) ?? null;
+}
+
 export async function listKindsForOrg(orgId: string): Promise<EntityKindRecord[]> {
   const all = await listKinds();
   // ONLY the kinds this workspace enabled. The registry is process-global —

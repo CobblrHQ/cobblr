@@ -116,6 +116,13 @@ export function colourWordOfFields(candidates: unknown): string | null {
   return null;
 }
 
+/** The document checks put this row's name in doubt (check_fields). */
+export function nameInDoubt(meta: unknown): boolean {
+  const fields = (meta as { check_fields?: { fields?: unknown } } | null)?.check_fields?.fields;
+  // The make and model are what a picture search reads with the name.
+  return Array.isArray(fields) && (fields.includes("name") || fields.includes("make") || fields.includes("model"));
+}
+
 export async function refreshCatalogImageByName(
   orgId: string,
   itemId: string,
@@ -148,6 +155,10 @@ export async function refreshCatalogImageByName(
     .where("id", "=", itemId)
     .executeTakeFirst();
   if ((cur?.suggested_metadata as { catalog_image_user_set?: boolean } | null)?.catalog_image_user_set) return "kept";
+  // A name the document checks found is not words ("C1yTe WATCU Ey oL 4") is
+  // never searched for: the search answers it with whatever the garbage
+  // resembles (wristwatches, #4571). It waits for the corrected name.
+  if (nameInDoubt(cur?.suggested_metadata)) return "none";
   // Sharpen a weak title with author + media word (the same extras the
   // photo-options strip uses) so a book finds its cover, not generic images —
   // and with the observation's FORM FACTOR, so the default auto-fetch knows a

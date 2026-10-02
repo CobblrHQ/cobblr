@@ -52,6 +52,13 @@ export function collectionLabelFor(
   return head ? humanise(head) : "Item";
 }
 
+/** The kind a record's custom fields are defined under: a record in a named
+ *  collection comes back as its module's base kind with `instance` set, and
+ *  its fields belong to `<instance>:item`. */
+export function fieldKindOf(record: { kind: string; instance?: string | null }): string {
+  return record.instance ? `${record.instance}:item` : record.kind;
+}
+
 /** The collection a RECORD belongs to. A record in a named collection comes
  *  back under its module's base kind with `instance` set (a grocery is an
  *  `inventory:part` in the "groceries" instance), so labelling it by `kind`
@@ -60,7 +67,7 @@ export function collectionLabelForRecord(
   record: { kind: string; instance?: string | null },
   instances: readonly InstanceForLabel[] | null | undefined,
 ): string {
-  return collectionLabelFor(record.instance ? `${record.instance}:item` : record.kind, instances);
+  return collectionLabelFor(fieldKindOf(record), instances);
 }
 
 /** One thing in that collection: "book" for `bookshelf:item` when the

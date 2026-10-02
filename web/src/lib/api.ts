@@ -2,6 +2,7 @@
 // call so the AuthProvider can update it without rewiring the client.
 // Everything goes through `request<T>` so error shape stays uniform.
 
+import type { ScopeDef, VisibilityDef } from "@cobblr/platform-contract/share-scope";
 import type { FieldValuesUsedBody, TipState } from "@cobblr/platform-web";
 import { noteWorkspaceWrite } from "@cobblr/platform-web";
 import type { CancelResult } from "./digifab-cancel";
@@ -72,6 +73,57 @@ export async function fetchCsv(path: string): Promise<{ blob: Blob; filename: st
   }
   const named = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1];
   return { blob: await res.blob(), filename: named ?? "export.csv", complete: res.headers.get("x-export-complete") !== "false" };
+}
+
+export interface ShareOfferItem {
+  id: string;
+  direction: "out" | "in";
+  title: string;
+  status: "offered" | "maybe" | "taken" | "passed" | "withdrawn" | "returned";
+  peer_name: string | null;
+  created_at: string;
+  taken_at: string | null;
+  can_withdraw: boolean;
+  can_send_back: boolean;
+}
+
+export interface ShareLinkItem {
+  id: string;
+  side: "owner" | "share";
+  status: "pending" | "active" | "revoked";
+  label: string | null;
+  peer_name: string | null;
+  peer_workspace_name: string | null;
+  /** The other Cobblr's host; null when it is this one. */
+  peer_host: string | null;
+  last_synced_at: string | null;
+  last_error: string | null;
+  last_error_at: string | null;
+  invite_expires_at: string | null;
+  waiting: number;
+  /** The friend's edits waiting for this workspace to decide. */
+  edits_waiting?: number;
+  edit_mode?: ShareEditMode;
+  created_at: string;
+}
+
+/** Whether a friend's edits apply at once ("direct") or wait ("suggest"). */
+export type ShareEditMode = "suggest" | "direct";
+
+export interface ShareEditItem {
+  id: string;
+  entity_kind: string;
+  entity_id: string;
+  title: string | null;
+  field: string;
+  label: string;
+  was: string | null;
+  now: string | null;
+  /** On a conflict: what the record says here now. */
+  yours: string | null;
+  status: "pending" | "conflict" | "applied" | "undone" | "accepted" | "rejected";
+  by_name: string | null;
+  created_at: string;
 }
 
 export class ApiError extends Error {
@@ -421,6 +473,8 @@ export interface OrgMembership {
   role: OrgRoleName;
   /** When the workspace was made. Absent from an older server. */
   created_at?: string;
+  /** "share": a workspace someone shared with you (Settings → Sharing). */
+  kind?: "workspace" | "share";
   /** Display name of the workspace's owner — for the switcher's "Owner: …" on
    *  workspaces you don't own. Null if unresolved. */
   owner_name?: string | null;
@@ -757,10 +811,58 @@ export interface OrderSummary {
   top_vendors: Array<{ vendor: string | null; spend: number }>;
 }
 
+/** One value a document filled on a record. */
+export interface PaperworkFill {
+  field: string;
+  label: string;
+  native: boolean;
+  value: string | number;
+  shown: string;
+}
+/** A field where the document and the record disagree; nothing was written. */
+export interface PaperworkConflict {
+  field: string;
+  label: string;
+  native: boolean;
+  document: string | number;
+  current: unknown;
+  shown_document: string;
+  shown_current: string;
+}
+/** A value the paper read that failed its check: shown under "Please
+ *  check", written nowhere (#4633). `field` is null when no field takes it. */
+export interface PaperworkHeld {
+  field: string | null;
+  label: string;
+  native: boolean;
+  check: string;
+  document: string | number;
+  shown_document: string;
+}
+
+export type PaperworkResult =
+  | {
+      read: true;
+      document: "bill-of-sale" | "receipt";
+      from: string | null;
+      total: number | null;
+      order_id: string | null;
+      purchases_off: boolean;
+      filled: PaperworkFill[];
+      conflicts: PaperworkConflict[];
+      held?: PaperworkHeld[];
+      /** The document AI could not read it now: busy, or its limit is used up. */
+      waiting?: "busy" | "limit" | null;
+    }
+  | { read: false; reason: string };
+
 export interface OrderItem {
   id: string;
   order_id: string;
   part_id: string | null;
+  /** The record this line was claimed for, any kind (a part also sets part_id). */
+  subject_kind?: string | null;
+  subject_id?: string | null;
   description: string | null;
   qty: string;
   unit_cost: string | null;
@@ -1412,10 +1514,20 @@ export const api = {
     request<void>("POST", `/orgs/${slug}/modules/${name}/disable`),
 
   // machines module (instance? scopes to /instances/:name/items)
-  listMachines: (slug: string, instance?: string) =>
-    walkPages<Machine>((offset, limit) =>
-      request<{ items: Machine[]; total?: number | null; complete?: boolean }>("GET", `${primaryBase(slug, "machines/machines", instance)}?offset=${offset}&limit=${limit}`),
-    ),
+  /** The machines you have; `gone` lists the ones sold, given away or
+   *  scrapped instead. `gone_count` is how many have left either way. */
+  listMachines: async (slug: string, instance?: string, opts: { gone?: boolean } = {}) => {
+    let gone_count = 0;
+    const walked = await walkPages<Machine>(async (offset, limit) => {
+      const page = await request<{ items: Machine[]; total?: number | null; complete?: boolean; gone_count?: number }>(
+        "GET",
+        `${primaryBase(slug, "machines/machines", instance)}?${opts.gone ? "gone=1&" : ""}offset=${offset}&limit=${limit}`,
+      );
+      gone_count = page.gone_count ?? gone_count;
+      return page;
+    });
+    return { ...walked, gone_count };
+  },
   getMachine: (slug: string, id: string, instance?: string) =>
     request<Machine>("GET", `${primaryBase(slug, "machines/machines", instance)}/${id}`),
   createMachine: (slug: string, body: Partial<Machine>, instance?: string) =>
@@ -1562,6 +1674,24 @@ export const api = {
    *  already added refuses a new count (409 line_received). */
   updateOrderItem: (slug: string, orderId: string, itemId: string, body: { description?: string | null; qty?: number; unit_cost?: number | null }) =>
     request<OrderItem>("PATCH", `/orgs/${slug}/modules/purchases/orders/${orderId}/items/${itemId}`, body),
+  /** Make one line of a purchase (a bill of sale's add-on) an inbox item, in
+   *  its receipt's session; filing it claims the line. Once per line. */
+  orderLineToInbox: (slug: string, body: { order_id: string; order_item_id: string; description: string; qty: number; unit_cost: number | null }) =>
+    request<{ id: string; existed: boolean }>("POST", `/orgs/${slug}/modules/core-scan/inbox/from-order-line`, body),
+  /** Which lines of one purchase are already scan-inbox items. */
+  orderLinesInInbox: (slug: string, orderId: string) =>
+    request<{ items: Array<{ order_item_id: string; id: string }> }>("GET", `/orgs/${slug}/modules/core-scan/inbox/order-lines?order_id=${encodeURIComponent(orderId)}`),
+  /** Read a document put on a record and fill the record's empty fields from
+   *  it; conflicts come back to decide, fills come back to undo. */
+  attachPaperwork: (slug: string, body: { file_id: string; kind: string; id: string }) =>
+    request<PaperworkResult>("POST", `/orgs/${slug}/modules/core-scan/scan/paperwork`, body),
+  undoPaperwork: (slug: string, body: { kind: string; id: string; fills: PaperworkFill[] }) =>
+    request<{ undone: string[] }>("POST", `/orgs/${slug}/modules/core-scan/scan/paperwork/undo`, body),
+  takePaperworkValue: (slug: string, body: { kind: string; id: string; field: string; native: boolean; value: string | number }) =>
+    request<{ ok: true }>("POST", `/orgs/${slug}/modules/core-scan/scan/paperwork/take`, body),
+  /** "It's this one": an inbox card's paper belongs to a record already here. */
+  inboxItemIsThisOne: (slug: string, itemId: string, body: { kind: string; id: string }) =>
+    request<PaperworkResult>("POST", `/orgs/${slug}/modules/core-scan/inbox/${itemId}/its-this-one`, body),
   removeOrderItem: (slug: string, orderId: string, itemId: string) =>
     request<{ deleted: string; items_remaining: number }>("DELETE", `/orgs/${slug}/modules/purchases/orders/${orderId}/items/${itemId}`),
 
@@ -1599,15 +1729,17 @@ export const api = {
    *  `archived_count` is how many are put away either way. */
   listAssets: async (slug: string, instance?: string, opts: { archived?: boolean } = {}) => {
     let archived_count = 0;
+    let paid_total_cents = 0;
     const walked = await walkPages<Asset>(async (offset, limit) => {
-      const page = await request<{ items: Asset[]; total?: number | null; complete?: boolean; archived_count?: number }>(
+      const page = await request<{ items: Asset[]; total?: number | null; complete?: boolean; archived_count?: number; paid_total_cents?: number }>(
         "GET",
         `${primaryBase(slug, "assets/assets", instance)}?${opts.archived ? "archived=1&" : ""}offset=${offset}&limit=${limit}`,
       );
       archived_count = page.archived_count ?? archived_count;
+      paid_total_cents = page.paid_total_cents ?? paid_total_cents;
       return page;
     });
-    return { ...walked, archived_count };
+    return { ...walked, archived_count, paid_total_cents };
   },
   getAsset: (slug: string, id: string, instance?: string) =>
     request<Asset>("GET", `${primaryBase(slug, "assets/assets", instance)}/${id}`),
@@ -2062,7 +2194,7 @@ export const api = {
     ),
   // Pillar B — actions + invocation
   listActions: (slug: string, kind: string) =>
-    request<{ items: PlatformAction[]; bindings: PlatformActionBinding[]; dormant?: PlatformDormantAction[] }>(
+    request<{ items: PlatformAction[]; bindings: PlatformActionBinding[]; dormant?: PlatformDormantAction[]; lifecycle?: boolean }>(
       "GET",
       `/orgs/${slug}/actions?kind=${encodeURIComponent(kind)}`,
     ),
@@ -2229,8 +2361,26 @@ export const api = {
       "DELETE",
       `/orgs/${slug}/field-presets/${key}`,
     ),
-  createFieldDef: (slug: string, body: Partial<PlatformFieldDef>) =>
+  createFieldDef: (slug: string, body: Partial<PlatformFieldDef> & { without_meaning?: boolean }) =>
     request<PlatformFieldDef & { warning?: string }>("POST", `/orgs/${slug}/field-defs`, body),
+  /** What a field about to be made would mean, read from its label, and the
+   *  field the kind already has with that meaning (one field per meaning). */
+  fieldMeaning: (slug: string, q: { kind: string; label: string; name?: string; role?: string | null }) => {
+    const p = new URLSearchParams({ kind: q.kind, label: q.label, ...(q.name ? { name: q.name } : {}), ...(q.role ? { role: q.role } : {}) });
+    return request<{ role: FieldRole | null; role_label: string | null; read_from_label?: boolean; same_as: { name: string; label: string; source: string } | null }>("GET", `/orgs/${slug}/field-defs/meaning?${p.toString()}`);
+  },
+  /** Kinds holding two fields that mean one thing, to settle once. */
+  sameMeaningFields: (slug: string, kind?: string) =>
+    request<{ items: Array<{ entity_kind: string; role: string; role_label: string; fields: Array<{ name: string; label: string; source: string }> }> }>(
+      "GET",
+      `/orgs/${slug}/field-defs/same-meaning${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`,
+    ),
+  /** Whether a kind's sellers have earned a field of their own. */
+  sellerOffer: (slug: string, kind: string) =>
+    request<{ offer: { entity_kind: string; seller: string; places: string[]; times: number; host: { name: string; label: string } } | null }>(
+      "GET",
+      `/orgs/${slug}/field-defs/seller-offer?kind=${encodeURIComponent(kind)}`,
+    ),
   updateFieldDef: (slug: string, id: string, body: Partial<PlatformFieldDef>) =>
     request<PlatformFieldDef>("PATCH", `/orgs/${slug}/field-defs/${id}`, body),
   deleteFieldDef: (slug: string, id: string) =>
@@ -3644,6 +3794,41 @@ export const api = {
     }>("GET", `/orgs/${slug}/modules/core-healthcheck/snapshot`),
 
   // ─── M1 cross-workspace links ─────────────────────────────────────
+  /** This workspace's shares (Settings → Sharing). `kind` is "share" in a
+   *  share space, where the one link is to whoever shared it. */
+  listShareLinks: (slug: string) => request<{ items: ShareLinkItem[]; kind: "workspace" | "share" }>("GET", `/orgs/${slug}/share-links`),
+  createShareLink: (slug: string, label: string) =>
+    request<{ id: string; invite_url: string; expires_at: string }>("POST", `/orgs/${slug}/share-links`, { label }),
+  syncShareLink: (slug: string, id: string) => request<{ sent: number; error: string | null; waiting: number }>("POST", `/orgs/${slug}/share-links/${id}/sync`, {}),
+  revokeShareLink: (slug: string, id: string) => request<{ ok: true }>("POST", `/orgs/${slug}/share-links/${id}/revoke`, {}),
+  /** What has been handed over through this workspace's shares, and who it
+   *  can hand things to from here. */
+  listShareOffers: (slug: string) => request<{ items: ShareOfferItem[]; targets: Array<{ link_id: string; to: string }> }>("GET", `/orgs/${slug}/share-offers`),
+  withdrawShareOffer: (slug: string, id: string) => request<{ ok: true }>("POST", `/orgs/${slug}/share-offers/${id}/withdraw`, {}),
+  sendBackShareOffer: (slug: string, id: string) => request<{ ok: true }>("POST", `/orgs/${slug}/share-offers/${id}/send-back`, {}),
+  /** Answer a thing offered into the scan inbox. In a shared workspace,
+   *  taking it moves it to `into`, a workspace of your own. */
+  decideScanOffer: (slug: string, inboxId: string, decision: "taken" | "passed" | "maybe", into?: string | null) =>
+    request<{ ok: true; landed?: { orgId: string; inboxId: string } }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${inboxId}/offer`, { decision, ...(into ? { into } : {}) }),
+  /** In a shared workspace: offer these scans to the person who shared it. */
+  offerScansToSharer: (slug: string, ids: string[]) => request<{ ok: true; offered: number }>("POST", `/orgs/${slug}/modules/core-scan/inbox/offer-to-sharer`, { ids }),
+  /** How many records a scope selects, and the first few: the scope editor's
+   *  live count. Shares and public pages read the same scope. */
+  previewScope: (slug: string, scope: ScopeDef) =>
+    request<{ count: number; complete: boolean; sample: Array<{ entity_kind: string; id: string; title: string }> }>("POST", `/orgs/${slug}/scope-preview`, { scope }),
+  getShareWhat: (slug: string, id: string) =>
+    request<{ scope: ScopeDef; visibility: VisibilityDef; edit_mode: ShareEditMode; gated_fields: Array<{ name: string; label: string }> }>("GET", `/orgs/${slug}/share-links/${id}/what`),
+  putShareWhat: (slug: string, id: string, body: { scope: ScopeDef; visibility: VisibilityDef; edit_mode: ShareEditMode }) =>
+    request<{ scope: ScopeDef; visibility: VisibilityDef; edit_mode: ShareEditMode; preview: { count: number } }>("PUT", `/orgs/${slug}/share-links/${id}/what`, body),
+  /** The friend's edits on a share: waiting first, then applied. */
+  listShareEdits: (slug: string, id: string) => request<{ items: ShareEditItem[] }>("GET", `/orgs/${slug}/share-links/${id}/edits`),
+  decideShareEdit: (slug: string, id: string, editId: string, decision: "accept" | "reject" | "undo") =>
+    request<{ status: ShareEditItem["status"] }>("POST", `/orgs/${slug}/share-links/${id}/edits/${editId}/${decision}`),
+  /** Who an invite is from, asked of the Cobblr that made it. */
+  previewShareInvite: (invite: string) =>
+    request<{ owner_name: string | null; workspace_name: string; from_host: string | null }>("POST", "/share-links/preview", { invite }),
+  /** Accept an invite on this Cobblr: makes the share space, returns its slug. */
+  acceptShareInvite: (invite: string) => request<{ org_id: string; slug: string }>("POST", "/share-links/accept", { invite }),
   listWorkspaceLinks: () =>
     request<{ items: WorkspaceLinkItem[] }>("GET", "/me/links"),
   createWorkspaceLink: (body: {
@@ -4652,7 +4837,7 @@ export const api = {
              *  total charged. False means the receipt is only mostly read. */
             lines_total: number;
             lines_reconcile: boolean | null;
-            method: "csv" | "pdf-table" | "text-lines" | "ocr-lines" | "ai-chat" | "ai-vision";
+            method: "csv" | "pdf-table" | "text-lines" | "ocr-lines" | "ocr-form" | "ai-chat" | "ai-vision" | "ai-document";
           };
           items: ScanInboxItem[];
           /** The session the lines went into. */
@@ -4819,7 +5004,9 @@ export const api = {
       /** `replace`: the one you had ran out and this is the new one. The
        *  count is set to what was scanned, the old one is recorded as
        *  consumed (or discarded via `resolution`), the new one as bought. */
-      mode: "add-qty" | "replace" | "link-barcode" | "move" | "merge-fields" | "count";
+      /** `add-place`: keep these at the scan's place as another place of the
+       *  same item (one item, a row per place). */
+      mode: "add-qty" | "replace" | "link-barcode" | "move" | "merge-fields" | "count" | "add-place";
       location_id?: string;
       /** `count`: what is in your hands, signed; or the total as it really
        *  is (a correction). Exactly one (scanCountBody). */
@@ -4845,6 +5032,8 @@ export const api = {
       prev_location_id: string | null;
       merged_fields: string[];
       cadence_recorded?: string[];
+      /** The scan was a new place of the item: the row added for it. */
+      added_place?: { id: string; card_id: string; location_id: string; location_name: string | null; qty: number };
       /** `count`: the take left it at its minimum or empty. */
       low?: boolean;
     }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/attach`, body),
@@ -5261,6 +5450,12 @@ export const api = {
       `/orgs/${slug}/modules/core-ai/capability-defaults`,
       body,
     ),
+  /** What a connection reports it serves; null for a curated list. */
+  aiReportedModels: (slug: string, ref: { provider_id?: string; credential_id?: string }, fresh = false) =>
+    request<{ reported: { ok: true; models: string[] } | { ok: false; error: string; models: string[] } | null }>(
+      "GET",
+      `/orgs/${slug}/modules/core-ai/capability-defaults/models?${new URLSearchParams({ ...ref, ...(fresh ? { fresh: "1" } : {}) } as Record<string, string>).toString()}`,
+    ),
   deleteAiCapabilityDefault: (slug: string, capability: string) =>
     request<void>(
       "DELETE",
@@ -5328,7 +5523,7 @@ export const api = {
   aiChatTurnEventsUrl: (slug: string, turnId: string, after = 0) =>
     `/api/v1/orgs/${slug}/modules/core-ai/chat/turns/${turnId}/events?after=${after}`,
   /** `prompt`: what was asked, the ledger row's label for this write. */
-  aiChatExecute: (slug: string, proposal: AiChatProposal, prompt?: string) =>
+  aiChatExecute: (slug: string, proposal: AiChatProposal, prompt?: string, offerId?: string) =>
     request<{
       ok: boolean;
       message: string;
@@ -5336,7 +5531,25 @@ export const api = {
       /** The AI change-ledger row for this write — undo handle. */
       ledger_id?: string;
       undoable?: boolean;
-    }>("POST", `/orgs/${slug}/modules/core-ai/chat/execute`, { proposal, ...(prompt ? { prompt: prompt.slice(0, 2000) } : {}) }),
+      /** A plan's steps that ran, each a done card with its own undo. */
+      applied?: Array<{ summary: string; ledger_id?: string; undoable?: boolean; entity?: { kind: string; id?: string; label?: string }; touched?: Array<{ kind: string; id: string; label: string }>; destination?: { kind: string; label: string } }>;
+    }>("POST", `/orgs/${slug}/modules/core-ai/chat/execute`, {
+      proposal,
+      ...(offerId ? { offer_id: offerId } : {}),
+      ...(prompt ? { prompt: prompt.slice(0, 2000) } : {}),
+    }),
+  /** The offers named, as the server keeps them: the plan, and what became of
+   *  it. A reloaded panel redraws its cards from these. */
+  aiChatOffers: (slug: string, ids: string[]) =>
+    request<{ items: AiChatOfferState[] }>("GET", `/orgs/${slug}/modules/core-ai/chat/offers?ids=${encodeURIComponent(ids.join(","))}`),
+  aiChatCancelOffer: (slug: string, id: string) =>
+    request<{ ok: boolean; offer: AiChatOfferState | null }>("POST", `/orgs/${slug}/modules/core-ai/chat/offers/${encodeURIComponent(id)}/cancel`),
+  /** This person's conversation, kept server-side so another tab or device
+   *  opens on the same one. */
+  aiChatConversation: (slug: string) =>
+    request<{ conversation: { messages: unknown[]; updated_at: string } | null }>("GET", `/orgs/${slug}/modules/core-ai/chat/conversation`),
+  aiChatSaveConversation: (slug: string, messages: unknown[]) =>
+    request<{ updated_at: string }>("PUT", `/orgs/${slug}/modules/core-ai/chat/conversation`, { messages }),
   /** Ask Cobb tool consent (per-user, per-workspace): may the chat read your
    *  workspace data into prompts, and the write mode (off / ask / auto)?
    *  Enforced server-side; auto still asks for ACTIONS (irreversible). */
@@ -5344,7 +5557,7 @@ export const api = {
   aiChatSetPrefs: (slug: string, prefs: ChatPrefsInput) =>
     request<ChatPrefs>("PUT", `/orgs/${slug}/modules/core-ai/chat/prefs`, prefs),
   /** The model pill: what this chat can be answered by, and what it is set to. */
-  aiChatModels: (slug: string) => request<ChatModelMenu>("GET", `/orgs/${slug}/modules/core-ai/chat/models`),
+  aiChatModels: (slug: string, fresh = false) => request<ChatModelMenu>("GET", `/orgs/${slug}/modules/core-ai/chat/models${fresh ? "?fresh=1" : ""}`),
   /** The AI change ledger: what Cobb wrote (confirmed or auto), what's undoable. */
   aiChatWrites: (slug: string) =>
     request<{
@@ -6035,6 +6248,11 @@ export interface LocationImportResponse {
 export interface ScanBatchMeta {
   label: string | null;
   origin: string | null;
+  /** Who an emailed receipt came from, and the shop the read found
+   *  (platform-contract scan-source: the document's name and the header's
+   *  "Emailed from"). */
+  origin_from?: string | null;
+  vendor?: string | null;
   source_file_id: string | null;
   order_ref: string | null;
   tracking_number: string | null;
@@ -6367,7 +6585,9 @@ export interface ChatModelOption {
   choice: { provider_id: string | null; model: string; credential_id: string | null };
 }
 export interface ChatModelMenu {
-  groups: Array<{ heading: string; owner?: "you" | "shared"; options: ChatModelOption[] }>;
+  /** `unlisted`: the connection could not be asked what it serves; the menu
+   *  says so with a Retry instead of options. */
+  groups: Array<{ key: string; heading: string; owner?: "you" | "shared"; options: ChatModelOption[]; unlisted?: { error: string } }>;
   current: ChatModelOption | null;
   defaultLabel: string | null;
   defaultShort: string;
@@ -6770,6 +6990,10 @@ export interface ScanMenuField {
   type: string;
   help?: string;
   choices?: string[];
+  /** What the field means, when the table says (acquired-from, seller). */
+  field_role?: string;
+  /** A typed value becomes a choice for next time (#4516). */
+  learns?: boolean;
 }
 
 /** One routable destination in the workspace scan menu — an enabled
@@ -7756,6 +7980,15 @@ export interface SuperAdminBarcodeCacheItem {
 import type { ServiceCapabilityView, ServiceJob, ServiceRun, ServiceRunStep, ServiceRunWait } from "@cobblr/platform-contract/services";
 export type { ServiceCapabilityView, ServiceJob, ServiceRun, ServiceRunStep, ServiceRunWait };
 
+/** An offer as the server keeps it, with what became of it. */
+export interface AiChatOfferState {
+  id: string;
+  summary: string;
+  proposal: AiChatProposal;
+  status: "open" | "confirming" | "confirmed" | "failed" | "cancelled" | "replaced";
+  outcome: { ok?: boolean; message?: string } | null;
+}
+
 export interface AiChatResponse {
   type: "reply" | "proposal" | "proposals" | "build-proposal" | "error";
   text?: string;
@@ -7779,8 +8012,10 @@ export interface AiChatResponse {
   refusal?: { code?: string; retry_after_sec?: number; resets_at?: string };
   summary?: string;
   proposal?: AiChatProposal;
+  /** The offer this proposal is kept as server-side (core_ai_offers). */
+  offer_id?: string;
   /** type:"proposals" — several writes from one turn, each its own confirm. */
-  items?: Array<{ summary: string; proposal: AiChatProposal }>;
+  items?: Array<{ summary: string; proposal: AiChatProposal; offer_id?: string }>;
   /** AUTO mode: writes already applied this turn (ledgered) — render as
    *  "✓ done" cards with an Undo where undoable. */
   applied?: Array<{
@@ -7832,7 +8067,16 @@ export type AiChatProposal =
     }
   | { kind: "build"; draft_id: string }
   /** add_thing: a thing put through the scan inbox's intake (#4472). */
-  | { kind: "add"; args: Record<string, unknown> };
+  | { kind: "add"; args: Record<string, unknown> }
+  /** Inbox items filed into one list; `lines` names each one. */
+  | { kind: "file"; ids: string[]; list: string; list_label?: string; lines?: string[] }
+  /** What one message asked for, as one card: its steps in the order they
+   *  run, each worded after the ones before it, and one Confirm (#4574). */
+  | {
+      kind: "plan";
+      title: string;
+      steps: Array<{ summary: string; proposal: Exclude<AiChatProposal, { kind: "plan" }>; undoable?: boolean | null }>;
+    };
 
 export interface SurfaceRecord {
   id: string;
@@ -9104,6 +9348,8 @@ export interface PlatformFieldDef {
   field_role?: FieldRole | null;
   /** A person's new value is remembered as a choice (platform-contract field-choices). */
   learns?: boolean | null;
+  /** Kept out of shares and public pages unless they show private notes. */
+  private?: boolean;
   name: string;
   display_label: string;
   type: FieldDefType;
@@ -9263,6 +9509,9 @@ export interface PlatformBundleManifest {
     position?: number;
     /** Override-layer decode role — wins over the field-def's own. */
     decode_role?: string;
+    /** What the module's own column MEANS on this table (Bought from is the
+     *  seller on a vehicle), the native twin of a field def's field_role. */
+    field_role?: FieldRole;
   }[];
   /** Saved views the bundle installs (optionally pinned to the dashboard). */
   saved_views?: {

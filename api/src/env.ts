@@ -312,7 +312,7 @@ export type Env = z.infer<typeof Schema>;
 /** Drop empty-string values, so `${VAR:-}` means "unset" everywhere.
  *
  *  docker-compose passes an unset variable as an EMPTY STRING, not as absent
- *  (CLAUDE.md 14.6). For a plain `z.string().optional()` that is merely untidy, but for
+ *  (docs/architecture/platform-spec.md §14.6). For a plain `z.string().optional()` that is merely untidy, but for
  *  an enum it is a HARD BOOT FAILURE — `z.enum(["turnstile"])` rejects "" and the api
  *  crash-loops with "Invalid enum value ... received ''". A coerced number is worse and
  *  quieter: Number("") is 0, so `.positive()` fails and a blank line in .env stops the

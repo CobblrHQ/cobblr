@@ -60,7 +60,7 @@ export interface TrackingConfig {
    *  This decides whether the fetch is SSRF-guarded. An operator setting an env
    *  var is configuring their own server and is trusted infrastructure; a user
    *  typing a URL into a form is not, and on a hosted Cobblr that URL could name
-   *  an internal address the server can reach and they cannot. CLAUDE.md 14.1
+   *  an internal address the server can reach and they cannot. docs/architecture/platform-spec.md §14.1
    *  draws exactly this line. */
   userSupplied: boolean;
 }

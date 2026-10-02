@@ -27,7 +27,7 @@ async function viewerFor(qc: QueryClient, slug: string, role: string | null) {
 
 function pictureOf(slug: string, it: ScanInboxItem): string | null {
   return leadPhoto(it, {
-    catalog: [it.catalog_image_file_id ? scanFileUrl(slug, it.catalog_image_file_id, "thumb") : null, it.catalog_image_url],
+    catalog: [it.catalog_image_file_id ? scanFileUrl(slug, it.catalog_image_file_id, "thumb") : null],
     yours: it.image_file_id ? scanFileUrl(slug, it.image_file_id, "thumb") : null,
   }).src;
 }

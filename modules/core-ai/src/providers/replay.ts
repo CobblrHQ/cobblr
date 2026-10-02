@@ -103,6 +103,7 @@ const REASONS: ReadonlySet<string> = new Set(["invalid_key", "quota", "model_una
 
 const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
   chat: { models: ["replay"], defaultModel: "replay" },
+  "plan-changes": { models: ["replay"], defaultModel: "replay" },
   "design-workspace": { models: ["replay"], defaultModel: "replay" },
   summarise: { models: ["replay"], defaultModel: "replay" },
   "classify-image": { models: ["replay"], defaultModel: "replay" },
@@ -304,7 +305,8 @@ export function register(): void {
     promptFingerprint,
     invoke: async (ctx) => {
       switch (ctx.capability) {
-        case "chat": {
+        case "chat":
+        case "plan-changes": {
           const turns = turnsOf(ctx.input);
           const ask = lastUserMessage(turns).toLowerCase();
           // Read the directory EVERY call, not once at registration. Recording

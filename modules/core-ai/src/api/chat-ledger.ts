@@ -49,7 +49,7 @@ export interface WriteRequest {
    *  (#4472) puts a thing through the scan inbox's intake and may file it;
    *  what it filed is ledgered as a create of that record, so the panel's
    *  Undo removes it like any other. */
-  via?: "add_thing";
+  via?: "add_thing" | "file_inbox";
 }
 
 export interface BulkOutcome {
@@ -200,6 +200,8 @@ export function undoableOf(
     case "action":
       // An action is undoable when it handed back its inverse and the ledger
       // kept it. One with side effects the kernel cannot reverse never does.
+      // Items filed out of the inbox go back into it.
+      if (parseJsonb<{ via?: unknown }>(row.payload)?.via === "file_inbox") return true;
       return !!undoSteps(parseJsonb<{ undo?: unknown }>(row.payload)?.undo);
     default:
       return false;
@@ -399,6 +401,44 @@ export async function performWrite(
       // Undoable exactly when the action handed back its inverse; the row
       // carries it, and undoWrite runs it.
       undoable: !!undo,
+    };
+  }
+
+  if (tool === "create" && req.via === "file_inbox") {
+    // Inbox items filed into one list: one change, so one Undo puts every
+    // one of them back in the inbox (the inbox's own unconfirm, which takes
+    // the record it made back off the list).
+    const r = await getTool("file_inbox_items")!.execute(wsApi, req.args ?? {});
+    if (!r.ok) return { ok: false, message: r.error ?? "Nothing was filed." };
+    const out = r.data as { list?: { label?: string }; filed?: Array<{ item_id: string; entity_id: string; entity_kind: string; name: string }>; failed?: Array<{ item_id: string; reason: string }> };
+    const filed = out.filed ?? [];
+    const failed = out.failed ?? [];
+    const label = out.list?.label ?? "the list";
+    const row = await db
+      .insertInto("core_ai_chat_writes")
+      .values({
+        user_id: userId,
+        tool: "action",
+        entity_kind: "",
+        entity_id: null,
+        entity_label: `Filed into ${label}`,
+        before: null,
+        payload: JSON.stringify({ via: "file_inbox", list: label, filed }) as unknown,
+        auto_applied: opts.auto,
+        prompt: opts.prompt ?? null,
+        turn_id: opts.turnId ?? null,
+        undone_at: null,
+        undo_of: opts.undoOf ?? null,
+      })
+      .returning("id")
+      .executeTakeFirst();
+    const n = filed.length;
+    return {
+      ok: true,
+      message: `Filed ${n === 1 ? "1 item" : `${n} items`} into ${label}.${failed.length ? ` ${failed.length} could not be: ${failed[0]!.reason}` : ""}`,
+      touched: filed.filter((f) => f.entity_id).map((f) => ({ kind: f.entity_kind, id: f.entity_id, label: f.name || "a record" })),
+      ledger_id: row?.id,
+      undoable: true,
     };
   }
 
@@ -667,6 +707,22 @@ export async function undoWrite(
       held: "deleted-since",
       message: `${row.entity_label} has been deleted since, so there is nothing to put back. Undoing that deletion is a separate step.`,
     };
+  }
+
+  if (row.tool === "action" && payload?.via === "file_inbox") {
+    // Back to the inbox, each one through the inbox's own unconfirm, which
+    // takes the record it made back off the list.
+    const filed = (Array.isArray(payload.filed) ? payload.filed : []) as Array<{ item_id?: string; name?: string }>;
+    const stuck: string[] = [];
+    for (const f of filed) {
+      if (!f.item_id) continue;
+      const back = await wsApi.request("POST", `/modules/core-scan/inbox/${encodeURIComponent(f.item_id)}/unconfirm`, {}).catch(() => null);
+      if (!back || back.status >= 400) stuck.push(f.name || "an item");
+    }
+    const n = filed.length - stuck.length;
+    if (stuck.length) return { ok: false, message: `Put ${n} back in the inbox; ${stuck.join(", ")} could not be.` };
+    await db.updateTable("core_ai_chat_writes").set({ undone_at: new Date() }).where("id", "=", row.id).execute();
+    return { ok: true, message: `Put ${n === 1 ? "1 item" : `${n} items`} back in the scan inbox.` };
   }
 
   switch (row.tool) {

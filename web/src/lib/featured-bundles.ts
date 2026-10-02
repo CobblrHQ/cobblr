@@ -2330,6 +2330,102 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     },
   },
   {
+    glyph: "🔧",
+    blurb:
+      "Sockets, ratchets and wrenches by size and drive, so a drawer of them reads at a glance and a 10 mm is never a 13 mm.",
+    manifest: {
+      id: "cobblr.community.hand-tools",
+      released_at: "2026-10-02",
+      changelog: "Hand tools as their own table: each one's size and drive as real measurements and what kind of tool it is, filled from its name.",
+      version: "0.1.0",
+      releases: [
+        {
+          version: "0.1.0",
+          released_at: "2026-10-02",
+          notes: "Hand tools as their own table: each one's size and drive as real measurements and what kind of tool it is, filled from its name.",
+        },
+      ],
+      name: "Hand Tools",
+      description:
+        "Sockets, ratchets, wrenches and drivers as their own table, with each one's size and drive kept as measurements (10 mm, 3/8 in) rather than words, and its kind of tool. A name like \"10 mm deep socket, 3/8 in drive\" fills all three.",
+      author: "Cobblr community",
+      requires: [{ module: "inventory" }, { module: "core-scan" }],
+      // INVENTORY: a drawer can hold two of the same socket, and a socket is
+      // counted, not identified by a serial. The sizes are measurements so a
+      // drawer can be grouped by drive and sorted by size, which text cannot.
+      provides_instances: [
+        {
+          module: "inventory",
+          instance_name: "hand-tools",
+          display_name: "Hand Tools",
+          glyph: "🔧",
+          item_noun: "hand tool",
+          qty_unit: "each",
+          faces: { stock: true },
+          scan_keywords: ["socket", "deep socket", "ratchet", "wrench", "spanner", "screwdriver", "hex key", "allen key", "breaker bar", "torque wrench", "nut driver"],
+          wires: [
+            {
+              source_kind: "hand-tools:item",
+              action_id: "core-scan:fill-known",
+              says: "A new tool fills its empty size, drive and kind from its name.",
+              trigger_type: "event",
+              trigger_event: "inventory.part.created",
+            },
+            {
+              source_kind: "hand-tools:item",
+              action_id: "core-scan:fill-known",
+              says: "Renaming a tool fills its size, drive and kind if they are still empty.",
+              trigger_type: "event",
+              trigger_event: "inventory.part.updated",
+            },
+          ],
+          field_defs: [
+            {
+              entity_kind: "inventory:part",
+              name: "tool_type",
+              display_label: "Type",
+              type: "text",
+              learns: true,
+              choices: ["Socket", "Deep socket", "Ratchet", "Extension", "Wrench", "Driver"],
+              field_role: "category",
+              position: 1,
+              help: "What kind of tool. The table groups by this, and a name that says it fills it.",
+            },
+            {
+              entity_kind: "inventory:part",
+              name: "size",
+              display_label: "Size",
+              type: "measure",
+              position: 2,
+              help: "The size it fits: 10 mm, 5/8 in. Read from the name when the name says it.",
+            },
+            {
+              entity_kind: "inventory:part",
+              name: "drive",
+              display_label: "Drive",
+              type: "measure",
+              unit: "in",
+              position: 3,
+              help: "The square drive it takes or turns: 1/4, 3/8 or 1/2 in. A plan of a drawer can group its tools by this.",
+            },
+          ],
+          saved_views: [
+            {
+              entity_kind: "inventory:part",
+              name: "By type",
+              view_type: "table",
+              pinned: true,
+              config: {
+                visible_fields: ["name", "tool_type", "size", "drive", "qty", "location_name"],
+                group_by: "tool_type",
+              },
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     glyph: "📚",
     blurb:
       "Personal library: author, ISBN, year, read-status, on its own shelf that opens as a cover wall. Print spine labels with one wire.",
@@ -4297,12 +4393,20 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       "id": "cobblr.flagship.vehicles",
       "name": "Vehicles",
-      "version": "0.4.4",
-      "releases": [{ "version": "0.4.4", "released_at": "2026-10-02", "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before. Setting a service schedule offers the usual jobs (oil change, tire rotation, brake pads and more) beside the ones you have logged." }],
+      "version": "0.4.5",
       "description": "Your vehicles as their own table - make/model/year, VIN, mileage, plate - with service logs (oil, tires, brakes) and next-due dates on your calendar. Replaces a glovebox folder of receipts and a sticky note on the windshield.",
       "author": "Cobblr",
       "released_at": "2026-07-13",
-      "changelog": "The licence plate is a vehicle's identity, like its VIN: two scans with different plates are never taken for one car, and a typed plate finds the car you already have. Earlier changes below.: Renamed to Vehicles and given its OWN table (an assets instance), not generic Assets with extra columns - its own nav entry, a “New vehicle” button, and only the fields a vehicle needs (VIN, make, model, year, trim, mileage, fuel, color). Service logs come from core-maintenance; scan a VIN and it fills the whole record.",
+      "changelog": "Mileage counts as the vehicle's use, so a bill of sale's odometer reading fills it when it is empty, and a service schedule can fall due every so many miles. Earlier changes below.: The licence plate is a vehicle's identity, like its VIN: two scans with different plates are never taken for one car, and a typed plate finds the car you already have. Earlier changes below.: Renamed to Vehicles and given its OWN table (an assets instance), not generic Assets with extra columns - its own nav entry, a “New vehicle” button, and only the fields a vehicle needs (VIN, make, model, year, trim, mileage, fuel, color). Service logs come from core-maintenance; scan a VIN and it fills the whole record.",
+      "releases": [
+        { "version": "0.4.5", "released_at": "2026-10-02", "notes": "A vehicle fills its empty Model, Year and Trim from its VIN and its name (\"Yamaha YZF-R3, Blue\" says the model), never over what you typed, with an Undo. Bought from is who sold it, so the place you found it and the person you bought it from are kept as two things." },
+        { "version": "0.4.4", "released_at": "2026-10-02", "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before. Setting a service schedule offers the usual jobs (oil change, tire rotation, brake pads and more) beside the ones you have logged." },
+        {
+          "version": "0.4.3",
+          "released_at": "2026-10-02",
+          "notes": "Mileage counts as the vehicle's use, so a bill of sale's odometer reading fills it when it is empty, and a service schedule can fall due every so many miles."
+        }
+      ],
       "requires": [
         {
           "module": "assets"
@@ -4317,6 +4421,22 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           "instance_name": "vehicles",
           "service_tasks": ["Oil change", "Oil filter", "Air filter", "Cabin air filter", "Tire rotation", "Tire pressure check", "Brake pads", "Brake fluid", "Coolant flush", "Spark plugs", "Transmission fluid", "Chain clean and lube", "Battery check", "Wiper blades", "Inspection / registration"],
           "display_name": "Vehicles",
+          "wires": [
+            {
+              "source_kind": "vehicles:item",
+              "action_id": "core-scan:fill-known",
+              "says": "A new vehicle fills its empty Model, Year and Trim from its VIN and its name.",
+              "trigger_type": "event",
+              "trigger_event": "assets.asset.created"
+            },
+            {
+              "source_kind": "vehicles:item",
+              "action_id": "core-scan:fill-known",
+              "says": "Entering a VIN fills the vehicle's empty Model, Year and Trim from it.",
+              "trigger_type": "event",
+              "trigger_event": "assets.asset.updated"
+            }
+          ],
           "glyph": "🚗",
           "item_noun": "vehicle",
           "scan_keywords": [
@@ -4371,7 +4491,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
               "display_label": "Mileage",
               "type": "number",
               "position": 4,
-              "help": "Current odometer reading - service schedules count from this."
+              "help": "Current odometer reading - service schedules count from this.",
+              "field_role": "usage"
             },
             {
               "entity_kind": "assets:asset",
@@ -4413,6 +4534,11 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
               "name": "serial_number",
               "display_label": "VIN",
               "decode_role": "identifier:vin"
+            },
+            {
+              "entity_kind": "assets:asset",
+              "name": "vendor",
+              "field_role": "seller"
             },
             {
               "entity_kind": "assets:asset",

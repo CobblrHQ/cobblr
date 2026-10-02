@@ -28,6 +28,7 @@ const SOURCE_OF_TRUTH = "scripts/lib/deploy-state.sh";
 const SCAN_DIRS = ["scripts", ".claude/skills"];
 const SCAN_FILES = [
   "CLAUDE.md",
+  "docs/architecture/platform-spec.md",
   "docs/design-decisions/release-topology.md",
   "docs/design-decisions/release-channels.md",
   "docs/operations/CI_DEPLOY.md",

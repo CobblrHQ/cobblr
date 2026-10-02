@@ -61,6 +61,17 @@ export function on(eventName: string, module: string, handler: EventHandler): vo
  *  reversal overtake its commit into the stock floor and leave phantom
  *  output credit (#2826), and let a shopping row answer before the
  *  restock it promised had landed. */
+type Observer = (eventName: string, orgId: string) => void;
+const observers: Observer[] = [];
+
+/** Hear that SOMETHING happened in a workspace, whatever it was: for the
+ *  kernel's own bookkeeping (a share's mirror falling due), never for acting
+ *  on an event's meaning, which is what `on` and wires are for. Called after
+ *  the subscribers and wires, never awaited, and a throw is only logged. */
+export function observeEvents(fn: Observer): void {
+  observers.push(fn);
+}
+
 export async function emit<T>(eventName: string, payload: T): Promise<void> {
   // 1. Direct subscribers, inline and in order. A failure is logged and
   // the next subscriber still runs (matched to the contract: emit never
@@ -87,6 +98,15 @@ export async function emit<T>(eventName: string, payload: T): Promise<void> {
       await fireEvent(eventName, p.orgId, payload as Record<string, unknown>);
     } catch (err) {
       console.error(`[events] wire engine failed for ${eventName}:`, err);
+    }
+  }
+  if (p && typeof p.orgId === "string" && observers.length) {
+    for (const fn of observers) {
+      try {
+        fn(eventName, p.orgId);
+      } catch (err) {
+        console.error(`[events] observer failed for ${eventName}:`, err);
+      }
     }
   }
 }

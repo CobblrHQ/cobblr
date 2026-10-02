@@ -139,6 +139,7 @@ export function ScanResultModal({
   // image-fetch tail (up to ~150s) is still resolving the real name/photo — so
   // ai_suggested_at alone is NOT "done", or the card stops polling + shows a
   // premature "No catalog match" while the real answer is still on its way.
+  // catalog-address: whether the lookup found anything, never what is drawn.
   const enrichedFully =
     !!item?.suggested_name && (!!item?.catalog_image_file_id || !!item?.catalog_image_url);
   const withinEnrichWindow =
@@ -410,9 +411,8 @@ export function ScanResultModal({
   // EXCEPT while the catalog result is unverified against the user's photo
   // (checking, or a flagged mismatch): then the user's own photo leads, because
   // it is never wrong, and the catalog shot takes over once the check confirms.
-  // External catalog_image_url can 404/hotlink-block (the broken-? the author hit)
-  // — onError marks that URL broken and we drop to the next rung; the live
-  // poll above may then land the server-cached catalog_image_file_id.
+  // The catalog picture is the stored file or nothing (#4580): an address
+  // nobody stored is never drawn as the row's picture.
   // The row's pictures, resolved once (lib/rowPictures.ts, #3046): the pair's
   // yours slot and the strip's own tiles read this list.
   const resolved = rowPictures(activeSlug, item ?? { image_file_id: null, catalog_image_file_id: null, catalog_image_url: null });
@@ -420,7 +420,6 @@ export function ScanResultModal({
   const ownPhotoUrl = yoursPicture ? resolved.src(yoursPicture) : null;
   const catalogRungs = [
     item?.catalog_image_file_id ? scanFileUrl(activeSlug, item.catalog_image_file_id) : null,
-    item?.catalog_image_url ?? null,
   ];
   // ONE answer to "which photo leads", shared with the strip below (and every
   // other surface) — see lib/scanPhoto.ts. The strip used to decide separately
@@ -549,14 +548,6 @@ export function ScanResultModal({
                     ? "Catalog photo - being checked against your photo"
                     : "Display photo"
                 }
-              />
-            )}
-            {item && !item.catalog_image_file_id && item.catalog_image_url && (
-              <StripTile
-                src={item.catalog_image_url}
-                active={lead.role === "catalog"}
-                checking={lead.pending}
-                label={lead.pending ? "Catalog photo - being checked against your photo" : "Catalog photo"}
               />
             )}
             {/* The row's own pictures from the one resolver: the lead one

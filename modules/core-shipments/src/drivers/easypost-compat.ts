@@ -226,7 +226,7 @@ export const easypostCompatDriver: CarrierDriver = {
           // An operator's env var skips the guard on purpose — they are
           // configuring their own server, and a self-hosted box pointing at a
           // service on its own LAN is the normal case, not an attack
-          // (CLAUDE.md 14.1).
+          // (docs/architecture/platform-spec.md §14.1).
           cfg.userSupplied
           ? await platform().egress.guardedFetch(route.orgId ?? "", `${base}${path}`, {
               headers,

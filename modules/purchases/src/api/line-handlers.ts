@@ -10,7 +10,7 @@
 
 import { receiveIfArrived } from "../receive.js";
 import { platform, requireActionEntity } from "@cobblr/platform-contract";
-import type { Kysely } from "kysely";
+import { sql, type Kysely } from "kysely";
 import type { PurchasesDB } from "../db.js";
 import { claimLine } from "./line-subject.js";
 import { editOrderLine, type LineEdit } from "../line-edit.js";
@@ -18,6 +18,7 @@ import { editOrderLine, type LineEdit } from "../line-edit.js";
 export function registerLineHandlers(): void {
   registerUndos();
   registerEditLine();
+  registerRecordPaperwork();
   platform().actions.registerHandler("purchases.add-line", async (ctx) => {
     const order = requireActionEntity(ctx);
     const args = (ctx.args ?? {}) as Record<string, unknown>;
@@ -116,5 +117,89 @@ function registerUndos(): void {
     const r = result as { ok?: unknown; result?: { line_id?: unknown } } | null;
     if (r?.ok !== true || typeof r.result?.line_id !== "string") return null;
     return { action_id: "purchases:remove-line", args: { line_id: r.result.line_id } };
+  });
+}
+
+// purchases:record-paperwork — a document put on a record (a bill of sale on a
+// car) is a purchase: the order with every line as the paper printed it, each
+// line marked for what it is (a charge, an add-on), and the line the paper is
+// ABOUT claimed for that record, which also fills the record's Paid,
+// Purchased at and Bought from from the order (claimLine). In-process, so the
+// assistant's door reaches it exactly as the record's paste does (#4523).
+interface PaperworkLine {
+  description: string;
+  qty: number;
+  unit_cost: number | null;
+  line_amount: number | null;
+  kind?: "charge" | "add-on";
+}
+function registerRecordPaperwork(): void {
+  platform().actions.registerHandler("purchases.record-paperwork", async (ctx) => {
+    const args = (ctx.args ?? {}) as {
+      vendor?: string | null;
+      ordered_at?: string | null;
+      order_ref?: string | null;
+      total?: number | null;
+      source_file_id?: string | null;
+      lines?: PaperworkLine[];
+      claim?: { index: number; kind: string; id: string } | null;
+    };
+    const lines = Array.isArray(args.lines) ? args.lines.filter((l) => l && typeof l.description === "string") : [];
+    if (lines.length === 0) return { ok: false, error: "the paper has no lines to record" };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<PurchasesDB>;
+    const vendor = typeof args.vendor === "string" && args.vendor.trim() ? args.vendor.trim() : null;
+    // The vendor as a managed record, found or made, the way an order typed
+    // in the app links it.
+    let vendorId: string | null = null;
+    if (vendor) {
+      const found = await db
+        .selectFrom("purchases_vendors")
+        .select("id")
+        .where(sql<boolean>`lower(trim(name)) = ${vendor.toLowerCase()}`)
+        .executeTakeFirst();
+      vendorId = found?.id ?? (await db.insertInto("purchases_vendors").values({ name: vendor } as never).returning("id").executeTakeFirst())?.id ?? null;
+    }
+    const day = typeof args.ordered_at === "string" && /^\d{4}-\d{2}-\d{2}/.test(args.ordered_at) ? args.ordered_at.slice(0, 10) : null;
+    const order = await db
+      .insertInto("purchases_orders")
+      .values({
+        vendor,
+        vendor_id: vendorId,
+        order_number: args.order_ref ?? null,
+        ordered_at: day,
+        arrived_at: day,
+        // The thing is already here: the paper is about something on hand.
+        status: "arrived",
+        // Nothing to count: the record it bought exists already.
+        add_to_stock: false,
+        total_cost: typeof args.total === "number" ? args.total : null,
+        metadata: { ...(args.source_file_id ? { source_file_id: args.source_file_id } : {}), from_paperwork: true },
+      } as never)
+      .returning("id")
+      .executeTakeFirstOrThrow();
+    const lineIds: string[] = [];
+    for (const l of lines) {
+      const row = await db
+        .insertInto("purchases_order_items")
+        .values({
+          order_id: order.id,
+          part_id: null,
+          description: l.description.slice(0, 300),
+          qty: Number(l.qty) > 0 ? Number(l.qty) : 1,
+          unit_cost: typeof l.unit_cost === "number" ? l.unit_cost : null,
+          line_amount: typeof l.line_amount === "number" ? l.line_amount : null,
+          metadata: l.kind ? { line_kind: l.kind } : {},
+        } as never)
+        .returning("id")
+        .executeTakeFirstOrThrow();
+      lineIds.push(row.id);
+    }
+    const claim = args.claim;
+    const claimed = claim && lineIds[claim.index] ? lineIds[claim.index]! : null;
+    if (claim && claimed) {
+      await claimLine({ db, orgId: ctx.orgId, userId: ctx.userId ?? null, orderId: order.id, itemId: claimed, subject: { kind: claim.kind, id: claim.id } });
+    }
+    await platform().events.emit("purchases.order.created", { orgId: ctx.orgId, orderId: order.id });
+    return { ok: true, summary: `Recorded the purchase${vendor ? ` from ${vendor}` : ""}, ${lines.length} line${lines.length === 1 ? "" : "s"}.`, order_id: order.id, line_ids: lineIds, claimed_line_id: claimed };
   });
 }

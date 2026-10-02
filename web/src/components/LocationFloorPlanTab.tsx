@@ -3,13 +3,14 @@
 // floor plan; containers draw as a front elevation (drawers/shelves at true
 // scale). Reuses the same <FloorPlan> editor the detail page mounts.
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Boxes, MapPin, Plus } from "lucide-react";
 import { Modal, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type Location } from "../lib/api";
-import { hasOwnLayout, withBound } from "../lib/floorplanGeometry";
+import { withBound } from "../lib/floorplanGeometry";
 import { parseLength, type LengthUnit } from "../lib/lengthUnits";
+import { useSelectedSpace } from "./placeItems/useSelectedSpace";
 import { FloorPlan } from "./FloorPlan";
 
 /** Spaces worth a chip: every root AREA (a room/region), plus every CONTAINER
@@ -18,15 +19,7 @@ import { FloorPlan } from "./FloorPlan";
  *  drawer: a drawer only placed on a face is reached by opening the face.
  *  Areas first, then containers; each group sorted by the user's sort_order
  *  then name. */
-export function viewableSpaces(items: Location[]): { areas: Location[]; containers: Location[] } {
-  const order = (a: Location, b: Location) =>
-    (a.position ?? 0) - (b.position ?? 0) || a.name.localeCompare(b.name);
-  const areas = items.filter((l) => l.kind === "area" && !l.parent_id).sort(order);
-  const containers = items
-    .filter((l) => l.kind === "container" && (!l.parent_id || hasOwnLayout(l.metadata)))
-    .sort(order);
-  return { areas, containers };
-}
+export { viewableSpaces } from "./placeItems/useSelectedSpace";
 
 /** A room in one step: what it is called and how big it is, and it is drawn.
  *  Before, a person made a place in one form, found the plan, and sized it in
@@ -107,12 +100,10 @@ export function LocationFloorPlanTab({
     setRoomOpen(false);
     onNewRoomClosed?.();
   };
-  const { areas, containers } = useMemo(() => viewableSpaces(items), [items]);
-  const first = areas[0]?.id ?? containers[0]?.id ?? null;
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  // Default to the first space, and heal if the selected one is deleted/renamed.
-  const activeId = selectedId && items.some((l) => l.id === selectedId) ? selectedId : first;
-  const active = items.find((l) => l.id === activeId) ?? null;
+  // The open room or container is the address's `space`, shared with Place
+  // items, so the button between the two pages keeps it (#4557).
+  const { areas, containers, active, choose: setSelectedId } = useSelectedSpace(items);
+  const activeId = active?.id ?? null;
 
   if (!active) {
     return (

@@ -56,6 +56,8 @@ interface MenuField {
    *  Not sent to the model; read by the passes that land a receipt's facts
    *  and check them (receipt-candidate-facts.ts, acquisition-source.ts). */
   field_role?: string;
+  /** A value typed into it becomes a choice for next time (#4516). */
+  learns?: boolean;
 }
 
 /** One routable destination in the workspace (a table). The fit rule's
@@ -489,7 +491,7 @@ export async function assembleScanMenu(
     try {
       const res = await fetch(`${baseUrl}/api/v1/orgs/${slug}/field-defs?kind=${encodeURIComponent(kind)}`, { headers: auth });
       if (res.ok) {
-        const defs = ((await res.json()) as { items?: Array<{ name: string; display_label: string; type: string; help?: string | null; choices?: string[] | null; decode_role?: string | null; field_role?: string | null }> }).items ?? [];
+        const defs = ((await res.json()) as { items?: Array<{ name: string; display_label: string; type: string; help?: string | null; choices?: string[] | null; decode_role?: string | null; field_role?: string | null; learns?: boolean | null }> }).items ?? [];
         fields = defs
           .filter((d) => d.type !== "computed")
           .map((d) => ({
@@ -500,6 +502,7 @@ export async function assembleScanMenu(
             ...(d.choices && d.choices.length ? { choices: d.choices } : {}),
             ...(d.decode_role ? { decode_role: d.decode_role } : {}),
             ...(d.field_role ? { field_role: d.field_role } : {}),
+            ...(d.learns ? { learns: true } : {}),
           }));
         // The table's GROUPING AXIS comes from the SEAM, not from this def list
         // (#3223). Where a kind's category lives is the kernel's question: a

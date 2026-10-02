@@ -1,0 +1,10 @@
+{
+  "lint": "lint:native-role-fields-are-writable",
+  "run": "node scripts/lint-native-role-fields-are-writable.ts",
+  "rows": [
+    "new-module"
+  ],
+  "ms": 500,
+  "recorded": "2026-10-02",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

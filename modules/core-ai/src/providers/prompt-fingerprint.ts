@@ -47,6 +47,7 @@ export function serverPromptFor(
   switch (capability) {
     case "identify-glance":
     case "split-image":
+    case "document-read":
     case "identify-image":
       // THE SAME resolver the adapters send through — including a caller's own
       // prompt (detectSplitItems'). If this re-derived the prompt independently the

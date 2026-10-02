@@ -6,6 +6,7 @@
 // a kind with no declared route is honestly not writable this way, instead of
 // being advertised and 404ing at execute time.
 
+// VOCAB-ENUMERATION OK: fieldsByRole maps the roles a tool takes values by (VALUE_ROLES) to the field that plays each one
 import type { WorkspaceApi } from "./api.js";
 
 export interface KindRec {
@@ -20,7 +21,7 @@ export interface KindRec {
    *  (`<instance>:item`): endpoints are then relative to
    *  /instances/<instance_name>, not /modules/<module_name>. */
   instance_name?: string;
-  fields?: Array<{ name: string; type?: string; role?: string; required?: boolean; readOnly?: boolean; choices?: string[]; /** This workspace's word for it, when it relabels the field ("cost" shows as "Paid"). */ label?: string; /** Money, and how the column holds it. */ money?: "cents" | "amount" }>;
+  fields?: Array<{ name: string; type?: string; role?: string; /** What the value means (a role from FIELD_ROLE_VALUES). */ fieldRole?: string; required?: boolean; readOnly?: boolean; choices?: string[]; /** This workspace's word for it, when it relabels the field ("cost" shows as "Paid"). */ label?: string; /** Money, and how the column holds it. */ money?: "cents" | "amount" }>;
   /** What "the same place" means for this kind when looking for duplicates:
    *  a field name, or "workspace". Absent = this kind is never deduplicated. */
   duplicate_scope?: string | null;
@@ -45,6 +46,8 @@ export interface KindRec {
     unit?: string | null;
     /** What the field means ("acquired-for" is money). */
     field_role?: string | null;
+    /** A list that takes a new value, rather than only its own choices. */
+    learns?: boolean;
   }>;
 }
 
@@ -144,6 +147,12 @@ export function summarizeKind(k: KindRec): Record<string, unknown> {
             type: f.type ?? "text",
             ...(f.required ? { required: true } : {}),
             ...(f.choices?.length ? { choices: f.choices } : {}),
+            // What the value IS (its role): add_thing and
+            // update_record take values by this role as well as by name.
+            ...(f.field_role ? { role: f.field_role } : {}),
+            // Closed unless it learns: on a closed list send one of its
+            // choices, spelled the list's way.
+            ...(f.choices?.length ? { list: f.learns ? "takes new values" : "only these choices" } : {}),
             ...(f.scope ? { scope: f.scope } : {}),
           })),
         }
@@ -205,4 +214,54 @@ export function withKindsTitleField(
   if (!wrong) return { fields };
   const { [wrong]: value, ...rest } = fields;
   return { fields: { ...rest, [target]: value }, movedFrom: wrong };
+}
+
+/** The roles a value may be said by instead of a field's name: where a thing
+ *  was bought, who sold it, when and for how much (arrivals.md §2). */
+export const VALUE_ROLES = ["acquired-from", "seller", "acquired-on", "acquired-for"] as const;
+
+const ROLE_NAMES: Record<(typeof VALUE_ROLES)[number], RegExp> = {
+  "acquired-from": /^(acquired_from|purchased_from|bought_from|source)$/i,
+  seller: /^(seller|sold_by)$/i,
+  "acquired-on": /^(acquired_on|purchase_date|purchased_on|date_acquired)$/i,
+  "acquired-for": /^(acquired_for|purchase_price|price_paid|paid|cost)$/i,
+};
+
+/**
+ * Values said by role, as the kind's own field names: the field that declares
+ * the role (custom or native), else the one named for it. Who sold it, on a
+ * kind with no seller field, goes beside where it was bought as that field's
+ * note ("eBay · detroitaxle"). What has no home is refused with the reason,
+ * never dropped (#4537).
+ */
+export function fieldsByRole(
+  kind: string,
+  kinds: KindRec[],
+  roles: Record<string, unknown>,
+): { fields: Record<string, unknown>; refused: Array<{ name: string; reason: string }> } {
+  const rec = kinds.find((k) => k.id === kind);
+  const all = [
+    ...(rec?.custom_fields ?? []).map((f) => ({ name: f.name, role: f.field_role ?? null })),
+    ...(rec?.fields ?? []).filter((f) => !f.readOnly).map((f) => ({ name: f.name, role: f.fieldRole ?? null })),
+  ];
+  const home = (role: (typeof VALUE_ROLES)[number]) => all.find((f) => f.role === role)?.name ?? all.find((f) => ROLE_NAMES[role].test(f.name))?.name ?? null;
+  const fields: Record<string, unknown> = {};
+  const refused: Array<{ name: string; reason: string }> = [];
+  const label = rec?.display_name ?? kind;
+  for (const [role, v] of Object.entries(roles)) {
+    if (v === undefined || v === null || v === "") continue;
+    if (!(VALUE_ROLES as readonly string[]).includes(role)) {
+      refused.push({ name: role, reason: `not a role: say one of ${VALUE_ROLES.join(", ")}` });
+      continue;
+    }
+    const name = home(role as (typeof VALUE_ROLES)[number]);
+    if (name) {
+      fields[name] = v;
+      continue;
+    }
+    const from = role === "seller" ? home("acquired-from") : null;
+    if (from) fields[`${from}_note`] = v;
+    else refused.push({ name: role, reason: `${label} has no field for ${role.replace(/-/g, " ")}` });
+  }
+  return { fields, refused };
 }

@@ -10,7 +10,7 @@
 //
 // See docs/design-decisions/arrivals.md.
 
-import type { RoledFacts } from "@cobblr/platform-contract";
+import { FIELD_ROLE_VALUES, type FieldRole, type RoledFacts } from "@cobblr/platform-contract";
 
 /** The receipt keys `materializeReceiptLines` stamps on an inbox item. */
 export interface ReceiptMeta {
@@ -21,6 +21,46 @@ export interface ReceiptMeta {
   receipt_line_count?: unknown;
   line_net?: unknown;
   line_total?: unknown;
+  /** Facts a document reader established about this one thing, already
+   *  keyed by role (a bill of sale's VIN, year and odometer). */
+  line_facts?: unknown;
+  /** The document's own checks that failed (document-checks.ts): a value
+   *  that failed one is never a fact (#4633). */
+  check_fields?: unknown;
+}
+
+/** Which facts a failed check takes back: the words a check names
+ *  (scan-triage CHECK_FIELD_WORDS) to the roles their values fill. */
+const DOUBT_TAKES: Record<string, readonly FieldRole[]> = {
+  seller: ["acquired-from", "seller"],
+  price: ["acquired-for"],
+  total: ["acquired-for"],
+  deposit: ["acquired-for"],
+  vin: ["identifier"],
+  year: ["year-made"],
+};
+
+/** The check a held role failed, in the card's words: the first of the
+ *  doubted checks that takes it back. */
+export function checkWordFor(role: string, doubted: Iterable<string>): string {
+  const d = [...doubted];
+  return d.find((w) => (DOUBT_TAKES[w] ?? []).includes(role as FieldRole)) ?? Object.keys(DOUBT_TAKES).find((w) => DOUBT_TAKES[w]!.includes(role as FieldRole)) ?? role;
+}
+
+/** Did a check doubt who sold it? */
+export function sellerDoubted(doubted: ReadonlySet<string>): boolean {
+  return doubted.has("seller");
+}
+
+/** Did a check doubt what it cost? */
+export function priceDoubted(doubted: ReadonlySet<string>): boolean {
+  return doubted.has("price") || doubted.has("total") || doubted.has("deposit");
+}
+
+/** The check words a row's failed checks name ("seller", "price"). */
+export function doubtedChecks(meta: { check_fields?: unknown } | null | undefined): Set<string> {
+  const f = (meta?.check_fields as { fields?: unknown } | null | undefined)?.fields;
+  return new Set(Array.isArray(f) ? f.filter((x): x is string => typeof x === "string") : []);
 }
 
 const str = (v: unknown): string | null => {
@@ -36,6 +76,24 @@ const str = (v: unknown): string | null => {
  * one lands based on what the workspace declared.
  */
 export function receiptFacts(meta: ReceiptMeta | null | undefined): RoledFacts {
+  return splitDoubtedFacts(meta).facts;
+}
+
+/** The facts, and the ones a failed check held back: shown under "Please
+ *  check" with what was read, and written nowhere (#4633). The dealer's
+ *  "sells/leases this vehicle 'as is' and hereby" failed the seller check
+ *  and still became Bought from on the merge. */
+export function splitDoubtedFacts(meta: ReceiptMeta | null | undefined): { facts: RoledFacts; held: RoledFacts } {
+  const all = allReceiptFacts(meta);
+  const doubted = doubtedChecks(meta);
+  const facts: RoledFacts = {};
+  const held: RoledFacts = {};
+  const out = new Set<FieldRole>([...doubted].flatMap((w) => [...(DOUBT_TAKES[w] ?? [])]));
+  for (const [role, v] of Object.entries(all) as Array<[FieldRole, string | number]>) (out.has(role) ? held : facts)[role] = v;
+  return { facts, held };
+}
+
+function allReceiptFacts(meta: ReceiptMeta | null | undefined): RoledFacts {
   const facts: RoledFacts = {};
   if (!meta) return facts;
 
@@ -67,6 +125,19 @@ export function receiptFacts(meta: ReceiptMeta | null | undefined): RoledFacts {
     money(meta.line_total) ??
     (lineCount === 1 ? money(meta.net_price) : null);
   if (price !== null) facts["acquired-for"] = price;
+
+  // What a document reader said about the thing itself. Only roles the
+  // vocabulary knows, only plain values; the receipt-level facts above
+  // stand where both have one.
+  const line = meta.line_facts;
+  if (line && typeof line === "object" && !Array.isArray(line)) {
+    for (const [role, v] of Object.entries(line as Record<string, unknown>)) {
+      if (!(FIELD_ROLE_VALUES as readonly string[]).includes(role) || role in facts) continue;
+      if (typeof v === "string" ? v.trim() !== "" : typeof v === "number" && Number.isFinite(v)) {
+        facts[role as FieldRole] = v as string | number;
+      }
+    }
+  }
 
   return facts;
 }

@@ -25,13 +25,21 @@ export async function identifyTypedIdentifier(opts: {
   /** The identifier as typed (brand word included when there was one). */
   code: string;
   userId: string | null;
+  /** The identifier came in a hint about something already on the card (a
+   *  photo of it): when nothing names it, the card keeps its own name and
+   *  the identifier is kept as its model number, said in those words. */
+  fromHint?: boolean;
 }): Promise<IdentifyIdentifierOutcome> {
   const { db, itemId, code } = opts;
+  const kept = opts.fromHint ? `kept it as the model number` : `Kept the name you typed`;
   if (!webSearchEnabled() && !replayingWeb()) {
     await db
       .updateTable("core_scan_inbox_items")
       .set({
-        ai_notes: `Web lookups are off on this instance, so ${code} was not looked up. Kept the name you typed.`,
+        ai_notes: opts.fromHint
+          ? `Web lookups are off on this instance, so ${code} was not looked up; ${kept}.`
+          : `Web lookups are off on this instance, so ${code} was not looked up. ${kept}.`,
+        ...(opts.fromHint ? { suggested_sku: code } : {}),
         suggested_metadata: mergeMeta({ identifier: code }) as never,
         ai_suggested_at: new Date(),
         updated_at: new Date(),
@@ -48,7 +56,8 @@ export async function identifyTypedIdentifier(opts: {
       .set({
         suggested_name: name.slice(0, 300),
         suggested_manufacturer: web.brand,
-        suggested_sku: web.sku ?? code,
+        // The person's own part number is the one their records are found by.
+        suggested_sku: opts.fromHint ? code : (web.sku ?? code),
         catalog_image_url: catalogImageUrlOrNull(web.imageUrl),
         suggested_metadata: identityMeta({
           source: "web-identifier",
@@ -58,7 +67,9 @@ export async function identifyTypedIdentifier(opts: {
           entity_type: web.entityType,
           ...(web.series ? { series: web.series } : {}),
           ...(parsePackSize(web.name) ? { pack_size: parsePackSize(web.name) } : {}),
-        }) as never,
+          // A photo's own read stays: the identifier names the thing, the
+          // photo still says how many and where.
+        }, opts.fromHint ? { keep: ["photo_observations", "photo_count"] } : {}) as never,
         ai_confidence: String(web.confidence),
         ai_notes: web.evidence,
         ai_suggested_at: new Date(),
@@ -72,9 +83,12 @@ export async function identifyTypedIdentifier(opts: {
   await db
     .updateTable("core_scan_inbox_items")
     .set({
-      ai_notes: web
-        ? `Nothing on the web agrees on what ${code} is. Kept the name you typed.`
-        : `Nothing on the web for ${code}. Kept the name you typed.`,
+      ai_notes: opts.fromHint
+        ? `Couldn't find ${code}; ${kept}.`
+        : web
+          ? `Nothing on the web agrees on what ${code} is. ${kept}.`
+          : `Nothing on the web for ${code}. ${kept}.`,
+      ...(opts.fromHint ? { suggested_sku: code } : {}),
       suggested_metadata: mergeMeta({
         identifier: code,
         ...(web ? { held_name: productTitle(web.name), held_reason: "uncorroborated" } : {}),

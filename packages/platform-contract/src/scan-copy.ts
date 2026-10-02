@@ -80,6 +80,8 @@ export const KEYWORD_ROUTE_SENTENCE = "Routed by keywords, not the AI. Confirm w
 /** The workspace already tracks one unique thing this looks like (a set, a
  *  book, a machine: a record with no count, where +1 would double it). */
 export const DUPLICATE_SENTENCE = "You already have one of these. Compare before adding.";
+/** A document for a thing you already have: it goes on that record (#4633). */
+export const PAPERWORK_SENTENCE = "This is paperwork for {title}: put it on that record.";
 
 /** The workspace counts this thing already: filing is one more of it. */
 export const MERGE_SENTENCE = "You already have this. Adding counts one more.";
@@ -92,6 +94,16 @@ export const AMBIGUOUS_MATCH_SENTENCE = "This could be any of {n} things you hav
  *  says which place this is: not the place being worked in, and nobody has
  *  picked. A person does, once; the choice stays on the row. */
 export const WHICH_PLACE_SENTENCE = "You keep this in {n} places. Open it to pick which one.";
+/** The thing is already here, kept somewhere else: this scan is another place
+ *  of it, never a second item (one item, a row per place). */
+/** A document read off a page whose own checks did not pass on these
+ *  fields (a VIN's check digit, lines that do not add up): a person looks. */
+export const CHECK_FIELDS_SENTENCE = "Please check {fields}: the page did not read clearly.";
+export const CHECK_FIELDS_WAITING_SENTENCE = "Please check {fields}. The AI reads it again when one is free.";
+/** The document AI's allowance is used up for now (#4633). */
+export const CHECK_FIELDS_LIMIT_SENTENCE = "The AI's daily limit is used up; it reads this again later.";
+export const NEW_PLACE_SENTENCE = "You already have {title}: {held}. Add these as another place?";
+export const NEW_PLACE_BARE_SENTENCE = "You already have this somewhere else. Add these as another place?";
 
 /** The destination is a table this workspace has not installed. `{table}`
  *  is the destination's label. */
@@ -128,6 +140,7 @@ export const LOW_CONFIDENCE_SENTENCE = "Identified at {pct}% confidence. Check t
 export const ACTION_ADD = "Add";
 export const ACTION_INSTALL_ADD = "Install & add";
 export const ACTION_MERGE = "+1 more";
+export const ACTION_ADD_PLACE = "Add as another place";
 export const ACTION_REVIEW = "Review";
 export const ACTION_BLOCKED = "Ask an admin";
 

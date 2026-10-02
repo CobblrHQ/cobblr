@@ -49,6 +49,7 @@ async function safeTick(): Promise<void> {
       // One process only: every api runs this loop, and more than one api
       // runs against a single database (the canary channel; a rolling deploy).
       // Unguarded, a recurring task is created twice on every due date.
+    // SKIP-IF-BUSY OK: a timer tick; the holder creates what is due, the next tick finds the rest
     await platform().exclusive.run("core-recurrence.scheduler", async () => {
       await tick();
     });

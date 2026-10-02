@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.51.1",
+  version: "0.58.0",
   displayName: "Scan",
   description:
     "Scan a barcode or snap a photo, and get the thing named and ready to file in one tap.",
@@ -32,6 +32,9 @@ export default defineModule({
     onBoot: async () => {
       const { registerRetryLookupWorker } = await import("./services/retry-worker.js");
       registerRetryLookupWorker();
+      // A document that waited for the document model while every one was busy.
+      const { registerDocumentReadWorker } = await import("./services/document-read-worker.js");
+      registerDocumentReadWorker();
       // How a thing must be kept vs where it just got put. Subscribes to
       // core-placement.placed; costs nothing until something moves.
       const { registerStorageFitCheck } = await import("./services/storage-fit.js");
@@ -56,6 +59,8 @@ export default defineModule({
       // WHEN in heal-picture-colour.ts for when this call goes.
       const { registerPictureColourHeal } = await import("./heal-picture-colour.js");
       registerPictureColourHeal();
+      const { registerUnsavedCatalogChoicesHeal } = await import("./heal-unsaved-catalog-choices.js");
+      registerUnsavedCatalogChoicesHeal();
       // A read the AI could not do for a passing reason (busy, a limit) is
       // asked again when it answers (hint-without-ai.ts).
       const { registerAiRerunSweep } = await import("./services/hint-without-ai.js");
@@ -219,6 +224,48 @@ export default defineModule({
         // goes through POST /inbox/:id/rank-photo-ai (a press IS the consent).
         wireOnly: true,
         userInvokable: false,
+      },
+      {
+        // UI-SCREEN: /scan
+        id: "core-scan:attach-paperwork",
+        examples: ["attach this bill of sale to the Civic", "this receipt is for my mower, put it on it"],
+        label: "Attach paperwork to a record",
+        description:
+          "Put a document (a bill of sale, a receipt, an invoice: a stored file) on a record the workspace already has. The file is kept on the record, the purchase it shows is recorded with every line and its line claimed for the record, and the record's EMPTY fields are filled from it by meaning: Paid, Purchased at, Bought from, and for a vehicle its VIN, make, model, year and mileage. A field that already holds a different value is never written; it comes back in `conflicts` to ask about. A document with several things on it, or none, is kept as a file only. Args: { file_id, kind, id } (the record's kind and id).",
+        scope: "workspace" as const,
+        argsSchema: {
+          file_id: { label: "The document's stored file", type: "text", required: true },
+          kind: { label: "The record's kind", type: "text", required: true },
+          id: { label: "The record's id", type: "text", required: true },
+        },
+        invokeHandler: "core-scan.attach-paperwork",
+        userInvokable: false,
+      },
+      {
+        // NO-PHRASING: a table's own wire runs it when a record is made or changed; the person's door is the record's identifier box
+        id: "core-scan:fill-known",
+        label: "Fill what the record already says",
+        description:
+          "Fill a record's EMPTY fields from what it already carries: its identifier (a VIN, read by the decoder) and its own name (\"Yamaha YZF-R3, Blue\" with Make Yamaha says the model). Never touches a field that holds a value. Wire-fired by a bundle on its table's created and updated events. Undoable.",
+        // DELIBERATELY universal: a bundle's wire names the table; which fields
+        // it can fill comes from the fields' declared decode roles, never a kind.
+        appliesTo: { any: true },
+        invokeHandler: "core-scan.fill-known",
+        wireOnly: true,
+        userInvokable: false,
+        undoable: true,
+      },
+      {
+        // NO-PHRASING: the undo step of fill-known, handed back on its card
+        // DELIBERATELY universal: the undo of fill-known, which runs on whatever record that did.
+        id: "core-scan:unfill-known",
+        label: "Empty what was filled",
+        description:
+          "Undo of fill-known: empty the fields it filled, only where each still holds the value it put there. Args: { filled }.",
+        appliesTo: { any: true },
+        invokeHandler: "core-scan.unfill-known",
+        userInvokable: false,
+        internal: true,
       },
       {
         id: "core-scan:fill-fields-from-receipts",

@@ -18,7 +18,7 @@ import { WEEKDAYS, MONTHS, isoLocal, buildMonthGrid, shiftMonth } from "../lib/m
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type SavedView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, useFlowHost, EntityPhoto, useRunAction, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle } from "@cobblr/platform-web";
+import { Modal, useTickedRows, useAskCobbAboutSelection, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, useFlowHost, EntityPhoto, useRunAction, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle } from "@cobblr/platform-web";
 import { groupRows, fieldVal, orderedGroups, NO_GROUP, NO_GROUP_LABEL } from "../lib/view-group-key";
 import { RowStockProvider, useRowStock } from "../components/ViewRowStock";
 import { useAreaResolver } from "../lib/useAreaResolver";
@@ -301,9 +301,10 @@ export function SavedViewBody({
   // Generic — the planner files whatever the kind's writer accepts a location on;
   // a non-locatable kind just yields nothing to file.
   const { openFlow } = useFlowHost();
-  // SELECTION-NOT-CONTEXT: saved views are configuration, not records; the rows a view SHOWS are
-  //   published by the list pages themselves
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useTickedRows(isLoading ? null : items.map((r) => r.id), view.id);
+  // The rows a view shows are records of its kind: ticked, they are what Cobb
+  // is talking about, as on the kind's own list.
+  const askCobb = useAskCobbAboutSelection(selected, items, view.entity_kind, noun);
   const toggle = (id: string) =>
     setSelected((s) => {
       const n = new Set(s);
@@ -366,6 +367,7 @@ export function SavedViewBody({
         <BulkActionBar
           count={selected.size}
           onClear={() => setSelected(new Set())}
+          onAskCobb={askCobb ?? undefined}
           actions={
             <button
               onClick={() => {

@@ -25,6 +25,7 @@
 // lock. Where a claim is available, the claim is the real guard and this is
 // contention control on top of it.
 
+import type { ExclusiveRun } from "@cobblr/platform-contract";
 import type { Client } from "pg";
 import { lockKeyFor } from "./advisory-lock.js";
 
@@ -33,8 +34,10 @@ export { lockKeyFor, withAdvisoryLock } from "./advisory-lock.js";
 /**
  * Run `work` only if no other api process is running the job of this name.
  *
- * Returns true when this process ran it, false when someone else held it. A
- * skipped tick is the normal, correct outcome — never an error.
+ * Says whether this process ran it ({ ran: true }) or someone else held it. A
+ * skipped tick is the normal, correct outcome for a timer, never an error;
+ * a caller that reports what it did to a person must not read a skip as
+ * "nothing to do" (lint:exclusive-answer-read).
  *
  * The lock lives on a connection of its OWN, opened for the tick and closed
  * after it, never a client borrowed from the meta pool. A session lock has to
@@ -46,15 +49,15 @@ export { lockKeyFor, withAdvisoryLock } from "./advisory-lock.js";
  * the pool through `meta` like any request, and gives each client back per
  * statement.
  */
-export async function runExclusive(name: string, work: () => Promise<void>): Promise<boolean> {
+export async function runExclusive(name: string, work: () => Promise<void>): Promise<ExclusiveRun> {
   const held = await tryHoldExclusive(name);
-  if (!held) return false;
+  if (!held) return { ran: false, heldElsewhere: true };
   try {
     await work();
   } finally {
     await held.release();
   }
-  return true;
+  return { ran: true };
 }
 
 /** The lock as a HANDLE: taken now on its own connection, released by the

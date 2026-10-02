@@ -60,6 +60,8 @@ export interface CoreScanBatchesTable {
   label: ColumnType<string | null, string | null | undefined, string | null | undefined>;
   /** Where the session came from — "email" makes the inbox say "emailed <when>".
    *  Null for an ordinary in-app scan session. */
+  /** The address an emailed receipt came from (origin "email"). */
+  origin_from: ColumnType<string | null, string | null | undefined, string | null | undefined>;
   origin: ColumnType<string | null, string | null | undefined, string | null | undefined>;
   /** When this session was IMPORTED from another instance: the source batch id,
    *  which is the dedupe key for repeat syncs. Separate from `origin` so the

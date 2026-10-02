@@ -1,0 +1,14 @@
+{
+  "match": "delete this and yarn as a whole",
+  "rounds": [
+    {
+      "tool_calls": [
+        {
+          "name": "invoke_action",
+          "args": { "action_id": "platform:remove-bundle", "args": { "bundle": "Yarn" } }
+        }
+      ]
+    },
+    { "content": "I can remove Yarn for you." }
+  ]
+}

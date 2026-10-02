@@ -68,9 +68,11 @@ function stripMeta(j: unknown): string {
 // A version bump with no notes of its own is how an update prompt came to
 // show notes from months before the version on offer: the bump was automatic
 // and the old `changelog` string rode along untouched.
+// An entry with EMPTY notes is the same failure: scripts/ship-prep.mjs scaffolds
+// one for the new version, and it counts only once a person has written it.
 function releaseFor(j: unknown, version: string): boolean {
-  const o = j as { manifest?: { releases?: Array<{ version?: string }> }; releases?: Array<{ version?: string }> };
-  return (o?.manifest?.releases ?? o?.releases ?? []).some((r) => r?.version === version);
+  const o = j as { manifest?: { releases?: Array<{ version?: string; notes?: unknown }> }; releases?: Array<{ version?: string; notes?: unknown }> };
+  return (o?.manifest?.releases ?? o?.releases ?? []).some((r) => r?.version === version && typeof r?.notes === "string" && r.notes.trim() !== "");
 }
 function ver(j: unknown): string | undefined {
   const o = j as { manifest?: { version?: string }; version?: string };
@@ -98,7 +100,7 @@ for (const f of changed.filter((f) => /^bundles\/[^/]+\.json$/.test(f) && f !== 
   const newVer = ver(newJson);
   if (newVer && newVer !== ver(oldJson) && !releaseFor(newJson, newVer)) {
     violations.push(
-      `${f}: version moved to "${newVer}" with no releases entry saying what changed in it. Add ` +
+      `${f}: version moved to "${newVer}" with no releases entry saying what changed in it (or its notes are empty). Add ` +
         `{ version: "${newVer}", released_at, notes } at the top of the manifest's \`releases\` ` +
         `(web/src/lib/featured-bundles.ts for a featured bundle, then scripts/sync-bundles.ts).`,
     );

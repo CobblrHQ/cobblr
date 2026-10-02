@@ -21,7 +21,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-locations",
-  version: "0.7.2",
+  version: "0.8.0",
   displayName: "Locations",
   description:
     "Where your things live: rooms, shelves and bins, one inside another, and a floor plan to draw them on.",
@@ -198,6 +198,23 @@ export default defineModule({
           to_kind: { label: "Destination kind, when it is a thing that holds things (a Backpack) rather than a place", type: "text" as const },
           places: { label: "Also move the places inside it", type: "boolean" as const },
           then_delete: { label: "Then delete this place (merge)", type: "boolean" as const },
+        },
+      },
+      {
+        // The person-facing door is the swatch row in Edit layout on the
+        // floor plan; this is the assistant's.
+        id: "core-locations:set-plan-colour",
+        examples: ["make the red chest's drawers red", "colour Shelf 3 blue on the plan", "take the colour off Bin 4"],
+        undoable: true,
+        label: "Set its colour on the plan",
+        description:
+          "Give a place a colour on its floor plan, so places that belong together read together (every drawer of one tool chest, say). `colour`: one of red, orange, yellow, green, blue, purple, grey, or none to take it off. The plan outlines the place in that colour and its legend lists each colour in use with the places that carry it. Set it on each place in turn.",
+        icon: "palette",
+        appliesTo: { kinds: ["core-locations:location"] },
+        invokeHandler: "core-locations.set-plan-colour",
+        userInvokable: false,
+        argsSchema: {
+          colour: { label: "Colour: red, orange, yellow, green, blue, purple, grey, or none", type: "text" as const, required: true },
         },
       },
       // NO-PHRASING: only ever run as Move everything's Undo, never asked for.

@@ -49,7 +49,7 @@ import { useDeclaredChoices } from "../components/ViewBuilder";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { ContentsPanel, useHoldsContents } from "../components/ContentsPanel";
-import { CustomFieldsPanel, EditField, EditSelect, EntityActionsBar, FaceSection, FacesOn, faceShows, FieldPack, RecordFaces, editFieldItem, fieldNeed, useAskCobbAboutSelection, Modal, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton } from "@cobblr/platform-web";
+import { BulkGiveTo, CustomFieldsPanel, EditField, EditSelect, EntityActionsBar, FaceSection, FacesOn, faceShows, FieldPack, RecordFaces, editFieldItem, fieldNeed, useAskCobbAboutSelection, useTickedRows, Modal, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton } from "@cobblr/platform-web";
 import {
   BulkActionBar,
   BulkTagAction,
@@ -119,9 +119,11 @@ export function MachinesPage({
     } else navigate(`/machines${searchParams.toString() ? `?${searchParams}` : ""}`);
   };
 
+  // Sold, given away or scrapped: off the list until asked for.
+  const [showGone, setShowGone] = useState(false);
   const machines = useQuery({
-    queryKey: ["machines", activeSlug, instance ?? null],
-    queryFn: () => api.listMachines(activeSlug, instance),
+    queryKey: ["machines", activeSlug, instance ?? null, showGone],
+    queryFn: () => api.listMachines(activeSlug, instance, { gone: showGone }),
     enabled: !!activeSlug,
   });
   const fieldDefs = useQuery({
@@ -348,7 +350,7 @@ export function MachinesPage({
   });
   const liveByMachine = useMemo(() => indexFleetByMachine(registryFleet.data), [registryFleet.data]);
   const [viewMode, setViewMode] = useViewMode("machines", "list");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useTickedRows(machines.data ? allRows.map((r) => r.id) : null);
 
   // What is ticked IS context: with the panel open, "delete these" means the
   // ones on screen a person pointed at, and Cobb gets their ids rather than a
@@ -408,6 +410,17 @@ export function MachinesPage({
         hint={hint} kind={instance ? `${instance}:item` : ENTITY_KIND}
         filters={
           <>
+        {((machines.data?.gone_count ?? 0) > 0 || showGone) && (
+          <button
+            type="button"
+            onClick={() => setShowGone(!showGone)}
+            aria-pressed={showGone}
+            data-testid="show-gone"
+            className={`${HEADER_CONTROL} px-2.5 rounded-md text-[10px] font-mono uppercase tracking-widest transition ${showGone ? "bg-cobble-100 text-accent dark:bg-cobble-700/40 dark:text-cobble-200" : "text-muted dark:text-slate-400 hover:bg-subtle dark:hover:bg-slate-800"}`}
+          >
+            {showGone ? "Back to what you have" : `Gone (${machines.data?.gone_count ?? 0})`}
+          </button>
+        )}
         {!instance && lensModule && (
           <Link
             to="/machines"
@@ -695,6 +708,7 @@ export function MachinesPage({
         actions={
           <>
             <BulkTagAction count={selected.size} placeholder="e.g. in-progress, voron, archive" onTag={(name) => bulkTag.mutateAsync(name)} />
+            <BulkGiveTo kind={instance ? `${instance}:item` : ENTITY_KIND} ids={Array.from(selected)} onDone={() => setSelected(new Set())} />
             <button
               type="button"
               onClick={async () => {

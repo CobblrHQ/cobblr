@@ -15,7 +15,7 @@ const MB = 1024 * 1024;
 
 /** The setting, read once. Blank is unset (compose passes an unset variable
  *  as ""); anything that is not a positive whole number of MB refuses boot
- *  with the value it got, never a quiet "no limit" (CLAUDE.md 14.6). */
+ *  with the value it got, never a quiet "no limit" (docs/architecture/platform-spec.md §14.6). */
 export function parseQuota(raw: string | undefined): number | null {
   if (raw === undefined || raw.trim() === "") return null;
   const n = Number(raw);

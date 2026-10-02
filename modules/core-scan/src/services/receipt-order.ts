@@ -13,7 +13,7 @@
  *  thrown, because losing the order must not lose the receipt.
  *
  *  Module isolation: purchases is reached over its HTTP API, never its tables
- *  (CLAUDE.md §4). That this file names `purchases` at all is counted by
+ *  (docs/architecture/platform-spec.md §4). That this file names `purchases` at all is counted by
  *  scripts/census-module-coupling.ts — see
  *  docs/architecture/module-coupling-census.md for why the count matters.
  */
@@ -160,6 +160,9 @@ export async function addOrderLine(args: {
    *  and 4 x 0.38 comes back as 1.52. The amount is the thing the receipt is
    *  authority on, so it travels rather than being recomputed. */
   lineAmount?: number | null;
+  /** What the line is when it is not a thing: kept on the order line so the
+   *  purchase can show a charge as a charge and offer an add-on as an item. */
+  kind?: "charge" | "add-on";
 }): Promise<string | null> {
   try {
     const res = await fetch(
@@ -172,6 +175,7 @@ export async function addOrderLine(args: {
           qty: args.qty,
           unit_cost: args.unitCost ?? undefined,
           line_amount: args.lineAmount ?? undefined,
+          ...(args.kind ? { metadata: { line_kind: args.kind } } : {}),
         }),
       },
     );

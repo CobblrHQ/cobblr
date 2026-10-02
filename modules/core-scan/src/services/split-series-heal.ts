@@ -14,7 +14,7 @@
 // Two doors and a cadence, in that order: a read-only count per workspace
 // (the audit), the heal on request, and the same heal a page a minute in
 // the background, like the retrim of stored pictures, so every workspace
-// heals on its own without anybody running anything (CLAUDE.md §8.1).
+// heals on its own without anybody running anything (docs/architecture/platform-spec.md §8.1).
 // Every row visited is stamped `split_series_judged`, healed or not, so a
 // second look costs nothing and a child re-identified later is never
 // touched twice.

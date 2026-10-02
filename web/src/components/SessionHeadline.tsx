@@ -17,8 +17,9 @@
 import { useLayoutEffect, useRef, useState } from "react";
 
 /** Below this many characters the name is shown whole, so the floor never
- *  pads a short name out into a hole. */
-const NAME_FLOOR_CH = 3;
+ *  pads a short name out into a hole, and a longer one keeps this many: the
+ *  order number gives way first, never "eB… · #08-15026-52…". */
+const NAME_FLOOR_CH = 6;
 /** Narrow no-break spaces: a flex item drops a plain leading space (so the
  *  dot ran into the name, #3393), and a full-width one costs the tightest
  *  phone row the pixels its count needs. */
@@ -91,7 +92,7 @@ export function SessionHeadline({
       ) : (
         <span
           data-headline-name
-          className={`truncate ${(name ?? "").length > NAME_FLOOR_CH ? "min-w-[3ch] shrink-[1000]" : "shrink-0"}`}
+          className={`truncate ${(name ?? "").length > NAME_FLOOR_CH ? "min-w-[6ch] shrink-[1000]" : "shrink-0"}`}
         >
           {name}
         </span>

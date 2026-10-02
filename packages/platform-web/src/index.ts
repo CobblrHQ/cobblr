@@ -10,6 +10,8 @@ export {
 } from "./context";
 export { EntityActionsBar } from "./EntityActionsBar";
 export { RecordHeaderChips } from "./RecordHeaderChips";
+export { RecordDisposition } from "./RecordDisposition";
+export { BulkGiveTo } from "./BulkGiveTo";
 export { RecordFaces, FaceSection, FacesOn, faceShows, useFaces, useFaceOn } from "./faces";
 export { useInvokeEntityAction } from "./use-invoke-action";
 export { useLater, type Later } from "./use-later";
@@ -50,7 +52,8 @@ export {
 } from "./locationTree";
 export { EntityTile, TILE_GRID, TILE_TITLE, distinctSubtitle, countBadge } from "./EntityTile";
 export { ViewModeToggle, useViewMode, type ViewMode } from "./ViewModeToggle";
-export { useImageSrc } from "./useImageSrc";
+export { reloadPicture, useImageSrc } from "./useImageSrc";
+export { brokenPictureCount, reportBrokenPicture } from "./brokenPictures";
 export { walkPages, type WalkedList } from "./list-pages";
 export { openAuthedFile, type OpenAuthedFileOptions } from "./openAuthedFile";
 export { FileIntake, FileIntakePanels, useFileIntake, describeLine, type IntakeLine, type FileIntakeOptions } from "./FileIntake";
@@ -62,6 +65,7 @@ export { MutationError, errorSentence } from "./MutationError";
 export { PasswordInput, SecretInput, AddressInput, NOT_A_LOGIN, type PasswordInputProps } from "./PasswordInput";
 export { NounChoiceButtons, nounChoiceHeading } from "./NounChoice";
 export { BulkActionBar } from "./BulkActionBar";
+export { useTickedRows, tickedRowsKey, type ClearForUndo } from "./ticked-rows";
 export { SelectableTile, SELECTED_TILE, type SelectableTileProps } from "./SelectableTile";
 export { PhotoSourceBadge, AiMark } from "./PhotoSourceBadge";
 export { FooterActionPopover, type FooterActionPopoverProps } from "./FooterActionPopover";

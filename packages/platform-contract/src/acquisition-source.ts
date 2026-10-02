@@ -188,6 +188,48 @@ export function canonicalSourceName(raw: string): string {
   return SOURCE_ALIASES[squashed] ?? squashed;
 }
 
+// VOCAB-ENUMERATION OK: how well-known shops write their own names is data
+// about names, not a rule branching on a role.
+/** How a known shop writes its own name, by canonical key. A receipt or a
+ *  till prints "EBAY"; the shop is "eBay". */
+const SOURCE_DISPLAY: Record<string, string> = {
+  ebay: "eBay",
+  amazon: "Amazon",
+  aliexpress: "AliExpress",
+  etsy: "Etsy",
+  walmart: "Walmart",
+  target: "Target",
+  costco: "Costco",
+  homedepot: "The Home Depot",
+  lowes: "Lowe's",
+  bestbuy: "Best Buy",
+  ikea: "IKEA",
+  facebook: "Facebook Marketplace",
+  craigslist: "Craigslist",
+  mcmastercarr: "McMaster-Carr",
+  digikey: "DigiKey",
+  mouser: "Mouser",
+  adafruit: "Adafruit",
+  sparkfun: "SparkFun",
+  newegg: "Newegg",
+  temu: "Temu",
+  shein: "SHEIN",
+  lidl: "Lidl",
+  aldi: "Aldi",
+  kroger: "Kroger",
+  harborfreight: "Harbor Freight",
+};
+
+/**
+ * A shop's name as the shop writes it: "EBAY" and "ebay.com" are "eBay".
+ * A name the table does not know is returned as it was written, uppercase
+ * included, since guessing the casing of an unknown name is worse.
+ */
+export function sourceDisplayName(raw: string): string {
+  const key = canonicalSourceName(raw);
+  return SOURCE_DISPLAY[key] ?? raw.trim();
+}
+
 /** The comparable tokens of a name, for the containment rule below. */
 function sourceTokens(raw: string): string[] {
   const s = raw.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/^[a-z]+:\/\//, "").replace(/^www\./, "").replace(DOMAIN_TAIL, "").replace(/['’`]/g, "");
@@ -367,6 +409,33 @@ export function scanSourceConflict(row: SourceConflictRow): SourceConflict | nul
     if (!isFrom) continue;
     const c = acquisitionSourceConflict(name, fields[name], evidence);
     if (c) return c;
+  }
+  return null;
+}
+
+/** Where a thing came from and who from, as somebody said them together.
+ *
+ *  "3DPrintopia 2026 from Jai" in the Acquired from box is the event and the
+ *  person: the value keeps the event (it groups, and it becomes a choice) and
+ *  the person is the seller beside it. The same when the value is clean and
+ *  the person is said in a note ("acquired at 3DPrintopia 2026 from Jai").
+ *  Returns the value to keep and the seller, or null when nothing names one.
+ *  A "from" that is not followed by a name ("from the garage sale") names no
+ *  person and is left alone. Pure (#4593). */
+export function sellerSaidWith(value: string | null | undefined, texts: ReadonlyArray<string | null | undefined> = []): { value: string; seller: string } | null {
+  const v = (value ?? "").replace(/\s+/g, " ").trim();
+  if (!v) return null;
+  // A person's name: one or two capitalised words, said after "from".
+  const NAME = "([A-Z][\\p{L}'’-]*(?: [A-Z][\\p{L}'’-]*)?)";
+  const inValue = new RegExp(`^(.+?)\\s+from\\s+${NAME}\\s*$`, "u").exec(v);
+  if (inValue) return { value: inValue[1]!.trim(), seller: inValue[2]! };
+  const esc = v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // "3DPrintopia 2026 from Jai", or with a word or two between ("3DPrintopia
+  // 2026 event from Justin"): the value and the person said in one breath.
+  const beside = new RegExp(`${esc}(?:\\s+[a-z]+){0,2}\\s*,?\\s+from\\s+${NAME}(?=$|[\\s,.;:!?)])`, "iu");
+  for (const t of texts) {
+    const m = t ? beside.exec(t.replace(/\s+/g, " ")) : null;
+    if (m && /^[A-Z]/.test(m[1]!)) return { value: v, seller: m[1]! };
   }
   return null;
 }

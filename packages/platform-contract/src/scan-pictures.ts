@@ -115,11 +115,14 @@ export function rowPictures(row: PictureRow, ctx: PicturesContext = {}): RowPict
     for (const id of meta.extra_photos) if (typeof id === "string" && id) file("extra", id, "Added photo");
   }
 
-  // The catalog picture, once. It is one of the row's own (a crop, an added
-  // photo made primary): that pane is current. It is a web address the strip
-  // also shows: that tile is current, stored copy or not, since the tile is
-  // the picture and the outline is what says "you picked this one" (#2982).
-  // Otherwise it gets a pane of its own, the stored file first.
+  // The catalog picture, once, and only once it is STORED (#4580): an address
+  // the server never stored is a search result, not the catalog picture, or
+  // the CATALOG panel shows a picture the thumbnail cannot ("how do I have it
+  // in the one place but not the other?"). It is one of the row's own (a
+  // crop, an added photo made primary): that pane is current. It is the web
+  // result the strip also shows: that tile is current, since the tile is the
+  // picture and the outline is what says "you picked this one" (#2982).
+  // Otherwise the stored file gets a pane of its own.
   const web = ctx.web ?? [];
   const catalogFile = row.catalog_image_file_id ?? null;
   const catalogUrl = row.catalog_image_url ?? null;
@@ -134,11 +137,9 @@ export function rowPictures(row: PictureRow, ctx: PicturesContext = {}): RowPict
     current: false,
     source: t.source ?? null,
   }));
-  if (!current && catalogUrl) current = webTiles.find((t) => t.url === catalogUrl) ?? null;
-  if (!current && (catalogFile || catalogUrl)) {
-    const pane: RowPicture = catalogFile
-      ? { key: `catalog:${catalogFile}`, role: "catalog", fileId: catalogFile, url: catalogUrl, thumbUrl: null, caption: "Catalog image", current: false }
-      : { key: `catalog:${catalogUrl}`, role: "catalog", fileId: null, url: catalogUrl, thumbUrl: null, caption: "Catalog image", current: false };
+  if (!current && catalogFile && catalogUrl) current = webTiles.find((t) => t.url === catalogUrl) ?? null;
+  if (!current && catalogFile) {
+    const pane: RowPicture = { key: `catalog:${catalogFile}`, role: "catalog", fileId: catalogFile, url: catalogUrl, thumbUrl: null, caption: "Catalog image", current: false };
     out.push(pane);
     current = pane;
   }
@@ -186,4 +187,28 @@ export function catalogCaption(pictures: readonly RowPicture[]): string {
     default:
       return "Catalog";
   }
+}
+
+/** Where a row says its catalog picture could not be stored, and the words
+ *  the card says it with (#4580). The server writes it; every surface reads
+ *  it through `catalogUnsaved`. */
+export const CATALOG_UNSAVED_KEY = "catalog_image_unsaved";
+export const COULDNT_SAVE_WORDS = "Couldn't save this one";
+
+export interface CatalogUnsaved {
+  url: string;
+  why: string;
+  at: string;
+}
+
+/** The catalog picture that was let go because it could not be stored, while
+ *  nothing has replaced it. */
+export function catalogUnsaved(row: { catalog_image_file_id: string | null; suggested_metadata?: unknown }): CatalogUnsaved | null {
+  if (row.catalog_image_file_id) return null;
+  const meta = row.suggested_metadata;
+  if (!meta || typeof meta !== "object") return null;
+  const v = (meta as Record<string, unknown>)[CATALOG_UNSAVED_KEY];
+  if (!v || typeof v !== "object") return null;
+  const u = v as Partial<CatalogUnsaved>;
+  return typeof u.url === "string" ? { url: u.url, why: typeof u.why === "string" ? u.why : COULDNT_SAVE_WORDS, at: typeof u.at === "string" ? u.at : "" } : null;
 }

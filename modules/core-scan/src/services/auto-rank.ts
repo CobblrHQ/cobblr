@@ -155,6 +155,7 @@ export async function deriveRankContext(
   // the tile beside it had been filled from the shop-scoped one).
   const boughtFrom = typeof meta.receipt_vendor === "string" ? meta.receipt_vendor.trim() : "";
   const query = deriveImageQuery({
+    identifier: typeof meta.identifier === "string" ? meta.identifier : null,
     name: row.suggested_name ?? null,
     brand: row.suggested_manufacturer ?? (boughtFrom || null),
     fields: candidateFields,

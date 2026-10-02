@@ -33,6 +33,7 @@ export const KERNEL_NOTIFICATION_KINDS: readonly NotificationKindDecl[] = [
   { eventType: "workspace.join_link_paused", label: "Join link paused", description: "The workspace's join link stopped itself after too many joins at once." },
   { eventType: "platform.invite.accepted", label: "Invite accepted", description: "Someone you invited joined." },
   { eventType: "platform.mail_source.connected", label: "Mailbox connected", description: "A mailbox you connected started bringing receipts in." },
+  { eventType: "platform.field.seller_upgrade", label: "Track sellers as a field?", description: "The same seller came up often enough, or through enough places, to be worth a field of its own." },
   { eventType: "platform.mail_source.stopped", label: "Mailbox stopped", description: "A connected mailbox stopped bringing receipts in, and why." },
   { eventType: "core-scan.email.forwarding_verification", scope: "account", label: "Confirm email forwarding", description: "Your mail provider wants you to confirm forwarding to Cobblr." },
   { eventType: "core-scan.email.received", scope: "account", label: "Receipt email received", description: "A receipt you emailed in arrived and is being read." },

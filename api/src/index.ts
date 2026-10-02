@@ -33,7 +33,7 @@ import { choiceLearns } from "@cobblr/platform-contract/field-choices";
 import { sql, type Kysely, type Generated } from "kysely";
 import { env } from "./env.js";
 import { meta, metaPool, pingMeta } from "./db/meta.js";
-import { currentActor } from "./lib/request-context.js";
+import { currentActor, currentVia } from "./lib/request-context.js";
 import { runMigrations } from "./db/migrate.js";
 import { getTenantDb, releaseIdleTenantPool, withTenantDbForSweep } from "./db/tenant.js";
 import { runExclusive } from "./platform/exclusive.js";
@@ -43,6 +43,16 @@ import { loadAllModules } from "./modules/loader.js";
 import { loadAllSandboxedModules } from "./sandbox/loader.js";
 import { syncTenantMigrations, reconcileDefaultModules } from "./modules/enable.js";
 import { startDeliverySweeper } from "./platform/delivery-sweeper.js";
+import { registerShareLinkOps } from "./platform/share-links.js";
+import { addShareSyncPass, startShareSync } from "./platform/share-sync.js";
+import * as shareMirror from "./platform/share-mirror.js";
+import * as shareEdits from "./platform/share-edits.js";
+import { observeEvents } from "./platform/events.js";
+import * as shareOffers from "./platform/share-offers.js";
+import type { OfferIntake } from "@cobblr/platform-contract/share-offer";
+
+/** The scan inbox's side of a share's hand-over, registered by its module. */
+let offerIntakeImpl: OfferIntake | null = null;
 import { startBridgeOutageWatch } from "./platform/edge-outages.js";
 import { startPhotoRetentionSweeper } from "./platform/photo-retention.js";
 import { tenantSweeps, startTenantSweeps } from "./platform/tenant-sweeps.js";
@@ -124,6 +134,7 @@ import { provisionOrgForUser } from "./routes/auth.js";
 import { enableDefaultModulesForOrg } from "./modules/enable.js";
 import { startDbUpgradeHoldWatch } from "./platform/db-upgrade-status.js";
 import { reconcileOrphanTenantRoles } from "./platform/reconcile-tenant-roles.js";
+import { reconcileShareSpaces } from "./platform/reconcile-share-spaces.js";
 import { reconcileScanCategoryFields, retireScanCategoryPlaceholders } from "./platform/reconcile-scan-category.js";
 import { reconcileAppScanFallback } from "./platform/reconcile-app-scan-fallback.js";
 import { backfillBundleClaims } from "./platform/backfill-bundle-claims.js";
@@ -391,7 +402,7 @@ async function boot() {
         // a parser's value off the list is written on a field that learns (it
         // is never ADDED to the list), and held back on a closed one.
         const defs = await effectiveFieldDefsForKind(orgId, kind);
-        return defs
+        const custom = defs
           .filter((d) => d.field_role)
           .map((d) => ({
             name: d.name,
@@ -400,6 +411,15 @@ async function boot() {
             choices: d.choices,
             learns: choiceLearns(d),
           }));
+        // The kind's own columns that declare a role (a vehicle's Paid,
+        // Purchased at, Bought from) come FIRST: the record's own field is
+        // the answer every screen reads, so a fact lands there before any
+        // custom field claiming the same role (#4523).
+        const rec = await entities.kindRecordForOrg(orgId, kind);
+        const native = (rec?.fields ?? [])
+          .filter((f) => f.fieldRole && f.fieldRole !== "identifier")
+          .map((f) => ({ name: f.name, field_role: f.fieldRole!, type: f.type, choices: null, native: true, money: f.money ?? null }));
+        return [...native, ...custom];
       },
       fieldsFor: async (orgId, kind) => {
         const defs = await effectiveFieldDefsForKind(orgId, kind);
@@ -413,6 +433,7 @@ async function boot() {
           unit: (d as { unit?: string | null }).unit ?? null,
           template: (d as { template?: string | null }).template ?? null,
           required: (d as { required?: boolean | null }).required === true,
+          private: d.private,
         }));
       },
       countersFor: counters.countersFor,
@@ -582,6 +603,7 @@ async function boot() {
       listProviders: aiImpl.listProviders,
       getProvider: aiImpl.getProvider,
       chainFor: aiImpl.aiChainFor,
+      modelsReportedBy: aiImpl.modelsReportedBy,
       invoke: aiImpl.invoke,
     },
     edge: {
@@ -677,6 +699,14 @@ async function boot() {
     scan: {
       registerUrlResolver: scanResolvers.registerScanUrlResolver,
       resolveUrl: scanResolvers.resolveScanUrl,
+      registerOfferIntake: (intake) => {
+        offerIntakeImpl = intake;
+      },
+      offerIntake: () => offerIntakeImpl,
+    },
+    shares: {
+      decideOffer: shareOffers.decideOffer,
+      offerInboxItems: shareOffers.offerInboxItems,
     },
     // Hosted-overlay extension seams — no-op / allow-all in open core.
     entitlements: {
@@ -792,6 +822,15 @@ async function boot() {
       describeBlock: (args) => describeBlock(args),
       mintAppToken: ({ userId, appSlug }) => signAppToken(userId, appSlug),
       mintSession: ({ userId }) => signSession(userId),
+      requestSource: async () => {
+        const actor = currentActor();
+        if (!actor) return null;
+        const via = currentVia();
+        const tok = actor.authMethod === "api_token" && actor.apiTokenId
+          ? await meta.selectFrom("api_tokens").select("name").where("id", "=", actor.apiTokenId).executeTakeFirst()
+          : null;
+        return { auth_method: actor.authMethod, via: via?.kind ?? null, token_name: tok?.name ?? null };
+      },
       registerEmailSender: hostedSeams.registerAuthEmailSender,
       hasEmailSender: hostedSeams.hasAuthEmailSender,
       sendEmail: hostedSeams.sendAuthEmail,
@@ -1744,6 +1783,24 @@ async function boot() {
   // which is the failure this exists to prevent. Costs nothing on a box where
   // nobody has set a window (one indexed "any pending?" read per tick).
   startDeliverySweeper();
+  // Shares: what each side has to tell the other, retried until it arrives.
+  registerShareLinkOps();
+  shareOffers.registerShareOfferOps();
+  // A share's mirror: what the owner shares, copied and kept in step. A change
+  // anywhere in a workspace that shares something makes its shares due.
+  shareMirror.registerShareMirrorOps();
+  observeEvents((_event, orgId) => void shareMirror.noteWorkspaceChanged(orgId).catch(() => undefined));
+  addShareSyncPass(shareMirror.mirrorDueShares);
+  shareEdits.registerShareEditOps();
+  observeEvents((_event, orgId) => void shareEdits.noteCopiesChanged(orgId).catch(() => undefined));
+  // A module's route may log an edit without emitting an event: both sides
+  // hear of it through the log as well.
+  activity.observeActivity((orgId) => {
+    void shareMirror.noteWorkspaceChanged(orgId).catch(() => undefined);
+    void shareEdits.noteCopiesChanged(orgId).catch(() => undefined);
+  });
+  addShareSyncPass(shareEdits.sendDueCopyEdits);
+  startShareSync();
   startBridgeOutageWatch();
   startPhotoRetentionSweeper();
   // Temporary upload files a crashed request left on disk.
@@ -1778,6 +1835,7 @@ async function boot() {
   // cluster-global, so DROP DATABASE never removed them). One query on a healthy
   // instance; opens no tenant pools. See platform/reconcile-tenant-roles.ts.
   const roleSweep = await T("reconcileOrphanTenantRoles", reconcileOrphanTenantRoles());
+  await T("reconcileShareSpaces", reconcileShareSpaces());
   if (roleSweep.dropped > 0 || roleSweep.skippedBroken > 0) {
     console.log(
       `[cobblr-api] orphaned tenant roles: ${roleSweep.dropped} dropped, ${roleSweep.skippedBroken} left for investigation`,

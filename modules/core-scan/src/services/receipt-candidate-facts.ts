@@ -26,6 +26,7 @@
 // answer this pass displaced is kept on the stamp as `replaced`, so the
 // contradiction is on the record rather than gone.
 
+import { doubtedChecks } from "./receipt-facts.js";
 import type { ScanMenuEntry } from "./matchmaker.js";
 // The names live in the platform contract because the card in the browser
 // hides the same chips again when the session header already states them,
@@ -97,8 +98,10 @@ export function applyReceiptFacts(
     const listing = listingOf(meta);
     return listing ? applyListingFacts(listing, meta, candidates, menu) : stamps;
   }
-  const vendor = str(meta.receipt_vendor);
-  const seller = str(meta.receipt_seller);
+  // A seller the page's checks did not believe is not put anywhere (#4633).
+  const sellerDoubted = doubtedChecks(meta as { check_fields?: unknown }).has("seller");
+  const vendor = sellerDoubted ? null : str(meta.receipt_vendor);
+  const seller = sellerDoubted ? null : str(meta.receipt_seller);
   const date = str(meta.receipt_date);
   const weight = num(meta.weight);
   const weightUnit = str(meta.weight_unit);

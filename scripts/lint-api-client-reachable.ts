@@ -5,7 +5,7 @@
 // `cropScanCatalogImage` shipped in api.ts the same day. No component ever
 // called it. "use as catalog" kept taking the whole frame, and the crop the
 // owner asked for on 2026-09-08 had been possible, unreachable, for a month.
-// CLAUDE.md calls this "an action with no surface": the client method LOOKS
+// docs/architecture/platform-spec.md calls this "an action with no surface": the client method LOOKS
 // like a finished feature and hides that the UI half is missing.
 //
 // This reads every method name on the `api` object and fails when a method

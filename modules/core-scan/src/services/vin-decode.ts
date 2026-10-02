@@ -14,11 +14,14 @@
 // miss). The caching itself lives in the endpoint (api/decode.ts) with the
 // tenant db; this file is the pure lookup + classifier, like lookupBarcode.
 
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   registerDecoder,
   type DecodeResult,
   type IdentifierDecoder,
 } from "./identifier-registry.js";
+import { catalogRecording, catalogReplayDir } from "./catalog-replay.js";
 
 const PROVENANCE = "NHTSA vPIC";
 const VPIC_URL = "https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues";
@@ -40,6 +43,27 @@ export function normalizeVin(code: string): string {
  *  warning, not a hard reject — see checkDigitValid + §7 of the spec). */
 export function isShapeValidVin(code: string): boolean {
   return VIN_RE.test(normalizeVin(code));
+}
+
+// The model year is position 10, a code that repeats every 30 years
+// (A..Y without I, O, Q, U, Z, then 1..9). For a car or light truck built for
+// North America, a LETTER at position 7 places it in 2010 or later; a digit
+// there leaves both cycles possible unless the later one is still in the
+// future. Answers only when the year is certain, so an offline read never
+// guesses a 1995 car into 2025.
+const YEAR_CODES = "ABCDEFGHJKLMNPRSTVWXY123456789";
+
+export function vinModelYear(code: string, now: Date = new Date()): number | null {
+  const vin = normalizeVin(code);
+  if (!isShapeValidVin(vin)) return null;
+  const i = YEAR_CODES.indexOf(vin[9]!);
+  if (i < 0) return null;
+  const early = 1980 + i;
+  const late = early + 30;
+  const latest = now.getUTCFullYear() + 1;
+  if (/[A-Z]/.test(vin[6]!)) return late <= latest ? late : null;
+  if (late > latest) return early;
+  return null;
 }
 
 // ISO 3779 transliteration: letters → a digit; I/O/Q have no value (never
@@ -159,6 +183,98 @@ export function repairVin(code: string): VinRepair | null {
   }
   const verified = vinCandidates(raw).filter(isShapeValidVin).find(checkDigitValid);
   return verified ? { vin: verified, repaired: true, verified: true } : null;
+}
+
+// ── OCR repair ───────────────────────────────────────────────────────────────
+//
+// A VIN read off a scanned form by the OCR engine is not a barcode label: the
+// engine swaps characters that look alike (a 5 for an S, an 8 for a B, a 0 for
+// a D), and a shape-valid wrong VIN is the dangerous case, because it looks
+// fine and decodes somebody else's car. So a VIN from OCR is used only when
+// the check digit PROVES it, as read or after swapping look-alikes; a read the
+// arithmetic cannot settle is unreadable, never used (#4571). The barcode
+// path above keeps its own rule (a well-formed label is trusted as read).
+
+/** Characters the engine confuses, each with what it may really be. I, O and
+ *  Q are not in the VIN alphabet, so they always mean their digit. */
+const OCR_LOOKALIKES: Record<string, string[]> = {
+  "0": ["D"], D: ["0"],
+  "1": ["L", "T"], L: ["1"], T: ["1"],
+  "2": ["Z"], Z: ["2"],
+  "5": ["S"], S: ["5"],
+  "6": ["G"], G: ["6"],
+  "8": ["B"], B: ["8"],
+};
+
+export interface OcrVin {
+  vin: string;
+  /** Characters changed from what was read to make the check digit agree. */
+  changed: number;
+}
+
+/**
+ * The VIN an OCR read stands for, proved by its check digit, or null.
+ *
+ * Tries the read as is, then every single look-alike swap, and returns the
+ * one candidate that passes the check digit, or null when none or several do
+ * (`year`, what the form prints as the model year, breaks a tie when exactly
+ * one agrees with position 10). A read longer than 17 is windowed.
+ *
+ * A swapped candidate is NOT proved. Each swap passes the check digit one time
+ * in eleven by chance, and a page with ten look-alike characters offers ten
+ * chances: measured on a deliberately wrong read, a two-swap search "repaired"
+ * it into a different, valid-looking VIN. So `changed > 0` is a candidate the
+ * caller must confirm (the vehicle database decodes it clean, and its make is
+ * the one the form prints) before it is used. Pairs of swaps are not tried.
+ */
+export function repairOcrVin(raw: string, opts: { year?: number | null; now?: Date } = {}): OcrVin | null {
+  const clean = raw.toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/[OQ]/g, "0").replace(/I/g, "1");
+  const reads: string[] = [];
+  if (clean.length === 17) reads.push(clean);
+  else if (clean.length > 17 && clean.length <= 19) for (let i = 0; i + 17 <= clean.length; i++) reads.push(clean.slice(i, i + 17));
+  if (!reads.length) return null;
+  const pick = (found: string[]): string | null => {
+    const unique = [...new Set(found)];
+    if (unique.length === 1) return unique[0]!;
+    if (unique.length > 1 && opts.year) {
+      const agree = unique.filter((v) => vinModelYear(v, opts.now) === opts.year);
+      if (agree.length === 1) return agree[0]!;
+    }
+    return null;
+  };
+  const passes = (v: string) => isShapeValidVin(v) && checkDigitValid(v);
+  for (const changes of [0, 1]) {
+    const found: string[] = [];
+    for (const read of reads) {
+      for (const cand of swaps(read, changes)) if (passes(cand)) found.push(cand);
+    }
+    if (found.length) {
+      const vin = pick(found);
+      return vin ? { vin, changed: changes } : null;
+    }
+  }
+  return null;
+}
+
+/** Every string `changes` look-alike swaps away from `read`. */
+function swaps(read: string, changes: number): string[] {
+  if (changes === 0) return [read];
+  const out: string[] = [];
+  const at = [...read].map((ch, i) => (OCR_LOOKALIKES[ch] ? i : -1)).filter((i) => i >= 0);
+  const swap = (s: string, i: number, ch: string) => s.slice(0, i) + ch + s.slice(i + 1);
+  for (let a = 0; a < at.length; a++) {
+    for (const x of OCR_LOOKALIKES[read[at[a]!]!]!) {
+      const one = swap(read, at[a]!, x);
+      if (changes === 1) {
+        out.push(one);
+        continue;
+      }
+      for (let b = a + 1; b < at.length; b++) {
+        for (const y of OCR_LOOKALIKES[read[at[b]!]!]!) out.push(swap(one, at[b]!, y));
+      }
+    }
+  }
+  return out;
 }
 
 // ── vPIC response → semantic fields + four-way classification ─────────────────
@@ -296,6 +412,20 @@ export function vinTitle(fields: Record<string, string | number>): string {
 export async function decodeVin(code: string): Promise<DecodeResult> {
   const vin = normalizeVin(code);
   if (!isShapeValidVin(vin)) return { outcome: "miss", fields: {}, provenance: PROVENANCE };
+  // Under replay (COBBLR_CATALOG_REPLAY_DIR, the CI api lane), the vehicle
+  // database is a cassette like every other catalog: <dir>/vpic/<VIN>.json
+  // holds vPIC's first result, recorded once with COBBLR_CATALOG_REPLAY_RECORD.
+  // A VIN with no cassette under replay is "unavailable", never a network call.
+  const dir = catalogReplayDir();
+  if (dir && !catalogRecording()) {
+    const file = join(dir, "vpic", `${vin}.json`);
+    if (!existsSync(file)) return { outcome: "unavailable", fields: {}, provenance: PROVENANCE };
+    try {
+      return classifyVpic((JSON.parse(readFileSync(file, "utf8")) as { result?: VpicResult }).result);
+    } catch {
+      return { outcome: "unavailable", fields: {}, provenance: PROVENANCE };
+    }
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), VPIC_TIMEOUT_MS);
@@ -308,6 +438,14 @@ export async function decodeVin(code: string): Promise<DecodeResult> {
     // stray 4xx: better to let the user retry than poison the cache.
     if (!res.ok) return { outcome: "unavailable", fields: {}, provenance: PROVENANCE };
     const body = (await res.json().catch(() => null)) as { Results?: VpicResult[] } | null;
+    if (dir && catalogRecording() && body?.Results?.[0]) {
+      try {
+        mkdirSync(join(dir, "vpic"), { recursive: true });
+        writeFileSync(join(dir, "vpic", `${vin}.json`), JSON.stringify({ vin, result: body.Results[0] }, null, 2));
+      } catch {
+        // a cassette that cannot be written is a cassette missing, not a failed decode
+      }
+    }
     return classifyVpic(body?.Results?.[0]);
   } catch {
     // AbortError (timeout) or any transport failure → unavailable.

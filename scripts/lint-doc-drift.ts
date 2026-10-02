@@ -45,7 +45,14 @@ const GHOST_FIELDS: Record<string, string> = {
 
 // core-* tokens that legitimately appear in prose but are not module dirs.
 // Add here ONLY with a stated reason.
-const NON_MODULE_ALLOW = new Set<string>([]);
+const NON_MODULE_ALLOW = new Set<string>([
+  // Docker image and container names, not modules: the platform spec
+  // (docs/architecture/platform-spec.md) describes the build and the dev box.
+  "core-api",
+  "core-web",
+  "core-api-1",
+  "core-db-1",
+]);
 
 const hits: string[] = [];
 for (const f of readdirSync(ARCH).filter((f) => f.endsWith(".md"))) {

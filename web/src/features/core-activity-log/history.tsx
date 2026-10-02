@@ -149,6 +149,23 @@ function ChangeLine({ line, name, who, compact }: { line: HistoryLine; name: str
   );
 }
 
+/** What one entry changed or recorded, a line per field in words: the same
+ *  lines the History panel shows, for the Activity page's details. */
+export function SaidList({ entry, name }: { entry: ActivityEntry; name: string }) {
+  const said = entry.said ?? [];
+  if (said.length === 0) return null;
+  const who = <ActorVia entry={entry} />;
+  return (
+    <ul data-testid="activity-said" className="mt-1 space-y-0.5 text-xs text-muted dark:text-slate-400">
+      {said.map((c) => (
+        <li key={c.field}>
+          <ChangeLine line={{ ...c, at: entry.occurred_at }} name={name} who={who} compact />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function HistoryPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
   const { activeSlug } = useActiveOrg();
   const [limit, setLimit] = useState(FIRST);

@@ -11,6 +11,10 @@ import { adoptAxisValuesIntoField, findRowIdByKey, mergeRowMetadata, platform, r
 import { DISPOSITION_LABELS } from "@cobblr/platform-contract/disposition";
 import { sql, type Kysely } from "kysely";
 import type { MachinesDB } from "../db.js";
+import { GONE_STATES } from "./resolvers.js";
+
+const gone = (state: string | null | undefined) => GONE_STATES.has(String(state ?? "").toLowerCase());
+const PRIOR_STATE = "state_before_it_left";
 
 let registered = false;
 
@@ -95,11 +99,32 @@ export function registerMachinesWriter(): void {
      *  says how it left, beside "loaned" and "decommissioned". */
     async retire(orgId, id, how) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<MachinesDB>;
+      // The state it left from is kept, so bringing it back puts it back as
+      // it was ("in storage" comes back in storage, not "working").
+      const row = await db.selectFrom("machines_machines").select("state").where("id", "=", id).executeTakeFirst();
+      const prior = row?.state && !gone(row.state) ? row.state : null;
+      if (prior) await mergeRowMetadata(db, "machines_machines", id, { [PRIOR_STATE]: prior });
       await db
         .updateTable("machines_machines")
         .set({ state: DISPOSITION_LABELS[how.disposition], updated_at: new Date() } as never)
         .where("id", "=", id)
         .execute();
+      void platform().events.emit("machines.machine.updated", { orgId, machineId: id });
+    },
+
+    async unretire(orgId, id) {
+      const db = (await platform().tenants.getDb(orgId)) as Kysely<MachinesDB>;
+      const row = await db.selectFrom("machines_machines").select(["state", "metadata"]).where("id", "=", id).executeTakeFirst();
+      if (!row) return;
+      const m = (row.metadata ?? {}) as Record<string, unknown>;
+      const prior = typeof m[PRIOR_STATE] === "string" ? (m[PRIOR_STATE] as string) : null;
+      if (!gone(row.state)) return;
+      await db
+        .updateTable("machines_machines")
+        .set({ state: prior ?? "working", updated_at: new Date() } as never)
+        .where("id", "=", id)
+        .execute();
+      await mergeRowMetadata(db, "machines_machines", id, { [PRIOR_STATE]: null });
       void platform().events.emit("machines.machine.updated", { orgId, machineId: id });
     },
 

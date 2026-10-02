@@ -30,7 +30,9 @@ import type { Selectable } from "kysely";
 import { sql } from "kysely";
 import { z } from "zod";
 import {
+  FIELD_ROLE_LABELS,
   FieldRoleSchema,
+  type FieldRole,
   fieldRoleOwner,
   fieldRoleTypeRefusal,
   fieldRoleOwnedMessage,
@@ -51,6 +53,7 @@ import * as activity from "./activity.js";
 import { clearComputedDefsCache } from "./computed-fields.js";
 import { getKind, listAll, listKindsForOrg } from "./entities.js";
 import { valueFitsField } from "@cobblr/platform-contract/entity-metadata";
+import { fieldWithMeaning, meaningFromWords, type FieldWithMeaning } from "@cobblr/platform-contract/field-meaning";
 
 export type FieldDefRow = Selectable<ModuleFieldDefsTable>;
 
@@ -269,6 +272,10 @@ export const FieldDefCreate = z.object({
    *  (@cobblr/platform-contract/field-choices). */
   learns: z.boolean().nullable().optional(),
   help: z.string().max(500).nullable().optional(),
+  /** The person was shown that this kind already has a field with this
+   *  meaning and chose to add this one anyway, as a field of its own: it is
+   *  made WITHOUT the meaning, so the kind still holds one field per meaning. */
+  without_meaning: z.boolean().optional(),
 }).refine(
   (d) => !d.choices || d.type === "text",
   { message: "choices is only valid for type='text'", path: ["choices"] },
@@ -284,7 +291,8 @@ export type FieldDefCreateInput = z.infer<typeof FieldDefCreate>;
 
 export type CreateFieldDefResult =
   | { ok: true; def: FieldDefRow; warning?: string }
-  | { ok: false; code: "missing_ref_kind" | "unknown_scope" | "duplicate_name" | "role_owned_by_platform" | "role_wrong_type"; message: string };
+  | { ok: false; code: "missing_ref_kind" | "unknown_scope" | "duplicate_name" | "role_owned_by_platform" | "role_wrong_type"; message: string }
+  | { ok: false; code: "same_meaning"; message: string; existing: { name: string; label: string }; role: FieldRole; inferred: boolean };
 
 /** Create one custom field def — the shared body of POST /field-defs and the
  *  platform:add-field action. Input is already FieldDefCreate-parsed; the
@@ -357,6 +365,33 @@ export async function createFieldDef(
           : `values land on your field for this kind.`);
     }
   }
+  // One field per meaning on a kind (#4518). The meaning is the one given, or
+  // read from the label when none was (field-meaning.ts); a field that means
+  // what one the kind already has is not made a second time. A class scope
+  // spans kinds, so the check is per kind and the overlap notice covers it.
+  let role: FieldRole | null = input.field_role ?? null;
+  let inferred = false;
+  if (input.field_role === undefined) {
+    const guess = meaningFromWords(input.display_label, input.name);
+    if (guess && FIELD_ROLE_LABELS[guess].pickable && !fieldRoleOwner(guess) && !fieldRoleTypeRefusal(guess, input.type)) {
+      role = guess;
+      inferred = true;
+    }
+  }
+  if (role && !scopeTraits.length) {
+    const same = fieldWithMeaning(await kindFieldsWithMeaning(orgId, entityKind), role, input.name);
+    if (same && !input.without_meaning) {
+      return {
+        ok: false,
+        code: "same_meaning",
+        message: `This kind already has "${same.label}", which ${inferred ? "looks like it means" : "means"} ${FIELD_ROLE_LABELS[role].label.toLowerCase()}. Use that one, or add this one as a field of its own without that meaning.`,
+        existing: { name: same.name, label: same.label },
+        role,
+        inferred,
+      };
+    }
+    if (same) role = null;
+  }
   try {
     const inserted = await meta
       .insertInto("module_field_defs")
@@ -378,7 +413,7 @@ export async function createFieldDef(
         applies_to: scopeTraits.length
           ? sql`${JSON.stringify({ traits: scopeTraits })}::jsonb`
           : null,
-        field_role: input.field_role ?? null,
+        field_role: role,
         // A new field with choices learns unless it says not to.
         learns: input.learns ?? null,
         help: input.help ?? null,
@@ -437,13 +472,17 @@ export const FieldDefPatch = z.object({
   /** Whether a person's typing grows the choices ("Remember new entries").
    *  On a bundle's field it is the person's own override, like choices. */
   learns: z.boolean().nullable().optional(),
+  /** Private: kept out of every share and public page unless it shows
+   *  private notes. A person's own mark, kept in the override layer for every
+   *  field, shipped or not, so a bundle update never clears it. */
+  private: z.boolean().optional(),
 });
 
 export type FieldDefPatchInput = z.infer<typeof FieldDefPatch>;
 
 export type UpdateFieldDefResult =
   | { ok: true; def: FieldDefRow; effectiveChoices?: string[] | null }
-  | { ok: false; code: "not_found" | "unit_not_number" | "no_changes" | "role_owned_by_platform" | "role_wrong_type" | "type_not_changeable" | "type_is_the_bundles"; message: string };
+  | { ok: false; code: "not_found" | "unit_not_number" | "no_changes" | "role_owned_by_platform" | "role_wrong_type" | "type_not_changeable" | "type_is_the_bundles" | "same_meaning"; message: string };
 
 /** Change one field def — the shared body of PATCH /field-defs/:id and the
  *  platform:edit-field action. */
@@ -506,6 +545,18 @@ export async function updateFieldDef(
   }
   const wrongType = patch.field_role ? fieldRoleTypeRefusal(patch.field_role, def.type) : null;
   if (wrongType) return { ok: false, code: "role_wrong_type", message: wrongType };
+  // One field per meaning: a field is not given a meaning one of its kind's
+  // other fields already carries (the same rule as create).
+  if (patch.field_role && !def.entity_kind.startsWith("@")) {
+    const same = fieldWithMeaning(await kindFieldsWithMeaning(orgId, def.entity_kind), patch.field_role, def.name);
+    if (same) {
+      return {
+        ok: false,
+        code: "same_meaning",
+        message: `"${same.label}" on this kind already means ${FIELD_ROLE_LABELS[patch.field_role].label.toLowerCase()}. A kind holds one field per meaning: use that one, or settle the two first.`,
+      };
+    }
+  }
 
   // Provenance: a `choices` change on a BUNDLE-owned field def routes to the
   // USER override layer (bundle_id null), never the bundle row — so the
@@ -513,7 +564,7 @@ export async function updateFieldDef(
   // single chokepoint: every client PATCHes through here, so none of them can
   // clobber a bundle field.
   let routedChoices = false;
-  if (def.bundle_id && (patch.choices !== undefined || patch.learns !== undefined)) {
+  if ((def.bundle_id && (patch.choices !== undefined || patch.learns !== undefined)) || patch.private !== undefined) {
     const existing = await meta
       .selectFrom("native_field_overrides")
       .selectAll()
@@ -522,13 +573,17 @@ export async function updateFieldDef(
       .where("name", "=", def.name)
       .executeTakeFirst();
     const blob: FieldOverrideBlob = { ...(existing?.overrides ?? {}) };
-    if (patch.choices !== undefined) {
+    if (def.bundle_id && patch.choices !== undefined) {
       if (patch.choices === null) delete blob.choices;
       else blob.choices = patch.choices;
     }
-    if (patch.learns !== undefined) {
+    if (def.bundle_id && patch.learns !== undefined) {
       if (patch.learns === null) delete blob.learns;
       else blob.learns = patch.learns;
+    }
+    if (patch.private !== undefined) {
+      if (patch.private) blob.private = true;
+      else delete blob.private;
     }
     const blobSql = sql`${JSON.stringify(blob)}::jsonb` as unknown as FieldOverrideBlob;
     await meta
@@ -551,8 +606,10 @@ export async function updateFieldDef(
         }),
       )
       .execute();
-    delete updates.choices;
-    delete updates.learns;
+    if (def.bundle_id) {
+      delete updates.choices;
+      delete updates.learns;
+    }
     routedChoices = true;
   }
 
@@ -653,6 +710,37 @@ export async function previewRetype(orgId: string, id: string, to: string): Prom
   return { from: def.type, to, checked: all.items.length, complete: all.complete, wontFit, examples, drops };
 }
 
+/** Every field a kind has, with its meaning as the workspace has it: its own
+ *  and scoped defs (a shipped def's meaning may be overridden), and the
+ *  module's own columns a bundle or a person gave a meaning to. The one list
+ *  the one-field-per-meaning rule and its overlap notice read. */
+export async function kindFieldsWithMeaning(orgId: string, kind: string): Promise<Array<FieldWithMeaning & { source: "custom" | "shipped" | "built-in" }>> {
+  const defs = await resolveFieldDefsForKind(orgId, kind);
+  const kinds = [...new Set([kind, ...defs.map((d) => d.entity_kind)])];
+  const rows = await meta
+    .selectFrom("native_field_overrides")
+    .select(["entity_kind", "name", "display_label", "overrides"])
+    .where("org_id", "=", orgId)
+    .where("entity_kind", "in", kinds)
+    .execute();
+  const own = new Map(rows.map((r) => [`${r.entity_kind} ${r.name}`, r] as const));
+  const out: Array<FieldWithMeaning & { source: "custom" | "shipped" | "built-in" }> = defs.map((d) => {
+    const o = own.get(`${d.entity_kind} ${d.name}`);
+    return {
+      name: d.name,
+      label: o?.display_label ?? d.display_label,
+      field_role: (o?.overrides as FieldOverrideBlob | null)?.field_role ?? d.field_role ?? null,
+      source: d.bundle_id || d.source_module ? "shipped" : "custom",
+    };
+  });
+  for (const r of rows) {
+    if (r.entity_kind !== kind || out.some((f) => f.name === r.name)) continue;
+    const fr = (r.overrides as FieldOverrideBlob | null)?.field_role ?? null;
+    if (fr) out.push({ name: r.name, label: r.display_label ?? r.name, field_role: fr, source: "built-in" });
+  }
+  return out;
+}
+
 /** A kind's field as a person's form sees it: its own def with the user
  *  layer on top (a bundle field's choices and `learns` live in
  *  native_field_overrides, never on the bundle's row). Every write that grows
@@ -673,7 +761,7 @@ export async function effectiveFieldDef(
 export async function effectiveFieldDefsForKind(
   orgId: string,
   kind: string,
-): Promise<Array<ResolvedFieldDef & { choices: string[] | null; learns: boolean | null }>> {
+): Promise<Array<ResolvedFieldDef & { choices: string[] | null; learns: boolean | null; private: boolean }>> {
   const defs = await resolveFieldDefsForKind(orgId, kind);
   const kinds = [...new Set(defs.map((d) => d.entity_kind))];
   const rows = kinds.length
@@ -691,6 +779,21 @@ export async function effectiveFieldDefsForKind(
       ...def,
       choices: (o?.choices ?? (def.choices as string[] | null)) ?? null,
       learns: o?.learns ?? def.learns ?? null,
+      private: o?.private === true,
     };
   });
+}
+
+/** The fields of a kind its owner marked private, its own columns included
+ *  (the override layer holds the mark for any field). */
+export async function privateFieldNames(orgId: string, kind: string): Promise<Set<string>> {
+  const defs = await resolveFieldDefsForKind(orgId, kind);
+  const kinds = [...new Set([kind, ...defs.map((d) => d.entity_kind)])];
+  const rows = await meta
+    .selectFrom("native_field_overrides")
+    .select(["name", "overrides"])
+    .where("org_id", "=", orgId)
+    .where("entity_kind", "in", kinds)
+    .execute();
+  return new Set(rows.filter((r) => (r.overrides as FieldOverrideBlob | null)?.private === true).map((r) => r.name));
 }

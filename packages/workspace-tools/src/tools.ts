@@ -19,6 +19,7 @@ import {
   fetchKinds,
   resolveCreatePath,
   resolveUpdatePath,
+  fieldsByRole,
   resolveDeletePath,
   summarizeKind,
 } from "./kinds.js";
@@ -475,6 +476,28 @@ interface ScanInboxRow {
 /** One queue row, flattened to what a person would say about it. Drops the
  *  identification internals (candidate arrays, scores, image ids) — a chat
  *  answer needs what it is, how long it has waited and what it still needs. */
+/** Where "file these into <list>" files: a list made from a module (an
+ *  instance), by its name or short name, or a kind's own list by its label.
+ *  The kind is the module's own scannable kind, which is what the inbox's
+ *  confirm takes beside the instance. */
+async function listTarget(
+  api: WorkspaceApi,
+  said: string,
+): Promise<{ module: string; kind: string; instance: string | null; label: string } | { error: string }> {
+  const want = said.trim().toLowerCase();
+  const [instRes, kinds] = await Promise.all([api.request("GET", "/instances"), fetchKinds(api)]);
+  const instances = ((instRes.body as { items?: Array<{ instance_name: string; display_name?: string | null; module_name: string; is_default?: boolean }> }).items ?? []);
+  const inst = instances.find((i) => i.instance_name === want || (i.display_name ?? "").trim().toLowerCase() === want);
+  if (inst) {
+    const own = kinds.find((k) => k.module_name === inst.module_name && !k.instance_name);
+    if (!own) return { error: `${inst.display_name ?? inst.instance_name} has no kind to file into` };
+    return { module: inst.module_name, kind: own.id, instance: inst.is_default ? null : inst.instance_name, label: inst.display_name ?? inst.instance_name };
+  }
+  const kind = kinds.find((k) => !k.instance_name && [k.display_name, k.display_name_plural, k.id].some((n) => (n ?? "").trim().toLowerCase() === want));
+  if (kind?.module_name) return { module: kind.module_name, kind: kind.id, instance: null, label: kind.display_name_plural ?? kind.display_name ?? kind.id };
+  return { error: `no list called "${said}"; make it first (platform:create-instance) or name one the app shows` };
+}
+
 function summarizeScanItem(
   it: ScanInboxRow,
   batches: Record<string, { label?: string | null }>,
@@ -714,7 +737,7 @@ export const ESCORT_DESTINATIONS: EscortDestination[] = [
     // The covered_by list below names what an action does instead, so the
     // why says only what the screen is still FOR (#3378 added two sweeps to
     // the list and the description hit its cap).
-    why: "only a field's TYPE and the data behind it need the screen",
+    why: "changing a field's type",
     covered_by: [
       "platform:add-field",
       "platform:edit-field",
@@ -722,6 +745,9 @@ export const ESCORT_DESTINATIONS: EscortDestination[] = [
       "platform:group-fields",
       "platform:ungroup-fields",
       "platform:set-field-preset",
+      // The seller upgrade's no (#4518); its yes and the settle of two
+      // same-meaning fields are found by their own examples.
+      "platform:decline-seller-field",
       // Kind-wide sweeps over a field, workspace-scoped since #3378: the
       // screen shows the field, these retire it into the real Location.
       "inventory:field-to-location",
@@ -760,6 +786,10 @@ export const READ_TOOLS_THAT_POST: ReadonlySet<string> = new Set(["replan_putawa
 export function lookOnlyCanRun(tool: Pick<WorkspaceTool, "name" | "mode">): boolean {
   return tool.mode !== "write" && !READ_TOOLS_THAT_POST.has(tool.name);
 }
+
+/** Values said by what they are, whatever a workspace calls the field
+ *  (#4537): one wording for every tool that takes them. */
+const ROLES_SAID = "By role: acquired-from, seller, acquired-on, acquired-for";
 
 export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
@@ -909,7 +939,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "count_records",
     description:
-      "Count records of ONE kind, optionally grouped by a field (e.g. group_by \"model\"). Use for \"how many\", \"which do I have most of\", \"any X?\": it counts EVERY record in code, exact however long the list. Groups compare case-insensitively. `units`, if present, counts things: \"how many printers\" is units.",
+      "Count records of ONE kind, optionally grouped by a field (e.g. group_by \"model\"). Use for \"how many\", \"which do I have most of\", \"any X?\": it counts EVERY record in code, exact however long the list. `units`, if present, counts things: \"how many printers\" is units.",
     mode: "read",
     paging: { by: "one-call", why: "counts in code over every record (walks the kind itself); returns numbers, not rows" },
     params: {
@@ -1045,7 +1075,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_related",
     description:
-      "List the records LINKED to one record: which project a part belongs to, what is inside a location, bin or box (placed_in), what a build consumed. A location's contents include its sub-locations (a garage holds its bins; ask a bin to see inside it). Returns each link's relationship, direction, and the other record's kind + id + title. Kind + id alone lists every link.",
+      "List the records LINKED to one record: which project a part belongs to, what is inside a location, bin or box (placed_in), what a build consumed. A location's contents include its sub-locations (a garage holds its bins; ask a bin to see inside it). Kind + id alone lists every link.",
     mode: "read",
     paging: { by: "one-call", why: "every link of ONE record, both directions, in one call" },
     params: {
@@ -1165,7 +1195,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_actions",
     description:
-      "Discover the operations (actions) this workspace can run. scope 'entity': runs on one record, matched_kinds says which kinds. scope 'workspace': a config/admin operation on the whole workspace, invoked WITHOUT a record. Each carries args_schema (pass as invoke_action's args) and undoable; on a connection with no confirmation prompt only undoable ones run, and the rest refuse and say so - tell the user rather than claiming you cannot act. Optionally filter to one kind. Run one with invoke_action.",
+      "Discover the operations (actions) this workspace can run. scope 'entity': runs on one record (matched_kinds says which kinds); scope 'workspace': runs on the whole workspace, invoked WITHOUT a record. Each carries args_schema (pass as invoke_action's args) and undoable. Optionally filter to one kind. Run one with invoke_action.",
     mode: "read",
     paging: { by: "one-call", why: "every action the workspace registers; the registry is small and whole" },
     params: {
@@ -1286,7 +1316,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_activity",
     description:
-      "The workspace's history, newest first: who created, updated or deleted what, and when. Use for any question about the PAST (\"what changed this week?\", \"who edited this part?\"). Records answer what the user HAS; this answers what HAPPENED to it. entity_type follows one kind of thing.",
+      "The workspace's history, newest first: who created, updated or deleted what, and when. Use for any question about the PAST (\"what changed this week?\", \"who edited this part?\"). entity_type follows one kind of thing.",
 
     mode: "read",
     paging: { by: "cursor" },
@@ -1469,7 +1499,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_scan_inbox",
     description:
-      "The ITEMS waiting in the scan inbox: captures (barcodes, photos, notes, receipt lines) not yet filed. Not a record kind, so list_records cannot reach it. Each item says what it is, how long it waited, if it needs a human, and where it goes. facet: needs_review (no clean name, low confidence), waiting (over 2 days), unfiled (no destination), ready. One item in full: get_scan_item.",
+      "The ITEMS waiting in the scan inbox (barcodes, photos, notes, receipt lines) not yet filed; list_records cannot reach it. facet: needs_review (low confidence), waiting (over 2 days), unfiled (no destination), ready. One in full: get_scan_item.",
 
     mode: "read",
     paging: { by: "cursor" },
@@ -1576,7 +1606,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "get_workspace_setup",
     description:
-      "How this workspace is SET UP, as opposed to what it holds: its instances (separate lists from one module), its saved views, its automations (wires: when X happens, do Y), the apps the user built, their entity templates, and their unit vocabulary. Use for \"how is my workspace set up?\", \"what automations do I have?\", or before proposing a change to any of them. `part` picks one area; omit it for a summary of every area at once.",
+      "How the workspace is SET UP, not what it holds: instances (separate lists from one module), saved views, automations (wires: when X happens, do Y), the user's apps, entity templates, unit vocabulary. Use before proposing a change to any of them. `part` picks one area; omit it for a summary of all.",
     mode: "read",
     paging: { by: "one-call", why: "a description of the setup, one area or a summary of all" },
     params: {
@@ -1775,10 +1805,12 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "add_thing",
     description:
-      "The way to add a THING the person has (a printer, a book). Runs the scan inbox's intake: duplicate check, table, fields, picture, place. Returns what it found and hints (fields still empty: ask your person). Lands in the inbox; file: true files it.",
+      "The way to add a THING the person has. Runs the scan inbox's intake: duplicate check, table, fields, picture, place. Returns what it found, fields_refused (tell your person) and hints (empty fields: ask). Lands in the inbox; file: true files it.",
     mode: "write",
     params: {
       name: z.string(),
+      goes_to: z.string().optional().describe("List your person named"),
+      roles: z.record(z.unknown()).optional().describe(ROLES_SAID),
       identifier: z.string().optional().describe("Barcode, ISBN or model number"),
       url: z.string().optional(),
       image_file_id: z.string().optional(),
@@ -1793,6 +1825,45 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       const res = await api.request("POST", "/modules/core-scan/scan/assistant", args as Record<string, unknown>);
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "the add did not go through"));
       return toolOk(res.body);
+    },
+  },
+  {
+    name: "file_inbox_items",
+    description:
+      "File scan inbox items into ONE list (\"file these in Mugs\": the ticked ones). The list may be one a create-instance call earlier in the same plan makes. Undo returns them to the inbox.",
+    mode: "write",
+    params: {
+      ids: z.array(z.string()).min(1).max(200),
+      list: z.string().describe("e.g. Mugs"),
+    },
+    execute: async (api, args) => {
+      const ids = Array.isArray(args.ids) ? (args.ids as unknown[]).map(String).filter(Boolean) : [];
+      const said = String(args.list ?? "").trim();
+      if (!ids.length || !said) return toolFail("ids and list are required");
+      const target = await listTarget(api, said);
+      if ("error" in target) return toolFail(target.error);
+      const filed: Array<{ item_id: string; entity_id: string; entity_kind: string; name: string }> = [];
+      const failed: Array<{ item_id: string; reason: string }> = [];
+      for (const id of ids.slice(0, 200)) {
+        const res = await api.request("POST", `/modules/core-scan/inbox/${encodeURIComponent(id)}/confirm`, {
+          target_module: target.module,
+          target_kind: target.kind,
+          ...(target.instance ? { instance: target.instance } : {}),
+        });
+        if (res.status >= 400) {
+          failed.push({ item_id: id, reason: apiErrorMessage(res, "it could not be filed") });
+          continue;
+        }
+        const created = (res.body as { created?: { id?: string; name?: unknown; title?: unknown } }).created;
+        filed.push({
+          item_id: id,
+          entity_id: String(created?.id ?? ""),
+          entity_kind: target.instance ? `${target.instance}:item` : target.kind,
+          name: String(created?.name ?? created?.title ?? ""),
+        });
+      }
+      if (!filed.length) return toolFail(`Nothing was filed into ${target.label}: ${failed[0]?.reason ?? "no items"}`);
+      return toolOk({ list: { name: target.instance ?? target.kind, label: target.label }, filed, failed });
     },
   },
   {
@@ -1820,7 +1891,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "create_records",
     description:
-      "Create MANY records of one kind in ONE call. Use this whenever the user asks for a SET rather than a thing - \"shelf 1 to 5 in every rack\", \"bins A through H\" - instead of calling create_record over and over. Same field names as create_record. Up to 200. Each is undoable on its own; any that clash with something already there are reported back, not forced: say so rather than retry.",
+      "Create MANY records of one kind in ONE call, for a SET (\"shelf 1 to 5 in every rack\", \"bins A through H\") instead of calling create_record for each. Same field names as create_record. Up to 200, each undoable; clashes are reported back, not forced: say so rather than retry.",
     mode: "write",
     params: {
       kind: z.string().describe("Entity kind id with can_create true"),
@@ -1860,17 +1931,21 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     params: {
       kind: z.string().describe("Entity kind id with can_update true"),
       id: z.string().describe("Record id"),
-      fields: z.record(z.unknown()).describe("The fields to change, using the kind's exact field names"),
+      fields: z.record(z.unknown()).optional().describe("The fields to change, using the kind's exact field names"),
+      roles: z.record(z.unknown()).optional().describe(ROLES_SAID),
     },
     execute: async (api, args) => {
       const kind = String(args.kind ?? "");
       const kinds = await fetchKinds(api);
       const path = resolveUpdatePath(kind, String(args.id ?? ""), kinds);
       if (!path) return toolFail(`records of "${kind}" can't be updated this way (no update route declared)`);
-      const { fields: patch } = withKindsTitleField(kind, kinds, (args.fields as Record<string, unknown>) ?? {});
+      const byRole = fieldsByRole(kind, kinds, (args.roles as Record<string, unknown>) ?? {});
+      const sent = { ...byRole.fields, ...((args.fields as Record<string, unknown>) ?? {}) };
+      if (!Object.keys(sent).length) return toolFail(byRole.refused.length ? `nothing to change: ${byRole.refused.map((r) => `${r.name}: ${r.reason}`).join("; ")}` : "no fields or roles given");
+      const { fields: patch } = withKindsTitleField(kind, kinds, sent);
       const res = await api.request("PATCH", `/${path}`, patch);
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "update failed"));
-      return toolOk(res.body);
+      return toolOk(byRole.refused.length ? { ...(res.body as Record<string, unknown>), fields_refused: byRole.refused } : res.body);
     },
   },
   {

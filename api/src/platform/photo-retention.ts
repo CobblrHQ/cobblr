@@ -75,6 +75,7 @@ async function safeTick(): Promise<void> {
   if (running) return;
   running = true;
   try {
+    // SKIP-IF-BUSY OK: a timer tick; the holder sweeps, the next tick sweeps what is left
     await runExclusive("platform.photo-retention", async () => {
       const r = await photoRetentionRound();
       if (r.sent || r.failed) console.log(`[photo-retention] sent ${r.sent}, ${r.failed} still waiting`);

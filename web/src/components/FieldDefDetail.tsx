@@ -181,6 +181,22 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
               </label>
             )}
           </Row>
+          <Row label="Private">
+            <label className="inline-flex items-start gap-1.5 cursor-pointer" title="Kept out of every share and public page unless it shows private notes">
+              <input
+                type="checkbox"
+                checked={fieldDef.private === true}
+                disabled={patch.isPending}
+                onChange={(e) => patch.mutate({ private: e.target.checked })}
+                className="mt-0.5 accent-cobble-500"
+                data-testid="field-private"
+              />
+              <span>
+                {fieldDef.private ? "yes" : "no"}
+                <span className="block text-[10px] text-faint dark:text-slate-500">Never shared with anyone or shown on a public page unless that share shows private notes.</span>
+              </span>
+            </label>
+          </Row>
           <Row label="Position">{fieldDef.position}</Row>
           <Row label="Origin">
             {fieldDef.bundle_id ? (

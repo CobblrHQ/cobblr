@@ -5,7 +5,7 @@
 // platform-web so BOTH core pages and module UIs can publish. Read at send-time
 // (no React re-render plumbing): a page just publishes while mounted.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { countOf } from "@cobblr/platform-contract";
 
 export interface ChatPageContext {
@@ -105,13 +105,54 @@ export function getChatSelection(): ChatSelection | null {
 /** A page publishes the rows a person has ticked, for as long as it has them. */
 export function publishRowSelection(sel: ChatSelection | null): void {
   rows = sel;
+  if (rowsFromBar) {
+    bar = null;
+    saveBar();
+  }
   rowsFromBar = false;
   announce();
 }
 
-export function publishBarSelection(sel: ChatSelection): void {
+/** What a bar hands over, with what it needs to say it again for fewer rows. */
+interface BarSelection {
+  sel: ChatSelection;
+  noun?: string;
+  names?: Record<string, string>;
+}
+let bar: BarSelection | null = null;
+
+// The rows a bar handed to Cobb come back with a reload of the same page and
+// filters, the way the ticks do (ticked-rows.ts, #4587); a new tab starts
+// empty. Kept per tab, beside the ticks.
+const BAR_KEY = "cobblr.bar-selection";
+function here(): string {
+  return typeof location === "undefined" ? "" : location.pathname + location.search;
+}
+function saveBar(): void {
+  try {
+    if (bar) sessionStorage.setItem(BAR_KEY, JSON.stringify({ at: here(), ...bar }));
+    else sessionStorage.removeItem(BAR_KEY);
+  } catch {
+    /* no storage: the chip just does not outlive the page */
+  }
+}
+try {
+  const saved = typeof sessionStorage === "undefined" ? null : sessionStorage.getItem(BAR_KEY);
+  const parsed = saved ? (JSON.parse(saved) as BarSelection & { at?: string }) : null;
+  if (parsed?.sel?.label && parsed.at === here()) {
+    bar = { sel: parsed.sel, noun: parsed.noun, names: parsed.names };
+    rows = parsed.sel;
+    rowsFromBar = true;
+  }
+} catch {
+  /* a damaged entry is no selection */
+}
+
+export function publishBarSelection(sel: ChatSelection, say?: { noun: string; names: Record<string, string> }): void {
   rows = sel;
   rowsFromBar = true;
+  bar = { sel, ...say };
+  saveBar();
   announce();
 }
 /** The selection bar was cleared: its rows leave the chat as well. Rows put
@@ -120,7 +161,28 @@ export function clearBarSelection(): void {
   if (!rowsFromBar) return;
   rows = null;
   rowsFromBar = false;
+  bar = null;
+  saveBar();
   announce();
+}
+/** Rows the bar handed over that the page no longer shows leave the chip,
+ *  which then says the count that is left. */
+export function trimBarSelection(shown: ReadonlySet<string>): void {
+  if (!rowsFromBar || !bar || !rows?.ids) return;
+  const ids = rows.ids.filter((id) => shown.has(id));
+  if (ids.length === rows.ids.length) return;
+  if (ids.length === 0) return clearBarSelection();
+  const names = ids.map((id) => bar?.names?.[id] ?? "").filter(Boolean);
+  const noun = bar.noun ?? "item";
+  publishBarSelection(
+    {
+      label: ids.length === 1 ? names[0] || `1 ${noun}` : countOf(ids.length, noun),
+      kind: rows.kind,
+      ids,
+      ...(names.length ? { text: names.slice(0, 40).join(", ") } : {}),
+    },
+    { noun, names: Object.fromEntries(ids.flatMap((id) => (bar?.names?.[id] ? [[id, bar.names[id]!]] : []))) },
+  );
 }
 
 /** The captured highlight. Separate slot so it cannot clobber ticked rows. */
@@ -131,7 +193,12 @@ export function publishTextSelection(sel: ChatSelection | null): void {
 
 /** Forget both — after the message that used them is sent, or on dismiss. */
 export function clearChatSelection(): void {
+  if (rowsFromBar) {
+    bar = null;
+    saveBar();
+  }
   rows = null;
+  rowsFromBar = false;
   text = null;
   announce();
 }
@@ -200,38 +267,73 @@ export function useSelectionResolver(fn: ((text: string) => ResolvedSelection | 
   }, [fn]);
 }
 
-/** Point Cobb at what is ticked — WHEN ASKED, not because it is ticked.
+/** What is ticked IS what Cobb is talking about, while it is ticked.
  *
- *  This used to publish continuously: tick two racks to print their labels and
- *  the assistant silently took them as the subject of your next message, and
- *  their Cobb buttons lit up as if you had pressed them. A checkbox and the Cobb
- *  button are not the same instruction. One says "do this to these"; the other
- *  says "let us talk about this". Conflating them meant you could not do the
- *  first without the second happening to you.
+ *  This used to wait for the list's own Ask Cobb button: a checkbox was "do
+ *  this to these" and only the button was "let us talk about this". That cost
+ *  more than it saved. On the inbox, filtered to one session's eleven items
+ *  with all eleven ticked, the owner asked Cobb to "file these in Mugs" and
+ *  was asked "which ones?" (2026-10-02): "I shouldn't have to add them to
+ *  Cobb just for Cobb to know the context." So the ticks ride every turn as
+ *  the "About:" chip, which the person drops with its ×, and "these" means
+ *  them (the prompt's selection line). Unticking them all, or a row leaving
+ *  the page, takes them out of the chip too (useTickedRows, trimBarSelection),
+ *  and leaving the page takes the rest.
  *
- *  So a list ticks for its own bulk actions, and offers "Ask Cobb" beside them.
- *  Returns the callback that hands the selection over, or null when nothing is
- *  ticked. The wording stays here so it is the same on every screen ("12
- *  parts", never "12 selected" on one and "parts: 12" on the next), and the
- *  KIND is the part a page must get right: it is what turns a chip into
- *  something Cobb can act on. */
+ *  The wording stays here so it is the same on every screen ("12 parts",
+ *  never "12 selected" on one and "parts: 12" on the next), and the KIND is
+ *  the part a page must get right: it is what turns a chip into something
+ *  Cobb can act on. Returns the callback the list's Ask Cobb button runs (it
+ *  opens Cobb on the selection), or null when nothing is ticked.
+ *
+ *  With nothing ticked, a list narrowed to some of its rows (one session, a
+ *  search, a filter) hands Cobb the rows it shows, as "11 inbox items shown":
+ *  on the inbox filtered to one session's eleven, none ticked, "create Mugs
+ *  and file these 11 in it" had no "these" to read (2026-10-02). A page
+ *  showing everything passes no `shown`, so the whole list is never a chip. */
+/** The most rows a narrowed list hands Cobb unticked: the request's own cap. */
+const SHOWN_LIMIT = 200;
+
 export function useAskCobbAboutSelection(
   selected: ReadonlySet<string>,
   rows: ReadonlyArray<{ id: string; name?: string | null; title?: string | null }>,
   kind: string,
   /** What one of them is called, in a person's words: "part", "asset". */
   noun: string,
+  /** The rows on screen when the list is narrowed to them; null otherwise. */
+  shown?: ReadonlyArray<{ id: string; name?: string | null; title?: string | null }> | null,
 ): (() => void) | null {
-  const ids = [...selected];
-  const names = rows.filter((r) => selected.has(r.id)).map((r) => r.title ?? r.name ?? "");
-  if (ids.length === 0) return null;
+  const ticked = [...selected];
+  const onScreen = !ticked.length && shown && shown.length > 0 && shown.length <= SHOWN_LIMIT ? shown : null;
+  const ids = onScreen ? onScreen.map((r) => r.id) : ticked;
+  const named = (onScreen ?? rows.filter((r) => selected.has(r.id))).map((r) => [r.id, r.title ?? r.name ?? ""] as const);
+  const names = named.map(([, n]) => n);
+  const hand = (): void =>
+    publishBarSelection(
+      {
+        label: onScreen ? `${countOf(ids.length, noun)} shown` : ids.length === 1 ? (names[0] || `1 ${noun}`) : countOf(ids.length, noun),
+        kind,
+        ids,
+        ...(names.some(Boolean) ? { text: names.filter(Boolean).slice(0, 40).join(", ") } : {}),
+      },
+      { noun, names: Object.fromEntries(named.filter(([, n]) => n)) },
+    );
+  // The ticks are the context as they change: no press needed. Keyed on the
+  // ids and their names, so a name that loads after the tick still reaches
+  // the chip. A list whose ticks are plain state (not useTickedRows) is
+  // cleared here when they go, and leaving the page clears what it handed.
+  const key = `${onScreen ? "shown" : "ticked"}|${kind}|${ids.join(",")}|${names.join("\u0000")}`;
+  const handRef = useRef(hand);
+  handRef.current = hand;
+  useEffect(() => {
+    if (ids.length) handRef.current();
+    else clearBarSelection();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  useEffect(() => () => clearBarSelection(), []);
+  if (ticked.length === 0) return null;
   return () => {
-    publishBarSelection({
-      label: ids.length === 1 ? (names[0] || `1 ${noun}`) : countOf(ids.length, noun),
-      kind,
-      ids,
-      ...(names.some(Boolean) ? { text: names.filter(Boolean).slice(0, 40).join(", ") } : {}),
-    });
+    hand();
     window.dispatchEvent(new CustomEvent("cobblr:open-chat", { detail: {} }));
   };
 }

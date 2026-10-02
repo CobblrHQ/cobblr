@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { mergeRowMetadata, platform } from "@cobblr/platform-contract";
+import { DISPOSITION_KEY, dispositionOf, readRecordDisposition } from "@cobblr/platform-contract/disposition";
 import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
@@ -77,11 +78,15 @@ assetsRouter.get(
       .limit(page.limit)
       .offset(page.offset)
       .execute();
+    // Put away, sold and given away are counted apart: what the register cost
+    // is what you still have, over every asset of it, not the page shown.
     const put = await db
       .selectFrom("assets_assets")
-      .select((eb) => eb.fn.countAll<string>().as("n"))
+      .select(() => [
+        sql<string>`count(*) filter (where archived_at is not null)`.as("n"),
+        sql<string>`coalesce(sum(purchase_price_cents) filter (where archived_at is null), 0)`.as("paid"),
+      ])
       .where("instance", "=", instanceOf(req))
-      .where("archived_at", "is not", null)
       .executeTakeFirst();
     const answer = pagedAnswer(rows, page);
     // Person and relation fields read as names (assigned_to_label).
@@ -89,6 +94,7 @@ assetsRouter.get(
       ...answer,
       items: await platform().entities.withFieldLabels(tenantContext(req).org.id, kindOf(req), answer.items),
       archived_count: Number(put?.n ?? 0),
+      paid_total_cents: Number(put?.paid ?? 0),
     });
   }),
 );
@@ -219,6 +225,23 @@ assetsRouter.patch(
     if (!updated) {
       res.status(404).json({ error: { code: "not_found", message: "asset not found" } });
       return;
+    }
+    // The State picker and "No longer mine" are one fact: picking sold or given
+    // away puts the asset away (out of the register and its total), and
+    // picking a state it is still yours in brings back one that left that way.
+    if (parsed.data.state !== undefined && parsed.data.state !== before.state) {
+      const how = dispositionOf(parsed.data.state);
+      const left = readRecordDisposition(beforeMeta);
+      if (how && !before.archived_at) {
+        const on = await platform().accounts.dayFor(sessionUser(req).id);
+        await db.updateTable("assets_assets").set({ archived_at: new Date() } as never).where("id", "=", id).execute();
+        await mergeRowMetadata(db, "assets_assets", id, { [DISPOSITION_KEY]: { ...(left ?? {}), how, on: left?.on ?? on } });
+        (updated as { archived_at?: unknown }).archived_at = new Date();
+      } else if (!how && left && before.archived_at) {
+        await db.updateTable("assets_assets").set({ archived_at: null } as never).where("id", "=", id).execute();
+        await mergeRowMetadata(db, "assets_assets", id, { [DISPOSITION_KEY]: null });
+        (updated as { archived_at?: unknown }).archived_at = null;
+      }
     }
     if (patchLocationId !== undefined) {
       try {

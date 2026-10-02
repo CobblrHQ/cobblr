@@ -8,7 +8,7 @@ import { DISPOSITIONS, DISPOSITION_LABELS } from "@cobblr/platform-contract/disp
 
 export default defineModule({
   name: "assets",
-  version: "0.5.2",
+  version: "0.6.0",
   displayName: "Assets",
   description:
     "Keep track of the things you own one at a time: tools, appliances, collections, anything worth knowing about individually.",
@@ -54,10 +54,13 @@ export default defineModule({
             type: "text",
             choices: ["working", "needs repair", "broken", "in storage", ...DISPOSITIONS.map((d) => DISPOSITION_LABELS[d]), "retired"],
           },
-          { name: "serial_number", type: "text" },
-          { name: "purchased_at", type: "date" },
-          { name: "purchase_price_cents", type: "number", money: "cents", label: "Paid" },
-          { name: "vendor", type: "text", label: "Bought from" },
+          { name: "serial_number", type: "text", fieldRole: "identifier" }, // VOCAB-ENUMERATION OK: declares what this field means
+          // The record's own acquisition fields carry their roles, so a
+          // receipt or bill of sale fills them by meaning (#4523).
+          // VOCAB-ENUMERATION OK: a manifest declares what each of its fields means.
+          { name: "purchased_at", type: "date", fieldRole: "acquired-on" },
+          { name: "purchase_price_cents", type: "number", money: "cents", label: "Paid", fieldRole: "acquired-for" }, // VOCAB-ENUMERATION OK: declares what this field means
+          { name: "vendor", type: "text", label: "Bought from", fieldRole: "acquired-from" },
           { name: "warranty_until", type: "date" },
           { name: "last_service_at", type: "date", label: "Last service" },
           { name: "image_path", type: "image-path", role: "image" },
@@ -111,7 +114,7 @@ export default defineModule({
   // role is that meaning, and wears the Lending face.
   contributes: {
     fieldDefs: [
-      { entity_kind: "assets:asset", name: "assigned_to", display_label: "Who has it", type: "person" as const, field_role: "assignee" as const },
+      { entity_kind: "assets:asset", name: "assigned_to", display_label: "Who has it", type: "person" as const, field_role: "assignee" as const }, // VOCAB-ENUMERATION OK: declares what this field means
       // When a lent thing is due back: a date named like a deadline, so Needs
       // you raises it once it is overdue with no code of its own.
       { entity_kind: "assets:asset", name: "due_back", display_label: "Due back", type: "date" as const },

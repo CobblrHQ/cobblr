@@ -166,3 +166,29 @@ function mergeUserFields<T>(candidates: T, user: StoredUserFields): T {
   const fields = { ...((top.fields as Record<string, unknown> | undefined) ?? {}), ...user.values };
   return [{ ...top, fields, ...(user.category ? { category: user.category } : {}) }, ...rest] as unknown as T;
 }
+
+/** The stored values after a match: they follow the route the system chose
+ *  when the new table has every one of their fields (an agent's
+ *  "manufacturer" and "notes" are facts about the thing, not answers to one
+ *  table), and stay with the table they were typed for when it does not (a
+ *  yarn's weight class never lands on a part). Who it came from is read out
+ *  of them into an empty seller (seller-split.ts). A person's own choice of
+ *  table keeps their values where they typed them. Null when nothing changes
+ *  (#4591). */
+export function userFieldsAfterMatch(
+  meta: unknown,
+  routedKind: string | null,
+  heard: { name: string | null; roles: ReadonlyMap<string, string>; fieldNames: ReadonlySet<string> | null },
+  split: (values: UserFields, name: string | null, roles: ReadonlyMap<string, string>) => UserFields,
+): StoredUserFields | null {
+  const stored = userFieldsOf(meta);
+  if (!stored) return null;
+  const chosen = storedDestinationOf(meta)?.by === "person";
+  const fits = (k: string) => !!heard.fieldNames && heard.fieldNames.has(k.endsWith("_note") ? k.slice(0, -"_note".length) : k);
+  const follows = !chosen && !!routedKind && !!stored.kind && stored.kind !== routedKind && Object.keys(stored.values).every(fits);
+  const kind = follows ? routedKind : stored.kind;
+  const values = split(stored.values, heard.name, heard.roles);
+  const same = kind === stored.kind && Object.keys(values).length === Object.keys(stored.values).length && Object.entries(values).every(([k, v]) => stored.values[k] === v);
+  if (same) return null;
+  return { ...stored, kind, values };
+}

@@ -11,8 +11,9 @@
 // (line-edit.ts).
 
 import { useState, type FormEvent } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Pencil, Plus, Trash2, ArrowUpRight } from "lucide-react";
+import { Link } from "react-router-dom";
 import { MoneyInput, RelationSelect, useConfirm, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type Order, type OrderItem } from "../lib/api";
 
@@ -120,6 +121,69 @@ export function AddOrderLine({ slug, order }: { slug: string; order: Order }) {
 }
 
 /** Correct or remove one line, from its row. */
+/** What a line is when it is not a thing, as the receipt reader marked it: a
+ *  charge (a fee, a tax, delivery) or a bill of sale's add-on. */
+export function orderLineKind(item: Pick<OrderItem, "metadata">): "charge" | "add-on" | null {
+  const k = (item.metadata as { line_kind?: unknown } | null)?.line_kind;
+  return k === "charge" || k === "add-on" ? k : null;
+}
+
+/** A charge says so; an add-on says so and offers to become an item until it
+ *  is one (#4523). Nothing for an ordinary line. */
+export function OrderLineKind({ slug, order, item }: { slug: string; order: Order; item: OrderItem }) {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const kind = orderLineKind(item);
+  const claimed = !!item.part_id || !!item.subject_id;
+  // One read per order, shared by its lines: which are already in the inbox.
+  const inInbox = useQuery({
+    queryKey: ["order-lines-in-inbox", slug, order.id],
+    queryFn: () => api.orderLinesInInbox(slug, order.id),
+    enabled: kind === "add-on" && !claimed,
+    staleTime: 30_000,
+  });
+  const madeId = inInbox.data?.items.find((r) => r.order_item_id === item.id)?.id ?? null;
+  const promote = useMutation({
+    mutationFn: () =>
+      api.orderLineToInbox(slug, {
+        order_id: order.id,
+        order_item_id: item.id,
+        description: item.description ?? "Item",
+        qty: Number(item.qty) || 1,
+        unit_cost: item.unit_cost == null ? null : Number(item.unit_cost),
+      }),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: ["order-lines-in-inbox", slug, order.id] });
+      toast.success(r.existed ? "It is already in the scan inbox." : "Added to the scan inbox, ready to file.");
+    },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't make it an item."),
+  });
+  if (!kind) return null;
+  if (kind === "charge") {
+    return (
+      <span title="A fee, tax or charge: paid, but not a thing you keep" className="shrink-0 rounded-full border border-line dark:border-slate-700 px-1.5 py-0.5 text-[10px] text-muted">
+        charge
+      </span>
+    );
+  }
+  if (claimed) return null;
+  return madeId ? (
+    <Link to={`/scan?item=${madeId}`} className="shrink-0 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-accent hover:underline">
+      In the scan inbox <ArrowUpRight size={12} />
+    </Link>
+  ) : (
+    <button
+      type="button"
+      onClick={() => promote.mutate()}
+      disabled={promote.isPending}
+      title="An extra on this purchase. Make it an item of its own to keep track of it."
+      className="shrink-0 rounded-md border border-line dark:border-slate-700 px-2 py-1 text-xs text-content dark:text-mortar-100 hover:border-cobble-500 hover:text-accent disabled:opacity-50"
+    >
+      {promote.isPending ? "Adding…" : "Make it an item"}
+    </button>
+  );
+}
+
 export function OrderLineControls({ slug, order, item }: { slug: string; order: Order; item: OrderItem }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -169,7 +233,10 @@ export function OrderLineControls({ slug, order, item }: { slug: string; order: 
 
   if (!editing) {
     return (
-      <span className="flex items-center gap-1 shrink-0">
+      // A line with a label or a button keeps the line itself at full width on
+      // a phone: beside them its name and price were squeezed into each other.
+      <span className={`flex items-center gap-1 shrink-0 ${orderLineKind(item) ? "max-sm:basis-full max-sm:justify-end" : ""}`}>
+        <OrderLineKind slug={slug} order={order} item={item} />
         <button type="button" onClick={() => setEditing(true)} aria-label="Correct this line" title="Correct this line" className="p-1.5 rounded text-faint hover:text-accent hover:bg-subtle dark:hover:bg-slate-800">
           <Pencil size={13} />
         </button>

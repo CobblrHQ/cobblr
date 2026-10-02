@@ -16,7 +16,7 @@
 // this". Cobb is one of the ACTIONS here now, so pointing him at a selection is
 // something you ask for.
 
-import type { ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { MessageSquare, X } from "lucide-react";
 import { usePlatformWeb } from "./context";
 import { FloatingChrome } from "./FloatingChrome";
@@ -37,6 +37,8 @@ interface Props {
 
 export function BulkActionBar({ count, actions, onClear, onAskCobb }: Props) {
   const { cobbIcon: Cobb } = usePlatformWeb();
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const iconsOnly = useIconsBesidePanel(actionsRef, count > 0);
   if (count === 0) return null;
   return (
     /* ONE line, always, clear of the floating chat button, and the CLOSE never
@@ -56,17 +58,18 @@ export function BulkActionBar({ count, actions, onClear, onAskCobb }: Props) {
       // one), centred in what the panel leaves; it used to hide with every
       // overlay, so the selection seemed to vanish (#4531).
       yields="covering"
-      className="left-[calc((100vw-var(--side-panel-w,0px))/2)] -translate-x-1/2 z-50 sm:[--bulk-bar-lift:1rem] flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 rounded-full border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg whitespace-nowrap max-w-[calc(100vw-var(--side-panel-w,0px)-1.5rem)]"
+      className={(iconsOnly ? "fc-bar-icons " : "") + "left-[calc((100vw-var(--side-panel-w,0px))/2)] -translate-x-1/2 z-50 sm:[--bulk-bar-lift:1rem] flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 rounded-full border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg whitespace-nowrap max-w-[calc(100vw-var(--side-panel-w,0px)-1.5rem)]"}
+      data-icons-only={iconsOnly || undefined}
     >
       {/* Just the number on a phone. "2 selected" spends a third of the bar
           saying what the checkboxes above already showed you; the number beside
           the actions is unambiguous. */}
       <span className="shrink-0 text-sm font-medium text-content dark:text-mortar-100">
         {count}
-        <span className="hidden sm:inline"> selected</span>
+        <span className="hidden sm:inline fc-bar-words"> selected</span>
       </span>
       <span className="shrink-0 text-faint dark:text-slate-600">·</span>
-      <div className="flex min-w-0 items-center gap-1 sm:gap-2 overflow-x-auto no-scrollbar">
+      <div ref={actionsRef} className="flex min-w-0 items-center gap-1 sm:gap-2 overflow-x-auto no-scrollbar">
         {actions}
         {onAskCobb && (
           <button
@@ -80,7 +83,7 @@ export function BulkActionBar({ count, actions, onClear, onAskCobb }: Props) {
                 is how he is recognised everywhere else. Falls back to the
                 bubble if a host has not supplied the mascot. */}
             {Cobb ? <Cobb size={14} /> : <MessageSquare size={12} />}
-            Ask Cobb
+            <span className="fc-bar-words">Ask Cobb</span>
           </button>
         )}
       </div>
@@ -98,4 +101,85 @@ export function BulkActionBar({ count, actions, onClear, onAskCobb }: Props) {
       </button>
     </FloatingChrome>
   );
+}
+
+const NAMED_HERE = "data-fc-named";
+
+/** Icons alone while a side panel leaves the bar too little room for its
+ *  words, and the words back once there is room again (#4531). Only beside a
+ *  panel: on a phone with no panel open the actions slide instead, because
+ *  an icon with no word is a guess on a touch screen, where no tooltip shows.
+ *
+ *  The width the words need is the one measured when they last overflowed,
+ *  so the bar does not flicker between the two at the edge. Each icon action
+ *  is named while its words are hidden (aria-label, and a tooltip when it has
+ *  none of its own), and those names leave again with the icons. */
+function useIconsBesidePanel(ref: RefObject<HTMLDivElement | null>, shown: boolean): boolean {
+  const [iconsOnly, setIconsOnly] = useState(false);
+  const now = useRef(false);
+  const needs = useRef(0);
+  const check = useRef(() => {});
+  check.current = () => {
+    const el = ref.current;
+    const bar = el?.parentElement;
+    if (!el || !bar) return;
+    const panel = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--side-panel-w")) || 0;
+    let next: boolean;
+    if (panel <= 0) next = false;
+    else if (!now.current) {
+      const over = el.scrollWidth - el.clientWidth;
+      next = over > 0;
+      if (next) needs.current = bar.getBoundingClientRect().width + over;
+    } else next = window.innerWidth - panel - 24 < needs.current;
+    if (next !== now.current) {
+      now.current = next;
+      setIconsOnly(next);
+    }
+  };
+
+  // After every render: the actions a page hands in can change under the bar.
+  useLayoutEffect(() => {
+    if (shown) check.current();
+  });
+
+  useLayoutEffect(() => {
+    if (!shown) return;
+    const run = () => check.current();
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(run);
+    if (ref.current) ro?.observe(ref.current);
+    // The side panel opening, closing or being resized says so on <html>.
+    const mo = new MutationObserver(run);
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
+    window.addEventListener("resize", run);
+    return () => {
+      ro?.disconnect();
+      mo.disconnect();
+      window.removeEventListener("resize", run);
+    };
+  }, [ref, shown]);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !iconsOnly) return;
+    const named: HTMLElement[] = [];
+    for (const b of el.querySelectorAll<HTMLElement>("button")) {
+      if (!b.querySelector(":scope > svg, :scope > .fc-bar-words")) continue;
+      const words = b.textContent?.trim();
+      if (!words || b.hasAttribute("aria-label")) continue;
+      b.setAttribute("aria-label", words);
+      const tooltip = !b.title;
+      if (tooltip) b.title = words;
+      b.setAttribute(NAMED_HERE, tooltip ? "both" : "label");
+      named.push(b);
+    }
+    return () => {
+      for (const b of named) {
+        if (b.getAttribute(NAMED_HERE) === "both") b.removeAttribute("title");
+        b.removeAttribute("aria-label");
+        b.removeAttribute(NAMED_HERE);
+      }
+    };
+  });
+
+  return iconsOnly;
 }

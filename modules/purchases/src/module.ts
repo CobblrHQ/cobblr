@@ -8,7 +8,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "purchases",
-  version: "0.11.7",
+  version: "0.12.0",
   displayName: "Purchases",
   description:
     "Orders you placed and what they cost, with each line tied to the parts it bought and what they went into.",
@@ -185,6 +185,27 @@ export default defineModule({
           for_id: { label: "Id of the record it bought (optional)", type: "text" },
           unit_cost: { label: "Cost each (optional)", type: "number" },
           add_to_stock: { label: "On an order that already arrived, add this line to stock (default: the order's choice, normally yes)", type: "boolean" },
+        },
+      },
+      {
+        // NO-PHRASING: nobody asks for this; it is what attaching paperwork to a record (core-scan:attach-paperwork) records the purchase with.
+        // UI-REACH: plumbing for the paperwork door, which every screen reaches through core-scan's record Files and inbox
+        id: "purchases:record-paperwork",
+        label: "Record the purchase a document shows",
+        description:
+          "Record a purchase from a document put on a record (a bill of sale on a car): the order with every line as the paper printed it, each marked as a charge or an add-on where it is one, and the line the paper is about claimed for that record, which fills its Paid, Purchased at and Bought from. Used by the paperwork door; to attach a document to a record ask for core-scan:attach-paperwork. Args: { vendor?, ordered_at?, order_ref?, total?, source_file_id?, lines, claim? }.",
+        icon: "receipt",
+        scope: "workspace" as const,
+        invokeHandler: "purchases.record-paperwork",
+        userInvokable: false,
+        argsSchema: {
+          vendor: { label: "Who sold it", type: "text" },
+          ordered_at: { label: "Date of the sale", type: "date" },
+          order_ref: { label: "Order or invoice number", type: "text" },
+          total: { label: "Total", type: "number" },
+          source_file_id: { label: "The document's file", type: "text" },
+          lines: { label: "Every line: description, qty, unit_cost, line_amount, kind", type: "json", required: true },
+          claim: { label: "Which line is the record's: index, kind, id", type: "json" },
         },
       },
       {

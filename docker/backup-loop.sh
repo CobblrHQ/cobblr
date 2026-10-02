@@ -113,7 +113,7 @@ secs_until() {
   # RANGE-CHECKED, not glob-matched. A glob of [0-2][0-9]:[0-5][0-9] accepts
   # 25:00, which then failed `date` and returned 2 with NOTHING printed: the
   # container would exit on boot and the log would not say why. A wrong value
-  # has to name itself and what is accepted (CLAUDE.md 14.6).
+  # has to name itself and what is accepted (docs/architecture/platform-spec.md §14.6).
   bad_hour() { echo "BACKUP_AT must be HH:MM (00:00-23:59) or the word interval, got: $1" >&2; }
   case "$hhmm" in
     [0-9][0-9]:[0-9][0-9]) ;;

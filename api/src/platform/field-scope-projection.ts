@@ -25,7 +25,7 @@ import { effectiveCapabilities } from "../auth/effective-capabilities.js";
 let manifestScopes: Array<{ field: string; capability: string }> | null = null;
 
 /** The field scopes every kind's manifest declares (registered at boot). */
-async function declaredScopes(): Promise<Array<{ field: string; capability: string }>> {
+async function declaredFieldScopes(): Promise<Array<{ field: string; capability: string }>> {
   if (manifestScopes) return manifestScopes;
   const rows = await meta.selectFrom("entity_kinds").select(["field_read_scopes"]).where("field_read_scopes", "is not", null).execute();
   const out: Array<{ field: string; capability: string }> = [];
@@ -41,7 +41,7 @@ async function declaredScopes(): Promise<Array<{ field: string; capability: stri
 export async function hiddenFieldsFor(orgId: string, userId: string, role: string): Promise<Set<string>> {
   if (roleHoldsEveryCapability(role)) return new Set();
   const perOrg = await meta.selectFrom("workspace_field_scopes").select(["field", "capability"]).where("org_id", "=", orgId).execute();
-  const gated = [...(await declaredScopes()), ...perOrg];
+  const gated = [...(await declaredFieldScopes()), ...perOrg];
   if (gated.length === 0) return new Set();
   const held = await effectiveCapabilities(orgId, userId, role);
   if (held.all) return new Set();

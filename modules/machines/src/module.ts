@@ -8,7 +8,7 @@ import { DISPOSITIONS, DISPOSITION_LABELS } from "@cobblr/platform-contract/disp
 
 export default defineModule({
   name: "machines",
-  version: "0.4.4",
+  version: "0.5.0",
   displayName: "Machines",
   description:
     "The machines you run, with a specialisation for each type (3D printers, laser cutters, CNC machines) that adds the details that type needs.",
@@ -45,7 +45,7 @@ export default defineModule({
           { name: "family", type: "text" },
           { name: "type", type: "text" },
           { name: "manufacturer", type: "text" },
-          { name: "serial_number", type: "text" },
+          { name: "serial_number", type: "text", fieldRole: "identifier" },
           // In the order a machine lives them, so a board grouped by state
           // reads as a lifecycle and keeps a column for an empty state. How a
           // machine LEFT is the shared disposition vocabulary, the same words

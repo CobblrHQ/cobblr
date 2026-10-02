@@ -19,7 +19,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-files",
-  version: "0.7.2",
+  version: "0.8.0",
   displayName: "Files",
   description:
     "Keep photos, manuals and other files with the things they belong to.",
@@ -33,6 +33,11 @@ export default defineModule({
     route: "/files",
     icon: "files",
   },
+  // It draws its Files section onto a part's page (contributes.panels), which
+  // is declaring that it works on inventory. It is still a place you keep
+  // things, not a tool you go to, so the sidebar keeps it with collections.
+  operatesOn: ["inventory"],
+  navKind: "collection",
 
   schema: {
     // Convention from sibling modules: prefix is module-name +
@@ -117,6 +122,21 @@ export default defineModule({
         argsSchema: {
           file_id: { label: "File", type: "text" },
         },
+      },
+    ],
+  },
+
+  // A part's page is the inventory module's own and cannot draw the web
+  // app's Files section, so a part had nowhere to keep a manual, a receipt or a
+  // bill of sale, and nowhere to paste one (#4523). The other record pages draw
+  // Files themselves.
+  contributes: {
+    panels: [
+      {
+        id: "core-files:files",
+        surface: "entity-detail-panel" as const,
+        target: "inventory:part",
+        title: "Files",
       },
     ],
   },

@@ -19,10 +19,15 @@ import { shipmentEventRouter } from "./shipment-event.js";
 import { registerScanHandlers } from "./handlers.js";
 import { registerEmailInbound } from "../services/email-inbound.js";
 import { registerOperatorServices } from "../services/operator-services.js";
+import { offerIntake } from "../services/offer-intake.js";
+import { offersRouter } from "./offers.js";
+import { platform } from "@cobblr/platform-contract";
 
 registerScanHandlers();
 registerEmailInbound();
 registerOperatorServices();
+// Things offered over a share land in this inbox (share-offer.ts).
+platform().scan.registerOfferIntake(offerIntake);
 
 // Follow parcels whose receipt is still in the inbox — filing should not
 // be the price of being told your delivery arrived.
@@ -32,6 +37,8 @@ startReceiptTrackingSweeper();
 startPicturesSweeper();
 
 const router = Router({ mergeParams: true });
+// Before the inbox router: its /inbox/:id routes would take /inbox/offer-to-sharer.
+router.use("/", offersRouter);
 router.use("/", inboxRouter);
 router.use("/", shipmentEventRouter);
 router.use("/", organizeRouter); // Guided Organize: batch put-away plan + apply

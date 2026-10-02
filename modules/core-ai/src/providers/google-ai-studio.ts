@@ -19,7 +19,8 @@
 // the path that demonstrably works.
 
 import { platform } from "@cobblr/platform-contract";
-import { buildCompatProvider } from "./openai-compat.js";
+import { authHeadersFor, buildCompatProvider } from "./openai-compat.js";
+import type { AiCapability } from "@cobblr/platform-contract";
 
 export const GOOGLE_AI_STUDIO_BASE = "https://generativelanguage.googleapis.com/v1beta/openai";
 
@@ -48,9 +49,125 @@ export const GOOGLE_AI_STUDIO_DEFAULT_MODEL = "gemini-flash-lite-latest";
 // does a workspace's own choice for this job on the AI page.
 export const GOOGLE_AI_STUDIO_BUILDER_MODEL = "gemini-flash-latest";
 
-export function register(): void {
-  platform().ai.registerProvider(
-    buildCompatProvider({
+// THE LADDER, when a model nobody chose stays busy. Both aliases float to the
+// newest generation, and on 2026-10-02 the newest Flash was busy in every
+// version Google serves (the alias, 3.8, 3.7, 3.6 returned 503 "high demand"
+// on every page-sized request for over twenty minutes) while the PINNED
+// 3.5 Flash answered. An alias can never reach an older version, so the
+// ladder names them: the alias, then pinned older versions of the same tier,
+// newest first, then the other tier (for a job that may use it).
+//
+// The pinned versions are DISCOVERED, never typed here: Google retires a
+// numbered model on a date (gemini-2.5-flash 404s), and a ladder that names
+// one dies with it. The list comes from Google's own models list, read at
+// most once a day per process (refreshPinned).
+export interface PinnedGemini {
+  /** Stable Flash versions older than the newest, newest first. */
+  flash: string[];
+  /** Stable Lite versions older than the newest, newest first. */
+  lite: string[];
+}
+
+/** At most this many older versions of one tier on a ladder: each is one
+ *  more failed attempt before the workspace's next AI is asked. */
+export const PINNED_PER_TIER = 3;
+export const PINNED_REFRESH_MS = 24 * 3600_000;
+
+/** The pinned stable versions in a models list ("models/gemini-3.5-flash"):
+ *  plain numbered Flash and Flash Lite only, no preview, image, audio or
+ *  speech variants, newest first, without the newest (the one the alias
+ *  already is). */
+export function pinnedFromModelList(ids: readonly string[]): PinnedGemini {
+  const versions = (re: RegExp) =>
+    ids
+      .map((i) => i.replace(/^models\//, ""))
+      .flatMap((id) => {
+        const m = re.exec(id);
+        return m ? [{ id, v: m[1]!.split(".").map(Number) }] : [];
+      })
+      .sort((a, b) => {
+        for (let i = 0; i < Math.max(a.v.length, b.v.length); i++) {
+          const d = (b.v[i] ?? 0) - (a.v[i] ?? 0);
+          if (d) return d;
+        }
+        return 0;
+      })
+      .map((x) => x.id);
+  return {
+    flash: versions(/^gemini-(\d+(?:\.\d+)*)-flash$/).slice(1, 1 + PINNED_PER_TIER),
+    lite: versions(/^gemini-(\d+(?:\.\d+)*)-flash-lite$/).slice(1, 1 + PINNED_PER_TIER),
+  };
+}
+
+let pinned: PinnedGemini = { flash: [], lite: [] };
+let pinnedAt = 0;
+let pinnedRead: Promise<void> | null = null;
+
+/** Read Google's models list when the last read is a day old. The first
+ *  read in a process is waited for (briefly), so a busy call right after a
+ *  restart already has a ladder; later reads happen beside the call. A
+ *  failed read keeps what was known and tries again in an hour. */
+async function refreshPinned(credentials: Record<string, unknown>): Promise<void> {
+  if (Date.now() - pinnedAt < PINNED_REFRESH_MS) return;
+  pinnedRead ??= (async () => {
+    try {
+      const res = await fetch(`${GOOGLE_AI_STUDIO_BASE}/models`, { headers: authHeadersFor(credentials), signal: AbortSignal.timeout(5_000) });
+      if (!res.ok) throw new Error(`models list answered ${res.status}`);
+      const body = (await res.json()) as { data?: Array<{ id?: unknown }> };
+      pinned = pinnedFromModelList((body.data ?? []).map((m) => String(m.id ?? "")));
+      pinnedAt = Date.now();
+    } catch (err) {
+      console.warn(`[core-ai] google-ai-studio: reading the models list failed (${(err as Error).message}); the busy ladder keeps ${pinned.flash.length + pinned.lite.length} pinned versions`);
+      pinnedAt = Date.now() - PINNED_REFRESH_MS + 3600_000;
+    } finally {
+      pinnedRead = null;
+    }
+  })();
+  const first = pinned.flash.length + pinned.lite.length === 0;
+  if (first) await Promise.race([pinnedRead, new Promise((r) => setTimeout(r, 3_000))]);
+}
+
+export function setPinnedForTest(p: PinnedGemini | null): void {
+  pinned = p ?? { flash: [], lite: [] };
+  pinnedAt = p ? Date.now() : 0;
+}
+
+/** The ladder below one busy model, for one job. A document is never read by
+ *  a lighter model, and a change is never planned by one: their ladder stays
+ *  in the Flash tier, and when every rung is busy the job waits for the
+ *  workspace's next AI (#4573, #4574). */
+/** The jobs a busy Flash never hands to Lite. */
+const NEVER_LIGHTER = new Set<AiCapability>(["document-read", "plan-changes"]);
+
+export function googleLadder(model: string, capability: AiCapability): string[] {
+  const flash = [GOOGLE_AI_STUDIO_BUILDER_MODEL, ...pinned.flash];
+  const lite = [GOOGLE_AI_STUDIO_DEFAULT_MODEL, ...pinned.lite];
+  const order = isLiteModel(model) ? [...lite, ...flash] : [...flash, ...lite];
+  const below = order.filter((m) => m !== model);
+  return NEVER_LIGHTER.has(capability) ? below.filter((m) => !isLiteModel(m)) : below;
+}
+
+/** Google's light tier, by its name: every Lite id says so. */
+export function isLiteModel(model: string): boolean {
+  return /(^|-)lite(-|$)/i.test(model);
+}
+
+/** The preset itself, so the router's own tests can run Google's real model
+ *  choice and busy ladder with only the network call faked. */
+export function googleAiStudioProvider(): ReturnType<typeof buildCompatProvider> {
+  const def = googleAiStudioPreset();
+  const invoke = def.invoke;
+  return {
+    ...def,
+    invoke: async (ctx) => {
+      await refreshPinned(ctx.credentials);
+      return invoke(ctx);
+    },
+  };
+}
+
+function googleAiStudioPreset(): ReturnType<typeof buildCompatProvider> {
+  return buildCompatProvider({
       id: "google-ai-studio",
       label: "Google AI Studio (free tier)",
       describeCredentials: () => ({
@@ -101,16 +218,25 @@ export function register(): void {
       // reason.
       requireModel: false,
       defaultModel: GOOGLE_AI_STUDIO_DEFAULT_MODEL,
-      modelForCapability: { "design-workspace": GOOGLE_AI_STUDIO_BUILDER_MODEL },
+      // A document is read by Flash too: what it holds is a value somebody
+      // keeps, and Lite misreads the small print a form is made of.
+      // So is a chat turn that plans a change: a delete or a reshape is a
+      // serious action, planned by Flash, never Lite (#4574).
+      modelForCapability: {
+        "design-workspace": GOOGLE_AI_STUDIO_BUILDER_MODEL,
+        "document-read": GOOGLE_AI_STUDIO_BUILDER_MODEL,
+        "plan-changes": GOOGLE_AI_STUDIO_BUILDER_MODEL,
+      },
       // Each alias is overloaded on its own schedule: Lite answered "high
       // demand" for over an hour while the same key could still reach Flash.
       // Both float, so neither dies on a retirement date. Flash's smaller
       // daily cap is fine for the minutes Lite is busy; its "limit" then
       // moves the call to the workspace's next AI.
-      busyAlternates: {
-        [GOOGLE_AI_STUDIO_DEFAULT_MODEL]: [GOOGLE_AI_STUDIO_BUILDER_MODEL],
-        [GOOGLE_AI_STUDIO_BUILDER_MODEL]: [GOOGLE_AI_STUDIO_DEFAULT_MODEL],
-      },
+      //
+      // Never Lite for a document: a busy Flash moves the read to the
+      // workspace's next AI, and with none free the read waits for one,
+      // rather than coming back from a weaker model (#4573).
+      busyAlternates: googleLadder,
       // The menu the chat's model pill offers. Two, on purpose: the free tier
       // has exactly two models worth choosing between, and the choice is a
       // quota decision the note makes visible. Google reports fifty-one models
@@ -119,6 +245,8 @@ export function register(): void {
       modelsFor: {
         chat: [GOOGLE_AI_STUDIO_DEFAULT_MODEL, GOOGLE_AI_STUDIO_BUILDER_MODEL],
         "design-workspace": [GOOGLE_AI_STUDIO_BUILDER_MODEL, GOOGLE_AI_STUDIO_DEFAULT_MODEL],
+        "document-read": [GOOGLE_AI_STUDIO_BUILDER_MODEL],
+        "plan-changes": [GOOGLE_AI_STUDIO_BUILDER_MODEL],
       },
       modelNotes: {
         // `short` is what the chat's pill shows at rest. The pill shares one
@@ -127,6 +255,9 @@ export function register(): void {
         [GOOGLE_AI_STUDIO_DEFAULT_MODEL]: { label: "Gemini Flash Lite", short: "Flash Lite", note: "500 free a day" },
         [GOOGLE_AI_STUDIO_BUILDER_MODEL]: { label: "Gemini Flash", short: "Flash", note: "stronger, 20 free a day" },
       },
-    }),
-  );
+    });
+}
+
+export function register(): void {
+  platform().ai.registerProvider(googleAiStudioProvider());
 }

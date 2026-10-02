@@ -251,7 +251,7 @@ export async function ingestReceiptEmail(
         results.push({ filename: a.filename ?? null, error: "store_failed" });
         continue;
       }
-      const r = await post(`/modules/core-scan/scan/receipt`, { file_id: written.fileId, origin: "email" });
+      const r = await post(`/modules/core-scan/scan/receipt`, { file_id: written.fileId, origin: "email", ...(from_email ? { from: from_email } : {}) });
       const body = (await r.json().catch(() => ({}))) as {
         receipt?: { item_count?: number; method?: string; vendor?: string | null };
         duplicate?: boolean;
@@ -353,7 +353,7 @@ export async function ingestReceiptEmail(
         mimeType: "text/plain",
       });
       if (written) {
-        const r = await post(`/modules/core-scan/scan/receipt`, { file_id: written.fileId, origin: "email" });
+        const r = await post(`/modules/core-scan/scan/receipt`, { file_id: written.fileId, origin: "email", ...(from_email ? { from: from_email } : {}) });
         const rb = (await r.json().catch(() => ({}))) as {
           receipt?: { item_count?: number };
           duplicate?: boolean;

@@ -121,6 +121,7 @@ export function startSandboxReaper(): void {
     // racing a redeem. The advisory lock means exactly one process sweeps and
     // the others find it taken and do nothing, which is the same seam the trial
     // reaper uses.
+    // SKIP-IF-BUSY OK: a timer tick; the holder reaps, the next tick finds what is still due
     void runExclusive("platform.reap-sandboxes", async () => {
       await reapExpiredSandboxes();
     }).catch((err) => console.error("[reap-sandboxes] sweep threw:", (err as Error).message));

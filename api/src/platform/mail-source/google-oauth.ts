@@ -16,7 +16,7 @@
 // token ENCRYPTED under the credentials key: the state is signed against
 // tampering and the verifier inside it is opaque to anyone who sees the URL.
 //
-// `||` not `??` for env defaults (CLAUDE.md §14.6); the API bases are
+// `||` not `??` for env defaults (docs/architecture/platform-spec.md §14.6); the API bases are
 // overridable so a test can stand up a fake Google on localhost.
 
 import { createHash, randomBytes } from "node:crypto";

@@ -70,13 +70,9 @@ function ItemThumb({
   const file = (id: string) => `/api/v1/orgs/${slug}/modules/core-files/files/${id}/raw?variant=thumb`;
   const catalogId = item?.catalog_image_file_id ?? fallback?.catalog_image_file_id ?? null;
   const yoursId = item?.image_file_id ?? fallback?.image_file_id ?? null;
-  // The raw catalog URL is the rung the By-session list has and this one
-  // lacked: a barcode item whose art the background downloader has not
-  // localised yet drew a grey square HERE while showing a picture THERE.
-  const catalogUrl = item?.catalog_image_url ?? fallback?.catalog_image_url ?? null;
   const src = useImageSrc(
     leadPhoto(item, {
-      catalog: [catalogId ? file(catalogId) : null, catalogUrl],
+      catalog: [catalogId ? file(catalogId) : null],
       yours: yoursId ? file(yoursId) : null,
     }).src,
   );

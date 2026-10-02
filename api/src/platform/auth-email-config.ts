@@ -10,7 +10,7 @@
 //
 // Env (all optional; the sender registers only if one provider is fully
 // configured). docker-compose passes an unset optional var as "" (not
-// undefined), so "" is treated as absent throughout — see core CLAUDE.md §14.6.
+// undefined), so "" is treated as absent throughout — see core docs/architecture/platform-spec.md §14.6.
 //
 //   COBBLR_AUTH_EMAIL_PROVIDER   smtp | mailgun | resend | postmark  (default smtp)
 //   COBBLR_AUTH_EMAIL_FROM       From header, e.g. "Cobblr <noreply@you.com>"

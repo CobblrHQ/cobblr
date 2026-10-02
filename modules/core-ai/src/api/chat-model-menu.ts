@@ -8,6 +8,12 @@
 // Picking one pins this person's chat to it; nothing else's order changes. Each brings its provider's short list of
 // chat models, with a label a person can read and a note on what it costs.
 //
+// A connection whose models depend on its endpoint (an Ollama, a self-hosted
+// OpenAI-compatible server, a bridge) offers what it REPORTS, asked of it
+// (platform().ai.modelsReportedBy), never its type's suggestions: a Claude
+// bridge listed llama3.2 and qwen2.5 it did not have (#4586). One that cannot
+// be asked says so, with a Retry, rather than guessing.
+//
 // Pure: given the pieces, returns the menu. The route fetches the pieces.
 
 export interface MenuProvider {
@@ -54,12 +60,22 @@ export interface MenuOption {
 }
 
 export interface MenuGroup {
+  /** "ws" for the workspace's own providers, else the connection's credential
+   *  id: what the router's order and a Retry name it by. */
+  key: string;
   /** "Workspace" or the connection's own name. */
   heading: string;
   /** Whose key this is, for a connection somebody else shared. */
   owner?: "you" | "shared";
   options: MenuOption[];
+  /** The connection could not be asked what it serves: the menu says so and
+   *  offers a Retry instead of options it would be guessing. */
+  unlisted?: { error: string };
 }
+
+/** What a connection reported, by group key: "ws:<provider_id>" for the
+ *  workspace's own, the credential id for a personal one. */
+export type ReportedModels = Record<string, { ok: true; models: string[] } | { ok: false; error: string; models?: string[] }>;
 
 export interface ChatModelMenu {
   groups: MenuGroup[];
@@ -75,9 +91,12 @@ export interface ChatModelMenu {
 
 /** The label for a model id: the provider's note, else a tidied id. `short` is
  *  what fits on the pill: the note's own, else the label, else the id. */
-export function modelLabel(prov: MenuProvider | undefined, model: string): { label: string; short: string; note?: string } {
+export function modelLabel(prov: MenuProvider | undefined, model: string, opts: { asReported?: boolean } = {}): { label: string; short: string; note?: string } {
   const n = prov?.modelNotes?.[model];
   if (n) return { label: n.label, short: n.short ?? n.label, ...(n.note ? { note: n.note } : {}) };
+  // A name the connection reported is the name the person pulled or typed
+  // ("muse-glimmer:latest"): shown exactly, so it matches what they know.
+  if (opts.asReported) return { label: model, short: model };
   // "gemini-flash-lite-latest" -> "gemini flash lite latest": readable, and
   // honest that nobody wrote a nicer name for it.
   const label = model.replace(/^models\//, "").replace(/[-_]+/g, " ");
@@ -96,6 +115,9 @@ export function chatModelMenu(args: {
    *  providers, a credential id for a connection. Unlisted groups keep their
    *  place after the listed ones. */
   order?: string[];
+  /** What each connection that can be asked reported. A connection absent
+   *  here keeps its provider's curated list. */
+  reported?: ReportedModels;
 }): ChatModelMenu {
   const byId = new Map(args.providers.map((p) => [p.id, p]));
   const groups: MenuGroup[] = [];
@@ -103,16 +125,19 @@ export function chatModelMenu(args: {
   // The workspace's own providers, enabled ones only: a disabled provider is
   // a decision somebody made, and the pill must not quietly undo it.
   const ws: MenuOption[] = [];
+  const wsUnlisted: string[] = [];
   for (const row of args.workspace) {
     if (!row.enabled) continue;
     const prov = byId.get(row.provider_id);
-    if (!prov || prov.models.length === 0) continue;
+    if (!prov) continue;
+    const live = args.reported?.[`ws:${row.provider_id}`];
+    if (live && !live.ok) wsUnlisted.push(`${row.label || prov.label}: ${live.error}`);
     // A model typed on the connection is that connection's whole menu unless
     // the provider curated one: typing a model was a decision too.
-    const menu = prov.models.filter((m) => m !== "default");
+    const menu = live ? (live.models ?? []) : prov.models.filter((m) => m !== "default");
     const models = menu.length ? menu : row.model ? [row.model] : [];
     for (const m of models) {
-      const { label, short, note } = modelLabel(prov, m);
+      const { label, short, note } = modelLabel(prov, m, { asReported: !!live });
       ws.push({
         key: `ws:${row.provider_id}:${m}`,
         label,
@@ -122,7 +147,9 @@ export function chatModelMenu(args: {
       });
     }
   }
-  if (ws.length) groups.push({ heading: "Workspace", options: ws });
+  if (ws.length || wsUnlisted.length) {
+    groups.push({ key: "ws", heading: "Workspace", options: ws, ...(wsUnlisted.length ? { unlisted: { error: wsUnlisted.join(" ") } } : {}) });
+  }
 
   // Personal connections routed here and approved. Yours get their name;
   // somebody else's shared key is "<their share>" without the provider named,
@@ -131,11 +158,12 @@ export function chatModelMenu(args: {
     if (!c.approved) continue;
     const prov = byId.get(c.providerId);
     if (!prov) continue;
-    const menu = prov.models.filter((m) => m !== "default");
-    if (menu.length === 0) continue;
+    const live = args.reported?.[c.credentialId];
+    const menu = live ? (live.models ?? []) : prov.models.filter((m) => m !== "default");
+    if (menu.length === 0 && !(live && !live.ok)) continue;
     const mine = c.ownerUserId === args.viewerUserId;
     const options: MenuOption[] = menu.map((m) => {
-      const { label, short, note } = modelLabel(prov, m);
+      const { label, short, note } = modelLabel(prov, m, { asReported: !!live });
       return {
         key: `me:${c.credentialId}:${m}`,
         label,
@@ -145,16 +173,17 @@ export function chatModelMenu(args: {
       };
     });
     groups.push({
+      key: c.credentialId,
       heading: mine ? c.label || prov.label : "A shared connection",
       owner: mine ? "you" : "shared",
       options,
+      ...(live && !live.ok ? { unlisted: { error: live.error } } : {}),
     });
   }
 
   if (args.order?.length) {
     const rank = (g: MenuGroup): number => {
-      const key = g.heading === "Workspace" && !g.owner ? "ws" : g.options[0]?.choice.credential_id ?? "";
-      const i = args.order!.indexOf(key);
+      const i = args.order!.indexOf(g.key);
       return i < 0 ? Number.MAX_SAFE_INTEGER : i;
     };
     groups.sort((a, b) => rank(a) - rank(b));

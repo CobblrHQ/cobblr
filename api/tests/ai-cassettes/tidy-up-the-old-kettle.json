@@ -1,0 +1,8 @@
+{
+  "match": "tidy up the old kettle",
+  "rounds": [
+    { "tool_calls": [{ "name": "search_records", "args": { "q": "old kettle" } }] },
+    { "tool_calls": [{ "name": "delete_record", "args": { "kind": "inventory:part", "id": "$result.search_records.data.items[0].id" } }] },
+    { "content": "I can take the old kettle out for you." }
+  ]
+}

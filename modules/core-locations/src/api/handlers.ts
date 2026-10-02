@@ -14,6 +14,7 @@
 // tree and asking for an order cannot come to mean different things.
 
 import { platform, readListArg, requireActionEntity } from "@cobblr/platform-contract";
+import { PLAN_COLOURS, planColourOf, readPlanColour } from "@cobblr/platform-contract/plan-colours";
 import type { Kysely } from "kysely";
 import { ReorderIds, applyOrder } from "./locations.js";
 import { MoveRefused, moveEverything, putBackEverything, readMoveResult } from "./move-everything.js";
@@ -52,6 +53,45 @@ export function registerLocationsHandlers(): void {
       if (e instanceof MoveRefused) return { ok: false, error: e.message };
       throw e;
     }
+  });
+  // A place's colour on its floor plan: the assistant's door to the swatches
+  // in Edit layout ("make the red chest's drawers red").
+  platform().actions.registerHandler("core-locations.set-plan-colour", async (ctx) => {
+    const entity = requireActionEntity(ctx);
+    const raw = (ctx.args as { colour?: unknown } | null)?.colour;
+    const clear = raw == null || (typeof raw === "string" && ["", "none", "no colour", "no color", "clear"].includes(raw.trim().toLowerCase()));
+    const colour = clear ? null : readPlanColour(raw);
+    if (!clear && !colour) {
+      return { ok: false, error: `Pass \`colour\`: one of ${PLAN_COLOURS.join(", ")}, or "none" to take it off.` };
+    }
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreLocationsDB>;
+    const row = await db
+      .selectFrom("core_locations_locations")
+      .select(["id", "name", "metadata"])
+      .where("id", "=", entity.id)
+      .executeTakeFirst();
+    if (!row) return { ok: false, error: `no location with id ${entity.id}` };
+    const previous = planColourOf(row.metadata);
+    // The whole floorplan goes back, so its size and spot are kept: the
+    // metadata merge is one level deep.
+    const fp = { ...(((row.metadata as { floorplan?: Record<string, unknown> } | null)?.floorplan ?? {}) as Record<string, unknown>) };
+    if (colour) fp.color = colour;
+    else delete fp.color;
+    await db
+      .updateTable("core_locations_locations")
+      .set({ metadata: platform().db.mergeJsonb("metadata", { floorplan: fp }) as never, updated_at: new Date() } as never)
+      .where("id", "=", row.id)
+      .execute();
+    void platform().events.emit("core-locations.location.updated", { orgId: ctx.orgId, locationId: row.id });
+    return {
+      ok: true,
+      result: {
+        id: row.id,
+        previous: previous ?? "none",
+        colour: colour ?? "none",
+        note: colour ? `${row.name} is ${colour} on the plan.` : `${row.name} has no colour on the plan.`,
+      },
+    };
   });
   platform().actions.registerHandler("core-locations.reorder", async (ctx) => {
     // `ids` is a list arg: a real array from invoke_action, a delimited string
@@ -130,6 +170,16 @@ function registerUndos(): void {
       entity_kind: "core-locations:location",
       entity_id: move.from.id,
       args: { to: move.to.id, places: move.places.length > 0, then_delete: move.deleted },
+    };
+  });
+  platform().actions.registerUndo("core-locations.set-plan-colour", (result) => {
+    const r = (result as { result?: { id?: unknown; previous?: unknown } } | null)?.result;
+    if (typeof r?.id !== "string") return null;
+    return {
+      action_id: "core-locations:set-plan-colour",
+      entity_kind: "core-locations:location",
+      entity_id: r.id,
+      args: { colour: typeof r.previous === "string" ? r.previous : "none" },
     };
   });
   platform().actions.registerUndo("core-locations.reorder", (result) => {

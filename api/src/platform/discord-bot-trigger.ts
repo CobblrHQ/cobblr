@@ -2,7 +2,7 @@
 // is resolved → the bot posts the reply into the ticket's thread and marks it
 // done. No-op when COBBLR_DISCORD_BOT_URL is unset (the bot isn't running). The
 // bot is the only thing that holds a Discord connection; the API never talks to
-// Discord directly. `||` not `??` for the env default (core CLAUDE.md §14.6).
+// Discord directly. `||` not `??` for the env default (core docs/architecture/platform-spec.md §14.6).
 
 import { dmSummary } from "./channels/discord-card.js";
 const BOT_URL = process.env.COBBLR_DISCORD_BOT_URL || "";

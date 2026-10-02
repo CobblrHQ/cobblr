@@ -49,6 +49,7 @@ platform().entities.registerScannable("inventory:part", {
   // consumption ledger all live at this action, so a scan's undone bump comes
   // back off through it rather than a bare write of the column.
   adjustAction: "inventory:adjust-stock",
+  holdAction: "inventory:add-holding",
 });
 // Any type='date' custom field on inventory:part (or its instances) becomes an
 // all-day calendar event — the owning module declares its kind+table; the

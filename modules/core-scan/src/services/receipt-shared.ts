@@ -45,6 +45,26 @@ export interface ReceiptLine {
    *  into a count of four is simply wrong (2026-09-06). */
   weight: number | null;
   weight_unit: "lb" | "kg" | "oz" | "g" | null;
+  /** What the document says about THIS thing, keyed by field role (its VIN
+   *  as `identifier`, its year, its odometer as `usage`). Filled by a reader
+   *  that knows the document (a bill of sale); filing lands each on the
+   *  field that declares the role. */
+  facts?: RoledFacts;
+  /** What the line is when it is not a thing you now have. A `charge` (a
+   *  fee, a tax, a delivery charge, a service) and an `add-on` (an extra on a
+   *  bill of sale, like wheel locks) stay lines on the purchase and are never
+   *  made into inbox items; an add-on can be promoted from the purchase.
+   *  Absent: a thing. */
+  kind?: "charge" | "add-on";
+  /** Who made the thing, when the document prints it (a bill of sale's
+   *  Make). The row's suggested manufacturer, which filing carries to the
+   *  record's own manufacturer. */
+  manufacturer?: string | null;
+  /** An identifier the document printed for this thing (a VIN) with what it
+   *  said about it (year, make, model), in the shape an identifier decode
+   *  takes, so the record's fields fill through the same decode roles a
+   *  scanned VIN fills. */
+  decoded?: { decoder_id: string; code: string; fields: Record<string, string | number> };
 }
 
 /** How many of the thing a line is. One, when it was sold by weight: 4.14 lb of
@@ -88,6 +108,7 @@ export function vendorFromLabel(label: string | null | undefined): string | null
 
 import type { AiFallback, ProviderErrorReason } from "@cobblr/platform-contract/scan-fallback";
 import type { ReceiptReadSource } from "@cobblr/platform-contract/scan-session";
+import type { RoledFacts } from "@cobblr/platform-contract";
 import { filedQuantityOf } from "./filed-quantity.js";
 import type { ReceiptDateReading } from "./receipt-date.js";
 import {
@@ -99,6 +120,13 @@ import {
 } from "@cobblr/platform-contract/receipt-totals";
 
 export interface ParsedReceipt {
+  /** What kind of document it was, when not a store receipt. */
+  document?: "bill-of-sale";
+  /** A document read off a page is checked before it is believed
+   *  (document-checks.ts). The fields a person should look at because a
+   *  check on them did not pass, why, and whether the document model is still
+   *  to read the page (it was busy). Absent when every check passed. */
+  checks?: { fields: string[]; why: string[]; waiting_for_ai?: boolean; waiting_reason?: "limit" };
   vendor: string | null;
   /** Order / invoice / reference number, when the receipt states one — makes two
    *  receipts from the same vendor distinct (bare identifier, no "Order" word). */
@@ -141,7 +169,10 @@ export interface ParsedReceipt {
 /** How a receipt was read — surfaced on the result + stamped into each inbox
  *  row's metadata so triage (and debugging) knows whether a line came from a
  *  deterministic parse or the AI fallback. */
-export type ParseMethod = "csv" | "pdf-table" | "text-lines" | "ocr-lines" | "ai-chat" | "ai-vision";
+/** `ocr-form`: a scanned form read the way a form is (form-ocr.ts);
+ *  `ai-document`: the page read by the document model because a check on the
+ *  engine's read failed (document-read.ts). */
+export type ParseMethod = "csv" | "pdf-table" | "text-lines" | "ocr-lines" | "ocr-form" | "ai-chat" | "ai-vision" | "ai-document";
 
 /**
  * WHY a parse failed, in a form something can branch on.
@@ -274,6 +305,10 @@ export function buildReceipt(parts: {
     model?: unknown;
     weight?: unknown;
     weight_unit?: unknown;
+    facts?: RoledFacts;
+    manufacturer?: unknown;
+    decoded?: ReceiptLine["decoded"];
+    kind?: ReceiptLine["kind"];
   }>;
 }): ParsedReceipt | null {
   const items: ReceiptLine[] = [];
@@ -301,6 +336,10 @@ export function buildReceipt(parts: {
       // Only with a unit: a bare number called "weight" is a guess.
       weight: weightUnit(it.weight_unit) && (num(it.weight) ?? 0) > 0 ? num(it.weight)! : null,
       weight_unit: (num(it.weight) ?? 0) > 0 ? weightUnit(it.weight_unit) : null,
+      ...(it.facts && Object.keys(it.facts).length ? { facts: it.facts } : {}),
+      ...(it.decoded ? { decoded: it.decoded } : {}),
+      ...(str(it.manufacturer) ? { manufacturer: str(it.manufacturer)!.slice(0, 80) } : {}),
+      ...(it.kind ? { kind: it.kind } : {}),
     });
   }
   if (items.length === 0) return null;

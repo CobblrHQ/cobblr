@@ -368,6 +368,19 @@ export const GENERATED_SURFACE: Capability[] = [
     "module": "core-scan"
   },
   {
+    "feature": "Sharing",
+    "does": "Share part of this workspace with someone, on this Cobblr or another one. They get a workspace of their own for it, and things can be handed over between you.",
+    "where": "/configuration/sharing",
+    "also": [
+      "share",
+      "friend",
+      "hand over",
+      "give",
+      "offer",
+      "another cobblr"
+    ]
+  },
+  {
     "feature": "Public surfaces",
     "does": "Token-gated URLs that share a saved view with anyone, no account needed.",
     "where": "/configuration/surfaces",

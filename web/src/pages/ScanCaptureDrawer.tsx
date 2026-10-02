@@ -373,7 +373,7 @@ export function ScanCaptureDrawer({
   // Local frame beats everything for a PHOTO item (never swap away from the
   // user's own shot). A barcode item falls through its file-backed sources:
   // display photo (which the + shutter may have just written - the thumb went
-  // BLANK after a + snap because only catalog_image_url was consulted), then
+  // BLANK after a + snap because only the catalog address was consulted), then
   // provider art, then the scan-moment frame.
   const fileThumb = (id: string) => `/api/v1/orgs/${slug}/modules/core-files/files/${id}/raw?variant=thumb`;
   // The local frame still wins outright (it is THIS capture, already on screen,
@@ -385,7 +385,7 @@ export function ScanCaptureDrawer({
       : leadPhoto(it!, {
           catalog: isPhoto
             ? []
-            : [it!.catalog_image_file_id ? fileThumb(it!.catalog_image_file_id) : null, it!.catalog_image_url ?? null],
+            : [it!.catalog_image_file_id ? fileThumb(it!.catalog_image_file_id) : null],
           yours: it!.image_file_id ? fileThumb(it!.image_file_id) : null,
         }).src;
 
@@ -672,7 +672,7 @@ function ExpandedSheet({
   // other (the cover never consulted catalog_image_file_id at all).
   const cover = useImageSrc(
     leadPhoto(it, {
-      catalog: [it.catalog_image_file_id ? scanFileUrl(slug, it.catalog_image_file_id, "thumb") : null, it.catalog_image_url ?? null],
+      catalog: [it.catalog_image_file_id ? scanFileUrl(slug, it.catalog_image_file_id, "thumb") : null],
       yours: yours ? resolved.src(yours, "thumb") : null,
     }).src,
   );

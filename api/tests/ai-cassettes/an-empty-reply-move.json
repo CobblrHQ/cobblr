@@ -1,0 +1,4 @@
+{
+  "match": "answer me with nothing at all",
+  "rounds": [{ "content": "{\"type\":\"reply\",\"text\":\"\"}" }]
+}

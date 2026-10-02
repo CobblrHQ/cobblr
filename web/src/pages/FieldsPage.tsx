@@ -2,7 +2,7 @@
 // what bundles do, but exposed as a UI so users can sketch their
 // own without writing a bundle manifest.
 
-import { useState, type FormEvent } from "react";
+import { useDeferredValue, useState, type FormEvent } from "react";
 import { FIELD_TYPE_VALUES, fieldTypeTakesUnit } from "@cobblr/platform-contract";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Plus } from "lucide-react";
@@ -15,6 +15,7 @@ import { fieldFormReadiness } from "../lib/field-form";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { FieldDefDetail } from "../components/FieldDefDetail";
 import { FieldRenderer, UnitInput, changeWorkspaceShape, useToast, usePageTitle } from "@cobblr/platform-web";
+import { FieldMeaningNotices } from "../components/FieldMeaningNotices";
 
 // `relation` is deliberately absent: user-authored relation fields (picking a
 // ref_kind in this UI) are a follow-on; today relation defs are contributed by
@@ -91,11 +92,12 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [choices, setChoices] = useState<string[]>([]);
   // null = the default (a person's own field with choices learns).
   const [learns, setLearns] = useState<boolean | null>(null);
-  // What a field MEANS, so the pipeline can fill it. The API has always taken
-  // this; the form never sent one, which is why a hand-built "Acquired on" was
-  // a plain date the scan could not fill. Optional and empty by default: a role
-  // is a person saying what a field is, never a guess from its name.
+  // What a field MEANS, so the pipeline can fill it. Empty means "read it from
+  // the label" (the server's table, field-meaning.ts), shown as a question
+  // before the field is made; "none" is the person's answer that it means
+  // nothing in particular. A kind holds one field per meaning (#4518).
   const [fieldRole, setFieldRole] = useState<string>("");
+  const [withoutMeaning, setWithoutMeaning] = useState(false);
   const [type, setType] = useState<PlatformFieldDef["type"]>("text");
   const [renderer, setRenderer] = useState<CatalogFieldRenderer>("text");
   const [template, setTemplate] = useState("");
@@ -182,7 +184,8 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
         // type, so don't send an empty array and trip it.
         choices: type === "text" && choices.length ? choices : undefined,
         learns: type === "text" && learns !== null ? learns : undefined,
-        field_role: fieldRole ? (fieldRole as PlatformFieldDef["field_role"]) : undefined,
+        field_role: fieldRole === "none" ? null : fieldRole ? (fieldRole as PlatformFieldDef["field_role"]) : undefined,
+        ...(withoutMeaning ? { without_meaning: true } : {}),
       })),
     onSuccess: (created) => {
       toast.success(
@@ -198,6 +201,8 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
       setName("");
       setNameTouched(false);
       setLabel("");
+      setFieldRole("");
+      setWithoutMeaning(false);
       setChoices([]);
       setType("text");
       setRenderer("text");
@@ -211,6 +216,19 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
       toast.error(msg);
     },
   });
+
+  // What the field will mean, and whether the kind already has a field that
+  // means it: asked while the label is typed, so the answer is on screen
+  // before anything is made ("This kind already has Bought from").
+  const meaningLabel = useDeferredValue(label.trim());
+  const meaning = useQuery({
+    queryKey: ["field-meaning", slug, entityKind, meaningLabel, name, fieldRole],
+    queryFn: () => api.fieldMeaning(slug, { kind: entityKind, label: meaningLabel, name, role: fieldRole && fieldRole !== "none" ? fieldRole : null }),
+    enabled: !!slug && mode === "kind" && !!entityKind && meaningLabel.length >= 3 && fieldRole !== "none",
+    staleTime: 30_000,
+  });
+  const sameAs = meaning.data?.same_as ?? null;
+  const guessed = !fieldRole && meaning.data?.read_from_label && meaning.data.role ? meaning.data : null;
 
   // ONE readiness rule, shared by the button's `disabled`, the hint beside it, and
   // this guard — so they can't drift. They did: the button demanded an entityKind,
@@ -326,6 +344,8 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
           </span>
         </div>
       )}
+
+      <FieldMeaningNotices slug={slug} kinds={kinds.data?.items ?? []} />
 
       {(presets.data?.items ?? []).length > 0 && (
         <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
@@ -522,17 +542,51 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
             </span>
             <select
               value={fieldRole}
-              onChange={(e) => setFieldRole(e.target.value)}
+              onChange={(e) => {
+                setFieldRole(e.target.value);
+                setWithoutMeaning(false);
+              }}
               className="input"
             >
-              <option value="">No particular meaning</option>
+              <option value="">{guessed ? `Read from the label: ${guessed.role_label}` : "Read from the label"}</option>
+              <option value="none">No particular meaning</option>
               {FIELD_ROLE_VALUES.filter((r) => FIELD_ROLE_LABELS[r].pickable && !fieldRoleTypeRefusal(r, type)).map((r) => (
                 <option key={r} value={r}>
                   {FIELD_ROLE_LABELS[r].label}
                 </option>
               ))}
             </select>
+            {guessed && !sameAs && (
+              <span className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted dark:text-slate-400" data-testid="meaning-guess">
+                Looks like <em>{guessed.role_label?.toLowerCase()}</em>: right?
+                <button type="button" onClick={() => setFieldRole(guessed.role!)} className="text-accent hover:underline">Yes</button>
+                <button type="button" onClick={() => setFieldRole("none")} className="text-muted hover:underline">No, something else</button>
+              </span>
+            )}
           </label>
+          {sameAs && !withoutMeaning && (
+            <div className="col-span-2 rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-xs text-content dark:text-mortar-100" data-testid="same-meaning">
+              This kind already has <strong>{sameAs.label}</strong>, which means {meaning.data?.role_label?.toLowerCase()}. A kind keeps one field per meaning.
+              <span className="mt-1.5 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const existing = (fields.data?.items ?? []).find((f) => f.entity_kind === entityKind && f.name === sameAs.name);
+                    if (existing) setSelected(existing);
+                    setLabel("");
+                    setName("");
+                    setNameTouched(false);
+                  }}
+                  className="rounded-md bg-cobble-600 px-2.5 py-1 font-medium text-white hover:bg-cobble-500"
+                >
+                  Use {sameAs.label}
+                </button>
+                <button type="button" onClick={() => setWithoutMeaning(true)} className="rounded-md px-2.5 py-1 text-muted hover:text-content">
+                  It means something else: add it as its own field
+                </button>
+              </span>
+            </div>
+          )}
 
           {(type === "text" || rendererChoices.length > 1) && (
             <div className="col-span-2 grid grid-cols-3 gap-3">

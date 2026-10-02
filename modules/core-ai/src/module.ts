@@ -14,7 +14,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-ai",
-  version: "0.40.19",
+  version: "0.40.27",
   displayName: "AI",
   description:
     "Let AI help with your things: recognise photos, read text, sum up and match items to catalogs, using the provider you choose.",

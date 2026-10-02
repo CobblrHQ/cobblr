@@ -52,7 +52,6 @@ function Thumb({ row, big, slug }: { row: ScanInboxItem; big?: boolean; slug: st
     leadPhoto(row, {
       catalog: [
         row.catalog_image_file_id ? scanFileUrl(slug, row.catalog_image_file_id) : null,
-        row.catalog_image_url ?? null,
       ],
       yours: yours ? resolved.src(yours) : null,
     }).src;

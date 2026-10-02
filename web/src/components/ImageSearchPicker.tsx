@@ -19,7 +19,7 @@
 // inbox's own pipeline) → `entity` (server-derived) → `query` (literal).
 
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { AiMark, PhotoSourceBadge, SearchInput, SelectableTile, usePasteImage } from "@cobblr/platform-web";
+import { AiMark, EntityPhoto, PhotoSourceBadge, SearchInput, SelectableTile, usePasteImage } from "@cobblr/platform-web";
 import { Maximize2, Sparkles, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type ImageOption } from "../lib/api";
@@ -27,6 +27,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { nextTerm } from "./imageSearchTerm";
 import { imageUrlFrom } from "./pastedImage";
 import { ImageLightbox } from "./ImageLightbox";
+import { shownPictureUrl } from "../lib/rowPictures";
 
 export function ImageSearchPicker({
   phone = false,
@@ -199,6 +200,9 @@ export function ImageSearchPicker({
   const inUse = currentUrl ?? fetched.data?.in_use_url ?? null;
   const aiUrl = bestUrl ?? fetched.data?.ai_url ?? null;
   const aiReason = bestReason ?? fetched.data?.ai_reason ?? null;
+  // Every result is drawn through the workspace's copy (#4580): the copy the
+  // person sees is the one a pick stores.
+  const shown = (u: string, page?: string) => (activeSlug ? shownPictureUrl(activeSlug, u, page) : u);
   const pickTile = (o: ImageOption) => onPick(o.url, o.thumb || undefined, { sourcePage: o.source, searched: searched || undefined });
 
   function submit(e: FormEvent) {
@@ -278,7 +282,14 @@ export function ImageSearchPicker({
             band and discards the top and bottom - so a tall bottle or jar
             reads as a stripe of label and the grid stops distinguishing
             anything. */}
-        <img src={o.thumb} alt={o.title} className="w-full h-full object-contain" loading="lazy" onError={() => setBroken((s) => new Set(s).add(o.url))} />
+        <EntityPhoto
+          src={shown(o.thumb || o.url, o.source)}
+          alt={o.title}
+          fill
+          fit="contain"
+          className="bg-transparent"
+          onBroken={() => setBroken((s) => new Set(s).add(o.url))}
+        />
       </SelectableTile>
     );
   });
@@ -287,8 +298,8 @@ export function ImageSearchPicker({
         <ImageLightbox
           items={opts.map((o) => ({
             key: o.url,
-            url: o.url,
-            thumbUrl: o.thumb,
+            url: shown(o.url, o.source),
+            thumbUrl: shown(o.thumb || o.url, o.source),
             caption: `${o.title} · ${o.source}`,
             href: o.source,
           }))}
@@ -299,17 +310,15 @@ export function ImageSearchPicker({
             label: "Use this image",
             busy,
             onAction: (it) => {
-              const o = opts.find((x) => x.url === it.url);
+              const o = opts.find((x) => x.url === it.key);
               if (o) pickTile(o);
-              else if (it.url) onPick(it.url, it.thumbUrl ?? undefined);
               setViewIdx(null);
             },
           }}
           onItemError={(it) => {
             // Full-size dead but the thumb loaded — drop it and close rather than
             // leaving a broken image filling the screen.
-            const u = it.url;
-            if (u) setBroken((s) => new Set(s).add(u));
+            setBroken((s) => new Set(s).add(it.key));
             setViewIdx(null);
           }}
         />

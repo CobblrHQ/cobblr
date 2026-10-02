@@ -3,7 +3,7 @@
 // A `foundational`/`autoEnable` capability's migrations run only for workspaces
 // that existed when it shipped; older workspaces never get it and 500 on the
 // first op touching its tables (`relation "<x>" does not exist`). The platform
-// covers this with `reconcileDefaultModules()` in boot() — see CLAUDE.md §8.1.
+// covers this with `reconcileDefaultModules()` in boot() — see docs/architecture/platform-spec.md §8.1.
 //
 // That generic reconcile makes the bug impossible to reintroduce *per module*
 // (it heals every foundational/autoEnable module a workspace lacks) — so the ONE
@@ -96,7 +96,7 @@ if (errors.length > 0) {
   for (const e of errors) console.error(`  ❌ ${e}`);
   console.error(
     `\nWithout it, workspaces created before a foundational/autoEnable capability\n` +
-      `500 on every op touching that capability's tables. See CLAUDE.md §8.1.\n`,
+      `500 on every op touching that capability's tables. See docs/architecture/platform-spec.md §8.1.\n`,
   );
   process.exit(1);
 }

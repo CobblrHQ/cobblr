@@ -21,8 +21,10 @@ import { dirname, relative, resolve } from "node:path";
 
 const GUARD = "e2e/shot-guard.mjs";
 
-const files = globSync("e2e/**/*.mjs").filter(
-  (f) => !f.includes("node_modules") && !f.includes("/_tmp/") && f !== GUARD,
+// scripts/ too: a capture tool there (scripts/walk.mjs) writes screenshots
+// just the same, and a lint that looks only in e2e/ never sees it.
+const files = [...globSync("e2e/**/*.mjs"), ...globSync("scripts/**/*.mjs")].filter(
+  (f) => !f.includes("node_modules") && !f.includes("/_tmp/") && f !== GUARD && !f.endsWith(".test.mjs"),
 );
 if (files.length === 0) {
   console.error("shot-guard lint: matched no e2e scripts — the check would pass vacuously.");
@@ -70,13 +72,17 @@ const captures = (text: string) =>
     return /\.screenshot\s*\(/.test(line);
   });
 
-const offenders = files.filter((f) => captures(read(f)) && !reachesGuard(f));
+// A script whose screenshots are EVIDENCE of a failure (a crash card is the
+// point of the picture) says so, with its reason: `shot-guard: off (<why>)`.
+const optedOut = (text: string) => /shot-guard: off \([^)]{8,}\)/.test(text);
+
+const offenders = files.filter((f) => captures(read(f)) && !reachesGuard(f) && !optedOut(read(f)));
 
 if (offenders.length > 0) {
   console.error(
     `shot-guard lint: ${offenders.length} capture script(s) do not load ${GUARD}, so they will\n` +
       `happily write a screenshot of a crashed page. Add this next to the playwright import:\n\n` +
-      `  import "./shot-guard.mjs";\n\n` +
+      `  import "./shot-guard.mjs";   (from scripts/: "../e2e/shot-guard.mjs")\n\n` +
       offenders.map((f) => `  ${f}`).join("\n"),
   );
   process.exit(1);

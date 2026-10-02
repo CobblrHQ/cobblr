@@ -23,7 +23,7 @@ import {
 import { promptFingerprint } from "./prompt-fingerprint.js";
 import { visionPromptFor } from "./identify-prompt.js";
 import { rankImagesPromptFor } from "./rank-images-prompt.js";
-import { pickInstalledModel } from "./ollama-models.js";
+import { namesOfTags, pickInstalledModel } from "./ollama-models.js";
 
 /** Optional bearer auth for the endpoint. Returns {} when no token is
  *  configured (a bare local Ollama). A remote endpoint behind a
@@ -51,6 +51,8 @@ export function authHeadersFor(credentials: Record<string, unknown>): Record<str
 // own /api/tags when one of these turns out not to be installed.
 export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
   chat: { models: ["qwen3:14b", "qwen3", "granite3.3", "command-r7b", "llama3.2"], defaultModel: "qwen3:14b" },
+  // The strongest local chat model, never a small one, for a plan that deletes.
+  "plan-changes": { models: ["qwen3:14b", "qwen3"], defaultModel: "qwen3:14b" },
   // Anything that can hold a conversation can be asked to design a workspace;
   // whether it does it WELL is the workspace's choice of model, which is the
   // point of the job having its own id.
@@ -66,6 +68,8 @@ export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; default
   "identify-glance": { models: ["qwen2.5vl", "minicpm-v", "granite3.2-vision"], defaultModel: "qwen2.5vl" },
   "split-image": { models: ["qwen2.5vl", "minicpm-v", "granite3.2-vision"], defaultModel: "qwen2.5vl" },
   "rank-images": { models: ["qwen2.5vl", "minicpm-v"], defaultModel: "qwen2.5vl" },
+  // The strongest vision model on the bench (6/6), not the 2B one.
+  "document-read": { models: ["qwen2.5vl", "minicpm-v"], defaultModel: "qwen2.5vl" },
   // Reading text off a photo: minicpm-v is built for it and scores level with
   // qwen on the label cases, so it leads here and follows elsewhere.
   "extract-text": { models: ["minicpm-v", "qwen2.5vl", "granite3.2-vision"], defaultModel: "minicpm-v" },
@@ -197,7 +201,11 @@ export function register(): void {
           const body = (await res.json()) as { embedding: number[] };
           return { result: { vector: body.embedding }, cost_cents: 0 };
         }
-        case "chat": {
+        // The builder sends a conversation like chat does (no tools), and reads
+        // the answer the same way.
+        case "design-workspace":
+        case "chat":
+        case "plan-changes": {
           // Tool-aware turn mapping (Ollama's dialect of the neutral wire — see
           // tool-wire.ts: arguments are objects, results match by order).
           const messages = ollamaMessagesOf(turnsOf(ctx.input)) as Array<Record<string, unknown>>;
@@ -299,6 +307,7 @@ export function register(): void {
         }
         case "split-image":
         case "identify-glance":
+        case "document-read":
         case "identify-image":
         case "rank-images":
         case "classify-image":
@@ -313,7 +322,7 @@ export function register(): void {
           // through the SAME shared function the OpenAI/Anthropic adapters use, so
           // all three send byte-identical text and the cache fingerprint agrees.
           const prompt =
-            (ctx.capability === "identify-image" || ctx.capability === "split-image" || ctx.capability === "identify-glance")
+            (ctx.capability === "identify-image" || ctx.capability === "document-read" || ctx.capability === "split-image" || ctx.capability === "identify-glance")
               ? visionPromptFor(ctx.capability, ctx.input)
               : ctx.capability === "rank-images"
                 ? rankImagesPromptFor(ctx.input)
@@ -342,6 +351,20 @@ export function register(): void {
         default:
           throw new Error(`ollama: capability ${ctx.capability} not implemented`);
       }
+    },
+    // What this box has pulled: the menu offers exactly that, never the
+    // type's suggestions (a box with qwen3 and gemma4 has no llama3.2).
+    listModels: async (credentials) => {
+      const base = String(credentials.base_url ?? "http://ollama:11434").replace(/\/$/, "");
+      let res: PinnedResponse;
+      if (viaBridge(credentials)) {
+        res = await edgeFetch(edgeKeyFor(credentials), base, "/api/tags", { headers: authHeadersFor(credentials) });
+      } else {
+        const pin = await assertSafeAiEndpoint(base, platform().ai.getEndpointPolicy());
+        res = await pinnedFetch(`${base}/api/tags`, pin, { headers: authHeadersFor(credentials) });
+      }
+      if (!res.ok) throw new Error(providerSentence(reasonFromResponse(res.status, await res.text().catch(() => "")), { provider: "ollama" }));
+      return namesOfTags(await res.json());
     },
     testConnection: async (credentials) => {
       const base = String(credentials.base_url ?? "http://ollama:11434").replace(/\/$/, "");

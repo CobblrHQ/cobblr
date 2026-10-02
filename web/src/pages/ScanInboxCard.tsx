@@ -9,6 +9,10 @@
 // Extracted from ScanPage.tsx (which had grown past ten thousand lines)
 // with no change in behaviour; the page renders one InboxCard per item and
 // owns the queue, the session chrome and the page-level menu.
+import { ScanOfferStrip } from "./ScanOfferStrip";
+import { readInboxOffer } from "@cobblr/platform-contract/share-offer";
+import { addedByCardWords, cardSaysAddedBy, codeSourceNote, codeSourceOf, type AddedBy } from "@cobblr/platform-contract/scan-source";
+import { ROLE_CLARIFIES, type FieldRole } from "@cobblr/platform-contract";
 import { createPortal } from "react-dom";
 import { SamePictureOffer, ScanTwinsContext, TWIN_SENTENCE } from "./scanTwins";
 import { useAwaitingWords, type AwaitingWords } from "./awaitingLookup";
@@ -22,7 +26,7 @@ import { Fragment, useContext, useEffect, useId, useMemo, useRef, useState, type
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, CheckCircle, ChevronDown, Download, ExternalLink, Flag, Image as ImageIcon, ImagePlus, Library, Loader2, MapPin, MoreHorizontal, Pencil, RefreshCw, RotateCcw, ScanLine, Scissors, Sparkles, X, Database } from "lucide-react";
-import { Modal, useLater, useImageSrc, EntityPhoto, useOverlayOpenFlag, useToast, colorSwatch, wantsSwatch, ColourInput, valueFromInput, PopoverLayer, BackdropLayer, FieldPack, fieldNeed, fieldControl, fieldPackControlClass, type FieldType, relativeTime, SearchInput, ChoiceCombobox } from "@cobblr/platform-web";
+import { Modal, useLater, useImageSrc, EntityPhoto, useOverlayOpenFlag, useToast, colorSwatch, wantsSwatch, ColourInput, valueFromInput, PopoverLayer, BackdropLayer, FieldPack, fieldNeed, fieldControl, fieldPackControlClass, type FieldType, relativeTime, SearchInput, ChoiceCombobox, ChoiceField, offersClarifier, noteKey } from "@cobblr/platform-web";
 import { } from "../components/ScanImportModal";
 import { } from "../components/ExportInboxModal";
 import { CameraCaptureSheet } from "../components/CameraCaptureSheet";
@@ -36,7 +40,8 @@ import { CropPhotoModal } from "../components/CropPhotoModal";
 import { imageUrlFrom } from "../components/pastedImage";
 import { ImageLightbox, type LightboxItem } from "../components/ImageLightbox";
 import { ScanYourPhotos } from "../components/ScanYourPhotos";
-import { catalogCaption, leadYours, rowPictures, scanFileUrl, yourPictures } from "../lib/rowPictures";
+import { catalogCaption, leadYours, rowPictures, scanFileUrl, shownPictureUrl, yourPictures } from "../lib/rowPictures";
+import { catalogUnsaved, COULDNT_SAVE_WORDS } from "@cobblr/platform-contract/scan-pictures";
 import { } from "../components/ReceiptPeek";
 import { fieldsStillOnTable, fieldsNoLongerOnTable, isQuietDefault, isImpliedByPeer, isStatedByReceipt } from "../lib/scanCandidateFields";
 import { canRerunLookup } from "../lib/scanRerun";
@@ -45,6 +50,7 @@ import { namelessCard } from "../lib/namelessCard";
 import { fallbackChip, type IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
 import { TrackedMatchBanner, TrackedMatchLine } from "../components/TrackedMatchBanner";
 import { scanCountVerb, useScanCountSave } from "../components/ScanCountBlock";
+import { addedPlaceSentence } from "../lib/scan-place-words";
 import { scanCountResult } from "@cobblr/platform-contract/scan-count";
 import { } from "../components/BinAdjustModal";
 import { HeaderMenu, MenuItem } from "../components/HeaderMenu";
@@ -208,17 +214,6 @@ export function AiOffMissHint({ status }: { status: AiStatus | null }) {
 /** The carrier vocabulary in words a person uses. Six states, so a table
  *  rather than a chain of conditions — and an unmapped one falls through to
  *  itself instead of rendering blank. */
-/** How a code's origin is worded on a card. Keys are the values
- *  modules/core-scan/src/services/barcode-source.ts stamps; a scan stamps
- *  nothing and needs no note. */
-
-/** How a code's origin is worded on a card. Keys are the values
- *  modules/core-scan/src/services/barcode-source.ts stamps; a scan stamps
- *  nothing and needs no note. */
-const BARCODE_SOURCE_NOTE: Record<string, string | undefined> = {
-  "ai-photo": "read from photo",
-  receipt: "read from the receipt",
-};
 
 
 function CorrectNameInline({
@@ -386,11 +381,20 @@ function MakeBinSheet({
  *  no counted match hands it this and never calls it. */
 const NO_COUNTED_MATCH = { kind: "", id: "", instance: null, title: "", qty: 0 } as unknown as TrackedMatch;
 
+/** Who a value came from, said beside it as the record page does
+ *  ("3DPrintopia 2026 · Jai"): the field's note from the candidate's own
+ *  fields, or nothing. One reader for the desk card and the phone row. */
+function whoFromBeside(fields: unknown, key: string): string {
+  const v = (fields as Record<string, unknown> | null | undefined)?.[noteKey(key)];
+  return v != null && String(v).trim() ? ` · ${String(v).trim()}` : "";
+}
+
 export function InboxCard({
   item,
   pageTarget,
   menu,
   sessionCategoryLabel,
+  sessionSource,
   hasLocations,
   selected,
   onToggleSelect,
@@ -410,6 +414,10 @@ export function InboxCard({
   /** The label this item's SESSION agreed on, so sibling cards cannot show one
    *  category two ways. Null when the session settled on nothing. */
   sessionCategoryLabel?: string | null;
+  /** Where this item's SESSION came from (platform-contract scan-source):
+   *  who added it, said once in the header, and whether it was emailed, so a
+   *  code off it reads "from the email". */
+  sessionSource?: { addedBy: AddedBy | null; emailed: boolean } | null;
   hasLocations: boolean;
   selected?: boolean;
   onToggleSelect?: () => void;
@@ -1013,7 +1021,13 @@ export function InboxCard({
     },
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
-      toast.success(r.new_qty != null ? `${r.entity_title}: now ${r.new_qty}` : `Added one more to ${r.entity_title}`);
+      toast.success(
+        r.added_place
+          ? addedPlaceSentence(r.entity_title, r.added_place)
+          : r.new_qty != null
+            ? `${r.entity_title}: now ${r.new_qty}`
+            : `Added one more to ${r.entity_title}`,
+      );
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -1021,7 +1035,8 @@ export function InboxCard({
   // (ScanCountBlock), on the card's own line and in the open banner.
   const trackedRaw = (item.suggested_metadata as { tracked_match?: Partial<TrackedMatch> & { qty?: unknown } } | null)?.tracked_match ?? null;
   const restockMatch: TrackedMatch | null =
-    rowState.action.kind === "merge" && rowState.merge && trackedRaw && typeof trackedRaw.qty === "number"
+    // A new place of the thing is not a count on it (AddPlaceBlock, #4552).
+    rowState.action.kind === "merge" && rowState.merge && !rowState.merge.new_place && trackedRaw && typeof trackedRaw.qty === "number"
       ? ({ ...trackedRaw, kind: rowState.merge.kind, id: rowState.merge.id, instance: rowState.merge.instance, title: rowState.merge.title, qty: trackedRaw.qty, expired: !!trackedRaw.expired } as TrackedMatch)
       : null;
   // A record the workspace counts: the match line (closed) or the banner
@@ -1206,9 +1221,9 @@ export function InboxCard({
 
   // Internal /api/v1 file URLs need the Bearer token a bare <img> can't
   // send — useImageSrc blob-loads those; external URLs pass through.
-  // A catalog_image_url can 404 / hotlink-block (the broken-? the author hit): onError
-  // marks that URL broken and we drop to the next rung — the server-cached file,
-  // else the user's own photo — instead of leaving a dead image on the card.
+  // The catalog picture is the stored file or nothing (#4580); a file that
+  // will not load is marked broken and the next rung (the user's own photo)
+  // shows instead of a dead image on the card.
   const [brokenSrcs, setBrokenSrcs] = useState<Set<string>>(new Set());
   // The web candidates the strip below fetched, reported up so the one
   // resolver can fold them in (the lightbox filmstrip, the outline rule).
@@ -1220,7 +1235,7 @@ export function InboxCard({
   // slot is scanPhoto.ts's call (catalogRungs): the record's picture beats a
   // lookup's find, and a picture the person chose here beats both.
   const catalogUrl =
-    catalogRungs(item, [catalogFileUrl, item.catalog_image_url ?? null]).find(
+    catalogRungs(item, [catalogFileUrl]).find(
       (u): u is string => !!u && !brokenSrcs.has(u),
     ) ?? null;
   const pictureStatus = (item.suggested_metadata as { catalog_image_status?: string } | null)?.catalog_image_status;
@@ -1228,6 +1243,13 @@ export function InboxCard({
   /** The engine refused a burst, not the query: it retries itself, and the
    *  chip should not read as "nobody has a picture of this". */
   const pictureBusy = pictureStatus === "throttled";
+  /** A picture chosen once that could not be stored: said, never drawn. */
+  const unsaved = catalogUnsaved(item);
+  const unsavedNote = unsaved ? (
+    <span data-testid="catalog-unsaved" title={`The site would not give Cobblr that picture to keep (${unsaved.url}). Pick another from the web results.`} className="px-1 text-center text-[10px] leading-tight text-amber-700 dark:text-amber-400">
+      {COULDNT_SAVE_WORDS}
+    </span>
+  ) : null;
   // The row's pictures, resolved ONCE (lib/rowPictures.ts, the contract's
   // scan-pictures, #3046): the pair's yours slot, the lightbox's own panes,
   // the strip's "Your photos" column and the outline rule all read this list.
@@ -1308,8 +1330,8 @@ export function InboxCard({
       key: o.url,
       caption: `${o.title} · ${o.source}`,
       href: o.source,
-      url: o.url,
-      thumbUrl: o.thumb,
+      url: shownPictureUrl(activeSlug, o.url, o.source),
+      thumbUrl: shownPictureUrl(activeSlug, o.thumb || o.url, o.source),
       // The seam between what is yours and what the web offered. Only on the
       // first one, and only when there is something to its left to separate it
       // from.
@@ -1321,7 +1343,7 @@ export function InboxCard({
     if (i >= 0) setZoomIdx(i);
   };
   const openZoomUrl = (url: string) => {
-    const i = zoomItems.findIndex((z) => z.url === url);
+    const i = zoomItems.findIndex((z) => z.key === url);
     if (i >= 0) setZoomIdx(i);
   };
   // "Use this image" on a web candidate in the viewer → set it as the catalog.
@@ -1857,7 +1879,7 @@ export function InboxCard({
                 onAction: (it) => {
                   if (it.key === "yours") catalogAction.mutate("use_own_photo");
                   else if (it.key === "crop") catalogAction.mutate("use_screenshot_crop");
-                  else if (it.url) pickCatalogImage.mutate(it.url);
+                  else if (photoCandidates.some((o) => o.url === it.key)) pickCatalogImage.mutate(it.key);
                   setZoomIdx(null);
                 },
               }}
@@ -1985,6 +2007,7 @@ export function InboxCard({
                   rerun: "Re-ran the lookup with AI",
                   replay: "Replayed: the latest processing, same identification",
                   "rerun-hint": "Re-ran with a hint",
+                  hint: "Read the hint",
                   "confirm-guess": "Confirmed the first look",
                   "reject-guess": "Said the first look was wrong",
                   "crop-again": "Cut it again from the group photo",
@@ -2116,6 +2139,8 @@ export function InboxCard({
           )}
     </>
   );
+  // A hand-over: offered to you (Take / Pass / Maybe later), or from here.
+  const offerStrip = <ScanOfferStrip item={item} slug={activeSlug} />;
   const hintBox = (
           <HintBox
             onSubmit={(h, opts) => rerun.mutate({ hint: h || undefined, ...opts })}
@@ -2484,6 +2509,7 @@ export function InboxCard({
           evidence: evidenceBox,
           correction: (
             <>
+              {offerStrip}
               {hintBox}
               {identityRow}
             </>
@@ -2554,7 +2580,7 @@ export function InboxCard({
       [shownName, item.barcode_text, phoneSubtitle, brandLower, creatorLower, shopLower],
     )
       .slice(0, 3)
-      .map(({ name: k, label, value: v }) => ({ key: k, label, value: v, confirmed: k in userValues, swatch: /colou?r/i.test(k) ? colorSwatch(v) : null }));
+      .map(({ name: k, label, value: v }) => ({ key: k, label, value: `${String(v)}${whoFromBeside(dest?.fields, k)}`, confirmed: k in userValues, swatch: /colou?r/i.test(k) ? colorSwatch(v) : null }));
     const splitFrom = (item.suggested_metadata as { split_from?: string } | null)?.split_from;
     const more: ScanPhoneRowAction[] = [];
     if (item.status === "pending") {
@@ -2575,6 +2601,7 @@ export function InboxCard({
             item={item}
             receipt={receiptBlock}
             thumb={thumb}
+            pictureNote={unsavedNote}
             onThumbBroken={() => markBroken(catalogImg ? catalogUrl : yoursRawUrl)}
             onViewImage={thumb ? () => openZoom(catalogImg ? "catalog" : "yours") : null}
             subtitle={[item.barcode_text, phoneSubtitle].filter(Boolean).join(" · ")}
@@ -2714,7 +2741,7 @@ export function InboxCard({
             fit="contain"
             eager
             className="!bg-transparent"
-            placeholder={<ScanLine size={26} className="text-faint dark:text-slate-600" />}
+            placeholder={unsavedNote ?? <ScanLine size={26} className="text-faint dark:text-slate-600" />}
             onBroken={() => markBroken(catalogImg ? catalogUrl : yoursRawUrl)}
           />
           {onToggleSelect && (
@@ -2943,19 +2970,17 @@ export function InboxCard({
               // reads as "something's missing here". Never a leading/trailing dot.
               const segs: ReactNode[] = [];
               // An agent's add (MCP or the chat's add_thing, #4472) waits here
-              // for its person; say so, so it is not mistaken for their scan.
-              // The stamp is the assistant door's (core-scan /scan/assistant).
-              if ((item.suggested_metadata as { arrived_by?: string } | null)?.arrived_by === "assistant") {
-                segs.push(<span className="text-cobble-700 dark:text-cobble-300">from your assistant</span>);
-              }
+              // for its person, so it is not mistaken for their scan. Said on
+              // the card only when it differs from its session: the header
+              // says it once for every card that shares it (#4581).
+              const ownSource = cardSaysAddedBy(item, sessionSource?.addedBy ?? null);
+              if (ownSource) segs.push(<span className="text-cobble-700 dark:text-cobble-300">{addedByCardWords(ownSource)}</span>);
               if (item.barcode_text) {
-                // Say where it CAME FROM. "read from photo" over an emailed
-                // eBay receipt was simply untrue (reported 2026-08-31); the
-                // vocabulary lives with the server that stamps it, in
-                // modules/core-scan/src/services/barcode-source.ts.
-                const codeNote = BARCODE_SOURCE_NOTE[
-                  (item.suggested_metadata as { barcode_source?: string } | null)?.barcode_source ?? ""
-                ];
+                // Say where it CAME FROM. Read-from-photo over an emailed
+                // eBay receipt was simply untrue (reported 2026-08-31), and a
+                // line stamped the old way still said it (#4581). One wording,
+                // in platform-contract scan-source, which the server reads too.
+                const codeNote = codeSourceNote(codeSourceOf(item), { emailed: !!sessionSource?.emailed });
                 segs.push(
                   <>
                     {item.barcode_text}
@@ -2988,7 +3013,8 @@ export function InboxCard({
               // a marketplace order has both, and they are different facts. Kept
               // by the parser since receipts shipped and shown nowhere until now.
               const soldBy = (item.suggested_metadata as { receipt_seller?: string } | null)?.receipt_seller;
-              if (soldBy?.trim() && soldBy.trim() !== boughtFrom?.trim()) segs.push(`sold by ${soldBy.trim()}`);
+              // A thing handed over is from someone, not sold: its strip says who.
+              if (soldBy?.trim() && soldBy.trim() !== boughtFrom?.trim() && !readInboxOffer(item.suggested_metadata)) segs.push(`sold by ${soldBy.trim()}`);
               if (item.suggested_sku) segs.push(item.suggested_sku);
               // Where it's being FILED — the bin set by "Set location" (bulk or
               // per-item). This is target_location_id, the authoritative
@@ -3100,6 +3126,10 @@ export function InboxCard({
               Fingering (the name says 4 Ply) or Aran (the AI's read)". The
               pipeline's whole sentence is evidence, and reads in full on the
               open card and in the Source data box. */}
+          {/* A hand-over is the card's first question, open or closed. */}
+          <div className="mt-1" onClick={(e) => e.stopPropagation()}>
+            {offerStrip}
+          </div>
           {!expanded && cardQuestions.length > 0 && !!item.suggested_name && (
             <div className="mt-0.5 space-y-0.5" onClick={(e) => e.stopPropagation()} data-testid="review-questions">
               {cardQuestions.slice(0, 2).map((q) => (
@@ -3609,7 +3639,7 @@ export function InboxCard({
                           <span className="truncate">{item.suggested_location_note?.split(" — ")[0] ?? "Suggested spot"}</span>
                         </button>
                       )}
-                      {!formOpen && noPictureFound && (
+                      {!formOpen && noPictureFound && !unsaved && (
                         <button
                           type="button"
                           onClick={(e) => {
@@ -3667,6 +3697,7 @@ export function InboxCard({
                                 {k === axisKey || (dest.category && v === dest.category)
                                   ? categoryChipLabel(String(v), sessionCategoryLabel)
                                   : String(v)}
+                                {whoFromBeside(dest.fields, k)}
                               </span>
                             );
                           })()}
@@ -4193,7 +4224,6 @@ export function GalleryTile({
   const raw = leadPhoto(item, {
     catalog: [
       item.catalog_image_file_id ? scanFileUrl(slug, item.catalog_image_file_id) : null,
-      item.catalog_image_url ?? null,
     ],
     yours: yours ? resolved.src(yours) : null,
   }).src;
@@ -4395,7 +4425,8 @@ function PhotoOptions({
       onPickBest={() => pickBest.mutate()}
       pickingBest={pickBest.isPending}
       bestUrl={bestUrl}
-      currentUrl={item.catalog_image_url ?? null}
+      // catalog-address: marks which result is in use; only a stored pick is one.
+      currentUrl={item.catalog_image_file_id ? (item.catalog_image_url ?? null) : null}
       bestReason={bestReason}
       compact={compact}
       leading={leading}
@@ -5377,10 +5408,26 @@ function ConfirmForm({
         }]
       : []),
   ];
+  // A field of the table's own that clarifies another (a seller beside where
+  // it came from, from the contract's ROLE_CLARIFIES): that picker's right
+  // half writes there instead of the note (ChoiceField's detailField).
+  const clarifierDef = (entry.fields ?? []).find((x) => !!x.field_role && !!ROLE_CLARIFIES[x.field_role as FieldRole]) ?? null;
+  const sellerFor = (def: { field_role?: string | null; name: string }) =>
+    clarifierDef && def.field_role && def.field_role === ROLE_CLARIFIES[clarifierDef.field_role as FieldRole]
+      ? { name: clarifierDef.name, label: clarifierDef.label ?? clarifierDef.name, value: customValues[clarifierDef.name], onChange: (v: unknown) => custom.set(clarifierDef.name, v) }
+      : undefined;
+  // A value with who it came from beside it reads as one ("3DPrintopia 2026 ·
+  // Jai"), as the record page shows it; the chip still commits the value alone.
+  const besideOf = (f: { name: string; field_role?: string | null }) => {
+    const seller = sellerFor(f);
+    const v = seller ? seller.value : customValues[noteKey(f.name)];
+    return v == null || String(v).trim() === "" ? null : String(v);
+  };
   const customChips: ChipFieldDef[] = (entry.fields ?? []).map((f) => ({
     key: f.name,
     label: f.label ?? f.name,
     value: String(customValues[f.name] ?? ""),
+    ...(besideOf(f) ? { display: `${String(customValues[f.name] ?? "")} · ${besideOf(f)}` } : {}),
     type: (f.type === "select" ? "select" : f.type === "date" ? "date" : f.type === "number" ? "number" : "text") as ChipFieldType,
     choices: f.choices ?? null,
   }));
@@ -5599,10 +5646,13 @@ function ConfirmForm({
               // the field is, and eight paragraphs made a form a page.
               <ScanFieldInput
                 def={{ name: def.name, display_label: def.label ?? def.name, type: def.type,
-                       help: null, choices: def.choices ?? null }}
+                       help: null, choices: def.choices ?? null, field_role: def.field_role ?? null, learns: def.learns ?? null }}
                 value={customValues[def.name]}
                 onChange={(v) => custom.set(def.name, v)}
                 choiceDoor={choiceDoor}
+                note={customValues[noteKey(def.name)]}
+                onNoteChange={(v) => custom.set(noteKey(def.name), v)}
+                seller={sellerFor(def)}
               />
             ) : f.key === "category_axis" && f.choices?.length ? (
               // Inventory's category is its own tree, not a field def, so it has
@@ -5689,10 +5739,14 @@ function ConfirmForm({
         return (
           <ScanFieldInput
             def={{ name: def.name, display_label: def.label ?? def.name, type: def.type,
-                   help: def.help ?? null, choices: def.choices ?? null }}
+                   help: def.help ?? null, choices: def.choices ?? null, field_role: def.field_role ?? null, learns: def.learns ?? null }}
             value={customValues[def.name]}
             onChange={(v) => custom.set(def.name, v)}
             choiceDoor={choiceDoor}
+            note={customValues[noteKey(def.name)]}
+            onNoteChange={(v) => custom.set(noteKey(def.name), v)}
+            seller={sellerFor(def)}
+            hideLabel
           />
         );
       }}
@@ -5837,6 +5891,8 @@ interface FieldDefLike {
   type: string;
   help?: string | null;
   choices?: string[] | null;
+  field_role?: string | null;
+  learns?: boolean | null;
 }
 
 // `wantsSwatch` (is this field a colour swatch field?) now lives in
@@ -5852,6 +5908,10 @@ function ScanFieldInput({
   value,
   onChange,
   choiceDoor,
+  note,
+  onNoteChange,
+  seller,
+  hideLabel,
 }: {
   def: FieldDefLike;
   value: unknown;
@@ -5859,6 +5919,13 @@ function ScanFieldInput({
   /** A dropdown grows from the form: "New <field>…" appends to the field's
    *  definition and selects it (#2982). Absent: a plain select. */
   choiceDoor?: { slug: string; entityKind: string | null; canAdd: boolean };
+  /** The value's clarifier ("eBay · detroitaxle") and how to change it. */
+  note?: unknown;
+  onNoteChange?: (v: unknown) => void;
+  /** The table's own seller field, which takes the detail over the note. */
+  seller?: { name: string; label: string; value: unknown; onChange: (v: unknown) => void };
+  /** The host already shows the field's name (a chip does). */
+  hideLabel?: boolean;
 }) {
   // A title labels ONE control by id; it never wraps the field. A label
   // around two controls (the swatch and its hex box, a dropdown that grows
@@ -5909,12 +5976,29 @@ function ScanFieldInput({
       </div>
     );
   }
+  const noteText = note == null || note === "" ? null : String(note);
+  // Where a thing came from: the record page's own two-column picker, the
+  // value on the left and who from on the right (#4516, #4593).
+  const twoColumn = !!def.choices?.length && !!choiceDoor && (!!seller || (!!onNoteChange && offersClarifier({ ...def, type: def.type }, noteText)));
   return (
     <div className="block">
-      <label htmlFor={inputId} className="block text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
-        {def.display_label}
-      </label>
-      {def.choices && def.choices.length > 0 && choiceDoor ? (
+      {!hideLabel && (
+        <label htmlFor={inputId} className="block text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
+          {def.display_label}
+        </label>
+      )}
+      {twoColumn && choiceDoor ? (
+        <ChoiceField
+          def={{ name: def.name, display_label: def.display_label, type: def.type, choices: def.choices ?? null, entity_kind: choiceDoor.entityKind ?? "", field_role: def.field_role ?? null, learns: def.learns ?? null }}
+          kind={choiceDoor.entityKind ?? undefined}
+          value={s || null}
+          onCommit={(v) => onChange(v)}
+          note={noteText}
+          onCommitNote={onNoteChange ? (v) => onNoteChange(v) : undefined}
+          detailField={seller ? { name: seller.name, label: seller.label, value: seller.value == null || seller.value === "" ? null : String(seller.value), onCommit: (v) => seller.onChange(v) } : undefined}
+          className={fieldPackControlClass + " text-sm"}
+        />
+      ) : def.choices && def.choices.length > 0 && choiceDoor ? (
         <ScanChoiceSelect
           id={inputId}
           slug={choiceDoor.slug}

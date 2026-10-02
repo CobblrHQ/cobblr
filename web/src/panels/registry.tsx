@@ -72,6 +72,10 @@ registerDetailPanel(
   lazy(() => import("../features/core-discussion/panel").then((m) => ({ default: m.DiscussionPanel }))),
 );
 registerDetailPanel(
+  "core-files:files",
+  lazy(() => import("../features/core-files/panel").then((m) => ({ default: m.FilesPanel }))),
+);
+registerDetailPanel(
   "core-documents:documents",
   lazy(() => import("../features/core-documents/panel").then((m) => ({ default: m.DocumentsPanel }))),
 );

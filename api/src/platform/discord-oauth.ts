@@ -7,7 +7,7 @@
 //   callback → exchangeCodeForIdentity(code) → { id, username }
 //
 // The DM itself goes through the bot (sendDiscordDm); this module only resolves
-// WHO. `||` not `??` for env defaults (core CLAUDE.md §14.6).
+// WHO. `||` not `??` for env defaults (core docs/architecture/platform-spec.md §14.6).
 
 import { SignJWT, jwtVerify } from "jose";
 import { env } from "../env.js";

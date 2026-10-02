@@ -12,6 +12,7 @@ import { SERVICE_EFFECTS, type PlatformServices } from "@cobblr/platform-contrac
 export type { PlatformServices } from "@cobblr/platform-contract/services";
 import type { DateFieldDirection } from "@cobblr/platform-contract/date-field-direction";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
+import { centsFromAmount } from "@cobblr/platform-contract/money";
 import { isJunkCategory } from "@cobblr/platform-contract/category-reconcile";
 import { measurePaths, measureTokens, type Measure } from "@cobblr/platform-contract/measure";
 
@@ -33,6 +34,7 @@ import type { BlockedAction } from "@cobblr/platform-contract/blocked-action";
 export { destinationLabel, normaliseTargetKind, type DestinationTable } from "@cobblr/platform-contract/destination-label";
 import type { TitleVariants } from "@cobblr/platform-contract/display-identity";
 import type { Disposition } from "@cobblr/platform-contract/disposition";
+import type { OfferDecision, OfferIntake } from "@cobblr/platform-contract/share-offer";
 export { NotificationBatcher, type ComposedBurst } from "@cobblr/platform-contract/notification-batcher";
 import type {
   ResolvableProvider,
@@ -2324,7 +2326,9 @@ export interface ActivityLogParams {
  *  context and every module read it from here. `surface` is a place in the
  *  app that is not a record's own page (a floor plan, a shelf drawing), its
  *  label the words the activity shows ("via floor plan"). */
-export type ActivityViaKind = "mcp" | "assistant" | "automation" | "label" | "surface";
+/** `share`: a friend's edit, made in a share space and applied here (its
+ *  label is their name). */
+export type ActivityViaKind = "mcp" | "assistant" | "automation" | "label" | "surface" | "share";
 
 export interface PlatformActivity {
   log(p: ActivityLogParams): Promise<void>;
@@ -2799,6 +2803,13 @@ export interface ScannableInfo {
    *  declared, core-scan takes an undone bump back through it; without it,
    *  the quantity field is written through the module's own route. */
   adjustAction?: string;
+  /** The action that keeps this thing at another place too: invoked ON the
+   *  item with args `{ location_id, qty }` and answering `{ ok, id, card_id }`
+   *  (the new place's record and the item it belongs to). When declared, a
+   *  scan of a thing the workspace has, at a place it is not kept yet, files
+   *  as that place's row under the same item instead of a count on another
+   *  place or a second item. */
+  holdAction?: string;
 }
 
 /** In-process create/update/delete for one kind, registered by the owning
@@ -2832,6 +2843,10 @@ export interface EntityWriter {
    *  and keeps its history. A kind without it has no such notion, and a
    *  caller says so rather than pretending. */
   retire?(orgId: string, id: string, how: { disposition: Disposition }): Promise<void>;
+  /** Optional: the way back from `retire`: it is the person's again, in the
+   *  lists and the totals, as it was before it left. A kind with `retire`
+   *  and no `unretire` makes "I got it back" impossible, so give both. */
+  unretire?(orgId: string, id: string): Promise<void>;
   /** Optional: existing entities of this kind, for a natural-key match during
    *  an import preview — so a one-time import MERGES a source record into an
    *  already-present row (same name) instead of duplicating it. Without this,
@@ -3388,6 +3403,13 @@ export interface ActionInvokeActor {
  *  handler read its record?" knew only the first, so it accused a handler
  *  that read the record through the alias (#3378).
  *  See docs/architecture/wires-and-bundles.md (Q2). */
+/** One earlier step of a plan, as a later step's planner reads it. */
+export interface PlanStepBefore {
+  op: "delete";
+  kind: string;
+  id: string;
+}
+
 export interface ActionInvokeContext {
   orgId: string;
   userId: string | null;
@@ -3422,6 +3444,11 @@ export interface ActionInvokeContext {
   rendered?: string;
   /** Extra args from the binding (passed through). */
   args?: Record<string, unknown>;
+  /** For a PLANNER only: what the earlier steps of the same plan will have
+   *  done by the time this one runs, so what the card says counts after them
+   *  ("Delete this yarn, then remove Yarn" never says Yarn keeps its one
+   *  record). Absent for a run, which reads the workspace as it then is. */
+  before?: PlanStepBefore[];
   /** The origin (`https://host`) of the request that invoked the action,
    *  when a person pressed a button: the same origin the module's own
    *  routes see, so a handler that must mint an absolute URL (a label's
@@ -4273,6 +4300,28 @@ export const AiCapabilities = [
   // hopeless for chat, exactly right for a handful of builds. Sharing chat's
   // id meant that trade could not be made at all.
   "design-workspace",
+  // Reading a DOCUMENT: a bill of sale, an invoice, a receipt read as
+  // paperwork, a warranty, a title, a form. Its own id because what rides on
+  // it is a value somebody keeps (a VIN, a total, every line), so it goes to
+  // each provider's fuller model, never its light one: Flash on Google's free
+  // tier, not Lite, which stays for a quick glance at a photo (the owner,
+  // 2026-10-02: "a document should get Flash, not Lite, since it's a more
+  // serious item"). The caller sends its own prompt (what to read), and the
+  // page as image_b64 with image_media_type; the answer is the model's text.
+  // When the fuller model is busy the read waits for it rather than going to
+  // a weaker one: a provider's busyAlternates are told the job, and answer
+  // none lighter for this one.
+  "document-read",
+  // Planning a CHANGE in the chat: a turn that deletes a record or reshapes
+  // the workspace (a feature off, a bundle removed, a list made, a field's
+  // choices edited). The same conversation, tools and answer shape as `chat`,
+  // and its own id so it goes to each provider's fuller model: a plan that
+  // deletes or removes something is a serious action (the owner, 2026-10-02:
+  // Flash, not Lite, on the same busy ladder). A turn starts on it when the
+  // message asks for such a change, and moves to it the round the model
+  // proposes one (modules/core-ai/src/api/plan-tier.ts). Never swapped down
+  // to a lighter sibling when busy.
+  "plan-changes",
 ] as const;
 
 export type AiCapability = (typeof AiCapabilities)[number];
@@ -4303,7 +4352,20 @@ export const CHAT_HISTORY_MESSAGES = 40;
  *  heard of it. */
 export const AI_CAPABILITY_FALLBACK: Partial<Record<AiCapability, AiCapability>> = {
   "design-workspace": "chat",
+  // A provider written before documents had their own job still reads one,
+  // the way it reads any picture it is handed a prompt for.
+  "document-read": "identify-image",
+  // A provider written before planning had its own job plans in its chat.
+  "plan-changes": "chat",
 };
+
+/** A turn of the conversation, with tools and the chat answer shape: `chat`
+ *  itself, or a planning turn on the fuller model. Every adapter asks this
+ *  instead of comparing to "chat", so a planning turn is never handed the
+ *  plain-text path (no tools, no tool_calls back). */
+export function isChatTurn(capability: AiCapability | string): boolean {
+  return capability === "chat" || capability === "plan-changes";
+}
 
 /** A model id that names whatever the provider currently points it at
  *  ("gemini-flash-lite-latest", an Ollama "llama3:latest"): it can change, or
@@ -4442,8 +4504,9 @@ export interface AiProviderDef {
    *  for a model nobody chose (see resolveModel): a person's explicit model is
    *  never swapped behind their back. For a provider whose default is a
    *  floating alias that can be overloaded for an hour while its sibling
-   *  answers. */
-  busyAlternates?: (model: string) => string[];
+   *  answers. Told the job, because a sibling fit for one job is not for
+   *  another: a document is never handed to a lighter model (document-read). */
+  busyAlternates?: (model: string, capability: AiCapability) => string[];
   /** Run a single inference. The platform handles caching + audit
    *  before/after. */
   invoke: (ctx: {
@@ -4472,7 +4535,19 @@ export interface AiProviderDef {
    *  answer — and it is what lets the UI offer a dropdown instead of asking someone to
    *  type an exact model name they have no way to know. */
   testConnection?: (credentials: Record<string, unknown>) => Promise<AiConnectionTest>;
+  /** The models THIS connection serves, asked of it live (an Ollama's
+   *  /api/tags, an OpenAI-compatible /models, a bridge's own list). A
+   *  provider whose models depend on the endpoint implements it, so a menu
+   *  offers what the connection has rather than the type's suggestions; a
+   *  hosted service with a curated list leaves it out. Throws when the
+   *  connection cannot be asked. */
+  listModels?: (credentials: Record<string, unknown>) => Promise<string[]>;
 }
+
+/** What a connection reported it serves (platform().ai.modelsReportedBy),
+ *  with the model typed on the connection itself always among them: a pinned
+ *  entry the person added stays choosable even when the list cannot be read. */
+export type AiReportedModels = { ok: true; models: string[] } | { ok: false; error: string; models: string[] };
 
 export interface AiConnectionTest {
   ok: boolean;
@@ -4569,6 +4644,12 @@ export interface PlatformAi {
    *  it would. A person's own "Just me" connection is in it; somebody else's
    *  is only when shared with the workspace. */
   chainFor(orgId: string, userId: string | null, capability: AiCapability, opts?: { limit?: number }): Promise<{ steps: AiChainStep[] }>;
+  /** The models a connection serves, asked of it (briefly cached), for a menu
+   *  or a setting that must offer only what it has. Names the workspace's own
+   *  provider (`providerId`) or a personal connection routed here
+   *  (`credentialId`). Null when the provider keeps a curated list instead
+   *  (no listModels), or the connection is not one this caller may use. */
+  modelsReportedBy(orgId: string, userId: string | null, ref: { providerId?: string; credentialId?: string }, opts?: { fresh?: boolean }): Promise<AiReportedModels | null>;
   /** Single entry point for any module to use AI. Picks provider +
    *  model from the workspace's capability defaults, calls the
    *  cache, calls the provider, writes audit + cache rows, returns
@@ -5184,6 +5265,11 @@ export interface PlatformAuth {
    *  never HTTP-reachable); the resulting session is still bounded by the
    *  member's role + capabilities at every endpoint it hits. */
   mintSession(args: { userId: string }): Promise<string>;
+  /** How the CURRENT request was made: its auth method, how it acts (the
+   *  in-app assistant, an assistant over MCP) and the API token's name. For a
+   *  door that records who added a thing (the inbox's "Added by Claude").
+   *  Null outside a request. */
+  requestSource(): Promise<{ auth_method: "session" | "api_token" | "system"; via: string | null; token_name: string | null } | null>;
   /** Register the platform-level auth-email sender (verify / reset / magic
    *  link). A self-hoster wires their own; the overlay injects a managed
    *  sender. Open core registers none — magic-link falls back to the inline
@@ -5975,8 +6061,15 @@ export interface FileIntakeDecl {
  *  loser's next tick may find the job free. Work that must not repeat has to
  *  claim what it acts on (compare-and-set the row, delete the bucket) inside
  *  the callback. */
+/** What became of a run under the exclusive lock. Not a boolean on purpose:
+ *  "someone else held it" is a normal answer for a timer tick and a wrong
+ *  one to report as done to a person or a test, and a bare `false` was read
+ *  as "nothing to do" (a Sync now that said "sent 0" while a change still
+ *  waited). The caller says which it is (lint:exclusive-answer-read). */
+export type ExclusiveRun = { ran: true } | { ran: false; heldElsewhere: true };
+
 export interface PlatformExclusive {
-  run(name: string, work: () => Promise<void>): Promise<boolean>;
+  run(name: string, work: () => Promise<void>): Promise<ExclusiveRun>;
 }
 
 // ── Cross-tenant sweeps: one walk of the workspaces, one budget ─────────────
@@ -6033,7 +6126,7 @@ export interface TenantSweepPass {
   visit: (ctx: TenantSweepVisit) => Promise<TenantSweepVisitResult | void>;
   /** What a workspace needs from this pass the moment its `module` is
    *  enabled there, so it is born with it instead of waiting for its first
-   *  round (CLAUDE.md 8.1, BORN WITH). Run once by enableModuleForOrg, with
+   *  round (docs/architecture/platform-spec.md §8.1, BORN WITH). Run once by enableModuleForOrg, with
    *  the workspace's db open. Keep it cheap: no network, no long work; set
    *  up state and leave the work to the rounds. Only a pass that names its
    *  `module` has an enable to hook, so a pass without one never runs this.
@@ -6602,6 +6695,28 @@ export interface PlatformScan {
    *  registration order. Returns the first hit, or null if none claim it.
    *  `opts.force` rides through to each resolver (re-run bypasses caches). */
   resolveUrl(value: string, opts?: { force?: boolean }): Promise<ScanUrlResolution | null>;
+  /** The scan inbox's side of a share's hand-over (share-offer.ts). The
+   *  module that owns the inbox registers it at load. */
+  registerOfferIntake(intake: OfferIntake): void;
+  offerIntake(): OfferIntake | null;
+}
+
+/** Shares between workspaces (docs/design-decisions/share-spaces.md): what a
+ *  module may ask of them. */
+export interface PlatformShares {
+  /** A person answered an offer that arrived in their scan inbox. Taking it
+   *  keeps it (or, in a share space, moves it to `into`, a workspace of theirs
+   *  on this Cobblr); passing removes it; maybe leaves it for later. The giver
+   *  is told. */
+  decideOffer(
+    orgId: string,
+    inboxId: string,
+    decision: OfferDecision,
+    opts: { userId: string; into?: string | null },
+  ): Promise<{ ok: true; landed?: { orgId: string; inboxId: string } } | { ok: false; error: string }>;
+  /** Offer things from this workspace's scan inbox to the person a share
+   *  links it with (a share space offering back to its sharer). */
+  offerInboxItems(orgId: string, inboxIds: string[], opts: { userId: string }): Promise<{ ok: true; offered: number } | { ok: false; error: string }>;
 }
 
 /** The resolvable registry seam. A module registers a provider for a value it
@@ -6707,6 +6822,7 @@ export interface Platform {
   files: PlatformFiles;
   instances: PlatformInstances;
   scan: PlatformScan;
+  shares: PlatformShares;
   devices: PlatformDevices;
   // Hosted-overlay seams (no-op / allow-all in open core):
   entitlements: PlatformEntitlements;
@@ -7037,6 +7153,12 @@ export interface RoledField {
   field_role?: string | null;
   type?: string | null;
   choices?: string[] | null;
+  /** A column of the kind's own (a vehicle's Paid, Purchased at), written
+   *  through the kind's writer, never into metadata. */
+  native?: boolean;
+  /** How a native money column stores its amount; a fact's money is put in
+   *  that unit (cents) before it is written. */
+  money?: "cents" | "amount" | null;
   /** The list is open: a value off it is still this field's value (field-choices
    *  `choiceLearns`, decided by whoever hands the field over). A parser's value
    *  is written but never added to the list. Absent = a closed list. */
@@ -7054,11 +7176,16 @@ export interface DefinedField extends RoledField {
   /** Once filled, an update may not empty it. A create may leave it empty:
    *  capture comes before structure, and the record then shows what it needs. */
   required?: boolean;
+  /** The owner marked it private: shares and public pages leave it out unless
+   *  they show private notes (@cobblr/platform-contract/share-scope). */
+  private?: boolean;
 }
 
 export interface MappedValue {
-  /** The metadata key to write. */
+  /** The key to write: a metadata key, or a native column when `native`. */
   key: string;
+  /** A column of the kind's own: written through the kind's writer. */
+  native?: boolean;
   value: string | number;
   /** Which role put it there, so a confirm UI can explain itself. */
   role: FieldRole;
@@ -7118,7 +7245,9 @@ export function mapRoledFacts(
     const field = byRole.get(role);
     if (field) {
       const unlisted = field.learns !== true && typeof value === "string" && (field.choices?.length ?? 0) > 0 && !isListedChoice(value, field.choices!);
-      out.push({ key: field.name, value, role, ...(unlisted ? { unlistedChoice: true } : {}) });
+      // A money fact is an amount; a column that keeps cents gets cents.
+      const stored = field.money === "cents" && typeof value === "number" ? centsFromAmount(value) : value;
+      out.push({ key: field.name, value: stored, role, ...(field.native ? { native: true } : {}), ...(unlisted ? { unlistedChoice: true } : {}) });
       continue;
     }
 
@@ -7132,11 +7261,24 @@ export function mapRoledFacts(
 
 /** The metadata patch, for a caller that just wants to write it. Values the UI
  *  must confirm first (an unlisted choice) are EXCLUDED: offering to add a
- *  choice and then adding it anyway would make the offer decorative. */
+ *  choice and then adding it anyway would make the offer decorative. A value
+ *  for a native column is not metadata and is left out: `roledNativePatch`
+ *  has it. */
 export function roledFactsPatch(mapped: readonly MappedValue[]): Record<string, string | number> {
   const patch: Record<string, string | number> = {};
   for (const m of mapped) {
-    if (m.unlistedChoice) continue;
+    if (m.unlistedChoice || m.native) continue;
+    patch[m.key] = m.value;
+  }
+  return patch;
+}
+
+/** The writes for the kind's own columns (a vehicle's Paid, Purchased at,
+ *  Bought from), for the kind's writer. */
+export function roledNativePatch(mapped: readonly MappedValue[]): Record<string, string | number> {
+  const patch: Record<string, string | number> = {};
+  for (const m of mapped) {
+    if (m.unlistedChoice || !m.native) continue;
     patch[m.key] = m.value;
   }
   return patch;

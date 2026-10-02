@@ -65,7 +65,10 @@ export function appliedCards(applied: AppliedWrite[], turnId: string | null): Ap
       },
     ];
   }
-  const ids = applied.map((a) => a.ledger_id).filter((x): x is string => !!x);
+  // Only the changes that can be put back are counted on the button: a plan
+  // whose last step removed a bundle for good offered "Undo all 2" over a
+  // removal its own action says cannot be undone.
+  const ids = applied.filter((a) => a.undoable !== false).map((a) => a.ledger_id).filter((x): x is string => !!x);
   return [
     {
       role: "assistant",

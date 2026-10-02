@@ -1,0 +1,10 @@
+{
+  "lint": "lint:exclusive-answer-read",
+  "run": "node scripts/lint-exclusive-answer-read.ts",
+  "rows": [
+    "background-loop"
+  ],
+  "ms": 500,
+  "recorded": "2026-10-03",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}
