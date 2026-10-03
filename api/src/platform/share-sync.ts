@@ -13,6 +13,7 @@
 // Both sides on one Cobblr is the same path with the network taken out: the
 // flush hands the batch straight to the apply function the route would.
 
+import { trustedPeers } from "./cloud.js";
 import { randomBytes } from "node:crypto";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
@@ -108,13 +109,25 @@ export class ShareDeliveryError extends Error {
  *  like any operator-run service; one a person typed through the egress guard,
  *  which refuses a private address on a hosted instance. */
 export async function peerFetch(orgId: string, url: string, init: RequestInit): Promise<Response> {
-  const trusted = (process.env.COBBLR_SHARE_TRUSTED_PEERS || "")
-    .split(",")
-    .map((s) => s.trim().replace(/\/+$/, ""))
-    .filter(Boolean);
+  const trusted = trustedPeers();
   const origin = new URL(url).origin;
   if (trusted.some((t) => t === origin)) return fetch(url, { ...init, signal: AbortSignal.timeout(30_000) });
   return platform().egress.guardedFetch(orgId, url, { ...init, signal: AbortSignal.timeout(30_000) });
+}
+
+/** POST to the other side of a paired link, signed with this side's key:
+ *  the one way anything crosses to another Cobblr. */
+export async function signedPeerPost(link: ShareLinkRow, path: string, body: unknown): Promise<Response> {
+  if (!link.peer_url || !link.send_key_encrypted) throw new ShareDeliveryError("this share is not paired with another Cobblr");
+  const key = parseServiceKey(decryptCreds(link.send_key_encrypted));
+  if (!key) throw new ShareDeliveryError("this share's key is unreadable");
+  const raw = JSON.stringify(body);
+  const headers = signServiceRequest({ keyId: key.keyId, secret: key.secret, method: "POST", pathAndQuery: path, body: raw });
+  try {
+    return await peerFetch(link.org_id, `${link.peer_url}${path}`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: raw });
+  } catch (err) {
+    throw new ShareDeliveryError(`could not reach ${new URL(link.peer_url).host}: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 async function deliver(link: ShareLinkRow, ops: ShareOp[]): Promise<void> {
@@ -131,17 +144,7 @@ async function deliver(link: ShareLinkRow, ops: ShareOp[]): Promise<void> {
     }
     return;
   }
-  const key = parseServiceKey(decryptCreds(link.send_key_encrypted));
-  if (!key) throw new ShareDeliveryError("this share's key is unreadable");
-  const path = `/api/v1/share-links/${link.peer_link_id}/ops`;
-  const raw = JSON.stringify(body);
-  const headers = signServiceRequest({ keyId: key.keyId, secret: key.secret, method: "POST", pathAndQuery: path, body: raw });
-  let res: Response;
-  try {
-    res = await peerFetch(link.org_id, `${link.peer_url}${path}`, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: raw });
-  } catch (err) {
-    throw new ShareDeliveryError(`could not reach ${new URL(link.peer_url).host}: ${err instanceof Error ? err.message : String(err)}`);
-  }
+  const res = await signedPeerPost(link, `/api/v1/share-links/${link.peer_link_id}/ops`, body);
   if (res.ok) return;
   const said = (await res.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null;
   if (res.status === 426 || said?.error?.code === "needs_update") {
@@ -246,12 +249,15 @@ const loopPasses: Array<() => Promise<void>> = [];
 export function addShareSyncPass(fn: () => Promise<void>): void {
   loopPasses.push(fn);
 }
-const tick = () =>
-  // SKIP-IF-BUSY OK: a timer tick; the holder flushes every due link, the next tick retries the rest
-  void runExclusive("share.sync-loop", async () => {
+const runLoop = () =>
+  // SKIP-IF-BUSY OK: hands the outcome back; each caller reads .ran or says why it may skip
+  runExclusive("share.sync-loop", async () => {
     await flushDueShareLinks();
     for (const fn of loopPasses) await fn().catch((err) => console.error("[share] sync pass:", err));
-  }).catch((err) => console.error("[share] sync loop:", err));
+  });
+const tick = () =>
+  // SKIP-IF-BUSY OK: a timer tick; the holder flushes every due link, the next tick retries the rest
+  void runLoop().catch((err) => console.error("[share] sync loop:", err));
 
 export function startShareSync(): void {
   if (handle) clearInterval(handle);
@@ -261,16 +267,34 @@ export function startShareSync(): void {
 }
 
 let kicked: ReturnType<typeof setTimeout> | null = null;
-/** Something shared just changed: run the loop soon rather than on its next
- *  tick, once for a burst of changes. Each pass still waits for its own
- *  settle time, so a kick that comes too early finds nothing due and the
- *  next tick catches it. */
+let kickedAt = 0;
+const wanted: number[] = [];
+/** Something shared just changed: run the loop at about this time rather
+ *  than on its next tick. Several asks run once each, in order, and an ask
+ *  inside a second of one already waiting rides with it, so a burst of
+ *  changes is one run. Each pass still checks its own settle time; a run that
+ *  comes too early finds nothing due and the next tick catches it. */
 export function kickShareSync(afterMs = 6_000): void {
-  if (kicked || !handle) return;
+  if (!handle) return;
+  const at = Date.now() + afterMs;
+  if (!wanted.some((w) => Math.abs(w - at) < 1_000)) wanted.push(at);
+  wanted.sort((x, y) => x - y);
+  const next = wanted[0]!;
+  if (kicked && kickedAt <= next) return;
+  if (kicked) clearTimeout(kicked);
+  kickedAt = next;
   kicked = setTimeout(() => {
     kicked = null;
-    tick();
-  }, afterMs);
+    while (wanted.length && wanted[0]! <= Date.now() + 250) wanted.shift();
+    void runLoop()
+      .then((run) => {
+        // A loop already running may have read what is due before this
+        // change was: ask again in a moment rather than wait for the tick.
+        if (!run.ran) kickShareSync(1_500);
+      })
+      .catch((err) => console.error("[share] sync loop:", err));
+    if (wanted.length) kickShareSync(Math.max(0, wanted.shift()! - Date.now()));
+  }, Math.max(0, next - Date.now()));
   kicked.unref?.();
 }
 
@@ -323,8 +347,11 @@ export async function verifyShareRequest(p: {
   linkId: string;
   headers: Record<string, string | undefined>;
   pathAndQuery: string;
-  rawBody: string;
+  rawBody: string | undefined;
 }): Promise<ShareLinkRow> {
+  // Every signed per-link door keeps its exact bytes (server.ts); a door that
+  // does not would read every signature as forged, so say what is wrong.
+  if (p.rawBody === undefined) throw new ShareApplyError(500, "raw_body_missing", "This door does not keep the request's exact bytes, so no signature can be checked.");
   const link = await getShareLink(p.linkId);
   if (!link || !link.receive_key_id || !link.receive_secret_encrypted) throw new ShareApplyError(404, "unknown_share", "No such share.");
   const secret = decryptCreds(link.receive_secret_encrypted);

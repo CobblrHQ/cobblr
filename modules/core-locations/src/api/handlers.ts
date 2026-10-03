@@ -58,7 +58,8 @@ export function registerLocationsHandlers(): void {
   // in Edit layout ("make the red chest's drawers red").
   platform().actions.registerHandler("core-locations.set-plan-colour", async (ctx) => {
     const entity = requireActionEntity(ctx);
-    const raw = (ctx.args as { colour?: unknown } | null)?.colour;
+    const args = ctx.args as { colour?: unknown; outline_group?: unknown } | null;
+    const raw = args?.colour;
     const clear = raw == null || (typeof raw === "string" && ["", "none", "no colour", "no color", "clear"].includes(raw.trim().toLowerCase()));
     const colour = clear ? null : readPlanColour(raw);
     if (!clear && !colour) {
@@ -75,6 +76,9 @@ export function registerLocationsHandlers(): void {
     // The whole floorplan goes back, so its size and spot are kept: the
     // metadata merge is one level deep.
     const fp = { ...(((row.metadata as { floorplan?: Record<string, unknown> } | null)?.floorplan ?? {}) as Record<string, unknown>) };
+    const previousGroup = typeof fp.outline_tag_id === "string" ? fp.outline_tag_id : "auto";
+    if (args?.outline_group === "auto") delete fp.outline_tag_id;
+    else fp.outline_tag_id = typeof args?.outline_group === "string" ? args.outline_group : "custom";
     if (colour) fp.color = colour;
     else delete fp.color;
     await db
@@ -88,6 +92,7 @@ export function registerLocationsHandlers(): void {
       result: {
         id: row.id,
         previous: previous ?? "none",
+        previous_group: previousGroup,
         colour: colour ?? "none",
         note: colour ? `${row.name} is ${colour} on the plan.` : `${row.name} has no colour on the plan.`,
       },
@@ -173,13 +178,13 @@ function registerUndos(): void {
     };
   });
   platform().actions.registerUndo("core-locations.set-plan-colour", (result) => {
-    const r = (result as { result?: { id?: unknown; previous?: unknown } } | null)?.result;
+    const r = (result as { result?: { id?: unknown; previous?: unknown; previous_group?: unknown } } | null)?.result;
     if (typeof r?.id !== "string") return null;
     return {
       action_id: "core-locations:set-plan-colour",
       entity_kind: "core-locations:location",
       entity_id: r.id,
-      args: { colour: typeof r.previous === "string" ? r.previous : "none" },
+      args: { colour: typeof r.previous === "string" ? r.previous : "none", outline_group: typeof r.previous_group === "string" ? r.previous_group : "auto" },
     };
   });
   platform().actions.registerUndo("core-locations.reorder", (result) => {

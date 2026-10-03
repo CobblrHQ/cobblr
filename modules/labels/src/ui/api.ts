@@ -1,7 +1,9 @@
 // Labels module client. Exposed alongside the UI so other modules
 // (inventory's web UI) can import + call it directly.
 
-import { noteWorkspaceWrite } from "@cobblr/platform-web";
+import { noteWorkspaceWrite, walkPages } from "@cobblr/platform-web";
+import type { StationTagClient } from "@cobblr/platform-web";
+import type { ScanStation, StationCommand } from "@cobblr/platform-contract/scan-station";
 
 export interface QueueItem {
   id: string;
@@ -162,6 +164,14 @@ export interface ActionLabelPreviewShape {
 }
 
 export class LabelsApi {
+  stationTags(): StationTagClient {
+    const base = `/api/v1/orgs/${encodeURIComponent(this.slug)}/scan-stations`;
+    return {
+      list: () => this.requestAbs<{ items: ScanStation[] }>("GET", base),
+      queue: (id, type, url) => this.requestAbs<StationCommand>("POST", `${base}/${id}/commands`, { type, url }),
+      cancel: (id) => this.requestAbs("POST", `${base}/${id}/commands/cancel`, {}),
+    };
+  }
   constructor(
     private readonly slug: string,
     private readonly opts: { getToken: () => string | null },
@@ -184,7 +194,7 @@ export class LabelsApi {
     });
     const wrote = method.toUpperCase() !== "GET";
     if (res.status === 204) {
-      if (wrote) noteWorkspaceWrite(url);
+      if (wrote) noteWorkspaceWrite(url, res);
       return undefined as T;
     }
     const parsed = await res.json().catch(() => null);
@@ -192,14 +202,16 @@ export class LabelsApi {
       const err = (parsed as { error?: { code?: string; message?: string } } | null)?.error;
       throw new Error(err?.message ?? `HTTP ${res.status}`);
     }
-    if (wrote) noteWorkspaceWrite(url);
+    if (wrote) noteWorkspaceWrite(url, res);
     return parsed as T;
   }
 
   listQueue = () => this.request<{ items: QueueItem[] }>("GET", "/queue");
 
   // Action labels (#3897): a printed QR whose page does one thing on Confirm.
-  listActionLabels = () => this.request<{ items: ActionLabel[] }>("GET", "/action-labels");
+  listActionLabels = () => walkPages((offset, limit) =>
+    this.request<{ items: ActionLabel[]; total: number | null; complete: boolean }>("GET", `/action-labels?offset=${offset}&limit=${limit}`),
+  );
   actionLabelPreview = (code: string) =>
     this.request<ActionLabelPreviewShape>("GET", `/action-labels/by-code/${code.split("/").map(encodeURIComponent).join("/")}`);
   createActionLabel = (b: { title: string; hint?: string | null; buttons: ActionLabelButton[] }) =>
@@ -332,12 +344,12 @@ export class LabelsApi {
     const res = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
     const wrote = method.toUpperCase() !== "GET";
     if (res.status === 204) {
-      if (wrote) noteWorkspaceWrite(url);
+      if (wrote) noteWorkspaceWrite(url, res);
       return undefined as T;
     }
     const parsed = await res.json().catch(() => null);
     if (!res.ok) throw new Error((parsed as { error?: { message?: string } } | null)?.error?.message ?? `HTTP ${res.status}`);
-    if (wrote) noteWorkspaceWrite(url);
+    if (wrote) noteWorkspaceWrite(url, res);
     return parsed as T;
   }
   /** driver + settings matter here: a "browser-bluetooth" printer cannot be
@@ -420,16 +432,29 @@ export class LabelsApi {
     description: string;
     qty?: number;
   }): Promise<void> => {
+    const scanUrl = await this.labelUrlForEntity(b);
+    const [moduleName, entityType] = b.entity_kind.split(":");
+    await this.addToQueue({
+      module_name: moduleName ?? "unknown",
+      entity_type: entityType ?? "entity",
+      entity_id: b.entity_id,
+      qr_payload: scanUrl,
+      description: b.description,
+      qty: b.qty,
+    });
+  };
+
+  labelUrlForEntity = async (b: { entity_kind: string; entity_id: string }): Promise<string> => {
     const q = `entity_kind=${encodeURIComponent(b.entity_kind)}&entity_id=${encodeURIComponent(b.entity_id)}`;
     let scanUrl: string | null = null;
     // Reuse an active token if one exists, to avoid littering the table on
     // repeated prints of the same thing.
     try {
-      const list = await this.requestAbs<{ items: Array<{ scan_url: string; revoked_at: string | null }> }>(
+      const list = await this.requestAbs<{ items: Array<{ scan_url: string; revoked_at: string | null; mode: string; auth: string; expires_at: string | null }> }>(
         "GET",
         `/api/v1/orgs/${this.slug}/modules/labels/qr/tokens?${q}`,
       );
-      scanUrl = list.items.find((t) => !t.revoked_at)?.scan_url ?? null;
+      scanUrl = list.items.find((t) => !t.revoked_at && t.mode === "navigate" && t.auth === "session" && !t.expires_at)?.scan_url ?? null;
     } catch {
       /* fall through to mint */
     }
@@ -441,15 +466,7 @@ export class LabelsApi {
       );
       scanUrl = m.scan_url;
     }
-    const [moduleName, entityType] = b.entity_kind.split(":");
-    await this.addToQueue({
-      module_name: moduleName ?? "unknown",
-      entity_type: entityType ?? "entity",
-      entity_id: b.entity_id,
-      qr_payload: scanUrl,
-      description: b.description,
-      qty: b.qty,
-    });
+    return scanUrl;
   };
 
   /** The workspace's custom label base URL (or null), read from the QR settings

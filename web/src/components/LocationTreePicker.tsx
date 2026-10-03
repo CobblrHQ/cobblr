@@ -14,6 +14,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Backpack, Check, ChevronDown, ChevronRight, MapPin, Plus, X } from "lucide-react";
 import { api, type Location, type PlaceHolder } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { withArticle } from "@cobblr/platform-contract/plural";
+
+/** A kind of place, in words a person reads: "a room or area", "a container". */
+function placeKindWords(kind: string | null | undefined): string {
+  if (kind === "area") return "a room or area";
+  return withArticle(kind || "place");
+}
 import { QuickCreateLocation } from "./QuickCreateLocation";
 import { OverlayLayer, PopoverLayer, SearchInput, useEscapeToClose, useToast } from "@cobblr/platform-web";
 
@@ -355,7 +362,11 @@ export function LocationTreePicker({
                   <button
                     type="button"
                     onClick={() => (pickable ? pick(l.id) : kids ? drill(l.id) : undefined)}
-                    className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left text-sm"
+                    // A place this field cannot take says so, never a tap that
+                    // does nothing (#4693).
+                    disabled={!pickable && !kids}
+                    title={!pickable ? `This takes ${placeKindWords(kind)}; ${nameOf(l)} is ${placeKindWords(l.kind)}.` : undefined}
+                    className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left text-sm disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {value === l.id && !inside && <Check size={13} className="shrink-0 text-accent" />}
                     <span className="truncate">
@@ -366,6 +377,7 @@ export function LocationTreePicker({
                       <span className="truncate text-xs text-faint">in {parentPath.map(nameOf).join(" › ")}</span>
                     )}
                     {!pickable && kids && <span className="shrink-0 text-[10px] text-faint">open ▸</span>}
+                    {!pickable && !kids && <span className="shrink-0 text-[10px] text-faint" data-testid="place-not-pickable">{placeKindWords(l.kind)}, not {placeKindWords(kind)}</span>}
                   </button>
                   {!q.trim() && kids && (
                     <button

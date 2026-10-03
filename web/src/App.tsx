@@ -1,3 +1,5 @@
+import { RecentlyDeletedPage } from "./pages/RecentlyDeletedPage";
+import { DeletedRecordUndo } from "./components/DeletedRecordUndo";
 // Top-level shell. AuthProvider hydrates from /me on mount; while
 // that's in flight we show nothing (a fast roundtrip avoids flash).
 // Once resolved we render the routed authed surface for an authed
@@ -7,6 +9,7 @@
 // imports its UI from "@cobblr/<name>/ui"; the host wires it under
 // /<module>/* and the module's own internal routes take over.
 
+import { photoSuggestionsWhenOn } from "./lib/photoSuggestionsWhenOn";
 import { OfflineScreen } from "./components/OfflineScreen";
 import { OPEN_RECORD_ROUTE } from "@cobblr/platform-contract/instance-detail";
 import { lazy, Suspense , useEffect, useState } from "react";
@@ -14,9 +17,11 @@ import { ScanFiledRefresh } from "./lib/scanFiled";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { CobbHead } from "./components/Cobb";
 import { KERNEL_PANELS, PlatformWebProvider, type FlowRegistry } from "@cobblr/platform-web";
+import { NewFromTemplateFlow } from "./flows/NewFromTemplateFlow";
 import { OrganizeFlow } from "./flows/OrganizeFlow";
 import { Boxes, FolderKanban } from "lucide-react";
 import { InstanceHubGate } from "./components/InstanceHubGate";
+import { RecordPhoto } from "./components/RecordPhoto";
 import { InventoryUI } from "@cobblr/inventory/ui";
 import { LabelsBasket, LabelsUI } from "@cobblr/labels/ui";
 import { useNavHasRow } from "./components/useNavModules";
@@ -47,6 +52,7 @@ import { SandboxEnded } from "./pages/SandboxEnded";
 import { CarryPage } from "./pages/CarryPage";
 import { pendingCarry, takeCarryGrant } from "./lib/carry-pending";
 import { pendingBring, takeBringFile } from "./lib/bring-pending";
+import { pendingShareInvite } from "./lib/share-invite-pending";
 import { BringPage } from "./pages/BringPage";
 import { EndingPreview } from "./pages/EndingPreview";
 import { useSandboxEnded } from "./lib/sandbox-session";
@@ -56,7 +62,7 @@ import { Dashboard } from "./pages/Dashboard";
 import { InviteAcceptPage } from "./pages/InviteAcceptPage";
 import { JoinPage } from "./pages/JoinPage";
 import { JoinMachinesPage } from "./pages/JoinMachinesPage";
-import { PublicSurfacePage } from "./pages/PublicSurfacePage";
+import { NamedPublicPage, PublicSurfacePage } from "./pages/PublicSurfacePage";
 import { ChangelogPage } from "./pages/ChangelogPage";
 import { QrResolvePage } from "./pages/QrResolvePage";
 import { ActionLabelPage } from "./pages/ActionLabelPage";
@@ -75,6 +81,7 @@ import { FilesPage } from "./pages/FilesPage";
 import { FileDetailPage } from "./pages/FileDetailPage";
 import { ViewsPage } from "./pages/ViewsPage";
 import { SavedViewPage } from "./pages/SavedViewPage";
+import { TidySuggestionsPage } from "./pages/TidySuggestionsPage";
 import { ConfigurationPage } from "./pages/ConfigurationPage";
 import { ConfigurationLayout } from "./components/ConfigurationLayout";
 import { AccountLayout } from "./components/AccountLayout";
@@ -133,6 +140,8 @@ const ApiRecipesPage = lazy(() => import("./pages/ApiRecipesPage").then((m) => (
 const QueuePage = lazy(() => import("./pages/QueuePage").then((m) => ({ default: m.QueuePage })));
 const LinksPage = lazy(() => import("./pages/LinksPage").then((m) => ({ default: m.LinksPage })));
 const SharingPage = lazy(() => import("./pages/SharingPage").then((m) => ({ default: m.SharingPage })));
+const SuggestionsPage = lazy(() => import("./pages/SuggestionsPage").then((m) => ({ default: m.SuggestionsPage })));
+const ViewAsPage = lazy(() => import("./pages/ViewAsPage").then((m) => ({ default: m.ViewAsPage })));
 const ShareJoinPage = lazy(() => import("./pages/ShareJoinPage").then((m) => ({ default: m.ShareJoinPage })));
 const LocationsPage = lazy(() => import("./pages/LocationsPage").then((m) => ({ default: m.LocationsPage })));
 const PlaceItemsPage = lazy(() => import("./pages/PlaceItemsPage").then((m) => ({ default: m.PlaceItemsPage })));
@@ -141,6 +150,7 @@ const OpenRecordPage = lazy(() => import("./pages/OpenRecordPage").then((m) => (
 const TemplatesPage = lazy(() => import("./pages/TemplatesPage").then((m) => ({ default: m.TemplatesPage })));
 const AssistantSettingsPage = lazy(() => import("./pages/AssistantSettingsPage").then((m) => ({ default: m.AssistantSettingsPage })));
 const ScanPage = lazy(() => import("./pages/ScanPage").then((m) => ({ default: m.ScanPage })));
+const ScanStationsPage = lazy(() => import("./pages/ScanStationsPage").then((m) => ({ default: m.ScanStationsPage })));
 const ScanCameraPage = lazy(() => import("./pages/ScanCameraPage").then((m) => ({ default: m.ScanCameraPage })));
 const ShareReceivePage = lazy(() => import("./pages/ShareReceivePage").then((m) => ({ default: m.ShareReceivePage })));
 const ScanLivePage = lazy(() => import("./pages/ScanLivePage").then((m) => ({ default: m.ScanLivePage })));
@@ -172,6 +182,7 @@ import { WorkspaceStateBar } from "./components/WorkspaceStateBar";
 import { WorkspaceDeletionBar } from "./components/WorkspaceDeletionBar";
 import { BlockedActionSheet } from "./components/BlockedActionSheet";
 import { ImpersonationBanner } from "./components/ImpersonationBanner";
+import { ShareViewBanner } from "./components/ShareViewBanner";
 import { AdminLayout } from "./components/AdminLayout";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ConnectivityBanner } from "./components/ConnectivityBanner";
@@ -196,6 +207,7 @@ import { hydrateNavPref } from "./lib/nav-mode";
 // docs/architecture/invokable-flows-and-lego-redesign.md.
 const WORKSPACE_FLOWS: FlowRegistry = {
   "core-scan:organize": OrganizeFlow,
+  "core-templates:create": NewFromTemplateFlow,
 };
 
 function RouteFallback() {
@@ -257,6 +269,7 @@ export function App() {
       <NavPrefSync />
         <ToastProvider>
           <ConfirmProvider>
+            <DeletedRecordUndo />
             <Shell />
           </ConfirmProvider>
         </ToastProvider>
@@ -301,6 +314,7 @@ function Shell() {
         {/* Portaled to body — overlays whichever shell renders (AppLayout /
             PortalLayout / AppPlayer) while an operator is impersonating. */}
         <ImpersonationBanner />
+        <ShareViewBanner />
         <WorkspaceRoutes urlHandle={ws[1]!} />
       </BrowserRouter>
     );
@@ -340,6 +354,7 @@ function PublicRoutes() {
     <Routes>
       <Route path="/invite/:token" element={<InviteAcceptPage />} />
       <Route path="/share/join" element={<ShareJoinPage />} />
+      <Route path="/view-as" element={<ViewAsPage />} />
       {/* /oauth/authorize — an AI assistant's connector (claude.ai, the phone
           apps) sends a person here to approve it; signed out, it asks them to
           sign in and comes back. */}
@@ -376,6 +391,8 @@ function PublicRoutes() {
       {/* /p/:token is the un-auth'd public surface render. Reachable
           signed-in or signed-out — the token is the secret. */}
       <Route path="/p/:token" element={<PublicSurfacePage />} />
+      {/* A public page's memorable address, when its owner gave it one. */}
+      <Route path="/p/:org/:address" element={<NamedPublicPage />} />
       {/* Public "What's new" feed — reachable signed-in or signed-out. */}
       <Route path="/changelog" element={<ChangelogPage />} />
       {/* /qr/:token — printed QR-label resolve (phone-camera scans land
@@ -479,7 +496,10 @@ function LandingRedirect() {
   // Signed in from a page that asked to come back ("/?next=/invite/…": an
   // invite's "Sign in to join", a machine share's "Log in"): back there,
   // not to the default workspace, or the invite is lost on the way.
-  const back = nextFromQuery(window.location.search);
+  // A share invite opened signed out comes back too, though the sign-up's
+  // email verification landed on "/" without its ?next= (#4737).
+  const held = pendingShareInvite();
+  const back = nextFromQuery(window.location.search) ?? (held ? `/share/join#${held}` : null);
   if (back) {
     window.location.replace(back);
     return <BootScrim />;
@@ -624,6 +644,7 @@ function ActiveOrgScopedRoutes() {
       role={role ?? null}
       appMode={!!appMode}
       flows={WORKSPACE_FLOWS}
+      recordPhoto={RecordPhoto}
       // The app owns what Cobb looks like; the package owns the button that
       // hands him a record.
       cobbIcon={CobbHead}
@@ -643,6 +664,9 @@ function ActiveOrgScopedRoutes() {
         lookupEntity: (slug, kind, id) => api.lookupEntity(slug, kind, id),
         listShareOffers: (slug) => api.listShareOffers(slug),
         withdrawShareOffer: (slug, id) => api.withdrawShareOffer(slug, id),
+        recordShares: (slug, kind, id) => api.recordShares(slug, kind, id),
+        listSuggestions: (slug, q) => api.listSuggestions(slug, q),
+        copyNotes: (slug, kind, id) => api.copyNotes(slug, kind, id),
         // Walk-up printing: platform-web needs the printer list to spot a
         // browser-driven default, and a way to call a module back once paper
         // exists. Both optional in the contract; wiring them turns it on.
@@ -667,6 +691,7 @@ function ActiveOrgScopedRoutes() {
         },
         // The resolved read: a record shows its fields as the workspace
         // arranged them (relabelled, hidden, filed under sections).
+        listBulkFieldOptions: api.listBulkFieldOptions,
         listFieldDefs: (slug, kind) => api.listFieldDefs(slug, kind, true),
         // Wires, through the same door as the Wires page: a module's offer to
         // make one ("add running-low items to a list") on a person's say-so.
@@ -677,7 +702,7 @@ function ActiveOrgScopedRoutes() {
         // Contributed panels: what ENABLED modules declare for other modules'
         // detail pages. platform-web renders them; this is the gate that keeps
         // a disabled module's panel off the page.
-        listPhotoSuggestions: (slug, kind, ids) => api.photoSuggestions(slug, kind, ids),
+        listPhotoSuggestions: (slug, kind, ids) => photoSuggestionsWhenOn(qc, slug, kind, ids),
         searchPhotoFor: (slug, kind, id) => api.searchPhotoFor(slug, kind, id),
         listContributedPanels: (slug) =>
           api
@@ -693,6 +718,10 @@ function ActiveOrgScopedRoutes() {
         // come to it, judged and filed the way the inbox card does.
         waitingScans: (slug, q, destination) => waitingScans(qc, role ?? null, slug, q, destination),
         fileWaitingScan: (slug, id) => fileWaitingScan(qc, role ?? null, slug, id),
+        raiseBlocked: (blocked) => raiseBlockedAction({ blocked, refused: null, subject: null }),
+        recordPublicPages: (slug, id) => api.recordPublicPages(slug, id),
+        receivedFrom: (slug, kind, id) => api.receivedFrom(slug, kind, id),
+        sendBackShareOffer: (slug, offerId) => api.sendBackShareOffer(slug, offerId),
       }}
     >
       <Suspense fallback={<RouteFallback />}>
@@ -823,6 +852,8 @@ function ActiveOrgScopedRoutes() {
           <Route element={<ConfigurationLayout />}>
             <Route path="/configuration" element={<ConfigurationPage />} />
             <Route path="/configuration/s/:section" element={<ConfigSectionPage />} />
+            <Route path="/configuration/recently-deleted" element={<RecentlyDeletedPage />} />
+            <Route path="/configuration/tidy" element={<TidySuggestionsPage />} />
             <Route path="/configuration/general" element={<GeneralSettingsPage />} />
             <Route path="/configuration/notification-audiences" element={<NotificationAudiencesPage />} />
             {/* Launcher PAGES (settings-cohesion): the dialogs, in-flow. */}
@@ -912,6 +943,7 @@ function ActiveOrgScopedRoutes() {
             <Route path="/configuration/queue" element={<QueuePage />} />
             <Route path="/configuration/links" element={<LinksPage />} />
             <Route path="/configuration/sharing" element={<SharingPage />} />
+            <Route path="/suggestions" element={<SuggestionsPage />} />
             {/* Settings FAMILY pages that live outside /configuration/* render
                 inside the same sidebar — a sidebar link must never drop the
                 sidebar. Files / Tags / Views used to be here too; they are
@@ -962,6 +994,9 @@ function ActiveOrgScopedRoutes() {
           <Route path="/locations/:id" element={<LocationDetailPage />} />
           <Route path={OPEN_RECORD_ROUTE} element={<OpenRecordPage />} />
           <Route path="/scan" element={<ScanPage />} />
+          <Route path="/scan/stations" element={<ScanStationsPage />} />
+          <Route path="/scan/stations/:id" element={<ScanStationsPage />} />
+          <Route path="/scan/stations/:id/sessions/:sessionId" element={<ScanStationsPage />} />
           <Route path="/scan/camera" element={<ScanCameraPage />} />
           {/* Where another app's share lands (the manifests' share_target). */}
           <Route path="/scan/share" element={<ShareReceivePage />} />

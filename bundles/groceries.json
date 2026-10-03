@@ -1,8 +1,13 @@
 {
   "manifest": {
     "id": "cobblr.flagship.groceries",
-    "version": "0.13.1",
+    "version": "0.13.5",
     "releases": [
+      {
+        "version": "0.13.5",
+        "released_at": "2026-10-03",
+        "notes": "A scanned bottle of water now goes to Groceries: the barcode catalog calls it water, and Groceries now knows the word."
+      },
       {
         "version": "0.13.1",
         "released_at": "2026-10-02",
@@ -152,6 +157,11 @@
       "lemonade",
       "cola",
       "soda",
+      "waters",
+      "bottled water",
+      "spring water",
+      "sparkling water",
+      "mineral water",
       "beverages",
       "drinks",
       "beer",

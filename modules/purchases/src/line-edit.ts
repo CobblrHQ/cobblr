@@ -1,3 +1,4 @@
+import { withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 // Correcting one line of an order: what it is, how many, the price. The order
 // page and Cobb's purchases:edit-line both come through here, so both answer
 // the same way.
@@ -15,10 +16,11 @@ export interface LineEdit {
   description?: string | null;
   qty?: number;
   unit_cost?: number | null;
+  currency?: string;
 }
 
 export type LineEditResult =
-  | { ok: true; line: Record<string, unknown>; before: Required<LineEdit> }
+  | { ok: true; line: Record<string, unknown>; before: Required<Omit<LineEdit, "currency">> }
   | { ok: false; code: "not_found" | "line_received"; message: string };
 
 export const LINE_RECEIVED_MESSAGE = "This line's stock was already added. Change the item's count instead, so its history says why.";
@@ -33,7 +35,7 @@ export async function editOrderLine(
   let q = db
     .selectFrom("purchases_order_items as i")
     .innerJoin("purchases_orders as o", "o.id", "i.order_id")
-    .select(["i.order_id", "i.qty", "i.description", "i.unit_cost", "i.received_at", "i.part_id", "o.add_to_stock"])
+    .select(["i.order_id", "i.qty", "i.description", "i.unit_cost", "i.received_at", "i.part_id", "o.add_to_stock", "i.metadata"])
     .where("i.id", "=", lineId);
   if (orderId) q = q.where("i.order_id", "=", orderId);
   const line = await q.executeTakeFirst();
@@ -45,7 +47,8 @@ export async function editOrderLine(
   if (edit.description !== undefined) set.description = edit.description;
   if (edit.qty !== undefined) set.qty = edit.qty;
   if (edit.unit_cost !== undefined) set.unit_cost = edit.unit_cost;
-  const updated = await db.updateTable("purchases_order_items").set(set as never).where("id", "=", lineId).returningAll().executeTakeFirstOrThrow();
+  if (edit.currency !== undefined) set.metadata = { currency: edit.currency };
+  const updated = await db.updateTable("purchases_order_items").set(withMetadataMerged(set) as never).where("id", "=", lineId).returningAll().executeTakeFirstOrThrow();
   await platform().activity.log({
     orgId: who.orgId,
     userId: who.userId,

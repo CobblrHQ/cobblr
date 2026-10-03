@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/core-scan",
-  "version": "0.26.29",
+  "version": "0.26.32",
   "private": true,
   "type": "module",
   "main": "dist/module.js",

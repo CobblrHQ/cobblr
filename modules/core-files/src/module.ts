@@ -19,7 +19,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-files",
-  version: "0.8.0",
+  version: "0.8.2",
   displayName: "Files",
   description:
     "Keep photos, manuals and other files with the things they belong to.",
@@ -145,6 +145,8 @@ export default defineModule({
 
   lifecycle: {
     onBoot: async () => {
+      const { registerDeletedFilesHeal } = await import("./heal-deleted-records.js");
+      registerDeletedFilesHeal();
       // One-shot heal: server-written copies of a file fold into the file
       // they repeat (see heal-same-bytes.ts for the retirement condition).
       const { registerSameBytesHeal } = await import("./heal-same-bytes.js");

@@ -28,7 +28,7 @@ const Body = z.object({
    *  the picker and the scan inbox derive it. Callers should omit rather than
    *  hand-build — a hand-built phrase is how "Auto" and "search the web" ended
    *  up finding different things for the same book. */
-  query: z.string().min(2).max(200).optional(),
+  query: z.string().min(2).max(200).optional(), // SEARCH-PARAM-OK: a POST body's web-image phrase, not a list's query string
   instance: z.string().max(80).nullable().optional(),
   /** A specific web-image url the user picked (skips auto-search). */
   image_url: z.string().url().max(2000).optional(),

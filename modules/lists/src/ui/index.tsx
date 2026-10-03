@@ -4,7 +4,7 @@
 // destructive deletes confirm via useConfirm. Matches house conventions.
 
 import { useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ContributedDetailPanels, CustomFieldsPanel, Modal, QueryError, useToast, useConfirm, usePageTitle, usePlatformWeb } from "@cobblr/platform-web";
 import { ListChecks, Plus, Trash2, X, RotateCcw, Hand, Minus, Pencil, ChevronDown } from "lucide-react";
@@ -73,6 +73,7 @@ export function ListsUI({ orgSlug, getToken }: Props) {
     <div className="space-y-4 max-w-4xl">
       <div className="flex items-baseline justify-between border-b border-line dark:border-slate-700 pb-3">
         <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">lists</h1>
+        <Link className="text-xs text-muted underline" to="/configuration/recently-deleted?kind=lists:list">Recently deleted</Link>
         <button
           type="button"
           onClick={() => setCreating(true)}

@@ -88,6 +88,22 @@ export function instanceOfGrants(): string {
   return (process.env.COBBLR_ENV || "").trim();
 }
 
+/** View as, through a share (share-spaces.md §14): the share space's own
+ *  person's identity, with an audience naming the grant row. requireAuth
+ *  holds a request carrying it to GETs in that one workspace and refuses it
+ *  once the row is ended or expired, so it is read-only and revocable. */
+export async function signShareView(userId: string, sessionId: string, expiresAt: Date): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  return new SignJWT({})
+    .setProtectedHeader({ alg: ALG })
+    .setIssuer(ISSUER)
+    .setSubject(userId)
+    .setAudience(`share-view:${sessionId}`)
+    .setIssuedAt(now)
+    .setExpirationTime(Math.floor(expiresAt.getTime() / 1000))
+    .sign(secretKey());
+}
+
 export async function signMcpReadGrant(userId: string, orgSlug: string): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   return new SignJWT({ ins: instanceOfGrants() })

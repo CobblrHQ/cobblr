@@ -1,3 +1,5 @@
+import { insuranceCsv, insurancePdf, readInsuranceList } from "./insurance-list.js";
+import { csvDownloadHeaders } from "@cobblr/platform-contract/csv";
 // Default-exported Router, mounted at
 //   /api/v1/orgs/:slug/modules/core-placement/
 // (requireAuth + withTenant pre-applied by the platform).
@@ -145,6 +147,31 @@ router.get(
   }),
 );
 
+async function mayReadCosts(req: Request, res: Response): Promise<boolean> {
+  const viewer = viewerOf(req);
+  if (!viewer) { res.status(401).json({ error: { code: "unauthorized", message: "Sign in to view costs." } }); return false; }
+  const who = { orgId: orgId(req), ...viewer, actionId: "inventory:view-costs" };
+  if (await platform().auth.userHasCapability(who)) return true;
+  const blocked = await platform().auth.describeBlockedCapability(who);
+  res.status(403).json({ error: { code: "missing_capability", message: blocked.sentence, blocked } });
+  return false;
+}
+
+router.get("/insurance-list.:format", wrap(async (req, res) => {
+  if (!await mayReadCosts(req, res)) return;
+  const within = Ref.safeParse({ kind: req.query.within_kind, id: req.query.within_id });
+  const format = z.enum(["csv", "pdf"]).safeParse(req.params.format);
+  if (!within.success || !format.success) {
+    res.status(400).json({ error: { code: "bad_query", message: "Choose a place and CSV or PDF." } });
+    return;
+  }
+  const got = await readInsuranceList(orgId(req), within.data, viewerOf(req)!);
+  const filename = `insurance-list.${format.data}`;
+  res.set(csvDownloadHeaders(filename));
+  if (format.data === "csv") res.send(insuranceCsv(got.rows));
+  else res.type("application/pdf").send(Buffer.from(await insurancePdf(orgId(req), got.title, got.worth, got.rows)));
+}));
+
 // GET /worth?within_kind=&within_id= — what everything is worth, each record
 // once: the workspace, or what is inside one place at any depth.
 router.get(
@@ -156,6 +183,7 @@ router.get(
       return;
     }
     const viewer = viewerOf(req);
+    if (within && !await mayReadCosts(req, res)) return;
     res.json(await platform().placement.worth({ orgId: orgId(req), within: within?.data ?? null, ...(viewer ? { viewer } : {}) }));
   }),
 );

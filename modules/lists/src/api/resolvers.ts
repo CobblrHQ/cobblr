@@ -1,6 +1,7 @@
 // Entity-kind resolvers — let other modules + core-views read lists
 // entities via platform().entities.lookup()/list() without knowing our tables.
 
+import { registerRowHistoryWriter } from "@cobblr/platform-contract";
 import { type Kysely } from "kysely";
 import { platform, textSearchWhere, type ResolvedEntity } from "@cobblr/platform-contract";
 import type { ListsDB } from "../db.js";
@@ -10,6 +11,8 @@ let registered = false;
 export function registerListResolvers(): void {
   if (registered) return;
   registered = true;
+  registerRowHistoryWriter("lists:list", "lists_lists");
+  registerRowHistoryWriter("lists:item", "lists_items");
 
   platform().entities.registerResolver("lists:list", async (orgId, id) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<ListsDB>;

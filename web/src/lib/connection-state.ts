@@ -17,6 +17,7 @@ export function verificationBadge(v: ConnectionVerification | null | undefined):
       return { text, tone: "ok", title };
     case "invalid":
       return { text, tone: "bad", title };
+    case "warning":
     case "unverifiable":
     case "unverified":
       return { text, tone: "warn", title };
@@ -31,6 +32,8 @@ export function verificationToast(v: ConnectionVerification | null | undefined, 
   switch (v?.state) {
     case "verified":
       return { kind: "success", message: `${lead} and verified${v.model ? ` (${v.model})` : ""}.` };
+    case "warning":
+      return { kind: "info", message: `${lead}. Works with limitations: ${v.message ?? "check the connection's settings."}` };
     case "invalid":
       return { kind: "error", message: v.message ?? `${lead}, but the provider rejected the key.` };
     case "unverifiable":
@@ -78,9 +81,9 @@ export function verificationLine(
   if (!v?.at) return null;
   const at = when(v.at);
   const took = typeof v.latency_ms !== "number" ? null : v.latency_ms < 1000 ? `${v.latency_ms} ms` : `${(v.latency_ms / 1000).toFixed(1)} s`;
-  if (v.state === "verified") {
+  if (v.state === "verified" || v.state === "warning") {
     const photos = v.photos === "read" ? "can read photos ✓" : v.photos === "not-read" ? "can read photos ✗" : null;
-    return { text: [`Tested ${at}`, v.model, took, photos].filter(Boolean).join(" · "), tone: v.photos === "not-read" ? "warn" : "ok" };
+    return { text: [`Tested ${at}`, v.model, took, photos, v.state === "warning" ? v.message : null].filter(Boolean).join(" · "), tone: v.state === "warning" || v.photos === "not-read" ? "warn" : "ok" };
   }
   const head = [`Tested ${at}`, took].filter(Boolean).join(" · ");
   return { text: v.message ? `${head}: ${v.message}` : head, tone: v.state === "invalid" ? "bad" : "warn" };

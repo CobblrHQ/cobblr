@@ -1,3 +1,4 @@
+import type { MoneyTotal } from "@cobblr/platform-contract/money";
 // Thin fetch wrapper. Reads the auth token from localStorage on every
 // call so the AuthProvider can update it without rewiring the client.
 // Everything goes through `request<T>` so error shape stays uniform.
@@ -36,14 +37,18 @@ import type {
 import { describeUnreadableBody, sendUpload, uploadErrorOf, UploadError } from "@cobblr/platform-web";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 import { walkPages } from "./list-pages";
+import { getShareViewToken, setShareViewToken } from "./share-view";
 
 const TOKEN_KEY = "cobblr.token";
 
 export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  return getShareViewToken() ?? localStorage.getItem(TOKEN_KEY);
 }
 
 export function setToken(token: string | null) {
+  // Signing out of a View as ends the view in this tab, never the account
+  // signed in on this browser.
+  if (!token && getShareViewToken()) return setShareViewToken(null);
   if (token) localStorage.setItem(TOKEN_KEY, token);
   else localStorage.removeItem(TOKEN_KEY);
 }
@@ -103,12 +108,55 @@ export interface ShareLinkItem {
   waiting: number;
   /** The friend's edits waiting for this workspace to decide. */
   edits_waiting?: number;
+  /** In a share space: when the person who shared it last looked through
+   *  it with View as. */
+  last_viewed?: { at: string; by: string | null } | null;
   edit_mode?: ShareEditMode;
   created_at: string;
 }
 
 /** Whether a friend's edits apply at once ("direct") or wait ("suggest"). */
 export type ShareEditMode = "suggest" | "direct";
+
+/** Something someone you share with added to the shared workspace. */
+/** A public page and its links. */
+export interface PublicPageItem {
+  id: string;
+  name: string;
+  layout: "gallery" | "table";
+  scope: ScopeDef;
+  visibility: VisibilityDef;
+  /** A signed-out scan of its records' labels opens their public view. */
+  label_door?: boolean;
+  /** Booth mode: private again on its own at this time. */
+  public_until?: string | null;
+  contact?: string | null;
+  footer?: boolean;
+  /** The fields a record shows, in order; null: all the visibility allows. */
+  show_fields?: string[] | null;
+  about?: string | null;
+  /** Addresses shown with every record ("Store"). */
+  out_links?: Array<{ label: string; url: string }>;
+  skin_html?: string | null;
+  /** Search engines may list it; off by default. */
+  indexable?: boolean;
+  /** Its own accent over the workspace brand. */
+  accent?: string | null;
+  /** Its memorable address (/p/<workspace>/<address>); null: none. */
+  address?: string | null;
+  label_scans_today?: number;
+  label_scans_week?: number;
+  links: Array<{ id: string; label: string; url: string; named?: boolean; visibility: VisibilityDef; own_visibility: boolean; expires_at: string | null; enabled: boolean; visits: number; created_at: string }>;
+}
+
+export interface ShareAdditionItem {
+  id: string;
+  entity_kind: string;
+  title: string;
+  by_name: string | null;
+  status: "pending" | "taken" | "left";
+  created_at: string;
+}
 
 export interface ShareEditItem {
   id: string;
@@ -121,6 +169,9 @@ export interface ShareEditItem {
   now: string | null;
   /** On a conflict: what the record says here now. */
   yours: string | null;
+  /** False once the record left the share; the edit still waits. */
+  still_shared: boolean;
+  link_id: string;
   status: "pending" | "conflict" | "applied" | "undone" | "accepted" | "rejected";
   by_name: string | null;
   created_at: string;
@@ -273,6 +324,37 @@ function noteAiAvailabilityWrite(path: string): void {
   if (AI_AVAILABILITY_WRITE.test(path)) aiListeners.forEach((l) => l());
 }
 
+/** Ids, in order, as many as keep a query string well under what a proxy
+ *  accepts (8 KB): what an older api's GET door can be asked. */
+export function idsThatFitAUrl(ids: readonly string[], budget = 6_000): string[] {
+  const out: string[] = [];
+  let used = 0;
+  for (const id of ids) {
+    const cost = encodeURIComponent(id).length + 3;
+    if (used + cost > budget) break;
+    out.push(id);
+    used += cost;
+  }
+  return out;
+}
+
+/** A lookup whose ids ride in a body (#4653), asked of an api that may still
+ *  be the one before it. The web and the api roll out separately, so for a
+ *  while the new page can meet the old api, which has only the GET door and
+ *  answers the POST 404 (#4673: every machines, assets and project page on a
+ *  staging walk mid-deploy). A 404 asks the older door instead, with as many
+ *  ids as fit in its URL. */
+async function lookupInBody<T>(postPath: string, body: unknown, olderGet: () => string): Promise<T> {
+  try {
+    return await request<T>("POST", postPath, body);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return request<T>("GET", olderGet());
+    throw err;
+  }
+}
+
+export { subscribeDeletedRecord } from "@cobblr/platform-web";
+
 async function request<T>(
   method: string,
   path: string,
@@ -321,7 +403,7 @@ async function request<T>(
   }
   noteWorkspaceShape(path, res.headers.get("x-cobblr-workspace-shape"));
   if (res.ok && isMutating(method)) {
-    noteWorkspaceWrite(path);
+    noteWorkspaceWrite(path, res);
     noteAiAvailabilityWrite(path);
   }
 
@@ -370,7 +452,12 @@ async function request<T>(
     // yes can finish it. The surface's own toast still shows the sentence.
     // Any refusal that carries one, not only a 403: an app that is off
     // answers 409 with the ask attached (#3610).
-    if (res.status >= 400 && res.status < 500 && err?.blocked && isMutating(method)) {
+    // A View as refuses every write, the page's own background ones too (a
+    // lookup, a draft saved). Its refusal is raised by the mutation a person
+    // started (main.tsx, the mutation cache), never here, or the sheet would
+    // open on every page (#4687).
+    const viewRefusal = err?.code === "share_view_read_only";
+    if (res.status >= 400 && res.status < 500 && err?.blocked && isMutating(method) && !viewRefusal) {
       raiseBlockedAction({ blocked: err.blocked, refused: refusedRequestFor(method, path, sent), subject: null });
     }
     // A route that answers `{ok:false,message}` is still TELLING us why. Reading
@@ -622,6 +709,8 @@ export interface AnnounceSetting {
 export interface MeResponse {
   user: SessionUser;
   orgs: OrgMembership[];
+  /** Set while this tab is a View as through a share: who is looking, until when. */
+  share_view?: { viewer_name: string | null; expires_at: string; slug: string } | null;
 }
 
 export interface Healthz {
@@ -699,7 +788,9 @@ export interface VendorSummary extends Vendor {
 }
 
 export interface VendorDetail extends Vendor {
-  orders: Array<Pick<Order, "id" | "order_number" | "status" | "ordered_at" | "expected_arrival" | "arrived_at" | "total_cost" | "total">>;
+  currency?: string;
+  money_total?: MoneyTotal;
+  orders: Array<Pick<Order, "currency" | "money_total" | "id" | "order_number" | "status" | "ordered_at" | "expected_arrival" | "arrived_at" | "total_cost" | "total">>;
   order_count: number;
   total_spend: number;
 }
@@ -715,6 +806,9 @@ export interface EdgeDriverDeclaration {
 }
 
 export interface Order {
+  computed_total?: number;
+  currency?: string;
+  money_total?: MoneyTotal;
   id: string;
   vendor: string | null;
   vendor_id: string | null;
@@ -800,6 +894,8 @@ export type ShipmentStatusReason =
   | "busy";
 
 export interface OrderSummary {
+  currency?: string;
+  money_total?: MoneyTotal;
   count: number;
   open: number;
   in_transit: number;
@@ -857,6 +953,8 @@ export type PaperworkResult =
   | { read: false; reason: string };
 
 export interface OrderItem {
+  currency?: string;
+  money_total?: MoneyTotal;
   id: string;
   order_id: string;
   part_id: string | null;
@@ -918,6 +1016,8 @@ export interface RecordItem {
 /** One purchase of one part — a line item flattened with its order's date and
  *  vendor. Mirrors purchases' PricePoint. */
 export interface PurchasePricePoint {
+  currency?: string;
+  original_unit_cost?: number | null;
   id: string;
   order_id: string;
   order_number: string | null;
@@ -945,6 +1045,8 @@ export interface PurchasePriceStats {
 }
 
 export interface PurchasePriceHistory {
+  currency?: string;
+  money_total?: MoneyTotal;
   part_id: string | null;
   items: PurchasePricePoint[];
   stats: PurchasePriceStats;
@@ -961,9 +1063,12 @@ export interface ContributedPanel {
 
 export interface OrgModuleListItem {
   name: string;
+  aliases?: string[];
+  retirement?: { reason: string; replacement?: string } | null;
   version: string;
   displayName: string;
   description: string;
+  integration?: { route: string } | null;
   icon: string | null;
   /** Module layer: `stock` = Cobblr's shipped first-party domains, `core-*`
    *  plumbing is `foundational`, marketplace installs / user samples differ.
@@ -1130,6 +1235,8 @@ export interface OutboundEmailLogRow {
 /** One library item (a document, a game) as the record's library panel shows it. */
 export interface DocumentRow {
   connection_id: string;
+  /** Linked rows say whether their connection still exists for this person. */
+  connected?: boolean;
   ref: string;
   /** What it is ("document", "game") and its kind's heading ("Games"). */
   type: string;
@@ -1144,6 +1251,9 @@ export interface DocumentRow {
   /** Linked: the system it is in. */
   system?: string;
   written_back?: boolean;
+  /** A library copy that finished and is attached to this record. */
+  copied_at?: string | null;
+  copied_filename?: string | null;
   /** Suggested: what made it a match ("serial", "model", "name"). */
   because?: string | null;
   score?: number;
@@ -1176,6 +1286,8 @@ const documentsPath = (slug: string, kind: string, id: string) =>
   `/orgs/${slug}/modules/core-documents/records/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`;
 
 export const api = {
+  workspaceCurrency: (slug: string) => request<{ currency: string }>("GET", `/orgs/${slug}/currency`),
+  setWorkspaceCurrency: (slug: string, currency: string) => request<{ currency: string }>("PUT", `/orgs/${slug}/currency`, { currency }),
   /** A one-shot URL for an iframe document that must run inline script (a
    *  custom app block, an installed renderer). The browser then applies the
    *  RESPONSE's policy instead of this page's, which is what lets script-src
@@ -1227,6 +1339,8 @@ export const api = {
     display_name: string;
     org_name?: string;
     invite_token?: string;
+    /** A share invite the person is signing up to accept (#4737). */
+    share_invite?: string;
     /** Managed-app signup: provision the first workspace as this app. */
     app?: string;
     manifest?: unknown;
@@ -1569,12 +1683,18 @@ export const api = {
     request<{ chosen_url: string | null; reason: string }>("POST", `/orgs/${slug}/modules/core-scan/entity-image/rank-ai`, body),
   /** Pictures the platform suggested for records made without one (#3818):
    *  the ones waiting for an answer, still being looked for, or not found. */
-  photoSuggestions: (slug: string, kind: string | null, ids?: string[]) => {
-    const p = new URLSearchParams();
-    if (kind) p.set("kind", kind);
-    if (ids?.length) p.set("ids", ids.join(","));
-    return request<{ items: PhotoSuggestion[] }>("GET", `/orgs/${slug}/modules/core-scan/photo-suggestions?${p.toString()}`);
-  },
+  photoSuggestions: (slug: string, kind: string | null, ids?: string[]) =>
+    lookupInBody<{ items: PhotoSuggestion[] }>(
+      `/orgs/${slug}/modules/core-scan/photo-suggestions/lookup`,
+      { ...(kind ? { kind } : {}), ...(ids?.length ? { ids } : {}) },
+      () => {
+        const p = new URLSearchParams();
+        if (kind) p.set("kind", kind);
+        // id-list-in-url: the older api's door only, trimmed to fit by idsThatFitAUrl.
+        if (ids?.length) p.set("ids", idsThatFitAUrl(ids).join(","));
+        return `/orgs/${slug}/modules/core-scan/photo-suggestions?${p.toString()}`;
+      },
+    ),
   usePhotoSuggestion: (slug: string, kind: string, id: string) =>
     request<{ ok: true; image_path: string }>("POST", `/orgs/${slug}/modules/core-scan/photo-suggestions/${encodeURIComponent(kind)}/${encodeURIComponent(id)}/use`),
   searchPhotoFor: (slug: string, kind: string, id: string) =>
@@ -1672,7 +1792,7 @@ export const api = {
     request<OrderItem>("POST", `/orgs/${slug}/modules/purchases/orders/${orderId}/items`, body),
   /** Correct a line: what it is, how many, the price. A line whose stock was
    *  already added refuses a new count (409 line_received). */
-  updateOrderItem: (slug: string, orderId: string, itemId: string, body: { description?: string | null; qty?: number; unit_cost?: number | null }) =>
+  updateOrderItem: (slug: string, orderId: string, itemId: string, body: { description?: string | null; qty?: number; unit_cost?: number | null; currency?: string }) =>
     request<OrderItem>("PATCH", `/orgs/${slug}/modules/purchases/orders/${orderId}/items/${itemId}`, body),
   /** Make one line of a purchase (a bill of sale's add-on) an inbox item, in
    *  its receipt's session; filing it claims the line. Once per line. */
@@ -1730,16 +1850,18 @@ export const api = {
   listAssets: async (slug: string, instance?: string, opts: { archived?: boolean } = {}) => {
     let archived_count = 0;
     let paid_total_cents = 0;
+    let money_total: MoneyTotal | undefined;
     const walked = await walkPages<Asset>(async (offset, limit) => {
-      const page = await request<{ items: Asset[]; total?: number | null; complete?: boolean; archived_count?: number; paid_total_cents?: number }>(
+      const page = await request<{ items: Asset[]; total?: number | null; complete?: boolean; archived_count?: number; paid_total_cents?: number; money_total?: MoneyTotal }>(
         "GET",
         `${primaryBase(slug, "assets/assets", instance)}?${opts.archived ? "archived=1&" : ""}offset=${offset}&limit=${limit}`,
       );
       archived_count = page.archived_count ?? archived_count;
       paid_total_cents = page.paid_total_cents ?? paid_total_cents;
+      money_total = page.money_total || money_total;
       return page;
     });
-    return { ...walked, archived_count, paid_total_cents };
+    return { ...walked, archived_count, paid_total_cents, money_total };
   },
   getAsset: (slug: string, id: string, instance?: string) =>
     request<Asset>("GET", `${primaryBase(slug, "assets/assets", instance)}/${id}`),
@@ -2074,6 +2196,8 @@ export const api = {
   modules: () => request<{ items: ModuleListItem[] }>("GET", "/modules"),
 
   // Pillar A — entities + kinds
+  listBulkFieldOptions: (slug: string, kinds: string[]) => request<{ items: import("@cobblr/platform-web").BulkFieldOption[] }>("GET", `/orgs/${slug}/bulk-field-options?kinds=${encodeURIComponent(kinds.join(","))}`),
+
   listEntityKinds: (slug: string) =>
     request<{ items: PlatformEntityKind[] }>("GET", `/orgs/${slug}/entity-kinds`),
   lookupEntity: (slug: string, kind: string, id: string) =>
@@ -2114,9 +2238,11 @@ export const api = {
       "GET",
       `/orgs/${slug}/modules/core-placement/word?kind=${encodeURIComponent(kind)}`,
     ),
+  insuranceList: (slug: string, within: { kind: string; id: string }, format: "csv" | "pdf") =>
+    fetchCsv(`/orgs/${slug}/modules/core-placement/insurance-list.${format}?within_kind=${encodeURIComponent(within.kind)}&within_id=${encodeURIComponent(within.id)}`),
   /** What everything is worth, each thing once: the workspace, or one place. */
   placementWorth: (slug: string, within?: { kind: string; id: string } | null) =>
-    request<{ total: number; records: number; withheld: boolean }>(
+    request<{ total: number; records: number; unpriced: number; withheld: boolean; currency?: string; excluded?: Record<string, number>; conversions?: MoneyTotal["conversions"] }>(
       "GET",
       `/orgs/${slug}/modules/core-placement/worth${within ? `?within_kind=${encodeURIComponent(within.kind)}&within_id=${encodeURIComponent(within.id)}` : ""}`,
     ),
@@ -2179,6 +2305,10 @@ export const api = {
       "GET",
       `/orgs/${slug}/calendar/events?from=${from}&to=${to}`,
     ),
+  getWarrantyReminders: (slug: string) =>
+    request<{ enabled: boolean }>("GET", `/orgs/${slug}/calendar/reminders`),
+  setWarrantyReminders: (slug: string, enabled: boolean) =>
+    request<{ enabled: boolean }>("PUT", `/orgs/${slug}/calendar/reminders`, { enabled }),
   getCalendarFeed: (slug: string) =>
     request<CalendarFeed>("GET", `/orgs/${slug}/calendar/feed`),
   setCalendarFeed: (slug: string, enabled: boolean) =>
@@ -2198,6 +2328,9 @@ export const api = {
       "GET",
       `/orgs/${slug}/actions?kind=${encodeURIComponent(kind)}`,
     ),
+  tidySuggestions: (slug: string) => request<{ available: boolean; enabled: boolean; items: Array<{ id: string; candidate: import("@cobblr/platform-contract").TidyCandidate }> }>("GET", `/orgs/${slug}/tidy-suggestions`),
+  setTidySuggestions: (slug: string, enabled: boolean) => request<{ enabled: boolean }>("PATCH", `/orgs/${slug}/tidy-suggestions`, { enabled }),
+  decideTidySuggestion: (slug: string, id: string, decision: "later" | "never" | "done") => request<{ ok: boolean }>("POST", `/orgs/${slug}/tidy-suggestions/${id}/decision`, { decision }),
   invokeAction: (
     slug: string,
     { label, ...body }: {
@@ -2440,7 +2573,7 @@ export const api = {
     /** The word picked for each table that offers them, by instance name. */
     nounChoices?: Record<string, string>,
   ) =>
-    request<{ bundle: PlatformBundle; applied: { wires: number; field_defs: number }; installed?: BundleInstallSummary }>(
+    request<{ bundle: PlatformBundle; applied: { wires: number; field_defs: number; instances_created?: string[]; auto_enabled_modules?: string[] }; installed?: BundleInstallSummary }>(
       "POST",
       `/orgs/${slug}/bundles/install`,
       {
@@ -2610,6 +2743,8 @@ export const api = {
     }>("GET", `/orgs/${slug}/bundles/${id}`),
   exportBundle: (slug: string) =>
     request<{ manifest: PlatformBundleManifest }>("GET", `/orgs/${slug}/bundles/export`),
+  restoreHistoryVersion: (slug: string, entryId: number, body: { kind: string; entity_id: string; expected_latest_id: number }) =>
+    request<{ ok: true }>("POST", `/orgs/${slug}/activity/${entryId}/restore`, body),
   listActivity: (
     slug: string,
     opts: {
@@ -3798,12 +3933,18 @@ export const api = {
    *  share space, where the one link is to whoever shared it. */
   listShareLinks: (slug: string) => request<{ items: ShareLinkItem[]; kind: "workspace" | "share" }>("GET", `/orgs/${slug}/share-links`),
   createShareLink: (slug: string, label: string) =>
-    request<{ id: string; invite_url: string; expires_at: string }>("POST", `/orgs/${slug}/share-links`, { label }),
+    request<{ id: string; invite_url: string; expires_at: string; links?: Array<{ label: string; origin: string; url: string; note: string | null }> }>("POST", `/orgs/${slug}/share-links`, { label }),
   syncShareLink: (slug: string, id: string) => request<{ sent: number; error: string | null; waiting: number }>("POST", `/orgs/${slug}/share-links/${id}/sync`, {}),
   revokeShareLink: (slug: string, id: string) => request<{ ok: true }>("POST", `/orgs/${slug}/share-links/${id}/revoke`, {}),
   /** What has been handed over through this workspace's shares, and who it
    *  can hand things to from here. */
   listShareOffers: (slug: string) => request<{ items: ShareOfferItem[]; targets: Array<{ link_id: string; to: string }> }>("GET", `/orgs/${slug}/share-offers`),
+  /** The shares of this workspace's own things, and which hold this record. */
+  recordShares: (slug: string, kind?: string, id?: string) =>
+    request<{ targets: Array<{ link_id: string; to: string }>; shared_with: Array<{ link_id: string; to: string }> }>(
+      "GET",
+      kind && id ? `/orgs/${slug}/record-shares?kind=${encodeURIComponent(kind)}&id=${encodeURIComponent(id)}` : `/orgs/${slug}/record-shares`,
+    ),
   withdrawShareOffer: (slug: string, id: string) => request<{ ok: true }>("POST", `/orgs/${slug}/share-offers/${id}/withdraw`, {}),
   sendBackShareOffer: (slug: string, id: string) => request<{ ok: true }>("POST", `/orgs/${slug}/share-offers/${id}/send-back`, {}),
   /** Answer a thing offered into the scan inbox. In a shared workspace,
@@ -3814,12 +3955,70 @@ export const api = {
   offerScansToSharer: (slug: string, ids: string[]) => request<{ ok: true; offered: number }>("POST", `/orgs/${slug}/modules/core-scan/inbox/offer-to-sharer`, { ids }),
   /** How many records a scope selects, and the first few: the scope editor's
    *  live count. Shares and public pages read the same scope. */
-  previewScope: (slug: string, scope: ScopeDef) =>
-    request<{ count: number; complete: boolean; sample: Array<{ entity_kind: string; id: string; title: string }> }>("POST", `/orgs/${slug}/scope-preview`, { scope }),
+  previewScope: (slug: string, scope: ScopeDef, linkId?: string) =>
+    request<{ count: number; complete: boolean; sample: Array<{ entity_kind: string; id: string; title: string }> }>("POST", `/orgs/${slug}/scope-preview`, { scope, ...(linkId ? { link_id: linkId } : {}) }),
   getShareWhat: (slug: string, id: string) =>
-    request<{ scope: ScopeDef; visibility: VisibilityDef; edit_mode: ShareEditMode; gated_fields: Array<{ name: string; label: string }> }>("GET", `/orgs/${slug}/share-links/${id}/what`),
+    request<{ scope: ScopeDef; visibility: VisibilityDef; edit_mode: ShareEditMode; person: { id: string; name: string } | null; gated_fields: Array<{ name: string; label: string }> }>("GET", `/orgs/${slug}/share-links/${id}/what`),
   putShareWhat: (slug: string, id: string, body: { scope: ScopeDef; visibility: VisibilityDef; edit_mode: ShareEditMode }) =>
     request<{ scope: ScopeDef; visibility: VisibilityDef; edit_mode: ShareEditMode; preview: { count: number } }>("PUT", `/orgs/${slug}/share-links/${id}/what`, body),
+  /** Edits suggested through shares, waiting for a decision: the whole
+   *  workspace's, or one record's (all: decided ones too). */
+  listSuggestions: (slug: string, q: { kind?: string; id?: string; all?: boolean } = {}) => {
+    const p = new URLSearchParams();
+    if (q.kind && q.id) {
+      p.set("kind", q.kind);
+      p.set("id", q.id);
+    }
+    if (q.all) p.set("all", "1");
+    const qs = p.toString();
+    return request<{ items: ShareEditItem[]; additions: ShareAdditionItem[] }>("GET", `/orgs/${slug}/suggestions${qs ? `?${qs}` : ""}`);
+  },
+  /** On a copy in a share space: what the owner changed since you edited it. */
+  copyNotes: (slug: string, kind: string, id: string) =>
+    request<{ from: string | null; notes: Array<{ field: string; label: string; theirs: string | null }> }>("GET", `/orgs/${slug}/copy-notes?kind=${encodeURIComponent(kind)}&id=${encodeURIComponent(id)}`),
+  /** The fields gated to a permission, for a scope editor's restricted list. */
+  scopeFields: (slug: string) => request<{ gated_fields: Array<{ name: string; label: string }> }>("GET", `/orgs/${slug}/scope-fields`),
+  /** Public pages: a scope and a visibility, seen through any number of links. */
+  listPublicPages: (slug: string) => request<{ items: PublicPageItem[] }>("GET", `/orgs/${slug}/modules/core-public-surfaces/pages`),
+  createPublicPage: (slug: string, body: { name: string }) => request<{ id: string; name: string }>("POST", `/orgs/${slug}/modules/core-public-surfaces/pages`, body),
+  updatePublicPage: (
+    slug: string,
+    id: string,
+    body: {
+      name?: string;
+      scope?: ScopeDef;
+      visibility?: VisibilityDef;
+      layout?: "gallery" | "table";
+      label_door?: boolean;
+      public_until?: string | null;
+      contact?: string | null;
+      footer?: boolean;
+      show_fields?: string[] | null;
+      about?: string | null;
+      links?: Array<{ label: string; url: string }>;
+      skin_html?: string | null;
+      indexable?: boolean;
+      accent?: string | null;
+      address?: string | null;
+    },
+  ) =>
+    request<{ id: string }>("PATCH", `/orgs/${slug}/modules/core-public-surfaces/pages/${id}`, body),
+  /** The fields a public page's records can show, to choose from. */
+  receivedFrom: (slug: string, kind: string, id: string) =>
+    request<{ received: { offer_id: string; from: string | null; until: string } | null }>("GET", `/orgs/${slug}/received-from?kind=${encodeURIComponent(kind)}&id=${encodeURIComponent(id)}`),
+  recordPublicPages: (slug: string, id: string) =>
+    request<{ pages: Array<{ name: string; public_until: string | null; label_door: boolean; links: number }> }>("GET", `/orgs/${slug}/public-status/${encodeURIComponent(id)}`),
+  publicPageFields: (slug: string, id: string) => request<{ fields: Array<{ name: string; label: string }> }>("GET", `/orgs/${slug}/public-page-fields/${id}`),
+  deletePublicPage: (slug: string, id: string) => request<void>("DELETE", `/orgs/${slug}/modules/core-public-surfaces/pages/${id}`),
+  createPublicLink: (slug: string, pageId: string, body: { label: string; visibility?: VisibilityDef; expires_at?: string | null }) =>
+    request<{ id: string; url: string }>("POST", `/orgs/${slug}/modules/core-public-surfaces/pages/${pageId}/links`, body),
+  revokePublicLink: (slug: string, id: string) => request<void>("DELETE", `/orgs/${slug}/modules/core-public-surfaces/surfaces/${id}`),
+  regeneratePublicLink: (slug: string, id: string) => request<{ token: string }>("POST", `/orgs/${slug}/modules/core-public-surfaces/surfaces/${id}/regenerate`, {}),
+  /** A read-only view of the share space as the other person sees it: where
+   *  to open it (a new tab). */
+  viewShareAs: (slug: string, id: string) => request<{ url: string; expires_at: string }>("POST", `/orgs/${slug}/share-links/${id}/view-as`, {}),
+  endShareView: () => request<{ ok: true }>("POST", "/share-view/end", {}),
+  renewShareView: () => request<{ token: string; expires_at: string }>("POST", "/share-view/renew", {}),
   /** The friend's edits on a share: waiting first, then applied. */
   listShareEdits: (slug: string, id: string) => request<{ items: ShareEditItem[] }>("GET", `/orgs/${slug}/share-links/${id}/edits`),
   decideShareEdit: (slug: string, id: string, editId: string, decision: "accept" | "reject" | "undo") =>
@@ -5069,9 +5268,11 @@ export const api = {
   /** Asked about exactly `itemIds` (the rows the group shows); the answer
    *  names the set it was about, and every id it would change is in it. */
   scanSessionTheme: (slug: string, batchId: string, itemIds: readonly string[]) =>
-    request<ScanSessionThemeAnswer>(
-      "GET",
-      `/orgs/${slug}/modules/core-scan/inbox/session-theme?batch_id=${encodeURIComponent(batchId)}&ids=${encodeURIComponent(itemIds.join(","))}`,
+    lookupInBody<ScanSessionThemeAnswer>(
+      `/orgs/${slug}/modules/core-scan/inbox/session-theme`,
+      { batch_id: batchId, ids: [...itemIds] },
+      // id-list-in-url: the older api's door only, trimmed to fit by idsThatFitAUrl.
+      () => `/orgs/${slug}/modules/core-scan/inbox/session-theme?batch_id=${encodeURIComponent(batchId)}&ids=${encodeURIComponent(idsThatFitAUrl(itemIds).join(","))}`,
     ),
   /** Every pending scan, grouped by where it could go (the dashboard queue). */
   scanScannerQueue: (slug: string) => request<ScannerQueueSummary>("GET", `/orgs/${slug}/modules/core-scan/inbox/scanner-queue`),
@@ -5309,7 +5510,7 @@ export const api = {
   // Answer a question that is still being typed, from the workspace, with no
   // model involved. Null when it is not a question this can answer.
   peekAnswer: (slug: string, message: string, aiOn: boolean) =>
-    request<{ answer: string | null; detail?: string; from?: "guide"; mentions?: Array<{ kind: string; id: string; label: string }> }>(
+    request<{ answer: string | null; detail?: string; from?: "guide"; mentions?: Array<{ kind: string; id: string; label: string; href?: string; open_label?: string }> }>(
       "POST",
       `/orgs/${slug}/modules/core-ai/basics/peek`,
       { message, ai_on: aiOn },
@@ -5541,7 +5742,12 @@ export const api = {
   /** The offers named, as the server keeps them: the plan, and what became of
    *  it. A reloaded panel redraws its cards from these. */
   aiChatOffers: (slug: string, ids: string[]) =>
-    request<{ items: AiChatOfferState[] }>("GET", `/orgs/${slug}/modules/core-ai/chat/offers?ids=${encodeURIComponent(ids.join(","))}`),
+    lookupInBody<{ items: AiChatOfferState[] }>(
+      `/orgs/${slug}/modules/core-ai/chat/offers/lookup`,
+      { ids },
+      // id-list-in-url: the older api's door only, trimmed to fit by idsThatFitAUrl.
+      () => `/orgs/${slug}/modules/core-ai/chat/offers?ids=${encodeURIComponent(idsThatFitAUrl(ids).join(","))}`,
+    ),
   aiChatCancelOffer: (slug: string, id: string) =>
     request<{ ok: boolean; offer: AiChatOfferState | null }>("POST", `/orgs/${slug}/modules/core-ai/chat/offers/${encodeURIComponent(id)}/cancel`),
   /** This person's conversation, kept server-side so another tab or device
@@ -5700,11 +5906,12 @@ export const api = {
     slug: string,
     id: string,
     overrides?: Record<string, unknown>,
+    destination?: { instance?: string; scan_item_id?: string },
   ) =>
     request<T>(
       "POST",
       `/orgs/${slug}/modules/core-templates/templates/${id}/instantiate`,
-      { overrides },
+      { overrides, ...destination },
     ),
   importCatalogCsv: (
     slug: string,
@@ -5757,6 +5964,7 @@ export const api = {
   ) => {
     const qs = new URLSearchParams({ q: params.q });
     if (params.limit) qs.set("limit", String(params.limit));
+    // id-list-in-url: the workspace's installed catalogs, a handful at most, never its records.
     if (params.catalog_ids?.length) qs.set("catalog_ids", params.catalog_ids.join(","));
     return request<{ items: CatalogSearchHit[] }>(
       "GET",
@@ -6456,7 +6664,7 @@ export interface AiProvider {
 export interface AiProviderDef {
   id: string;
   label: string;
-  credentials: Record<string, { label: string; secret: boolean; choices?: Array<{ value: string; label: string }> }>;
+  credentials: Record<string, { label: string; secret: boolean; format?: "uri"; choices?: Array<{ value: string; label: string }> }>;
   capabilities: Record<string, { models: string[]; defaultModel?: string }>;
   /** What each model is called and costs, for any picker a person reads:
    *  "Gemini Flash Lite - 500 free a day" rather than an id. */
@@ -6467,6 +6675,8 @@ export interface AiProviderDef {
   kind?: string;
   /** One line under the picker, for a kind whose purpose isn't self-evident. */
   blurb?: string;
+  /** What removing the connection stops and what remains in Cobblr. */
+  disconnect?: { stops: string; keeps: string };
   /** How a person GETS these credentials: numbered steps with links, shown above the
    *  fields. Mirrors AiProviderSetup in the platform contract; the server serialises it
    *  onto the catalogue. Absent for a provider that needs no credentials. */
@@ -6931,6 +7141,8 @@ export interface PlaceMove {
 }
 
 export interface Location {
+  /** Direct placements, supplied by the workspace locations list. */
+  contents_count?: number;
   id: string;
   name: string;
   short_name: string | null;
@@ -7868,7 +8080,9 @@ export interface DiscussionComment {
   id: string;
   /** A reference to another comment, not a tree edge. Ships unrendered. */
   in_reply_to: string | null;
-  author_kind: "user" | "assistant";
+  /** `guest`: someone outside the workspace, through a share; named by `author_name`. */
+  author_kind: "user" | "assistant" | "guest";
+  author_name?: string | null;
   /** An opaque id: these rows live in the tenant DB and users live in
    *  cobblr_meta, so names are resolved against the member list, never stored. */
   author_user_id: string | null;
@@ -8041,7 +8255,7 @@ export interface AiChatResponse {
   /** The records this turn READ whose name the words carry, so a read answer
    *  opens what it names the way a write's card does. Decided server-side
    *  from what the tools returned; never a name the turn did not read. */
-  mentions?: Array<{ kind: string; id: string; label: string }>;
+  mentions?: Array<{ kind: string; id: string; label: string; href?: string; open_label?: string }>;
   /** A write aimed at one of several look-alikes the person's words did not
    *  pick between (two CubePros, one label): the candidates, each with the
    *  sentence that re-asks with that record named. A tap sends it. `note` is
@@ -8851,6 +9065,7 @@ export interface ActivityEntry {
   /** What an edit changed, in words (the api's history-describe): each field
    *  under its label, old → new, a photo as a photo. Empty for anything else. */
   said?: SaidChange[];
+  restorable?: boolean;
 }
 
 /** A picture in a record's history: never named by its path on the line. */
@@ -9233,7 +9448,8 @@ export interface PlatformActionBinding {
 
 /** One row of the dashboard's "needs you" feed (api/src/routes/attention.ts). */
 export interface AttentionFeedItem {
-  kind: "low_stock" | "overdue" | "due_today" | "upcoming" | "pending_scans" | "photo_wanted" | "unreadable_date";
+  suggestion?: { id: string; candidate: import("@cobblr/platform-contract").TidyCandidate };
+  kind: "tidy" | "low_stock" | "overdue" | "due_today" | "upcoming" | "pending_scans" | "photo_wanted" | "unreadable_date" | "suggested_edits";
   label: string;
   count: number;
   sample: string[];
@@ -9672,6 +9888,7 @@ export interface PlatformBundleLocation {
 export interface PlatformBundleFeature {
   key: string;
   name: string;
+  kind?: "integration";
   description?: string;
   /** The question form of the feature, shown in the install modal
    *  ("Want to track your designs too?"). Falls back to `name`. Display-only. */

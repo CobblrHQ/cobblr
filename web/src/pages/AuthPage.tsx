@@ -9,6 +9,7 @@ import { TurnstileWidget } from "../components/TurnstileWidget";
 import { ForgotPasswordRow } from "../components/ForgotPasswordRow";
 import { MagicLinkPanel } from "../components/MagicLinkPanel";
 import { hereAsLanding, landingPath } from "../lib/landing-path";
+import { shareInviteFor } from "../lib/share-invite-pending";
 import { useAuth } from "../auth/AuthContext";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { api, ApiError, setToken } from "../lib/api";
@@ -123,6 +124,9 @@ export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carryi
           org_name: orgName.trim() || undefined,
           captcha_token: captchaToken || undefined,
           ...(source ? { source } : {}),
+          // Signing up to accept a share: the invite is the invitation where
+          // public signup is off (#4737).
+          ...(shareInviteFor(window.location.search) ? { share_invite: shareInviteFor(window.location.search)! } : {}),
         });
         // Trial tier: the account exists but must verify its email before it can
         // sign in. Show the "check your email" screen instead of entering the app.

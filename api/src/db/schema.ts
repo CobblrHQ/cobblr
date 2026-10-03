@@ -72,6 +72,9 @@ export interface UsersTable {
 }
 
 export interface OrgsTable {
+  main_currency: Generated<string>;
+  low_stock_alerts: Generated<boolean>;
+  warranty_reminders: Generated<boolean>;
   id: Generated<string>;
   /** "share": a share space, a small workspace holding what someone shares
    *  with its member, linked to the sharer's workspace (share_links). */
@@ -87,6 +90,9 @@ export interface OrgsTable {
   /** Per-workspace AI opt-out. When true, the workspace/managed AI default is
    *  off here; a user's own personal connection still works. */
   ai_disabled: Generated<boolean>;
+  tidy_enabled: Generated<boolean>;
+  tidy_last_run: Date | null;
+  tidy_shape_version: number | null;
   /** Member-portal config — branding + pinned views shown in the
    *  slimmed-down `/portal/:slug` shell. See
    *  docs/modules/member-portal-and-permissions.md. */
@@ -749,6 +755,7 @@ export interface NotificationAction {
 }
 
 export interface NotificationsTable {
+  dedupe_key: Generated<string | null>;
   id: Generated<string>;
   org_id: string;
   user_id: string;
@@ -1530,7 +1537,34 @@ export interface ShareCopyBaseTable {
   copy_id: string;
   fields: Record<string, unknown>;
   metadata: Record<string, unknown>;
+  /** Fields the owner changed since the friend edited them: the owner's value. */
+  owner_changed: Generated<Record<string, unknown>>;
   updated_at: Generated<Date>;
+}
+
+/** A record the friend made in a share space, sent to the owner once (20261003-188). */
+export interface ShareAddedTable {
+  link_id: string;
+  copy_kind: string;
+  copy_id: string;
+  sent_at: Generated<Date>;
+}
+
+/** What a friend added to a share, waiting for the owner (20261003-188). */
+export interface ShareAdditionsTable {
+  id: Generated<string>;
+  org_id: string;
+  link_id: string;
+  peer_copy_id: string;
+  entity_kind: string;
+  title: string;
+  fields: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  by_name: string | null;
+  status: Generated<"pending" | "taken" | "left">;
+  taken_id: string | null;
+  created_at: Generated<Date>;
+  decided_at: Date | null;
 }
 
 export type ShareSuggestionStatus = "pending" | "conflict" | "applied" | "undone" | "accepted" | "rejected";
@@ -1552,6 +1586,29 @@ export interface ShareSuggestionsTable {
   created_at: Generated<Date>;
   decided_at: Date | null;
   decided_by: string | null;
+}
+
+/** Something a share has to tell its people, gathered (20261003-187). */
+export interface ShareNoticesTable {
+  id: Generated<string>;
+  link_id: string;
+  kind: "suggested" | "applied" | "added" | "accepted" | "rejected" | "undone";
+  title: string | null;
+  created_at: Generated<Date>;
+  sent_at: Date | null;
+}
+
+/** A read-only View as grant into a share space (20261003-189). */
+export interface ShareViewSessionsTable {
+  id: Generated<string>;
+  link_id: string;
+  org_id: string;
+  target_user_id: string;
+  viewer_name: string | null;
+  created_at: Generated<Date>;
+  expires_at: Date;
+  ended_at: Date | null;
+  request_count: Generated<number>;
 }
 
 export interface ShareMirrorStateTable {
@@ -1604,12 +1661,32 @@ export interface ShareOffersTable {
   taken_at: Date | null;
 }
 
+export interface TidySuggestionsTable {
+  id: Generated<string>;
+  org_id: string;
+  candidate: import("@cobblr/platform-contract").TidyCandidate;
+  created_at: Generated<Date>;
+  decided_at: Date | null;
+}
+export interface TidySuppressionsTable {
+  org_id: string; kind: string; record_kind: string; record_id: string; until_at: Date | null;
+}
+export interface TidyRouteCacheTable {
+  org_id: string; record_key: string; fingerprint: string; result: unknown;
+}
 export interface MetaDB {
+  tidy_suggestions: TidySuggestionsTable;
+  tidy_suppressions: TidySuppressionsTable;
+  tidy_route_cache: TidyRouteCacheTable;
   share_links: ShareLinksTable;
   share_offers: ShareOffersTable;
   share_mirror_state: ShareMirrorStateTable;
   share_copy_base: ShareCopyBaseTable;
   share_suggestions: ShareSuggestionsTable;
+  share_notices: ShareNoticesTable;
+  share_added: ShareAddedTable;
+  share_additions: ShareAdditionsTable;
+  share_view_sessions: ShareViewSessionsTable;
   share_outbox: ShareOutboxTable;
   share_received: ShareReceivedTable;
   share_nonces: ShareNoncesTable;

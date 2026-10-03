@@ -31,8 +31,8 @@ import type { PlatformWebApi } from "./types";
 
 export interface ActionBody {
   actionId: string;
-  entityKind: string;
-  entityId: string;
+  entityKind?: string;
+  entityId?: string;
   bindingId?: string;
   args?: Record<string, unknown>;
   /** The code of the action label the press came from: the door checks it and

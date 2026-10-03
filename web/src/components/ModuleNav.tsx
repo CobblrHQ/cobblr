@@ -33,8 +33,9 @@ import { setNavLayout, useNavChoiceMade } from "../lib/nav-mode";
 import { isInvoluntaryFold, layoutExpressed, shouldOfferSidebar } from "../lib/nav-graduation";
 import { NavCountBadge } from "./NavCountBadge";
 import { useNavBadges } from "./useNavBadges";
-import { useNavModules, HEADING_PREFIX, NAVGROUP_PREFIX, stripNavStem, navTargetFor, surfaceTops } from "./useNavModules";
+import { useNavModules, HEADING_PREFIX, NAVGROUP_PREFIX, navTargetFor, surfaceTops } from "./useNavModules";
 import { PopoverLayer } from "@cobblr/platform-web";
+import { NavSplitRow, NavRowMenu } from "./NavSplitRow";
 
 export function ModuleNav({ quiet = false }: {
   /** Another surface is already asking the layout question (the tour's
@@ -52,6 +53,7 @@ export function ModuleNav({ quiet = false }: {
   const focused = isFocused(activeOrg);
   const { tops: allVisibleTops, overflowNames, childrenByParent: children, instanceGroups } = useNavModules(activeSlug);
   const tops = surfaceTops(allVisibleTops, appMode);
+  const rowCandidates = tops.flatMap((t) => instanceGroups.get(t.name)?.members ?? (t.name.startsWith("__instance__") ? [t] : []));
   const badges = useNavBadges(activeSlug);
   // A count appearing widens its chip, so the fit is re-measured when one
   // changes; the cache below is refilled from the DOM on every recompute.
@@ -139,6 +141,7 @@ export function ModuleNav({ quiet = false }: {
       if (g) return <NavGroupSegments key={m.name} name={m.name} group={g} />;
     }
     const kids = children.get(m.name) ?? [];
+    if (kids.length === 0 && m.name.startsWith("__instance__")) return <div key={m.name} data-top={m.name} className="flex shrink-0 items-center"><ModuleTopLink name={m.name} label={m.displayName} badge={badges.get(m.name)} measured={false} /><NavRowMenu slug={activeSlug} label={m.displayName} members={[m]} candidates={rowCandidates} /></div>;
     return kids.length === 0 ? (
       <ModuleTopLink key={m.name} name={m.name} label={m.displayName} badge={badges.get(m.name)} />
     ) : (
@@ -224,12 +227,12 @@ function useNavTarget(): (name: string) => string {
   return (name) => navTargetFor(name, appMode);
 }
 
-function ModuleTopLink({ name, label, badge }: { name: string; label: string; badge?: number }) {
+function ModuleTopLink({ name, label, badge, measured = true }: { name: string; label: string; badge?: number; measured?: boolean }) {
   const to = useNavTarget()(name);
   return (
     <NavLink
       to={to}
-      data-top={name}
+      data-top={measured ? name : undefined}
       className={({ isActive }) =>
         "px-2 py-1 rounded transition text-sm whitespace-nowrap shrink-0 inline-flex items-center gap-1.5 " +
         (isActive
@@ -254,35 +257,10 @@ function NavGroupSegments({
   name: string;
   group: { label: string; members: { name: string; displayName: string }[] };
 }) {
-  const target = useNavTarget();
-  return (
-    <div
-      data-top={name}
-      className="flex items-center shrink-0 rounded border border-line dark:border-slate-700 overflow-hidden"
-    >
-      <span className="pl-2 pr-1.5 py-1 text-xs font-mono uppercase tracking-wide text-faint dark:text-slate-500 select-none">
-        {group.label}
-      </span>
-      {group.members.map((mem, i) => (
-        <span key={mem.name} className="flex items-center">
-          {i > 0 && (
-            <span className="text-faint/60 dark:text-slate-600 select-none">│</span>
-          )}
-          <NavLink
-            to={target(mem.name)}
-            className={({ isActive }) =>
-              "px-2 py-1 transition text-sm whitespace-nowrap " +
-              (isActive
-                ? "text-accent font-semibold"
-                : "text-muted dark:text-slate-400 hover:text-accent")
-            }
-          >
-            {stripNavStem(mem.displayName, group.label)}
-          </NavLink>
-        </span>
-      ))}
-    </div>
-  );
+  const { activeSlug, activeOrg } = useActiveOrg();
+  const { tops, instanceGroups } = useNavModules(activeSlug);
+  const candidates = tops.flatMap((t) => instanceGroups.get(t.name)?.members ?? (t.name.startsWith("__instance__") ? [t] : []));
+  return <div data-top={name} className="shrink-0"><NavSplitRow slug={activeSlug} group={group} candidates={candidates} appMode={!!activeOrg?.app_mode} /></div>;
 }
 
 /** Trailing "more ▾" dropdown holding the top links that didn't fit on

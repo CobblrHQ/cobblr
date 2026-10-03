@@ -7,18 +7,15 @@
 // item. A library answers the generic library.* Services capabilities, and
 // this module matches what it holds to records in the background and shows it.
 //
-// The id is still `core-documents`: it was the first library's name, and a
-// module enabled in a workspace has no rename path (docs/modules/core-documents.md,
-// "Holes"). What a person reads is its display name.
-//
 // Spec: docs/modules/core-documents.md
 
 import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-documents",
+  aliases: ["core-library"],
   maturity: "beta",
-  version: "0.2.1",
+  version: "0.2.4",
   displayName: "Libraries",
   description:
     "The things you keep in other apps, like receipts and manuals in Paperless-ngx or games in RomM, matched to the records they belong to and linked where you can open them.",
@@ -39,6 +36,10 @@ export default defineModule({
       subscribeRecordSaves();
       subscribeDocumentAdded();
       registerDocumentsInbound();
+      const { registerCopyCompletion } = await import("./copy-completion.js");
+      registerCopyCompletion();
+      const { registerLibraryPairingPresentationHeal } = await import("./heal-pairing-presentations.js");
+      registerLibraryPairingPresentationHeal();
     },
   },
 
@@ -127,5 +128,5 @@ export default defineModule({
     ],
   },
 
-  subscribes: [],
+  subscribes: ["services.job.done"],
 });

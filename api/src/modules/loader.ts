@@ -104,12 +104,19 @@ export async function loadAllModules(): Promise<{ count: number; names: string[]
 function topoSort(
   pending: Array<{ manifest: ModuleManifest; rootPath: string }>,
 ): Array<{ manifest: ModuleManifest; rootPath: string }> {
-  const byName = new Map(pending.map((p) => [p.manifest.name, p]));
+  const byName = new Map<string, (typeof pending)[number]>();
+  for (const entry of pending) {
+    for (const name of [entry.manifest.name, ...(entry.manifest.aliases ?? [])]) {
+      if (byName.has(name)) throw new Error(`[modules] Module name conflict: ${name}`);
+      byName.set(name, entry);
+    }
+  }
   const ordered: Array<{ manifest: ModuleManifest; rootPath: string }> = [];
   const inProgress = new Set<string>();
   const done = new Set<string>();
 
   function visit(name: string, chain: string[]) {
+    name = byName.get(name)?.manifest.name ?? name;
     if (done.has(name)) return;
     if (inProgress.has(name)) {
       throw new Error(

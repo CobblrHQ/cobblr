@@ -2,6 +2,8 @@
 // missing; anything malformed crashes the process at startup rather
 // than mysteriously at request time.
 
+import { destinationsProblem } from "./platform/cloud.js";
+import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
 import { z } from "zod";
 import { weakSecretReasons } from "./env-secret-guard.js";
 
@@ -202,6 +204,20 @@ const Schema = z.object({
   //    sandboxes sets both.
   COBBLR_SELFHOST_DOCS_URL: z.string().default(""),
   COBBLR_CLOUD_SIGNUP_URL: z.string().default(""),
+  // The Cobblr cloud, read through platform/cloud.ts (#4737): every share,
+  // hand-over or move to the cloud goes there. Unset is the default cloud.
+  COBBLR_CLOUD_URL: z.string().default(""),
+  // The invite dialog's "Where is their Cobblr?": "Label=https://address,..."
+  // in order, or "self". Unset: this Cobblr and the cloud (the cloud: itself).
+  // A destination that is neither this Cobblr nor a trusted peer refuses boot.
+  COBBLR_SHARE_INVITE_DESTINATIONS: z.string().default(""),
+  // Features the operator turns off on this instance, comma-separated
+  // (e.g. "suggestions.tidy"), never a hostname written into the product.
+  COBBLR_FEATURES_OFF: z.string().default(""),
+  // Experimental features this site turns on, comma-separated (e.g.
+  // "suggestions.tidy"). An experiment is off on every site that does not
+  // name it here (platform/features.ts lists them).
+  COBBLR_FEATURES_ON: z.string().default(""),
   // "Bring what I built" (the ending's third door, the trial replay). On the
   // box that hands out sandboxes, COBBLR_TRY_CARRY=true lights the door: the
   // person keeps their trial, gets a carry token, and leaves for the cloud
@@ -352,6 +368,11 @@ function loadEnv(): Env {
   if (devSecretErrs.length > 0) {
     console.error("Refusing to boot with dev/placeholder secrets in production:");
     for (const e of devSecretErrs) console.error(`  ${e}`);
+    process.exit(1);
+  }
+  const destinations = destinationsProblem(publicBaseUrl());
+  if (destinations) {
+    console.error(`Refusing to boot: ${destinations}`);
     process.exit(1);
   }
   return parsed.data;

@@ -1,3 +1,4 @@
+import { NewItemMenu } from "@cobblr/platform-web";
 // Parts list — filterable table. Search, category, location, state,
 // low-stock toggle. Clicking a row opens the part detail page.
 
@@ -5,8 +6,9 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Archive, ArrowRightLeft, Download, ExternalLink, FileDown, FileUp, Plus, Printer, ScanLine, ShieldCheck, MoreHorizontal } from "lucide-react";
-import { BulkActionBar, BulkGiveTo, BulkTagAction, EditableCell, EntityThumb, EntityTile, suggestedSrcFor, usePhotoSuggestions, Modal, MoveToInstanceModal, ViewModeToggle, useToast, useConfirm, usePageTitle, usePageWidth, useViewMode, usePlatformWeb, usePublishChatContext, makeAreaResolver, LOCATION_GROUP_KEY, type EditableCellDef, useAskCobbAboutSelection, useTickedRows, useUnits, TILE_GRID, InboxWaitingStrip, SearchInput, QueryError, noteWorkspaceWrite } from "@cobblr/platform-web";
+import { BulkActionBar, BulkSetField, BulkGiveTo, BulkTagAction, EditableCell, EntityThumb, EntityTile, suggestedSrcFor, usePhotoSuggestions, Modal, MoveToInstanceModal, ViewModeToggle, useToast, useConfirm, usePageTitle, usePageWidth, useViewMode, usePlatformWeb, usePublishChatContext, makeAreaResolver, LOCATION_GROUP_KEY, type EditableCellDef, useAskCobbAboutSelection, useTickedRows, useUnits, TILE_GRID, InboxWaitingStrip, SearchInput, QueryError, noteWorkspaceWrite } from "@cobblr/platform-web";
 import { useInventory } from "./context";
+import { LowStockAlerts } from "./LowStockAlerts.js";
 import { nothingToFilter, offeredFilters, type ListFilter } from "./list-filters";
 import { AddToListButton } from "./AddToListButton";
 import { QtyStepper } from "./QtyStepper";
@@ -466,6 +468,7 @@ export function PartsListPage() {
 
   return (
     <div className="space-y-4">
+      <LowStockAlerts />
       {strays.length > 0 && (
         <div className="rounded-xl border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-950/40 px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
           <span className="text-content dark:text-mortar-100">
@@ -752,12 +755,14 @@ export function PartsListPage() {
             <ScanLine size={14} /> Scan
           </Link>
         )}
-        <button
-          onClick={() => setAdding(true)}
-          className="rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
-        >
-          <Plus size={14} /> New {itemNoun}
-        </button>
+        <NewItemMenu kind="inventory:part" instance={instance}>
+          <button
+            onClick={() => setAdding(true)}
+            className="rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
+          >
+            <Plus size={14} /> New {itemNoun}
+          </button>
+        </NewItemMenu>
       </div>
 
       {/* Saved-view chips — bundles ship pinned ones; the wizard lands here.
@@ -965,6 +970,7 @@ export function PartsListPage() {
         onClear={() => setSelected(new Set())}
         actions={
           <>
+            <BulkSetField records={Array.from(selected).map((id) => ({ kind: instance && instance !== "inventory" ? `${instance}:item` : "inventory:part", id }))} onDone={() => setSelected(new Set())} />
             <button
               type="button"
               disabled={bulkLabelBusy}
@@ -1324,6 +1330,8 @@ function PartsTable({
                   <EditableCell
                     def={c}
                     value={(p.metadata as Record<string, unknown> | null)?.[c.name]}
+                    metadata={p.metadata}
+                    onCurrencyChange={(currency) => setMeta(p, `money_currency_${c.name}`, currency)}
                     note={noteOf(p.metadata as Record<string, unknown> | null, c.name)}
                     onCommit={(v) => setMeta(p, c.name, v)}
                   />
@@ -1650,7 +1658,7 @@ function CardFieldRows({
         <Fragment key={c.id}>
           <dt className="text-faint dark:text-slate-500">{c.display_label}</dt>
           <dd className="text-content dark:text-mortar-200 min-w-0">
-            <EditableCell def={c} value={meta?.[c.name]} note={noteOf(meta, c.name)} onCommit={(v) => onCommit(c.name, v)} />
+            <EditableCell def={c} value={meta?.[c.name]} metadata={meta} onCurrencyChange={(currency) => onCommit(`money_currency_${c.name}`, currency)} note={noteOf(meta, c.name)} onCommit={(v) => onCommit(c.name, v)} />
           </dd>
         </Fragment>
       ))}

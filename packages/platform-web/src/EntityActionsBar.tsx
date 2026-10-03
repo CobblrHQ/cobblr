@@ -10,6 +10,11 @@ import { AskCobbAbout } from "./AskCobbAbout";
 import { HEADER_ACTION_IDS } from "./RecordHeaderChips";
 import { DormantActionButton } from "./DormantActionButton";
 import { RecordDisposition } from "./RecordDisposition";
+import { RecordSharing } from "./RecordSharing";
+import { RecordPublic } from "./RecordPublic";
+import { RecordSendBack } from "./RecordSendBack";
+import { RecordSuggestions } from "./RecordSuggestions";
+import { RecordShareNote } from "./RecordShareNote";
 import type { PlatformAction, PlatformActionBinding } from "./types";
 
 interface Props {
@@ -92,21 +97,41 @@ export function EntityActionsBar({ entityKind, entityId, entityLabel, className,
   // Sold, given away, thrown out: on every record whose kind can leave, placed
   // here so no record page has to remember it.
   const lifecycle = data?.lifecycle ? <RecordDisposition key="lifecycle" kind={entityKind} id={entityId} /> : null;
+  // Who it is shared with, and Share with…: on every record, shown only once
+  // this workspace shares its things with someone.
+  const sharing = (
+    <>
+      <RecordSharing key="sharing" kind={entityKind} id={entityId} />
+      <RecordPublic key="public" id={entityId} />
+      <RecordSendBack key="send-back" kind={entityKind} id={entityId} />
+    </>
+  );
+  // What someone you share with changed on it, waiting for you.
+  const suggested = (
+    <>
+      <RecordSuggestions key="suggested" kind={entityKind} id={entityId} />
+      <RecordShareNote key="share-note" kind={entityKind} id={entityId} />
+    </>
+  );
   if (buttons.length === 0) {
-    return ask || lifecycle ? (
-      <div className={`flex flex-wrap gap-2 ${className ?? ""}`}>
+    return (
+      <div className={`flex flex-wrap gap-2 empty:hidden ${className ?? ""}`}>
+        {suggested}
         {ask}
         {lifecycle}
+        {sharing}
       </div>
-    ) : null;
+    );
   }
   const folded = !showAll && buttons.length > ACTIONS_IN_THE_OPEN + 1;
   const shown = folded ? buttons.slice(0, ACTIONS_IN_THE_OPEN) : buttons;
   return (
     <div className={`flex flex-wrap gap-2 ${className ?? ""}`}>
+      {suggested}
       {ask}
       {shown}
       {lifecycle}
+      {sharing}
       {folded && (
         <button
           type="button"

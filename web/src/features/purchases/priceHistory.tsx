@@ -1,3 +1,4 @@
+import { MoneyTotalNotice } from "@cobblr/platform-web";
 // Price history — what you've paid for one thing, every time, and whether it
 // moved. Contributed by purchases onto inventory:part through the panel seam
 // (manifest contributes.panels → platform-web's detail-panel registry), so the
@@ -14,8 +15,8 @@ import { api, type PurchasePricePoint, type PurchasePriceStats } from "../../lib
 import type { EntityDetailPanelCtx } from "../../panels/types";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
 
-function money(v: number | null | undefined): string {
-  return formatStoredMoney(v, "amount") ?? "—";
+function money(v: number | null | undefined, currency?: string): string {
+  return formatStoredMoney(v, "amount", { currency }) ?? "—";
 }
 
 function day(iso: string | null): string {
@@ -94,6 +95,7 @@ export function PriceHistoryPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
         </div>
       </div>
 
+      <MoneyTotalNotice total={q.data?.money_total} />
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <span className="text-2xl font-mono text-content dark:text-mortar-100">{money(stats.latest)}</span>
         <span className="text-xs text-muted">last paid {day(stats.last_purchased_at)}</span>
@@ -116,7 +118,7 @@ export function PriceHistoryPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
               {p.vendor ?? "(no vendor)"}
               {p.qty !== 1 ? <span className="text-faint"> · ×{p.qty}</span> : null}
             </span>
-            <span className="font-mono shrink-0 text-content dark:text-mortar-100">{money(p.unit_cost)}</span>
+            <span className="font-mono shrink-0 text-content dark:text-mortar-100">{money(p.original_unit_cost ?? p.unit_cost, p.currency)}</span>
           </Link>
         ))}
       </div>

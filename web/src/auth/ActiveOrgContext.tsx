@@ -1,3 +1,6 @@
+import { useQuery } from "@tanstack/react-query";
+import { api } from "../lib/api";
+import { MoneyCurrencyProvider } from "@cobblr/platform-web";
 // Tracks which of the user's orgs is currently active. The active workspace
 // lives in the URL (/w/:handle/… — set as the router basename), so it is
 // PER-TAB: two tabs on different workspaces don't clobber each other.
@@ -120,6 +123,7 @@ export function ActiveOrgProvider({
   // operator legitimately isn't a member of the workspace they're viewing).
   // `orgs` is authoritative here: it arrives with the user, and this provider
   // only renders once there is one, so an empty list means no workspace at all.
+  const money = useQuery({ queryKey: ["workspace-currency", org?.slug], queryFn: () => api.workspaceCurrency(org!.slug), enabled: !!org });
   const unknown = !org && !imp;
   useEffect(() => {
     if (!unknown) return;
@@ -173,11 +177,11 @@ export function ActiveOrgProvider({
     [org, orgs],
   );
 
-  if (unknown) return <BootScrim />;
+  if (unknown || (org && money.isPending)) return <BootScrim />;
 
   return (
     <Ctx.Provider value={{ activeOrg: org, activeSlug: org?.slug ?? "", setActiveSlug }}>
-      {children}
+      <MoneyCurrencyProvider currency={money.data?.currency || "USD"}>{children}</MoneyCurrencyProvider>
     </Ctx.Provider>
   );
 }

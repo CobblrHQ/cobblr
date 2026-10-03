@@ -16,7 +16,7 @@ import { Router, type Request } from "express";
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { z } from "zod";
 import { sql, type Kysely } from "kysely";
-import { columnSet, platform } from "@cobblr/platform-contract";
+import { columnSet, placeNames, platform } from "@cobblr/platform-contract";
 import { coerceMetadata } from "@cobblr/platform-contract/entity-metadata";
 import { instanceOf, sessionUser, tenantContext, tenantDb, type InventoryDB } from "../db.js";
 import { isLowStock } from "../on-hand.js";
@@ -369,10 +369,11 @@ familiesRouter.get(
     const types = await db.selectFrom("inventory_parts").selectAll().where("instance", "=", fam.parent as never).where("archived", "=", false).orderBy("name").limit(1000).execute();
     const things = await db.selectFrom("inventory_parts").select([...THING_COLUMNS]).where("instance", "=", fam.child as never).where("archived", "=", false).orderBy("created_at").limit(5000).execute();
     const byType = await childrenOf(orgId, fam, types.map((t) => t.id));
-    const thingById = new Map(things.map((t) => [t.id, thing(t as unknown as Record<string, unknown>)]));
+    const places = await placeNames(orgId, PART, things);
+    const thingById = new Map(things.map((t) => [t.id, { ...thing(t as unknown as Record<string, unknown>), location_name: places.get(t.id) ?? null }]));
     const claimed = new Set<string>();
     const cards = types.map((t) => {
-      const kids = (byType.get(t.id) ?? []).map((id) => thingById.get(id)).filter((x): x is ReturnType<typeof thing> => !!x);
+      const kids = (byType.get(t.id) ?? []).map((id) => thingById.get(id)).filter((x): x is NonNullable<typeof x> => !!x);
       for (const k of kids) claimed.add(k.id);
       return {
         id: t.id,

@@ -98,6 +98,48 @@ export interface LexicalEvidence {
   fields: Record<string, string | number | boolean>;
 }
 
+/** The specific food and drink ROOTS of a food catalog's category tags, and
+ *  the words a table that keeps that kind of thing declares. The catalog tags a
+ *  product with its ancestors, general to specific; the leaf ("kombuchas",
+ *  "jerkies") is a word nobody listed, but its root (beverages, meats) is a kind
+ *  of thing a pantry table already speaks, so the root claims the table the way
+ *  the category's head noun does (#4644). CURATED and specific on purpose: the
+ *  broad "plant-based-foods-and-beverages" / "foods" tags sit on a tube of crisps
+ *  and a bag of flour alike and say nothing, so they are not here. A table
+ *  claims a root by declaring one of its words; no table is named. */
+export const FOOD_ROOT_WORDS: Readonly<Record<string, readonly string[]>> = {
+  beverages: ["beverages", "drinks", "soda"],
+  snacks: ["snack", "chips", "crisps", "cookies"],
+  "sweet-snacks": ["snack", "cookies", "candy"],
+  "salty-snacks": ["snack", "chips", "crisps"],
+  dairies: ["milk", "cheese", "yogurt", "butter"],
+  meats: ["beef", "pork", "chicken", "sausage"],
+  "meats-and-their-products": ["beef", "pork", "chicken", "sausage"],
+  seafood: ["salmon", "tuna", "shrimp", "prawn"],
+  "cereals-and-their-products": ["cereal", "rice", "pasta", "oats"],
+  "cereals-and-potatoes": ["cereal", "rice", "pasta", "oats"],
+  breads: ["bread"],
+  sauces: ["sauce"],
+  condiments: ["condiment"],
+  "frozen-foods": ["frozen"],
+  desserts: ["chocolate", "ice cream"],
+};
+
+/** The words of the specific food roots among a lookup's English category
+ *  tags (`metadata.raw.categories_tags`, kept with the cached lookup). Empty
+ *  when the lookup carried none or only broad ones. */
+export function foodRootWordsOf(metadata: unknown): string[] {
+  const m = (metadata ?? {}) as { raw?: { categories_tags?: unknown }; categories_tags?: unknown };
+  const tags = m.raw?.categories_tags ?? m.categories_tags;
+  if (!Array.isArray(tags)) return [];
+  const words = new Set<string>();
+  for (const t of tags) {
+    if (typeof t !== "string" || !t.startsWith("en:")) continue;
+    for (const w of FOOD_ROOT_WORDS[t.slice(3)] ?? []) words.add(w);
+  }
+  return [...words];
+}
+
 /** Build the per-item lexical scorer heuristicMatch routes with — exposed as a
  *  factory so runMatchmaker can CORROBORATE an AI pick against the same
  *  deterministic evidence (one bar, two callers). */
@@ -315,8 +357,13 @@ export function makeLexicalScorer(item: FitItem): {
   // while Groceries, which declared the word, sat empty (2026-09-12).
   const catTokens = (item.category ?? "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
   const catHeadStem = catTokens.length ? stem(catTokens[catTokens.length - 1]!) : "";
-  const hitsCategoryHead = (phrase: string): boolean =>
-    !!catHeadStem && phrase.toLowerCase().split(/[^a-z0-9]+/).some((w) => w.length >= 3 && stem(w) === catHeadStem);
+  // The catalog's food roots speak for the category too: a leaf nobody listed
+  // still sits under a root a pantry table declares words for.
+  const rootStems = new Set(foodRootWordsOf(item.metadata).flatMap((w) => w.split(/[^a-z0-9]+/).filter((x) => x.length >= 3).map(stem)));
+  const hitsCategoryHead = (phrase: string): boolean => {
+    const ws = phrase.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3).map(stem);
+    return ws.some((w) => (!!catHeadStem && w === catHeadStem) || rootStems.has(w));
+  };
   // The category's head noun IS a table's own name. "Groceries" from the food
   // catalog names the Groceries table whatever its item noun is (the generic
   // "item", which scores nothing on purpose), the way "Books" names a

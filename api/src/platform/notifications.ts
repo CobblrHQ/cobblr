@@ -73,6 +73,7 @@ function meetsThreshold(
 }
 
 export type DispatchParams = NotificationDestination & {
+  idempotencyKey?: string;
   orgId: string;
   userId: string;
   eventType: string;
@@ -147,6 +148,7 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
   const inserted = await meta
     .insertInto("notifications")
     .values({
+      dedupe_key: p.idempotencyKey ?? null,
       org_id: p.orgId,
       user_id: p.userId,
       event_type: p.eventType,
@@ -170,8 +172,15 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
       // typechecking perfectly.
       actions: (p.actions?.length ? JSON.stringify(p.actions) : null) as never,
     })
+    .onConflict((oc) => oc.columns(["org_id", "user_id", "dedupe_key"]).doNothing())
     .returning("id")
-    .executeTakeFirstOrThrow();
+    .executeTakeFirst();
+  if (!inserted) {
+    const existing = await meta.selectFrom("notifications").select("id")
+      .where("org_id", "=", p.orgId).where("user_id", "=", p.userId)
+      .where("dedupe_key", "=", p.idempotencyKey!).executeTakeFirstOrThrow();
+    return { notificationId: existing.id, deliveredVia: [] };
+  }
   sometimesPrune(p.userId);
   announceNotificationChange(p.userId, { kind: "new", id: inserted.id });
 

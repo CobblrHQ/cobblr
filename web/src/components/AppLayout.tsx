@@ -177,6 +177,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
     const ro = new ResizeObserver(update);
     ro.observe(el);
     window.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("cobblr:top-chrome-change", update);
     // The bar slides over 200ms, and the scroll frame that started the slide
     // measured it where it WAS: the variable read 0 while the bar sat fully
     // in view after an upward flick, and 45 while it was hidden. Everything
@@ -187,6 +188,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
       if (queued) cancelAnimationFrame(queued);
       ro.disconnect();
       window.removeEventListener("scroll", update);
+      window.removeEventListener("cobblr:top-chrome-change", update);
       window.removeEventListener("scroll", onScroll);
       el.removeEventListener("transitionend", update);
       document.documentElement.style.removeProperty("--app-header-bottom");
@@ -198,7 +200,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
   useEffect(() => {
     const el = headerRef.current;
     if (!el || window.innerWidth >= 768) return;
-    document.documentElement.style.setProperty("--app-header-bottom", `${barHidden ? 0 : el.offsetHeight}px`);
+    document.documentElement.style.setProperty("--app-header-bottom", `calc(var(--top-chrome-height, 0px) + ${barHidden ? 0 : el.offsetHeight}px)`);
   }, [barHidden]);
   const { activeOrg } = useActiveOrg();
   const qc = useQueryClient();

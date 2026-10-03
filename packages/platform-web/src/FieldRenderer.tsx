@@ -1,3 +1,4 @@
+import { useMoneyCurrency } from "./MoneyCurrency";
 // FieldRenderer — renders an arbitrary field value using one of a
 // fixed set of built-in renderers, selected by the consumer (a
 // catalog schema, a custom field def, an entity-kind presentation
@@ -53,6 +54,7 @@ interface Props {
   note?: string | null;
   /** How a native column holds money ("cents" | "amount"), when it does. */
   money?: MoneyStorage | null;
+  currency?: string;
   /** The field's record role: "acquired-for" makes a number money. */
   fieldRole?: string | null;
 }
@@ -90,7 +92,9 @@ export function FieldRenderer({
   note,
   money,
   fieldRole,
+  currency,
 }: Props) {
+  const mainCurrency = useMoneyCurrency();
   const clarifier = note?.trim() ? (
     <span className="text-muted dark:text-slate-400"> · {note.trim()}</span>
   ) : null;
@@ -107,7 +111,7 @@ export function FieldRenderer({
   // Money, however its field holds it, reads "$4,300" (never 430000).
   const storage = moneyStorageOf({ type, unit, money, field_role: fieldRole });
   if (storage) {
-    const shown = formatStoredMoney(value, storage);
+    const shown = formatStoredMoney(value, storage, { currency: currency || mainCurrency });
     if (shown !== null) {
       return (
         <span className="tabular-nums" data-money="">

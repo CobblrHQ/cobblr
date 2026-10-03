@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.18.7",
+  version: "0.18.10",
   displayName: "Inventory",
   description:
     "Parts and supplies: how many you have, where they are kept, and what is running low.",
@@ -175,6 +175,9 @@ export default defineModule({
   dependencies: [],
 
   exposes: {
+    notifications: [
+      { eventType: "inventory.low-stock", label: "Running low", description: "A daily summary of items at or below their minimum stock." },
+    ],
     events: [
       "inventory.part.created",
       "inventory.part.updated",
@@ -862,6 +865,10 @@ export default defineModule({
   // with a consume history, so idle workspaces pay nothing.
   lifecycle: {
     onBoot: async () => {
+      const { registerInventoryTidyFinders } = await import("./tidy-finders.js");
+      registerInventoryTidyFinders();
+      const { registerLowStockAlerts } = await import("./low-stock-alerts.js");
+      registerLowStockAlerts();
       const { startBurnRateSweeper } = await import("./burn-rate.js");
       startBurnRateSweeper();
       // A bundle that changes a collection's default count unit (Yarn: skein

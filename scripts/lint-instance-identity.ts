@@ -20,6 +20,11 @@
  *   1. No `cobblr.me` literal. It is one deployment's hostname. Say "the hosted
  *      service" in prose, use `cobblr.example.com` in an example URL, and read
  *      PUBLIC_BASE_URL at runtime when the real value is needed.
+ *   3. No cloud hostname (app.cobblr.xyz, try.cobblr.xyz) in a string literal
+ *      outside api/src/platform/cloud.ts, the one place the Cobblr cloud is
+ *      named (COBBLR_CLOUD_URL, #4737). A share, a hand-over or a move to the
+ *      cloud reads cloudUrl(); an instance gate reads an operator setting
+ *      (COBBLR_FEATURES_OFF). A comment may name a host; a string ships it.
  *   2. No email literal outside a reserved example domain (RFC 2606:
  *      example.com/net/org, .test, .invalid, .localhost). A real address in
  *      shipping code is either a leak or a misattribution.
@@ -39,6 +44,10 @@ const SKIP_DIR = new Set(["node_modules", "dist", "build", ".turbo", "coverage",
 const EXT = /\.(ts|tsx|js|jsx|mjs)$/;
 // A test/fixture may legitimately assert on a real-looking value.
 const SKIP_FILE = /\.(test|spec)\.[tj]sx?$/;
+
+/** The one file that names the cloud: its default lives there. */
+const CLOUD_HOME = "api/src/platform/cloud.ts";
+const CLOUD_HOST_IN_STRING = /["'`][^"'`\n]*\b(app|try)\.cobblr\.xyz/;
 
 const EXAMPLE_DOMAIN = /@([a-z0-9-]+\.)*(example\.(com|net|org)|test|invalid|localhost)$/i;
 const EMAIL = /["'`]([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})["'`]/g;
@@ -75,6 +84,14 @@ for (const abs of files) {
         `${rel}:${i + 1} hardcodes the hosted deployment's hostname.\n` +
           `      Prose: "the hosted service". Example URL: cobblr.example.com.\n` +
           `      Real value at runtime: contactUrl() from @cobblr/platform-contract/outbound-identity.\n` +
+          `      ${line.trim().slice(0, 100)}`,
+      );
+    }
+    if (rel !== CLOUD_HOME && !/^\s*(\/\/|\*|\/\*)/.test(line) && CLOUD_HOST_IN_STRING.test(line)) {
+      fails.push(
+        `${rel}:${i + 1} names the Cobblr cloud's host in a string.\n` +
+          `      Read cloudUrl() / cloudSignupUrl() from api/src/platform/cloud.ts (COBBLR_CLOUD_URL),\n` +
+          `      or an operator setting (COBBLR_FEATURES_OFF) for an instance gate; the web asks the api.\n` +
           `      ${line.trim().slice(0, 100)}`,
       );
     }

@@ -34,6 +34,10 @@ const COVER_MAX = 400 * 1024;
 const connection: BuiltInConnectionDef = {
   title: "RomM",
   summary: "Your retro game library, linked to the cartridges and discs on your shelf. Cobblr links to each game in RomM; nothing is copied.",
+  disconnect: {
+    stops: "Matching, previews, and new links from RomM stop until you reconnect.",
+    keeps: "Existing links stay on records, and anything already stored in Cobblr stays where it is.",
+  },
   group: ROMM_GROUP,
   config_schema: {
     type: "object",
@@ -53,17 +57,32 @@ const connection: BuiltInConnectionDef = {
     } catch (err) {
       return { ok: false, reason: "unreachable", error: `RomM did not answer: ${plainError(err)}` };
     }
-    if (res.status === 401 || res.status === 403) return { ok: false, reason: "invalid_key", error: "RomM did not accept this token. Make a Client API token in RomM's Administration and paste it here." };
+    if (res.status === 401 || res.status === 403) return invalidToken();
+    // Current RomM releases turn a malformed Bearer token into a bare 500.
+    // Ask the same healthy endpoint without credentials: reaching its 401/403
+    // authentication boundary distinguishes that defect from RomM being down.
+    if (res.status >= 500) {
+      try {
+        const withoutToken = await ctx.fetch({ path: "/api/roms?limit=1&with_total=true", headers: { accept: "application/json" } });
+        if (withoutToken.status === 401 || withoutToken.status === 403) return invalidToken();
+      } catch {
+        // The original server response remains the useful failure below.
+      }
+    }
     if (res.status >= 500) return { ok: false, reason: "busy", error: `RomM answered ${res.status}.` };
     const body = res.json as { items?: unknown; total?: unknown } | null;
     if (res.status !== 200 || !Array.isArray(body?.items)) return { ok: false, reason: "unknown", error: `That address answered ${res.status}, not like RomM does.` };
     const total = typeof body?.total === "number" ? body.total : null;
     // Connected, and nothing to link to yet, is not a failure; it is said in
     // the same line, so a person is not left wondering why nothing matches.
-    if (total === 0) return { ok: true, note: `RomM answered in ${Date.now() - started} ms, but its library has no games yet` };
+    if (total === 0) return { ok: true, warning: `RomM answered in ${Date.now() - started} ms, but its library has no games yet` };
     return { ok: true, note: `RomM${total != null ? `, ${total} game${total === 1 ? "" : "s"}` : ""}, answered in ${Date.now() - started} ms` };
   },
 };
+
+function invalidToken(): { ok: false; reason: "invalid_key"; error: string } {
+  return { ok: false, reason: "invalid_key", error: "RomM did not accept this token. Make a Client API token in RomM's Administration and paste it here." };
+}
 
 function auth(config: Record<string, string> | undefined): Record<string, string> {
   return { authorization: `Bearer ${config?.token ?? ""}`, accept: "application/json" };

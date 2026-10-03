@@ -21,7 +21,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-locations",
-  version: "0.8.0",
+  version: "0.8.1",
   displayName: "Locations",
   description:
     "Where your things live: rooms, shelves and bins, one inside another, and a floor plan to draw them on.",
@@ -208,13 +208,14 @@ export default defineModule({
         undoable: true,
         label: "Set its colour on the plan",
         description:
-          "Give a place a colour on its floor plan, so places that belong together read together (every drawer of one tool chest, say). `colour`: one of red, orange, yellow, green, blue, purple, grey, or none to take it off. The plan outlines the place in that colour and its legend lists each colour in use with the places that carry it. Set it on each place in turn.",
+          "Give a place a colour on its floor plan, so places that belong together read together (every drawer of one tool chest, say). `colour`: one of red, orange, yellow, green, blue, purple, grey, or none to take it off. The plan outlines the place in that colour and lists it as Custom in the legend. This selects the manual colour instead of an attached tag. Undo restores the previous outline group. Set it on each place in turn.",
         icon: "palette",
         appliesTo: { kinds: ["core-locations:location"] },
         invokeHandler: "core-locations.set-plan-colour",
         userInvokable: false,
         argsSchema: {
           colour: { label: "Colour: red, orange, yellow, green, blue, purple, grey, or none", type: "text" as const, required: true },
+          outline_group: { label: "Previous outline group (for Undo)", type: "text" as const },
         },
       },
       // NO-PHRASING: only ever run as Move everything's Undo, never asked for.

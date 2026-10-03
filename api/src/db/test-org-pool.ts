@@ -191,6 +191,11 @@ export async function checkoutTestOrg(opts: { reserved?: boolean } = {}): Promis
   `.execute(meta);
   const row = claimed.rows[0];
   if (!row) return null;
+  // Checkout models a signup now, rather than the older workspace baked into
+  // the image. Reset only this new-workspace default on the unclaimed fixture;
+  // production upgrades must keep every existing workspace opted out.
+  await sql`update orgs set main_currency = default, warranty_reminders = default, low_stock_alerts = default where id = ${row.org_id}`.execute(meta);
+
   // Pooled orgs were provisioned at BAKE time, so they miss anything installed
   // by enable-time hooks added since the bake — concretely the transitional
   // location_id→placement sync triggers (the boot sweep is skipped in CI via

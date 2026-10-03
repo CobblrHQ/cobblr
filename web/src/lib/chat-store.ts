@@ -28,7 +28,7 @@ export interface StoredChatMessage {
   role: "user" | "assistant";
   content: string;
   sentWith?: { label: string; kind?: string; ids?: string[]; text?: string };
-  refs?: Array<{ kind: string; id: string; label: string }>;
+  refs?: Array<{ kind: string; id: string; label: string; href?: string; open_label?: string }>;
   command?: unknown;
   proposal?: unknown;
   sections?: Record<string, unknown>;

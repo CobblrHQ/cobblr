@@ -7,7 +7,7 @@
 // side stays pure declarative data. Fires the module's own events so views,
 // wires, and the instance counters stay consistent with the HTTP path.
 
-import { adoptAxisValuesIntoField, findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow } from "@cobblr/platform-contract";
+import { adoptAxisValuesIntoField, findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow, snapshotRowTree, restoreRowTree } from "@cobblr/platform-contract";
 import { DISPOSITION_LABELS } from "@cobblr/platform-contract/disposition";
 import { sql, type Kysely } from "kysely";
 import type { MachinesDB } from "../db.js";
@@ -23,6 +23,8 @@ export function registerMachinesWriter(): void {
   registered = true;
 
   platform().entities.registerWriter("machines:machine", {
+    snapshotDeletion: async (orgId, id) => snapshotRowTree(await platform().tenants.getDb(orgId), "machines_machines", id, "machines_"),
+    restoreDeletion: async (orgId, snapshot) => restoreRowTree(await platform().tenants.getDb(orgId), "machines_machines", snapshot, "machines_"),
     // A record that already carries the source's key is adopted by a sync, never
     // duplicated (#3836).
     findByKey: async (orgId, key, value) => findRowIdByKey(await platform().tenants.getDb(orgId), "machines_machines", key, value),

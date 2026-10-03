@@ -1247,8 +1247,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track the fridge/pantry with expiry + storage, and auto-build a shopping list when something runs low or is about to expire. Check an item off → it restocks.",
     manifest: {
       id: "cobblr.flagship.groceries",
-      version: "0.13.1",
-      releases: [{ version: "0.13.1", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
+      version: "0.13.3",
+      releases: [{ version: "0.13.5", released_at: "2026-10-03", notes: "A scanned bottle of water now goes to Groceries: the barcode catalog calls it water, and Groceries now knows the word." }, { version: "0.13.1", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
       // What its items are actually CALLED. A bundle's suggestion has to be
       // corroborated by the capture's own text before it is trusted, and a
       // category whose members never share its name can never corroborate:
@@ -1403,6 +1403,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         "lemonade",
         "cola",
         "soda",
+        // A catalog files bottled water under "Waters" (#4644). Never bare
+        // "water": a filter, a pump and a bottle cage are not groceries.
+        "waters",
+        "bottled water",
+        "spring water",
+        "sparkling water",
+        "mineral water",
         // What a food catalog calls the KIND ("Carbonated beverages"): the
         // category's head noun routes like the name's (2026-09-12).
         "beverages",
@@ -1961,8 +1968,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.community.lego",
-      version: "0.6.1",
-      releases: [{ version: "0.6.1", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
+      version: "0.6.3",
+      releases: [{ version: "0.6.3", released_at: "2026-10-03", notes: "Sets and Bricks share a navigation row that you can join or split on this device." }, { version: "0.6.2", released_at: "2026-10-03", notes: "Adding Sets offers BrickLink as an optional service instead of turning it on or adding a sidebar row." }, { version: "0.6.1", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
       name: "Lego",
       description:
         "Lego as its own tables. Sets you own (sealed / built / disassembled) with optional Bricks bins, a Rebrickable catalog link, and a one-tap Disassemble that spawns the parts and opens the sorting planner.",
@@ -1972,12 +1979,12 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         "Call them sets or kits: pick the word when you install, or change it later in the table's settings, and every label says it. Earlier: Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: The set number is the set's identity: two scans with different set numbers are never offered as one product, and a scanned or typed set number finds the set you already have. Earlier changes below.: Lego is now its OWN tables, not a skin over generic inventory. Installing it gives you a Sets table (each set sealed, built, or disassembled) with set number, theme, year, piece count and minifig count: the generic warranty/serial/supplier clutter is hidden. Turn on the checkboxes you want: track individual Bricks in bins, link to the Rebrickable catalog so sets and parts match real data, disassemble a built set into its parts and sort them into bins, print QR labels, or add by scanning.",
       requires: [{ module: "inventory" }],
       // The always-on BASE: a Sets table (the noun everyone with Lego has). The
-      // Bricks/bins world, the Rebrickable link, and Disassemble are opt-in
-      // features (default on) — the Yarn model, one base + checkboxes.
+      // Service integrations require a choice, not a bundle default.
       provides_instances: [
         {
           module: "inventory",
           instance_name: "sets",
+          nav_group: { key: "lego", label: "LEGO" },
           faces: { stock: false },
           display_name: "Sets",
           glyph: "🧱",
@@ -2023,6 +2030,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             {
               module: "inventory",
               instance_name: "bricks",
+              nav_group: { key: "lego", label: "LEGO" },
               display_name: "Bricks",
               glyph: "🧱",
               item_noun: "brick",
@@ -2069,10 +2077,11 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         },
         {
           key: "disassemble",
-          name: "Disassemble into bricks",
-          question: "Disassemble a set into its bricks and sort them?",
-          description: "Adds a one-tap Disassemble on a set: it spawns the set's parts (from the Rebrickable bill of materials) into your Bricks table and opens the sorting planner to file them into bins. Needs the Bricks table and the Rebrickable catalog.",
-          default: true,
+          name: "BrickLink",
+          kind: "integration",
+          question: "Sets works with BrickLink. Turn it on?",
+          description: "Bring in wanted lists and orders, see which parts you have, and disassemble a built set into bricks using the Rebrickable catalog. Available under your services, not as another sidebar app.",
+          default: false,
           requires: [{ module: "bricklink-connector" }],
           next_steps: [
             { label: "Open a built set to disassemble it", module: "inventory", path: "/instances/sets", hint: "Open a set, then use Disassemble: its parts land in Bricks and the planner opens." },

@@ -14,21 +14,31 @@ export interface RegisteredModule {
 }
 
 const registry = new Map<string, RegisteredModule>();
+const aliases = new Map<string, string>();
 
 export function register(entry: RegisteredModule): void {
   const name = entry.manifest.name;
-  if (registry.has(name)) {
-    throw new Error(`Module name conflict: ${name} already registered`);
+  const names = [name, ...(entry.manifest.aliases ?? [])];
+  if (new Set(names).size !== names.length) throw new Error(`Module name conflict: duplicate alias for ${name}`);
+  for (const id of names) {
+    if (registry.has(id) || aliases.has(id)) {
+      throw new Error(`Module name conflict: ${id} already registered`);
+    }
   }
   registry.set(name, entry);
+  for (const alias of entry.manifest.aliases ?? []) aliases.set(alias, name);
+}
+
+export function canonicalModuleName(name: string): string {
+  return aliases.get(name) ?? name;
 }
 
 export function getEntry(name: string): RegisteredModule | undefined {
-  return registry.get(name);
+  return registry.get(canonicalModuleName(name));
 }
 
 export function get(name: string): ModuleManifest | undefined {
-  return registry.get(name)?.manifest;
+  return getEntry(name)?.manifest;
 }
 
 export function list(): ModuleManifest[] {
@@ -50,5 +60,7 @@ export function size(): number {
  *  handler short-circuits via the sandbox loader's stale-entry
  *  check. A full unmount needs an api restart. */
 export function deregister(name: string): boolean {
-  return registry.delete(name);
+  const canonical = canonicalModuleName(name);
+  for (const [alias, owner] of aliases) if (owner === canonical) aliases.delete(alias);
+  return registry.delete(canonical);
 }

@@ -11,6 +11,8 @@ import { qrTokenFromScan } from "@cobblr/platform-contract/qr-token";
 import { driveHub } from "./drive-hub.js";
 import { resolveQrToken } from "../routes/qr-scan.js";
 import { invoke } from "./actions.js";
+import { withStation } from "./scan-stations.js";
+import type { StationResult } from "@cobblr/platform-contract/scan-station";
 
 const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
 
@@ -21,7 +23,7 @@ export { qrTokenFromScan } from "@cobblr/platform-contract/qr-token";
 /** What a scan does when it lands (D7). `navigate` (the default) drives the
  *  user's designated tab; `print` drops a label for the scanned entity into the
  *  print buffer instead — the accumulate-then-print seam from slice 2. */
-export type ScanDisposition = "navigate" | "print";
+export type ScanDisposition = "navigate" | "print" | "file";
 
 export interface ScanDriveResult {
   /** True when a designated tab existed and the action was pushed to it. */
@@ -48,7 +50,14 @@ export async function routeScanToDrive(opts: {
   baseUrl?: string;
   /** The session's scan mode (D7). Defaults to `navigate`. */
   disposition?: ScanDisposition;
-}): Promise<ScanDriveResult> {
+  deviceId?: string;
+  requestId?: string;
+}): Promise<ScanDriveResult | StationResult> {
+  if (opts.deviceId) {
+    if (!opts.requestId) throw new Error("A station scan needs a request identifier.");
+    return withStation(opts, opts.deviceId, (engine) => engine.scan(opts.code, opts.requestId!));
+  }
+  if (opts.disposition === "file") throw new Error("Choose a station before filing without a screen.");
   const baseUrl = opts.baseUrl ?? INTERNAL_API;
   const disposition = opts.disposition ?? "navigate";
 

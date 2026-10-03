@@ -39,12 +39,10 @@ function bounded(n: number): number | null {
   return Number.isInteger(n) && n >= 1 && n <= MAX_COUNT ? n : null;
 }
 
-export function parseHintFacts(hint: string | null | undefined): HintFacts {
-  const none: HintFacts = { quantity: null, identifier: null, identifierKind: null, rest: (hint ?? "").trim() };
-  let text = (hint ?? "").trim();
-  if (!text) return none;
-  let quantity: number | null = null;
-
+/** The count a hint states and the hint with that count taken out, token
+ *  order and case kept: the one place a count is read off a hint. */
+function splitCount(hint: string): { quantity: number | null; text: string } {
+  let text = hint.trim();
   // Two-token counts first ("8 x", "x 8", "qty 8", "8 pcs", "8 ×"), then
   // single tokens.
   const spaced = [
@@ -55,24 +53,46 @@ export function parseHintFacts(hint: string | null | undefined): HintFacts {
   for (const re of spaced) {
     const m = re.exec(text);
     if (m) {
-      quantity = bounded(Number(m[1]));
-      if (quantity != null) text = (text.slice(0, m.index) + " " + text.slice(m.index + m[0].length)).trim();
+      const quantity = bounded(Number(m[1]));
+      if (quantity != null) return { quantity, text: (text.slice(0, m.index) + " " + text.slice(m.index + m[0].length)).trim() };
       break;
     }
   }
-  const tokens = text.split(/\s+/).filter(Boolean);
   const kept: string[] = [];
-  let identifier: string | null = null;
-  let identifierKind: HintFacts["identifierKind"] = null;
-  for (const tok of tokens) {
-    const bare = tok.replace(/^[("']+|[)"',;:.!?]+$/g, "");
+  let quantity: number | null = null;
+  for (const tok of text.split(/\s+/).filter(Boolean)) {
     if (quantity == null) {
-      const n = countOf(bare);
+      const n = countOf(tok.replace(/^[("']+|[)"',;:.!?]+$/g, ""));
       if (n != null) {
         quantity = n;
         continue;
       }
     }
+    kept.push(tok);
+  }
+  return { quantity, text: kept.join(" ") };
+}
+
+/** The hint as a model should read it: the count is the person's own fact,
+ *  already set, so the model is never shown it to confirm or decline (it
+ *  answered "Listed count of eight is unconfirmed" and the count stayed one,
+ *  core#4552). Null when nothing is left. */
+export function hintWithoutCount(hint: string | null | undefined): string | null {
+  const t = (hint ?? "").trim();
+  if (!t) return null;
+  return splitCount(t).text || null;
+}
+
+export function parseHintFacts(hint: string | null | undefined): HintFacts {
+  const none: HintFacts = { quantity: null, identifier: null, identifierKind: null, rest: (hint ?? "").trim() };
+  const trimmed = (hint ?? "").trim();
+  if (!trimmed) return none;
+  const { quantity, text } = splitCount(trimmed);
+  const kept: string[] = [];
+  let identifier: string | null = null;
+  let identifierKind: HintFacts["identifierKind"] = null;
+  for (const tok of text.split(/\s+/).filter(Boolean)) {
+    const bare = tok.replace(/^[("']+|[)"',;:.!?]+$/g, "");
     if (!identifier) {
       const typed = typedIdentifier(bare);
       if (typed) {

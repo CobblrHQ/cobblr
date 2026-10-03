@@ -29,6 +29,8 @@ const Instantiate = z.object({
    *  time. The shape is exactly what the target kind's create
    *  endpoint accepts; the merged body is sent verbatim. */
   overrides: z.record(z.unknown()).optional(),
+  instance: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).max(80).optional(),
+  scan_item_id: z.string().uuid().optional(),
 });
 
 // Map (entity_kind) → (module, create endpoint path). Templates need
@@ -239,8 +241,32 @@ templatesRouter.post(
     // points at this same host.
     const baseUrl =
       (req.headers["x-cobblr-base-url"] as string | undefined) ??
-      `${req.protocol}://${req.headers.host ?? "localhost"}`;
-    const createUrl = `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${createPath}`;
+      `http://127.0.0.1:${process.env.API_PORT || 4000}`;
+    const [sourceModule, sourceType] = tmpl.target_kind.split(":");
+    const instance = parsed.data.instance;
+    if (instance) {
+      const [instances, targetKind] = await Promise.all([
+        platform().instances.list(ctx.org.id),
+        platform().entities.getKind(tmpl.target_kind),
+      ]);
+      if (!targetKind?.is_primary || !instances.some((i) => i.instance_name === instance && i.module_name === sourceModule)) {
+        res.status(400).json({ error: { code: "wrong_instance", message: "This collection does not accept this template." } });
+        return;
+      }
+    }
+    const scanItemId = parsed.data.scan_item_id;
+    const createUrl = scanItemId
+      ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-scan/inbox/${scanItemId}/confirm`
+      : instance
+        ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/instances/${instance}/items`
+        : `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${createPath}`;
+    const createBody = scanItemId ? {
+      target_module: sourceModule,
+      target_kind: sourceType,
+      ...(instance ? { instance } : {}),
+      ...(typeof body.name === "string" && body.name ? { name: body.name } : {}),
+      extras: body,
+    } : body;
 
     const createRes = await fetch(createUrl, {
       method: "POST",
@@ -248,7 +274,7 @@ templatesRouter.post(
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify(createBody),
     });
     if (!createRes.ok) {
       const errText = await createRes.text();
@@ -261,11 +287,11 @@ templatesRouter.post(
       });
       return;
     }
-    const created = (await createRes.json()) as { id?: string };
+    const result = await createRes.json() as { id?: string; created?: { id?: string } };
+    const created = scanItemId ? result.created ?? {} : result;
 
     // Apply default tags polymorphically through core-tags. The
     // (source_module, source_type) come from splitting target_kind.
-    const [sourceModule, sourceType] = tmpl.target_kind.split(":");
     const tags = tmpl.default_tags as string[];
     if (created.id && sourceModule && sourceType && tags.length > 0) {
       for (const tagName of tags) {
@@ -280,8 +306,8 @@ templatesRouter.post(
               },
               body: JSON.stringify({
                 tag_name: tagName,
-                source_module: sourceModule,
-                source_type: sourceType,
+                source_module: instance ?? sourceModule,
+                source_type: instance ? "item" : sourceType,
                 source_id: created.id,
               }),
             },

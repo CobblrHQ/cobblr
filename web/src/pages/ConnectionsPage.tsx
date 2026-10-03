@@ -8,8 +8,11 @@
 import { aiAvailabilityKeys } from "../lib/ai-availability-keys";
 import { useEffect, useMemo, useState } from "react";
 import { ServiceSetup } from "../components/ServiceSetup";
+import { WorkspaceIntegrations } from "../components/WorkspaceIntegrations";
+import { useActiveOrgOptional } from "../auth/ActiveOrgContext";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { useSearchParams } from "react-router-dom";
-import { incumbentConnection } from "../lib/incumbent-connection";
+import { incumbentConnection, routedConnectionsOfKind } from "../lib/incumbent-connection";
 import { initialPick } from "../lib/connection-pick";
 import { MailSourceRow, OAuthConnectPanel } from "../components/MailSourceCard";
 import { CredentialFields } from "../components/CredentialFields";
@@ -21,6 +24,7 @@ import { useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { WorkspaceChainSummaries } from "../components/WorkspaceChainSummaries";
 import { TestConnectionButton, VerificationBadge, VerificationLine } from "../components/ConnectionState";
 import { keyRefusedBy, refusalDialog, verificationToast } from "../lib/connection-state";
+import { connectionRemovalPlan } from "../lib/connection-removal";
 import {
   ApiError,
   api,
@@ -57,6 +61,8 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
   usePageTitle("Connections");
   const qc = useQueryClient();
   const toast = useToast();
+  const confirm = useConfirm();
+  const workspace = useActiveOrgOptional();
   const conns = useQuery({ queryKey: aiAvailabilityKeys.connections(), queryFn: api.listConnections });
   // Where each AI connection could stand behind another you already route.
   const offers = backupOffers(conns.data?.items ?? [], (c) => c.label || providerLabel(c.provider_id));
@@ -114,6 +120,16 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
+
+  const removeConnection = async (c: UserConnection) => {
+    const provider = providers.find((p) => p.id === c.provider_id);
+    const plan = connectionRemovalPlan(c, provider);
+    if (await confirm({
+      ...plan,
+      confirmLabel: "Remove",
+      destructive: true,
+    })) del.mutate(c.id);
+  };
 
   return (
     <div className="space-y-5">
@@ -224,7 +240,7 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
               )}
               <button
                 type="button"
-                onClick={() => del.mutate(c.id)}
+                onClick={() => void removeConnection(c)}
                 className="text-faint hover:text-ember-500 p-1.5"
                 title="Remove"
               >
@@ -293,6 +309,12 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
           )}
         </div>
       )}
+      {workspace?.activeOrg && <WorkspaceIntegrations
+        slug={workspace.activeSlug}
+        name={workspace.activeOrg.name}
+        canEnable={roleSatisfies(workspace.activeOrg.role, ["owner", "admin"])}
+        offers={!!adding && adding.provider === "service"}
+      />}
     </div>
   );
 }
@@ -373,7 +395,6 @@ function ConnectionForm({
   // about when another of mine is already routed there — otherwise there is
   // nothing to choose between and no question worth putting on screen.
   const [takeOver, setTakeOver] = useState<Record<string, boolean>>({});
-  const incumbentFor = (orgId: string) => incumbentConnection(others, orgId);
   // Yours and other people's are different decisions: routing a key into a
   // workspace you own is between you and yourself; offering it to someone
   // else's is a share they have to accept. The workspace switcher splits them
@@ -396,6 +417,9 @@ function ConnectionForm({
   });
 
   const provider = useMemo(() => providers.find((p) => p.id === providerId), [providers, providerId]);
+  const connectionKind = provider?.kind ?? existing?.kind ?? null;
+  const incumbentFor = (orgId: string) =>
+    connectionKind ? incumbentConnection(others, orgId, connectionKind) : null;
   // A service at an address has its own panel (where it is, what it offers,
   // its key). An adapter (a third-party API Cobblr speaks itself) is kind
   // service too, but is configured by its own fields like any provider.
@@ -438,9 +462,10 @@ function ConnectionForm({
         for (const org_id of claiming) {
           try {
             // This one first, then whatever else of mine is already here.
-            const rest = others
-              .filter((c) => (c.routes ?? []).some((r) => r.org_id === org_id))
-              .map((c) => c.id);
+            const rest = connectionKind
+              ? routedConnectionsOfKind(others, org_id, connectionKind)
+                  .map((c) => c.id)
+              : [];
             await api.setConnectionOrder({ org_id, credential_ids: [credentialId, ...rest] });
           } catch (e) {
             toast.error(e instanceof ApiError ? e.message : String(e));

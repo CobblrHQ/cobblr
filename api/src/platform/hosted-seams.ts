@@ -5,6 +5,7 @@
 // (verification / GDPR delete), and abuse rate-limiting. Mirrors the existing
 // `ai.registerEntitlementGuard` / `ai.registerProvider` pattern.
 
+import { featureOff } from "./features.js";
 import type { RequestHandler } from "express";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import type {
@@ -56,6 +57,10 @@ export function registerEntitlementGuard(g: EntitlementGuard): void {
 export async function checkEntitlement(
   ctx: EntitlementCtx,
 ): Promise<{ allow: boolean; reason?: string }> {
+  // Off on this site: the operator turned it off (COBBLR_FEATURES_OFF), or it
+  // is an experiment the operator has not turned on (COBBLR_FEATURES_ON);
+  // never a hostname written into the product (#4737).
+  if (featureOff(ctx.feature)) return { allow: false, reason: "That is turned off on this instance." };
   if (!entitlementGuard) return { allow: true };
   try {
     return await entitlementGuard(ctx);

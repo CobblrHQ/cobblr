@@ -32,6 +32,11 @@ export interface OfferedThing {
   kind_words?: string | null;
   quantity?: number | null;
   notes?: string | null;
+  /** The collection it was kept in on the giver's side: its module and, for
+   *  a collection of its own ("3d-printers"), the instance. The receiver files
+   *  it where they keep the same collection, the most specific first (#4682);
+   *  a hint, never a table the receiver must have. */
+  collection?: { module: string; instance: string | null } | null;
   /** The giver's field values by their labels ("Nozzle": "0.4 mm"). */
   fields?: Record<string, string>;
   photos: OfferedPhoto[];
@@ -102,3 +107,9 @@ export interface OfferIntake {
   /** An inbox row as a thing to offer. Null when it is gone. */
   asThing(orgId: string, inboxId: string): Promise<OfferedThing | null>;
 }
+
+/** The event the platform announces when a comment on a shared record arrives
+ *  from the other side of a share (share-spaces.md §12): `{ orgId, kind, id,
+ *  body, author_name, external_ref }`. The discussion module puts it in the
+ *  record's conversation as a guest's. One name, here, for both ends. */
+export const SHARE_COMMENT_ARRIVED = "platform.share.comment-arrived";

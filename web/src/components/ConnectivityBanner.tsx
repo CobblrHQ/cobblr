@@ -56,9 +56,9 @@ export function ConnectivityBanner() {
   if (!down && !offline) return null;
   const isOffline = offline || asOf !== null;
   return (
-    // A top bar that never yields: losing the server is news over anything.
     <FloatingChrome
       anchor="top"
+      reserveTop
       yields={false}
       role="alert"
       aria-live="assertive"

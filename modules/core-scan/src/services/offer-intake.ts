@@ -7,6 +7,7 @@
 // Filed, it says where it came from through the same facts a receipt's seller
 // does: Acquired from is the person, Acquired on the day it arrived.
 
+import { routeWhereKept, type RouteCandidate } from "./kept-route.js";
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
@@ -44,6 +45,11 @@ async function routeArrivals(db: Kysely<CoreScanDB>, orgId: string, ids: string[
     if (menu.length && row.suggested_name) {
       try {
         candidates = heuristicMatch(perceiveRow(row as Parameters<typeof perceiveRow>[0]), menu);
+        // The collection the giver kept it in is where the receiver keeps
+        // the same collection: the kept-route rule, the most specific first,
+        // so a 3D printer files into 3D Printers, not generic Machines (#4682).
+        const offered = (row.suggested_metadata as { offered_collection?: { module?: string; instance?: string | null } } | null)?.offered_collection;
+        if (offered?.module) routeWhereKept(candidates as RouteCandidate[], menu, { twins: [{ module: offered.module, instance: offered.instance ?? null }] });
       } catch (err) {
         console.error("[core-scan] offer intake: routing threw for one row:", (err as Error).message);
       }
@@ -135,6 +141,7 @@ export const offerIntake: OfferIntake = {
         user_fields: userFields,
         offered_fields: thing.fields ?? {},
         ...(thing.kind_words ? { offered_kind: thing.kind_words } : {}),
+        ...(thing.collection?.module ? { offered_collection: thing.collection } : {}),
         ...(photoIds.length > 1 ? { extra_photos: photoIds.slice(1) } : {}),
       };
       const ins = await intakeRow({
@@ -166,10 +173,14 @@ export const offerIntake: OfferIntake = {
 
   async state(orgId, inboxId) {
     const db = await dbFor(orgId);
-    const row = await db.selectFrom("core_scan_inbox_items").select(["status", "target_kind", "target_entity_id"]).where("id", "=", inboxId).executeTakeFirst();
+    const row = await db.selectFrom("core_scan_inbox_items").select(["status", "target_module", "target_kind", "target_entity_id"]).where("id", "=", inboxId).executeTakeFirst();
     if (!row || row.status === "discarded") return { status: "gone" };
     if (row.status === "resolved") {
-      return row.target_kind && row.target_entity_id ? { status: "filed", record: { kind: row.target_kind, id: row.target_entity_id } } : { status: "gone" };
+      // The row keeps the kind bare ("asset") beside its module; the record's
+      // kind is the two together, or Send back of a filed thing could not
+      // find it ("asset records cannot be marked as given away", #4684).
+      const kind = row.target_kind && !row.target_kind.includes(":") && row.target_module ? `${row.target_module}:${row.target_kind}` : row.target_kind;
+      return kind && row.target_entity_id ? { status: "filed", record: { kind, id: row.target_entity_id } } : { status: "gone" };
     }
     return { status: "waiting" };
   },

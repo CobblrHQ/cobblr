@@ -1,3 +1,4 @@
+import { currencyFromLocale } from "@cobblr/platform-contract/money";
 // /api/v1/auth — signup, login. Minimal for Phase 0:
 //
 //   POST /signup  { email, password, display_name, org_name }
@@ -14,6 +15,9 @@
 import { IP_LIMITS_OFF as AUTH_LIMITS_OFF, makeIpLimiter, overLimit, rateLimited } from "../platform/ip-limiter.js";
 import { Router, type Request } from "express";
 import { z } from "zod";
+import { decodeInvite, hereUrl, readInvite } from "../platform/share-links.js";
+import { trustedPeers } from "../platform/cloud.js";
+import { publicOrigin } from "./edge.js";
 import { sql } from "kysely";
 import { meta, metaPool } from "../db/meta.js";
 import { lockoutState, isLocked } from "../auth/lockout.js";
@@ -70,6 +74,24 @@ import type { OrgRole } from "../db/schema.js";
 
 class SkipNotify extends Error {}
 
+/** Does this share invite let its person sign up here? Made here or by a
+ *  Cobblr this one trusts, and still good (its owner's Cobblr says so). */
+async function shareInviteAdmits(raw: string, here: string): Promise<boolean> {
+  const token = decodeInvite(raw);
+  if (!token) return false;
+  let from: string;
+  try {
+    from = new URL(token.u).origin;
+  } catch {
+    return false;
+  }
+  if (from !== new URL(here || "http://invalid").origin && !trustedPeers().includes(from)) return false;
+  return readInvite(token, here).then(
+    () => true,
+    () => false,
+  );
+}
+
 export const authRouter = Router();
 
 // ─────────────────────────── helpers ────────────────────────────
@@ -95,6 +117,10 @@ const SignupBody = z.object({
   /** Single-use signup-invite token. When public signup is disabled, a
    *  valid token authorises this registration (the invite-only gate). */
   invite_token: z.string().max(200).optional(),
+  /** A share invite (/share/join#<token>) the person is signing up to accept.
+   *  From this Cobblr or one it trusts, it counts as their invitation when
+   *  public signup is off (#4737). */
+  share_invite: z.string().min(8).max(4000).optional(),
   /** Managed-app signup ("Cobblr for Yarn"): provision the user's first (only)
    *  workspace AS this app — install its flagship bundle + lock it into app
    *  mode — instead of a generic workspace. `manifest` is the app's bundle
@@ -404,7 +430,10 @@ authRouter.post("/signup", async (req, res, next) => {
     // atomic claim happens just before user creation (race-safe).
     const isManagedAppSignup = !!body.app && managedAppSignupEnabled();
     let invite: { id: string; invited_email: string | null; created_by: string; blueprint: unknown | null } | null = null;
-    if (!publicSignupEnabled() && !isManagedAppSignup && !body.invite_token) {
+    // A share invite from here or a trusted Cobblr, still good, is the
+    // invitation: the owner of a Cobblr this one trusts invited this person.
+    const sharedIn = !publicSignupEnabled() && !isManagedAppSignup && !body.invite_token && body.share_invite ? await shareInviteAdmits(body.share_invite, hereUrl(publicOrigin(req))) : false;
+    if (!publicSignupEnabled() && !isManagedAppSignup && !body.invite_token && !sharedIn) {
       return res.status(403).json({
         error: {
           code: "signup_disabled",
@@ -545,6 +574,7 @@ authRouter.post("/signup", async (req, res, next) => {
       return res.status(503).json({ error: { code: err.code, message: WORKSPACE_NOT_CREATED_MESSAGE } });
     }
 
+    await meta.updateTable("orgs").set({ main_currency: currencyFromLocale(req.get("Accept-Language")?.split(",")[0]?.split(";")[0]) }).where("id", "=", provisioned.orgId).execute();
     // Lifecycle seam: the hosted overlay attaches here. No-op in open core.
     await fireSignup({ userId, email, orgId: provisioned.orgId });
     recordSignup({ orgId: provisioned.orgId, userId, via: "form", source: body.source });
@@ -762,7 +792,7 @@ authRouter.post("/login", async (req, res, next) => {
         });
         if (central.ok && central.token) {
           if (!AUTH_LIMITS_OFF) await clearLoginAttempts(email);
-          const out = await completeIdentitySignIn(central.token, body.app, body.source);
+          const out = await completeIdentitySignIn(central.token, body.app, body.source, req.get("Accept-Language")?.split(",")[0]?.split(";")[0]);
           return res.status(out.status).json(out.body);
         }
         if (!central.ok && central.error === "email_unverified") {
@@ -869,6 +899,7 @@ async function adoptOrProvisionIdentity(
   identityToken: string,
   app?: string,
   source?: string,
+  locale?: string,
 ): Promise<AdoptResult> {
   const profile = await fetchIdentityProfile(identityToken);
   if (!profile) return NO_LOCAL_ACCOUNT;
@@ -937,6 +968,7 @@ async function adoptOrProvisionIdentity(
     }
   }
   provisioned ??= await provisionOrgForUser(created.id, `${profile.displayName}'s workspace`);
+  await meta.updateTable("orgs").set({ main_currency: currencyFromLocale(locale) }).where("id", "=", provisioned.orgId).execute();
   // Same lifecycle seam signup uses, so the hosted overlay sees these accounts too
   // (trial stamping, welcome flows) rather than only the ones that came through a form.
   await fireSignup({ userId: created.id, email: profile.email, orgId: provisioned.orgId });
@@ -1001,6 +1033,7 @@ async function completeIdentitySignIn(
   identityToken: string,
   app?: string,
   source?: string,
+  locale?: string,
 ): Promise<{ status: number; body: unknown }> {
   let identityId: string;
   try {
@@ -1026,7 +1059,7 @@ async function completeIdentitySignIn(
   let userId = linked?.id;
   let provisioned: { slug: string; app: string | null } | null = null;
   if (!userId) {
-    const outcome = await adoptOrProvisionIdentity(identityId, identityToken, app, source);
+    const outcome = await adoptOrProvisionIdentity(identityId, identityToken, app, source, locale);
     if ("error" in outcome) return { status: outcome.status, body: { error: outcome.error } };
     userId = outcome.userId;
     provisioned = outcome.provisioned;
@@ -1138,7 +1171,7 @@ authRouter.post("/identity/callback", async (req, res, next) => {
         error: { code: "invalid_code", message: "That sign-in link has expired or was already used." },
       });
     }
-    const out = await completeIdentitySignIn(redeemed, app, source);
+    const out = await completeIdentitySignIn(redeemed, app, source, req.get("Accept-Language")?.split(",")[0]?.split(";")[0]);
     return res.status(out.status).json(out.body);
   } catch (err) {
     if (err instanceof z.ZodError) {

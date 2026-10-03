@@ -20,8 +20,9 @@ import type { PlatformFieldDef } from "./types";
 import { fieldControl, fieldInputText, valueFromInput } from "./fieldControl";
 import { ChoiceField } from "./ChoiceField";
 import { SellerOfferNotice } from "./SellerOfferNotice";
-import { MoneyInput } from "./MoneyInput";
-import { moneyStorageOf } from "@cobblr/platform-contract/money";
+import { MoneyInput, MoneyValueInput } from "./MoneyInput";
+import { useMoneyCurrency } from "./MoneyCurrency";
+import { fieldCurrency, moneyStorageOf } from "@cobblr/platform-contract/money";
 import { formatMeasure, parseMeasure } from "@cobblr/platform-contract/measure";
 import { fieldTypeTakesUnit } from "@cobblr/platform-contract";
 import { FieldPack, fieldPackControlClass } from "./FieldPack";
@@ -90,6 +91,7 @@ export function CustomFieldsPanel({
   entityId,
   hideNames,
 }: Props) {
+  const mainCurrency = useMoneyCurrency();
   const { api, orgSlug } = usePlatformWeb();
   const { data } = useQuery({
     queryKey: ["platform-field-defs", orgSlug, entityKind],
@@ -216,13 +218,18 @@ export function CustomFieldsPanel({
           }),
           node: (
             <div>
-            <FieldRow
+            <FieldValueEditor
               key={`${f.id}:${refused[f.name] ?? 0}`}
               def={f}
               value={value}
               fallbackValue={fallbackValues?.[f.name]}
               fallbackLabel={fallbackLabel}
-              onCommit={(v) => commitField(f.name, v)}
+              currency={fieldCurrency(values, f.name, mainCurrency)}
+              onCurrencyChange={(currency) => onCommit(`money_currency_${f.name}`, currency)}
+              onCommit={(v) => {
+                commitField(f.name, v);
+                if (f.type !== "money" && moneyStorageOf(f)) onCommit(`money_currency_${f.name}`, fieldCurrency(values, f.name, mainCurrency));
+              }}
               evidence={stamps[f.name]}
               note={noteOf(values, f.name)}
               // The kind's own column already answers who sold it: a note
@@ -292,7 +299,7 @@ export function CustomFieldsPanel({
   );
 }
 
-function FieldRow({
+export function FieldValueEditor({
   def,
   value,
   fallbackValue,
@@ -303,8 +310,14 @@ function FieldRow({
   onCommitNote,
   kind,
   detailField,
+  draftOnly,
+  currency,
+  onCurrencyChange,
 }: {
   def: PlatformFieldDef;
+  draftOnly?: boolean;
+  currency?: string;
+  onCurrencyChange?: (currency: string) => void;
   value: unknown;
   fallbackValue?: unknown;
   fallbackLabel?: string;
@@ -352,6 +365,7 @@ function FieldRow({
         note={note}
         onCommitNote={onCommitNote}
         detailField={detailField}
+        draftOnly={draftOnly}
       />
     ) : control === "checkbox" ? (
       // Boolean — a real checkbox, not a text box.
@@ -361,7 +375,7 @@ function FieldRow({
       <MarkdownRow def={def} value={value} onCommit={onCommit} />
     ) : control === "money" ? (
       // An amount: the currency symbol, grouped digits, never cents.
-      <MoneyRow def={def} value={value} onCommit={onCommit} />
+      <MoneyRow def={def} value={value} onCommit={onCommit} currency={currency} onCurrencyChange={onCurrencyChange} />
     ) : (
       // number / date / url / text
       <PlainRow
@@ -503,20 +517,15 @@ function PlainRow({
   );
 }
 
-function MoneyRow({ def, value, onCommit }: { def: PlatformFieldDef; value: unknown; onCommit: (v: unknown) => void }) {
+function MoneyRow({ def, value, onCommit, currency, onCurrencyChange }: { def: PlatformFieldDef; value: unknown; onCommit: (v: unknown) => void; currency?: string; onCurrencyChange?: (currency: string) => void }) {
+  const props = { value, storage: moneyStorageOf(def) ?? "amount" as const, ariaLabel: def.display_label, className: fieldPackControlClass };
   return (
     <label className="block">
       <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {def.display_label}
         {def.required ? <span className="text-ember-500"> *</span> : null}
       </span>
-      <MoneyInput
-        value={value}
-        storage={moneyStorageOf(def) ?? "amount"}
-        onCommit={(v) => onCommit(v)}
-        ariaLabel={def.display_label}
-        className={fieldPackControlClass}
-      />
+      {def.type === "money" ? <MoneyValueInput {...props} onCommit={onCommit} /> : <MoneyInput {...props} currency={currency} onCurrencyChange={onCurrencyChange} onCommit={onCommit} />}
     </label>
   );
 }
@@ -907,8 +916,10 @@ function ChoiceRow({
   note,
   onCommitNote,
   detailField,
+  draftOnly,
 }: {
   def: PlatformFieldDef;
+  draftOnly?: boolean;
   kind: string;
   value: unknown;
   onCommit: (v: unknown) => void;
@@ -930,6 +941,7 @@ function ChoiceRow({
         note={note}
         onCommitNote={onCommitNote ? (v) => onCommitNote(v) : undefined}
         detailField={detailField}
+        draftOnly={draftOnly}
         className={fieldPackControlClass}
       />
     </div>

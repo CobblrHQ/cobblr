@@ -612,7 +612,7 @@ export function setBusyRetryDelaysForTest(delays: readonly number[]): void {
  *  and `aiChainFor` walks it to list the whole order, so the order a person
  *  is shown is the order the router uses, by construction (#3842). */
 async function nextCandidate(
-  req: Pick<Parameters<PlatformAi["invoke"]>[0], "orgId" | "userId" | "capability" | "provider_id" | "model" | "credential_id">,
+  req: Pick<Parameters<PlatformAi["invoke"]>[0], "orgId" | "userId" | "capability" | "provider_id" | "model" | "credential_id" | "costPolicy">,
   tried: readonly TriedProvider[],
 ): Promise<{ row: ProviderRow; model: string; picked: boolean; personalCredentials?: Record<string, unknown>; personal: ResolvedPersonalProvider | null }> {
   const triedPersonal = new Set(tried.filter((t) => t.rowId.startsWith("personal:")).map((t) => t.rowId.slice("personal:".length)));
@@ -714,7 +714,10 @@ async function nextCandidate(
       { provider_id: req.provider_id, model: req.model },
       triedWorkspace,
     ));
-  return { row, model, picked, personalCredentials, personal: personalServed };
+  if (req.costPolicy === "free" && !providers.get(row.provider_id)?.freeBackground) {
+    return nextCandidate(req, [...tried, { rowId: row.id, provider_id: row.provider_id, label: nameOf(row), model, reason: "unknown" }]);
+  }
+  return { row, model: req.costPolicy === "free" ? providers.get(row.provider_id)?.freeBackgroundModel || model : model, picked, personalCredentials, personal: personalServed };
 }
 
 export type { AiChainStep } from "@cobblr/platform-contract";

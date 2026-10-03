@@ -116,6 +116,7 @@ async function pauseJoinLink(orgId: string, inviteId: string, limit: number, per
         eventType: "workspace.join_link_paused",
         message: `Your join link paused itself: more than ${limit} people joined in ${PERIOD_WORD[period] ?? "the period"}. Resume it, or give it a new code if the QR got out.`,
         // The link's own row on the members page, where Resume and New code are.
+        // OUTSIDE-RECORD-ADDRESS: an invite is a settings workflow, not a registered record kind.
         link_url: `/configuration/members#invite-${inviteId}`,
         entityType: "invite",
         entityId: inviteId,

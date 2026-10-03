@@ -28,7 +28,10 @@ const SurfaceCreate = z.object({
   // 'app'        — scope_id is a core-apps app SLUG. Renders the whole
   //                composed app read-only + no-login (markdown / stat /
   //                view / custom blocks; write/member blocks dropped).
-  scope_type: z.enum(["view", "entity", "collection", "board", "app"]),
+  // 'page'       — scope_id is a core_public_surfaces_pages id: one LINK
+  //                to a public page, with its own label (name), expiry
+  //                and config.visibility (pages.ts makes these).
+  scope_type: z.enum(["view", "entity", "collection", "board", "app", "page"]),
   scope_id: z.string().min(1),
   config: z.record(z.unknown()).optional(),
   expires_at: z.string().datetime().nullable().optional(),
@@ -50,7 +53,7 @@ interface MetaDbLike {
   };
 }
 
-function metaDb(): MetaDbLike {
+export function metaDb(): MetaDbLike {
   return platform().db.meta as MetaDbLike;
 }
 
@@ -61,48 +64,71 @@ surfacesRouter.post(
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const parsed = SurfaceCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
+    const row = await createSurface(tenantDb(req), tenantContext(req).org.id, sessionUser(req)?.id ?? null, parsed.data);
+    res.status(201).json({ ...row, public_url: `/api/v1/public/${row.token}` });
+  }),
+);
+
+/** Make a surface (a link): the tenant row, then the meta-side token index
+ *  the public route reads. Tenant-side first, so a failure there leaves no
+ *  orphan in the lookup. */
+export async function createSurface(
+  db: ReturnType<typeof tenantDb>,
+  orgId: string,
+  userId: string | null,
+  input: z.infer<typeof SurfaceCreate>,
+) {
+  const token = mintToken();
+  const expiresAt = input.expires_at ? new Date(input.expires_at) : null;
+  const row = await db
+    .insertInto("core_public_surfaces_surfaces")
+    .values({
+      name: input.name,
+      token,
+      scope_type: input.scope_type,
+      scope_id: input.scope_id,
+      config: input.config ?? {},
+      expires_at: expiresAt,
+      created_by: userId,
+    })
+    .returningAll()
+    .executeTakeFirstOrThrow();
+  await metaDb()
+    .insertInto("public_surface_tokens")
+    .values({ token, org_id: orgId, surface_id: row.id, enabled: true, expires_at: expiresAt })
+    .execute();
+  await platform().events.emit("core-public-surfaces.surface.created", {
+    orgId,
+    surfaceId: row.id,
+    name: row.name,
+    scope_type: row.scope_type,
+  });
+  return row;
+}
+
+// A new address for the same link: the old token stops working at once, the
+// label, expiry and visibility stay. For a link that went somewhere it
+// should not have.
+// AI-REACH: exempt what is made public, and to whom, is a person's decision in Settings, Sharing; an assistant never publishes
+surfacesRouter.post(
+  "/:id/regenerate",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
     const db = tenantDb(req);
     const ctx = tenantContext(req);
-    const session = sessionUser(req);
-
+    const old = await db.selectFrom("core_public_surfaces_surfaces").selectAll().where("id", "=", String(req.params.id)).where("revoked_at", "is", null).executeTakeFirst();
+    if (!old) {
+      res.status(404).json({ error: { code: "not_found", message: "surface not found" } });
+      return;
+    }
     const token = mintToken();
-    const expiresAt = parsed.data.expires_at ? new Date(parsed.data.expires_at) : null;
-
-    // Two-step insert. Tenant-side first (so a failure there doesn't
-    // leave an orphan in the meta lookup); meta-side after.
-    const row = await db
-      .insertInto("core_public_surfaces_surfaces")
-      .values({
-        name: parsed.data.name,
-        token,
-        scope_type: parsed.data.scope_type,
-        scope_id: parsed.data.scope_id,
-        config: parsed.data.config ?? {},
-        expires_at: expiresAt,
-        created_by: session?.id ?? null,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-
+    await metaDb().deleteFrom("public_surface_tokens").where("token", "=", old.token).execute();
+    const row = await db.updateTable("core_public_surfaces_surfaces").set({ token, updated_at: new Date() }).where("id", "=", old.id).returningAll().executeTakeFirstOrThrow();
     await metaDb()
       .insertInto("public_surface_tokens")
-      .values({
-        token,
-        org_id: ctx.org.id,
-        surface_id: row.id,
-        enabled: true,
-        expires_at: expiresAt,
-      })
+      .values({ token, org_id: ctx.org.id, surface_id: row.id, enabled: row.enabled, expires_at: row.expires_at })
       .execute();
-
-    await platform().events.emit("core-public-surfaces.surface.created", {
-      orgId: ctx.org.id,
-      surfaceId: row.id,
-      name: row.name,
-      scope_type: row.scope_type,
-    });
-
-    res.status(201).json({ ...row, public_url: `/api/v1/public/${token}` });
+    res.json({ ...row, public_url: `/api/v1/public/${token}` });
   }),
 );
 

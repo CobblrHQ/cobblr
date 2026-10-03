@@ -47,6 +47,7 @@ export async function startFakePaperless(token: string, docs: FakeDoc[], tags: R
       if (req.headers.authorization !== `Token ${token}`) return json(401, { detail: "Invalid token." });
       const u = new URL(req.url ?? "/", "http://x");
       const one = /^\/api\/documents\/(\d+)\/$/.exec(u.pathname);
+      const download = /^\/api\/documents\/(\d+)\/download\/$/.exec(u.pathname);
       if (u.pathname === "/api/documents/" && req.method === "GET") {
         const q = (u.searchParams.get("query") ?? "").toLowerCase().replace(/"/g, "");
         const words = q.split(/\s+/).filter(Boolean);
@@ -66,6 +67,15 @@ export async function startFakePaperless(token: string, docs: FakeDoc[], tags: R
       if (one && req.method === "PATCH") {
         patched.push({ id: Number(one[1]), body: JSON.parse(body || "{}") });
         return json(200, { id: Number(one[1]) });
+      }
+      if (download && req.method === "GET") {
+        const d = docs.find((x) => x.id === Number(download[1]));
+        if (!d) return json(404, { detail: "Not found." });
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/pdf");
+        res.setHeader("content-disposition", `attachment; filename="${d.title}.pdf"`);
+        res.end(Buffer.from("%PDF-1.4\n% fake Paperless document\n"));
+        return;
       }
       if (u.pathname === "/api/tags/") {
         const ids = (u.searchParams.get("id__in") ?? "").split(",").map(Number);
@@ -106,9 +116,14 @@ export async function runBridge(key: string, paperless: { url: string }, lan = L
       const res = await fetch(`${paperless.url}${item.path}`, { method: item.method ?? "GET", headers: item.source?.headers ?? {}, ...(body ? { body } : {}) });
       // A picture crosses the relay the way the real bridge sends it.
       const ctype = res.headers.get("content-type") ?? "";
-      if (/^image\//.test(ctype)) {
+      if (/^(?:image\/|application\/pdf)/.test(ctype)) {
         const data = Buffer.from(await res.arrayBuffer()).toString("base64");
-        await relayRespond(key, { id: item.id, status: res.status, body: { __binary: true, contentType: ctype, data_b64: data } });
+        await relayRespond(key, {
+          id: item.id,
+          status: res.status,
+          body: { __binary: true, contentType: ctype, data_b64: data },
+          headers: { "content-type": ctype, ...(res.headers.get("content-disposition") ? { "content-disposition": res.headers.get("content-disposition")! } : {}) },
+        });
         continue;
       }
       const text = await res.text();
@@ -129,4 +144,3 @@ export async function runBridge(key: string, paperless: { url: string }, lan = L
     },
   };
 }
-

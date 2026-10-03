@@ -6,7 +6,8 @@
 // makes "<their name>'s workspace (shared)" for you here
 // (docs/design-decisions/share-spaces.md).
 
-import { useState } from "react";
+import { dropShareInvite, holdShareInvite } from "../lib/share-invite-pending";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { usePageTitle, useToast } from "@cobblr/platform-web";
 import { ApiError, api } from "../lib/api";
@@ -31,6 +32,10 @@ export function ShareJoinPage() {
   const toast = useToast();
   const invite = inviteFromHash();
   const [elsewhere, setElsewhere] = useState("");
+  // Signed in and back on the invite: it is here again, so it is not held.
+  useEffect(() => {
+    if (user) dropShareInvite();
+  }, [user]);
   const preview = useQuery({
     queryKey: ["share-invite", invite?.raw],
     queryFn: () => api.previewShareInvite(invite!.raw),
@@ -83,16 +88,27 @@ export function ShareJoinPage() {
   const what = preview.data?.workspace_name ?? invite.workspace ?? "their workspace";
 
   if (!user) {
+    // Held through the sign-in or sign-up, so it opens again after (#4737).
+    holdShareInvite(invite.raw);
+    const back = encodeURIComponent(`/share/join#${invite.raw}`);
     return (
       <CenteredCard tone="info" title={`${who} wants to share with you`}>
-        <p className="text-sm text-content">Sign in to the Cobblr your account is on to accept. You get a workspace of your own for what {who} shares.</p>
+        <p className="text-sm text-content">Sign in to accept, or make an account here first; this invite opens again after. You get a workspace of your own for what {who} shares.</p>
         <button
           type="button"
           data-testid="share-join-sign-in"
-          onClick={() => window.location.assign(`/?next=${encodeURIComponent(`/share/join#${invite.raw}`)}`)}
+          onClick={() => window.location.assign(`/?next=${back}`)}
           className="mt-4 w-full rounded-md bg-cobble-600 px-3 py-2 text-sm font-medium text-white"
         >
           Sign in here
+        </button>
+        <button
+          type="button"
+          data-testid="share-join-sign-up"
+          onClick={() => window.location.assign(`/?mode=signup&next=${back}`)}
+          className="mt-2 w-full rounded-md border border-line px-3 py-2 text-sm text-content hover:border-accent dark:border-slate-700"
+        >
+          Make an account here
         </button>
         {otherCobblr}
       </CenteredCard>

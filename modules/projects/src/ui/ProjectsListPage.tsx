@@ -1,3 +1,4 @@
+import { NewItemMenu } from "@cobblr/platform-web";
 // Projects index. Status-grouped list + search + new-project form.
 
 import { useDeferredValue, useMemo, useState, type FormEvent } from "react";
@@ -5,7 +6,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2 } from "lucide-react";
 import {
-  BulkActionBar,
+  BulkActionBar, BulkSetField,
   CustomFieldsPanel,
   TableFileIntake,
   Modal,
@@ -205,13 +206,15 @@ export function ProjectsListPage() {
       />
 
       <div className="flex">
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
-        >
-          <Plus size={14} /> New {noun}
-        </button>
+        <NewItemMenu kind="projects:project" instance={instance}>
+          <button
+            type="button"
+            onClick={() => setCreating(true)}
+            className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
+          >
+            <Plus size={14} /> New {noun}
+          </button>
+        </NewItemMenu>
       </div>
 
       {/* The table's import door, where its bundle declares one: each file
@@ -382,7 +385,9 @@ export function ProjectsListPage() {
         count={selected.size}
         onClear={() => setSelected(new Set())}
         actions={
-          <button
+          <>
+            <BulkSetField records={Array.from(selected).map((id) => ({ kind: entityKind, id }))} onDone={() => setSelected(new Set())} />
+            <button
             type="button"
             disabled={bulkDelete.isPending}
             onClick={async () => {
@@ -398,6 +403,7 @@ export function ProjectsListPage() {
           >
             <Trash2 size={12} /> Delete
           </button>
+          </>
         }
       />
     </div>

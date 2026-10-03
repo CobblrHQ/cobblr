@@ -1,6 +1,7 @@
 // Entity-kind resolvers — let other modules + core-views read knowledge entries
 // via platform().entities.lookup()/list() without knowing our table.
 
+import { registerRowHistoryWriter } from "@cobblr/platform-contract";
 import { type Kysely } from "kysely";
 import { platform, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import type { KnowledgeDB } from "../db.js";
@@ -10,6 +11,7 @@ let registered = false;
 export function registerKnowledgeResolvers(): void {
   if (registered) return;
   registered = true;
+  registerRowHistoryWriter("knowledge:entry", "knowledge_entries");
 
   platform().entities.registerResolver("knowledge:entry", async (orgId, id) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<KnowledgeDB>;

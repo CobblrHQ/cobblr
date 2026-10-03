@@ -39,6 +39,10 @@ export interface ComposedBurst {
    *  Composed here rather than at the call site because only the compose knows
    *  whether the batch collapsed to one. */
   link_url?: string;
+  /** A record destination to resolve only once the sender has the workspace.
+   *  This keeps composed messages semantic until an outside-facing address can
+   *  be made workspace-qualified. */
+  record?: { kind: string; id: string };
   /** The entity a batch of one is about, same reasoning as the link. */
   entityType?: string;
   entityId?: string;

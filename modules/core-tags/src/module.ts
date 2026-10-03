@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-tags",
-  version: "0.2.1",
+  version: "0.2.2",
   displayName: "Tags",
   description:
     "Label anything with the same tag, whatever it is, and see everything with that tag together.",

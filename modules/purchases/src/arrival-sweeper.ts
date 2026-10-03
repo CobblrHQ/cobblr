@@ -146,17 +146,6 @@ export function decideAsk(state: AskState, now: Date): AskDecision {
   return daysSince >= NUDGE_AFTER_DAYS ? "nudge" : "quiet";
 }
 
-/** Where the question takes you. A bare workspace-relative path, per the
- *  deep-link convention.
- *
- *  This MUST agree with `purchases:order`'s `detailRoute` in the manifest.
- *  There is no runtime seam to resolve a kind's detail route from a module, so
- *  the two are written twice and `arrival-sweep.mjs` asserts the link resolves
- *  to a real order rather than trusting they stayed in step. */
-export function orderLink(orderId: string): string {
-  return `/purchases/${orderId}`;
-}
-
 /** How the question reads. Kept next to the decision because the wording IS
  *  the feature: this is the entire user-facing surface of the sweep. */
 export function askMessage(
@@ -463,6 +452,11 @@ async function visitWorkspace(
           // when no owner is known (orders never recorded a creator, so
           // legacy rows broadcast exactly as before).
           const audience = parcelAudience([row.tracking_added_by_user_id], new Set(memberIds));
+          const recordLink = await platform().entities.recordAddressForEntity(
+            org.id,
+            "purchases:order",
+            row.id,
+          );
           for (const userId of audience) {
             try {
               await platform().notifications.dispatch({
@@ -479,7 +473,9 @@ async function visitWorkspace(
                 // Without this the notification asks a question and gives no
                 // way to answer it: dispatch does NOT derive a link from
                 // entityType/entityId, it passes link_url straight through.
-                link_url: orderLink(row.id),
+                ...(recordLink
+                  ? { link_url: recordLink }
+                  : { no_link_reason: "the order has no detail page" }),
                 // The DM renders this as one rich card with the button in it,
                 // instead of a sentence trailing a bare URL.
                 card: {

@@ -49,7 +49,7 @@ export class KnowledgeApi {
     });
     const wrote = method.toUpperCase() !== "GET";
     if (res.status === 204) {
-      if (wrote) noteWorkspaceWrite(url);
+      if (wrote) noteWorkspaceWrite(url, res);
       return undefined as T;
     }
     let parsed: unknown;
@@ -65,7 +65,7 @@ export class KnowledgeApi {
       const e = (parsed as { error?: { code?: string; message?: string } }).error;
       throw new KnowledgeApiError(res.status, e?.code ?? "error", e?.message ?? `Request failed (${res.status})`);
     }
-    if (wrote) noteWorkspaceWrite(url);
+    if (wrote) noteWorkspaceWrite(url, res);
     return parsed as T;
   }
 

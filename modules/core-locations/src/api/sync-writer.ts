@@ -6,7 +6,7 @@
 // fire, so hierarchy + wires + views stay consistent with the HTTP path.
 
 import { duplicateSiblingMessage, siblingNamed } from "./siblings.js";
-import { DuplicateRecordError, findRowIdByKey, imageId, platform, restoreRow, snapshotRow } from "@cobblr/platform-contract";
+import { DuplicateRecordError, findRowIdByKey, imageId, platform, restoreRow, snapshotRow, snapshotRowTree, restoreRowTree } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { CoreLocationsDB } from "../db.js";
 import { deletePlace, restoreDeletedPlace } from "./place-delete.js";
@@ -121,6 +121,14 @@ export function registerLocationsWriter(): void {
 
     /** Every column of one row — the state a change ledger keeps so an undo
      *  has something real to put back (EntityWriter.snapshot). */
+    async restoreDeletion(orgId, snapshot) {
+      const id = imageId(snapshot.image);
+      if (id && await restoreDeletedPlace(orgId, id)) return;
+      await restoreRowTree(await platform().tenants.getDb(orgId), "core_locations_locations", snapshot, "core_locations_");
+    },
+    async snapshotDeletion(orgId, id) {
+      return snapshotRowTree(await platform().tenants.getDb(orgId), "core_locations_locations", id, "core_locations_");
+    },
     async snapshot(orgId, id) {
       return snapshotRow(await platform().tenants.getDb(orgId), "core_locations_locations", id);
     },

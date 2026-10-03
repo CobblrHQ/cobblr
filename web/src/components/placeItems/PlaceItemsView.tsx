@@ -106,12 +106,8 @@ export function PlaceItemsView({
 
   const listed = useMemo(() => railItems(records, filter), [records, filter]);
   const unplacedCount = useMemo(() => records.filter((r) => placesOf(r).length === 0).length, [records]);
-  // The count says what the list shows: narrowed by a collection or a
-  // search, "3 of 16 without a place", never the workspace's 16 over a list
-  // of 3 (#4437).
-  const narrowed = !!filter.q || !!filter.collection;
-  const unplacedShown = useMemo(() => railItems(records, { ...filter, showAll: false }).length, [records, filter]);
-  const withoutAPlace = narrowed ? `${unplacedShown} of ${unplacedCount} without a place` : `${unplacedCount} without a place`;
+  const unplacedShown = useMemo(() => listed.filter((r) => placesOf(r).length === 0).length, [listed]);
+  const withoutAPlace = filter.showAll ? `${listed.length} shown · ${unplacedShown} without a place` : `${unplacedShown} without a place`;
   const collections = useMemo(
     () => kinds.filter((k) => records.some((r) => r.kind === k.id)).map((k) => ({ id: k.id, name: k.display_name_plural || k.display_name })),
     [kinds, records],

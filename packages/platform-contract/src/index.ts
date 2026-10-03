@@ -1,3 +1,4 @@
+export type { Money, MoneyTotal, MoneyConversion, ExchangeRates } from "@cobblr/platform-contract/money";
 // The platform contract — types and validators that modules import
 // when registering with cobblr-core. Modules MUST NOT import from
 // @cobblr/api directly; everything they need crosses through here.
@@ -7,6 +8,7 @@
 // later phases.
 
 import type { UploadMiddleware, UploadOptions, UploadRefusal, UploadSizeRow } from "./upload.js";
+import type { ConnectionTestOutcome } from "./connection-verification.js";
 import { z } from "zod";
 import { SERVICE_EFFECTS, type PlatformServices } from "@cobblr/platform-contract/services";
 export type { PlatformServices } from "@cobblr/platform-contract/services";
@@ -130,8 +132,8 @@ export const FIELD_TYPE_VALUES = [
   // shown with the best prefix, searched, filtered and sorted by value
   // (@cobblr/platform-contract/measure).
   "measure",
-  // Money: the amount in the workspace currency's main unit (4300 for
-  // $4,300), shown and typed through @cobblr/platform-contract/money
+  // Money: { amount, currency }, in main units (4300 for $4,300). Legacy
+  // numbers read in the workspace currency. Shown and typed through @cobblr/platform-contract/money
   // ("$4,300", "4,300"). A number field whose role or unit says money reads
   // the same way; this is the type a person picks for a price.
   "money",
@@ -1632,6 +1634,11 @@ const ModuleManifest = z.object({
   // etc. Leading digit allowed so names like "3d-printers" work; everything must
   // still be kebab/snake-case ascii.
   name: z.string().regex(/^[a-z0-9][a-z0-9_-]*$/, "name must be kebab/snake-case ascii"),
+  aliases: z.array(z.string().regex(/^[a-z0-9][a-z0-9_-]*$/)).optional(),
+  retirement: z.object({
+    reason: z.string().trim().min(1),
+    replacement: z.string().regex(/^[a-z0-9][a-z0-9_-]*$/).optional(),
+  }).optional(),
   version: z.string().regex(/^\d+\.\d+\.\d+/, "version must be semver-ish"),
   displayName: z.string().min(1),
   description: z.string().min(1),
@@ -1687,6 +1694,9 @@ const ModuleManifest = z.object({
   // modules are always-on regardless; this flag is for the stock band.
   // See docs/architecture/module-layers.md.
   autoEnable: z.boolean().default(false),
+
+  /** An optional outside integration, offered under services, not a collection row. */
+  integration: z.object({ route: z.string().startsWith("/") }).optional(),
 
   // A user-facing NAV entry this module contributes, even though the `core-`
   // prefix / foundational band would otherwise exclude it from the navbar.
@@ -2225,6 +2235,20 @@ export function defineModule(manifest: z.input<typeof ModuleManifest>): ModuleMa
   // can always read `traits` directly. `profile` and `overrides` are
   // preserved on the entry for introspection / tooling.
   const resolved = result.data;
+  const aliases = resolved.aliases ?? [];
+  if (aliases.includes(resolved.name) || new Set(aliases).size !== aliases.length) {
+    throw new Error(`Invalid module aliases for "${resolved.name}": aliases must be unique and differ from name`);
+  }
+  if (resolved.retirement && (resolved.maturity === "hidden" || resolved.maturity === "experimental")) {
+    throw new Error(`Retired module "${resolved.name}" must load on every deployment: use beta or stable maturity`);
+  }
+  if (resolved.retirement && resolved.band === "foundational") {
+    throw new Error(`Cannot retire foundational module "${resolved.name}"`);
+  }
+  if (resolved.retirement?.replacement && [resolved.name, ...aliases].includes(resolved.retirement.replacement)) {
+    throw new Error(`Module "${resolved.name}" cannot replace itself`);
+  }
+
   for (const kind of resolved.provides.entityKinds) {
     if (kind.profile) {
       const base = TRAIT_PRESETS[kind.profile];
@@ -2330,7 +2354,50 @@ export interface ActivityLogParams {
  *  label is their name). */
 export type ActivityViaKind = "mcp" | "assistant" | "automation" | "label" | "surface" | "share";
 
+export class RecordRestoreRefused extends Error {
+  status: number;
+  constructor(message: string, status = 409) { super(message); this.status = status; }
+}
+
+export interface DeletionSnapshot {
+  image: Record<string, unknown>;
+  related?: unknown;
+}
+
+export interface DeletionParticipant {
+  snapshot(orgId: string, ref: EntityRef, snapshot?: DeletionSnapshot): Promise<unknown>;
+  restore(orgId: string, ref: EntityRef, image: unknown): Promise<void>;
+  purge?(orgId: string, ref: EntityRef, image: unknown): Promise<void>;
+}
+
+export interface DeletedRecordImage {
+  id: string;
+  image: Record<string, unknown>;
+  details: unknown;
+  deletedBy: string | null;
+  deletedAt: Date;
+}
+
+export interface PlatformDeletedRecords {
+  exclusive<T>(orgId: string, kind: string, id: string, work: () => Promise<T>): Promise<T>;
+  capture<T>(orgId: string, kind: string, id: string, work: () => Promise<T>): Promise<T>;
+  keep(orgId: string, kind: string, id: string, image: Record<string, unknown>, details?: unknown, deletedBy?: string | null, deletedAt?: Date): Promise<string>;
+  get(orgId: string, kind: string, id: string): Promise<DeletedRecordImage | null>;
+  forget(orgId: string, kind: string, id: string): Promise<void>;
+  restore(orgId: string, kind: string, id: string, deletionId?: string): Promise<boolean>;
+  registerParticipant(name: string, participant: DeletionParticipant): void;
+  registerLifecycle(kind: string, lifecycle: { restore(orgId: string, id: string): Promise<void>; purge(orgId: string, id: string): Promise<boolean> }): void;
+}
+
+export interface HistoryWriter {
+  snapshotDeletion?(orgId: string, id: string): Promise<DeletionSnapshot | null>;
+  restoreDeletion?(orgId: string, snapshot: DeletionSnapshot): Promise<void>;
+  snapshot(orgId: string, id: string): Promise<Record<string, unknown> | null>;
+  restore(orgId: string, image: Record<string, unknown>): Promise<void>;
+}
+
 export interface PlatformActivity {
+  registerHistoryWriter(kind: string, writer: HistoryWriter): void;
   log(p: ActivityLogParams): Promise<void>;
 }
 
@@ -2835,6 +2902,8 @@ export interface EntityWriter {
    *  duplicated: two copies of one printer with the same source id, one made by an
    *  assistant and one by the next sync, was the bug (#3836). */
   findByKey?(orgId: string, key: { field: string; metadata: boolean }, value: string): Promise<string | null>;
+  snapshotDeletion?(orgId: string, id: string): Promise<DeletionSnapshot | null>;
+  restoreDeletion?(orgId: string, snapshot: DeletionSnapshot): Promise<void>;
   delete(orgId: string, id: string): Promise<void>;
   /** Optional: this thing is no longer the person's (sold, given away, parted
    *  out, …; `@cobblr/platform-contract/disposition`). The module records it
@@ -3247,6 +3316,11 @@ export interface PlatformEntities {
    *  module's named instances when the base kind can't see it, and picks the
    *  per-instance route. Returns undefined when the entity has no reachable page. */
   detailPathForEntity(orgId: string, kind: string, id: string): Promise<string | undefined>;
+  /** A record's complete browser address, INSTANCE AWARE and WORKSPACE
+   *  QUALIFIED. This is the address for anything that leaves the app, such as
+   *  a library write-back, notification channel, calendar feed or export.
+   *  `origin` overrides the configured public origin for an inbound request. */
+  recordAddressForEntity(orgId: string, kind: string, id: string, origin?: string | null): Promise<string | undefined>;
   /** The entity's current system TITLE, INSTANCE AWARE — the stock name, re-resolved
    *  live. Same instance probe as detailPathForEntity: tries the given kind, and if
    *  that base lookup can't see an item in a NAMED instance, probes the module's
@@ -3816,6 +3890,16 @@ export interface DateFieldCalendarSpec {
    *  without the stock face (a bookshelf, where the count is not the point)
    *  keeps every date. Omit and every row counts. */
   onHand?: { column: string; instanceColumn: string };
+  /** Built-in date columns, declared by their owner, with a separate filter. */
+  dateColumns?: Array<{
+    column: string;
+    label: string;
+    source: "warranty" | "purchase";
+    direction: DateFieldDirection;
+    /** A true flag, such as a lifetime warranty, removes this date. */
+    excludeWhen?: string;
+  }>;
+
 }
 
 export interface PlatformCalendar {
@@ -3913,6 +3997,7 @@ export interface PlatformNotifications {
    *  Writes the row, looks up the user's per-event-type channel
    *  preferences, and delivers via every enabled channel. */
   dispatch(p: NotificationDestination & {
+    idempotencyKey?: string;
     orgId: string;
     userId: string;
     eventType: string;
@@ -4442,6 +4527,8 @@ export interface AiProviderDef {
    *  when explicitly chosen/routed and a missing-provider case stays a clean
    *  "no provider configured" rather than an error from the unset provider. */
   autoSelectable?: boolean;
+  freeBackground?: boolean;
+  freeBackgroundModel?: string;
   /** This backend RUNS tools itself and cannot hand `tool_calls` back (a
    *  `claude -p`-style agent). Cobb's tools reach it as a read-only MCP relay
    *  instead: the platform mints a short-lived, workspace-pinned grant and puts
@@ -4549,8 +4636,7 @@ export interface AiProviderDef {
  *  entry the person added stays choosable even when the list cannot be read. */
 export type AiReportedModels = { ok: true; models: string[] } | { ok: false; error: string; models: string[] };
 
-export interface AiConnectionTest {
-  ok: boolean;
+export interface AiConnectionTest extends ConnectionTestOutcome {
   error?: string;
   /** Why it failed, as the provider said it (provider-reason.ts): a bad key,
    *  a quota, a missing model, or a provider that did not answer. */
@@ -4688,6 +4774,7 @@ export interface PlatformAi {
      *  not the prompt, so a cached reply answers whatever prompt was live when it
      *  was bought. Mutually exclusive with bypass_cache; bypass_cache wins. */
     cache_only?: boolean;
+    costPolicy?: "free";
     source?: { kind: string; id: string };
     /** The user who initiated this call (for the AI activity log). Null/absent
      *  for system-initiated calls (e.g. a wire). */
@@ -4991,12 +5078,19 @@ export interface ConnectionProviderDef {
   label: string;
   /** The fields to ask for. `secret: true` is write-only — stored encrypted and
    *  never returned, so the edit form shows "set" rather than the value. */
-  credentials: Record<string, { label: string; secret: boolean; choices?: Array<{ value: string; label: string }> }>;
+  credentials: Record<string, { label: string; secret: boolean; format?: "uri"; choices?: Array<{ value: string; label: string }> }>;
   /** Position in the picker; lower first, and FIRST IS THE DEFAULT. Optional:
    *  unranked providers sort after the ranked ones in registration order. */
   rank?: number;
   /** One line under the picker, for a kind whose purpose isn't self-evident. */
   blurb?: string;
+  /** What Remove changes and what it deliberately leaves alone. The generic
+   *  connections page says both before deleting the credential, so a provider
+   *  with durable links or copied data can describe their different fates. */
+  disconnect?: {
+    stops: string;
+    keeps: string;
+  };
   /** A provider whose credentials come from a consent screen, not a form: a
    *  mailbox, a calendar, anything OAuth. The page renders a Connect button
    *  that opens `start` (a route of the provider's own, which redirects to
@@ -5313,6 +5407,12 @@ export interface PlacementPosition {
   y_mm: number;
 }
 
+export interface PlacementExpectation {
+  container: EntityRef | null;
+  slot?: string | null;
+  position?: PlacementPosition | null;
+}
+
 export interface PlatformPlacement {
   /** Put `containee` inside `container` (moving it if already placed). Throws on
    *  a self-placement, an ineligible kind, or a cycle.
@@ -5323,6 +5423,9 @@ export interface PlatformPlacement {
    *  `via` says what moved it ("floor plan"), and makes the move an activity
    *  row on the thing, in the person's words. */
   place(args: {
+    expected?: PlacementExpectation;
+    /** Keep this record distinct for a durable undo journal. */
+    preserveIdentity?: boolean;
     orgId: string;
     containee: EntityRef;
     container: EntityRef;
@@ -5350,7 +5453,7 @@ export interface PlatformPlacement {
    *  there is no such place. Resolves with where it went. */
   returnHome(args: { orgId: string; containee: EntityRef; placedBy?: string | null; via?: string }): Promise<(EntityRef & { placed?: EntityRef }) | null>;
   /** Take `containee` out of whatever container it's in (no-op if unplaced). */
-  remove(args: { orgId: string; containee: EntityRef }): Promise<void>;
+  remove(args: { orgId: string; containee: EntityRef; expected?: PlacementExpectation }): Promise<void>;
   /** The container a containee currently lives in, or null. */
   containerOf(args: { orgId: string; containee: EntityRef }): Promise<EntityRef | null>;
   /** Everything directly inside a container (one level; not recursive), with
@@ -5365,8 +5468,9 @@ export interface PlatformPlacement {
   pathsOf(args: { orgId: string; containees: EntityRef[] }): Promise<Map<string, PlacePathStep[]>>;
   /** Every record holding something now that is not a place by nature (its
    *  kind's traits do not make it a container): a Backpack, a toolbox. What a
-   *  place picker offers beside the places, with how many things each holds. */
-  holders(args: { orgId: string }): Promise<Array<EntityRef & { holds: number }>>;
+   *  place picker offers beside the places, with how many things each holds.
+   *  includePlaces also returns natural containers for occupancy checks. */
+  holders(args: { orgId: string; includePlaces?: boolean }): Promise<Array<EntityRef & { holds: number }>>;
   /** How a container kind knows its own parent, when that nesting is not a
    *  placement (a Location's parent place). The kind's own module registers it. */
   registerParent(kind: string, parentOf: (orgId: string, id: string) => Promise<EntityRef | null>): void;
@@ -5377,14 +5481,18 @@ export interface PlatformPlacement {
    *  the spares there. */
   registerQuantity(kind: string, quantity: PlacementQuantity): void;
   /** What one record of a kind is worth, in the workspace's currency. Given
-   *  ids, those; given "all", every record of the kind that counts. */
+   *  ids, those; given "all", every active record of the kind that counts,
+   *  including unpriced records with null. Empty holdings are left out. */
   registerValue(
     kind: string,
-    valueOf: (orgId: string, ids: string[] | "all") => Promise<Map<string, number>>,
+    valueOf: (orgId: string, ids: string[] | "all") => Promise<Map<string, number | null | DatedMoney>>,
     /** The capability a viewer needs to see these values (a part's value
      *  reveals its cost). A viewer without it gets them withheld, said so. */
-    opts?: { readScope?: string },
+    opts?: { readScope?: string; insuranceDetails?: (orgId: string, ids: string[]) => Promise<Map<string, { serial?: string | null; date?: string | null }>> },
   ): void;
+  /** Private serial/date fields for a kind with no value provider. Read
+   *  only for insurance exports by a viewer allowed to see costs. */
+  registerInsuranceDetails(kind: string, reader: (orgId: string, ids: string[]) => Promise<Map<string, { serial?: string | null; date?: string | null }>>): void;
   /** A thing built from parts: its own value (what is not itemized), what is
    *  installed in it (and in those, all the way down) and the total. Each
    *  part counted once. `other` is null when its kind keeps no value. */
@@ -5392,7 +5500,7 @@ export interface PlatformPlacement {
   /** What everything is worth, each record counted once: the workspace, or
    *  only what is in `within` at any depth. A computer's installed parts count
    *  as themselves, never again inside the computer's own value. */
-  worth(args: { orgId: string; within?: EntityRef | null; viewer?: ValueViewer }): Promise<{ total: number; records: number; withheld: boolean }>;
+  worth(args: { orgId: string; within?: EntityRef | null; viewer?: ValueViewer; insurance?: boolean }): Promise<PlacementWorth>;
   /** What a kind calls the things inside one of its records ("Parts" for a
    *  computer, "In the bag" for a backpack): the workspace's word, else a
    *  bundle's, else null (say "Contents"). Per kind, a collection's kind
@@ -5401,6 +5509,17 @@ export interface PlatformPlacement {
   /** Set the workspace's word for a kind; null puts the default back. A
    *  bundle update never changes it. */
   setContentsWord(args: { orgId: string; kind: string; word: string | null }): Promise<ContentsWord>;
+}
+
+export interface PlacementWorth {
+  currency?: string;
+  excluded?: Record<string, number>;
+  conversions?: import("@cobblr/platform-contract/money").MoneyConversion[];
+  total: number;
+  records: number;
+  unpriced: number;
+  withheld: boolean;
+  items: Array<EntityRef & { value: number | null; serial?: string | null; date?: string | null }>;
 }
 
 /** A kind's word for what is inside its records (placement.contentsWord). */
@@ -5453,6 +5572,9 @@ export interface BuiltPart extends EntityRef {
 }
 
 export interface BuiltValue {
+  currency?: string;
+  excluded?: Record<string, number>;
+  conversions?: import("@cobblr/platform-contract/money").MoneyConversion[];
   /** The thing's own value: what is not itemized. Null when its kind keeps none. */
   other: number | null;
   parts: BuiltPart[];
@@ -5714,7 +5836,20 @@ export interface PlatformPairings {
      *  (a document in a document system): what a reader of the links sees
      *  beside its id. */
     notes?: string | null;
+    /** How to name and open a target that has no Cobblr detail route. */
+    presentation?: import("./pairing-presentation.js").PairingResultPresentation;
   }): Promise<{ id: string }>;
+  /** Add or refresh the presentation of one exact relationship. Existing
+   * metadata owned by other features is preserved. */
+  present(args: {
+    orgId: string;
+    sourceKind: string;
+    sourceId: string;
+    targetKind: string;
+    targetId: string;
+    relationshipKind: string;
+    presentation: import("./pairing-presentation.js").PairingResultPresentation;
+  }): Promise<{ updated: number }>;
   /** Remove the pairing(s) matching this exact relationship. Returns how many
    *  rows went; removing something that is not there is a no-op, not an error
    *  (the same shape placement.remove has).
@@ -6782,7 +6917,18 @@ export interface PlatformOutboundEmail {
   ): Promise<Array<{ id: string; to: string; subject: string; sentBy: string | null; status: "sent" | "failed" | "skipped"; messageId: string | null; error: string | null; at: string }>>;
 }
 
+export interface DatedMoney {
+  value: import("@cobblr/platform-contract/money").Money;
+  day: string;
+}
+export interface PlatformMoney {
+  currency(orgId: string): Promise<string>;
+  total(orgId: string, values: readonly DatedMoney[], currency?: string): Promise<import("@cobblr/platform-contract/money").MoneyTotal>;
+}
+
 export interface Platform {
+  deletedRecords: PlatformDeletedRecords;
+  money: PlatformMoney;
   activity: PlatformActivity;
   events: PlatformEvents;
   tenants: PlatformTenants;
@@ -6826,6 +6972,7 @@ export interface Platform {
   devices: PlatformDevices;
   // Hosted-overlay seams (no-op / allow-all in open core):
   entitlements: PlatformEntitlements;
+  tidy: PlatformTidy;
   metering: PlatformMetering;
   telemetry: PlatformTelemetry;
   accounts: PlatformAccounts;
@@ -7312,6 +7459,16 @@ export function imageId(image: Record<string, unknown>): string | null {
   return typeof id === "string" && id ? id : null;
 }
 
+export function registerRowHistoryWriter(kind: string, table: string): void {
+  const prefix = `${kind.split(":")[0]!.replace(/-/g, "_")}_`;
+  platform().activity.registerHistoryWriter(kind, {
+    snapshotDeletion: async (orgId, id) => snapshotRowTree(await platform().tenants.getDb(orgId), table, id, prefix),
+    restoreDeletion: async (orgId, snapshot) => restoreRowTree(await platform().tenants.getDb(orgId), table, snapshot, prefix),
+    snapshot: async (orgId, id) => snapshotRow(await platform().tenants.getDb(orgId), table, id),
+    restore: async (orgId, image) => restoreRow(await platform().tenants.getDb(orgId), table, image),
+  });
+}
+
 /** The whole of a module's `snapshot`: every column of one row, by id. */
 export async function snapshotRow(
   db: unknown,
@@ -7608,4 +7765,90 @@ export function valueSearchWhere<EB extends LikeBuilder>(
   return eb.and!(every);
 }
 
+export interface TidyRecord { kind: string; id: string; name: string; url?: string }
+export interface TidyCandidate {
+  id: string;
+  kind: string;
+  records: TidyRecord[];
+  action: { route: string; bundle_id?: string; action_id?: string; args?: Record<string, unknown>; steps?: Array<{ action_id: string; args: Record<string, unknown> }> };
+  why: string;
+  priority: number;
+}
+export interface TidyFinderContext {
+  orgId: string;
+  now: Date;
+  lastRun: Date | null;
+  shapeChanged: boolean;
+  as: { userId: string; orgSlug: string };
+  memo<T>(key: string, fingerprint: string, compute: () => Promise<T>): Promise<T>;
+  classify(item: Record<string, unknown>, collections: Array<{ name: string; label: string; noun: string }>): Promise<string | null>;
+}
+export interface PlatformTidy {
+  registerFinder(finder: { id: string; module?: string; find(ctx: TidyFinderContext): Promise<TidyCandidate[]> }): void;
+}
 
+export interface DeletedRowTree {
+  rows: Array<{ table: string; row: Record<string, unknown> }>;
+  cleared: Array<{ table: string; column: string; row: Record<string, unknown> }>;
+}
+
+export async function snapshotRowTree(db: unknown, table: string, id: string, prefix: string): Promise<DeletionSnapshot | null> {
+  const image = await snapshotRow(db, table, id);
+  if (!image) return null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const q = db as any;
+  const related: DeletedRowTree = { rows: [], cleared: [] };
+  const seen = new Set<string>();
+  const visit = async (parentTable: string, row: Record<string, unknown>): Promise<void> => {
+    const key = `${parentTable}:${String(row.id ?? JSON.stringify(row))}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    if (parentTable !== table || row.id !== id) related.rows.push({ table: parentTable, row });
+    const fks = await q.selectFrom("information_schema.referential_constraints as r")
+      .innerJoin("information_schema.key_column_usage as child", "child.constraint_name", "r.constraint_name")
+      .innerJoin("information_schema.key_column_usage as parent", "parent.constraint_name", "r.unique_constraint_name")
+      .select(["child.table_name as table", "child.column_name as column", "parent.column_name as parentColumn", "r.delete_rule as rule"])
+      .where("child.table_schema", "=", "public").where("parent.table_schema", "=", "public")
+      .where("parent.table_name", "=", parentTable).where("r.delete_rule", "in", ["CASCADE", "SET NULL"]).execute() as Array<{ table: string; column: string; parentColumn: string; rule: string }>;
+    for (const fk of fks) {
+      if (!fk.table.startsWith(prefix) || row[fk.parentColumn] == null) continue;
+      const children = await q.selectFrom(fk.table).selectAll().where(fk.column, "=", row[fk.parentColumn]).execute() as Array<Record<string, unknown>>;
+      for (const child of children) {
+        if (fk.rule === "CASCADE") await visit(fk.table, child);
+        else related.cleared.push({ table: fk.table, column: fk.column, row: child });
+      }
+    }
+  };
+  await visit(table, image);
+  return { image, related };
+}
+
+export async function restoreRowTree(db: unknown, table: string, snapshot: DeletionSnapshot, prefix: string): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const q = db as any;
+  const related = snapshot.related as DeletedRowTree | undefined;
+  const insert = async (t: string, image: Record<string, unknown>) => {
+    if (!t.startsWith(prefix)) throw new Error("That saved row belongs to another app.");
+    const cols = await q.selectFrom("information_schema.columns").select(["column_name", "data_type", "is_generated", "identity_generation"])
+      .where("table_schema", "=", "public").where("table_name", "=", t).execute() as Array<{ column_name: string; data_type: string; is_generated: string; identity_generation: string | null }>;
+    const row: Record<string, unknown> = {};
+    for (const c of cols) {
+      if (c.is_generated === "ALWAYS" || c.identity_generation === "ALWAYS" || image[c.column_name] === undefined) continue;
+      const v = image[c.column_name];
+      row[c.column_name] = /json/i.test(c.data_type) && v !== null && typeof v === "object" ? JSON.stringify(v) : v;
+    }
+    await q.insertInto(t).values(row).onConflict((oc: { doNothing(): unknown }) => oc.doNothing()).execute();
+  };
+  await insert(table, snapshot.image);
+  for (const r of related?.rows ?? []) await insert(r.table, r.row);
+  for (const r of related?.cleared ?? []) {
+    if (!r.table.startsWith(prefix) || !r.row.id) continue;
+    await q.updateTable(r.table).set({ [r.column]: r.row[r.column] }).where("id", "=", r.row.id).where(r.column, "is", null).execute();
+  }
+}
+
+export function canPurgeDeletedRecord(role: string, deletedBy: string | null, userId: string): boolean {
+  // role-gate: exact. Permanent removal of someone else's deletion belongs to
+  // workspace owners and admins; editors may remove only their own deletions.
+  return role === "owner" || role === "admin" || deletedBy === userId;
+}

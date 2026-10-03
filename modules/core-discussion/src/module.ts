@@ -15,7 +15,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-discussion",
-  version: "0.7.8",
+  version: "0.7.9",
   maturity: "beta",
   displayName: "Discussion",
   description:

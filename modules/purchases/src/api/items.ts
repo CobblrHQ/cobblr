@@ -1,3 +1,5 @@
+import { platform } from "@cobblr/platform-contract";
+import { fieldCurrency } from "@cobblr/platform-contract/money";
 // /items — line items across orders, and the price history of one thing.
 //
 // The nested /orders/:id/items collection answers "what was on this order".
@@ -18,7 +20,7 @@ import { localDayOf } from "./route-helpers.js";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
-import { tenantDb } from "../db.js";
+import { tenantContext, tenantDb } from "../db.js";
 import { asyncHandler } from "./util.js";
 import { summarizePriceHistory, type PricePoint } from "../price-stats.js";
 
@@ -65,7 +67,7 @@ itemsRouter.get(
     // The date money actually changed hands. A receipt-imported line carries no
     // received_at (the receipt IS the receipt), so fall back to the order's
     // arrived_at / ordered_at before giving up and using the row's created_at.
-    const purchasedAt = sql<Date | null>`coalesce(i.received_at, o.arrived_at, o.ordered_at, i.created_at::date)`;
+    const purchasedAt = sql<Date | null>`coalesce(o.ordered_at, i.created_at::date)`;
 
     let q = db
       .selectFrom("purchases_order_items as i")
@@ -76,7 +78,7 @@ itemsRouter.get(
         "i.part_id",
         "i.description",
         "i.qty",
-        "i.unit_cost",
+        "i.unit_cost", "i.metadata", "o.metadata as order_metadata",
         "i.received_at",
         "i.created_at",
         "o.vendor",
@@ -99,7 +101,9 @@ itemsRouter.get(
       .limit(limit)
       .execute();
 
-    const items: PricePoint[] = rows
+    const orgId = tenantContext(req).org.id;
+    const currency = await platform().money.currency(orgId);
+    const items: Array<PricePoint & { currency: string; original_unit_cost: number | null }> = rows
       .map((r) => ({
         id: r.id,
         order_id: r.order_id,
@@ -108,11 +112,17 @@ itemsRouter.get(
         purchased_at: isoDay(r.purchased_at),
         description: r.description,
         qty: num(r.qty) ?? 1,
-        unit_cost: num(r.unit_cost),
+        unit_cost: num(r.unit_cost), original_unit_cost: num(r.unit_cost), currency: fieldCurrency(r.metadata, "unit_cost", fieldCurrency(r.order_metadata, "total_cost", currency)),
       }))
       .reverse();
 
+    const entries = items.filter((p) => p.unit_cost != null).map((p) => ({ value: { amount: p.unit_cost!, currency: p.currency }, day: p.purchased_at || "" }));
+    const sum = await platform().money.total(orgId, entries, currency);
+    const byValue = new Map(sum.conversions.map((v) => [v.original, v.amount]));
+    let i = 0;
+    for (const p of items) if (p.unit_cost != null) { p.unit_cost = byValue.get(entries[i++]!.value) ?? null; }
     res.json({
+      currency, money_total: sum,
       part_id: part_id ?? null,
       items,
       stats: summarizePriceHistory(items),

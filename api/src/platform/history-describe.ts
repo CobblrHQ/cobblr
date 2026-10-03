@@ -114,9 +114,10 @@ export async function describeChanges(
   slug: string,
   rows: Array<{ action: string; diff: unknown; kinds: string[] }>,
 ): Promise<SaidChange[][]> {
-  const raw = rows.map((r) => changesOfRow(r.action, r.diff).filter((c) => !NOT_SAID.has(c.field) || c.custom));
+  const raw = rows.map((r) => changesOfRow(r.action, r.diff).filter((c) => (!NOT_SAID.has(c.field) || c.custom) && !c.field.startsWith("money_currency_")));
   if (raw.every((r) => r.length === 0)) return raw.map(() => []);
 
+  const currency = await platform().money.currency(orgId);
   const fieldsByKinds = new Map<string, Map<string, FieldInfo>>();
   for (const r of rows) {
     const key = r.kinds.join("|");
@@ -173,7 +174,7 @@ export async function describeChanges(
     }
     if (info?.money) {
       if (value === null || value === undefined || value === "") return { text: null };
-      const said = formatStoredMoney(value, info.money);
+      const said = formatStoredMoney(value, info.money, { currency });
       if (said) return { text: said };
     }
     const kind = refKind(field, own);

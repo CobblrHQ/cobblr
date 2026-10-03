@@ -183,12 +183,18 @@ export const SATELLITE_TABLES: SatelliteRef[] = [
  *  A record arriving in a new instance adopts that instance's configuration,
  *  which is the entire point of instances being different. */
 export const KIND_SCOPED_CONFIG = [
+  // A deleted record is absent, so it cannot move between collections. Its
+  // recovery image keeps the collection it belonged to when it was deleted.
+  "deleted_records",
   "module_field_defs",
   // A share's record of what its mirror last sent. Left alone on purpose: the
   // next pass reads a moved record as one that left the old kind and arrived
   // in the new, so its copy is replaced. Rewriting the kind here would keep
   // the old copy (keyed by the old kind) in the friend's share space for good.
   "share_mirror_state",
+  // What a friend added to a share, waiting to be taken: its kind is where
+  // it would be made, not a record here, so a move has nothing to rewrite.
+  "share_additions",
   // An offer about the kind's fields (the seller upgrade), not about a record.
   "field_upgrade_offers",
   "native_field_overrides",

@@ -14,15 +14,12 @@
 // has put it somewhere else since. Every door reaches the same undo: the
 // page's Undo button, and the assistant's, which restores the one row it knew
 // about through the writer and so finds this record by that row's id.
-import { platform, restoreRow } from "@cobblr/platform-contract";
+import { platform, restoreRowTree } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
-import { sql } from "kysely";
 import type { CoreLocationsDB } from "../db.js";
 
 const LOCATION = "core-locations:location";
 const TABLE = "core_locations_locations";
-/** How long a deleted place can still be put back. */
-const KEEP_DAYS = 30;
 
 type Db = Kysely<CoreLocationsDB>;
 
@@ -92,29 +89,7 @@ export async function deletePlace(
   const placements = await placementsIn(orgId, ids);
   const things = placements.filter((p) => p.containee.kind !== LOCATION);
 
-  await db
-    .insertInto("core_locations_deleted")
-    .values({
-      id: rootId,
-      name: root.name,
-      rows: sql`${JSON.stringify(rows)}::jsonb` as never,
-      placements: sql`${JSON.stringify(placements)}::jsonb` as never,
-      deleted_by: deletedBy,
-    })
-    .onConflict((oc) =>
-      oc.column("id").doUpdateSet({
-        name: root.name,
-        rows: sql`excluded.rows` as never,
-        placements: sql`excluded.placements` as never,
-        deleted_by: deletedBy,
-        deleted_at: new Date(),
-      }),
-    )
-    .execute();
-  await db
-    .deleteFrom("core_locations_deleted")
-    .where("deleted_at", "<", new Date(Date.now() - KEEP_DAYS * 86_400_000))
-    .execute();
+  await platform().deletedRecords.keep(orgId, LOCATION, rootId, root, { name: root.name, rows, placements }, deletedBy);
 
   for (const t of things) await platform().placement.remove({ orgId, containee: t.containee });
   await db.deleteFrom(TABLE).where("id", "=", rootId).execute();
@@ -131,7 +106,8 @@ export async function restoreDeletedPlace(
   rootId: string,
 ): Promise<{ name: string; places: number; things: number; leftWhereTheyAre: number } | null> {
   const db = await dbOf(orgId);
-  const kept = await db.selectFrom("core_locations_deleted").selectAll().where("id", "=", rootId).executeTakeFirst();
+  const saved = await platform().deletedRecords.get(orgId, LOCATION, rootId);
+  const kept = saved?.details as { name: string; rows: unknown; placements: unknown } | null;
   if (!kept) return null;
   const rows = ((typeof kept.rows === "string" ? JSON.parse(kept.rows) : kept.rows) ?? []) as Array<
     Record<string, unknown> & { id: string; parent_id: string | null; depth: number }
@@ -148,7 +124,7 @@ export async function restoreDeletedPlace(
   const shift = parentGone ? root.depth : 0;
   for (const row of [...rows].sort((a, b) => a.depth - b.depth)) {
     const image = { ...row, depth: row.depth - shift, ...(parentGone && row.id === rootId ? { parent_id: null } : {}) };
-    await restoreRow(db, TABLE, image);
+    await restoreRowTree(db, TABLE, { image }, "core_locations_");
   }
 
   let things = 0;
@@ -172,7 +148,7 @@ export async function restoreDeletedPlace(
       // The thing itself was deleted since: nothing to put back.
     }
   }
-  await db.deleteFrom("core_locations_deleted").where("id", "=", rootId).execute();
+  await platform().deletedRecords.forget(orgId, LOCATION, rootId);
   void platform().events.emit("core-locations.location.updated", { orgId, locationId: rootId });
   return { name: kept.name, places: rows.length - 1, things, leftWhereTheyAre };
 }

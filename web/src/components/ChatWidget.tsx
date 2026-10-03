@@ -33,6 +33,8 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { getChatPageContext, getChatSelection, clearChatSelection, useChatSelection } from "../lib/chat-context";
 import { useSelectionCapture } from "../lib/use-selection-capture";
 import { localAnswerFor } from "../lib/local-answers";
+import { runNavRowCommand } from "../lib/nav-row-command";
+import { useNavModules } from "./useNavModules";
 import { describeTool } from "../lib/chat-progress";
 import {
   caretOnFirstLine,
@@ -531,6 +533,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   });
   void railOpen;
   const { activeSlug } = useActiveOrg();
+  const nav = useNavModules(activeSlug);
   const navigate = useNavigate();
   const detailRoute = useDetailRoute(activeSlug ?? "");
   const listRoute = useListRoute(activeSlug ?? "");
@@ -1074,6 +1077,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
       { role: "user", content: text, ...(selection ? { sentWith: selection } : {}) },
     ];
     setMessages(next);
+
     setBusy(true);
     try {
       const out = await api.runCommand(activeSlug, s.id, text, getChatSelection()?.ids);
@@ -1116,6 +1120,14 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
       { role: "user", content: text, ...(selection ? { sentWith: selection } : {}) },
     ];
     setMessages(next);
+
+    const rows = [...nav.instanceGroups.entries()].map(([key, row]) => ({ key: key.replace(/^__navgroup__/, ""), label: row.label, members: row.members.map((m) => m.name) }));
+    const collections = nav.tops.flatMap((t) => nav.instanceGroups.get(t.name)?.members ?? (t.name.startsWith("__instance__") ? [t] : []));
+    const navReply = runNavRowCommand(activeSlug, text, collections, rows);
+    if (navReply) {
+      setMessages([...next, { role: "assistant", content: navReply }]);
+      return;
+    }
 
     // No AI provider → ask the server's basic-mode matcher (no model, no cost)
     // instead of hitting the AI chat only to render a failure. The endpoint
@@ -2046,7 +2058,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                             <ChatRefChip
                               key={`${r.kind} ${r.id}`}
                               slug={activeSlug ?? ""}
-                              href={detailRoute(r.kind, r.id) ?? undefined}
+                              href={detailRoute(r.kind, r.id) ?? r.href}
                               onGo={(to) => {
                                 setOpen(false);
                                 navigate(to);

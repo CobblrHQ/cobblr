@@ -57,7 +57,17 @@ export function FileDetailPage() {
   const remove = useMutation({
     mutationFn: () => api.deleteFile(activeSlug, id),
     onSuccess: () => {
-      toast.success("File deleted");
+      toast.action("File moved to Recently deleted.", {
+        actionLabel: "Undo",
+        onAction: async () => {
+          try {
+            await api.restoreFile(activeSlug, id);
+            await qc.invalidateQueries();
+            toast.success("File restored.");
+            navigate(`/files/${id}`);
+          } catch (err) { fail(err); }
+        },
+      });
       void qc.invalidateQueries({ queryKey: ["files", activeSlug] });
       navigate("/files");
     },

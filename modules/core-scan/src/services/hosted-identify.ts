@@ -242,7 +242,7 @@ export async function hostedIdentifyWhy(opts: {
    *  per-workspace counter alone cannot. Detached work with no visitor (retry
    *  sweeps, email ingest) sends nothing and rides the key cap. */
   visitorIp?: string | null;
-}): Promise<{ answer: HostedAnswer | null; degraded?: HostedDegrade }> {
+}): Promise<{ answer: HostedAnswer | null; degraded?: HostedDegrade; queued?: HostedQueued }> {
   // The same answer /ai-status gives, so what a person is promised and what
   // the scan does cannot disagree (#3867).
   const reach = await hostedIdentifyReach(opts.orgId);
@@ -281,7 +281,17 @@ export async function hostedIdentifyWhy(opts: {
       // A 429 is the edge's per-person daily tier: the allowance, said so.
       return { answer: null, degraded: res.status === 429 ? "allowance" : "unreachable" };
     }
-    const body = (await res.json()) as HostedAnswer & { cached?: boolean };
+    const body = (await res.json()) as HostedAnswer & { cached?: boolean; status?: unknown; job_id?: unknown; message?: unknown };
+    // Accepted, not answered: every engine the service has was busy or out,
+    // so it queued the photo and will answer later (barcode-intelligence #43).
+    // That is not a failure and not "unidentified": the caller says "back
+    // shortly" and collects the job (hostedIdentifyJob). It will cost an
+    // engine call when it runs, so it is metered as one now.
+    if (res.status === 202 && body?.status === "queued" && typeof body.job_id === "string" && body.job_id) {
+      meterIdentify({ orgId: opts.orgId, kind: "identify.call", userId: opts.userId });
+      console.log(`[hosted-identify] queued as ${body.job_id}: every engine is busy; collecting it later`);
+      return { answer: null, queued: { jobId: body.job_id, message: typeof body.message === "string" ? body.message : HOSTED_QUEUED_WORDS } };
+    }
     if (body?.cached === true) {
       await refundWorkspaceIdentify(opts.orgId);
       meterIdentify({ orgId: opts.orgId, kind: "identify.refund", userId: opts.userId });
@@ -292,6 +302,51 @@ export async function hostedIdentifyWhy(opts: {
   } catch (err) {
     console.log(`[hosted-identify] unreachable (${(err as Error).message}) — degrading`);
     return { answer: null, degraded: "unreachable" };
+  }
+}
+
+/** A photo the service accepted and will answer later: its job, and the
+ *  service's own words for the wait. */
+export interface HostedQueued {
+  jobId: string;
+  message: string;
+}
+
+/** What the row says while a queued identify waits. */
+export const HOSTED_QUEUED_WORDS = "Identifying. Back shortly.";
+/** ...and while a queued receipt read waits. */
+export const HOSTED_RECEIPT_QUEUED_WORDS = "Reading the receipt. Back shortly.";
+
+/** Where a queued identify has got to. `lost` is a job the service no longer
+ *  knows (it expired, or the service was rebuilt): asking again will not help. */
+export type HostedJobState =
+  | { state: "queued" }
+  | { state: "done"; answer: HostedAnswer }
+  | { state: "failed"; message: string }
+  | { state: "lost" }
+  | { state: "unreachable" };
+
+/** Collect a queued identify (GET /v1/identify/jobs/:id). Never throws: a
+ *  service that cannot be reached right now is asked again later. Free on
+ *  the service's side, so nothing is metered. */
+export async function hostedIdentifyJob(jobId: string): Promise<HostedJobState> {
+  const url = process.env.COBBLR_IDENTIFY_URL?.trim();
+  if (!url) return { state: "unreachable" };
+  try {
+    const key = process.env.COBBLR_IDENTIFY_KEY?.trim();
+    const res = await fetch(`${url.replace(/\/+$/, "")}/v1/identify/jobs/${encodeURIComponent(jobId)}`, {
+      headers: key ? { authorization: `Bearer ${key}` } : {},
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (res.status === 404) return { state: "lost" };
+    if (!res.ok) return { state: "unreachable" };
+    const body = (await res.json()) as HostedAnswer & { status?: unknown; message?: unknown };
+    if (body?.status === "done" && typeof body.kind === "string") return { state: "done", answer: body };
+    if (body?.status === "failed") return { state: "failed", message: typeof body.message === "string" ? body.message : "" };
+    return { state: "queued" };
+  } catch (err) {
+    console.log(`[hosted-identify] job ${jobId} unreachable (${(err as Error).message}); asking again later`);
+    return { state: "unreachable" };
   }
 }
 

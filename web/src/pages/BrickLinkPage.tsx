@@ -1,19 +1,12 @@
-// /bricklink — three BrickLink-format ingestion tools for a Lego
-// workspace:
-//   1. Wanted-list paste — parse a BL XML, see structured items.
-//   2. Diff vs inventory — given a parsed wanted-list, bucket each
-//      line as have / partial / need / unmatched against
-//      inventory:part rows matched to the rebrickable-parts catalog.
-//   3. Order CSV import — parse a BL order CSV into structured lines.
-//
-// All three are stateless on the server side; the user pastes, the
-// API parses, the UI renders. A future commit-order action will
-// take the parsed CSV lines + write inventory + purchases.
+// /bricklink: take the files BrickLink exports, compare a wanted list with the
+// workspace's Lego inventory, then hand durable facts to their owners. Lists
+// owns saved and shopping lists; Purchases owns imported orders and lines.
+// BrickLink only parses its formats and performs the catalog-backed comparison.
 
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type DragEvent, type ReactNode } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Diff, FileText, Upload } from "lucide-react";
-import { usePageTitle, usePageWidth, useToast } from "@cobblr/platform-web";
+import { CheckCircle2, Diff, FileText, ShoppingCart, Upload } from "lucide-react";
+import { usePageTitle, usePageWidth, usePasteImage, useToast } from "@cobblr/platform-web";
 import { ApiError, api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
@@ -96,6 +89,27 @@ const STATUS_STYLE: Record<DiffEntry["status"], string> = {
 
 type Tab = "wanted" | "order";
 
+const WANTED_ACCEPT = ".xml,application/xml,text/xml,text/plain";
+const ORDER_ACCEPT = ".csv,text/csv,text/plain";
+
+function readFile(file: File): Promise<string> {
+  if (typeof file.text === "function") return file.text();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(reader.error ?? new Error("Couldn't read the file"));
+    reader.readAsText(file);
+  });
+}
+
+function lineTitle(item: ParsedItem, catalogName?: string | null): string {
+  return catalogName?.trim() || `${TYPE_LABEL[item.item_type]} ${item.item_id}`;
+}
+
+function plural(n: number, one: string): string {
+  return `${n} ${one}${n === 1 ? "" : "s"}`;
+}
+
 export function BrickLinkPage() {
   usePageTitle("BrickLink");
   // A wide table is the page here, so it gets the screen.
@@ -103,6 +117,13 @@ export function BrickLinkPage() {
   const { activeSlug } = useActiveOrg();
   const toast = useToast();
   const [tab, setTab] = useState<Tab>("wanted");
+  const wantedArea = useRef<HTMLDivElement>(null);
+  const wantedInput = useRef<HTMLInputElement>(null);
+  const orderArea = useRef<HTMLDivElement>(null);
+  const orderInput = useRef<HTMLInputElement>(null);
+  const [wantedName, setWantedName] = useState("BrickLink wanted list");
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<{ label: string; href: string } | null>(null);
 
   // Wanted-list state.
   const [xml, setXml] = useState("");
@@ -114,11 +135,11 @@ export function BrickLinkPage() {
   const [parsedOrder, setParsedOrder] = useState<ParseOrderResponse | null>(null);
 
   const parseWanted = useMutation({
-    mutationFn: () =>
+    mutationFn: (source: string) =>
       api.request<ParseWantedResponse>(
         "POST",
         `/orgs/${activeSlug}/modules/bricklink-connector/parse-wanted-list`,
-        { xml },
+        { xml: source },
       ),
     onSuccess: (data) => {
       setParsedWanted(data);
@@ -133,11 +154,11 @@ export function BrickLinkPage() {
   });
 
   const runDiff = useMutation({
-    mutationFn: () =>
+    mutationFn: (items: ParsedItem[]) =>
       api.request<DiffResponse>(
         "POST",
         `/orgs/${activeSlug}/modules/bricklink-connector/diff-wanted-list`,
-        { items: parsedWanted!.items },
+        { items },
       ),
     onSuccess: (data) => {
       setDiff(data);
@@ -151,11 +172,11 @@ export function BrickLinkPage() {
   });
 
   const parseOrder = useMutation({
-    mutationFn: () =>
+    mutationFn: (source: string) =>
       api.request<ParseOrderResponse>(
         "POST",
         `/orgs/${activeSlug}/modules/bricklink-connector/parse-order`,
-        { csv },
+        { csv: source },
       ),
     onSuccess: (data) => {
       setParsedOrder(data);
@@ -169,16 +190,151 @@ export function BrickLinkPage() {
       toast.error(e instanceof ApiError ? e.message : "Couldn't parse CSV"),
   });
 
+  const showError = (error: unknown, fallback: string) => {
+    const message = error instanceof Error ? error.message : fallback;
+    setActionError(message);
+    toast.error(message);
+  };
+
+  const previewWanted = async (source: string) => {
+    if (!source.trim()) return;
+    setActionError(null);
+    setSaved(null);
+    try {
+      const parsed = await parseWanted.mutateAsync(source);
+      await runDiff.mutateAsync(parsed.items);
+    } catch (error) {
+      showError(error, "Couldn't read the wanted list");
+    }
+  };
+
+  const takeWantedFiles = async (files: File[]) => {
+    const file = files[0];
+    if (!file) return;
+    try {
+      const source = await readFile(file);
+      setWantedName(file.name.replace(/\.xml$/i, "") || "BrickLink wanted list");
+      setXml(source);
+      await previewWanted(source);
+    } catch (error) {
+      showError(error, "Couldn't read the wanted-list file");
+    }
+  };
+
+  const takeOrderFiles = async (files: File[]) => {
+    const file = files[0];
+    if (!file) return;
+    try {
+      const source = await readFile(file);
+      setCsv(source);
+      setActionError(null);
+      setSaved(null);
+      await parseOrder.mutateAsync(source);
+    } catch (error) {
+      showError(error, "Couldn't read the order file");
+    }
+  };
+
+  usePasteImage(wantedArea, {
+    accept: WANTED_ACCEPT,
+    enabled: tab === "wanted",
+    onFiles: (files) => void takeWantedFiles(files),
+    onText: (text) => {
+      setXml(text);
+      void previewWanted(text);
+      return true;
+    },
+  });
+  usePasteImage(orderArea, {
+    accept: ORDER_ACCEPT,
+    enabled: tab === "order",
+    onFiles: (files) => void takeOrderFiles(files),
+    onText: (text) => {
+      setCsv(text);
+      void parseOrder.mutateAsync(text).catch((error) => showError(error, "Couldn't read the order"));
+      return true;
+    },
+  });
+
+  const saveWanted = useMutation({
+    mutationFn: async (shopping: boolean) => {
+      if (!parsedWanted || !diff) throw new Error("Preview the wanted list first.");
+      let list: { id: string; title: string };
+      if (shopping) {
+        const lists = await api.request<{ items: Array<{ id: string; title: string }> }>("GET", `/orgs/${activeSlug}/modules/lists/lists`);
+        list = lists.items.find((item) => item.title.trim().toLowerCase() === "shopping list")
+          ?? await api.request<{ id: string; title: string }>("POST", `/orgs/${activeSlug}/modules/lists/lists`, { title: "Shopping list", description: "Things to buy." });
+      } else {
+        list = await api.request<{ id: string; title: string }>("POST", `/orgs/${activeSlug}/modules/lists/lists`, {
+          title: wantedName,
+          description: "Imported from a BrickLink wanted list.",
+          metadata: { source: "bricklink" },
+        });
+      }
+      const entries = shopping ? diff.entries.filter((entry) => entry.status !== "have") : diff.entries;
+      for (const entry of entries) {
+        const short = Math.max(1, entry.wanted.min_qty - entry.total_in_stock);
+        await api.request("POST", `/orgs/${activeSlug}/modules/lists/items`, {
+          list_id: list.id,
+          title: lineTitle(entry.wanted, entry.catalog_name),
+          qty: String(shopping ? short : entry.wanted.min_qty),
+          note: `BrickLink ${entry.wanted.item_id}${entry.wanted.color_id >= 0 ? ` · color ${entry.wanted.color_id}` : ""}`,
+          metadata: { source: "bricklink", item_type: entry.wanted.item_type, item_id: entry.wanted.item_id, color_id: entry.wanted.color_id },
+        });
+      }
+      return { id: list.id, count: entries.length, shopping };
+    },
+    onSuccess: ({ id, count, shopping }) => {
+      const label = shopping ? `Added ${plural(count, "line")} to your shopping list` : `Saved ${plural(count, "line")} as a wanted list`;
+      setSaved({ label, href: `/lists/${id}` });
+      setActionError(null);
+      toast.success(label);
+    },
+    onError: (error) => showError(error, "Couldn't save the list"),
+  });
+
+  const importOrder = useMutation({
+    mutationFn: async () => {
+      if (!parsedOrder) throw new Error("Preview the order first.");
+      const order = await api.request<{ id: string }>("POST", `/orgs/${activeSlug}/modules/purchases/orders`, {
+        vendor: "BrickLink",
+        order_number: parsedOrder.summary.order_id,
+        total_cost: parsedOrder.summary.total,
+        status: "ordered",
+        metadata: { source: "bricklink" },
+      });
+      for (const line of parsedOrder.lines) {
+        await api.request("POST", `/orgs/${activeSlug}/modules/purchases/orders/${order.id}/items`, {
+          description: line.description || `${TYPE_LABEL[line.item_type]} ${line.item_id}`,
+          qty: line.qty,
+          unit_cost: line.unit_price,
+          line_amount: line.line_total,
+          metadata: { source: "bricklink", item_type: line.item_type, item_id: line.item_id, color_id: line.color_id, condition: line.condition, lot_id: line.lot_id },
+        });
+      }
+      return { id: order.id, count: parsedOrder.lines.length };
+    },
+    onSuccess: ({ id, count }) => {
+      const label = `Imported ${plural(count, "line")} as a purchase`;
+      setSaved({ label, href: `/purchases/${id}` });
+      setActionError(null);
+      toast.success(label);
+    },
+    onError: (error) => showError(error, "Couldn't import the order"),
+  });
+
+  const dropFiles = (event: DragEvent<HTMLDivElement>, take: (files: File[]) => void) => {
+    event.preventDefault();
+    take(Array.from(event.dataTransfer.files));
+  };
+
   return (
-    <div className="space-y-5 max-w-5xl mx-auto">
+    <div className="space-y-5 max-w-6xl mx-auto">
       <div className="border-b border-line dark:border-slate-700 pb-3">
         <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
           BrickLink
         </h1>
-        <span className="page-subtitle">
-          import wanted lists + order csvs; diff a wanted list against
-          your lego inventory. v0.2.
-        </span>
+        <span className="page-subtitle">Bring your BrickLink wanted lists and orders into Cobblr, and see which parts you already have.</span>
       </div>
 
       <div className="flex gap-1 border-b border-line dark:border-slate-700">
@@ -192,43 +348,58 @@ export function BrickLinkPage() {
 
       {tab === "wanted" && (
         <div className="space-y-5">
-          <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
-            <label className="block">
-              <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-                Wanted-list XML
-              </span>
-              <textarea
-                value={xml}
-                onChange={(e) => setXml(e.target.value)}
-                rows={10}
-                placeholder={`<INVENTORY>\n  <ITEM>\n    <ITEMTYPE>P</ITEMTYPE>\n    <ITEMID>3001</ITEMID>\n    <COLOR>5</COLOR>\n    <MINQTY>4</MINQTY>\n  </ITEM>\n</INVENTORY>`}
-                className="input font-mono text-xs"
-              />
-            </label>
-            <div className="flex justify-end gap-2">
+          <div
+            ref={wantedArea}
+            data-testid="bricklink-wanted-intake"
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => dropFiles(event, (files) => void takeWantedFiles(files))}
+            className="rounded-xl border-2 border-dashed border-line hover:border-accent dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-4 transition"
+          >
+            <div>
+              <h2 className="text-[10px] font-mono uppercase tracking-widest text-accent">Wanted list</h2>
+              <p className="text-sm text-muted dark:text-slate-400">Upload or drop the file you downloaded from BrickLink, or paste it.</p>
+              <a href="https://www.bricklink.com/v2/wanted/list.page" target="_blank" rel="noreferrer" className="text-xs text-accent hover:underline">Open your wanted lists on BrickLink</a>
+            </div>
+            <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => parseWanted.mutate()}
-                disabled={parseWanted.isPending || !xml.trim()}
-                className="inline-flex items-center gap-1.5 rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-4 py-2 transition disabled:opacity-50"
+                onClick={() => wantedInput.current?.click()}
+                disabled={parseWanted.isPending || runDiff.isPending}
+                className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-4 py-2 transition disabled:opacity-50"
               >
-                <Upload size={14} /> {parseWanted.isPending ? "Parsing…" : "Parse"}
+                <Upload size={14} /> {parseWanted.isPending || runDiff.isPending ? "Reading…" : "Choose wanted-list file"}
               </button>
-              {parsedWanted && (
+              <input ref={wantedInput} type="file" accept={WANTED_ACCEPT} className="hidden" onChange={(event) => { const files = event.target.files ? Array.from(event.target.files) : []; event.target.value = ""; void takeWantedFiles(files); }} />
+            </div>
+            <details>
+              <summary className="cursor-pointer text-sm text-accent">Paste instead</summary>
+              <label className="mt-3 block">
+                <span className="sr-only">Wanted-list file contents</span>
+                <textarea value={xml} onChange={(event) => setXml(event.target.value)} rows={6} placeholder="Paste the contents of your downloaded file" className="input font-mono text-base sm:text-sm" />
+              </label>
+              <div className="mt-2 flex justify-end">
                 <button
                   type="button"
-                  onClick={() => runDiff.mutate()}
-                  disabled={runDiff.isPending}
+                  onClick={() => void previewWanted(xml)}
+                  disabled={parseWanted.isPending || runDiff.isPending || !xml.trim()}
                   className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-4 py-2 transition disabled:opacity-50"
                 >
-                  <Diff size={14} /> {runDiff.isPending ? "Diffing…" : "Diff vs inventory"}
+                  <Diff size={14} /> {parseWanted.isPending || runDiff.isPending ? "Comparing…" : "Preview"}
                 </button>
-              )}
-            </div>
+              </div>
+            </details>
           </div>
 
           {diff ? (
-            <DiffTable diff={diff} />
+            <>
+              <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 flex flex-wrap items-center gap-3">
+                <strong className="text-content dark:text-mortar-100">{plural(diff.entries.length, "part")} · {diff.counts.have} you already have · {diff.counts.need + diff.counts.partial + diff.counts.unmatched} to buy</strong>
+                <div className="flex-1" />
+                <button type="button" onClick={() => saveWanted.mutate(true)} disabled={saveWanted.isPending} className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-2 disabled:opacity-50"><ShoppingCart size={14} />Add to your shopping list</button>
+                <button type="button" onClick={() => saveWanted.mutate(false)} disabled={saveWanted.isPending} className="inline-flex items-center gap-1.5 rounded-md border border-line hover:border-accent text-sm font-medium px-3 py-2 disabled:opacity-50">Save as a wanted list</button>
+              </div>
+              <DiffTable diff={diff} />
+            </>
           ) : parsedWanted ? (
             <ParsedWantedTable result={parsedWanted} />
           ) : null}
@@ -241,37 +412,21 @@ export function BrickLinkPage() {
 
       {tab === "order" && (
         <div className="space-y-5">
-          <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
-            <label className="block">
-              <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-                Order CSV
-              </span>
-              <textarea
-                value={csv}
-                onChange={(e) => setCsv(e.target.value)}
-                rows={10}
-                placeholder={`Order ID,Lot ID,Item No,Item Type,Color ID,Condition,Qty,Each,Order Total,Item Description,Item Remarks\n12345,L1,3001,P,5,U,4,0.05,0.20,"Brick 2x4","Red"`}
-                className="input font-mono text-xs"
-              />
-            </label>
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={() => parseOrder.mutate()}
-                disabled={parseOrder.isPending || !csv.trim()}
-                className="inline-flex items-center gap-1.5 rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-4 py-2 transition disabled:opacity-50"
-              >
-                <FileText size={14} /> {parseOrder.isPending ? "Parsing…" : "Parse"}
-              </button>
-            </div>
+          <div ref={orderArea} data-testid="bricklink-order-intake" onDragOver={(event) => event.preventDefault()} onDrop={(event) => dropFiles(event, (files) => void takeOrderFiles(files))} className="rounded-xl border-2 border-dashed border-line hover:border-accent dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-4 transition">
+            <div><h2 className="text-[10px] font-mono uppercase tracking-widest text-accent">Order import</h2><p className="text-sm text-muted dark:text-slate-400">Upload or drop the order file you downloaded from BrickLink, or paste it. It becomes a Purchase with its lines.</p></div>
+            <button type="button" onClick={() => orderInput.current?.click()} disabled={parseOrder.isPending} className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-4 py-2 transition disabled:opacity-50"><FileText size={14} />{parseOrder.isPending ? "Reading…" : "Choose order file"}</button>
+            <input ref={orderInput} type="file" accept={ORDER_ACCEPT} className="hidden" onChange={(event) => { const files = event.target.files ? Array.from(event.target.files) : []; event.target.value = ""; void takeOrderFiles(files); }} />
+            <details><summary className="cursor-pointer text-sm text-accent">Paste instead</summary><label className="mt-3 block"><span className="sr-only">Order file contents</span><textarea value={csv} onChange={(event) => setCsv(event.target.value)} rows={6} placeholder="Paste the contents of your downloaded order file" className="input font-mono text-base sm:text-sm" /></label><div className="mt-2 flex justify-end"><button type="button" onClick={() => parseOrder.mutate(csv)} disabled={parseOrder.isPending || !csv.trim()} className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-4 py-2 transition disabled:opacity-50"><FileText size={14} />{parseOrder.isPending ? "Reading…" : "Preview"}</button></div></details>
           </div>
 
-          {parsedOrder && <ParsedOrderTable result={parsedOrder} />}
+          {parsedOrder && <><div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 flex flex-wrap items-center gap-3"><strong className="text-content dark:text-mortar-100">{plural(parsedOrder.summary.line_count, "line")} · {formatStoredMoney(parsedOrder.summary.total, "amount")}</strong><div className="flex-1" /><button type="button" onClick={() => importOrder.mutate()} disabled={importOrder.isPending} className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-2 disabled:opacity-50">Import as a Purchase</button></div><ParsedOrderTable result={parsedOrder} /></>}
           {parsedOrder?.warnings.length ? (
             <WarningsPanel warnings={parsedOrder.warnings} />
           ) : null}
         </div>
       )}
+      {actionError && <div role="alert" className="rounded-lg border border-ember-300 bg-ember-50 p-3 text-sm text-ember-800 dark:border-ember-700 dark:bg-ember-950/30 dark:text-ember-200">{actionError}</div>}
+      {saved && <a href={saved.href} className="flex items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm font-medium text-emerald-800 hover:underline dark:border-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-200"><CheckCircle2 size={16} />{saved.label}. Open it.</a>}
     </div>
   );
 }

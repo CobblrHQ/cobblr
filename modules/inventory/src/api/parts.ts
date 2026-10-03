@@ -1,3 +1,4 @@
+import { fieldCurrency } from "@cobblr/platform-contract/money";
 // /parts — full CRUD plus the stock-adjust endpoint.
 //
 // Computed reads (assigned_qty, available_qty, low_stock) come from
@@ -263,6 +264,11 @@ const isTruthy = (v: string | undefined): boolean => v === "1" || v === "true";
 
 const ListQuery = z.object({
   search: z.string().optional(),
+  /** The search word under the name every other list and the workspace
+   *  search take. Unknown keys are dropped silently, so a `?q=` here listed
+   *  EVERY part: a walk's "count only my parts" counted the whole workspace,
+   *  seeded nothing, and its search for a word it meant to hold found none. */
+  q: z.string().optional(),
   category_id: z.string().uuid().optional(),
   location_id: z.string().uuid().optional(),
   state: z.enum(["active", "draft", "needs_review"]).optional(),
@@ -335,7 +341,7 @@ const ListQuery = z.object({
     .string()
     .transform((s) => s.split(",").map((x) => x.trim()).filter(Boolean))
     .optional(),
-});
+}).transform((d) => ({ ...d, search: d.search ?? d.q }));
 
 function encodeCursor(name: string, id: string): string {
   return Buffer.from(JSON.stringify({ name, id })).toString("base64url");
@@ -1251,7 +1257,7 @@ partsRouter.post(
         image_path: parsed.data.image_path ?? null,
         notes: parsed.data.notes ?? null,
         state: parsed.data.state ?? "active",
-        metadata: parsed.data.metadata ?? {},
+        metadata: { ...parsed.data.metadata, ...(parsed.data.cost == null ? {} : { money_currencies: { ...((parsed.data.metadata?.money_currencies as Record<string, string>) || {}), cost: fieldCurrency(parsed.data.metadata, "cost", await platform().money.currency(ctx.org.id)) } }) },
         serial_number: parsed.data.serial_number ?? null,
         model_number: parsed.data.model_number ?? null,
         assigned_to: parsed.data.assigned_to ?? null,
@@ -1655,7 +1661,7 @@ partsRouter.delete(
       ref: { module: "inventory", entityType: "part", entityId: deleted.id },
       diff: { name: deleted.name },
     });
-    platform().events.emit("inventory.part.deleted", {
+    await platform().events.emit("inventory.part.deleted", {
       orgId: ctx.org.id,
       partId: deleted.id,
     });

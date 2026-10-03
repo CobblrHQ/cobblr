@@ -23,6 +23,7 @@ import { usePlatformWeb } from "./context";
 import { useInvokeEntityAction, type RunArgs } from "./use-invoke-action";
 import { ActionOutcome } from "./ActionOutcome";
 import { AskCobbAbout } from "./AskCobbAbout";
+import { isWebNfcAvailable } from "./nfc";
 
 /** The action whose chip lives up here rather than in the strip. */
 export const HEADER_ACTION_IDS: ReadonlySet<string> = new Set(["labels:print"]);
@@ -53,7 +54,7 @@ export function RecordHeaderChips({
   // label (#3591); the strip below leaves it out for the same reason.
   const bound = (data?.bindings ?? []).find((b) => HEADER_ACTION_IDS.has(b.action_id));
   return (
-    <span className={`inline-flex items-center gap-1.5 ${className ?? ""}`}>
+    <span className={`inline-flex flex-wrap items-center gap-1.5 ${className ?? ""}`}>
       {(print || bound) && (
         <PrintChip
           kind={kind}
@@ -69,6 +70,11 @@ export function RecordHeaderChips({
           binding={bound}
         />
       )}
+      {(print || bound) && <Link
+        to={`/labels/nfc?kind=${encodeURIComponent(kind)}&id=${encodeURIComponent(id)}&title=${encodeURIComponent(label)}`}
+        title="Put this record’s label link on an NFC tag"
+        className="inline-flex items-center gap-1 rounded border border-line dark:border-slate-600 px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 hover:text-accent hover:border-accent transition"
+      >{isWebNfcAvailable() ? "Write to NFC tag" : "Copy tag link"}</Link>}
       {/* An action label (#3897): a code that DOES one of this record's
           buttons when scanned. Offered where a label can be printed, and only
           when the record has a button a scan could press. */}

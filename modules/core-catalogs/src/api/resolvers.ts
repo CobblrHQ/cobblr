@@ -7,6 +7,7 @@
 // resolver pulls from payload[title_column / image_column /
 // subtitle_column] for each entry at lookup time.
 
+import { registerRowHistoryWriter } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import { platform, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import type { CoreCatalogsDB } from "../db.js";
@@ -73,6 +74,7 @@ function hostedResolvedEntity(catalogId: string, externalId: string, e: HostedEn
 export function registerCatalogsResolvers(): void {
   if (registered) return;
   registered = true;
+  registerRowHistoryWriter("core-catalogs:catalog", "core_catalogs_catalogs");
 
   // ───────────────────────── catalog ───────────────────────────────
   platform().entities.registerResolver(

@@ -20,10 +20,11 @@
 // "no longer active" card per the module spec — we never echo what
 // the token used to point at.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { QrCode, ScanLine } from "lucide-react";
 import { usePageTitle } from "@cobblr/platform-web";
-import { getToken } from "../lib/api";
+import { api, getToken } from "../lib/api";
+import { PublicBrand, PublicRecordCard, type PublicFrame, type PublicRecord } from "./PublicPageView";
 
 interface ResolveResult {
   ok: boolean;
@@ -33,6 +34,25 @@ interface ResolveResult {
   mode?: "navigate" | "action";
   detail_path?: string;
   join?: { token: string; org_name: string };
+  /** A live public page opens this label to anyone who is not a member. */
+  public_view?: boolean;
+}
+
+interface PublicLabel {
+  page: PublicFrame & { name: string };
+  record: PublicRecord;
+}
+
+/** Who scans decides what they see, by membership (#4502): a member gets the
+ *  record; anyone else, signed in here or not, is a visitor. */
+async function memberOf(slug: string): Promise<{ member: boolean; name: string | null }> {
+  if (!getToken()) return { member: false, name: null };
+  try {
+    const me = await api.me();
+    return { member: me.orgs.some((o) => o.slug === slug), name: me.user.display_name || null };
+  } catch {
+    return { member: false, name: null };
+  }
 }
 
 export function QrResolvePage() {
@@ -45,8 +65,10 @@ export function QrResolvePage() {
   const path = window.location.pathname;
   const token = (path.includes("/a/") && !path.includes("/qr/") ? path.split("/a/")[1] : path.split("/qr/")[1]) ?? "";
 
-  const [state, setState] = useState<"loading" | "dead" | "action" | "join" | "error">("loading");
+  const [state, setState] = useState<"loading" | "dead" | "action" | "join" | "error" | "public" | "elsewhere">("loading");
   const [result, setResult] = useState<ResolveResult | null>(null);
+  const [visitor, setVisitor] = useState<{ view: PublicLabel | null; name: string | null }>({ view: null, name: null });
+  const opened = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,6 +88,29 @@ export function QrResolvePage() {
           return;
         }
         setResult(body);
+        if (body.mode === "navigate") {
+          const who = await memberOf(body.org_slug);
+          if (cancelled) return;
+          if (!who.member && body.public_view) {
+            const visit = opened.current !== token;
+            opened.current = token;
+            const r = await fetch(`/api/v1/public/label?t=${encodeURIComponent(token)}`, {
+              headers: { "X-Cobblr-Visit": visit ? "1" : "0" },
+            });
+            if (r.ok && !cancelled) {
+              setVisitor({ view: (await r.json()) as PublicLabel, name: who.name });
+              setState("public");
+              return;
+            }
+          }
+          // Signed in to someone else's workspace, and nothing here is public:
+          // say whose it is, never "no access", never their switcher.
+          if (!who.member && who.name && !body.join) {
+            setVisitor({ view: null, name: who.name });
+            setState("elsewhere");
+            return;
+          }
+        }
         if (body.mode === "navigate" && body.detail_path && body.join && !getToken()) {
           setState("join");
           return;
@@ -107,6 +152,40 @@ export function QrResolvePage() {
       <>
         <ScanLine size={28} className="mx-auto text-accent animate-pulse" />
         <div className="text-sm text-muted dark:text-slate-400">Resolving QR label…</div>
+      </>,
+    );
+  }
+
+  if (state === "public" && visitor.view) {
+    const v = visitor.view;
+    return (
+      <PublicBrand frame={v.page} className="min-h-screen">
+      <div className="mx-auto max-w-3xl space-y-3 p-4" data-testid="label-public">
+        {visitor.name && (
+          <p className="text-xs text-muted" data-testid="label-visitor">
+            Viewing as a visitor · you&apos;re signed in as {visitor.name} ·{" "}
+            <a href="/" className="text-accent hover:underline">
+              your workspace
+            </a>
+          </p>
+        )}
+        <PublicRecordCard record={v.record} frame={v.page} skinFrom={`/api/v1/public/label/skin?t=${encodeURIComponent(token)}`} />
+      </div>
+      </PublicBrand>
+    );
+  }
+
+  if (state === "elsewhere") {
+    return card(
+      <>
+        <QrCode size={28} className="mx-auto text-faint" />
+        <div className="text-sm font-medium text-content dark:text-mortar-100" data-testid="label-elsewhere">
+          This belongs to someone else&apos;s Cobblr
+        </div>
+        <p className="text-xs text-muted dark:text-slate-400">They have not made it public. You&apos;re signed in as {visitor.name}.</p>
+        <a href="/" className="inline-flex items-center justify-center rounded-md bg-cobble-600 px-4 py-2 text-sm font-medium text-white hover:bg-cobble-700">
+          Your workspace
+        </a>
       </>,
     );
   }

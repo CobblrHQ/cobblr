@@ -20,6 +20,8 @@ import { meta } from "../db/meta.js";
 import { encryptCreds } from "../db/crypto.js";
 import { provisionOrgForUser } from "../routes/auth.js";
 import { shapeShareSpace } from "./reconcile-share-spaces.js";
+import { sharePerson } from "./share-person.js";
+import { lastViews } from "./share-view.js";
 import { hardDeleteOrg } from "./delete-org.js";
 import {
   SHARE_ENVELOPE_VERSION,
@@ -84,7 +86,7 @@ export async function createShareInvite(p: {
   userId: string;
   label: string;
   here: string;
-}): Promise<{ linkId: string; inviteUrl: string; expiresAt: Date }> {
+}): Promise<{ linkId: string; inviteUrl: string; expiresAt: Date; token: string }> {
   const org = await orgOf(p.orgId);
   if (!org) throw new Error("no such workspace");
   if (org.kind === "share") throw new Error("A share space cannot be shared on; share from your own workspace.");
@@ -105,7 +107,7 @@ export async function createShareInvite(p: {
     .returning("id")
     .executeTakeFirstOrThrow();
   const token = encodeInvite({ u: p.here, c: code, n: (await userName(p.userId)) ?? undefined, w: org.name });
-  return { linkId: row.id, inviteUrl: `${p.here}/share/join#${token}`, expiresAt };
+  return { linkId: row.id, inviteUrl: `${p.here}/share/join#${token}`, expiresAt, token };
 }
 
 async function pendingInvite(code: string) {
@@ -166,6 +168,8 @@ export async function claimShareInvite(req: ClaimRequest): Promise<{ owner_link_
     .returning("id")
     .executeTakeFirst();
   if (!claimed) return null;
+  // Who it is with, on the People list, so lending them a thing shares it.
+  await sharePerson(row.id).catch((err) => console.error(`[share] no People entry for ${row.id}:`, err));
   return { owner_link_id: row.id, owner_name: await userName(row.created_by), workspace_name: row.workspace_name, v: SHARE_ENVELOPE_VERSION };
 }
 
@@ -290,6 +294,9 @@ export interface ShareLinkView {
   invite_expires_at: Date | null;
   /** Changes waiting to reach the other side. */
   waiting: number;
+  /** On the share space's side: when the other person last looked through
+   *  it with View as, and who. */
+  last_viewed: { at: Date; by: string | null } | null;
   /** The friend's edits waiting for the owner to decide. */
   edits_waiting: number;
   /** Whether the friend's edits apply at once ("direct") or wait ("suggest"). */
@@ -328,7 +335,9 @@ export async function listShareLinks(orgId: string): Promise<ShareLinkView[]> {
     .groupBy("l.id")
     .orderBy("l.created_at", "desc")
     .execute();
+  const viewed = await lastViews(rows.filter((r) => r.side === "share").map((r) => r.id));
   return rows.map((r) => ({
+    last_viewed: viewed.has(r.id) ? { at: viewed.get(r.id)!.at, by: viewed.get(r.id)!.by } : null,
     id: r.id,
     side: r.side,
     status: r.status,

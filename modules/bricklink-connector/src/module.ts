@@ -50,6 +50,7 @@ export default defineModule({
     "Bring in BrickLink wanted lists and orders, and see which pieces from a wanted list you already have.",
   icon: "package",
   band: "marketplace",
+  integration: { route: "/bricklink-connector" },
 
   api: () => import("./api/index.js"),
 

@@ -27,7 +27,7 @@ const BASELINE = new Set([
   "setDigifabDevicePosition", "patchDigifabChannel", "renameDigifabLibrary", "deleteInstance",
   "updateNavHeading", "updateSyncConnection", "putawayConfirm", "setupPutawayBins",
   "putawayUndo", "getPutawayCurrent", "backfillScanCatalogPhotos", "matchScanItem",
-  "peekAnswer", "invokeAi", "aiChat", "aiChatWrites", "instantiateTemplate",
+  "peekAnswer", "invokeAi", "aiChat", "aiChatWrites",
 ]);
 
 const methods = apiClientMethods();

@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 // The strip at the top of every collection: its name and count, then its
 // filters, then the search and the actions on the right (#4014). One layout,
 // so every control shares one height and one centre line, the name and the
@@ -9,7 +10,7 @@
 // chip, a 28px segmented control, a 28px search, a 30px view toggle and a 38px
 // button, none on one line (the owner's 3D Printers screenshot).
 // e2e/collection-header-one-line.mjs checks the centre line at 1440 and 390.
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { PlaceOnPlan } from "./PlaceOnPlan";
 import { ExportCsvButton } from "./ExportCsvButton";
 
@@ -65,6 +66,7 @@ export function CollectionHeader({
   /** Anything else for the line under the strip. */
   below?: ReactNode;
 }) {
+  const titleId = useId();
   return (
     <div className="border-b border-line dark:border-slate-700 pb-3 space-y-1.5" data-collection-header>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -72,11 +74,11 @@ export function CollectionHeader({
             under it: beside a select and a search it was squeezed, and the
             controls ran past the edge (#4390). */}
         <div className="flex min-w-0 items-baseline gap-x-2 max-sm:basis-full" data-header-title>
-          <h1 className="font-display text-2xl font-extrabold leading-9 text-content dark:text-mortar-100 page-title">{title}</h1>
+          <h1 id={titleId} className="font-display text-2xl font-extrabold leading-9 text-content dark:text-mortar-100 page-title">{title}</h1>
           {count != null && <span className="text-xs font-mono tabular-nums text-faint dark:text-slate-500">{count}</span>}
         </div>
         {nav && (
-          <nav className="flex h-9 items-center gap-5 text-sm" data-header-controls>
+          <nav aria-labelledby={titleId} className="flex h-9 items-center gap-5 text-sm" data-header-controls>
             {nav}
           </nav>
         )}
@@ -101,6 +103,7 @@ export function CollectionHeader({
             </p>
           ) : null}
           {kind ? <PlaceOnPlan kind={kind} /> : null}
+          {kind ? <Link className="text-xs text-muted underline" to={`/configuration/recently-deleted?kind=${encodeURIComponent(kind)}`}>Recently deleted</Link> : null}
           {below}
         </div>
       )}

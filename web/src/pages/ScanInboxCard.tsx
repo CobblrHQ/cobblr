@@ -1,3 +1,4 @@
+import { NewFromTemplateButton } from "@cobblr/platform-web";
 // The scan inbox's DESKTOP card, and the pieces only it renders: the
 // collapsed strip (photo column, title, facts, filing pair, tool rail), the
 // expanded triage surface (photos beside intel, the confirm form, the AI
@@ -2928,7 +2929,10 @@ export function InboxCard({
                 )}
               </span>
             )}
-            {!receiptUnread && (item.quantity ?? 1) > 1 && typeof (item.suggested_metadata as { weight?: unknown } | null)?.weight !== "number" && (
+            {/* The count is shown at every value, one included: a card that hid
+                it until it passed one gave no way to raise it without opening
+                the form (#4552). */}
+            {!receiptUnread && typeof (item.suggested_metadata as { weight?: unknown } | null)?.weight !== "number" && (
               <span className="shrink-0 inline-flex items-center rounded-full bg-cobble-600 text-white text-[11px] font-semibold overflow-hidden">
                 <button
                   type="button"
@@ -5506,6 +5510,8 @@ function ConfirmForm({
   // as a separate control sitting apart from the fields, when it is simply the
   // first thing you choose about this item. Same shell, same label treatment.
   const destinationChip = (
+    <div className="flex flex-wrap items-center gap-2">
+    <NewFromTemplateButton args={{ kind: `${entry.module}:${baseKind(entry.module)}`, instance: entry.instance ?? undefined, scanItemId: item.id, seed: { name, ...(locationId ? { location_id: locationId } : {}) } }} />
     <label className="inline-flex items-baseline gap-1.5 max-w-full rounded-lg border px-2 py-1 cursor-pointer transition border-line/70 dark:border-slate-700/70 bg-subtle/50 dark:bg-slate-800/50 hover:border-cobble-400 dark:hover:border-cobble-600">
       <span className="shrink-0 text-[10px] uppercase tracking-wide text-faint">Add to</span>
       <select
@@ -5544,6 +5550,7 @@ function ConfirmForm({
         })}
       </select>
     </label>
+    </div>
   );
   // The list rendering: every field the table has, as a labelled input. The
   // location keeps its drawer (a picker is not a text box); the builtins and

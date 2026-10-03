@@ -8,7 +8,6 @@
 // registers itself when the projects module loads.
 
 import { NotificationBatcher, platform, type ComposedBurst } from "@cobblr/platform-contract";
-import { openRecordPath } from "@cobblr/platform-contract/instance-detail";
 
 interface TaskUnblockedPayload {
   orgId: string;
@@ -37,9 +36,7 @@ export function composeUnblocked(items: readonly Unblocked[]): ComposedBurst | n
     return {
       message: `Task "${u.title}" is unblocked (${u.causeText} is now satisfied)`,
       count: 1,
-      // The project may sit in a named collection this mapper cannot see; the
-      // open door asks where it lives.
-      link_url: openRecordPath("projects:project", u.projectId),
+      record: { kind: "projects:project", id: u.projectId },
       entityType: "task",
       entityId: u.taskId,
     };
@@ -57,7 +54,10 @@ export function composeUnblocked(items: readonly Unblocked[]): ComposedBurst | n
     // the unblocked tasks are; `undefined` here used to mean the burst version
     // of this notification went nowhere at all.
     // PAGE-LINK: the burst spans several projects; no single one is right.
-    link_url: projects.size === 1 ? openRecordPath("projects:project", items[0]!.projectId) : "/projects",
+    ...(projects.size === 1
+      ? { record: { kind: "projects:project", id: items[0]!.projectId } }
+      // PAGE-LINK: the burst spans several projects; no single one is right.
+      : { link_url: "/projects" }),
   };
 }
 
@@ -72,6 +72,10 @@ export function composeUnblocked(items: readonly Unblocked[]): ComposedBurst | n
 export const unblockedBatcher = new NotificationBatcher<Unblocked>(
   composeUnblocked,
   async (orgId, burst) => {
+    const recordLink = burst.record
+      ? await platform().entities.recordAddressForEntity(orgId, burst.record.kind, burst.record.id)
+      : undefined;
+    const link = recordLink ?? burst.link_url;
     const userIds = await platform().notifications.orgMemberIds(orgId);
     for (const userId of userIds) {
       try {
@@ -83,8 +87,8 @@ export const unblockedBatcher = new NotificationBatcher<Unblocked>(
           // composeUnblocked always names one (a project, or the list of
           // them); the burst type allows none, so the absence is spelled out
           // rather than silently dropped.
-          ...(burst.link_url
-            ? { link_url: burst.link_url }
+          ...(link
+            ? { link_url: link }
             : { no_link_reason: "the burst named no project" }),
           module: "projects",
           entityType: burst.entityType,

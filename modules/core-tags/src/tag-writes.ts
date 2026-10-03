@@ -9,7 +9,7 @@
 // answered 500, and only "tag created" was ever written down.
 
 import { sql, type Kysely } from "kysely";
-import { platform, restoreRow } from "@cobblr/platform-contract";
+import { platform, restoreRowTree, RecordRestoreRefused } from "@cobblr/platform-contract";
 import type { CoreTagsDB } from "./db.js";
 
 type Db = Kysely<CoreTagsDB>;
@@ -217,10 +217,8 @@ export async function mergeTag(db: Db, w: Writer, source: { id: string; name: st
 // re-adds each dropped one, and puts its child tags back under it. Every door
 // reaches the same undo: the page's Undo, the merge action's registered undo,
 // and the assistant's ledger through the tag writer's restore.
-/** How long a deleted or merged tag can still be put back. */
-const KEEP_DAYS = 30;
 
-export class TagRestoreRefused extends Error {}
+export class TagRestoreRefused extends RecordRestoreRefused {}
 
 interface KeptAssignment {
   id: string;
@@ -235,31 +233,18 @@ const parse = <T>(v: unknown): T => (typeof v === "string" ? JSON.parse(v) : v) 
 
 /** Write down what a delete or merge of `id` is about to take. Null when there
  *  is no such tag. */
-async function keep(db: Db, id: string, by: string | null, mergedInto: string | null) {
+async function keep(db: Db, orgId: string, id: string, by: string | null, mergedInto: string | null) {
   const row = await db.selectFrom("core_tags_tags").selectAll().where("id", "=", id).executeTakeFirst();
   if (!row) return null;
   const assignments = await db.selectFrom("core_tags_assignments").selectAll().where("tag_id", "=", id).execute();
   const children = (await db.selectFrom("core_tags_tags").select("id").where("parent_id", "=", id).execute()).map((c) => c.id);
-  const values = {
-    name: row.name,
-    row: sql`${JSON.stringify(row)}::jsonb` as never,
-    assignments: sql`${JSON.stringify(assignments)}::jsonb` as never,
-    children: sql`${JSON.stringify(children)}::jsonb` as never,
-    merged_into: mergedInto,
-    deleted_by: by,
-  };
-  await db
-    .insertInto("core_tags_deleted")
-    .values({ id, ...values })
-    .onConflict((oc) => oc.column("id").doUpdateSet({ ...values, deleted_at: new Date() }))
-    .execute();
-  await db.deleteFrom("core_tags_deleted").where("deleted_at", "<", new Date(Date.now() - KEEP_DAYS * 86_400_000)).execute();
+  await platform().deletedRecords.keep(orgId, "core-tags:tag", id, row, { row, name: row.name, assignments, children, merged_into: mergedInto }, by);
   return { name: row.name, assignments: assignments.length };
 }
 
 /** Delete a tag, keeping what an undo needs. */
 export async function deleteTagKept(db: Db, orgId: string, id: string, by: string | null) {
-  const kept = await keep(db, id, by, null);
+  const kept = await keep(db, orgId, id, by, null);
   if (!kept) return null;
   await deleteTag(db, { orgId, userId: by }, id);
   return kept;
@@ -269,7 +254,7 @@ export async function deleteTagKept(db: Db, orgId: string, id: string, by: strin
 export async function mergeTagKept(db: Db, orgId: string, id: string, into: string, by: string | null) {
   const target = await db.selectFrom("core_tags_tags").select(["id", "name"]).where("id", "=", into).executeTakeFirst();
   if (!target) return null;
-  const kept = await keep(db, id, by, into);
+  const kept = await keep(db, orgId, id, by, into);
   if (!kept) return null;
   const moved = await mergeTag(db, { orgId, userId: by }, { id, name: kept.name }, target);
   return { ...kept, moved };
@@ -279,7 +264,8 @@ export async function mergeTagKept(db: Db, orgId: string, id: string, into: stri
  *  when it was not deleted, or too long ago. Refused when another tag has
  *  taken its name since, since names are unique. */
 export async function restoreTag(db: Db, orgId: string, id: string, by: string | null = null) {
-  const kept = await db.selectFrom("core_tags_deleted").selectAll().where("id", "=", id).executeTakeFirst();
+  const saved = await platform().deletedRecords.get(orgId, "core-tags:tag", id);
+  const kept = saved?.details as { row: unknown; assignments: unknown; children: unknown; merged_into: string | null } | null;
   if (!kept) return null;
   const row = parse<Record<string, unknown> & { name: string; parent_id: string | null }>(kept.row);
   const clash = await db
@@ -292,7 +278,7 @@ export async function restoreTag(db: Db, orgId: string, id: string, by: string |
   // Its parent may have gone since: then it comes back at the top level.
   const parentThere =
     !row.parent_id || !!(await db.selectFrom("core_tags_tags").select("id").where("id", "=", row.parent_id).executeTakeFirst());
-  await restoreRow(db, "core_tags_tags", parentThere ? row : { ...row, parent_id: null });
+  await restoreRowTree(db, "core_tags_tags", { image: parentThere ? row : { ...row, parent_id: null } }, "core_tags_");
 
   let putBack = 0;
   for (const a of parse<KeptAssignment[]>(kept.assignments)) {
@@ -316,8 +302,24 @@ export async function restoreTag(db: Db, orgId: string, id: string, by: string |
   if (children.length) {
     await db.updateTable("core_tags_tags").set({ parent_id: id }).where("id", "in", children).where("parent_id", "is", null).execute();
   }
-  await db.deleteFrom("core_tags_deleted").where("id", "=", id).execute();
+  await platform().deletedRecords.forget(orgId, "core-tags:tag", id);
   await platform().events.emit("core-tags.tag.created", { orgId, tagId: id, name: row.name });
   await log({ orgId, userId: by }, "tag_restored", tagRef(id), { name: row.name, put_back_on: putBack, was_merged_into: kept.merged_into ?? null });
   return { name: row.name, assignments: putBack, mergedInto: kept.merged_into };
+}
+
+export async function restoreDeletedAssignments(db: Db, image: unknown): Promise<void> {
+  for (const row of image as Array<{ id: string; tag_id: string; source_module: string; source_type: string; source_id: string; created_at: string }>) {
+    if (!await db.selectFrom("core_tags_tags").select("id").where("id", "=", row.tag_id).executeTakeFirst()) continue;
+    await db.insertInto("core_tags_assignments").values({ ...row, created_at: new Date(row.created_at) }).onConflict((oc) => oc.doNothing()).execute();
+  }
+}
+export async function forgetLegacyDeletedTag(db: Db, id: string): Promise<void> {
+  await db.deleteFrom("core_tags_deleted").where("id", "=", id).execute();
+}
+
+export async function purgeDeletedAssignments(db: Db, image: unknown): Promise<void> {
+  for (const row of image as Array<{ id: string; tag_id: string; source_id: string }>) {
+    await db.deleteFrom("core_tags_assignments").where("id", "=", row.id).where("tag_id", "=", row.tag_id).where("source_id", "=", row.source_id).execute();
+  }
 }

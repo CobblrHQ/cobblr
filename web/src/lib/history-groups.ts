@@ -18,10 +18,10 @@ export interface HistoryLine extends SaidChange {
 }
 
 export type HistoryItem =
-  | { kind: "changes"; key: string; head: ActivityEntry; lines: HistoryLine[]; startedAt: string }
+  | { kind: "changes"; key: string; head: ActivityEntry; entries: ActivityEntry[]; lines: HistoryLine[]; startedAt: string }
   | { kind: "event"; key: string; entry: ActivityEntry };
 
-const isEdit = (e: ActivityEntry) => e.action.endsWith("_updated") && (e.said?.length ?? 0) > 0;
+const isEdit = (e: ActivityEntry) => (e.action.endsWith("_updated") || e.action === "updated") && (e.said?.length ?? 0) > 0;
 const who = (e: ActivityEntry) => `${e.user_id ?? "system"}|${e.api_token_id ?? ""}|${e.via_kind ?? ""}`;
 
 /** `entries` newest first, as the log returns them. Groups come out newest
@@ -38,10 +38,11 @@ export function groupHistory(entries: ActivityEntry[], windowMs = GROUP_WINDOW_M
     }
     const t = new Date(e.occurred_at).getTime();
     if (!open || who(open.head) !== who(e) || openNewest - t > windowMs) {
-      open = { kind: "changes", key: `g${e.id}`, head: e, lines: [], startedAt: e.occurred_at };
+      open = { kind: "changes", key: `g${e.id}`, head: e, entries: [], lines: [], startedAt: e.occurred_at };
       openNewest = t;
       out.push(open);
     }
+    open.entries.push(e);
     open.startedAt = e.occurred_at;
     // Newest first in, so an earlier change of a field already listed only
     // moves its "from" back to what the field was before this one.
@@ -59,5 +60,5 @@ export function groupHistory(entries: ActivityEntry[], windowMs = GROUP_WINDOW_M
     item.lines = item.lines.filter((l) => !l.from || l.from.text !== l.to.text || l.from.photo?.file_id !== l.to.photo?.file_id);
     item.lines.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
   }
-  return out.filter((i) => i.kind === "event" || i.lines.length > 0);
+  return out.filter((i) => i.kind === "event" || i.lines.length > 0 || i.entries.some((e) => e.restorable));
 }

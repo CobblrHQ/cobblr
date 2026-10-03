@@ -36,6 +36,7 @@ export interface ReceiptOrderInput {
   expectedArrival?: string | null;
   /** Receipt total, when the parse actually saw one. */
   total: number | null;
+  currency?: string | null;
   groupId: string;
   sourceFileId: string | null;
 }
@@ -98,6 +99,7 @@ export async function tryCreateReceiptOrder(input: ReceiptOrderInput): Promise<{
         notes: "Imported from a receipt.",
         metadata: {
           receipt_group_id: input.groupId,
+          currency: input.currency || undefined,
           source: "receipt",
           receipt_file_id: input.sourceFileId ?? undefined,
         },

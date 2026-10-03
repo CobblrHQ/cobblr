@@ -1,6 +1,7 @@
 // Entity-kind resolvers for sales — let other modules + core-views read
 // customers / orders / line items via platform().entities without our tables.
 
+import { registerRowHistoryWriter } from "@cobblr/platform-contract";
 import { type Kysely } from "kysely";
 import { platform, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import type { SalesDB } from "../db.js";
@@ -10,6 +11,8 @@ let registered = false;
 export function registerSalesResolvers(): void {
   if (registered) return;
   registered = true;
+  registerRowHistoryWriter("sales:customer", "sales_customers");
+  registerRowHistoryWriter("sales:order", "sales_orders");
 
   platform().entities.registerResolver("sales:customer", async (orgId, id) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<SalesDB>;

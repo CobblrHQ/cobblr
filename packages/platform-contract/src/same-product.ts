@@ -50,6 +50,42 @@ function identifies(name: string, key: string): boolean {
   return /^model$/i.test(name.trim()) ? /\d/.test(key) : true;
 }
 
+/** A conservative identity fallback for old/imported fields whose role has
+ *  not been set yet. Codes such as VINs, IMEIs and asset tags are long and
+ *  contain both letters and digits; prose, dates and ordinary numbers are
+ *  deliberately excluded. */
+export function isCodeLikeIdentifier(v: unknown): boolean {
+  if (typeof v !== "string" && typeof v !== "number") return false;
+  const raw = String(v).trim();
+  if (!/^[a-z0-9._\-/]+$/i.test(raw)) return false;
+  if (/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(raw)) return false;
+  const key = identifierKey(v);
+  return !!key && key.length >= 8 && /[a-z]/.test(key) && /\d/.test(key);
+}
+
+/** Every value in a field bag that identifies the record. Declared roles and
+ *  well-known field names are authoritative; old unroled fields get the
+ *  conservative code-shape fallback above. Values are returned as written,
+ *  de-duplicated by their comparison key. */
+export function identifierValues(
+  fields: Record<string, unknown> | null | undefined,
+  roles?: Record<string, string | null | undefined> | null,
+): string[] {
+  const values: string[] = [];
+  const seen = new Set<string>();
+  for (const [name, value] of Object.entries(fields ?? {})) {
+    if (typeof value !== "string" && typeof value !== "number") continue;
+    const key = identifierKey(value);
+    if (!key) continue;
+    const named = isIdentifierField(name, roles?.[name] ?? null) && identifies(name, key);
+    if (!named && !isCodeLikeIdentifier(value)) continue;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    values.push(String(value).trim());
+  }
+  return values;
+}
+
 export type IdentifierVerdict = "same" | "different" | "unknown";
 
 /**

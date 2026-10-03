@@ -173,20 +173,34 @@ export async function planKnownFill(orgId: string, kind: string, id: string): Pr
 
 /** Write the fills: native columns through the kind's writer, custom fields
  *  merged into metadata so no other key is touched. */
-export async function writeKnownFill(orgId: string, kind: string, id: string, fills: readonly KnownFill[], clear = false): Promise<boolean> {
-  if (fills.length === 0) return true;
+export async function writeKnownFill(orgId: string, kind: string, id: string, fills: readonly KnownFill[], clear = false): Promise<KnownFill[] | null> {
+  if (fills.length === 0) return [];
   const writer = await platform().entities.getWriter(orgId, kind);
-  if (!writer) return false;
+  if (!writer) return null;
+  const rec = await platform().entities.lookup(orgId, kind, id);
+  if (!rec) return null;
+  const fields = (rec.fields ?? {}) as Record<string, unknown>;
+  const metadata = (fields.metadata ?? {}) as Record<string, unknown>;
+  // Decoding may have waited on a remote reply since the empty-field check.
+  const current = fills.filter((x) => {
+    const value = x.native ? fields[x.name] : metadata[x.name];
+    return clear ? fieldText(value) === String(x.value) : blank(value);
+  });
   const native: Record<string, unknown> = {};
   const custom: Record<string, unknown> = {};
-  for (const x of fills) (x.native ? native : custom)[x.name] = clear ? null : x.fieldType ? castFieldValue(x.fieldType, x.value, x.unit) : x.value;
+  for (const x of current) (x.native ? native : custom)[x.name] = clear ? null : x.fieldType ? castFieldValue(x.fieldType, x.value, x.unit) : x.value;
   if (Object.keys(native).length) await writer.update(orgId, id, native);
   if (Object.keys(custom).length) {
     if (writer.mergeMetadata) await writer.mergeMetadata(orgId, id, custom);
     else await platform().entities.mergeMetadata(orgId, kind, id, custom);
   }
-  return true;
+  return current;
 }
+
+const fieldText = (value: unknown): string =>
+  value && typeof value === "object" && typeof (value as { text?: unknown }).text === "string"
+    ? (value as { text: string }).text
+    : String(value ?? "");
 
 /** The fills the record now holds. A kind's writer takes the columns it
  *  knows and drops the rest without a word, so what landed is read back, never
@@ -197,8 +211,7 @@ export async function landedFills(orgId: string, kind: string, id: string, fills
   const f = (rec?.fields ?? {}) as Record<string, unknown>;
   const meta = (f.metadata && typeof f.metadata === "object" ? f.metadata : {}) as Record<string, unknown>;
   // A measure is kept as { value, unit, text }: what landed is its text.
-  const said = (v: unknown) => (v && typeof v === "object" && typeof (v as { text?: unknown }).text === "string" ? (v as { text: string }).text : String(v ?? ""));
-  const landed = fills.filter((x) => said(x.native ? f[x.name] : meta[x.name]) === String(x.value));
+  const landed = fills.filter((x) => fieldText(x.native ? f[x.name] : meta[x.name]) === String(x.value));
   if (landed.length < fills.length) {
     const lost = fills.filter((x) => !landed.includes(x)).map((x) => x.name);
     console.warn(`[core-scan] fill-known on ${kind} ${id}: the record's writer did not keep ${lost.join(", ")}`);

@@ -1,0 +1,15 @@
+{
+  "match": "accept my friend's suggestions on the cr-10",
+  "rounds": [
+    { "tool_calls": [{ "name": "list_suggestions", "args": {} }] },
+    {
+      "tool_calls": [
+        {
+          "name": "invoke_action",
+          "args": { "action_id": "platform:accept-suggestions", "args": { "ids": ["$result.list_suggestions.data.records[0].edits[0].id"] } }
+        }
+      ]
+    },
+    { "content": "Here is the change for you to confirm." }
+  ]
+}

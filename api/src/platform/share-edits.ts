@@ -28,9 +28,11 @@ import * as activity from "./activity.js";
 import { baseKindOf, lookup } from "./entities.js";
 import { describeChanges } from "./history-describe.js";
 import { gatedFields } from "./scope-eval.js";
-import { COPY_BOOKKEEPING, fieldsOf, isReference, noteWorkspaceChanged } from "./share-mirror.js";
+import { COPY_BOOKKEEPING, fieldsOf, isReference, mirrorShareNow, noteWorkspaceChanged } from "./share-mirror.js";
 import { enqueueShareOp, getShareLink, kickShareSync, registerShareOp, type ShareLinkRow } from "./share-sync.js";
 import { runExclusive } from "./exclusive.js";
+import { noteShare } from "./share-notices.js";
+import { sendAdditions } from "./share-additions.js";
 
 export type EditMode = "suggest" | "direct";
 export const readEditMode = (settings: unknown): EditMode => ((settings as { edit_mode?: unknown } | null)?.edit_mode === "direct" ? "direct" : "suggest");
@@ -94,6 +96,7 @@ export async function sendCopyEdits(linkId: string): Promise<{ sent: number }> {
       .execute();
     sent++;
   }
+  sent += await sendAdditions(link, [...new Set(bases.map((b) => b.copy_kind))]);
   return { sent };
 }
 
@@ -140,7 +143,10 @@ async function writeField(orgId: string, kind: string, id: string, c: { field: s
       if (!w) throw new Error("this kind of record cannot be changed from a share");
       await w.update(orgId, id, { [c.field]: value });
     }
-    const [module, entityType] = kind.split(":", 2);
+    // Logged under the module's kind, as its own writer logs: the record's
+    // History reads a collection's item ("3d-printers:item") as that kind,
+    // and an edit logged as the collection's was never found there (#4680, #4690).
+    const [module, entityType] = (await baseKindOf(orgId, kind)).split(":", 2);
     const patch = c.in_metadata ? { metadata: { [c.field]: value } } : { [c.field]: value };
     const was = c.in_metadata ? { metadata: { [c.field]: valueIn(before, c) } } : { [c.field]: valueIn(before, c) };
     await activity.log({ orgId, userId: null, action: "updated", ref: { module: module ?? null, entityType: entityType ?? kind, entityId: id }, diff: patch, before: was });
@@ -180,14 +186,27 @@ export async function receiveEdit(link: ShareLinkRow & { settings?: unknown }, k
   }
   const conflict = !same(current, base);
   const status: ShareSuggestionStatus = conflict ? "conflict" : readEditMode(settings) === "direct" ? "applied" : "pending";
-  if (status === "applied") await writeField(link.org_id, kind, id, c, c.to, by, now);
   const row = { proposed: JSON.stringify(c.to ?? null) as never, owner_before: JSON.stringify(current ?? null) as never, status, by_name: by, ...(status === "applied" ? { decided_at: new Date() } : {}) };
-  if (waiting) await meta.updateTable("share_suggestions").set(row).where("id", "=", waiting.id).execute();
-  else
-    await meta
-      .insertInto("share_suggestions")
-      .values({ org_id: link.org_id, link_id: link.id, entity_kind: kind, entity_id: id, field: c.field, in_metadata: c.in_metadata, base: JSON.stringify(base ?? null) as never, ...row })
-      .execute();
+  // The edit is kept before it is applied: a change the owner cannot see
+  // listed is one they cannot undo.
+  const rowId = waiting
+    ? (await meta.updateTable("share_suggestions").set(row).where("id", "=", waiting.id).execute(), waiting.id)
+    : (
+        await meta
+          .insertInto("share_suggestions")
+          .values({ org_id: link.org_id, link_id: link.id, entity_kind: kind, entity_id: id, field: c.field, in_metadata: c.in_metadata, base: JSON.stringify(base ?? null) as never, ...row })
+          .returning("id")
+          .executeTakeFirstOrThrow()
+      ).id;
+  if (status === "applied") {
+    try {
+      await writeField(link.org_id, kind, id, c, c.to, by, now);
+    } catch (err) {
+      await meta.updateTable("share_suggestions").set({ status: "pending", decided_at: null }).where("id", "=", rowId).execute();
+      throw err;
+    }
+  }
+  await noteShare(link.id, status === "applied" ? "applied" : "suggested", rec.title);
   return status;
 }
 
@@ -219,32 +238,76 @@ export interface ShareEditRow {
   status: ShareSuggestionStatus;
   by_name: string | null;
   created_at: Date;
+  /** False once the record left the share: the edit is kept for the owner
+   *  to accept or drop, and says so. */
+  still_shared: boolean;
 }
 
-/** A share's edits, newest first: what is waiting, and what was applied. */
-export async function listShareEdits(orgId: string, linkId: string, limit = 100): Promise<ShareEditRow[]> {
+export const OPEN_STATUSES: ShareSuggestionStatus[] = ["pending", "conflict"];
+
+/** A waiting suggestion whose base is no longer what the record says here:
+ *  the owner changed the field after the friend did. Marks it a conflict
+ *  (with what the record says now) and says so. */
+export async function conflictIfChanged(r: { id: string; base: unknown }, current: unknown): Promise<boolean> {
+  if (same(current, r.base)) return false;
+  await meta.updateTable("share_suggestions").set({ status: "conflict", owner_before: JSON.stringify(current ?? null) as never }).where("id", "=", r.id).where("status", "=", "pending").execute();
+  return true;
+}
+
+/** Edits from shares, newest first, waiting ones before decided ones: one
+ *  share's, one record's, or the whole workspace's. */
+export async function listShareEdits(orgId: string, where: { linkId?: string; kind?: string; id?: string; open?: boolean } = {}, limit = 200): Promise<ShareEditRow[]> {
   const rows = await meta
-    .selectFrom("share_suggestions")
-    .select(["id", "link_id", "entity_kind", "entity_id", "field", "in_metadata", "base", "proposed", "owner_before", "status", "by_name", "created_at"])
-    .where("org_id", "=", orgId)
-    .where("link_id", "=", linkId)
-    .orderBy(sql`case when status in ('pending','conflict') then 0 else 1 end`)
-    .orderBy("created_at", "desc")
+    .selectFrom("share_suggestions as s")
+    .leftJoin("share_mirror_state as m", (j) => j.onRef("m.link_id", "=", "s.link_id").onRef("m.entity_kind", "=", "s.entity_kind").onRef("m.entity_id", "=", "s.entity_id"))
+    .select(["s.id", "s.link_id", "s.entity_kind", "s.entity_id", "s.field", "s.in_metadata", "s.base", "s.proposed", "s.owner_before", "s.status", "s.by_name", "s.created_at", "m.entity_id as shared_id"])
+    .where("s.org_id", "=", orgId)
+    .$if(!!where.linkId, (q) => q.where("s.link_id", "=", where.linkId!))
+    .$if(!!where.kind && !!where.id, (q) => q.where("s.entity_kind", "=", where.kind!).where("s.entity_id", "=", where.id!))
+    .$if(where.open === true, (q) => q.where("s.status", "in", OPEN_STATUSES))
+    .orderBy(sql`case when s.status in ('pending','conflict') then 0 else 1 end`)
+    .orderBy("s.created_at", "desc")
     .limit(limit)
     .execute();
   const titles = new Map<string, string>();
+  const records = new Map<string, Record<string, unknown> | null>();
   for (const r of rows) {
     const k = `${r.entity_kind}/${r.entity_id}`;
-    if (!titles.has(k)) titles.set(k, (await lookup(orgId, r.entity_kind, r.entity_id).catch(() => null))?.title ?? "");
+    if (!records.has(k)) {
+      const rec = await lookup(orgId, r.entity_kind, r.entity_id).catch(() => null);
+      titles.set(k, rec?.title ?? "");
+      records.set(k, (rec?.fields ?? null) as Record<string, unknown> | null);
+    }
+    // The owner changed the field since the friend's edit: it is a conflict
+    // to decide, not an ordinary suggestion to accept (#4692).
+    const now = records.get(k);
+    if (r.status === "pending" && now && (await conflictIfChanged(r, valueIn(now, r)))) {
+      r.status = "conflict";
+      r.owner_before = valueIn(now, r);
+    }
   }
-  return rows.map((r) => ({ ...r, title: titles.get(`${r.entity_kind}/${r.entity_id}`) || null }));
+  return rows.map(({ shared_id, ...r }) => ({ ...r, title: titles.get(`${r.entity_kind}/${r.entity_id}`) || null, still_shared: shared_id !== null }));
+}
+
+/** The copy follows a decision: the record is sent again now. Its mirror
+ *  row stays (cleared, not removed), because that row is also what says the
+ *  record is still shared, and an edit arriving before the resend must not
+ *  read as one on a record that left. */
+async function resendRecord(linkId: string, kind: string, id: string): Promise<void> {
+  await meta.updateTable("share_mirror_state").set({ digest: "" }).where("link_id", "=", linkId).where("entity_kind", "=", kind).where("entity_id", "=", id).execute();
+  await meta.updateTable("share_links").set({ mirror_due_at: new Date() }).where("id", "=", linkId).execute();
+  void mirrorShareNow(linkId).catch((err) => console.error(`[share] mirror of ${linkId} failed:`, err));
 }
 
 export type DecideResult = { ok: true; status: ShareSuggestionStatus } | { ok: false; error: string };
 
+export type ShareEditDecision = "accept" | "reject" | "undo" | "reopen";
+
 /** The owner decides on one of the friend's edits: accept or reject one
- *  waiting, or undo one applied. */
-export async function decideShareEdit(orgId: string, userId: string | null, editId: string, decision: "accept" | "reject" | "undo"): Promise<DecideResult> {
+ *  waiting, undo one applied on a Direct share, or reopen one accepted or
+ *  rejected (the way back from either: the record says what it did before,
+ *  and the edit waits again). */
+export async function decideShareEdit(orgId: string, userId: string | null, editId: string, decision: ShareEditDecision): Promise<DecideResult> {
   const r = await meta.selectFrom("share_suggestions").selectAll().where("id", "=", editId).where("org_id", "=", orgId).executeTakeFirst();
   if (!r) return { ok: false, error: "That edit is not here any more." };
   const rec = await lookup(orgId, r.entity_kind, r.entity_id);
@@ -252,9 +315,12 @@ export async function decideShareEdit(orgId: string, userId: string | null, edit
   const current = valueIn(now, r);
   const done = async (status: ShareSuggestionStatus) => {
     await meta.updateTable("share_suggestions").set({ status, decided_at: new Date(), decided_by: userId }).where("id", "=", r.id).execute();
+    // The friend hears what became of their edit.
+    if (status === "accepted" || status === "rejected" || status === "undone") {
+      await enqueueShareOp(r.link_id, "edits.decided", { decision: status, title: rec?.title ?? null });
+    }
     // The copy follows the decision: the mirror sends this record again.
-    await meta.deleteFrom("share_mirror_state").where("link_id", "=", r.link_id).where("entity_kind", "=", r.entity_kind).where("entity_id", "=", r.entity_id).execute();
-    await meta.updateTable("share_links").set({ mirror_due_at: new Date() }).where("id", "=", r.link_id).execute();
+    await resendRecord(r.link_id, r.entity_kind, r.entity_id);
     return { ok: true as const, status };
   };
   if (decision === "undo") {
@@ -264,9 +330,27 @@ export async function decideShareEdit(orgId: string, userId: string | null, edit
     await writeField(orgId, r.entity_kind, r.entity_id, r, r.owner_before, r.by_name ?? "Someone you share with", now);
     return done("undone");
   }
+  if (decision === "reopen") {
+    if (r.status !== "accepted" && r.status !== "rejected") return { ok: false, error: "Only an edit that was accepted or rejected can wait again." };
+    if (r.status === "accepted" && rec) {
+      if (!same(current, r.proposed)) return { ok: false, error: "It has been changed again since, so putting it back would lose that change." };
+      await writeField(orgId, r.entity_kind, r.entity_id, r, r.owner_before, r.by_name ?? "Someone you share with", now);
+    }
+    const after = r.status === "accepted" ? r.owner_before : current;
+    const status: ShareSuggestionStatus = same(after, r.base) ? "pending" : "conflict";
+    await meta.updateTable("share_suggestions").set({ status, decided_at: null, decided_by: null }).where("id", "=", r.id).execute();
+    await resendRecord(r.link_id, r.entity_kind, r.entity_id);
+    return { ok: true, status };
+  }
   if (r.status !== "pending" && r.status !== "conflict") return { ok: false, error: "That edit was already decided." };
   if (decision === "reject") return done("rejected");
   if (!rec) return { ok: false, error: "That record is not here any more." };
+  // Accepting a suggestion the owner has since changed under would overwrite
+  // their newer value without them choosing to: it waits as a conflict.
+  if (r.status === "pending" && (await conflictIfChanged(r, current))) {
+    await resendRecord(r.link_id, r.entity_kind, r.entity_id);
+    return { ok: false, error: "You changed this since their edit. Choose Take theirs or Keep yours." };
+  }
   if (!same(current, r.proposed)) await writeField(orgId, r.entity_kind, r.entity_id, r, r.proposed, r.by_name ?? "Someone you share with", now);
   await meta.updateTable("share_suggestions").set({ owner_before: JSON.stringify(current ?? null) as never }).where("id", "=", r.id).execute();
   return done("accepted");
@@ -303,4 +387,26 @@ export async function describeShareEdits(orgId: string, rows: ShareEditRow[]): P
     const { base: _b, proposed: _p, owner_before: _o, ...rest } = r;
     return { ...rest, label: mine?.label ?? r.field, was: mine?.from?.text ?? null, now: mine?.to.text ?? null, yours: r.status === "conflict" ? (theirs?.to.text ?? null) : null };
   });
+}
+
+/** On the friend's side: what the owner changed since the friend edited this
+ *  copy, field by field, in words. Empty for anything that is not a copy. */
+export async function copyNotes(orgId: string, kind: string, id: string): Promise<{ from: string | null; notes: Array<{ field: string; label: string; theirs: string | null }> }> {
+  const row = await meta
+    .selectFrom("share_copy_base as b")
+    .innerJoin("share_links as l", "l.id", "b.link_id")
+    .select(["b.owner_changed", "b.metadata", "l.peer_name"])
+    .where("l.org_id", "=", orgId)
+    .where("b.copy_id", "=", id)
+    .executeTakeFirst();
+  const changed = (row?.owner_changed ?? {}) as Record<string, unknown>;
+  const fields = Object.keys(changed);
+  if (!row || !fields.length) return { from: row?.peer_name ?? null, notes: [] };
+  const slug = (await meta.selectFrom("orgs").select("slug").where("id", "=", orgId).executeTakeFirstOrThrow()).slug;
+  const inMeta = (f: string) => f in ((row.metadata ?? {}) as Record<string, unknown>);
+  const [said] = await describeChanges(orgId, slug, [
+    { action: "updated", kinds: [kind, await baseKindOf(orgId, kind)], diff: { changes: fields.map((f) => ({ field: f, ...(inMeta(f) ? { custom: true as const } : {}), from: null, to: changed[f] })) } },
+  ]);
+  const of = (f: string) => said?.find((c) => c.field === f);
+  return { from: row.peer_name, notes: fields.map((f) => ({ field: f, label: of(f)?.label ?? f, theirs: of(f)?.to.text ?? null })) };
 }

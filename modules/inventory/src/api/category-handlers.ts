@@ -54,7 +54,7 @@ export function registerCategoryHandlers(): void {
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
     const used = await db.selectFrom("inventory_parts").select("id").where("category_id", "=", id).limit(1).executeTakeFirst();
     if (used) return { ok: false, error: "that category has things filed under it now, so it stays" };
-    const row = await db.deleteFrom("inventory_categories").where("id", "=", id).returning(["id", "name"]).executeTakeFirst();
+    const row = await platform().deletedRecords.capture(ctx.orgId, "inventory:category", id, () => db.deleteFrom("inventory_categories").where("id", "=", id).returning(["id", "name"]).executeTakeFirst());
     if (!row) return { ok: false, error: `no category with id ${id}` };
     return { ok: true, summary: `Removed the ${row.name} category.`, result: { id: row.id, name: row.name } };
   });

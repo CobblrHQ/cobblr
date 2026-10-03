@@ -205,7 +205,10 @@ export type ReceiptResult =
   /** `ai` / `ai_reason`: the router's coded reason when the AI was the reason
    *  (scan-fallback / provider-reason), so the session's verdict can say what
    *  to do rather than "unavailable" (#2892). `reason` stays for a person. */
-  | { ok: false; reason: string; code: ReceiptFailure; ai?: AiFallback; ai_reason?: ProviderErrorReason; source?: ReceiptSource };
+  /** `hosted_job`: no AI can read it now, but the hosted identify has it
+   *  queued and reads it when an engine is back (barcode-intelligence #43).
+   *  Only a caller that asked to wait (`queueIfBusy`) ever gets one. */
+  | { ok: false; reason: string; code: ReceiptFailure; ai?: AiFallback; ai_reason?: ProviderErrorReason; source?: ReceiptSource; hosted_job?: string };
 
 export function num(v: unknown): number | null {
   if (typeof v === "number") return Number.isFinite(v) ? v : null;

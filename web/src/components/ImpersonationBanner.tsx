@@ -27,16 +27,6 @@ export function ImpersonationBanner() {
   const [error, setError] = useState<string | null>(null);
   const active = !!imp;
 
-  // Push the whole app down so the fixed bar never covers the workspace header.
-  useEffect(() => {
-    if (!active) return;
-    const prev = document.body.style.paddingTop;
-    document.body.style.paddingTop = `${BAR_H}px`;
-    return () => {
-      document.body.style.paddingTop = prev;
-    };
-  }, [active]);
-
   // 1s tick for the countdown, only while a session is live.
   useEffect(() => {
     if (!active) return;
@@ -98,6 +88,7 @@ export function ImpersonationBanner() {
       <FloatingChrome
         inPlace
         anchor="top"
+        reserveTop
         yields={false}
         className={`z-[2001] flex items-center gap-2 px-3 ${accent} text-white text-[13px] font-medium shadow`}
         style={{ height: BAR_H }}

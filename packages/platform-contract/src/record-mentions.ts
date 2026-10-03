@@ -35,6 +35,9 @@ export interface RecordRef {
   kind: string;
   id: string;
   label: string;
+  /** A server-vouched page outside Cobblr for a result with no local route. */
+  href?: string;
+  open_label?: string;
 }
 
 /** One place in the text where a record is named. */
@@ -75,7 +78,7 @@ function byTitle(records: readonly RecordRef[]): {
     const key = `${r.kind} ${r.id}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    usable.push({ kind: r.kind, id: r.id, label });
+    usable.push({ ...r, kind: r.kind, id: r.id, label });
   }
   // A one-word prefix must be distinctive AMONG WHAT WAS READ: a word in two
   // read titles could mean either.

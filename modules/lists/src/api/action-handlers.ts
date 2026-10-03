@@ -128,7 +128,7 @@ export function registerListActionHandlers(): void {
     const id = typeof (ctx.args as { item_id?: unknown } | null)?.item_id === "string" ? String((ctx.args as { item_id: string }).item_id) : "";
     if (!id) return { ok: false, error: "say which item" };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<ListsDB>;
-    const res = await db.deleteFrom("lists_items").where("id", "=", id).where("checked", "=", false).executeTakeFirst();
+    const res = await platform().deletedRecords.capture(ctx.orgId, "lists:item", id, () => db.deleteFrom("lists_items").where("id", "=", id).where("checked", "=", false).executeTakeFirst());
     return { ok: true, removed: Number(res.numDeletedRows ?? 0n) };
   });
 
@@ -137,12 +137,13 @@ export function registerListActionHandlers(): void {
   platform().actions.registerHandler("lists.clear-done", async (ctx) => {
     const entity = requireActionEntity(ctx);
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<ListsDB>;
-    const res = await db
-      .deleteFrom("lists_items")
-      .where("list_id", "=", entity.id)
-      .where("checked", "=", true)
-      .executeTakeFirst();
-    const removed = Number(res.numDeletedRows ?? 0n);
+    const rows = await db.selectFrom("lists_items").select("id").where("list_id", "=", entity.id).where("checked", "=", true).execute();
+    let removed = 0;
+    for (const row of rows) {
+      const res = await platform().deletedRecords.capture(ctx.orgId, "lists:item", row.id,
+        () => db.deleteFrom("lists_items").where("id", "=", row.id).where("checked", "=", true).executeTakeFirst());
+      removed += Number(res.numDeletedRows ?? 0n);
+    }
     return {
       ok: true,
       result: {

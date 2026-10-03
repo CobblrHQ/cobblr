@@ -1,3 +1,4 @@
+import { NewItemMenu } from "@cobblr/platform-web";
 // Project detail — header + inline tasks list. Tasks are added,
 // checked off, deleted inline. Cross-module dependencies render as
 // pill chips on the task row.
@@ -444,12 +445,12 @@ function NewTaskInline({ projectId }: { projectId: string }) {
 
   return (
     <>
-    <form onSubmit={submit} className="flex gap-2">
+    <form onSubmit={submit} className="flex flex-wrap gap-2">
       <input
         value={title}
         onChange={(e) => setTitle(e.target.value)}
         placeholder="new task…"
-        className="input flex-1"
+        className="input flex-1 min-w-0 max-sm:basis-full"
       />
       <select
         value={energy}
@@ -460,13 +461,15 @@ function NewTaskInline({ projectId }: { projectId: string }) {
         <option value="medium">medium</option>
         <option value="large">large</option>
       </select>
-      <button
-        type="submit"
-        disabled={create.isPending || !title.trim()}
-        className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-xs font-medium px-3 transition disabled:opacity-50 flex items-center gap-1"
-      >
-        <Plus size={12} /> Add
-      </button>
+      <NewItemMenu kind="projects:task" seed={{ project_id: projectId }}>
+        <button
+          type="submit"
+          disabled={create.isPending || !title.trim()}
+          className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-xs font-medium px-3 transition disabled:opacity-50 flex items-center gap-1"
+        >
+          <Plus size={12} /> Add
+        </button>
+      </NewItemMenu>
     </form>
     <MutationError mutation={create} className="block mt-1" />
     </>

@@ -1,3 +1,4 @@
+import { invalidateRateCache } from "../platform/money.js";
 // TEST-ONLY endpoints for the pre-provisioned org pool. This router is mounted
 // in server.ts ONLY when COBBLR_TEST_ORG_POOL is set — it is NOT reachable in
 // prod (checkout-org mints a token for a pooled org's owner, so it must never
@@ -566,4 +567,15 @@ testSupportRouter.post("/test-support/notifications", async (req, res, next) => 
   } catch (err) {
     next(err);
   }
+});
+
+testSupportRouter.post("/test-support/exchange-rate-fixture", async (_req, res, next) => {
+  try {
+    await sql`insert into exchange_rates (rate_date, rates) values
+      ('1998-12-23', '{"EUR":1,"NOK":12,"USD":1.12}'::jsonb),
+      ('1998-12-24', '{"EUR":1,"NOK":10,"USD":1.2}'::jsonb)
+      on conflict (rate_date) do update set rates = excluded.rates`.execute(meta);
+    invalidateRateCache();
+    res.json({ ok: true });
+  } catch (err) { next(err); }
 });

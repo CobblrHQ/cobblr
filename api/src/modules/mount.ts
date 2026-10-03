@@ -11,7 +11,7 @@ import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { projectFieldScopes } from "../platform/field-scope-projection.js";
 import { meta } from "../db/meta.js";
-import { listEntries } from "./registry.js";
+import { canonicalModuleName, getEntry, listEntries } from "./registry.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { describeBlock } from "../platform/approvals.js";
 
@@ -31,6 +31,7 @@ import { applyCustomFieldValues } from "../platform/custom-field-values.js";
 import { applyComputedFields } from "../platform/computed-fields.js";
 import { withServedTitle } from "../platform/served-title.js";
 import { markModulesMounted } from "./mount-state.js";
+import { observeInstanceHistory, observeModuleHistory } from "../platform/history-http.js";
 import { observeInstanceSaves, observeModuleSaves } from "../platform/entity-saved.js";
 
 const primaryRouters = new Map<string, Router>();
@@ -41,7 +42,7 @@ let appRef: Application | null = null;
  *  process (the attention feed) asks here rather than over loopback, where
  *  the answer is a 501 per instance per poll. */
 export function hasPrimaryRouter(moduleName: string): boolean {
-  return primaryRouters.has(moduleName);
+  return primaryRouters.has(canonicalModuleName(moduleName));
 }
 
 /** Middleware for /orgs/:slug/instances/:name/items — dispatches to the
@@ -55,7 +56,7 @@ export function dispatchInstanceItems(
   next: NextFunction,
 ): void {
   const moduleName = req.instanceModule;
-  const router = moduleName ? primaryRouters.get(moduleName) : undefined;
+  const router = moduleName ? primaryRouters.get(canonicalModuleName(moduleName)) : undefined;
   if (!router) {
     res.status(501).json({
       error: {
@@ -101,7 +102,10 @@ export function dispatchInstanceItems(
     }) as Response["json"];
   }
 
-  router(req, res, next);
+  void observeInstanceHistory(req, res, (err?: unknown) => {
+    if (err) next(err);
+    else router(req, res, next);
+  });
 }
 
 /** Run a module list/detail payload through the computed-field resolver.
@@ -221,12 +225,12 @@ async function mountSingleEntry(app: Application, entry: ReturnType<typeof listE
     );
     return false;
   }
-  const mountPath = `/api/v1/orgs/:slug/modules/${manifest.name}`;
+  const mountPath = [manifest.name, ...(manifest.aliases ?? [])].map(name => `/api/v1/orgs/:slug/modules/${name}`);
   // observeModuleSaves announces every create and update this module's routes
   // answer (platform/entity-saved.ts): one signal for a record, whatever door.
   // projectFieldScopes: a field scoped to a capability never leaves in a
   // module's answer to someone without it (platform/field-scope-projection.ts).
-  app.use(mountPath, requireAuth, withTenant, projectFieldScopes, requireModuleEnabled(manifest.name), observeModuleSaves(manifest.name), router);
+  app.use(mountPath, requireAuth, withTenant, projectFieldScopes, requireModuleEnabled(manifest.name), observeModuleSaves(manifest.name), observeModuleHistory(manifest.name), router);
   // Capture the module's primary-entity router (if exposed) so the
   // instance-items dispatcher can route /instances/:name/items to it.
   const primary = (imported as ModuleApiModule | undefined)?.primaryRouter;
@@ -248,7 +252,7 @@ export async function mountNewlyRegistered(moduleName: string): Promise<boolean>
     console.error(`[modules] cannot mount ${moduleName}: app not initialised`);
     return false;
   }
-  const entry = listEntries().find((e) => e.manifest.name === moduleName);
+  const entry = getEntry(moduleName);
   if (!entry) {
     console.error(`[modules] cannot mount ${moduleName}: not in registry`);
     return false;

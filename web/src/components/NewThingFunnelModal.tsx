@@ -11,7 +11,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Boxes } from "lucide-react";
-import { changeWorkspaceShape, Modal, useToast } from "@cobblr/platform-web";
+import { changeWorkspaceShape, Modal, NewFromTemplateButton, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type OrgModuleListItem } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
@@ -448,7 +448,7 @@ export function NewThingFunnelModal({
           </button>
         </div>
       </form>
-
+      <NewFromTemplateButton onOpen={() => { reset(); onClose(); }} />
     </Modal>
   );
 }

@@ -9,11 +9,13 @@ import { list } from "../modules/registry.js";
 export const modulesRouter = Router();
 
 modulesRouter.get("/", requireAuth, (_req, res) => {
-  const items = list().map((m) => ({
+  const items = list().filter(m => !m.retirement).map((m) => ({
     name: m.name,
+    aliases: m.aliases ?? [],
     version: m.version,
     displayName: m.displayName,
     description: m.description,
+    integration: m.integration ?? null,
     icon: m.icon ?? null,
     // Q4 in build-plan.md / module-layers.md — surfaces the band so
     // the workspace UI can hide the disable toggle for foundationals

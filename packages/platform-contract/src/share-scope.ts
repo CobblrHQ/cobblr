@@ -38,9 +38,14 @@ export interface ScopeDef {
   excluded: ScopeRef[];
   /** A container in scope brings what is in it (a toolbox and its tools). */
   with_contents: boolean;
+  /** For a share with a person: everything lent to them is in it (any record
+   *  whose "who has it" field, role `assignee`, names them), and leaves it
+   *  when it comes back. On unless turned off; a public page has no person,
+   *  so it selects nothing there. */
+  lent_to_them: boolean;
 }
 
-export const EMPTY_SCOPE: ScopeDef = { rules: [], picks: [], excluded: [], with_contents: false };
+export const EMPTY_SCOPE: ScopeDef = { rules: [], picks: [], excluded: [], with_contents: false, lent_to_them: true };
 
 export interface VisibilityDef {
   /** Paid, cost, value: any money field. */
@@ -77,6 +82,7 @@ export function readScope(v: unknown): ScopeDef {
     picks: (Array.isArray(o.picks) ? o.picks : []).map(ref).filter((r): r is ScopeRef => !!r),
     excluded: (Array.isArray(o.excluded) ? o.excluded : []).map(ref).filter((r): r is ScopeRef => !!r),
     with_contents: o.with_contents === true,
+    lent_to_them: o.lent_to_them !== false,
   };
 }
 

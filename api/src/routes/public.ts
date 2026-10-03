@@ -23,8 +23,18 @@ import { FrameDocTooLarge, putFrameDoc } from "../platform/frame-docs.js";
 import { FrameDocBody } from "./frame-docs.js";
 import { env } from "../env.js";
 import { statKey, statValue } from "@cobblr/platform-contract/stat-value";
+import { readVisibility } from "@cobblr/platform-contract/share-scope";
+import { countLabelScan, labelPublicRecord, pageFrame, pageIsLive, publicPageRecord, publicPageRecords, skinDocument } from "../platform/public-page.js";
+import { resolveQrToken } from "./qr-scan.js";
 
 export const publicRouter = Router();
+
+// What a public address answers is data for the page that shows it, never a
+// result of its own; whether a page may be listed is said by the page.
+publicRouter.use((_req, res, next) => {
+  res.setHeader("X-Robots-Tag", "noindex");
+  next();
+});
 
 // Verify a scan-export photo token → { orgId, fileId } (or null). Byte-compatible
 // mirror of modules/core-scan/src/services/export-token.ts `verifyExportToken` —
@@ -51,12 +61,37 @@ function verifyScanExportToken(token: string): { orgId: string; fileId: string |
 interface SurfaceRow {
   id: string;
   name: string;
-  scope_type: "view" | "entity" | "collection" | "board" | "app";
+  scope_type: "view" | "entity" | "collection" | "board" | "app" | "page";
   scope_id: string;
   config: Record<string, unknown>;
   enabled: boolean;
   expires_at: Date | null;
   revoked_at: Date | null;
+}
+
+interface PageRow {
+  id: string;
+  name: string;
+  scope: unknown;
+  visibility: unknown;
+  layout: string;
+  public_until: Date | null;
+  contact: string | null;
+  footer: boolean;
+  show_fields: string[] | null;
+  about: string | null;
+  links: Array<{ label: string; url: string }> | null;
+  skin_html: string | null;
+  indexable: boolean;
+  accent: string | null;
+}
+
+/** What one link to a page shows: the page's visibility, with whatever the
+ *  link sets for itself over it. */
+function pageLinkVisibility(page: PageRow, surface: SurfaceRow) {
+  const own = (surface.config as { visibility?: unknown } | null)?.visibility;
+  const base = readVisibility(page.visibility);
+  return own && typeof own === "object" ? readVisibility({ ...base, ...(own as Record<string, unknown>) }) : base;
 }
 
 interface ViewRow {
@@ -172,6 +207,125 @@ publicRouter.post("/:token/frame-docs", (req, res, next) => {
       }
       throw e;
     }
+  })().catch(next);
+});
+
+// A record's printed label, scanned by a stranger: its public view, through
+// the live page that opens its labels (#4502). Answers only to the label's
+// long random token (the short code printed beside it is not a token), and
+// says nothing of a record no page opens.
+// AI-REACH: exempt — an anonymous visitor's read of a label they scanned
+publicRouter.get("/label", (req, res, next) => {
+  void (async () => {
+    const t = typeof req.query.t === "string" ? req.query.t : "";
+    const qr = t ? await resolveQrToken(t) : null;
+    const view = qr?.ok && qr.mode === "navigate" ? await labelPublicRecord(qr.org_id!, qr.entity_kind!, qr.entity_id!, t) : null;
+    if (!view) {
+      res.status(404).json({ error: { code: "not_public", message: "This belongs to someone else's Cobblr." } });
+      return;
+    }
+    if (req.get("X-Cobblr-Visit") === "1") {
+      await countLabelScan(qr!.org_id!, view.pageId, view.ownerId).catch((err) => console.error("[public] label scan count failed:", (err as Error).message));
+    }
+    res.json({ page: view.page, record: view.record });
+  })().catch(next);
+});
+
+// The page's custom look for this label's record: a one-shot sandboxed
+// document handed only what the page shows (#4502, Tier B).
+publicRouter.get("/label/skin", (req, res, next) => {
+  void (async () => {
+    const t = typeof req.query.t === "string" ? req.query.t : "";
+    const qr = t ? await resolveQrToken(t) : null;
+    const view = qr?.ok && qr.mode === "navigate" ? await labelPublicRecord(qr.org_id!, qr.entity_kind!, qr.entity_id!, t) : null;
+    if (!view || !view.skinHtml) {
+      res.status(404).json({ error: { code: "not_found", message: "no custom look" } });
+      return;
+    }
+    res.json({ url: skinDocument(view.skinHtml, { record: view.record, page: view.page }) });
+  })().catch(next);
+});
+
+// That view's photo, and only that record's: the label's token is the gate.
+publicRouter.get("/label/photo/:id", (req, res, next) => {
+  void (async () => {
+    const t = typeof req.query.t === "string" ? req.query.t : "";
+    const qr = t ? await resolveQrToken(t) : null;
+    const view = qr?.ok && qr.mode === "navigate" ? await labelPublicRecord(qr.org_id!, qr.entity_kind!, qr.entity_id!, t) : null;
+    if (!view || !view.photoFileId || view.photoFileId !== req.params.id) {
+      res.status(404).json({ error: { code: "not_found", message: "no such image" } });
+      return;
+    }
+    const file = (await platform().files.read(qr!.org_id!, view.photoFileId, "medium")) ?? (await platform().files.read(qr!.org_id!, view.photoFileId, "original"));
+    if (!file || !file.mimeType.startsWith("image/")) {
+      res.status(404).json({ error: { code: "not_found", message: "no such image" } });
+      return;
+    }
+    res.type(file.mimeType);
+    res.setHeader("Cache-Control", "public, max-age=600");
+    res.send(Buffer.from(file.bytes));
+  })().catch(next);
+});
+
+// A page's memorable address, /p/<workspace>/<address>: the token of the link
+// it opens through, or nothing. The same answer for a workspace that does
+// not exist, a page without that address, and one whose address was turned
+// off, so a guess learns nothing.
+publicRouter.get("/named/:org/:address", (req, res, next) => {
+  void (async () => {
+    const none = (): void => {
+      res.status(404).json({ error: { code: "not_found", message: "no such page" } });
+    };
+    const org = await meta.selectFrom("orgs").select("id").where("slug", "=", String(req.params.org ?? "")).executeTakeFirst();
+    if (!org) return none();
+    const db = (await platform().tenants.getDb(org.id)) as Kysely<{ core_public_surfaces_surfaces: SurfaceRow & { token: string }; core_public_surfaces_pages: PageRow & { address: string | null } }>;
+    const page = await db.selectFrom("core_public_surfaces_pages").select(["id"]).where("address", "=", String(req.params.address ?? "")).executeTakeFirst().catch(() => undefined);
+    if (!page) return none();
+    const links = await db.selectFrom("core_public_surfaces_surfaces").selectAll().where("scope_type", "=", "page").where("scope_id", "=", page.id).where("revoked_at", "is", null).execute();
+    const named = links.find((l) => (l.config as { named?: unknown } | null)?.named === true && l.enabled);
+    if (!named) return none();
+    res.json({ token: named.token });
+  })().catch(next);
+});
+
+// One record of a public page, by the opaque ref the page gave it, and only
+// while the page's scope still selects it.
+publicRouter.get("/:token/records/:ref", (req, res, next) => {
+  void (async () => {
+    const token = String(req.params.token ?? "");
+    const tok = await resolveToken(token);
+    if (!tok.ok) {
+      res.status(tok.status).json({ error: { code: tok.code, message: tok.message } });
+      return;
+    }
+    const tenantDb = (await platform().tenants.getDb(tok.orgId)) as Kysely<{ core_public_surfaces_surfaces: SurfaceRow; core_public_surfaces_pages: PageRow }>;
+    const surface = await tenantDb.selectFrom("core_public_surfaces_surfaces").selectAll().where("id", "=", tok.surfaceId).executeTakeFirst();
+    if (!surface || surface.revoked_at !== null || !surface.enabled || surface.scope_type !== "page") {
+      res.status(404).json({ error: { code: "not_found", message: "no such surface" } });
+      return;
+    }
+    const found = await tenantDb.selectFrom("core_public_surfaces_pages").selectAll().where("id", "=", surface.scope_id).executeTakeFirst();
+    if (found && !pageIsLive(found)) {
+      res.status(410).json({ error: { code: "expired", message: "this surface has expired" } });
+      return;
+    }
+    const page = found;
+    const record = page ? await publicPageRecord(tok.orgId, surface.id, token, page.scope, pageLinkVisibility(page, surface), String(req.params.ref ?? ""), page.show_fields) : null;
+    if (!record) {
+      res.status(404).json({ error: { code: "not_found", message: "no such record" } });
+      return;
+    }
+    const frame = await pageFrame(tok.orgId, page!);
+    // ?skin=1: the page's custom look for this record instead of the record.
+    if (req.query.skin === "1") {
+      if (!page!.skin_html) {
+        res.status(404).json({ error: { code: "not_found", message: "no custom look" } });
+        return;
+      }
+      res.json({ url: skinDocument(page!.skin_html, { record, page: frame }) });
+      return;
+    }
+    res.json({ page: frame, record });
   })().catch(next);
 });
 
@@ -302,6 +456,25 @@ publicRouter.get("/:token", (req, res, next) => {
         });
       }
       payload.sections = resolved;
+    } else if (surface.scope_type === "page") {
+      // scope_id is a public page (core_public_surfaces_pages): its scope and
+      // default visibility; this link's config.visibility overrides it.
+      const page = await (tenantDb as unknown as Kysely<{ core_public_surfaces_pages: PageRow }>)
+        .selectFrom("core_public_surfaces_pages")
+        .selectAll()
+        .where("id", "=", surface.scope_id)
+        .executeTakeFirst();
+      if (!page) {
+        res.status(404).json({ error: { code: "not_found", message: "no such surface" } });
+        return;
+      }
+      // Booth mode: past its end, every link to it is ended too.
+      if (!pageIsLive(page)) {
+        res.status(410).json({ error: { code: "expired", message: "this surface has expired" } });
+        return;
+      }
+      payload.page = { ...(await pageFrame(tok.orgId, page)), layout: page.layout };
+      payload.items = await publicPageRecords(tok.orgId, surface.id, token!, page.scope, pageLinkVisibility(page, surface), page.show_fields);
     } else if (surface.scope_type === "app") {
       // scope_id is a core_apps_apps slug. Render the whole composed app
       // read-only + no-login: keep markdown / stat / view / custom blocks,
@@ -381,32 +554,28 @@ publicRouter.get("/:token", (req, res, next) => {
       return;
     }
 
-    // 4. Best-effort "viewed" event + analytics row. Both detached
-    // from the response — a failure on either path doesn't make the
-    // public page slow or 500. The events.emit is the platform-wide
-    // signal (wires can subscribe); the views-log row is the
-    // module's own rollup source.
-    void platform().events.emit("core-public-surfaces.surface.viewed", {
-      orgId: tok.orgId,
-      surfaceId: surface.id,
-      scope_type: surface.scope_type,
-    });
-    const ua = req.headers["user-agent"];
-    const referer = req.headers.referer ?? req.headers.referrer;
-    void tenantDb
-      .insertInto("core_public_surfaces_views" as never)
-      .values({
-        surface_id: surface.id,
-        ua_hint: typeof ua === "string" ? ua.slice(0, 200) : null,
-        referer: typeof referer === "string" ? referer.slice(0, 200) : null,
-      } as never)
-      .execute()
-      .catch((err) => {
-        console.error(
-          "[public] view-log insert failed:",
-          (err as Error).message,
-        );
+    // Only an explicit page opening is a visit. Public screens also refresh
+    // this data on timers and focus changes without another visitor arriving.
+    if (req.get("X-Cobblr-Visit") === "1") {
+      void platform().events.emit("core-public-surfaces.surface.viewed", {
+        orgId: tok.orgId,
+        surfaceId: surface.id,
+        scope_type: surface.scope_type,
       });
+      const ua = req.headers["user-agent"];
+      const referer = req.headers.referer ?? req.headers.referrer;
+      void tenantDb
+        .insertInto("core_public_surfaces_views" as never)
+        .values({
+          surface_id: surface.id,
+          ua_hint: typeof ua === "string" ? ua.slice(0, 200) : null,
+          referer: typeof referer === "string" ? referer.slice(0, 200) : null,
+        } as never)
+        .execute()
+        .catch((err) => {
+          console.error("[public] view-log insert failed:", (err as Error).message);
+        });
+    }
 
     res.json(payload);
   })().catch(next);

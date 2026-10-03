@@ -51,9 +51,11 @@ const CREDENTIAL = "a credential or key; it is issued again where it is used, ne
 const PERSONAL = "one person's own inbox and choices, tied to accounts the target workspace may not have";
 
 export const SHARED_WORKSPACE_TABLES: Record<string, SharedTablePolicy> = {
+  deleted_records: { travels: "never", why: "deleted before-images expire in the workspace where the deletion happened" },
   // ── Restored with the backup (order: parents first) ────────────────────
   workspace_people: { travels: "backup", id: "id", users: ["user_id"] },
   entity_pairings: { travels: "backup", id: "id", users: ["created_by"] },
+  scan_tag_aliases: { travels: "backup" },
   field_sections: { travels: "backup", id: "id" },
   native_field_overrides: { travels: "backup", id: "id", drop: ["bundle_id"] },
   entity_kind_overrides: { travels: "backup", id: "id" },
@@ -91,6 +93,11 @@ export const SHARED_WORKSPACE_TABLES: Record<string, SharedTablePolicy> = {
   entity_action_bindings: { travels: "blueprint" },
 
   // ── Never ─────────────────────────────────────────────────────────────
+  tidy_suggestions: { travels: "never", why: "pending suggestions are found afresh on the restored workspace" },
+  tidy_suppressions: { travels: "never", why: "suggestion preferences belong to this workspace; restored workspaces start opted out" },
+  tidy_route_cache: { travels: "never", why: "routing results are derived from the current workspace's collections" },
+  warranty_reminder_deliveries: { travels: "never", why: "reminders already sent to accounts on this instance; a restored workspace sends its own reminders" },
+  low_stock_alert_deliveries: { travels: "never", why: "daily notices already sent to accounts on this instance; a restored workspace sends its own notices" },
   org_memberships: { travels: "never", why: ACCESS },
   workspace_invites: { travels: "never", why: ACCESS },
   workspace_roles: { travels: "never", why: ACCESS },
@@ -103,6 +110,8 @@ export const SHARED_WORKSPACE_TABLES: Record<string, SharedTablePolicy> = {
   notification_deferred: { travels: "never", why: PERSONAL },
   notification_audiences: { travels: "never", why: PERSONAL },
   share_links: { travels: "never", why: "a pairing with another workspace, holding the keys both sides sign with; a restored workspace shares again by inviting again" },
+  share_view_sessions: { travels: "never", why: "read-only View as grants through a share's pairing, minutes long; a restored workspace has no pairing until it shares again" },
+  share_additions: { travels: "never", why: "things a friend added through a share, which belong to that share's pairing; a restored workspace has no pairing until it shares again" },
   share_suggestions: { travels: "never", why: "a friend's edits through a share, which belong to that share's pairing; a restored workspace has no pairing until it shares again" },
   api_tokens: { travels: "never", why: CREDENTIAL },
   oauth_grants: { travels: "never", why: CREDENTIAL },
@@ -117,6 +126,7 @@ export const SHARED_WORKSPACE_TABLES: Record<string, SharedTablePolicy> = {
     why: "this instance's record of what it mailed; each order's own history, which the backup carries, keeps who was emailed and when",
   },
   browser_drive_grants: { travels: "never", why: CREDENTIAL },
+  scan_stations: { travels: "never", why: "a physical station paired to one person's token; pair it again after restoring so queued scans cannot run in another workspace" },
   edge_pairing_codes: { travels: "never", why: CREDENTIAL },
   public_surface_tokens: {
     travels: "never",

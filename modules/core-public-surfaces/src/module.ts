@@ -24,7 +24,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-public-surfaces",
-  version: "0.1.1",
+  version: "0.6.0",
   displayName: "Public Surfaces",
   description:
     "Share a list or a single thing through a private link, without anyone needing an account.",

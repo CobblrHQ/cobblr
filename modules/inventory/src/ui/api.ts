@@ -341,7 +341,7 @@ export class InventoryApi {
     const wrote = method.toUpperCase() !== "GET";
 
     if (res.status === 204) {
-      if (wrote) noteWorkspaceWrite(url);
+      if (wrote) noteWorkspaceWrite(url, res);
       return undefined as T;
     }
     let parsed: unknown;
@@ -362,7 +362,7 @@ export class InventoryApi {
         err?.details,
       );
     }
-    if (wrote) noteWorkspaceWrite(url);
+    if (wrote) noteWorkspaceWrite(url, res);
     return parsed as T;
   }
 
@@ -460,6 +460,8 @@ export class InventoryApi {
   };
 
   listCategories = () => this.request<{ items: Category[] }>("GET", "/categories");
+  getLowStockAlerts = () => this.request<{ enabled: boolean; canManage: boolean }>("GET", "/low-stock-alerts");
+  setLowStockAlerts = (enabled: boolean) => this.request<{ enabled: boolean; canManage: boolean }>("PUT", "/low-stock-alerts", { enabled });
   createCategory = (b: { name: string; color?: string; parent_id?: string | null }) =>
     this.request<Category>("POST", "/categories", b);
 
@@ -970,6 +972,7 @@ export interface FamilyThing {
   min_qty: number | null;
   low: boolean;
   location_id: string | null;
+  location_name?: string | null;
   image_path: string | null;
   metadata: Record<string, unknown>;
 }

@@ -90,7 +90,7 @@ export const PLACEMENT: PlacementRow[] = [
   {
     id: "generic-web-component",
     what: "a web component that works for ANY module's records",
-    keywords: ["component", "shared component", "generic", "reusable ui", "widget", "panel on every record", "record panel", "every record", "detail page section"],
+    keywords: ["component", "shared component", "generic", "reusable ui", "widget", "panel on every record", "record panel", "every record", "detail page section", "floor plan editor", "floor plan editor placed items"],
     dir: "web/src/components/",
     exemplar: "web/src/components/EntityAttachments.tsx",
     why: "This layer is module-agnostic: it may not name a module's entity kind, because doing so silently excludes every module added later.",
@@ -100,9 +100,18 @@ export const PLACEMENT: PlacementRow[] = [
     ],
   },
   {
+    id: "navigation-layout",
+    what: "split navigation rows declared by bundles in nav layout",
+    keywords: ["split navigation rows", "nav layout", "join navigation rows", "sidebar rows", "personal navigation command in Cobb", "navigation layout preference"],
+    dir: "web/src/lib/",
+    exemplar: "web/src/lib/nav-order.ts",
+    why: "Personal navigation layout belongs to the per-device preferences used by every navigation renderer.",
+    lints: ["lint:component-kinds", "lint:hooks-after-return", "lint:no-emdash"],
+  },
+  {
     id: "shared-web-primitive",
     what: "a form, field or layout primitive that a SHARED package component must also reach (a field control, a field grid, a modal layout rule)",
-    keywords: ["primitive", "field", "form", "grid", "packer", "layout", "control", "input", "platform-web", "custom fields panel"],
+    keywords: ["primitive", "field", "form", "grid", "packer", "layout", "control", "input", "platform-web", "custom fields panel", "shared overlay safe area", "persistent connectivity banners"],
     dir: "packages/platform-web/src/",
     exemplar: "packages/platform-web/src/fieldControl.ts",
     why: "The shared consumers (CustomFieldsPanel, FieldRenderer, Modal) live in @cobblr/platform-web, and that package cannot import web/src. A primitive put in web/src/components would be unreachable from the very panel that every record page renders, so a second copy appears there. The rule has one home where both the app and the package import it.",
@@ -158,7 +167,7 @@ export const PLACEMENT: PlacementRow[] = [
   {
     id: "kernel-platform-service",
     what: "a kernel seam every module can call",
-    keywords: ["platform seam", "kernel", "contract", "platform()", "shared service"],
+    keywords: ["platform seam", "kernel", "contract", "platform()", "shared service", "headless", "scan station", "NFC tag aliases", "station sessions"],
     dir: "api/src/platform/",
     exemplar: "api/src/platform/exclusive.ts",
     why: "A capability two modules would otherwise each hand-roll belongs in the kernel, declared on the platform contract so modules reach it without importing each other.",
@@ -199,7 +208,7 @@ export const PLACEMENT: PlacementRow[] = [
   {
     id: "background-loop",
     what: "a sweeper, poller or anything on a timer",
-    keywords: ["sweeper", "cron", "timer", "setinterval", "poll", "background", "worker", "scheduled"],
+    keywords: ["sweeper", "cron", "timer", "setinterval", "poll", "background", "worker", "scheduled", "low stock notification", "notification digest"],
     dir: "modules/<name>/src/ or api/src/platform/",
     exemplar: "api/src/platform/delivery-sweeper.ts",
     why: "Every api process starts these and more than one api runs against a single database, so an unguarded loop does its work twice on real data.",
@@ -213,7 +222,7 @@ export const PLACEMENT: PlacementRow[] = [
   {
     id: "migration",
     what: "a schema change",
-    keywords: ["migration", "schema", "alter table", "add column", "sql"],
+    keywords: ["migration", "platform migration", "schema", "alter table", "add column", "sql"],
     dir: "modules/<name>/migrations/ or api/migrations/",
     exemplar: "modules/digifab/migrations/0034_print_rule_fired_events.sql",
     why: "More than one api version runs against a tenant database at a time, so a migration lands under the PREVIOUSLY deployed api.",
@@ -430,7 +439,7 @@ export const PLACEMENT: PlacementRow[] = [
   {
     id: "bundle",
     what: "a one-click bundle for a use case (a table with its fields, views and scan routing)",
-    keywords: ["bundle", "use case", "one-click", "flagship", "preset", "quickstart", "instance for a use case"],
+    keywords: ["bundle", "optional bundle integration", "use case", "one-click", "flagship", "preset", "quickstart", "instance for a use case"],
     dir: "web/src/lib/featured-bundles.ts",
     exemplar: "bundles/computers.json",
     why: "featured-bundles.ts is the ONE source; bundles/*.json is GENERATED from it. Editing the json directly is the drift this pair already suffered once, and lint:bundles-synced now catches it.",

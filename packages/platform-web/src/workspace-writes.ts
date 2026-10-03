@@ -13,6 +13,12 @@ import type { QueryClient } from "@tanstack/react-query";
 
 export type WorkspaceWriteListener = (slug: string, path: string) => void;
 const listeners = new Set<WorkspaceWriteListener>();
+const deletedRecordListeners = new Set<(record: { slug: string; id: string }) => void>();
+
+export function subscribeDeletedRecord(listener: (record: { slug: string; id: string }) => void): () => void {
+  deletedRecordListeners.add(listener);
+  return () => { deletedRecordListeners.delete(listener); };
+}
 
 export function subscribeWorkspaceWrite(listener: WorkspaceWriteListener): () => void {
   listeners.add(listener);
@@ -23,7 +29,7 @@ export function subscribeWorkspaceWrite(listener: WorkspaceWriteListener): () =>
 
 /** A successful write to `path` (`/orgs/<slug>/…`, absolute `/api/v1/…` or a
  *  full URL). A path outside a workspace is not one. */
-export function noteWorkspaceWrite(path: string): void {
+export function noteWorkspaceWrite(path: string, response?: Pick<Response, "headers">): void {
   let p = path;
   try {
     if (/^https?:\/\//.test(p)) p = new URL(p).pathname;
@@ -35,6 +41,8 @@ export function noteWorkspaceWrite(path: string): void {
   if (!m) return;
   const slug = decodeURIComponent(m[1]!);
   listeners.forEach((l) => l(slug, p));
+  const id = response?.headers?.get("x-cobblr-deleted-record");
+  if (id && !/\/modules\/(core-files|core-locations|core-tags)\//.test(p)) deletedRecordListeners.forEach((listener) => listener({ slug, id }));
 }
 
 /** The caches that show how much there is or where things are kept. Every

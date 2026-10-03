@@ -93,6 +93,72 @@ export interface PlatformActionDecl {
 
 export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
+    // UI-SCREEN: /configuration/recently-deleted
+    id: "platform:restore-deleted-record", label: "Restore a deleted record", icon: "history",
+    description: "Bring a record from Recently deleted back with its original id and contents. Deleted records are kept for 30 days. Args: kind and entity_id.",
+    scope: "workspace", min_role: "member", invoke_handler: "platform.restore-deleted-record", user_invokable: true, undoable: false,
+    args_schema: { kind: { label: "Record kind", type: "text", required: true }, entity_id: { label: "Record id", type: "text", required: true } },
+    version: "0.1.0",
+  },
+  {
+    // UI-REACH: Restore this version in every record's History panel
+    id: "platform:restore-record-version",
+    label: "Restore a record version",
+    description: "Restore the values from before a saved edit, replacing later edits and recording a restorable change. Read the record's activity first; entry_id selects the edit and expected_latest_id is its newest history entry. Runs on the workspace. Fields you cannot read stay unchanged.",
+    examples: ["put this record back to before that edit", "restore the previous version of this item"],
+    icon: "history",
+    scope: "workspace",
+    min_role: "admin",
+    invoke_handler: "platform.restore-record-version",
+    user_invokable: true,
+    undoable: true,
+    args_schema: {
+      kind: { label: "Record kind", type: "text", required: true },
+      entity_id: { label: "Record id", type: "text", required: true },
+      entry_id: { label: "The saved edit to restore", type: "number", required: true },
+      expected_latest_id: { label: "Newest history entry read for this record", type: "number", required: true },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /inventory, /assets, /machines, /views
+    id: "platform:set-field-on-records",
+    label: "Set field on selected records",
+    description: "Set or clear one writable built-in or custom field on up to 500 records. Pass records as [{kind,id}], the exact field name and value (null clears it). Only fields shared by every selected kind are accepted. Failed rows are listed and skipped. One Undo restores the successful rows. Runs on the workspace.",
+    examples: ["set Brand to Hakko on these parts", "clear the warranty date on the selected items"],
+    icon: "pencil",
+    scope: "workspace",
+    min_role: "admin",
+    invoke_handler: "platform.set-field-on-records",
+    user_invokable: true,
+    undoable: true,
+    args_schema: {
+      records: { label: "The selected records as kind and id pairs", type: "list", required: true },
+      field: { label: "The field's storage name", type: "text", required: true },
+      value: { label: "The new value, or null to clear", type: "json" },
+    },
+    version: "0.1.0",
+  },
+  {
+    // NO-PHRASING: the undo of a batch field edit, returned on its card
+    // UI-REACH: Undo in the Set field toast
+    id: "platform:restore-batch-field",
+    label: "Undo setting a field",
+    description: "Restore the previous field values from a bulk field edit. A row changed since the batch keeps its newer value and is listed as skipped.",
+    icon: "undo-2",
+    scope: "workspace",
+    min_role: "admin",
+    invoke_handler: "platform.restore-batch-field",
+    user_invokable: true,
+    wire_only: true,
+    undoable: false,
+    args_schema: {
+      field: { label: "The field's storage name", type: "text", required: true },
+      changes: { label: "The batch's successful changes", type: "list", required: true },
+    },
+    version: "0.1.0",
+  },
+  {
     // UI-SCREEN: /fields
     id: "platform:add-field",
     min_role: "grantable",
@@ -525,6 +591,146 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
       ids: { label: "The records, by id (read them first)", type: "list", required: true },
       to: { label: "Who to offer them to: the person's name, or the share's id", type: "text", required: true },
     },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /machines (and every record page: "Share with…", and a list's selection bar)
+    id: "platform:share-with",
+    min_role: "grantable",
+    label: "Share with someone",
+    description:
+      "Put records in a share with a person this workspace is shared with, so a copy of each appears in their shared workspace and keeps in step. Records already shared with them are left as they are. Name the person (with) as their name or the share's id. Read the records first and pass their real ids and their kind.",
+    icon: "share-2",
+    scope: "workspace",
+    invoke_handler: "platform.share-with",
+    user_invokable: true,
+    // it reaches another person's workspace, who may already have seen it:
+    // platform:stop-sharing takes the copies back, but an assistant asks first
+    undoable: false,
+    examples: ["share the Voron with Vince", "let Sam see these three drills"],
+    args_schema: {
+      entity_kind: { label: "The kind of record", type: "text", required: true },
+      ids: { label: "The records, by id (read them first)", type: "list", required: true },
+      with: { label: "Who to share them with: the person's name, or the share's id", type: "text", required: true },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /machines (and every record page: "Shared with <them>", Stop)
+    id: "platform:stop-sharing",
+    min_role: "grantable",
+    label: "Stop sharing with someone",
+    description:
+      "Take records out of a share with a person: their copies leave that person's shared workspace. A record a share brings in by a rule (a whole collection, or lent to them) is kept out by name. Name the person (with) as their name or the share's id. Read the records first and pass their real ids and their kind.",
+    icon: "share-2",
+    scope: "workspace",
+    invoke_handler: "platform.stop-sharing",
+    user_invokable: true,
+    // it changes what another person's workspace holds: platform:share-with
+    // puts it back, but an assistant asks first
+    undoable: false,
+    examples: ["stop sharing the Voron with Vince"],
+    args_schema: {
+      entity_kind: { label: "The kind of record", type: "text", required: true },
+      ids: { label: "The records, by id (read them first)", type: "list", required: true },
+      with: { label: "Who to stop sharing them with: the person's name, or the share's id", type: "text", required: true },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /suggestions (and every record page: "2 suggested edits by Vince")
+    id: "platform:accept-suggestions",
+    min_role: "grantable",
+    label: "Accept suggested edits",
+    description:
+      "Accept edits someone you share with suggested on your records: each changes your record to their value, and your history names them. Pass the suggestions' ids, or a record (entity_kind and entity_id) to accept everything suggested on it, or from (a person's name) for everything they suggested. Where you changed the same field since, accepting puts their value in place of yours. List them first with the suggestions read.",
+    icon: "check",
+    scope: "workspace",
+    invoke_handler: "platform.accept-suggestions",
+    user_invokable: true,
+    // platform:reopen-suggestions puts each record back and the edit waits again
+    undoable: true,
+    examples: ["accept Vince's suggestions on the CR-10", "accept all of Sam's edits"],
+    args_schema: {
+      ids: { label: "The suggestions, by id", type: "list" },
+      entity_kind: { label: "A record's kind, to decide everything suggested on it", type: "text" },
+      entity_id: { label: "That record's id", type: "text" },
+      from: { label: "A person's name, to decide everything they suggested", type: "text" },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /suggestions (and every record page: Reject on a suggested edit)
+    id: "platform:reject-suggestions",
+    min_role: "grantable",
+    label: "Reject suggested edits",
+    description:
+      "Turn down edits someone you share with suggested on your records: your records stay as they are, and their copies go back to what yours say. Pass the suggestions' ids, or a record (entity_kind and entity_id), or from (a person's name). List them first with the suggestions read.",
+    icon: "x",
+    scope: "workspace",
+    invoke_handler: "platform.reject-suggestions",
+    user_invokable: true,
+    // platform:reopen-suggestions makes each wait again
+    undoable: true,
+    examples: ["reject Vince's edit to the Voron's colour"],
+    args_schema: {
+      ids: { label: "The suggestions, by id", type: "list" },
+      entity_kind: { label: "A record's kind, to decide everything suggested on it", type: "text" },
+      entity_id: { label: "That record's id", type: "text" },
+      from: { label: "A person's name, to decide everything they suggested", type: "text" },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /suggestions (the Undo after Accept or Reject)
+    id: "platform:reopen-suggestions",
+    min_role: "grantable",
+    label: "Put suggested edits back to waiting",
+    description:
+      "Undo accepting or rejecting suggested edits: an accepted one puts the record back to what it said before, and each waits for a decision again. Pass the suggestions' ids.",
+    icon: "undo-2",
+    scope: "workspace",
+    invoke_handler: "platform.reopen-suggestions",
+    user_invokable: false,
+    // accepting or rejecting again, as each was, is its undo
+    undoable: true,
+    examples: ["undo accepting Vince's edits"],
+    args_schema: {
+      ids: { label: "The suggestions, by id", type: "list", required: true },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /suggestions ("Added to the share": Take)
+    id: "platform:take-additions",
+    min_role: "grantable",
+    label: "Take what someone added to a share",
+    description:
+      "Take things someone you share with added to the shared workspace into your own collection: each becomes your record, stays shared with them, and theirs becomes its copy. Pass the additions' ids from the suggestions read.",
+    icon: "inbox",
+    scope: "workspace",
+    invoke_handler: "platform.take-additions",
+    user_invokable: true,
+    // it makes records here and changes the other person's copy; an assistant asks first
+    undoable: false,
+    examples: ["take the PSU Vince added"],
+    args_schema: { ids: { label: "The additions, by id", type: "list", required: true } },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /suggestions ("Added to the share": Leave)
+    id: "platform:leave-additions",
+    min_role: "grantable",
+    label: "Leave what someone added to a share",
+    description: "Leave things someone you share with added to the shared workspace where they are, without taking them into your collection. Pass the additions' ids from the suggestions read.",
+    icon: "x",
+    scope: "workspace",
+    invoke_handler: "platform.leave-additions",
+    user_invokable: true,
+    // nothing to put back: the thing stays in their shared workspace either way
+    undoable: false,
+    examples: ["leave the cables Vince added"],
+    args_schema: { ids: { label: "The additions, by id", type: "list", required: true } },
     version: "0.1.0",
   },
   {

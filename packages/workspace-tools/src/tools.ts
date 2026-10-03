@@ -26,6 +26,7 @@ import {
 import { explainRecords } from "./field-meanings.js";
 import { asMeasure, measureMatches, measureTokens, type Measure } from "@cobblr/platform-contract/measure";
 import { CURSOR_PARAM, decodeCursor, pageEnd, type Paging } from "./paging.js";
+import { pairingResultPresentation } from "@cobblr/platform-contract/pairing-presentation";
 
 export type ToolMode = "read" | "write";
 
@@ -43,7 +44,7 @@ interface WorkspaceToolBase {
   /** Sent only in a workspace that can use it, not on every turn. Absent:
    *  always sent. "services": only when at least one service capability is
    *  connected here, which on most turns in most workspaces it is not. */
-  sentWhen?: "services";
+  sentWhen?: "services" | "scan-stations";
   execute(api: WorkspaceApi, args: Record<string, unknown>): Promise<ToolResult>;
 }
 
@@ -361,6 +362,8 @@ function nameFromDiff(diff: unknown): string | null {
 /** One activity-log entry, already enriched server-side with the actor's name
  *  and (where the diff doesn't carry one) the record's live title. */
 interface ActivityRow {
+  restorable?: boolean;
+  said?: unknown;
   /** The log's own sequence (bigserial, so a string over JSON): where the next page starts. */
   id?: string | number;
   action: string;
@@ -741,6 +744,8 @@ export const ESCORT_DESTINATIONS: EscortDestination[] = [
     covered_by: [
       "platform:add-field",
       "platform:edit-field",
+      "platform:set-field-on-records",
+      "platform:restore-batch-field",
       "platform:remove-field",
       "platform:group-fields",
       "platform:ungroup-fields",
@@ -804,7 +809,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       "NEVER escort for something an action covers: check list_actions and RUN it. Destinations: " +
       ESCORT_DESTINATIONS.map(
         (d) =>
-          `${d.id} (${d.why}${d.covered_by?.length ? `; but ${d.covered_by.join(", ")} do those — run them, don't escort` : ""})`,
+          `${d.id} (${d.why}${d.covered_by?.length ? `; but ${d.covered_by.join(", ")} are actions` : ""})`,
       ).join("; ") +
       ".",
     mode: "read",
@@ -1104,6 +1109,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         target_id: string;
         relationship_kind: string;
         notes?: string | null;
+        metadata?: { result?: unknown } | null;
       };
       const fetchSide = async (side: "out" | "in") => {
         const who = side === "out" ? "source" : "target";
@@ -1112,14 +1118,18 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
           `/pairings?${who}_kind=${encodeURIComponent(kind)}&${who}_id=${encodeURIComponent(id)}${rel}`,
         );
         if (res.status >= 400) throw new Error(apiErrorMessage(res, "couldn't list pairings"));
-        return ((res.body.items as PairingRow[] | undefined) ?? []).map((p) => ({
-          relationship: p.relationship_kind,
-          direction: side,
-          kind: side === "out" ? p.target_kind : p.source_kind,
-          id: side === "out" ? p.target_id : p.source_id,
-          ...(p.notes ? { notes: p.notes } : {}),
-          pairing_id: p.id,
-        }));
+        return ((res.body.items as PairingRow[] | undefined) ?? []).map((p) => {
+          const result = pairingResultPresentation(p.metadata?.result);
+          return {
+            relationship: p.relationship_kind,
+            direction: side,
+            kind: side === "out" ? p.target_kind : p.source_kind,
+            id: side === "out" ? p.target_id : p.source_id,
+            ...(p.notes ? { notes: p.notes } : {}),
+            ...(result ? { title: result.label, href: result.href, ...(result.open_label ? { open_label: result.open_label } : {}) } : {}),
+            pairing_id: p.id,
+          };
+        });
       };
       // Placement is the platform's "what is inside what", its own table and
       // not a pairing. A tool that promises what is stored in a location and
@@ -1288,7 +1298,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "get_attention",
     description:
-      "What needs the user RIGHT NOW: the same 'needs you' feed their dashboard shows — stock that has run low, dates that are overdue or coming up in the next 30 days, and captures still waiting to be filed, across every tracker they have. Reach for this FIRST on any open-ended question about their situation (\"what should I do today?\", \"anything need me?\", \"am I behind on anything?\") — it is one call and it is what they are looking at.",
+      "What needs the user now, the dashboard's 'needs you' feed: low stock, dates overdue or due within 30 days, captures to file, suggested edits. Call it FIRST on open-ended questions (\"what should I do today?\", \"anything need me?\").",
     mode: "read",
     paging: { by: "one-call", why: "the dashboard needs-you feed: one row per kind of thing with its count and a few examples; the count is the whole answer" },
     params: {},
@@ -1314,23 +1324,68 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     },
   },
   {
+    name: "list_suggestions",
+    description:
+      "Edits and additions people you share with suggested, awaiting a decision, by record and person. Decide via invoke_action: platform:accept-suggestions, reject-suggestions, take-additions, leave-additions.",
+    mode: "read",
+    paging: { by: "one-call", why: "what waits for one person's decision, a review queue that is short by nature (capped at 500 by the route)" },
+    params: {
+      from: z.string().optional().describe("A person's name"),
+      kind: z.string().optional().describe("A record's kind, with id"),
+      id: z.string().optional(),
+    },
+    execute: async (api, args) => {
+      const kind = typeof args.kind === "string" ? args.kind.trim() : "";
+      const id = typeof args.id === "string" ? args.id.trim() : "";
+      const res = await api.request("GET", `/suggestions${kind && id ? `?${new URLSearchParams({ kind, id }).toString()}` : ""}`);
+      if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't read the suggested edits"));
+      const body = res.body as {
+        items?: Array<{ id: string; entity_kind: string; entity_id: string; title: string | null; label: string; was: string | null; now: string | null; yours: string | null; status: string; by_name: string | null; still_shared?: boolean }>;
+        additions?: Array<{ id: string; entity_kind: string; title: string; by_name: string | null }>;
+      };
+      const from = typeof args.from === "string" ? args.from.trim().toLowerCase() : "";
+      const byWho = (n: string | null) => !from || String(n ?? "").toLowerCase().includes(from);
+      // One entry per record and person, the way the review page groups them,
+      // so "accept Vince's on the CR-10" can name exactly that group.
+      const groups = new Map<string, { kind: string; id: string; title: string | null; from: string | null; edits: Array<Record<string, unknown>> }>();
+      for (const e of (body.items ?? []).filter((x) => byWho(x.by_name))) {
+        const key = `${e.entity_kind}|${e.entity_id}|${e.by_name ?? ""}`;
+        const g = groups.get(key) ?? { kind: e.entity_kind, id: e.entity_id, title: e.title, from: e.by_name, edits: [] };
+        g.edits.push({
+          id: e.id,
+          field: e.label,
+          suggested: e.now,
+          was: e.was,
+          ...(e.status === "conflict" ? { you_since_changed_it_to: e.yours } : {}),
+          ...(e.still_shared === false ? { no_longer_shared: true } : {}),
+        });
+        groups.set(key, g);
+      }
+      const additions = (body.additions ?? []).filter((a) => byWho(a.by_name)).map((a) => ({ id: a.id, kind: a.entity_kind, title: a.title, from: a.by_name }));
+      if (!groups.size && !additions.length) return toolOk({ records: [], additions: [], note: from ? `Nothing from ${args.from} is waiting.` : "No suggested edits or additions are waiting." });
+      return toolOk({ records: [...groups.values()], additions });
+    },
+  },
+  {
     name: "list_activity",
     description:
-      "The workspace's history, newest first: who created, updated or deleted what, and when. Use for any question about the PAST (\"what changed this week?\", \"who edited this part?\"). entity_type follows one kind of thing.",
+      "History, newest first: who changed what and when. Filter entity_kind and entity_id for one record; history_entry_id selects an edit for platform:restore-record-version.",
 
     mode: "read",
     paging: { by: "cursor" },
     params: {
-      limit: z.number().optional().describe("Max entries (default 25, max 100)"),
+      limit: z.number().optional().describe("Page size, at most 100"),
       actions: z
         .string()
         .optional()
-        .describe("Comma-separated action filter, e.g. delete,update (omit for everything)"),
-      entity_type: z.string().optional().describe("Only entries about this entity type, e.g. part"),
+        .describe("Comma-separated actions"),
+      entity_type: z.string().optional().describe("Record type, e.g. part"),
+      entity_kind: z.string().optional().describe("Record kind"),
+      entity_id: z.string().optional().describe("Record id"),
       cursor: CURSOR_PARAM,
     },
     execute: async (api, args) => {
-      const cur = decodeCursor<{ b: string; a?: string; e?: string; l: number }>("list_activity", args.cursor);
+      const cur = decodeCursor<{ b: string; a?: string; e?: string; k?: string; i?: string; l: number }>("list_activity", args.cursor);
       if (!cur.ok) return toolFail(cur.error);
       const st = cur.state;
       const limit = st?.l ?? Math.min(Number(args.limit) || 25, 100);
@@ -1339,15 +1394,21 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       const q = [`limit=${limit}`];
       if (actions) q.push(`actions=${encodeURIComponent(actions)}`);
       if (entityType) q.push(`entity_type=${encodeURIComponent(entityType)}`);
+      const entityKind = st ? st.k : args.entity_kind;
+      const entityId = st ? st.i : args.entity_id;
+      if (entityKind && entityId) { q.push(`entity_kind=${encodeURIComponent(String(entityKind))}`, `entity_id=${encodeURIComponent(String(entityId))}`); }
       if (st) q.push(`before=${encodeURIComponent(st.b)}`);
       const res = await api.request("GET", `/activity?${q.join("&")}`);
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't read the activity log"));
       const rows = (res.body as { items?: ActivityRow[] }).items ?? [];
       const last = rows[rows.length - 1];
       const next = rows.length === limit && last?.id != null
-        ? { b: String(last.id), ...(actions ? { a: actions } : {}), ...(entityType ? { e: entityType } : {}), l: limit }
+        ? { b: String(last.id), ...(actions ? { a: actions } : {}), ...(entityType ? { e: entityType } : {}), ...(entityKind && entityId ? { k: String(entityKind), i: String(entityId) } : {}), l: limit }
         : null;
       const items = rows.map((a) => ({
+        history_entry_id: a.id,
+        restorable: a.restorable ?? false,
+        ...(a.said ? { changes: a.said } : {}),
         when: a.occurred_at,
         action: a.action,
         // The route resolves `title` from the live record ONLY when the diff
@@ -1465,7 +1526,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_calendar",
     description:
-      "What is coming up (or what was on) the workspace calendar in a date window — due dates, scheduled maintenance, recurring chores, project deadlines, anything the workspace puts on a date. Use for \"what's on this week?\", \"what's due before Friday?\", \"what did I have on last month?\". Dates are YYYY-MM-DD; the default window is the next 30 days.",
+      "The workspace calendar in a date window: due dates, maintenance, chores, deadlines, anything on a date. For \"what's on this week?\", \"what's due before Friday?\", \"what did I have last month?\". Dates YYYY-MM-DD; default the next 30 days.",
     mode: "read",
     paging: { by: "one-call", why: "everything in one date window; to see more, ask for another window" },
     params: {
@@ -1494,6 +1555,48 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         ...(e.entityType ? { about: `${e.entityModule}:${e.entityType}`, entity_id: e.entityId } : {}),
       }));
       return toolOk({ window: { from, to }, items });
+    },
+  },
+  {
+    name: "list_scan_stations",
+    sentWhen: "scan-stations",
+    description: "Your scan stations and their IDs, modes and active places. Read their sessions with list_scan_station_sessions.",
+    mode: "read",
+    paging: { by: "one-call", why: "every station configured by this person in this workspace" },
+    params: {},
+    execute: async (api) => {
+      const res = await api.request("GET", "/scan-stations");
+      return res.status >= 400 ? toolFail(apiErrorMessage(res, "couldn't read the stations")) : toolOk(res.body);
+    },
+  },
+  {
+    name: "list_scan_station_sessions",
+    sentWhen: "scan-stations",
+    description: "What a scan station did, by session and time. Read a session's actions with get_scan_station_session.",
+    mode: "read",
+    paging: { by: "cursor" },
+    params: { device_id: z.string().uuid(), cursor: CURSOR_PARAM },
+    execute: async (api, args) => {
+      const cur = decodeCursor<{ device: string; before: string }>("list_scan_station_sessions", args.cursor);
+      if (!cur.ok) return toolFail(cur.error);
+      const device = cur.state?.device || String(args.device_id);
+      const before = cur.state?.before;
+      const res = await api.request("GET", `/scan-stations/${encodeURIComponent(device)}/sessions${before ? `?before=${encodeURIComponent(before)}` : ""}`);
+      if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't read the sessions"));
+      const body = res.body as { items: unknown[]; next_before: string | null };
+      return toolOk({ items: body.items, ...pageEnd("list_scan_station_sessions", body.next_before ? { device, before: body.next_before } : null) });
+    },
+  },
+  {
+    name: "get_scan_station_session",
+    sentWhen: "scan-stations",
+    description: "A station session in full: each action, the thing, its place before and after, and whether it was undone.",
+    mode: "read",
+    paging: { by: "one-call", why: "one session in full; the station starts another after 500 actions" },
+    params: { device_id: z.string().uuid(), session_id: z.string().uuid() },
+    execute: async (api, args) => {
+      const res = await api.request("GET", `/scan-stations/${encodeURIComponent(String(args.device_id))}/sessions/${encodeURIComponent(String(args.session_id))}`);
+      return res.status >= 400 ? toolFail(apiErrorMessage(res, "couldn't read the session")) : toolOk(res.body);
     },
   },
   {
@@ -1723,7 +1826,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "get_putaway_plan",
     description:
-      "The user's live put-away situation: how many scanned items still have no home, and the CURRENT organize plan (groups, destinations, evidence, unresolved items). Use this whenever the user talks about putting things away, organizing scanned items, bins, or 'the plan'. To help further, create core-locations:location records for places they describe (with their confirmation); the plan routes to real locations by evidence.",
+      "The put-away situation: how many scanned items have no home, and the CURRENT organize plan (groups, destinations, evidence, unresolved). Use it when the user talks about putting things away, bins, or 'the plan'; places they describe become core-locations:location records (confirmed), which the plan routes to.",
     mode: "read",
     paging: { by: "one-call", why: "a summary of the standing plan (first 20 groups, 15 names each); the whole plan opens in the app" },
     params: {},
@@ -2140,7 +2243,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_label_codes",
     description:
-      "The workspace's label-code groups (one per kind + instance). Each has its prefix (the letters in p42), how many codes exist, whether it is frozen (a label was printed), whether the code shows inside the QR, and its group_key. To change a group, invoke labels:set-code with no entity: group_key plus prefix and/or code_in_qr.",
+      "The workspace's label-code groups (one per kind + instance): prefix (the letters in p42), code count, frozen (a label was printed), whether the code shows in the QR, group_key. To change one, invoke labels:set-code with no entity: group_key plus prefix and/or code_in_qr.",
     mode: "read",
     paging: { by: "one-call", why: "one row per label-code group; a workspace has a handful" },
     params: {},

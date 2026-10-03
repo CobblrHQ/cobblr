@@ -256,7 +256,7 @@ export async function visitWorkspace(orgId: string, raw: unknown, now: Date = ne
     if (all.length === 1) {
       link =
         (await platform()
-          .entities.detailPathForEntity(org.id, "inventory:part", all[0]!.id)
+          .entities.recordAddressForEntity(org.id, "inventory:part", all[0]!.id)
           .catch(() => undefined)) ?? link;
     }
     let delivered = 0;

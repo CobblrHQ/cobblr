@@ -58,7 +58,7 @@ export function ServiceSetup({
   const viaBridge = (creds.transit ?? "").startsWith("bridge");
   const [preview, setPreview] = useState<ServicePreview | null>(null);
   const [problem, setProblem] = useState<{ message: string; fields: Array<{ path: string; message: string }> } | null>(null);
-  const [test, setTest] = useState<{ ok: boolean; message: string } | null>(null);
+  const [test, setTest] = useState<{ ok: boolean; warning?: string; message: string } | null>(null);
 
   const where = { base_url: creds.base_url ?? "", transit: creds.transit ?? "" };
   const read = useMutation({
@@ -76,7 +76,7 @@ export function ServiceSetup({
   });
   const probe = useMutation({
     mutationFn: () => api.testConnection({ provider_id: "service", kind: "service", credentials: { ...where, secret: creds.secret ?? "" } }),
-    onSuccess: (r) => setTest(r.ok ? { ok: true, message: r.note ?? "It answered." } : { ok: false, message: r.error ?? "It did not answer." }),
+    onSuccess: (r) => setTest(r.ok ? { ok: true, warning: r.warning?.trim(), message: r.warning?.trim() || r.note || "It answered." } : { ok: false, message: r.error ?? "It did not answer." }),
     onError: (e) => setTest({ ok: false, message: e instanceof ApiError ? e.message : String(e) }),
   });
 
@@ -218,8 +218,8 @@ export function ServiceSetup({
           {probe.isPending ? "Testing…" : "Test"}
         </button>
         {test && (
-          <span className={"text-xs " + (test.ok ? "text-emerald-700 dark:text-emerald-400" : "text-ember-600 dark:text-ember-400")} data-testid="service-test-line">
-            {test.ok ? "✓ " : "✗ "}
+          <span className={"text-xs " + (test.ok ? test.warning ? "text-amber-700 dark:text-amber-400" : "text-emerald-700 dark:text-emerald-400" : "text-ember-600 dark:text-ember-400")} data-testid="service-test-line">
+            {test.ok ? test.warning ? "⚠ " : "✓ " : "✗ "}
             {test.message}
           </span>
         )}

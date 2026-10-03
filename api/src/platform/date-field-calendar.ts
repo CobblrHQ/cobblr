@@ -172,6 +172,38 @@ export async function unreadableDateField(orgId: string, kind: string, field: st
  *  platform().calendar.registerDateFieldSource(spec). */
 export function registerDateFieldSource(spec: Spec): void {
   specsByKind.set(spec.kind, spec);
+  for (const column of spec.dateColumns ?? []) {
+    calendar.registerSource(`${spec.kind}:${column.column}`, async (orgId, from, to) => {
+      const tdb = (await getTenantDb(orgId)) as Kysely<unknown>;
+      const date = sql.ref(column.column);
+      const excluded = column.excludeWhen ? sql`and ${sql.ref(column.excludeWhen)} = false` : sql``;
+      const active = column.source === "warranty" ? sql`and metadata->'disposition' is null` : sql``;
+      try {
+        const compiled = sql<DateRow>`
+          select id::text as id, name, ${date}::text as dt
+          from ${sql.table(spec.table)}
+          where ${date} >= ${from}::date and ${date} <= ${to}::date
+          ${excluded} ${active}
+        `.compile(tdb);
+        const { rows } = await tdb.executeQuery<DateRow>(compiled);
+        return rows.flatMap((r): CalendarEvent[] => {
+          const day = fieldDay(r.dt);
+          if (!day || day < from || day > to) return [];
+          return [{
+            id: `${spec.kind}:${column.column}:${r.id}:${day}`,
+            title: dateEventTitle(r.name, column.label),
+            date: day, allDay: true, source: column.source,
+            sourceLabel: column.source === "warranty" ? "Warranty ends" : "Purchased",
+            category: column.source, direction: column.direction,
+            entityModule: spec.entityModule, entityType: spec.entityType, entityId: r.id,
+          }];
+        });
+      } catch (err) {
+        if ((err as Error).message.includes("does not exist")) return [];
+        throw err;
+      }
+    });
+  }
   {
     calendar.registerSource(`${spec.entityModule}-dates`, async (orgId, from, to) => {
       // Date field defs for this module in this workspace — the base kind AND

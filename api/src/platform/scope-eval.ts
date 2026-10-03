@@ -17,9 +17,20 @@ import { saidLabel } from "@cobblr/platform-contract/activity-said";
 export const SCOPE_CAP = 5000;
 const CONTENTS_DEPTH = 4;
 
-const key = (r: ScopeRef) => `${r.entity_kind}\u0000${r.id}`;
+// A record by its id alone: the same record reached by a collection (its
+// collection's kind) and by a hand-pick (its module's kind) is one record,
+// shared once (#4689). Ids are uuids, unique across kinds; the first way in
+// (the rules, which name the most specific kind) keeps its kind.
+export const scopeKey = (r: ScopeRef) => r.id;
+const key = scopeKey;
 
-export async function recordsInScope(orgId: string, scope: ScopeDef, opts: { cap?: number } = {}): Promise<{ refs: ScopeRef[]; complete: boolean }> {
+/** The fields that say who has a thing now (role `assignee`, a `person`
+ *  field): what "lent to them" reads. */
+async function whoHasItFields(orgId: string): Promise<Array<{ entity_kind: string; name: string }>> {
+  return meta.selectFrom("module_field_defs").select(["entity_kind", "name"]).where("org_id", "=", orgId).where("field_role", "=", "assignee").where("type", "=", "person").execute();
+}
+
+export async function recordsInScope(orgId: string, scope: ScopeDef, opts: { cap?: number; person?: string | null } = {}): Promise<{ refs: ScopeRef[]; complete: boolean }> {
   const cap = opts.cap ?? SCOPE_CAP;
   const out = new Map<string, ScopeRef>();
   let complete = true;
@@ -28,7 +39,7 @@ export async function recordsInScope(orgId: string, scope: ScopeDef, opts: { cap
       complete = false;
       return;
     }
-    out.set(key(r), r);
+    if (!out.has(key(r))) out.set(key(r), r);
   };
   for (const rule of scope.rules) {
     const query = rule.type === "field" ? { filter: { [rule.field]: rule.equals } } : {};
@@ -37,6 +48,15 @@ export async function recordsInScope(orgId: string, scope: ScopeDef, opts: { cap
       .catch(() => ({ items: [], complete: false, total: 0 }));
     if (!res.complete) complete = false;
     for (const it of res.items) add({ entity_kind: rule.entity_kind, id: it.id });
+  }
+  if (scope.lent_to_them && opts.person) {
+    for (const f of await whoHasItFields(orgId)) {
+      const res = await platform()
+        .entities.listAll(orgId, f.entity_kind, { filter: { [f.name]: opts.person } }, undefined, { cap })
+        .catch(() => ({ items: [], complete: false, total: 0 }));
+      if (!res.complete) complete = false;
+      for (const it of res.items) add({ entity_kind: f.entity_kind, id: it.id });
+    }
   }
   if (scope.picks.length) {
     const found = await lookupMany(orgId, scope.picks.map((p) => ({ kind: p.entity_kind, id: p.id })));
@@ -65,8 +85,8 @@ export async function recordsInScope(orgId: string, scope: ScopeDef, opts: { cap
 }
 
 /** What the scope editor shows: how many, and the first few by name. */
-export async function previewScope(orgId: string, scope: ScopeDef): Promise<{ count: number; complete: boolean; sample: Array<{ entity_kind: string; id: string; title: string }> }> {
-  const r = await recordsInScope(orgId, scope);
+export async function previewScope(orgId: string, scope: ScopeDef, person: string | null = null): Promise<{ count: number; complete: boolean; sample: Array<{ entity_kind: string; id: string; title: string }> }> {
+  const r = await recordsInScope(orgId, scope, { person });
   const first = r.refs.slice(0, 8);
   const titled = first.length ? await lookupMany(orgId, first.map((f) => ({ kind: f.entity_kind, id: f.id }))) : [];
   return {

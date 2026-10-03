@@ -42,6 +42,7 @@ import { doorPlan, frameFromImage, type DoorPlan } from "../lib/imageDoor";
 import { captureRoute } from "../lib/captureRoute";
 import { useDeployEnv } from "../lib/deploy-env";
 import { ManualScanField } from "../components/ManualScanField";
+import { NfcScanButton } from "../components/NfcScanButton";
 import { ApiError, api, type LiveSortEntry, type ScanInboxItem, type ScanResolveCandidate, type TrackedMatch } from "../lib/api";
 import { LOCATION_ENTITY_KIND, decideLocationScan, filingLabel } from "../lib/scanFiling";
 import { freshDedupState, shouldFireScan, pickDetection, makeDetectionCollector, type DedupState } from "../lib/scanDedup";
@@ -2842,6 +2843,12 @@ export function ScanCameraPage() {
           <div className="flex justify-center">
             <ZoomChip range={zoomUi.range} level={zoomUi.level} onPick={pickZoom} />
           </div>
+        )}
+        {!(sheetOpen || !!reviewItem || (phase === "result" && !!pendingBarcode)) && (
+          <NfcScanButton
+            onCobblrQr={(token) => routeQr(token, { freeze: phaseRef.current === "scanning" })}
+            onOpenPath={(path) => navigate(path)}
+          />
         )}
         {!(sheetOpen || !!reviewItem || (phase === "result" && !!pendingBarcode)) && (
           <ManualScanField

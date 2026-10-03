@@ -100,7 +100,7 @@ import { filedIntoOf, scanRowState, scanSessionAction } from "@cobblr/platform-c
 import { displayName } from "@cobblr/platform-contract/display-identity";
 import { sessionVerdict, type SessionVerdict } from "@cobblr/platform-contract/scan-session";
 import { itemEnriching } from "./scan-status";
-import { attachBodyFor, confirmBodyFor, destinationCandidateOf, duplicateSummary, isReadyToFile, placementPreview } from "./scanFileAll";
+import { attachBodyFor, confirmBodyFor, destinationCandidateOf, duplicateSummary, filedLine, isReadyToFile, placementPreview } from "./scanFileAll";
 import { useScanViewer } from "./scanViewer";
 import { resolveInstanceForFiling } from "./scanInstall";
 import { arrivalLabel, arrivalOf } from "./scanArrival";
@@ -2050,17 +2050,6 @@ export function ScanPage() {
   // the per-session "File all" button. A pending item without a confident
   // candidate or a name stays pending for a manual look and is reported;
   // already-resolved items in the set are skipped silently.
-  // The batch question, with a choice PER TABLE. The shared confirm was
-  // all-or-nothing: "file where they belong" moved every group or none, so
-  // agreeing about the teas meant also agreeing about the spices. Same promise
-  // bridge the ConfirmProvider uses - the async chokepoint awaits, the modal
-  // resolves - with the answer being which tables you accepted.
-  const [batchAsk, setBatchAsk] = useState<{
-    groups: Array<{ instance: string; label: string; count: number; sample: string }>;
-    resolve: (accepted: Set<string> | null) => void;
-  } | null>(null);
-  const [batchAccepted, setBatchAccepted] = useState<Set<string>>(new Set());
-
   const confirmItemsToTheirCandidate = async (
     ids: Iterable<string>,
     agreedCategory?: string | null,
@@ -2068,84 +2057,13 @@ export function ScanPage() {
   ) => {
     const byId = new Map(items.map((i) => [i.id, i]));
 
-    // ASK BEFORE FILING A BATCH INTO THE WRONG TABLE.
-    //
-    // Each card carries a "Tea?" chip when a better table exists, which works
-    // when you are reading cards. It does nothing for "file all": you never see
-    // the lines, so ten teas went into Inventory with ten unread suggestions
-    // attached. Expecting a tap per line is not a fix, it is the same work moved.
-    //
-    // So the batch is checked ONCE, here, at the chokepoint every bulk path
-    // goes through - not at the two call sites, which would be two copies to
-    // drift. One question, grouped by table, and "file as-is" stays one click
-    // away because the suggestion is a suggestion.
-    // The resolver's answer, the same one the card shows (#3136): a SYSTEM
-    // route the router's rule replaces with a better table is a group to
-    // confirm; a PERSON's choice is never moved by a batch, whatever the
-    // router offers beside it (#3062).
+    // NO QUESTION BEFORE FILING. Every row files to the destination its card
+    // shows (confirmBodyFor reads destinationCandidateOf, #3618), so a "may
+    // belong somewhere else" modal could only propose the table the row
+    // already had: File 1 on a settled Spices item asked "1 -> Spices" (#4584).
+    // A person's disagreement is theirs to make on the card, where the better
+    // table is a chip; filing says where it went and offers the way back.
     const idList = [...ids];
-    // Grouped by TABLE and carrying ids, not names. Names are for reading; two
-    // jars of the same thing share one, and an unnamed scan has none at all, so
-    // matching rows back by name would move the wrong ones.
-    const misrouted = new Map<string, { label: string; entry: ScanMenuEntry; ids: string[]; names: string[] }>();
-    for (const id of idList) {
-      const it = byId.get(id);
-      if (!it) continue;
-      const d = scanRowState(it, viewer).destination;
-      if (!d?.replaced) continue;
-      const entry = (menu ?? []).find((m) => m.module === d.module && (m.instance ?? null) === (d.instance ?? null));
-      if (!entry) continue;
-      const label = d.label;
-      const cur = misrouted.get(label) ?? { label, entry, ids: [], names: [] };
-      cur.ids.push(id);
-      cur.names.push(displayName(it) ?? "one scan");
-      misrouted.set(label, cur);
-    }
-    if (misrouted.size > 0) {
-      const groups = [...misrouted.values()];
-      // Every table starts ACCEPTED: the common case is "yes, obviously" (five
-      // teas to Tea), and the checkbox exists for the one group you disagree
-      // with - unticking it files that group as-is without costing the others.
-      setBatchAccepted(new Set(groups.map((g) => g.entry.instance ?? g.entry.module)));
-      const accepted = await new Promise<Set<string> | null>((resolve) => {
-        setBatchAsk({
-          groups: groups.map((g) => ({
-            instance: g.entry.instance ?? g.entry.module,
-            label: g.label,
-            count: g.ids.length,
-            sample: `${g.names.slice(0, 3).join(", ")}${g.names.length > 3 ? `, +${g.names.length - 3}` : ""}`,
-          })),
-          resolve,
-        });
-      });
-      setBatchAsk(null);
-      // Closing the dialog aborts the whole filing - nothing moves, nothing
-      // files. Escape must never mean "do the irreversible thing anyway".
-      if (accepted === null) return;
-      {
-        // Each ACCEPTED group goes to its own table in the one pass: five teas
-        // to Tea and five spices to Spices; an unticked group files as-is.
-        for (const g of groups.filter((g) => accepted.has(g.entry.instance ?? g.entry.module))) {
-          for (const id of g.ids) {
-            const it = byId.get(id);
-            if (!it) continue;
-            byId.set(id, {
-              ...it,
-              suggested_candidates: [
-                {
-                  ...(it.suggested_candidates?.[0] ?? ({} as ScanCandidate)),
-                  module: g.entry.module,
-                  instance: g.entry.instance,
-                  kind: g.entry.kind,
-                  label: g.entry.label,
-                },
-                ...(it.suggested_candidates ?? []).slice(1),
-              ],
-            } as typeof it);
-          }
-        }
-      }
-    }
 
     // INSTALL what these items are routed to, before confirming any of them.
     //
@@ -2196,6 +2114,8 @@ export function ScanPage() {
     let failed = 0;
     let lastErr: string | null = null;
     let n = 0;
+    /** What filed, and where, for the done-toast and its Undo. */
+    const filed: Array<{ id: string; label: string; locationId: string | null }> = [];
     for (const id of idList) {
       n++;
       // A 40-line receipt is 40 serial round-trips; with no visible progress
@@ -2244,6 +2164,7 @@ export function ScanPage() {
       try {
         await api.confirmScanItem(activeSlug, id, body);
         ok++;
+        filed.push({ id, label: scanRowState(it!, viewer).destination?.label ?? "Inventory", locationId: body.location_id ?? null });
       } catch (e) {
         failed++;
         // The endpoint's message is actionable ("Enable Inventory in
@@ -2254,13 +2175,19 @@ export function ScanPage() {
     }
     setBulkProgress(null);
     void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
-    const parts = [`${ok} confirmed`];
+    const places = new Set(filed.map((f) => f.locationId));
+    const place = places.size === 1 ? (locsQ.data?.items ?? []).find((l) => l.id === [...places][0]) : undefined;
+    const parts = [ok ? filedLine(filed, place ? filingLabel(place) : null) : "0 filed"];
     if (merged) parts.push(`${merged} added to what you already had`);
     if (skipped) parts.push(`${skipped} need a manual look`);
     if (failed) parts.push(`${failed} failed${lastErr ? ` - ${lastErr}` : ""}`);
     if (ok === 0 && failed > 0) toast.error(parts.join(" · "));
     else if (failed > 0) toast.info(parts.join(" · "));
-    else toast.success(parts.join(" · "));
+    else if (ok > 0) {
+      // A done thing is a toast, and the way back rides on it.
+      const filedIds = filed.map((f) => f.id);
+      toast.action(parts.join(" · "), { actionLabel: "Undo", duration: 10000, onAction: () => void revertIds(filedIds).then(reportRevert) });
+    } else toast.success(parts.join(" · "));
     return { ok, merged, skipped, failed };
   };
   const bulkConfirm = async () => {
@@ -2841,6 +2768,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
       <AiOffNotice status={aiStatus} needs="identify" />
 
       <ScanDrivePanel drive={scanDrive} />
+      <Link className="inline-block text-sm text-accent underline" to="/scan/stations">Scan stations</Link>
 
       {/* When you arrived here from an instance's table ("Scan" on the Yarn
           page), confirms default into that instance. */}
@@ -4802,63 +4730,6 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
         </div>
       )}
 
-      {batchAsk && (
-        <Modal
-          open
-          onClose={() => batchAsk.resolve(null)}
-          title={`${batchAsk.groups.reduce((n, g) => n + g.count, 0)} of these may belong somewhere else`}
-          size="sm"
-        >
-          <div className="space-y-2">
-            <p className="text-xs text-muted dark:text-slate-400">
-              Tick the tables you agree with - anything unticked keeps its
-              current routing. Closing this files nothing.
-            </p>
-            {batchAsk.groups.map((g) => (
-              <label
-                key={g.instance}
-                className="flex items-start gap-3 rounded-md border border-line dark:border-slate-700 p-3 cursor-pointer hover:border-cobble-300 dark:hover:border-cobble-700 transition"
-              >
-                <input
-                  type="checkbox"
-                  checked={batchAccepted.has(g.instance)}
-                  onChange={() =>
-                    setBatchAccepted((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(g.instance)) next.delete(g.instance);
-                      else next.add(g.instance);
-                      return next;
-                    })
-                  }
-                  className="mt-0.5 h-4 w-4 shrink-0 accent-cobble-600"
-                />
-                <span className="min-w-0">
-                  <span className="block text-sm font-medium text-content dark:text-mortar-100">
-                    {g.count} → {g.label}
-                  </span>
-                  <span className="block text-xs text-muted dark:text-slate-400 truncate">{g.sample}</span>
-                </span>
-              </label>
-            ))}
-            <div className="flex justify-end gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => batchAsk.resolve(new Set())}
-                className="rounded border border-line dark:border-slate-600 px-3 py-1.5 text-xs text-muted hover:text-content transition"
-              >
-                File all as-is
-              </button>
-              <button
-                type="button"
-                onClick={() => batchAsk.resolve(new Set(batchAccepted))}
-                className="rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-xs font-medium transition"
-              >
-                File
-              </button>
-            </div>
-          </div>
-        </Modal>
-      )}
       <ScanImportModal
         slug={activeSlug}
         open={importOpen}

@@ -14,6 +14,7 @@
 // The visitor's journey is one click: the homepage button hits GET /try, the
 // server provisions and redirects to /t/<token>, the SPA there calls redeem,
 // stores the JWT and lands them on /w/<slug>. They type nothing.
+import { cloudSignupUrl, cloudUrl } from "../platform/cloud.js";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { env } from "../env.js";
@@ -476,12 +477,10 @@ const TakeBody = z.object({
   keep_examples: z.boolean().optional(),
 });
 
-/** The hosted product's /bring door for a take link, or null where this box
- *  names no hosted product (COBBLR_CLOUD_SIGNUP_URL). */
+/** The Cobblr cloud's /bring door for a take link (COBBLR_CLOUD_URL, #4737). */
 function bringUrl(link: string): string | null {
-  if (!env.COBBLR_CLOUD_SIGNUP_URL) return null;
   try {
-    return `${new URL(env.COBBLR_CLOUD_SIGNUP_URL).origin}/bring?file=${encodeURIComponent(link)}`;
+    return `${cloudUrl()}/bring?file=${encodeURIComponent(link)}`;
   } catch {
     return null;
   }
@@ -531,7 +530,7 @@ tryRouter.post(
         days,
         lifetime: lifetimeSentence(await sandboxLifetime(membership.org_id)),
         continueUrl: bringUrl(link),
-        cloudUrl: env.COBBLR_CLOUD_SIGNUP_URL,
+        cloudUrl: cloudSignupUrl(),
         selfhostUrl: env.COBBLR_SELFHOST_DOCS_URL,
       });
       const sent = await sendAuthEmail({ to: email, subject: mail.subject, text: mail.text, kind: "magic_link" });
@@ -840,7 +839,7 @@ tryRouter.get("/try/paths", (_req: Request, res: Response): void => {
   // Empty means "this deployment does not offer that path", and the modal and
   // the email both simply leave it out rather than showing a dead link.
   res.json({
-    cloud_url: env.COBBLR_CLOUD_SIGNUP_URL || null,
+    cloud_url: cloudSignupUrl(),
     selfhost_url: env.COBBLR_SELFHOST_DOCS_URL || null,
     export_days: env.TRY_SANDBOX_EXPORT_DAYS,
     // How long keeping makes it a trial here, for the web to say in words.

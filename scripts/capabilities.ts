@@ -73,6 +73,24 @@ export interface VocabularyCapability extends Base {
 export const CAPABILITIES: Capability[] = [
   {
     kind: "owns",
+    id: "records:one-deletion-image",
+    what: "one private before-image store for every record deletion",
+    why: "a delete kept only by an assistant ledger cannot be undone when a person deletes the same record in the app",
+    owner: "api/src/platform/deleted-records.ts", scope: ["api/src/platform/**/*.ts", "modules/*/src/**/*.ts"],
+    detect: /(?:insertInto\(["'](?:deleted_records|\w+_deleted)["']|insert into deleted_records)/,
+    use: "platform().deletedRecords.keep or capture, with the kind's snapshot and restore writer",
+  },
+  {
+    kind: "requires-prop",
+    id: "photos:host-editor",
+    what: "the workspace shell supplies its shared record photo editor to module pages",
+    why: "a module photo field cannot reach the shared web picker without the host component",
+    component: "PlatformWebProvider",
+    required: ["recordPhoto"],
+    scope: ["web/src/App.tsx"],
+  },
+  {
+    kind: "owns",
     id: "locations:the-open-space",
     what: "which room or container a floor-plan page has open: the address's `space`, read and set only through useSelectedSpace (web/src/components/placeItems/useSelectedSpace.ts)",
     why:
@@ -258,6 +276,8 @@ export const CAPABILITIES: Capability[] = [
     detect: /core_placement_placements/,
     use: "platform().placement.place / remove / containerOf / contents, never the table",
     except: {
+      "api/src/platform/placement-compare.ts":
+        "the placement seam's atomic compare-and-write helper, called only after api/src/index.ts canonicalizes both refs",
       "api/src/platform/migrate-location-to-placement.ts":
         "the location trigger: it writes under its own table's kind, which is the base kind, the key the kernel reads by",
       "modules/core-placement/src/heal-instance-kinds.ts":

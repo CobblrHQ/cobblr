@@ -6,9 +6,11 @@
 
 import { Router } from "express";
 import { surfacesRouter } from "./surfaces.js";
+import { pagesRouter } from "./pages.js";
 
 const router = Router({ mergeParams: true });
 
 router.use("/surfaces", surfacesRouter);
+router.use("/pages", pagesRouter);
 
 export default router;

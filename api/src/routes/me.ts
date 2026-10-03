@@ -62,11 +62,18 @@ meRouter.get("/me", requireAuth, async (req, res) => {
   const userId = req.session!.id;
   // Shared with buildAuthResponse (login, signup, invite-accept). One list of
   // columns, so a preference cannot arrive here and be missing there.
-  const [user, orgs] = await Promise.all([
+  const [loaded, memberships] = await Promise.all([
     loadSessionUser(userId),
     listMembershipsForUser(userId),
   ]);
+  // View as through a share: the app opens on the one share space, and the
+  // person whose eyes it lends keeps everything else of theirs (their address,
+  // their other workspaces) to themselves.
+  const view = req.session!.share_view ?? null;
+  const orgs = view ? memberships.filter((o) => o.id === view.org_id) : memberships;
+  const user = view ? { ...loaded, email: "" } : loaded;
   return res.json({
+    share_view: view ? { viewer_name: view.viewer_name, expires_at: view.expires_at, slug: view.slug } : null,
     user: {
       ...user,
       auth_method: req.session!.auth_method,

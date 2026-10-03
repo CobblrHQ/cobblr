@@ -16,6 +16,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
+import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 import { randomUUID } from "node:crypto";
 import { platform } from "@cobblr/platform-contract";
 import { requiredArgsMissing, describeArgs, type ActionArgSpec } from "@cobblr/platform-contract/action-args";
@@ -94,9 +95,17 @@ actionLabelsRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     const base = await effectiveBase(req);
-    // list-cap-ok: not paged yet, #4134
-    const rows = await tenantDb(req).selectFrom("labels_action_labels").selectAll().orderBy("created_at", "desc").limit(200).execute();
-    res.json({ items: rows.map((r) => ({ ...r, url: actionUrl(base, r.code) })) });
+    const page = readListPage(req.query);
+    const rows = await tenantDb(req)
+      .selectFrom("labels_action_labels")
+      .selectAll()
+      .select(sql<string>`count(*) over()`.as(TOTAL_COLUMN))
+      .orderBy("created_at", "desc")
+      .orderBy("id")
+      .limit(page.limit)
+      .offset(page.offset)
+      .execute();
+    res.json(pagedAnswer(rows.map((r) => ({ ...r, url: actionUrl(base, r.code) })), page));
   }),
 );
 

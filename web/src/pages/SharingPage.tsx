@@ -7,6 +7,7 @@
 // shared it, how it is syncing, and Leave.
 
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDownLeft, ArrowUpRight, Check, Copy, Plus, RefreshCw, Share2 } from "lucide-react";
 import { Modal, relativeTime, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
@@ -15,6 +16,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 import { ShareWhatEditor } from "./ShareWhatEditor";
 import { ShareEditsList } from "./ShareEditsList";
+import { PublicPagesSection } from "./PublicPagesSection";
 
 export function SharingPage() {
   usePageTitle("Sharing");
@@ -128,7 +130,13 @@ export function SharingPage() {
           ))}
         </div>
       )}
+      {live.some((l) => l.edits_waiting) ? (
+        <Link to="/suggestions" data-testid="sharing-review-all" className="inline-flex items-center gap-1 text-sm text-accent hover:underline">
+          Review every suggested edit ({live.reduce((n, l) => n + (l.edits_waiting ?? 0), 0)})
+        </Link>
+      ) : null}
       {live.length > 0 && <HandedOver slug={activeSlug} />}
+      <PublicPagesSection slug={activeSlug} />
       <Modal open={!!editing} onClose={() => setEditing(null)} title={`What ${editing?.peer_name ?? editing?.label ?? "they"} can see`} size="md">
         {editing && <ShareWhatEditor slug={activeSlug} linkId={editing.id} who={editing.peer_name ?? editing.label ?? "they"} onDone={() => setEditing(null)} />}
       </Modal>
@@ -156,6 +164,7 @@ function ShareRow({ link, onSync, syncing, onEnd, endLabel, onWhat, onEdits }: {
               What's shared
             </button>
           )}
+          {link.status === "active" && link.side === "owner" && <ViewAsButton link={link} />}
           {onEdits && link.status === "active" && link.side === "owner" && (
             <button type="button" onClick={onEdits} data-testid="share-edits-open" className="inline-flex items-center gap-1 rounded border border-line px-2 py-1 text-xs text-muted hover:text-accent hover:border-accent dark:border-slate-600">
               Their edits
@@ -177,29 +186,83 @@ function ShareRow({ link, onSync, syncing, onEnd, endLabel, onWhat, onEdits }: {
           ? `Invite sent${link.label ? ` to ${link.label}` : ""}, not accepted yet${link.invite_expires_at ? ` · expires ${relativeTime(link.invite_expires_at)}` : ""}`
           : `${link.last_synced_at ? `Last synced ${relativeTime(link.last_synced_at)}` : "Not synced yet"}${link.waiting ? ` · ${link.waiting} change${link.waiting === 1 ? "" : "s"} waiting` : ""}${link.side === "owner" ? (link.edit_mode === "direct" ? " · their edits apply at once" : " · you review their edits") : ""}`}
       </p>
+      {link.side === "share" && link.last_viewed && (
+        <p className="text-xs text-muted" data-testid="share-last-viewed">
+          {link.last_viewed.by ?? "The person who shared this"} last looked at it as you {relativeTime(link.last_viewed.at)}, read-only.
+        </p>
+      )}
       {link.status === "active" && link.last_error && <p className="text-xs text-ember-600 dark:text-ember-400">{link.last_error}. It will keep trying.</p>}
     </div>
   );
 }
 
+/** "View as Vince": the share space as they see it, read-only, in a new tab. */
+function ViewAsButton({ link }: { link: ShareLinkItem }) {
+  const { activeSlug } = useActiveOrg();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      data-testid="share-view-as"
+      onClick={async () => {
+        setBusy(true);
+        // Opened before the request, or a browser blocks a tab opened after a wait.
+        const tab = window.open("", "_blank");
+        try {
+          const r = await api.viewShareAs(activeSlug, link.id);
+          const url = new URL(r.url, window.location.origin).href;
+          if (tab) tab.location.href = url;
+          else window.location.href = url;
+        } catch (e) {
+          tab?.close();
+          toast.error((e as Error).message);
+        } finally {
+          setBusy(false);
+        }
+      }}
+      className="inline-flex items-center gap-1 rounded border border-line px-2 py-1 text-xs text-muted hover:text-accent hover:border-accent dark:border-slate-600 disabled:opacity-50"
+    >
+      View as {link.peer_name ?? "them"}
+    </button>
+  );
+}
+
 function InviteForm({ slug, onDone }: { slug: string; onDone: () => void }) {
   const [label, setLabel] = useState("");
-  const [made, setMade] = useState<{ url: string; expires: string } | null>(null);
+  const [made, setMade] = useState<{ links: Array<{ label: string; url: string; note: string | null }>; expires: string } | null>(null);
+  const [where, setWhere] = useState(0);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   if (made) {
+    const chosen = made.links[where] ?? made.links[0]!;
     return (
       <div className="space-y-3">
+        {made.links.length > 1 && (
+          <fieldset className="space-y-1" data-testid="share-invite-where">
+            <legend className="text-sm font-medium text-content">Where is their Cobblr?</legend>
+            {made.links.map((l, i) => (
+              <label key={l.url} className="flex items-start gap-2 text-sm text-content">
+                <input type="radio" name="share-where" checked={where === i} onChange={() => setWhere(i)} className="mt-1 accent-cobble-500" data-testid="share-invite-where-option" />
+                <span>
+                  {l.label}
+                  {l.note && <span className="block text-xs text-muted">{l.note}</span>}
+                </span>
+              </label>
+            ))}
+          </fieldset>
+        )}
         <p className="text-sm text-content">
-          Send this link to {label || "them"}. They open it signed in to their own Cobblr (this one, or another) and accept. It works once, for a week.
+          Send this link to {label || "them"}. They open it signed in to their Cobblr there and accept; with no account there yet, they sign up first and come back to it. It works once, for a week.
         </p>
         <div className="flex gap-2">
-          <input readOnly value={made.url} data-testid="share-invite-url" className="min-w-0 flex-1 rounded-lg border border-line bg-subtle px-3 py-2 text-xs text-content dark:border-slate-600" onFocus={(e) => e.currentTarget.select()} />
+          <input readOnly value={chosen.url} data-testid="share-invite-url" className="min-w-0 flex-1 rounded-lg border border-line bg-subtle px-3 py-2 text-xs text-content dark:border-slate-600" onFocus={(e) => e.currentTarget.select()} />
           <button
             type="button"
             onClick={async () => {
-              await navigator.clipboard?.writeText(made.url).catch(() => undefined);
+              await navigator.clipboard?.writeText(chosen.url).catch(() => undefined);
               setCopied(true);
             }}
             className="inline-flex items-center gap-1 rounded-lg border border-line px-3 text-sm text-muted hover:text-accent dark:border-slate-600"
@@ -220,7 +283,7 @@ function InviteForm({ slug, onDone }: { slug: string; onDone: () => void }) {
         setError(null);
         try {
           const r = await api.createShareLink(slug, label);
-          setMade({ url: r.invite_url, expires: r.expires_at });
+          setMade({ links: r.links?.length ? r.links : [{ label: "", url: r.invite_url, note: null }], expires: r.expires_at });
           onDone();
         } catch (err) {
           setError((err as Error).message);

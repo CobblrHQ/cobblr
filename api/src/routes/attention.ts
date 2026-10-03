@@ -13,6 +13,8 @@
 // uses (quickstart.ts precedent) — the host never reaches into module tables.
 // Small workspaces by design: caps at 15 instances × 200 items; the client
 // caches for 30s.
+import { listTidySuggestions } from "../platform/tidy-suggestions.js";
+import type { TidyCandidate } from "@cobblr/platform-contract";
 import { Router } from "express";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
@@ -22,6 +24,8 @@ import { resolveKind, titleForEntity } from "../platform/entities.js";
 import { hasPrimaryRouter } from "../modules/mount.js";
 import { countdownWords, fieldDay, fieldDayUnreadable, viewQuery } from "@cobblr/platform-contract";
 import { dueState, todayFrom } from "../lib/due-day.js";
+import { listShareEdits } from "../platform/share-edits.js";
+import { listAdditions } from "../platform/share-additions.js";
 
 export const attentionRouter = Router({ mergeParams: true });
 
@@ -74,7 +78,8 @@ interface AttentionCollection {
 }
 
 interface AttentionRow {
-  kind: "low_stock" | "overdue" | "due_today" | "upcoming" | "pending_scans" | "photo_wanted" | "unreadable_date";
+  suggestion?: { id: string; candidate: TidyCandidate };
+  kind: "tidy" | "low_stock" | "overdue" | "due_today" | "upcoming" | "pending_scans" | "photo_wanted" | "unreadable_date" | "suggested_edits";
   label: string;
   count: number;
   /** Up to 3 item names, for the row's detail line. */
@@ -106,6 +111,7 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
     const slug = String(req.params.slug);
     const token = (req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
     const rows: AttentionRow[] = [];
+    for (const s of await listTidySuggestions(req.tenant!.org.id, req.tenant!.role)) rows.push({ kind: "tidy", label: s.candidate.why, count: s.candidate.records.length, sample: s.candidate.records.slice(0, 3).map((r) => r.name), route: s.candidate.action.route, suggestion: s });
 
     // Pending captures first — always actionable.
     const inbox = await j<{ items: Array<{ id: string }> }>(
@@ -119,6 +125,28 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
         count: inbox.items.length,
         sample: [],
         route: "/scan",
+      });
+    }
+
+    // Edits someone you share with suggested on your things (share-spaces.md
+    // §10): one row, whoever and however many.
+    const waiting = await listShareEdits(req.tenant!.org.id, { open: true }, 500).catch(() => []);
+    const added = await listAdditions(req.tenant!.org.id).catch(() => []);
+    if (waiting.length + added.length > 0) {
+      const records = new Map<string, AttentionEntry>();
+      for (const e of waiting) {
+        const k = `${e.entity_kind}/${e.entity_id}`;
+        if (!records.has(k)) records.set(k, { id: e.entity_id, title: e.title ?? "A record", record: { kind: e.entity_kind, id: e.entity_id, name: e.title ?? "A record" } });
+      }
+      for (const a of added) if (!records.has(`a/${a.id}`)) records.set(`a/${a.id}`, { id: a.id, title: a.title });
+      const by = [...new Set([...waiting, ...added].map((e) => e.by_name ?? "someone"))];
+      rows.push({
+        kind: "suggested_edits",
+        label: `${waiting.length && added.length ? "suggested edits and additions" : waiting.length ? "suggested edits" : "things added to a share"} by ${by.join(" and ")}`,
+        count: waiting.length + added.length,
+        sample: [...records.values()].slice(0, 3).map((r) => r.title),
+        route: "/suggestions",
+        entries: [...records.values()].slice(0, 8),
       });
     }
 
@@ -508,8 +536,9 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
     }
 
     // Severity order: overdue → low stock → a date nothing can read (a
-    // reminder that will never fire) → pending scans → upcoming.
-    const rank = { overdue: 0, due_today: 1, low_stock: 2, unreadable_date: 3, photo_wanted: 4, pending_scans: 5, upcoming: 6 } as const;
+    // reminder that will never fire) → someone waiting on your answer →
+    // pending scans → upcoming.
+    const rank = { tidy: 5, overdue: 0, due_today: 1, low_stock: 2, unreadable_date: 3, suggested_edits: 4, photo_wanted: 5, pending_scans: 6, upcoming: 7 } as const;
     rows.sort((a, b) => rank[a.kind] - rank[b.kind] || b.count - a.count);
     res.json({ items: rows });
   } catch (err) {

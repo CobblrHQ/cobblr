@@ -1,3 +1,4 @@
+import { fieldCurrency } from "@cobblr/platform-contract/money";
 // VOCAB-ENUMERATION OK: turning an order line into the acquisition facts it
 // is evidence for is this file's subject, the same translation a receipt's
 // facts go through; naming the three roles is the point.
@@ -41,6 +42,7 @@ export interface OrderEvidence {
   qty: number | string | null;
   unitCost: number | string | null;
   lineAmount: number | string | null;
+  currency?: string;
 }
 
 const num = (v: unknown): number | null => {
@@ -113,8 +115,13 @@ export async function stampFromOrder(orgId: string, subject: LineSubject, e: Ord
       for (const k of Object.keys(nativeWrites)) delete prov[k];
     }
   }
+  for (const field of [...Object.keys(metaWrites), ...nativeWritten]) {
+    if (roleOf.get(field) !== "acquired-for" || !e.currency) continue;
+    metaWrites[`money_currency_${field}`] = e.currency;
+    if (roled.find((f) => f.name === field)?.type === "money" && field in metaWrites) metaWrites[field] = { amount: metaWrites[field], currency: e.currency };
+  }
   const ok = await platform().entities.mergeMetadata(orgId, subject.kind, subject.id, { ...metaWrites, [FIELD_PROVENANCE_KEY]: prov });
-  return [...(ok ? Object.keys(metaWrites) : []), ...nativeWritten];
+  return [...(ok ? Object.keys(metaWrites).filter((field) => !field.startsWith("money_currency_")) : []), ...nativeWritten];
 }
 
 /** The thing is bought in the order: once, whichever door claims it. */
@@ -206,11 +213,11 @@ export async function stampLine(
   orderId: string,
   itemId?: string,
 ): Promise<number> {
-  const order = await db.selectFrom("purchases_orders").select(["id", "vendor", "ordered_at"]).where("id", "=", orderId).executeTakeFirst();
+  const order = await db.selectFrom("purchases_orders").select(["id", "vendor", "ordered_at", "metadata"]).where("id", "=", orderId).executeTakeFirst();
   if (!order) return 0;
   let q = db
     .selectFrom("purchases_order_items")
-    .select(["id", "subject_kind", "subject_id", "qty", "unit_cost", "line_amount"])
+    .select(["id", "subject_kind", "subject_id", "qty", "unit_cost", "line_amount", "metadata"])
     .where("order_id", "=", orderId)
     .where("subject_id", "is not", null);
   if (itemId) q = q.where("id", "=", itemId);
@@ -219,6 +226,7 @@ export async function stampLine(
     if (!line.subject_kind || !line.subject_id) continue;
     const written = await stampFromOrder(orgId, { kind: line.subject_kind, id: line.subject_id }, {
       orderId,
+      currency: fieldCurrency(line.metadata, "unit_cost", fieldCurrency(order.metadata, "total_cost", await platform().money.currency(orgId))),
       vendor: order.vendor,
       orderedAt: order.ordered_at as unknown as string | Date | null,
       qty: line.qty,

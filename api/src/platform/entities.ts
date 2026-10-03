@@ -14,6 +14,8 @@
 // before returning. Anything not declared is private to the owning
 // module. See docs/architecture/entity-resolver.md.
 
+import { deletionWriter } from "./deleted-records.js";
+import { historyWriter } from "./history-writes.js";
 import { noteResolverFailure } from "./resolver-failures.js";
 import { sql } from "kysely";
 import type {
@@ -32,8 +34,10 @@ import { TRAIT_PRESETS, stockDisclosureFromConfig, traitAxisValue, type EntityVi
 import { meta } from "../db/meta.js";
 import { instanceKindName } from "./instance-kind.js";
 import { INSTANCE_ITEM_DETAIL, resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
+import { recordAddress } from "@cobblr/platform-contract/record-address";
+import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
 import { IMPLICIT_EXPOSABLE_PROPS } from "@cobblr/platform-contract/entity-metadata";
-import { getEntry } from "../modules/registry.js";
+import { canonicalModuleName, getEntry } from "../modules/registry.js";
 import { assertModulesMounted } from "../modules/mount-state.js";
 
 // Re-export so callers reaching detail-path logic through `entities` keep working
@@ -207,6 +211,7 @@ const ENABLED_MODULES_TTL_MS = 30_000;
  *  Fails OPEN: meta being unreachable is not the same as "nothing is enabled",
  *  and answering "disabled" on a blip would make every list silently empty. */
 async function moduleEnabledForOrg(orgId: string, moduleName: string): Promise<boolean> {
+  moduleName = canonicalModuleName(moduleName);
   const hit = enabledModulesCache.get(orgId);
   const now = Date.now();
   if (hit && now - hit.at < ENABLED_MODULES_TTL_MS) return hit.names.has(moduleName);
@@ -419,7 +424,7 @@ export function registerResolver(kind: string, resolver: EntityResolver): void {
 const entityWriters = new Map<string, EntityWriter>();
 
 export function registerEntityWriter(kind: string, writer: EntityWriter): void {
-  entityWriters.set(kind, writer);
+  entityWriters.set(kind, deletionWriter(kind, historyWriter(kind, writer)));
 }
 
 /** The writer for a kind — INCLUDING an instance kind.
@@ -1050,6 +1055,23 @@ export async function detailPathForEntity(orgId: string, kind: string, id: strin
   }
   const rec = await getKind(kind);
   return resolveDetailPath({ kind, id, instance: namedInstance, detailUrl, baseDetailRoute: rec?.detail_route ?? null });
+}
+
+/** The address for a record when it leaves the app. Unlike a detail path, it
+ *  names the workspace explicitly, so a reader who belongs to several cannot
+ *  be redirected through their default workspace. */
+export async function recordAddressForEntity(
+  orgId: string,
+  kind: string,
+  id: string,
+  origin?: string | null,
+): Promise<string | undefined> {
+  const [path, org] = await Promise.all([
+    detailPathForEntity(orgId, kind, id),
+    meta.selectFrom("orgs").select("slug").where("id", "=", orgId).executeTakeFirst(),
+  ]);
+  if (!path || !org?.slug) return undefined;
+  return recordAddress(origin || publicBaseUrl(), org.slug, path);
 }
 
 /** The entity's current system TITLE, INSTANCE AWARE — the stock name a label

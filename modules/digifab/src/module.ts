@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "digifab",
-  version: "0.29.4",
+  version: "0.29.5",
   displayName: "Digital Fabrication",
   description:
     "Send a design to the software that runs your machine (FDM Monster, OctoPrint and others) and follow the job until it is done.",

@@ -68,6 +68,11 @@ export async function logMeasurement(opts: {
     void platform().events.emit("tracking.goal.reached", { orgId, metricId: metric.id, value, goal });
     try {
       const memberIds = await platform().notifications.orgMemberIds(orgId);
+      const recordLink = await platform().entities.recordAddressForEntity(
+        orgId,
+        "tracking:metric",
+        metric.id,
+      );
       for (const userId of memberIds) {
         await platform().notifications.dispatch({
           orgId,
@@ -77,7 +82,9 @@ export async function logMeasurement(opts: {
           // Straight to the metric, opened. It said "you hit your goal" and
           // then went nowhere, so the only way to see the number behind it was
           // to remember where the metric lived.
-          link_url: `/tracking/${metric.id}`,
+          ...(recordLink
+            ? { link_url: recordLink }
+            : { no_link_reason: "the metric has no detail page" }),
           module: "tracking",
           entityType: "tracking:metric",
           entityId: metric.id,

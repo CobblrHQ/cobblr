@@ -34,6 +34,8 @@ export interface ChatEntityRef {
   kind: string;
   id: string;
   label: string;
+  href?: string;
+  open_label?: string;
 }
 
 /** Dedupe by kind+id, keeping the first label; drop refs with no id or name. */
@@ -46,7 +48,7 @@ export function mergeRefs(...lists: Array<Array<ChatEntityRef | null> | undefine
       const key = `${r.kind} ${r.id}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ kind: r.kind, id: r.id, label: r.label.trim() });
+      out.push({ ...r, kind: r.kind, id: r.id, label: r.label.trim() });
     }
   }
   return out;
@@ -102,14 +104,14 @@ export function linkifyMarkdown(
   // below. The server does the same before it decides the mentions; this
   // covers a reply stored before it did.
   text = unlinkInventedPaths(text, refs);
-  const linkable = refs.filter((r) => !!r.label && !!routeFor(r.kind, r.id));
+  const linkable = refs.filter((r) => !!r.label && !!(routeFor(r.kind, r.id) || r.href));
   if (linkable.length === 0) return text;
   const spans = findRecordNames(text, linkable);
   let out = text;
   // Back to front, so an earlier span's offsets are still true after a later
   // one has been rewritten.
   for (const s of [...spans].reverse()) {
-    const href = routeFor(s.ref.kind, s.ref.id);
+    const href = routeFor(s.ref.kind, s.ref.id) || s.ref.href;
     if (!href) continue;
     let { start, end } = s;
     if (/[“"']/.test(text[start - 1] ?? "") && /[”"']/.test(text[end] ?? "")) {
@@ -133,7 +135,7 @@ export function refsLeftUnnamed(
   refs: ChatEntityRef[],
   routeFor: (kind: string, id: string) => string | null,
 ): ChatEntityRef[] {
-  const routed = refs.filter((r) => !!routeFor(r.kind, r.id));
+  const routed = refs.filter((r) => !!(routeFor(r.kind, r.id) || r.href));
   if (routed.length === 0) return [];
   const named = new Set(findRecordNames(text, routed).map((s) => `${s.ref.kind} ${s.ref.id}`));
   return routed.filter((r) => !named.has(`${r.kind} ${r.id}`));

@@ -51,7 +51,7 @@ import { noReceiptShape, scoreReceiptShape, type ReceiptShape } from "./receipt-
 import { classifyAiFailure } from "@cobblr/platform-contract/ai-refusal";
 import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
 import { identifyFailureWords, type IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
-import { toPhotoIdentity, receiptAsIdentity } from "./hosted-identify.js";
+import { toPhotoIdentity, receiptAsIdentity, HOSTED_QUEUED_WORDS, type HostedAnswer, type HostedQueued } from "./hosted-identify.js";
 import { identifyWhyFor } from "./operator-services.js";
 
 /** Re-fetch the catalog image to match a (corrected) name. The card prefers the
@@ -340,6 +340,8 @@ interface PhotoEnrichContext {
   confirmedName?: string;
   /** The person answered NO: these guesses are off the table. */
   rejectedNames?: string[];
+  /** A finished queued identify's answer (see IdentifyImageOpts.hostedAnswer). */
+  hostedAnswer?: HostedAnswer;
 }
 
 function clamp01(n: number): number {
@@ -494,6 +496,10 @@ export interface IdentifyImageOpts {
    *  the hosted identify so its per-person daily tier works. Detached work
    *  with no visitor omits it. */
   visitorIp?: string | null;
+  /** The hosted service's answer to this photo, already in hand: a queued
+   *  identify that finished (hosted-identify-job.ts). Used exactly as if the
+   *  service had answered at once, and nothing is asked again. */
+  hostedAnswer?: HostedAnswer;
 }
 
 /** What an identify produced: an identity, or WHY there is none. The reason
@@ -501,8 +507,8 @@ export interface IdentifyImageOpts {
  *  could not be read, or a model that saw no single item), so the note under
  *  the photo can say the one true thing instead of listing every possibility. */
 export type IdentifyOutcome =
-  | { identity: PhotoIdentity; failure?: undefined; answeredBy?: AnsweredBy }
-  | { identity: null; failure: IdentifyFailure; answeredBy?: undefined };
+  | { identity: PhotoIdentity; failure?: undefined; answeredBy?: AnsweredBy; hostedJob?: undefined }
+  | { identity: null; failure: IdentifyFailure; answeredBy?: undefined; hostedJob?: HostedQueued };
 
 /** Which AI answered, when it was not the first one asked: the card says
  *  "Answered by X; Y was busy" (#3819). */
@@ -532,17 +538,24 @@ export async function identifyPhoto({
   rejectedNames,
   knownCategories,
   visitorIp,
+  hostedAnswer,
 }: IdentifyImageOpts): Promise<IdentifyOutcome> {
   // Hosted identify first, when this deployment has it (the try sandbox, or a
   // keyed self-host). Null falls through to the tenant path unchanged, so the
   // hosted service being down is never worse than never having had it.
   let hostedDegraded: IdentifyFailure["hosted"];
+  // A photo the hosted service accepted and will answer later (every engine
+  // it has was busy or out, barcode-intelligence #43). The tenant path is
+  // still asked below; if it cannot answer either, the row waits for this job
+  // instead of reading as unidentified.
+  let hostedJob: HostedQueued | undefined;
   // identifyWhyFor → hostedIdentifyWhy asks hostedIdentifyReach first, the question
   // /ai-status asks too: no second, looser "is it on" check here.
   {
-    const why = await identifyWhyFor({ orgId, imageB64, visitorIp, userId, mimeType: mediaType });
+    const why = hostedAnswer ? { answer: hostedAnswer } : await identifyWhyFor({ orgId, imageB64, visitorIp, userId, mimeType: mediaType });
     const hosted = why.answer;
-    if (why.degraded && why.degraded !== "off") hostedDegraded = why.degraded;
+    if ("degraded" in why && why.degraded && why.degraded !== "off") hostedDegraded = why.degraded;
+    if ("queued" in why && why.queued) hostedJob = why.queued;
     if (hosted?.kind === "item" && hosted.item) {
       const mapped = toPhotoIdentity(hosted.item);
       if (mapped) return { identity: mapped };
@@ -591,17 +604,17 @@ export async function identifyPhoto({
     const ai_provider = (err as { providerLabel?: string } | null)?.providerLabel;
     const model = (err as { model?: string } | null)?.model;
     console.error(`[core-scan] identify failed (${ai}${ai_reason ? `/${ai_reason}` : ""}${model ? `, model ${model}` : ""}):`, reason);
-    return { identity: null, failure: { code: "ai_unavailable", ai, ...(ai_reason ? { ai_reason } : {}), ...(ai_provider ? { ai_provider } : {}), ...(hostedDegraded ? { hosted: hostedDegraded } : {}), reason } };
+    return { identity: null, failure: { code: "ai_unavailable", ai, ...(ai_reason ? { ai_reason } : {}), ...(ai_provider ? { ai_provider } : {}), ...(hostedDegraded ? { hosted: hostedDegraded } : {}), reason }, ...(hostedJob ? { hostedJob } : {}) };
   }
   try {
     const m = raw.match(/\{[\s\S]*\}/);
     parsed = JSON.parse(m ? m[0] : raw);
   } catch (err) {
     console.error("[core-scan] identify reply was not JSON:", (err as Error)?.message ?? err);
-    return { identity: null, failure: { code: "no_answer", ai: "no-answer", reason: "reply was not JSON" } };
+    return { identity: null, failure: { code: "no_answer", ai: "no-answer", reason: "reply was not JSON" }, ...(hostedJob ? { hostedJob } : {}) };
   }
   const identity = parseIdentityReply(parsed);
-  if (!identity) return { identity: null, failure: { code: "no_item", reason: "no name in the reply" } };
+  if (!identity) return { identity: null, failure: { code: "no_item", reason: "no name in the reply" }, ...(hostedJob ? { hostedJob } : {}) };
   return { identity, ...(answeredBy ? { answeredBy } : {}) };
 }
 
@@ -1370,7 +1383,9 @@ export async function crossCheckScanPhoto(
 }
 
 /** Why an enrich did nothing, so a caller can tell a real failure from a no-op. */
-export type EnrichOutcome = "identified" | "no-photo-bytes" | "not-identified" | "is-receipt";
+/** `identify-queued`: the hosted service accepted the photo and will answer
+ *  later; the row says so and hosted-identify-job.ts lands the answer. */
+export type EnrichOutcome = "identified" | "no-photo-bytes" | "not-identified" | "is-receipt" | "identify-queued";
 
 /** Categories this workspace has recently used, most-used first.
  *
@@ -1513,7 +1528,7 @@ async function readPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOutcome> {
   }
 
   const knownCats = await knownCategories(ctx.db);
-  const { identity, failure, answeredBy } = await identifyPhoto({
+  const { identity, failure, answeredBy, hostedJob } = await identifyPhoto({
     orgId: ctx.orgId,
     imageB64,
     mediaType: file.mimeType,
@@ -1528,6 +1543,7 @@ async function readPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOutcome> {
     rejectedNames: ctx.rejectedNames,
     knownCategories: knownCats,
     visitorIp: ctx.visitorIp,
+    ...(ctx.hostedAnswer ? { hostedAnswer: ctx.hostedAnswer } : {}),
   });
   // identifyImage's vision call can run tens of seconds. When enrichPhotoItem
   // runs detached (after the HTTP response has returned), the request's tenant
@@ -1535,6 +1551,28 @@ async function readPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOutcome> {
   // a pool after calling end on the pool". Re-acquire a live handle before any
   // post-vision write (the same guard matchItem uses).
   ctx.db = (await platform().tenants.getDb(ctx.orgId)) as unknown as typeof ctx.db;
+  if (!identity && hostedJob) {
+    // Not unidentified: the hosted service has the photo and will answer when
+    // an engine is back (barcode-intelligence #43). The row says so, keeps no
+    // failure, and is left looking unread (no ai_suggested_at) so every
+    // surface shows it as still being identified. The job is collected by
+    // hosted-identify-job.ts, which lands the answer as if it came at once.
+    await ctx.db
+      .updateTable("core_scan_inbox_items")
+      .set({
+        ai_notes: HOSTED_QUEUED_WORDS,
+        updated_at: new Date(),
+        suggested_metadata: mergeMeta(
+          { hosted_identify_job: { id: hostedJob.jobId, since: new Date().toISOString(), user_id: ctx.userId ?? null } },
+          ["identify_failure"],
+        ) as never,
+      })
+      .where("id", "=", ctx.itemId)
+      .execute();
+    const { enqueueHostedIdentifyJob } = await import("./hosted-identify-job.js");
+    await enqueueHostedIdentifyJob({ orgId: ctx.orgId, itemId: ctx.itemId, jobId: hostedJob.jobId, imageFileId: ctx.imageFileId, userId: ctx.userId ?? null });
+    return "identify-queued";
+  }
   if (!identity) {
     // The one true reason, as a sentence from the code (scan-fallback.ts),
     // and the code itself on the row so the card can offer the remedy: the

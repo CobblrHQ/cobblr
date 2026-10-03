@@ -6,6 +6,7 @@
 // the user-configured wire decides when it fires (default seeded
 // at signup is on inventory.stock.changed).
 
+import { registerRowHistoryWriter } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import { columnSet, platform, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import type { ProjectsDB } from "../db.js";
@@ -20,6 +21,8 @@ export function registerProjectsHandlers(): void {
   registerUndos();
   if (registered) return;
   registered = true;
+  registerRowHistoryWriter("projects:project", "projects_projects");
+  registerRowHistoryWriter("projects:task", "projects_tasks");
 
   // Entity-kind resolvers ─────────────────────────────────────────
   platform().entities.registerResolver(

@@ -80,9 +80,26 @@ export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; default
   },
 };
 
+/** Capabilities that may let a thinking model think. None does today: every
+ *  call the app makes is structured (JSON, tool calls) or short, and a model
+ *  left to think spends 25 to 60 s on what takes 1 to 3 s without (#4733). */
+const THINKS: ReadonlySet<string> = new Set<string>();
+
+/** Models (per server) that refused the `think` field: an older server, or a
+ *  model that has no thinking switch. Asked once, then sent without it. */
+const refusesThink = new Set<string>();
+
+/** A reply with nothing in it is a failure another provider may answer, never
+ *  "the model had nothing to say" handed to the caller as an answer. */
+function emptyReply(model: unknown): Error {
+  return providerError("ollama", "busy", `ollama: ${String(model)} answered with nothing`);
+}
+
 export function register(): void {
   platform().ai.registerProvider({
     id: "ollama",
+    freeBackground: true,
+    freeBackgroundModel: "llama3.2",
     label: "Ollama (local)",
     // Free and private, but needs hardware, so it follows the one that needs none.
     rank: 20,
@@ -187,6 +204,36 @@ export function register(): void {
           body: JSON.stringify({ ...reqBody, model: picked }),
         });
       };
+      /** POST /api/chat with the thinking switch set: off unless this
+       *  capability opts in. A server or model that refuses the field is asked
+       *  again once without it, and remembered. */
+      const chatCall = async (reqBody: Record<string, unknown>): Promise<PinnedResponse> => {
+        const key = `${base}|${String(reqBody.model)}`;
+        if (!refusesThink.has(key)) reqBody.think = THINKS.has(ctx.capability);
+        const post = () =>
+          call("/api/chat", {
+            method: "POST",
+            headers: { "content-type": "application/json", ...authHeaders },
+            body: JSON.stringify(reqBody),
+          });
+        let res = await post();
+        // A refusal of the field is a 400 that names it. Reading the body spends
+        // it, so only a 400 is read; a 404 (missing model) stays whole for
+        // retryOnMissingModel.
+        if (res.status === 400 && "think" in reqBody) {
+          const why = await res.text().catch(() => "");
+          if (!/think/i.test(why)) {
+            // Not about thinking: hand the refusal on whole, body included,
+            // for the no-tools retry and the error that names the reason.
+            const status = res.status;
+            return { ok: false, status, text: async () => why, json: async () => JSON.parse(why) as unknown };
+          }
+          refusesThink.add(key);
+          delete reqBody.think;
+          res = await post();
+        }
+        return retryOnMissingModel(res, reqBody);
+      };
       switch (ctx.capability) {
         case "embed-text": {
           const input = String(ctx.input.text ?? "");
@@ -240,12 +287,7 @@ export function register(): void {
           // this, ollama's small default truncates the tool schemas out of the
           // prompt and cuts the answer off mid-sentence — see contextWindowFor.
           reqBody.options = { num_ctx: contextWindowFor(JSON.stringify(reqBody).length) };
-          let res = await call("/api/chat", {
-            method: "POST",
-            headers: { "content-type": "application/json", ...authHeaders },
-            body: JSON.stringify(reqBody),
-          });
-          res = await retryOnMissingModel(res, reqBody);
+          let res = await chatCall(reqBody);
           if (!res.ok && toolDefs) {
             const errText = await res.text().catch(() => "");
             if (looksLikeNoToolSupport(res.status, errText)) {
@@ -270,6 +312,7 @@ export function register(): void {
             eval_count?: number;
           };
           const calls = parseOllamaToolCalls(body.message ?? {});
+          if (!calls && !String(body.message?.content ?? "").trim()) throw emptyReply(reqBody.model);
           return {
             result: {
               role: body.message?.role ?? "assistant",
@@ -284,25 +327,22 @@ export function register(): void {
         case "summarise": {
           const text = String(ctx.input.text ?? "");
           const lengthHint = String(ctx.input.lengthHint ?? "3 sentences");
-          const res = await call("/api/chat", {
-            method: "POST",
-            headers: { "content-type": "application/json", ...authHeaders },
-            body: JSON.stringify({
-              model: ctx.model,
-              stream: false,
-              messages: [
-                {
-                  role: "system",
-                  content: `Summarise the user's text in ${lengthHint}. Output plain prose, no preamble.`,
-                },
-                { role: "user", content: text },
-              ],
-            }),
+          const res = await chatCall({
+            model: ctx.model,
+            stream: false,
+            messages: [
+              {
+                role: "system",
+                content: `Summarise the user's text in ${lengthHint}. Output plain prose, no preamble.`,
+              },
+              { role: "user", content: text },
+            ],
           });
           // Don't echo the upstream body — for a read-SSRF that body is the
           // exfil channel; the status alone is enough to diagnose.
           if (!res.ok) throw await failed(res);
           const body = (await res.json()) as { message: { content: string } };
+          if (!String(body.message?.content ?? "").trim()) throw emptyReply(ctx.model);
           return { result: { text: body.message.content }, cost_cents: 0 };
         }
         case "split-image":
@@ -336,16 +376,12 @@ export function register(): void {
             format: ctx.capability === "extract-text" ? undefined : "json",
             messages: [msg],
           };
-          let res = await call("/api/chat", {
-            method: "POST",
-            headers: { "content-type": "application/json", ...authHeaders },
-            body: JSON.stringify(visionBody),
-          });
-          res = await retryOnMissingModel(res, visionBody);
+          const res = await chatCall(visionBody);
           // Don't echo the upstream body — for a read-SSRF that body is the
           // exfil channel; the status alone is enough to diagnose.
           if (!res.ok) throw await failed(res);
           const body = (await res.json()) as { message: { content: string } };
+          if (!String(body.message?.content ?? "").trim()) throw emptyReply(ctx.model);
           return { result: { text: body.message.content }, cost_cents: 0 };
         }
         default:

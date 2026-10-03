@@ -14,7 +14,7 @@
 
 import { fieldKindOf } from "@cobblr/platform-contract/kind-label";
 import { asMeasure } from "@cobblr/platform-contract/measure";
-import { parseMoney } from "@cobblr/platform-contract/money";
+import { readMoney, parseMoney } from "@cobblr/platform-contract/money";
 import { isListedChoice, platform } from "@cobblr/platform-contract";
 
 export function routeUnknownToMetadata<T extends Record<string, unknown>>(
@@ -330,7 +330,7 @@ function problemWith(def: JudgedField, value: unknown): FieldValueProblem | null
       : { field: def.name, value, expected: "yes or no", code: "not_a_yes_no" };
   }
   if (def.type === "money") {
-    return typeof value === "number" || parseMoney(value) !== null
+    return readMoney(value) !== null || parseMoney(value) !== null
       ? null
       : { field: def.name, value, expected: "an amount, like 4,300 or 12.50", code: "not_a_number" };
   }

@@ -18,7 +18,7 @@
 // reactor + the sync engine's own upsert, so silence is correct. Add an opt-in
 // emit if a future sync TARGET needs the downstream cascade.)
 
-import { findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow } from "@cobblr/platform-contract";
+import { findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow, snapshotRowTree, restoreRowTree } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { InventoryDB } from "../db.js";
 import { adoptAxisValuesInto } from "./adopt-axis-values.js";
@@ -30,6 +30,8 @@ export function registerInventoryWriter(): void {
   registered = true;
 
   platform().entities.registerWriter("inventory:part", {
+    snapshotDeletion: async (orgId, id) => snapshotRowTree(await platform().tenants.getDb(orgId), "inventory_parts", id, "inventory_"),
+    restoreDeletion: async (orgId, snapshot) => restoreRowTree(await platform().tenants.getDb(orgId), "inventory_parts", snapshot, "inventory_"),
     // A record that already carries the source's key is adopted by a sync, never
     // duplicated (#3836).
     findByKey: async (orgId, key, value) => findRowIdByKey(await platform().tenants.getDb(orgId), "inventory_parts", key, value),

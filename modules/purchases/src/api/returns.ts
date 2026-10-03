@@ -17,8 +17,7 @@ import { z } from "zod";
 import { platform, parcelAudience } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { orderLink } from "../arrival-sweeper.js";
-import { formatStoredMoney } from "@cobblr/platform-contract/money";
+import { fieldCurrency, formatStoredMoney } from "@cobblr/platform-contract/money";
 
 export const returnsRouter = Router({ mergeParams: true });
 
@@ -60,7 +59,7 @@ returnsRouter.post(
 
     const order = await db
       .selectFrom("purchases_orders")
-      .select(["id", "vendor", "order_number", "tracking_added_by_user_id"])
+      .select(["id", "vendor", "order_number", "tracking_added_by_user_id", "metadata"])
       .where("id", "=", id)
       .where("instance", "=", instanceOf(req))
       .executeTakeFirst();
@@ -116,10 +115,15 @@ returnsRouter.post(
     // everyone. No button — a return needs nothing confirmed, it needs to be
     // known about.
     const what = ev.item ? ev.item : order.vendor ? `your ${order.vendor} order` : "your order";
-    const money = ev.refund_amount != null ? ` (${formatStoredMoney(ev.refund_amount, "amount")})` : "";
+    const money = ev.refund_amount != null ? ` (${formatStoredMoney(ev.refund_amount, "amount", { currency: fieldCurrency(order.metadata, "total_cost", await platform().money.currency(ctx.org.id)) })})` : "";
     const message = `${what}: ${RETURN_WORDS[ev.stage]}${money}.`;
     const memberIds = await platform().notifications.orgMemberIds(ctx.org.id);
     const audience = parcelAudience([order.tracking_added_by_user_id, session.id], new Set(memberIds));
+    const recordLink = await platform().entities.recordAddressForEntity(
+      ctx.org.id,
+      "purchases:order",
+      id,
+    );
     let notified = 0;
     for (const userId of audience) {
       try {
@@ -131,7 +135,9 @@ returnsRouter.post(
           module: "purchases",
           entityType: "purchases:order",
           entityId: id,
-          link_url: orderLink(id),
+          ...(recordLink
+            ? { link_url: recordLink }
+            : { no_link_reason: "the order has no detail page" }),
           card: {
             heading: `${RETURN_WORDS[ev.stage].replace(/^\w/, (c) => c.toUpperCase())}${money}`,
             body: ev.item ?? what,

@@ -25,6 +25,18 @@ function served(slug: string, r: { entity_kind: string; entity_id: string; statu
 // A list reads by kind; a record page reads by its id alone, because the page
 // may name the base kind ("inventory:part") while an instance's record was
 // saved under its own ("yarn:item").
+/** Records one lookup may name: a collection's page of cards, with room. */
+export const LOOKUP_MAX_IDS = 5_000;
+
+const LookupBody = z
+  .object({
+    kind: z.string().min(1).max(100).optional(),
+    ids: z.array(z.string().min(1).max(100)).max(LOOKUP_MAX_IDS).optional(),
+  })
+  .refine((q) => !!q.kind || !!q.ids?.length, { message: "kind or ids" });
+
+/** The pre-#4653 address, kept for a page loaded before the update: the ids
+ *  rode in the query string, which a proxy refuses once the list is long. */
 const ListQuery = z
   .object({
     kind: z.string().min(1).max(100).optional(),
@@ -32,31 +44,47 @@ const ListQuery = z
   })
   .refine((q) => !!q.kind || !!q.ids, { message: "kind or ids" });
 
-// GET /photo-suggestions?kind=<kind>[&ids=a,b], one row per record — the suggestions a list or a
-// record page shows: what is waiting for an answer (suggested), still being
-// looked for (queued), or looked for and not found (none), so a card can say
-// which. Answered ones are not a card's business.
+/** What a list or a record page shows, one row per record: waiting for an
+ *  answer (suggested), still being looked for (queued), or looked for and not
+ *  found (none). Answered ones are not a card's business. */
+async function lookup(req: Parameters<typeof tenantDb>[0], kind: string | undefined, ids: readonly string[]) {
+  let q = tenantDb(req)
+    .selectFrom("core_scan_record_photo_suggestions")
+    .select(["entity_kind", "entity_id", "status", "file_id", "query", "updated_at"])
+    .where("status", "in", ["suggested", "queued", "none"]);
+  // A list asks by its kind AND names the records it shows: a record's row
+  // may sit under another kind name (a collection's item is its module's
+  // record too), and it is still this list's record.
+  if (kind && ids.length) q = q.where((eb) => eb.or([eb("entity_kind", "=", kind), eb("entity_id", "in", ids)]));
+  else if (kind) q = q.where("entity_kind", "=", kind);
+  else q = q.where("entity_id", "in", [...ids]);
+  // list-cap-ok: bounded by the records the list names (LOOKUP_MAX_IDS), or by kind at the same cap
+  const rows = await q.limit(LOOKUP_MAX_IDS * 2).execute();
+  const slug = tenantContext(req).org.slug;
+  return { items: oneRowPerRecord(rows).map((r) => served(slug, r)) };
+}
+
+// POST /photo-suggestions/lookup {kind?, ids?}: the ids ride in the body, so
+// a collection of thousands asks in one request (#4653: the query-string
+// form was refused with 414 URI Too Long on a large collection's page).
+// AI-REACH: exempt a list reading the picture states of the cards it shows; the assistant reads a record's picture through the record
+recordPhotosRouter.post(
+  "/photo-suggestions/lookup",
+  asyncHandler(async (req, res) => {
+    const parsed = LookupBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const ids = [...new Set((parsed.data.ids ?? []).map((s) => s.trim()).filter(Boolean))];
+    res.json(await lookup(req, parsed.data.kind, ids));
+  }),
+);
+
 recordPhotosRouter.get(
   "/photo-suggestions",
   asyncHandler(async (req, res) => {
     const parsed = ListQuery.safeParse(req.query);
     if (!parsed.success) return badBody(res, parsed.error);
     const ids = (parsed.data.ids ?? "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 500);
-    let q = tenantDb(req)
-      .selectFrom("core_scan_record_photo_suggestions")
-      .select(["entity_kind", "entity_id", "status", "file_id", "query", "updated_at"])
-      .where("status", "in", ["suggested", "queued", "none"]);
-    // A list asks by its kind AND names the records it shows: a record's row
-    // may sit under another kind name (a collection's item is its module's
-    // record too), and it is still this list's record.
-    const kind = parsed.data.kind;
-    if (kind && ids.length) q = q.where((eb) => eb.or([eb("entity_kind", "=", kind), eb("entity_id", "in", ids)]));
-    else if (kind) q = q.where("entity_kind", "=", kind);
-    else if (ids.length) q = q.where("entity_id", "in", ids);
-    // list-cap-ok: not paged yet, #4134
-    const rows = await q.limit(500).execute();
-    const slug = tenantContext(req).org.slug;
-    res.json({ items: oneRowPerRecord(rows).map((r) => served(slug, r)) });
+    res.json(await lookup(req, parsed.data.kind, ids));
   }),
 );
 

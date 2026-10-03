@@ -1,3 +1,8 @@
+import { restore as restoreDeletedRecord } from "./deleted-records.js";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { restoreHistoryVersion } from "./history-restore.js";
+import { z } from "zod";
+import { setBulkField, restoreBulkField, type BulkFieldResult } from "./bulk-set-field.js";
 // Handlers for the kernel's own actions (platform-actions.ts) — wired at boot,
 // before registry-sync, so an action is never listed without its handler.
 //
@@ -21,6 +26,9 @@ import { actionLabelOf, registerHandler, registerPlanner, registerUndo } from ".
 import { getMover, instancesHolding, moveRecords } from "./move-records.js";
 import { bringBack, markGone } from "./dispositions.js";
 import { offerRecords, offerTargets } from "./share-offers.js";
+import { findShareTarget, shareRecords, stopSharingRecords } from "./share-picks.js";
+import { decideShareEdit, describeShareEdits, listShareEdits, type ShareEditDecision } from "./share-edits.js";
+import { leaveAddition, listAdditions, takeAddition } from "./share-additions.js";
 import { DISPOSITION_LABELS, dispositionOf, type RecordDisposition } from "@cobblr/platform-contract/disposition";
 import * as activity from "./activity.js";
 import { upsertNativeFieldOverride } from "./native-field-overrides.js";
@@ -260,6 +268,67 @@ function kindsInWords(kinds: Array<{ id: string; display_name_plural?: string | 
 }
 
 export function registerPlatformActionHandlers(): void {
+  registerHandler("platform.restore-deleted-record", async (ctx) => {
+    const parsed = z.object({ kind: z.string().min(1), entity_id: z.string().min(1) }).safeParse(ctx.args);
+    if (!parsed.success) return { ok: false, error: "Choose a deleted record." };
+    try { return await restoreDeletedRecord(ctx.orgId, parsed.data.kind, parsed.data.entity_id) ? { ok: true, summary: "Restored the record." } : { ok: false, error: "That record is no longer in Recently deleted." }; }
+    catch (err) { return { ok: false, error: (err as Error).message }; }
+  });
+  const versionSchema = z.object({ kind: z.string().min(1), entity_id: z.string().min(1), entry_id: z.number().int().positive(), expected_latest_id: z.number().int().positive() });
+  registerPlanner("platform.restore-record-version", async (ctx) => {
+    const parsed = versionSchema.safeParse(ctx.args);
+    if (!parsed.success) return { error: "Choose a record and a saved history entry." };
+    const rec = await lookup(ctx.orgId, parsed.data.kind, parsed.data.entity_id);
+    return { title: `Restore ${rec?.title ?? "this record"}`, lines: ["Restore the values from before the selected edit. Later edits will be replaced."] };
+  });
+  registerHandler("platform.restore-record-version", async (ctx) => {
+    const parsed = versionSchema.safeParse(ctx.args);
+    if (!parsed.success || !ctx.userId) return { ok: false, error: "Choose a record and a saved history entry." };
+    const membership = await meta.selectFrom("org_memberships").select("role").where("org_id", "=", ctx.orgId).where("user_id", "=", ctx.userId).executeTakeFirst();
+    if (!membership || !roleSatisfies(membership.role, ["owner", "admin"])) return { ok: false, error: "An owner, admin or editor can restore a record version." };
+    const a = parsed.data;
+    try {
+      const restored = await restoreHistoryVersion(ctx.orgId, ctx.userId, membership.role, a.kind, a.entity_id, a.entry_id, a.expected_latest_id);
+      return { ok: true, summary: "Restored the saved version.", data: { kind: a.kind, entity_id: a.entity_id, entry_id: restored, expected_latest_id: restored } };
+    } catch (err) { return { ok: false, error: (err as Error).message }; }
+  });
+  registerUndo("platform.restore-record-version", (result) => {
+    const parsed = versionSchema.safeParse((result as { data?: unknown } | null)?.data);
+    return parsed.success ? { action_id: "platform:restore-record-version", args: parsed.data } : null;
+  });
+  const refsSchema = z.array(z.object({ kind: z.string().min(1), id: z.string().min(1) })).min(1).max(500);
+  const changesSchema = z.array(z.object({ kind: z.string().min(1), id: z.string().min(1), title: z.string(), before: z.unknown(), after: z.unknown() })).min(1).max(500);
+  registerPlanner("platform.set-field-on-records", async (ctx) => {
+    const parsed = refsSchema.safeParse(ctx.args?.records);
+    if (!parsed.success) return { error: "Choose between 1 and 500 records, each with a kind and id." };
+    const lines: string[] = [];
+    for (const r of parsed.data) lines.push((await lookup(ctx.orgId, r.kind, r.id))?.title ?? "A record that is no longer available");
+    return { title: `Set ${String(ctx.args?.field ?? "a field")} on ${lines.length} records`, lines };
+  });
+  registerHandler("platform.set-field-on-records", async (ctx) => {
+    const parsed = refsSchema.safeParse(ctx.args?.records);
+    if (!parsed.success || typeof ctx.args?.field !== "string" || !("value" in ctx.args)) return { ok: false, error: "Choose records, a field and a value, or null to clear it." };
+    try {
+      const data = await setBulkField(ctx.orgId, ctx.userId, parsed.data, ctx.args.field, ctx.args.value);
+      return { ok: true, data: { field: ctx.args.field, ...data }, summary: `${data.done.length} records changed.${data.failed.length ? ` ${data.failed.length} skipped.` : ""}` };
+    } catch (e) { return { ok: false, error: (e as Error).message }; }
+  });
+  registerUndo("platform.set-field-on-records", (result) => {
+    const data = (result as { data?: BulkFieldResult & { field: string } } | null)?.data;
+    if (!data?.done.length) return null;
+    return { action_id: "platform:restore-batch-field", args: { field: data.field, changes: data.done } };
+  });
+  registerPlanner("platform.restore-batch-field", async (ctx) => {
+    const parsed = changesSchema.safeParse(ctx.args?.changes);
+    return parsed.success ? { title: "Restore the batch's previous field values", lines: parsed.data.map((r) => r.title) } : { error: "The batch's changes are missing." };
+  });
+  registerHandler("platform.restore-batch-field", async (ctx) => {
+    const parsed = changesSchema.safeParse(ctx.args?.changes);
+    if (!parsed.success || typeof ctx.args?.field !== "string") return { ok: false, error: "The batch's changes are missing." };
+    const data = await restoreBulkField(ctx.orgId, ctx.userId, ctx.args.field, parsed.data.map((r) => ({ ...r, before: r.before ?? null, after: r.after ?? null })));
+    return { ok: true, data, summary: `${data.done.length} records restored.${data.failed.length ? ` ${data.failed.length} skipped.` : ""}` };
+  });
+
   registerHandler("platform.add-field", async (ctx: ActionInvokeContext) => {
     const args = (ctx.args ?? {}) as Record<string, unknown>;
     const entityKind = str(args.entity_kind);
@@ -1709,7 +1778,7 @@ export function registerPlatformActionHandlers(): void {
     if (!kind) return { ok: false, error: "entity_kind (the kind of record) is required" };
     if (!ids.length) return { ok: false, error: "ids are required - read the records first and pass their real ids, never their names" };
     const r = await bringBack(ctx.orgId, ctx.userId, kind, ids);
-    if (!r.ok) return { ok: false, error: r.error };
+    if (!r.ok) return { ok: false, error: r.error, ...(r.blocked ? { blocked: r.blocked } : {}) };
     const n = r.done.length;
     return {
       ok: true,
@@ -1754,6 +1823,150 @@ export function registerPlatformActionHandlers(): void {
     if (!target) return { error: `Not shared with "${said}". Shared with: ${targets.map((t) => t.to).join(", ")}.` };
     return { kind, ids, target, userId: ctx.userId };
   };
+  const shareArgs = async (ctx: ActionInvokeContext): Promise<{ error: string } | { kind: string; ids: string[]; target: { link_id: string; to: string } }> => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const kind = str(args.entity_kind);
+    const ids = readListArg(args, "ids");
+    if (!kind) return { error: "entity_kind (the kind of record) is required" };
+    if (!ids.length) return { error: "ids are required - read the records first and pass their real ids, never their names" };
+    const target = await findShareTarget(ctx.orgId, str(args.with));
+    if ("error" in target) return target;
+    return { kind, ids, target };
+  };
+  for (const [handler, stop] of [["platform.share-with", false], ["platform.stop-sharing", true]] as const) {
+    registerHandler(handler, async (ctx: ActionInvokeContext) => {
+      const a = await shareArgs(ctx);
+      if ("error" in a) return { ok: false, error: a.error };
+      const refs = a.ids.map((id) => ({ entity_kind: a.kind, id }));
+      const r = stop ? await stopSharingRecords(a.target.link_id, refs) : await shareRecords(a.target.link_id, refs);
+      if ("error" in r) return { ok: false, error: r.error };
+      const n = r.changed.length;
+      if (n === 0) return { ok: true, skipped: true, summary: stop ? `Not shared with ${a.target.to}.` : `Already shared with ${a.target.to}.` };
+      return {
+        ok: true,
+        summary: stop ? (n === 1 ? `No longer shared with ${a.target.to}.` : `${n} things no longer shared with ${a.target.to}.`) : n === 1 ? `Shared with ${a.target.to}.` : `Shared ${n} things with ${a.target.to}.`,
+        data: { kind: a.kind, with: a.target.link_id, changed: r.changed.map((c) => c.id) },
+      };
+    });
+    registerPlanner(handler, async (ctx: ActionInvokeContext) => {
+      const a = await shareArgs(ctx);
+      if ("error" in a) return { error: a.error };
+      const lines = await goneTitles(ctx.orgId, a.kind, a.ids);
+      return { title: `${stop ? "Stop sharing" : "Share"} ${countOf(lines.length, "thing")} with ${a.target.to}`, lines };
+    });
+    registerUndo(handler, (result) => {
+      const d = (result as { skipped?: unknown; data?: { kind?: unknown; with?: unknown; changed?: unknown } } | null);
+      const ids = Array.isArray(d?.data?.changed) ? d.data.changed.filter((x): x is string => typeof x === "string") : [];
+      if (d?.skipped || !ids.length || typeof d?.data?.kind !== "string" || typeof d.data.with !== "string") return null;
+      return { action_id: stop ? "platform:share-with" : "platform:stop-sharing", args: { entity_kind: d.data.kind, ids, with: d.data.with } };
+    });
+  }
+
+  // The friend's edits, decided (share-spaces.md §10): by id, by record, or
+  // by person. Each run says what it decided, so its undo reopens exactly
+  // those, and reopening says what each was, so its undo decides them again.
+  const suggestionIds = async (ctx: ActionInvokeContext): Promise<{ error: string } | { ids: string[] }> => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const ids = readListArg(args, "ids");
+    if (ids.length) return { ids };
+    const kind = str(args.entity_kind);
+    const id = str(args.entity_id);
+    const from = str(args.from).toLowerCase();
+    if (!(kind && id) && !from) return { error: "say which: ids, a record (entity_kind and entity_id), or from (a person's name)" };
+    const open = await listShareEdits(ctx.orgId, { ...(kind && id ? { kind, id } : {}), open: true }, 500);
+    const picked = from ? open.filter((e) => (e.by_name ?? "").toLowerCase().startsWith(from)) : open;
+    return { ids: picked.map((e) => e.id) };
+  };
+  /** Each edit as a confirm card says it: "Voron: Colour green → blue (Vince)". */
+  const suggestionLines = async (orgId: string, ids: string[]): Promise<string[]> => {
+    const want = new Set(ids);
+    const said = await describeShareEdits(orgId, (await listShareEdits(orgId, {}, 1000)).filter((e) => want.has(e.id)));
+    return said.map((e) => `${e.title ?? "A record"}: ${e.label} ${e.was ?? "(empty)"} → ${e.now ?? "(empty)"}${e.by_name ? ` (${e.by_name})` : ""}`);
+  };
+  const decideAll = async (ctx: ActionInvokeContext, decision: ShareEditDecision) => {
+    const got = await suggestionIds(ctx);
+    if ("error" in got) return { ok: false as const, error: got.error };
+    const decided: Array<{ id: string; was: string }> = [];
+    let refused: string | null = null;
+    for (const id of got.ids) {
+      const r = await decideShareEdit(ctx.orgId, ctx.userId ?? null, id, decision);
+      if (r.ok) decided.push({ id, was: r.status });
+      else refused ??= r.error;
+    }
+    return { ok: true as const, decided, refused, asked: got.ids.length };
+  };
+  for (const [handler, decision, done, back] of [
+    ["platform.accept-suggestions", "accept", "Accepted", "platform:reopen-suggestions"],
+    ["platform.reject-suggestions", "reject", "Rejected", "platform:reopen-suggestions"],
+  ] as const) {
+    registerHandler(handler, async (ctx: ActionInvokeContext) => {
+      const r = await decideAll(ctx, decision);
+      if (!r.ok) return { ok: false, error: r.error };
+      if (!r.decided.length) return r.refused ? { ok: false, error: r.refused } : { ok: true, skipped: true, summary: "Nothing was waiting." };
+      return { ok: true, summary: `${done} ${countOf(r.decided.length, "suggested edit")}.${r.refused ? ` ${r.refused}` : ""}`, data: { ids: r.decided.map((d) => d.id) } };
+    });
+    registerPlanner(handler, async (ctx: ActionInvokeContext) => {
+      const got = await suggestionIds(ctx);
+      if ("error" in got) return { error: got.error };
+      return { title: `${decision === "accept" ? "Accept" : "Reject"} ${countOf(got.ids.length, "suggested edit")}`, lines: await suggestionLines(ctx.orgId, got.ids) };
+    });
+    registerUndo(handler, (result) => {
+      const ids = (result as { data?: { ids?: unknown } } | null)?.data?.ids;
+      return Array.isArray(ids) && ids.length ? { action_id: back, args: { ids } } : null;
+    });
+  }
+  registerPlanner("platform.reopen-suggestions", async (ctx: ActionInvokeContext) => {
+    const ids = readListArg((ctx.args ?? {}) as Record<string, unknown>, "ids");
+    if (!ids.length) return { error: "ids are required" };
+    return { title: `Put ${countOf(ids.length, "suggested edit")} back to waiting`, lines: await suggestionLines(ctx.orgId, ids) };
+  });
+  registerHandler("platform.reopen-suggestions", async (ctx: ActionInvokeContext) => {
+    const ids = readListArg((ctx.args ?? {}) as Record<string, unknown>, "ids");
+    if (!ids.length) return { ok: false, error: "ids are required" };
+    const was = new Map((await listShareEdits(ctx.orgId, {}, 1000)).filter((e) => ids.includes(e.id)).map((e) => [e.id, e.status]));
+    const back: Record<"accepted" | "rejected", string[]> = { accepted: [], rejected: [] };
+    let refused: string | null = null;
+    for (const id of ids) {
+      const before = was.get(id);
+      const r = await decideShareEdit(ctx.orgId, ctx.userId ?? null, id, "reopen");
+      if (r.ok && (before === "accepted" || before === "rejected")) back[before].push(id);
+      else if (!r.ok) refused ??= r.error;
+    }
+    const n = back.accepted.length + back.rejected.length;
+    if (!n) return refused ? { ok: false, error: refused } : { ok: true, skipped: true, summary: "Nothing to put back." };
+    return { ok: true, summary: `${countOf(n, "suggested edit")} waiting again.`, data: back };
+  });
+  registerUndo("platform.reopen-suggestions", (result) => {
+    const d = (result as { data?: { accepted?: unknown; rejected?: unknown } } | null)?.data;
+    const steps = [];
+    if (Array.isArray(d?.accepted) && d.accepted.length) steps.push({ action_id: "platform:accept-suggestions", args: { ids: d.accepted } });
+    if (Array.isArray(d?.rejected) && d.rejected.length) steps.push({ action_id: "platform:reject-suggestions", args: { ids: d.rejected } });
+    return steps.length ? steps : null;
+  });
+
+  for (const [handler, take] of [["platform.take-additions", true], ["platform.leave-additions", false]] as const) {
+    registerPlanner(handler, async (ctx: ActionInvokeContext) => {
+      const ids = readListArg((ctx.args ?? {}) as Record<string, unknown>, "ids");
+      if (!ids.length) return { error: "ids are required" };
+      const rows = (await listAdditions(ctx.orgId, false)).filter((a) => ids.includes(a.id));
+      return { title: `${take ? "Take" : "Leave"} ${countOf(rows.length, "thing")}`, lines: rows.map((a) => `${a.title}${a.by_name ? ` (added by ${a.by_name})` : ""}`) };
+    });
+    registerHandler(handler, async (ctx: ActionInvokeContext) => {
+      const ids = readListArg((ctx.args ?? {}) as Record<string, unknown>, "ids");
+      if (!ids.length) return { ok: false, error: "ids are required" };
+      const done: string[] = [];
+      let refused: string | null = null;
+      for (const id of ids) {
+        const r = take ? await takeAddition(ctx.orgId, id) : await leaveAddition(ctx.orgId, id);
+        if (r.ok) done.push(r.title);
+        else refused ??= r.error;
+      }
+      if (!done.length) return { ok: false, error: refused ?? "Nothing was waiting." };
+      const what = done.length === 1 ? done[0]! : countOf(done.length, "thing");
+      return { ok: true, summary: `${take ? "Took" : "Left"} ${what}.${refused ? ` ${refused}` : ""}` };
+    });
+  }
+
   registerHandler("platform.offer-to", async (ctx: ActionInvokeContext) => {
     const a = await offerArgs(ctx);
     if ("error" in a) return { ok: false, error: a.error };

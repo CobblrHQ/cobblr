@@ -42,7 +42,7 @@ const PostBody = Source.extend({
  *  So: join, resolve, split back. An instance kind ("kitchen-stuff:item")
  *  resolves to its owning module's kind, and BOTH halves move with it — an
  *  instance is a partition of the same table, not a different entity. */
-async function normaliseSource(
+export async function normaliseSource(
   orgId: string,
   src: { source_module: string; source_type: string },
 ): Promise<{ source_module: string; source_type: string }> {
@@ -66,7 +66,7 @@ async function normaliseSource(
  *  people commenting on a fresh record at the same moment would otherwise both
  *  see "no conversation" and both insert, and the unique constraint would turn
  *  one of their comments into a 500. */
-async function ensureConversation(
+export async function ensureConversation(
   db: ReturnType<typeof tenantDb>,
   src: { source_module: string; source_type: string; source_id: string },
 ): Promise<string> {
@@ -101,8 +101,9 @@ async function ensureConversation(
 interface CommentRow {
   id: string;
   in_reply_to: string | null;
-  author_kind: "user" | "assistant";
+  author_kind: "user" | "assistant" | "guest";
   author_user_id: string | null;
+  author_name: string | null;
   requested_by: string | null;
   status: "posted" | "pending" | "failed";
   body: string;
@@ -159,6 +160,7 @@ discussionRouter.get(
         "in_reply_to",
         "author_kind",
         "author_user_id",
+        "author_name",
         "requested_by",
         "status",
         "body",

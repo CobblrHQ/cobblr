@@ -355,6 +355,17 @@ export const GENERATED_SURFACE: Capability[] = [
     "module": "core-queue"
   },
   {
+    "feature": "Recently deleted",
+    "does": "Restore records deleted in the last 30 days, or remove them forever.",
+    "where": "/configuration/recently-deleted",
+    "also": [
+      "trash",
+      "restore",
+      "undo",
+      "deleted"
+    ]
+  },
+  {
     "feature": "Scan rules",
     "does": "Teach the scanner to read labels printed by another app, so an existing barcode resolves to the right record here.",
     "where": "/configuration/scan-rules",
@@ -403,6 +414,16 @@ export const GENERATED_SURFACE: Capability[] = [
       "stamp"
     ],
     "module": "core-templates"
+  },
+  {
+    "feature": "Tidy",
+    "does": "Tidy-up suggestions for the things you keep.",
+    "where": "/configuration/tidy",
+    "also": [
+      "tidy",
+      "organise",
+      "overnight"
+    ]
   },
   {
     "feature": "API tokens",

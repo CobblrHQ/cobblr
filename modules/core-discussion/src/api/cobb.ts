@@ -35,8 +35,8 @@ export const COBB_QUEUE = "core-discussion.ask-cobb";
  *
  *  Pure, and exported so the rule can be tested without a queue or a model. */
 export function summonsCobb(
-  comment: { body: string; author_kind: "user" | "assistant"; in_reply_to: string | null },
-  repliedTo: { author_kind: "user" | "assistant" } | null,
+  comment: { body: string; author_kind: "user" | "assistant" | "guest"; in_reply_to: string | null },
+  repliedTo: { author_kind: "user" | "assistant" | "guest" } | null,
 ): boolean {
   // An assistant comment never triggers anything. This is the loop guard, and
   // it is structural: it does not depend on remembering to check elsewhere.

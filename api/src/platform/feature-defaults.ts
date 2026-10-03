@@ -23,6 +23,7 @@
 export interface FeatureDecl {
   key: string;
   default?: boolean;
+  kind?: "integration";
 }
 
 export interface ResolveFeaturesInput {
@@ -63,7 +64,7 @@ export function resolveEnabledFeatures(input: ResolveFeaturesInput): {
     // First install: defaults are what they are for, and the checkboxes were
     // on screen.
     return {
-      enabled: input.declared.filter((f) => f.default).map((f) => f.key),
+      enabled: input.declared.filter((f) => f.default && f.kind !== "integration").map((f) => f.key),
       newToYou: [],
     };
   }

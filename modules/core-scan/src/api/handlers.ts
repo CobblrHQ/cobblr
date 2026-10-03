@@ -13,7 +13,7 @@ import { platform } from "@cobblr/platform-contract";
 import type { CoreScanDB } from "../db.js";
 import { enrichPhotoItem, knownCategories } from "../services/enrich-photo.js";
 import { answerWindow, claimGlanceAnswer, glanceItem, readContextFor, readGlanceEnabled, shouldGlance } from "../services/glance.js";
-import { routeScannedReceiptPhoto } from "../services/receipt-photo.js";
+import { finishPhotoRead } from "../services/photo-read-finish.js";
 import { autoRankCatalogPhoto, readPhotoRankEnabled } from "../services/auto-rank.js";
 import { runReceiptBackfill } from "../services/receipt-backfill.js";
 import { attachPaperwork } from "../services/attach-paperwork.js";
@@ -77,9 +77,10 @@ export function registerScanHandlers(): void {
     if (!ctx.entity) return { ok: true, skipped: "no record in scope" };
     const fills = await planKnownFill(ctx.orgId, ctx.entity.kind, ctx.entity.id);
     if (fills.length === 0) return { ok: true, skipped: "nothing to fill", data: { filled: [] } };
-    const wrote = await writeKnownFill(ctx.orgId, ctx.entity.kind, ctx.entity.id, fills);
-    if (!wrote) return { ok: false, error: "This record cannot be written from here." };
-    const landed = await landedFills(ctx.orgId, ctx.entity.kind, ctx.entity.id, fills);
+    const applied = await writeKnownFill(ctx.orgId, ctx.entity.kind, ctx.entity.id, fills);
+    if (!applied) return { ok: false, error: "This record cannot be written from here." };
+    if (applied.length === 0) return { ok: true, skipped: "nothing to fill", data: { filled: [] } };
+    const landed = await landedFills(ctx.orgId, ctx.entity.kind, ctx.entity.id, applied);
     if (landed.length === 0) return { ok: false, error: "Those fields could not be filled on this record.", data: { filled: [] } };
     return { ok: true, summary: sayFilled(landed), data: { filled: landed } };
   });
@@ -93,11 +94,8 @@ export function registerScanHandlers(): void {
   platform().actions.registerHandler("core-scan.unfill-known", async (ctx) => {
     if (!ctx.entity) return { ok: true, skipped: "no record in scope" };
     const filled = ((ctx.args ?? {}) as { filled?: KnownFill[] }).filled ?? [];
-    const rec = await platform().entities.lookup(ctx.orgId, ctx.entity.kind, ctx.entity.id);
-    const f = (rec?.fields ?? {}) as Record<string, unknown>;
-    const meta = (f.metadata && typeof f.metadata === "object" ? f.metadata : {}) as Record<string, unknown>;
-    const still = filled.filter((x) => String((x.native ? f[x.name] : meta[x.name]) ?? "") === String(x.value));
-    await writeKnownFill(ctx.orgId, ctx.entity.kind, ctx.entity.id, still, true);
+    const still = await writeKnownFill(ctx.orgId, ctx.entity.kind, ctx.entity.id, filled, true);
+    if (!still) return { ok: false, error: "This record cannot be written from here." };
     return { ok: true, summary: still.length ? `Emptied ${still.map((x) => x.label).join(", ")} again` : "Nothing to put back", data: { emptied: still.map((x) => x.name) } };
   });
 
@@ -175,25 +173,10 @@ export function registerScanHandlers(): void {
       visitorIp: typeof payloadIp === "string" ? payloadIp : null,
       ...readCtx,
     });
-    // You photographed a receipt. Hand it to the receipt parser instead of
-    // filing the paper as a thing you own — the same route an uploaded receipt
-    // takes, so the batch, the line items and the purchases order are all
-    // created by the one code path. No enriched event: nothing was identified,
-    // and the lines raise their own.
-    if (outcome === "is-receipt") {
-      const r = await routeScannedReceiptPhoto({
-        orgId: ctx.orgId,
-        itemId,
-        fileId: row.image_file_id,
-        userId: ctx.userId,
-      });
-      if (r.routed) return { ok: true, receipt: true, items: r.items };
-      // Called it a receipt and could not read it. The row is still there,
-      // with the reason on it (routeScannedReceiptPhoto wrote the note).
-      return { ok: true, receipt: false, skipped: r.reason };
-    }
-    void platform().events.emit("core-scan.scan.enriched", { orgId: ctx.orgId, itemId });
-    return { ok: true, identified: true };
+    // The receipt route, the queued wait, or the enriched event: one copy,
+    // shared with a queued identify that finishes later (photo-read-finish.ts).
+    const done = await finishPhotoRead({ orgId: ctx.orgId, itemId, fileId: row.image_file_id, userId: ctx.userId ?? null, outcome });
+    return { ok: true, ...done };
   });
 
   // The ALWAYS-ON catalog-photo pick (Phase F). Fired by a seeded wire on every

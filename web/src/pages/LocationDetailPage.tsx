@@ -1,3 +1,4 @@
+import { MoneyTotalNotice } from "@cobblr/platform-web";
 // /locations/:id — full-entity detail view.
 //
 // Locations are now first-class entities (Punch-list #1 from
@@ -14,9 +15,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRightLeft, ChevronRight, MapPin, Plus, Save, Trash2 } from "lucide-react";
 import { MoveEverythingModal, movedSentence, putBackSentence } from "../components/MoveEverythingModal";
 
-import { CustomFieldsPanel, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, fieldNeed, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
+import { CustomFieldsPanel, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, fieldNeed, useConfirm, useToast, usePageTitle, downloadBlob } from "@cobblr/platform-web";
 import { ApiError, api, type Location, type PlatformEntityKind } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { RecordPhoto } from "../components/RecordPhoto";
 import { EntityAttachments } from "../components/EntityAttachments";
 import { ContributedDetailPanels } from "../panels/registry";
 import { FloorPlan } from "../components/FloorPlan";
@@ -49,6 +51,7 @@ export function LocationDetailPage() {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
+  const [exporting, setExporting] = useState(false);
   const [moving, setMoving] = useState(false);
   const [editing, setEditing] = useState(false);
   const [addingChild, setAddingChild] = useState(false);
@@ -163,6 +166,19 @@ export function LocationDetailPage() {
     },
   });
 
+  const refreshPhotos = () => {
+    void qc.invalidateQueries({ queryKey: ["location", activeSlug] });
+    void qc.invalidateQueries({ queryKey: ["locations", activeSlug] });
+    void qc.invalidateQueries({ queryKey: ["core-locations", activeSlug] });
+    void qc.invalidateQueries({ queryKey: ["location-contents", activeSlug] });
+    void qc.invalidateQueries({ queryKey: ["file-attachments", activeSlug, "location", id] });
+  };
+  const photo = useMutation({
+    mutationFn: (image_path: string | null) => api.setMainPhoto(activeSlug, { entity_kind: "core-locations:location", entity_id: id!, image_path }),
+    onSuccess: refreshPhotos,
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't change the photo. Try again."),
+  });
+
   if (!id) return <Navigate to="/locations" replace />;
   if (location.isLoading) return <div className="text-sm text-faint">loading…</div>;
   if (location.error)
@@ -224,11 +240,15 @@ export function LocationDetailPage() {
 
       <header className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5">
         <div className="flex flex-wrap items-start gap-4">
-          <EntityThumb
+          <RecordPhoto
+            kind="core-locations:location"
+            id={l.id}
             src={l.image_path}
             alt={l.name}
             size={96}
-            className="ring-1 ring-line dark:ring-slate-700 shrink-0"
+            autoBusy={photo.isPending}
+            onChange={(imagePath) => photo.mutate(imagePath)}
+            onSaved={refreshPhotos}
           />
           <div className="flex-1 min-w-0">
             <h1 className="text-2xl font-display font-bold text-content dark:text-mortar-100 break-words">
@@ -241,9 +261,11 @@ export function LocationDetailPage() {
               {l.short_name && (
                 <span className="text-faint dark:text-slate-500">{l.short_name}</span>
               )}
-              {(worth.data?.total ?? 0) > 0 && (
-                <span data-testid="worth-here" className="text-muted" title={worth.data!.withheld ? "Some values are not shown to you, so they are left out" : "What everything kept here is worth, each thing counted once"}>
-                  worth {formatStoredMoney(worth.data!.total, "amount")}
+              {worth.data && !worth.data.withheld && (
+                <span data-testid="worth-here" className="text-muted">
+                  Contents worth: {formatStoredMoney(worth.data.total, "amount", { currency: worth.data.currency })} ({countOf(worth.data.records, "thing")})
+                  {worth.data.unpriced > 0 ? ` · ${worth.data.unpriced} with no price` : ""}
+                  <MoneyTotalNotice total={{ excluded: worth.data.excluded || {}, conversions: worth.data.conversions || [] }} />
                 </span>
               )}
             </div>
@@ -286,6 +308,22 @@ export function LocationDetailPage() {
           </div>
         )}
       </header>
+
+      {worth.data && !worth.data.withheld && (
+        <section aria-label="Insurance list" className="flex flex-wrap items-center gap-2">
+          <span className="text-sm text-muted">Insurance list</span>
+          {(["csv", "pdf"] as const).map((format) => (
+            <button key={format} type="button" disabled={exporting} className="rounded-md border border-line px-3 py-1 text-sm disabled:opacity-50" onClick={async () => {
+              setExporting(true);
+              try {
+                const got = await api.insuranceList(activeSlug, { kind: "core-locations:location", id }, format);
+                downloadBlob(got.blob, got.filename);
+              } catch (e) { toast.error(e instanceof Error ? e.message : "Couldn't make the insurance list."); }
+              finally { setExporting(false); }
+            }}>{format.toUpperCase()}</button>
+          ))}
+        </section>
+      )}
 
       {/* The floor plan / layout — the location's children drawn where they
           physically stand (spec: docs/design-decisions/location-floor-plan.md).
@@ -435,7 +473,7 @@ export function LocationDetailPage() {
           page names no contributor. */}
       <ContributedDetailPanels target="core-locations:location" ctx={{ slug: activeSlug, entityId: l.id, entityTitle: l.name }} />
 
-      <EntityAttachments kind="core-locations:location" entityId={l.id} omit={["tags", "discussion", "pairings"]} />
+      <EntityAttachments kind="core-locations:location" entityId={l.id} onRecordChanged={refreshPhotos} omit={["tags", "discussion", "pairings"]} />
 
       <div className="flex justify-center gap-6 pt-4">
         <button

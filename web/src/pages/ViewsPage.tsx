@@ -18,7 +18,7 @@ import { WEEKDAYS, MONTHS, isoLocal, buildMonthGrid, shiftMonth } from "../lib/m
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type SavedView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useTickedRows, useAskCobbAboutSelection, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, useFlowHost, EntityPhoto, useRunAction, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle } from "@cobblr/platform-web";
+import { Modal, useTickedRows, useAskCobbAboutSelection, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, BulkSetField, useFlowHost, EntityPhoto, useRunAction, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle } from "@cobblr/platform-web";
 import { groupRows, fieldVal, orderedGroups, NO_GROUP, NO_GROUP_LABEL } from "../lib/view-group-key";
 import { RowStockProvider, useRowStock } from "../components/ViewRowStock";
 import { useAreaResolver } from "../lib/useAreaResolver";
@@ -369,6 +369,8 @@ export function SavedViewBody({
           onClear={() => setSelected(new Set())}
           onAskCobb={askCobb ?? undefined}
           actions={
+            <>
+            <BulkSetField records={Array.from(selected).map((id) => ({ kind: view.entity_kind, id }))} onDone={() => setSelected(new Set())} />
             <button
               onClick={() => {
                 openFlow("core-scan:organize", {
@@ -381,6 +383,7 @@ export function SavedViewBody({
             >
               Organize selected
             </button>
+            </>
           }
         />
       )}

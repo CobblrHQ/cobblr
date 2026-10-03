@@ -20,6 +20,7 @@
 // or a log line. Errors from a hop keep the status and the service's error
 // code, never a header or a body.
 
+import { isDeepStrictEqual } from "node:util";
 import { createHash } from "node:crypto";
 import { gateServiceJob } from "./service-gate.js";
 import type { Kysely } from "kysely";
@@ -38,7 +39,9 @@ import {
   strongerEffect,
   adapterGroupOf,
   type AdapterFetch,
+  type AdapterMetadata,
   type BuiltInServiceDef,
+  type BuiltInServiceContext,
   type RemoteServiceJob,
   type ServiceCapabilityDecl,
   type ServiceCapabilityView,
@@ -145,6 +148,8 @@ export interface ServiceConnectionPort {
    *  or is not an adapter's. Read only to run a job, so a ref stays free of
    *  secrets. */
   configFor?(credentialId: string): Promise<Record<string, string> | null>;
+  /** Persist only this adapter group's declared secrets, with stale-write protection. */
+  updateSecrets?(credentialId: string, group: string, expected: Readonly<Record<string, string>>, patch: Readonly<Record<string, string>>): Promise<void>;
   /** One signed hop, direct or through the owner's bridge. `path` is under
    *  the manifest's api.base_path. */
   fetch(credentialId: string, req: { method: string; path: string; body?: Uint8Array | string; headers?: Record<string, string> }): Promise<ServiceHopResponse>;
@@ -233,6 +238,7 @@ export function setServiceSupervisor(s: ServiceSupervisorHooks): void {
 // ── Built-ins ───────────────────────────────────────────────────────────
 
 const builtIns = new Map<string, BuiltInServiceDef>();
+const adapterMetadata = new Map<string, AdapterMetadata>();
 
 /** Every registered built-in; the Connections page offers the ones with a
  *  `connection` (adapters) on Add a service. */
@@ -703,12 +709,20 @@ async function runBuiltIn(orgId: string, row: JobsTable): Promise<void> {
 
 /** What an adapter runs with: its connection's settings and its one way to
  *  its program. Null when that connection is gone. */
-async function adapterContext(def: BuiltInServiceDef, connectionId: string | null): Promise<{ config: Record<string, string>; connectionId: string; fetch?: AdapterFetch } | null> {
+async function adapterContext(def: BuiltInServiceDef, connectionId: string | null): Promise<Pick<BuiltInServiceContext, "config" | "connectionId" | "fetch" | "updateSecrets"> | null> {
   if (!def.connection || !connectionId || !port?.configFor) return null;
-  const config = await port.configFor(connectionId);
+  const connectionPort = port;
+  const config = await connectionPort.configFor!(connectionId);
   if (!config) return null;
-  const fetch = port.adapterFetch ? await port.adapterFetch(connectionId) : null;
-  return { config, connectionId, ...(fetch ? { fetch } : {}) };
+  const fetch = connectionPort.adapterFetch ? await connectionPort.adapterFetch(connectionId) : null;
+  let expected = { ...config };
+  const updateSecrets = connectionPort.updateSecrets ? async (patch: Readonly<Record<string, string>>) => {
+    const next = { ...patch };
+    await connectionPort.updateSecrets!(connectionId, adapterGroupOf(def), expected, next);
+    Object.assign(config, next);
+    expected = { ...expected, ...next };
+  } : undefined;
+  return { config, connectionId, ...(fetch ? { fetch } : {}), ...(updateSecrets ? { updateSecrets } : {}) };
 }
 
 async function recordOutputs(orgId: string, row: JobsTable, outs: Array<{ name: string; fileId: string; sha256?: string }>): Promise<void> {
@@ -1263,9 +1277,21 @@ export function createServices(): PlatformServices {
       return port.configFor(credentialId);
     },
     connectionsFor: async (orgId, capability) => (port?.holders ? port.holders(orgId, capability) : []),
+    adapterMetadata: (group) => {
+      const metadata = adapterMetadata.get(group);
+      return metadata ? structuredClone(metadata) : null;
+    },
     registerBuiltIn: (def) => {
       if (builtIns.has(def.id)) throw new Error(`services: a built-in ${def.id} is already registered`);
       if (!isServiceCapabilityId(def.capability.id)) throw new Error(`services: ${def.id} offers "${def.capability.id}", which is not a dotted capability id`);
+      const group = adapterGroupOf(def);
+      const metadata = def.connection?.metadata;
+      if (metadata) {
+        const existing = adapterMetadata.get(group);
+        if (existing && !isDeepStrictEqual(existing, metadata)) throw new Error(`services: conflicting metadata for adapter ${group}`);
+        for (const ref of metadata.library?.push?.refs ?? []) if (ref.pattern) new RegExp(ref.pattern);
+        adapterMetadata.set(group, structuredClone(metadata));
+      }
       builtIns.set(def.id, def);
     },
   };

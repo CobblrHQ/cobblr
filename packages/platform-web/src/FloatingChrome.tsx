@@ -34,10 +34,11 @@
 // layers beside it (fixed-layers.tsx), Modal and SidePanel are the only ways to
 // express one.
 
-import { forwardRef, useEffect, useImperativeHandle, useRef, type CSSProperties, type ElementType, type HTMLAttributes, type ReactNode } from "react";
+import { forwardRef, useEffect, useLayoutEffect, useImperativeHandle, useRef, type CSSProperties, type ElementType, type HTMLAttributes, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { HIDE_WHEN_COVERED, HIDE_WHEN_OVERLAY_OPEN } from "./overlay-open";
 import { registerBottomChrome, registerCornerChrome } from "./bottom-dock";
+import { registerTopChrome } from "./top-chrome";
 import { useYieldToContent, YIELDING_CLASS } from "./yield-to-content";
 
 export type FloatingAnchor = "top" | "bottom" | "corner";
@@ -48,6 +49,8 @@ export interface FloatingChromeProps extends HTMLAttributes<HTMLElement>, Record
   type?: string;
   disabled?: boolean;
   anchor: FloatingAnchor;
+  /** Persistent top banner: reserve its measured height above headers and content. */
+  reserveTop?: boolean;
   /** Hide while an overlay is open. Default true. "covering": hide only for
    *  an overlay over the page, staying beside a desk's side panel. */
   yields?: boolean | "covering";
@@ -69,7 +72,7 @@ export interface FloatingChromeProps extends HTMLAttributes<HTMLElement>, Record
 }
 
 export const FloatingChrome = forwardRef<HTMLElement, FloatingChromeProps>(function FloatingChrome(
-  { anchor, yields = true, yieldToContent = false, lift, stack, as: Tag = "div", inPlace = false, className = "", style, children, ...rest },
+  { anchor, reserveTop = false, yields = true, yieldToContent = false, lift, stack, as: Tag = "div", inPlace = false, className = "", style, children, ...rest },
   ref,
 ) {
   const inner = useRef<HTMLElement | null>(null);
@@ -79,6 +82,11 @@ export const FloatingChrome = forwardRef<HTMLElement, FloatingChromeProps>(funct
   const never = useRef<HTMLElement | null>(null);
   useImperativeHandle(ref, () => inner.current as HTMLElement, []);
   const covering = useYieldToContent(yieldToContent ? inner : never);
+
+  useLayoutEffect(() => {
+    if (anchor === "top" && reserveTop && inner.current) return registerTopChrome(inner.current);
+    return;
+  }, [anchor, reserveTop]);
 
   useEffect(() => {
     if (!inner.current) return;

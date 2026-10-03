@@ -174,7 +174,9 @@ export function ModulePickerModal({ open, onClose, scopeToParent, inline, chrome
     const ok = await confirm({
       title: `Disable ${m.displayName}?`,
       message:
-        m.dependencies.length === 0
+        m.retirement
+          ? "Your data stays in this workspace, but this retired module cannot be enabled again. Export anything you need before disabling it."
+          : m.dependencies.length === 0
           ? `Module data stays in the tenant DB (re-enabling restores access). Any specialisation that depends on this module must be disabled first.`
           : `Removes this module's contributed fields and wires from this workspace. Your entity data is unaffected.`,
       confirmLabel: "Disable",
@@ -538,6 +540,7 @@ function Row({
           </span>
           <span className="text-[10px] font-mono text-faint">v{m.version}</span>
           <MaturityBadge maturity={m.maturity} />
+          {m.retirement && <span className="text-xs text-ember-600 dark:text-ember-400">Retired: {m.retirement.reason}</span>}
           {m.dependencies.length > 0 && (
             <span className="text-[10px] font-mono text-faint dark:text-slate-500">
               · needs {m.dependencies.join(", ")}
@@ -571,7 +574,7 @@ function Row({
         ) : (
           <button
             onClick={onEnable}
-            disabled={busy || blocked}
+            disabled={busy || blocked || !!m.retirement}
             className="text-[10px] font-mono uppercase tracking-widest px-2 py-1 rounded border border-line dark:border-slate-700 text-accent hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-40 disabled:cursor-not-allowed"
           >
             enable
@@ -603,7 +606,7 @@ function CoreRow({
   const missingDeps = m.dependencies.filter((d) => !enabledNames.has(d));
   const blocked = missingDeps.length > 0;
   return (
-    <div className="flex items-center gap-2 py-1 px-2 rounded hover:bg-subtle dark:hover:bg-slate-800/40 transition">
+    <div className="flex flex-wrap items-center gap-2 py-1 px-2 rounded hover:bg-subtle dark:hover:bg-slate-800/40 transition">
       <span className="shrink-0">
         {m.enabled ? (
           <CheckCircle2 size={12} className="text-moss-600" />
@@ -618,6 +621,7 @@ function CoreRow({
       </span>
       <span className="text-[10px] font-mono text-faint shrink-0">v{m.version}</span>
       <MaturityBadge maturity={m.maturity} />
+      {m.retirement && <span className="text-xs text-ember-600 dark:text-ember-400">Retired: {m.retirement.reason}</span>}
       <span
         className="text-[11px] text-faint dark:text-slate-500 truncate flex-1"
         title={m.description}
@@ -635,7 +639,7 @@ function CoreRow({
       ) : (
         <button
           onClick={onEnable}
-          disabled={busy || blocked}
+          disabled={busy || blocked || !!m.retirement}
           className="text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 rounded border border-line dark:border-slate-700 text-accent hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
         >
           enable

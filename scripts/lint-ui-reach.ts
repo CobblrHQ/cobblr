@@ -126,11 +126,12 @@ interface Call {
 const VERB_ON_LINE = /["'`](GET|POST|PATCH|PUT|DELETE)["'`]/g;
 const METHOD_KEY = /method\s*:\s*["'`](GET|POST|PATCH|PUT|DELETE|get|post|patch|put|delete)["'`]/;
 // A helper named for its verb, or an upload (web's `upload`, platform-web's
-// `uploadJson`, #4328), which is always a POST.
-const HELPER_VERB = /(?:^|[^\w])(post|patch|put|delete|del|upload|uploadJson)\s*(?:<[^>]*>)?\(\s*$/;
+// `uploadJson`, #4328), or a body lookup (web's `lookupInBody`, #4673), each
+// always a POST.
+const HELPER_VERB = /(?:^|[^\w])(post|patch|put|delete|del|upload|uploadJson|lookupInBody)\s*(?:<[^>]*>)?\(\s*$/;
 /** The same helper opening a generic type that runs over several lines, the
  *  path on the line after `}>(`. */
-const HELPER_OPENS = /(?:^|[^\w.])(post|patch|put|delete|del|upload|uploadJson)\s*<\s*(?:\{|$)/;
+const HELPER_OPENS = /(?:^|[^\w.])(post|patch|put|delete|del|upload|uploadJson|lookupInBody)\s*<\s*(?:\{|$)/;
 const LITERAL = /`((?:[^`\\]|\\.)*)`|"([^"\n\\]*)"|'([^'\n\\]*)'/g;
 
 /** A literal as path segments, parameters and interpolations as `:x`, or null
@@ -206,7 +207,7 @@ function readCalls(): Call[] {
         }
         if (!verb) verb = [...line.slice(m.index! + m[0].length).matchAll(VERB_ON_LINE)][0]?.[1] ?? "GET";
         const V = verb.toUpperCase();
-        calls.push({ verb: V === "DEL" ? "DELETE" : V === "UPLOAD" || V === "UPLOADJSON" ? "POST" : V, segs, anchored, mods });
+        calls.push({ verb: V === "DEL" ? "DELETE" : V === "UPLOAD" || V === "UPLOADJSON" || V === "LOOKUPINBODY" ? "POST" : V, segs, anchored, mods });
       }
     }
   }

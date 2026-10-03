@@ -100,7 +100,7 @@ export class ProjectsApi {
     });
     const wrote = method.toUpperCase() !== "GET";
     if (res.status === 204) {
-      if (wrote) noteWorkspaceWrite(url);
+      if (wrote) noteWorkspaceWrite(url, res);
       return undefined as T;
     }
     const parsed = await res.json().catch(() => null);
@@ -108,7 +108,7 @@ export class ProjectsApi {
       const err = (parsed as { error?: { code?: string; message?: string } } | null)?.error;
       throw new Error(err?.message ?? `HTTP ${res.status}`);
     }
-    if (wrote) noteWorkspaceWrite(url);
+    if (wrote) noteWorkspaceWrite(url, res);
     return parsed as T;
   }
 

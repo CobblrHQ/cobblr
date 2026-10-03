@@ -15,6 +15,8 @@
 // request signer is server-only and lives in ./service-auth.
 
 import { z } from "zod";
+import type { LibraryAdapterMetadata } from "./library.js";
+import type { ConnectionTestOutcome } from "./connection-verification.js";
 
 // ── Words ───────────────────────────────────────────────────────────────
 
@@ -422,7 +424,12 @@ export interface BuiltInServiceContext {
   /** An adapter's connection settings (see BuiltInServiceDef.connection):
    *  the config of the connection this job runs on, decrypted. Absent for a
    *  plain built-in. */
-  config?: Record<string, string>;
+  config?: Readonly<Record<string, string>>;
+  /** Save refreshed credentials on this connection only. Accepts declared
+   *  writeOnly string fields, merges them encrypted, and returns no values.
+   *  Rejects a removed connection or a stale refresh; reload before refreshing
+   *  again. The current config reflects a successful save. */
+  updateSecrets?: (patch: Readonly<Record<string, string>>) => Promise<void>;
   /** An adapter's connection id: the key a module keeps its own per-record
    *  settings under (a detector's camera map). Absent for a plain built-in. */
   connectionId?: string;
@@ -483,12 +490,17 @@ export interface AdapterConfigProperty {
 }
 
 /** What testing an adapter connection found. */
-export interface AdapterTestResult {
-  ok: boolean;
+export interface AdapterTestResult extends ConnectionTestOutcome {
   reason?: "invalid_key" | "unreachable" | "busy" | "unknown";
   error?: string;
   /** "PrintGuard 2.1, answered in 80 ms". */
   note?: string;
+}
+
+/** Serializable adapter facts, read by the module consuming a capability.
+ *  Additional domains can extend this interface through declaration merging. */
+export interface AdapterMetadata {
+  library?: LibraryAdapterMetadata;
 }
 
 /** A built-in that speaks a third-party program's own API (PrintGuard, Obico)
@@ -498,9 +510,13 @@ export interface AdapterTestResult {
  *  manifest), it is ordered like one, and each job runs with the settings of
  *  the connection it was sent to (`ctx.config`). */
 export interface BuiltInConnectionDef {
+  /** Shared by every capability in this adapter group. No credentials. */
+  metadata?: AdapterMetadata;
   /** On the Add a service list ("PrintGuard"). */
   title: string;
   summary?: string;
+  /** Consequences the shared Connections page states before removal. */
+  disconnect?: { stops: string; keeps: string };
   config_schema: { type: "object"; properties: Record<string, AdapterConfigProperty>; required?: string[] };
   /** `ctx.fetch` reaches the program at the address being tested, the same
    *  way a job will. */
@@ -640,6 +656,8 @@ export interface PlatformServices {
   cancel(orgId: string, jobId: string, userId: string | null): Promise<void>;
   /** An in-process implementation of a capability. */
   registerBuiltIn(def: BuiltInServiceDef): void;
+  /** Adapter-owned metadata, keyed by group, never connection settings. */
+  adapterMetadata(group: string): Readonly<AdapterMetadata> | null;
   /** The chain a job belongs to, from the job that started it. */
   run(orgId: string, jobId: string): Promise<ServiceRun | null>;
   /** Tell people something is stuck (see StuckNotice), and take it back. */

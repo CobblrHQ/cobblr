@@ -1,3 +1,4 @@
+import { useMoneyCurrency } from "@cobblr/platform-web";
 // Modal to create a new part. Minimum fields only — name + qty +
 // optional category/location.
 //
@@ -136,6 +137,8 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
   const [categoryId, setCategoryId] = useState(seed?.category_id ?? "");
   const [locationId, setLocationId] = useState(seed?.location_id ?? "");
   const [manufacturer, setManufacturer] = useState(seed?.manufacturer ?? "");
+  const mainCurrency = useMoneyCurrency();
+  const [costCurrency, setCostCurrency] = useState(mainCurrency);
   const [cost, setCost] = useState<number | null>(seed?.cost != null && Number.isFinite(Number(seed.cost)) ? Number(seed.cost) : null);
   const [meta, setMeta] = useState<Record<string, unknown>>(seed?.fields ?? {});
   const [parentRef, setParentRef] = useState<ParentRef | null>(seed?.parent ?? null);
@@ -236,7 +239,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
         ...(cost == null ? {} : { cost }),
         // The instance's custom fields (colour, fibre, weight, …) filled in
         // the form go straight onto the new item.
-        ...(Object.keys(meta).length ? { metadata: meta } : {}),
+        metadata: Object.assign({}, meta, cost == null ? {} : { money_currency_cost: costCurrency }),
         // Stamp the matched catalog's image so the list row shows it
         // immediately. (Hydration would still find it via the pairing,
         // but this avoids the join cost on every list render.)
@@ -411,7 +414,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
                   need: fieldNeed("native:cost", { control: "money", label: fp.label("cost", "Price") }),
                   node: (
                     <Field label={fp.label("cost", "Price")}>
-                      <MoneyInput value={cost} storage="amount" live onCommit={setCost} ariaLabel={fp.label("cost", "Price")} className={fieldPackControlClass} />
+                      <MoneyInput currency={costCurrency} onCurrencyChange={setCostCurrency} value={cost} storage="amount" live onCommit={setCost} ariaLabel={fp.label("cost", "Price")} className={fieldPackControlClass} />
                     </Field>
                   ),
                 }

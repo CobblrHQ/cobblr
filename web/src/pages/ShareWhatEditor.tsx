@@ -21,10 +21,44 @@ const EDIT_MODES: Array<{ key: ShareEditMode; label: string; hint: (who: string)
   { key: "direct", label: "It changes your record", hint: (who) => `For someone you trust: ${who}'s edits apply at once, in your history under their name, and you can undo each one.` },
 ];
 
+/** What a share shows. */
 export function ShareWhatEditor({ slug, linkId, who, onDone }: { slug: string; linkId: string; who: string; onDone: () => void }) {
+  return (
+    <ScopeEditor
+      slug={slug}
+      who={who}
+      onDone={onDone}
+      source={{
+        key: ["share-what", slug, linkId],
+        load: () => api.getShareWhat(slug, linkId),
+        save: async (b) => (await api.putShareWhat(slug, linkId, b)).preview.count,
+        previewLinkId: linkId,
+        editMode: true,
+        saved: (n) => `Sharing ${n} thing${n === 1 ? "" : "s"} with ${who}.`,
+        refresh: [["share-links", slug]],
+      }}
+    />
+  );
+}
+
+export interface ScopeEditorSource {
+  key: unknown[];
+  load: () => Promise<{ scope: ScopeDef; visibility: VisibilityDef; gated_fields: Array<{ name: string; label: string }>; person?: { id: string; name: string } | null; edit_mode?: ShareEditMode }>;
+  /** Save, answering how many records it now selects. */
+  save: (b: { scope: ScopeDef; visibility: VisibilityDef; edit_mode: ShareEditMode }) => Promise<number>;
+  previewLinkId?: string;
+  /** A share asks how the other person's edits come back; a page has none. */
+  editMode: boolean;
+  saved: (count: number) => string;
+  refresh: unknown[][];
+}
+
+/** Which records and what of them: one editor for a share and a public
+ *  page, because they are one definition (share-scope.md). */
+export function ScopeEditor({ slug, who, onDone, source }: { slug: string; who: string; onDone: () => void; source: ScopeEditorSource }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const what = useQuery({ queryKey: ["share-what", slug, linkId], queryFn: () => api.getShareWhat(slug, linkId) });
+  const what = useQuery({ queryKey: source.key, queryFn: source.load });
   const kinds = useQuery({ queryKey: ["entity-kinds", slug], queryFn: () => api.listEntityKinds(slug), staleTime: 60_000 });
   const [scope, setScope] = useState<ScopeDef>(EMPTY_SCOPE);
   const [vis, setVis] = useState<VisibilityDef>(VISIBILITY_NONE);
@@ -41,16 +75,16 @@ export function ShareWhatEditor({ slug, linkId, who, onDone }: { slug: string; l
   const scopeKey = useMemo(() => JSON.stringify(scope), [scope]);
   const preview = useQuery({
     queryKey: ["scope-preview", slug, scopeKey],
-    queryFn: () => api.previewScope(slug, scope),
+    queryFn: () => api.previewScope(slug, scope, source.previewLinkId),
     enabled: loaded,
     staleTime: 10_000,
   });
   const save = useMutation({
-    mutationFn: () => api.putShareWhat(slug, linkId, { scope, visibility: vis, edit_mode: mode }),
-    onSuccess: (r) => {
-      toast.success(`Sharing ${r.preview.count} thing${r.preview.count === 1 ? "" : "s"} with ${who}.`);
-      void qc.invalidateQueries({ queryKey: ["share-what", slug, linkId] });
-      void qc.invalidateQueries({ queryKey: ["share-links", slug] });
+    mutationFn: () => source.save({ scope, visibility: vis, edit_mode: mode }),
+    onSuccess: (count) => {
+      toast.success(source.saved(count));
+      void qc.invalidateQueries({ queryKey: source.key });
+      for (const k of source.refresh) void qc.invalidateQueries({ queryKey: k });
       onDone();
     },
     onError: (e) => toast.error((e as Error).message),
@@ -83,6 +117,15 @@ export function ShareWhatEditor({ slug, linkId, who, onDone }: { slug: string; l
           )}
         </ul>
         <AddRule kinds={kinds.data?.items ?? []} onAdd={(r) => setRules([...scope.rules, r])} slug={slug} />
+        {what.data.person && (
+          <label className="flex items-start gap-2 text-sm text-content">
+            <input type="checkbox" data-testid="share-lent" checked={scope.lent_to_them} onChange={(e) => setScope({ ...scope, lent_to_them: e.target.checked })} className="mt-1 accent-cobble-500" />
+            <span>
+              What you lend to {what.data.person.name}
+              <span className="block text-xs text-muted">A thing you lend them is shared until it comes back.</span>
+            </span>
+          </label>
+        )}
         <label className="flex items-center gap-2 text-sm text-content">
           <input type="checkbox" checked={scope.with_contents} onChange={(e) => setScope({ ...scope, with_contents: e.target.checked })} className="accent-cobble-500" />
           With what is inside them
@@ -123,18 +166,20 @@ export function ShareWhatEditor({ slug, linkId, who, onDone }: { slug: string; l
         )}
       </section>
 
-      <section className="space-y-2">
-        <h3 className="text-sm font-semibold text-content">When {who} changes something</h3>
-        {EDIT_MODES.map((m) => (
-          <label key={m.key} className="flex items-start gap-2 text-sm text-content">
-            <input type="radio" name="share-edit-mode" data-testid={`share-edit-${m.key}`} checked={mode === m.key} onChange={() => setMode(m.key)} className="mt-1 accent-cobble-500" />
-            <span>
-              {m.label}
-              <span className="block text-xs text-muted">{m.hint(who)}</span>
-            </span>
-          </label>
-        ))}
-      </section>
+      {source.editMode && (
+        <section className="space-y-2">
+          <h3 className="text-sm font-semibold text-content">When {who} changes something</h3>
+          {EDIT_MODES.map((m) => (
+            <label key={m.key} className="flex items-start gap-2 text-sm text-content">
+              <input type="radio" name="share-edit-mode" data-testid={`share-edit-${m.key}`} checked={mode === m.key} onChange={() => setMode(m.key)} className="mt-1 accent-cobble-500" />
+              <span>
+                {m.label}
+                <span className="block text-xs text-muted">{m.hint(who)}</span>
+              </span>
+            </label>
+          ))}
+        </section>
+      )}
 
       <div className="flex justify-end gap-2">
         <button type="button" onClick={onDone} className="rounded-lg px-3 py-2 text-sm text-muted hover:text-content">

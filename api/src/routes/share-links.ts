@@ -5,6 +5,7 @@
 // under /share-links: an invite is read and claimed with its code, and once
 // paired every change arrives signed with the link's key.
 
+import { inviteLinks } from "../platform/cloud.js";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware.js";
@@ -13,6 +14,12 @@ import { meta } from "../db/meta.js";
 import { readScope, readVisibility } from "@cobblr/platform-contract/share-scope";
 import { gatedFields, previewScope } from "../platform/scope-eval.js";
 import { mirrorShareNow } from "../platform/share-mirror.js";
+import { sharePerson } from "../platform/share-person.js";
+import { shareTargets, sharesOfRecord } from "../platform/share-picks.js";
+import { listAdditions } from "../platform/share-additions.js";
+import { publicPageFieldChoices, recordPublicPages } from "../platform/public-page.js";
+import { copyNotes } from "../platform/share-edits.js";
+import { endShareView, mintShareView, renewShareView, requestShareView } from "../platform/share-view.js";
 import { decideShareEdit, describeShareEdits, listShareEdits, readEditMode } from "../platform/share-edits.js";
 import { requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
@@ -31,7 +38,7 @@ import {
   revokeShareLink,
 } from "../platform/share-links.js";
 import { ShareApplyError, applyShareOps, flushShareLinkNow, getShareLink, verifyShareRequest } from "../platform/share-sync.js";
-import { listOffers, offerTargets, sendBack, withdrawOffer } from "../platform/share-offers.js";
+import { listOffers, offerTargets, receivedOffer, sendBack, withdrawOffer } from "../platform/share-offers.js";
 
 export const shareLinksOrgRouter = Router();
 export const shareLinksRouter = Router();
@@ -59,8 +66,12 @@ shareLinksOrgRouter.post("/:slug/share-links", requireAuth, withTenant, async (r
     if (!requireRole(req, res, "owner", "admin")) return;
     const body = CreateBody.safeParse(req.body ?? {});
     if (!body.success) return bad(res, 400, "bad_body", body.error.issues[0]?.message ?? "bad body");
-    const made = await createShareInvite({ orgId: req.tenant!.org.id, userId: req.session!.id, label: body.data.label, here: hereUrl(publicOrigin(req)) });
-    res.status(201).json({ id: made.linkId, invite_url: made.inviteUrl, expires_at: made.expiresAt });
+    const here = hereUrl(publicOrigin(req));
+    const made = await createShareInvite({ orgId: req.tenant!.org.id, userId: req.session!.id, label: body.data.label, here });
+    // "Where is their Cobblr?": the same token, opened wherever they are
+    // (#4737); the first is the default.
+    const links = inviteLinks(here, made.token);
+    res.status(201).json({ id: made.linkId, invite_url: links[0]?.url ?? made.inviteUrl, expires_at: made.expiresAt, links });
   } catch (err) {
     if (err instanceof Error && /cannot be shared|does not know its own address/.test(err.message)) return bad(res, 409, "cannot_share", err.message);
     next(err);
@@ -176,16 +187,73 @@ shareLinksRouter.post("/share-links/claim", async (req, res, next) => {
 // UI-REACH: spoken by another Cobblr
 shareLinksRouter.post("/share-links/:id/ops", async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const raw = (req as unknown as { rawBody?: string }).rawBody ?? "";
+    const raw = (req as unknown as { rawBody?: string }).rawBody;
     const link = await verifyShareRequest({
       linkId: String(req.params.id),
       headers: req.headers as Record<string, string | undefined>,
       pathAndQuery: req.originalUrl,
       rawBody: raw,
     });
-    res.json(await applyShareOps(link, JSON.parse(raw || "{}")));
+    res.json(await applyShareOps(link, JSON.parse((raw ?? "") || "{}")));
   } catch (err) {
     if (err instanceof ShareApplyError) return bad(res, err.status, err.code, err.message);
+    next(err);
+  }
+});
+
+// The share space's side of View as: the other side asks, signed with the
+// link's key, and gets a read-only grant to look through it.
+// AI-REACH: exempt — spoken by another Cobblr, signed with the share's key.
+// UI-REACH: spoken by another Cobblr
+shareLinksRouter.post("/share-links/:id/view", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const raw = (req as unknown as { rawBody?: string }).rawBody;
+    const link = await verifyShareRequest({ linkId: String(req.params.id), headers: req.headers as Record<string, string | undefined>, pathAndQuery: req.originalUrl, rawBody: raw });
+    const body = JSON.parse((raw ?? "") || "{}") as { viewer?: unknown };
+    res.json(await mintShareView(link.id, typeof body.viewer === "string" ? body.viewer : link.peer_name));
+  } catch (err) {
+    if (err instanceof ShareApplyError) return bad(res, err.status, err.code, err.message);
+    if (err instanceof Error && /ended|nobody/.test(err.message)) return bad(res, 409, "cannot_view", err.message);
+    next(err);
+  }
+});
+
+// UI-REACH: the View as banner's Exit
+// AI-REACH: exempt — ends the read-only view a person opened; nothing for an assistant.
+shareLinksRouter.post("/share-view/end", requireAuth, async (req, res, next) => {
+  try {
+    const view = req.session!.share_view;
+    if (!view) return bad(res, 400, "not_viewing", "This is not a view.");
+    await endShareView(view.session_id);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// UI-REACH: the View as banner (renews quietly while the view is open)
+// AI-REACH: exempt — keeps a person's read-only view of their own share open; nothing for an assistant.
+shareLinksRouter.post("/share-view/renew", requireAuth, async (req, res, next) => {
+  try {
+    const view = req.session!.share_view;
+    if (!view) return bad(res, 400, "not_viewing", "This is not a view.");
+    res.json(await renewShareView(view.session_id));
+  } catch (err) {
+    if (err instanceof Error && /ended/.test(err.message)) return bad(res, 401, "share_view_ended", err.message);
+    next(err);
+  }
+});
+
+// UI-REACH: Settings → Sharing ("View as <them>")
+// AI-REACH: exempt — a person opens a read-only view in a new tab; an assistant has nothing to look through.
+shareLinksOrgRouter.post("/:slug/share-links/:id/view-as", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const l = await ownerLink(req.tenant!.org.id, String(req.params.id));
+    if (!l) return bad(res, 404, "not_found", "No such share.");
+    res.json(await requestShareView(l.id, req.session!.display_name || null));
+  } catch (err) {
+    if (err instanceof Error && !(err as { status?: number }).status) return bad(res, 409, "cannot_view", err.message);
     next(err);
   }
 });
@@ -227,7 +295,20 @@ shareLinksOrgRouter.post("/:slug/share-offers/:id/send-back", requireAuth, withT
   }
 });
 
-const ScopeBody = z.object({ scope: z.unknown() });
+// UI-REACH: a record taken from someone's share ("Send back to <them>", beside Shared with)
+// AI-REACH: exempt — a read the record page makes to offer Send back; the send itself is the route above.
+shareLinksOrgRouter.get("/:slug/received-from", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    // By id alone: a record's page may name it by its collection or its module.
+    const id = String(req.query.id ?? "");
+    if (!id) return bad(res, 400, "bad_query", "id is required");
+    res.json({ received: await receivedOffer(req.tenant!.org.id, id) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const ScopeBody = z.object({ scope: z.unknown(), link_id: z.string().uuid().optional() });
 
 // UI-REACH: Settings → Sharing ("What's shared": the live count while a scope is built)
 // AI-REACH: exempt — a read the scope editor makes while a person picks what to share.
@@ -236,7 +317,85 @@ shareLinksOrgRouter.post("/:slug/scope-preview", requireAuth, withTenant, async 
     if (!requireRole(req, res, "owner", "admin")) return;
     const body = ScopeBody.safeParse(req.body ?? {});
     if (!body.success) return bad(res, 400, "bad_body", "scope is required");
-    res.json(await previewScope(req.tenant!.org.id, readScope(body.data.scope)));
+    // A share's preview counts what is lent to its person too.
+    const link = body.data.link_id ? await ownerLink(req.tenant!.org.id, body.data.link_id) : null;
+    const person = link ? await sharePerson(link.id) : null;
+    res.json(await previewScope(req.tenant!.org.id, readScope(body.data.scope), person?.id ?? null));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// UI-REACH: every record page ("Share with…", "Shared with <them>")
+// AI-REACH: platform:share-with / platform:stop-sharing (the same change, as actions)
+shareLinksOrgRouter.get("/:slug/record-shares", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    // Without a record: only who this workspace shares with (a list's
+    // selection bar asks that).
+    const kind = String(req.query.kind ?? "");
+    const id = String(req.query.id ?? "");
+    const targets = await shareTargets(req.tenant!.org.id);
+    res.json({ targets, shared_with: targets.length && kind && id ? await sharesOfRecord(req.tenant!.org.id, kind, id) : [] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// UI-REACH: /suggestions, and every record page ("2 suggested edits by Vince")
+// AI-REACH: exempt — a read; the assistant reaches it as list_suggestions, and decides with platform:accept-suggestions / reject-suggestions / take-additions / leave-additions
+shareLinksOrgRouter.get("/:slug/suggestions", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    const kind = String(req.query.kind ?? "");
+    const id = String(req.query.id ?? "");
+    const rows = await listShareEdits(req.tenant!.org.id, { ...(kind && id ? { kind, id } : {}), open: req.query.all !== "1" }, 500);
+    res.json({ items: await describeShareEdits(req.tenant!.org.id, rows), additions: kind && id ? [] : await listAdditions(req.tenant!.org.id, req.query.all !== "1") });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// UI-REACH: every record page in a share space ("changed by <owner> since you edited")
+// AI-REACH: exempt — a note on the friend's own copy, read by the page that shows it
+shareLinksOrgRouter.get("/:slug/copy-notes", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    const kind = String(req.query.kind ?? "");
+    const id = String(req.query.id ?? "");
+    if (!kind || !id) return bad(res, 400, "bad_query", "kind and id are required");
+    res.json(await copyNotes(req.tenant!.org.id, kind, id));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// UI-REACH: Settings → Sharing → Public pages (a page's "What it shows": the restricted fields)
+// AI-REACH: exempt — a read for the scope editor's field list
+shareLinksOrgRouter.get("/:slug/scope-fields", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    res.json({ gated_fields: await gatedFields(req.tenant!.org.id) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The fields a public page's records can show, by the words a person reads,
+// for choosing which ones it shows (#4502, Tier A).
+// UI-REACH: Settings → Sharing → Public pages (a page's Look)
+// AI-REACH: exempt — a read for choosing what a public page shows
+shareLinksOrgRouter.get("/:slug/public-page-fields/:id", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    res.json({ fields: await publicPageFieldChoices(req.tenant!.org.id, String(req.params.id)) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// UI-REACH: a record's header (the "Public" chip)
+// AI-REACH: exempt a header chip saying a record is on a public page; the pages themselves are read and changed in Settings, Sharing
+shareLinksOrgRouter.get("/:slug/public-status/:id", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    res.json({ pages: await recordPublicPages(req.tenant!.org.id, String(req.params.id)) });
   } catch (err) {
     next(err);
   }
@@ -255,7 +414,7 @@ shareLinksOrgRouter.get("/:slug/share-links/:id/what", requireAuth, withTenant, 
     const l = await ownerLink(req.tenant!.org.id, String(req.params.id));
     if (!l) return bad(res, 404, "not_found", "No such share.");
     const s = (l.settings ?? {}) as Record<string, unknown>;
-    res.json({ scope: readScope(s.scope), visibility: readVisibility(s.visibility), edit_mode: readEditMode(s), gated_fields: await gatedFields(req.tenant!.org.id) });
+    res.json({ scope: readScope(s.scope), visibility: readVisibility(s.visibility), edit_mode: readEditMode(s), person: await sharePerson(l.id), gated_fields: await gatedFields(req.tenant!.org.id) });
   } catch (err) {
     next(err);
   }
@@ -283,7 +442,7 @@ shareLinksOrgRouter.put("/:slug/share-links/:id/what", requireAuth, withTenant, 
     // What is shared changed: the mirror runs now.
     await meta.updateTable("share_links").set({ mirror_due_at: new Date() }).where("id", "=", l.id).execute();
     void mirrorShareNow(l.id).catch((err) => console.error(`[share] mirror of ${l.id} failed:`, err));
-    res.json({ scope, visibility, edit_mode, preview: await previewScope(req.tenant!.org.id, scope) });
+    res.json({ scope, visibility, edit_mode, preview: await previewScope(req.tenant!.org.id, scope, (await sharePerson(l.id))?.id ?? null) });
   } catch (err) {
     next(err);
   }
@@ -296,7 +455,7 @@ shareLinksOrgRouter.get("/:slug/share-links/:id/edits", requireAuth, withTenant,
     if (!requireRole(req, res, "owner", "admin")) return;
     const l = await ownerLink(req.tenant!.org.id, String(req.params.id));
     if (!l) return bad(res, 404, "not_found", "No such share.");
-    res.json({ items: await describeShareEdits(req.tenant!.org.id, await listShareEdits(req.tenant!.org.id, l.id)) });
+    res.json({ items: await describeShareEdits(req.tenant!.org.id, await listShareEdits(req.tenant!.org.id, { linkId: l.id })) });
   } catch (err) {
     next(err);
   }
@@ -313,7 +472,6 @@ shareLinksOrgRouter.post("/:slug/share-links/:id/edits/:editId/:decision", requi
     if (decision !== "accept" && decision !== "reject" && decision !== "undo") return bad(res, 400, "bad_decision", "accept, reject or undo");
     const r = await decideShareEdit(req.tenant!.org.id, req.session!.id, String(req.params.editId), decision);
     if (!r.ok) return bad(res, 409, "cannot", r.error);
-    void mirrorShareNow(l.id).catch((err) => console.error(`[share] mirror of ${l.id} failed:`, err));
     res.json({ status: r.status });
   } catch (err) {
     next(err);

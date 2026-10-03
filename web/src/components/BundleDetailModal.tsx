@@ -136,7 +136,7 @@ export function BundleDetailModal(props: Props) {
   // Which optional features are checked. Lazy-init from each feature's `default`.
   // (Modal is keyed by bundle id in the parent, so this resets per bundle.)
   const [selectedFeatures, setSelectedFeatures] = useState<Set<string>>(
-    () => new Set((props.mode === "featured" ? props.manifest.features : undefined)?.filter((f) => f.default).map((f) => f.key) ?? []),
+    () => new Set((props.mode === "featured" ? props.manifest.features : undefined)?.filter((f) => f.default && f.kind !== "integration").map((f) => f.key) ?? []),
   );
 
   // Fetch the actually-installed wires + field defs + the stored manifest (with
@@ -269,11 +269,20 @@ export function BundleDetailModal(props: Props) {
     mutationFn: (vars: { manifest: PlatformBundleManifest; confirm: boolean; enabledFeatures?: string[]; resolutions?: BundleConflictResolution[]; nounChoices?: Record<string, string> }) =>
       changeWorkspaceShape(qc, slug, () => api.installBundle(slug, vars.manifest, vars.confirm, vars.enabledFeatures, vars.resolutions, vars.nounChoices)),
     onSuccess: (r) => {
-      toast.success(
-        isUpdate
-          ? `Updated ${r.bundle.name} to v${r.bundle.version}.`
-          : `Installed ${r.bundle.name} v${r.bundle.version}: ${r.applied.wires} wire(s), ${r.applied.field_defs} field def(s).`,
-      );
+      if (isUpdate) toast.success(`Updated ${r.bundle.name}.`);
+      else {
+        const added = [...(r.applied.instances_created ?? []), ...(r.applied.auto_enabled_modules ?? []).map((m) => moduleNames[m] ?? m)];
+        toast.action(`Installed ${r.bundle.name}${added.length ? `: added ${added.join(", ")}` : ""}.`, {
+          actionLabel: "Undo",
+          onAction: async () => {
+            try {
+              await changeWorkspaceShape(qc, slug, () => api.uninstallBundle(slug, r.bundle.id));
+              toast.success("Setup removed. Your records and collections stay.");
+              onClose();
+            } catch (error) { toast.error(error instanceof Error ? error.message : "Couldn't undo that."); }
+          },
+        });
+      }
       // Persist a "where to start" card to the dashboard so it's re-findable
       // after the user navigates away (the author: "I could never find it again").
       // Skip on an UPDATE — the user already onboarded; re-pinning the card +
@@ -561,9 +570,12 @@ export function BundleDetailModal(props: Props) {
       } catch (e) {
         if (!(e instanceof ApiError)) return;
         if (e.code === "needs_enable") {
-          // The detail page already lists the required modules (the "requires"
-          // accordion), so a second "enable this module?" confirm is redundant
-          // friction (the author). Just enable + install in one step.
+          const additions = (e.details as { needs_enable?: string[] } | undefined)?.needs_enable ?? [];
+          if (!await confirm({
+            title: "Turn on what's needed?",
+            message: `This setup turns on ${additions.map((name) => moduleNames[name] ?? name).join(", ")}. Your existing records stay as they are.`,
+            confirmLabel: "Turn on and install",
+          })) return;
           confirmEnable = true;
           continue;
         }

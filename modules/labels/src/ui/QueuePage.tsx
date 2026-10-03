@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
 import { Bluetooth, Check, ChevronDown, Download, Hash, Minus, Monitor, Pencil, Plus, Printer, RotateCcw, RotateCw, Send, Settings2, Trash2, Wifi, Zap } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { usePageTitle, useToast, Modal, BACKDROP_LAYER_CLASS, useFieldDraft } from "@cobblr/platform-web";
+import { usePageTitle, usePageWidth, useToast, Modal, BACKDROP_LAYER_CLASS, useFieldDraft, NfcTags, isWebNfcAvailable, type NfcTarget } from "@cobblr/platform-web";
 import { useLabels } from "./context";
 import { BrowsePanel } from "./BrowsePanel";
 import { CodesPanel } from "./CodesPanel";
@@ -81,6 +81,7 @@ function qrModuleCount(payload: string, ecLevel: "M" | "H"): number {
 
 export function QueuePage() {
   usePageTitle("Labels");
+  usePageWidth("wide");
   const { api, orgSlug } = useLabels();
   const toast = useToast();
   const qc = useQueryClient();
@@ -98,6 +99,7 @@ export function QueuePage() {
     enabled: !!orgSlug,
   });
   const [autoPrintOpen, setAutoPrintOpen] = useState(false);
+  const [tagTargets, setTagTargets] = useState<NfcTarget[] | null>(null);
   const [printerConfigOpen, setPrinterConfigOpen] = useState(false);
   const [confirmForget, setConfirmForget] = useState<{ id: string; name: string } | null>(null);
   const navigate = useNavigate();
@@ -889,6 +891,9 @@ export function QueuePage() {
 
   return (
     <div className="space-y-4">
+      <Modal open={tagTargets !== null} onClose={() => setTagTargets(null)} title="NFC tags">
+        {tagTargets && <NfcTags targets={tagTargets} />}
+      </Modal>
       <div className="space-y-2 border-b border-line dark:border-slate-700 pb-3">
         {/* Main row: identity + the action buttons. The sheet/label size pickers
             live on their own thin row below (they wrapped ugly inline). */}
@@ -901,6 +906,12 @@ export function QueuePage() {
           </span>
         </div>
         <div className="flex-1" />
+        <button
+          type="button"
+          disabled={expanded.length === 0 || qrBase.isLoading || qrBase.isError}
+          onClick={() => setTagTargets(expanded.map((it) => ({ title: it.description, url: liveUrl(it.qr_payload) })))}
+          className="rounded-md border border-line dark:border-slate-600 px-3 py-2 text-sm hover:border-accent disabled:opacity-50"
+        >{isWebNfcAvailable() ? "Write to NFC tag" : "Copy tag link"}</button>
 
         {/* Printer-first: the toolbar leads with WHICH printer this prints to.
             No printer → connect CTAs, but the sheet pickers + system Print stay
@@ -1566,10 +1577,9 @@ function EditableLabel({
   );
 }
 
-/** Scaled WYSIWYG preview of the first sheet — renders the exact
- *  print HTML inside an iframe sized in real inches, then CSS-scales
- *  it to fit a large preview box below the queue. */
-function SheetPreview({
+/** Scaled WYSIWYG preview of every sheet. It renders the exact print HTML in
+ *  real-inch iframes, then applies one scale to the whole run. */
+export function SheetPreview({
   sizeKey,
   printables,
   paperW,
@@ -1617,8 +1627,6 @@ function SheetPreview({
   // sane width until the box is measured.
   const previewScale = (boxW > 0 ? boxW : 640) / (REFERENCE_IN * 96);
   const scale = actual ? actualScale : previewScale;
-  const html = renderPrintSheetHtml(printables, sizeKey, { previewOnly: true, customSizes, rotate });
-
   // Physical scannability of the printed QR at THIS size — the "is it too small
   // to read?" sanity check. mm-per-module is a property of the printed inches, so
   // it is honest whether or not "actual size" is on. Worst case across the sheet
@@ -1635,14 +1643,13 @@ function SheetPreview({
   const scan = resolvedSize && maxModules > 0 ? assessScannability(qrSideForLabel(resolvedSize), maxModules) : null;
 
   // Multi-sheet: a queue often needs more than one sheet (2 labels of a 1-up
-  // die-cut roll = 2 sheets). The default view is a wrapping STRIP of small
-  // per-sheet thumbnails so it matches what actually comes out; "actual size"
-  // drops back to the first sheet at true physical size for the ruler check.
-  // Bounded (CAP) so a huge queue can't spawn hundreds of iframes.
+  // die-cut roll = 2 sheets). Both scales render the same sheets in the same
+  // order; Actual size changes dimensions only.
   const per = resolvedSize ? resolvedSize.cols * resolvedSize.rows : 0;
   const sheetCount = per > 0 ? Math.max(1, Math.ceil(printables.length / per)) : 1;
-  const CAP = 12;
-  const shownSheets = Math.min(sheetCount, CAP);
+  const CAP = 20;
+  const [showAll, setShowAll] = useState(false);
+  const shownSheets = showAll ? sheetCount : Math.min(sheetCount, CAP);
   const sheetHtml = useMemo(
     () =>
       Array.from({ length: per > 0 ? shownSheets : 1 }, (_, i) =>
@@ -1657,11 +1664,12 @@ function SheetPreview({
 
   return (
     <div>
-      <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
-        // sheet preview <span className="text-faint dark:text-slate-500">{mediaLabel ? `${mediaLabel} · ` : ""}{actual ? "first sheet, actual size" : sheetCount > 1 ? `${sheetCount} sheets` : "1 sheet"}</span>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
+        <span>// sheet preview</span>
+        <span className="text-faint dark:text-slate-500">{mediaLabel ? `${mediaLabel} · ` : ""}{sheetCount > 1 ? `${sheetCount} sheets` : "1 sheet"}{actual ? " · actual size" : ""}</span>
         {scan && (
           <span
-            className="normal-case tracking-normal text-faint dark:text-slate-500"
+            className="normal-case tracking-normal whitespace-nowrap text-faint dark:text-slate-500"
             title={`QR prints about ${scan.moduleMm.toFixed(2)} mm per module (${scan.label}). Under ~0.2 mm a phone can't read it; 0.3 mm and up is comfortable. This is the physical printed size, independent of screen zoom.`}
           >
             {" · "}
@@ -1686,54 +1694,36 @@ function SheetPreview({
       </div>
       <div
         ref={boxRef}
-        className={`rounded-xl border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 p-5 flex overflow-auto ${
-          actual ? "justify-start" : "flex-wrap gap-3 content-start justify-start"
-        }`}
+        className="rounded-xl border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 p-5 flex flex-wrap gap-3 content-start justify-start overflow-auto"
         style={{ maxHeight: MAX_H }}
       >
-        {actual ? (
-          <div
-            className="rounded-lg border border-line dark:border-slate-700 bg-surface overflow-hidden shadow-md shrink-0"
+        {/* Every sheet at the SAME scale, so a 2" sheet is visibly bigger than
+            a 1.5" one and the scale toggle cannot change the content. */}
+        {sheetHtml.map((h, i) => (
+          <div key={i} className="shrink-0 flex flex-col items-center gap-1">
+            <div
+              className="rounded-md border border-line dark:border-slate-700 bg-surface overflow-hidden shadow-sm"
+              style={{ width: natW * scale, height: natH * scale }}
+            >
+              <iframe
+                title={`sheet ${i + 1}`}
+                srcDoc={h}
+                scrolling="no"
+                style={{ width: natW, height: natH, border: 0, transform: `scale(${scale})`, transformOrigin: "top left" }}
+              />
+            </div>
+            {sheetCount > 1 && <span className="text-[9px] font-mono text-faint dark:text-slate-500 leading-none">{i + 1}</span>}
+          </div>
+        ))}
+        {sheetCount > CAP && !showAll && (
+          <button
+            type="button"
+            onClick={() => setShowAll(true)}
+            className="grid place-items-center rounded-md border border-dashed border-line dark:border-slate-700 text-[11px] text-faint hover:text-accent hover:border-accent dark:text-slate-500 shrink-0"
             style={{ width: natW * scale, height: natH * scale }}
           >
-            <iframe
-              title="label sheet preview"
-              srcDoc={html}
-              scrolling="no"
-              style={{ width: natW, height: natH, border: 0, transform: `scale(${scale})`, transformOrigin: "top left" }}
-            />
-          </div>
-        ) : (
-          <>
-            {/* Every thumbnail at the SAME scale, so a 2" sheet is visibly bigger
-                than a 1.5" one and a 2" cell of a 4×6 matches a 2" single. */}
-            {sheetHtml.map((h, i) => (
-              // Sheet number goes BELOW the thumbnail, not over it — an absolute
-              // badge sat on the label's title and hid it.
-              <div key={i} className="shrink-0 flex flex-col items-center gap-1">
-                <div
-                  className="rounded-md border border-line dark:border-slate-700 bg-surface overflow-hidden shadow-sm"
-                  style={{ width: natW * scale, height: natH * scale }}
-                >
-                  <iframe
-                    title={`sheet ${i + 1}`}
-                    srcDoc={h}
-                    scrolling="no"
-                    style={{ width: natW, height: natH, border: 0, transform: `scale(${scale})`, transformOrigin: "top left" }}
-                  />
-                </div>
-                {sheetCount > 1 && <span className="text-[9px] font-mono text-faint dark:text-slate-500 leading-none">{i + 1}</span>}
-              </div>
-            ))}
-            {sheetCount > CAP && (
-              <div
-                className="grid place-items-center rounded-md border border-dashed border-line dark:border-slate-700 text-[11px] text-faint dark:text-slate-500 shrink-0"
-                style={{ width: natW * scale, height: natH * scale }}
-              >
-                +{sheetCount - CAP} more
-              </div>
-            )}
-          </>
+            Showing {CAP} of {sheetCount}<br />Show all
+          </button>
         )}
       </div>
       <ActualSizeControl actual={actual} onToggle={() => setActual((v) => !v)} cal={cal} />

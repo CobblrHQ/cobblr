@@ -174,14 +174,14 @@ export function EditSelect({ label, value, options, onCommit }: { label: ReactNo
  *  "4,300" for either and writes back the shape the column keeps. */
 export function moneyFieldItem(
   key: string,
-  p: { label: string; value: unknown; storage: MoneyStorage; onCommit: (stored: number | null) => void; placeholder?: string },
+  p: { label: string; value: unknown; storage: MoneyStorage; currency?: string; onCurrencyChange?: (currency: string) => void; onCommit: (stored: number | null) => void; placeholder?: string },
 ): FieldPackItem {
   return {
     need: fieldNeed(key, { control: "money", label: p.label }),
     node: (
       <label className="block min-w-0">
         <FieldLabel>{p.label}</FieldLabel>
-        <MoneyInput value={p.value} storage={p.storage} onCommit={p.onCommit} placeholder={p.placeholder} ariaLabel={p.label} className={fieldPackControlClass} />
+        <MoneyInput currency={p.currency} onCurrencyChange={p.onCurrencyChange} value={p.value} storage={p.storage} onCommit={p.onCommit} placeholder={p.placeholder} ariaLabel={p.label} className={fieldPackControlClass} />
       </label>
     ),
   };

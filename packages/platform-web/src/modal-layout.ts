@@ -23,14 +23,14 @@ export function modalPanelLayout(overLive: boolean, fillHeight: boolean, stickyF
   if (overLive) {
     // A centred card at EVERY width, so the live surface stays visible around it.
     return (
-      "my-8 rounded-xl max-h-[calc(100dvh-4rem)] " +
-      (fillHeight ? "min-h-[calc(100dvh-4rem)] " : "")
+      "my-8 rounded-xl max-h-[calc(var(--overlay-height,100dvh)-4rem)] " +
+      (fillHeight ? "min-h-[calc(var(--overlay-height,100dvh)-4rem)] " : "")
     );
   }
   return (
     "my-0 rounded-none sm:my-8 sm:rounded-xl " +
-    "max-h-[100dvh] sm:max-h-[calc(100dvh-4rem)] " +
-    "min-h-[100dvh] sm:min-h-0 " +
+    "max-h-[var(--overlay-height,100dvh)] sm:max-h-[calc(var(--overlay-height,100dvh)-4rem)] " +
+    "min-h-[var(--overlay-height,100dvh)] sm:min-h-0 " +
     // The status bar sits over the sheet's first points on a notched phone,
     // the same way the home indicator sits over its last: the title of a
     // record modal was drawn under the clock (reported 2026-09-09).
@@ -42,7 +42,7 @@ export function modalPanelLayout(overLive: boolean, fillHeight: boolean, stickyF
     // footer up off it (0 in a browser / on desktop), unless the body's own
     // sticky footer already does.
     (stickyFooter ? "" : "pb-[env(safe-area-inset-bottom)] sm:pb-0 ") +
-    (fillHeight ? "sm:min-h-[calc(100dvh-4rem)] " : "")
+    (fillHeight ? "sm:min-h-[calc(var(--overlay-height,100dvh)-4rem)] " : "")
   );
 }
 

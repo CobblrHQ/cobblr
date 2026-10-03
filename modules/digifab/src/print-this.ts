@@ -335,11 +335,12 @@ async function readyToPrint(
 async function announceReady(orgId: string, make: MakeRow, printer: string | null): Promise<void> {
   const to = make.created_by ? [make.created_by] : await platform().notifications.orgMemberIds(orgId).catch(() => [] as string[]);
   const message = `Ready to print: ${make.name}${printer ? ` on ${printer}` : ""}. Start it from the Make.`;
+  const recordLink = await platform().entities.recordAddressForEntity(orgId, MAKE_KIND, make.id);
   await Promise.all(
     to.map((userId) =>
       platform()
         // dispatch-per-row-ok: one message to each person told about this one Make, never one per record
-        .notifications.dispatch({ orgId, userId, eventType: "digifab.make.ready", message, link_url: `/makes/${make.id}`, module: "digifab", entityType: MAKE_KIND, entityId: make.id })
+        .notifications.dispatch({ orgId, userId, eventType: "digifab.make.ready", message, ...(recordLink ? { link_url: recordLink } : { no_link_reason: "the make has no detail page" }), module: "digifab", entityType: MAKE_KIND, entityId: make.id })
         .catch((err: unknown) => console.warn(`[digifab] make ${make.id}: ready notice not sent: ${(err as Error).message}`)),
     ),
   );

@@ -23,7 +23,7 @@
 
 import { fieldDay } from "@cobblr/platform-contract/field-day";
 import { asMeasure } from "@cobblr/platform-contract/measure";
-import { amountOf, parseMoney } from "@cobblr/platform-contract/money";
+import { readMoney, isCurrency, parseMoneyAmount, amountOf, parseMoney } from "@cobblr/platform-contract/money";
 
 /** One field's declared shape, as `fieldsFor` reports it. */
 export interface TypedField {
@@ -46,6 +46,12 @@ export function castFieldValue(type: string, value: unknown, unit?: string | nul
   // is kept as typed, for a person to fix.
   if (type === "money") {
     if (typeof value === "number") return value;
+    if (value && typeof value === "object") return readMoney(value) || value;
+    if (typeof value === "string") {
+      const code = value.trim().match(/(?:^|\s)([A-Z]{3})(?:\s|$)/)?.[1];
+      const amount = parseMoneyAmount(value);
+      if (code && isCurrency(code) && amount !== null) return { amount, currency: code };
+    }
     const c = parseMoney(value);
     return c === null ? value : amountOf(c);
   }

@@ -30,6 +30,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { isConfigurationPath } from "../lib/configuration-nav";
 import { ConfigSidebarBody } from "./ConfigurationLayout";
 import { NavCountBadge } from "./NavCountBadge";
+import { NavSplitRow, NavRowMenu } from "./NavSplitRow";
 import { useNavBadges } from "./useNavBadges";
 import { groupNavRows } from "./nav-groups";
 import {
@@ -37,7 +38,6 @@ import {
   HEADING_PREFIX,
   NAVGROUP_PREFIX,
   INSTANCE_PREFIX,
-  stripNavStem,
   surfaceTops,
 } from "./useNavModules";
 
@@ -73,6 +73,7 @@ export function SidebarNav({
   const { pathname } = useLocation();
   const { tops: allVisibleTops, childrenByParent: children, instanceGroups, doorNames, placement } = useNavModules(activeSlug);
   const tops = surfaceTops(allVisibleTops, appMode);
+  const rowCandidates = tops.flatMap((t) => instanceGroups.get(t.name)?.members ?? (t.name.startsWith(INSTANCE_PREFIX) ? [t] : []));
   const badges = useNavBadges(activeSlug);
   // Past a handful of rows the middle splits into collections and tools
   // (nav-groups.ts); under it the list is flat, exactly as a fresh workspace
@@ -130,28 +131,7 @@ export function SidebarNav({
           if (m.name.startsWith(NAVGROUP_PREFIX)) {
             const g = instanceGroups.get(m.name);
             if (!g) return null;
-            return (
-              <div key={m.name}>
-                {/* The LABEL is the group's drag handle. It used to be the whole
-                    block, which is why grabbing a member moved the group. */}
-                <div
-                  {...handle}
-                  className="px-3 pt-2 pb-0.5 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 select-none"
-                >
-                  {g.label}
-                </div>
-                <SortableContext items={g.members.map((mem) => mem.name)} strategy={verticalListSortingStrategy}>
-                  {g.members.map((mem) => (
-                    <SortableChild key={mem.name} id={mem.name}>
-                      <NavLink to={`/${mem.name.slice(INSTANCE_PREFIX.length)}`} className={childCls}>
-                        <span className="w-1.5 h-1.5 rounded-full bg-cobble-500 shrink-0" />
-                        {stripNavStem(mem.displayName, g.label)}
-                      </NavLink>
-                    </SortableChild>
-                  ))}
-                </SortableContext>
-              </div>
-            );
+            return <NavSplitRow key={m.name} slug={activeSlug} group={g} candidates={rowCandidates} appMode={appMode} handle={handle} />;
           }
           const kids = children.get(m.name) ?? [];
           // A user-defined heading has no page — it's a label over its members.
@@ -180,10 +160,10 @@ export function SidebarNav({
           const to = m.name.startsWith(INSTANCE_PREFIX) ? `/${m.name.slice(INSTANCE_PREFIX.length)}` : `/${m.name}`;
           return (
             <div key={m.name}>
-              <NavLink {...handle} to={to} className={linkCls}>
+              <div className="flex min-w-0 items-center"><NavLink {...handle} role="link" to={to} className={(state) => linkCls(state) + " min-w-0 flex-1"}>
                 <span className="truncate">{m.displayName}</span>
                 <NavCountBadge count={badges.get(m.name)} label={m.displayName} className="ml-auto" />
-              </NavLink>
+              </NavLink>{m.name.startsWith(INSTANCE_PREFIX) && <NavRowMenu slug={activeSlug} label={m.displayName} members={[m]} candidates={rowCandidates} />}</div>
               <SortableContext items={kids.map((k) => k.name)} strategy={verticalListSortingStrategy}>
                 {kids.map((k) => (
                   <SortableChild key={k.name} id={k.name}>

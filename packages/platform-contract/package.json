@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/platform-contract",
-  "version": "0.5.72",
+  "version": "0.5.75",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
@@ -99,6 +99,8 @@
     "./action-refusal": "./src/action-refusal.ts",
     "./action-undo": "./src/action-undo.ts",
     "./record-mentions": "./src/record-mentions.ts",
+    "./record-address": "./src/record-address.ts",
+    "./pairing-presentation": "./src/pairing-presentation.ts",
     "./scan-fallback": "./src/scan-fallback.ts",
     "./scan-session": "./src/scan-session.ts",
     "./scan-source": "./src/scan-source.ts",
@@ -126,7 +128,8 @@
     "./field-meaning": "./src/field-meaning.ts",
     "./seller-upgrade": "./src/seller-upgrade.ts",
     "./field-choices": "./src/field-choices.ts",
-    "./plan-colours": "./src/plan-colours.ts"
+    "./plan-colours": "./src/plan-colours.ts",
+    "./scan-station": "./src/scan-station.ts"
   },
   "types": "src/index.ts",
   "scripts": {

@@ -30,7 +30,7 @@ import { getTenantDb } from "../db/tenant.js";
 import { resolveAppViewRefs, type SeededView } from "./bundle-app-view-refs.js";
 import * as activity from "../platform/activity.js";
 import { enableModuleForOrg, isDefaultModule } from "../modules/enable.js";
-import { getEntry } from "../modules/registry.js";
+import { canonicalModuleName, getEntry } from "../modules/registry.js";
 import { getFlagshipManifest, listFlagshipManifests } from "../lib/flagship-bundles.js";
 import { externalRegistry } from "./registry.js";
 import { upsertOverride, deleteOverride } from "../platform/entity-kind-overrides.js";
@@ -511,6 +511,7 @@ export const BundleManifest = z.object({
       z.object({
         key: z.string().min(1),
         name: z.string().min(1),
+        kind: z.literal("integration").optional(),
         description: z.string().optional(),
         /** Display-only: the question form of the feature, shown in the
          *  install modal ("Want to track your designs too?"). Never read by
@@ -889,7 +890,12 @@ export async function validateBundle(
   });
   const enabledFeatures = resolvedFeatures.enabled;
   const offer = pickFeaturesToOffer(full.features, priorInstall?.enabled ?? null, priorInstall?.declared ?? null);
-  const m = resolveManifestFeatures(full, enabledFeatures);
+  const selected = resolveManifestFeatures(full, enabledFeatures);
+  const m = {
+    ...selected,
+    requires: selected.requires.map(r => ({ ...r, module: canonicalModuleName(r.module) })),
+    provides_instances: selected.provides_instances.map(i => ({ ...i, module: canonicalModuleName(i.module) })),
+  };
   const errors: BundleValidationError[] = [];
 
   // 2. Referential — every referenced kind/action exists + is applicable.
@@ -1062,7 +1068,7 @@ export async function validateBundle(
   }
 
   // 3. Dependency — required modules must be registered, then enabled.
-  const allRequired = [...new Set([...declaredRequires, ...neededModules])];
+  const allRequired = [...new Set([...declaredRequires, ...neededModules].map(canonicalModuleName))];
   const modulesToEnable: string[] = [];
   if (allRequired.length > 0) {
     const enabledRows = await meta
@@ -1081,6 +1087,10 @@ export async function validateBundle(
           message: `Bundle requires module "${mod}" which isn't registered with this platform.`,
           detail: { missing_module: mod },
         });
+        continue;
+      }
+      if (getEntry(mod)?.manifest.retirement) {
+        errors.push({ path: "requires", code: "module_retired", message: `Module "${mod}" is retired. ${getEntry(mod)!.manifest.retirement!.reason}` });
         continue;
       }
       modulesToEnable.push(mod);

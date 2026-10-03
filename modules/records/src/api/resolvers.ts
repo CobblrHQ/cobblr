@@ -1,4 +1,4 @@
-import { columnSet, platform, withPlaceNames, parseSort, textSearchWhere, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
+import { registerRowHistoryWriter, columnSet, platform, withPlaceNames, parseSort, textSearchWhere, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { RecordsDB } from "../db.js";
 
@@ -11,6 +11,7 @@ const SORTABLE = columnSet<RecordsDB["records_records"]>()(["name", "location_id
 export function registerRecordsResolvers(): void {
   if (registered) return;
   registered = true;
+  registerRowHistoryWriter("records:record", "records_records");
 
   platform().entities.registerResolver("records:record", async (orgId, id) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<RecordsDB>;

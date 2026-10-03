@@ -14,7 +14,7 @@ import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, Trash2, ArrowUpRight } from "lucide-react";
 import { Link } from "react-router-dom";
-import { MoneyInput, RelationSelect, useConfirm, useToast } from "@cobblr/platform-web";
+import { MoneyInput, useMoneyCurrency, RelationSelect, useConfirm, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type Order, type OrderItem } from "../lib/api";
 
 /** The choice an order that has already arrived carries: whether its lines
@@ -46,6 +46,8 @@ export function AddOrderLine({ slug, order }: { slug: string; order: Order }) {
   const [partId, setPartId] = useState<string | null>(null);
   const [description, setDescription] = useState("");
   const [qty, setQty] = useState("1");
+  const mainCurrency = useMoneyCurrency();
+  const [currency, setCurrency] = useState(order.currency || mainCurrency);
   const [unitCost, setUnitCost] = useState<number | null>(null);
   const [addToStock, setAddToStock] = useState(order.add_to_stock !== false);
   const arrived = order.status === "arrived";
@@ -57,6 +59,7 @@ export function AddOrderLine({ slug, order }: { slug: string; order: Order }) {
         description: description.trim() || null,
         qty: Number(qty),
         unit_cost: unitCost,
+        metadata: { currency },
         ...(arrived ? { add_to_stock: addToStock } : {}),
       }),
     onSuccess: () => {
@@ -103,7 +106,7 @@ export function AddOrderLine({ slug, order }: { slug: string; order: Order }) {
         </label>
         <label className="block">
           <span className="block text-xs text-muted mb-1">Cost each</span>
-          <MoneyInput value={unitCost} storage="amount" live onCommit={setUnitCost} ariaLabel="Cost each" />
+          <MoneyInput currency={currency} onCurrencyChange={setCurrency} value={unitCost} storage="amount" live onCommit={setUnitCost} ariaLabel="Cost each" />
         </label>
       </div>
       {arrived && <AddToStockChoice checked={addToStock} onChange={setAddToStock} />}
@@ -191,6 +194,8 @@ export function OrderLineControls({ slug, order, item }: { slug: string; order: 
   const [editing, setEditing] = useState(false);
   const [description, setDescription] = useState(item.description ?? "");
   const [qty, setQty] = useState(String(Number(item.qty)));
+  const mainCurrency = useMoneyCurrency();
+  const [currency, setCurrency] = useState(item.currency || order.currency || mainCurrency);
   const [unitCost, setUnitCost] = useState<number | null>(item.unit_cost == null ? null : Number(item.unit_cost));
   const settled = lineCountSettled(order, item);
   const refresh = () => {
@@ -204,6 +209,7 @@ export function OrderLineControls({ slug, order, item }: { slug: string; order: 
         description: description.trim() || null,
         ...(settled ? {} : { qty: Number(qty) }),
         unit_cost: unitCost,
+        currency,
       }),
     onSuccess: () => {
       refresh();
@@ -275,7 +281,7 @@ export function OrderLineControls({ slug, order, item }: { slug: string; order: 
       </label>
       <label>
         <span className="block text-xs text-muted mb-1">Cost each</span>
-        <MoneyInput value={unitCost} storage="amount" live onCommit={setUnitCost} ariaLabel="Cost each" />
+        <MoneyInput currency={currency} onCurrencyChange={setCurrency} value={unitCost} storage="amount" live onCommit={setUnitCost} ariaLabel="Cost each" />
       </label>
       {settled && <p className="col-span-2 sm:col-span-4 text-xs text-faint">Its stock was already added, so its count stays. Change the item's own count if that is wrong.</p>}
       <div className="col-span-2 sm:col-span-4 flex justify-end gap-2">

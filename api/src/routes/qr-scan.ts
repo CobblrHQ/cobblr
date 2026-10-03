@@ -15,6 +15,7 @@ import { getTenantDb } from "../db/tenant.js";
 import * as events from "../platform/events.js";
 import { detailPathForEntity, resolveKind } from "../platform/entities.js";
 import { labelJoinLink } from "../platform/join-invite.js";
+import { labelIsPublic } from "../platform/public-page.js";
 
 export const qrScanRouter = Router({ mergeParams: true });
 
@@ -37,6 +38,9 @@ interface ResolveResult {
    *  signed-out scan of the closet's cable can say "Join <club> to take
    *  one" instead of a sign-in page that person has no account for. */
   join?: { token: string; org_name: string };
+  /** A stranger scanning this label sees the record's public view (a live
+   *  public page opens its labels, #4502). */
+  public_view?: boolean;
 }
 
 /** Resolve a QR token slug → its target (org, entity, mode, detail_path), or a
@@ -130,7 +134,8 @@ qrScanRouter.get("/:token(.*)", async (req, res, next) => {
     });
 
     const join = result.mode === "navigate" ? await labelJoinLink(result.org_id!) : null;
-    res.json(join ? { ...result, join } : result);
+    const publicView = result.mode === "navigate" ? await labelIsPublic(result.org_id!, result.entity_id!) : false;
+    res.json({ ...result, ...(join ? { join } : {}), ...(publicView ? { public_view: true } : {}) });
   } catch (err) {
     next(err);
   }

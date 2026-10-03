@@ -61,7 +61,6 @@
     "modules/core-scan/src/api/putaway.ts POST /putaway/:x/confirm",
     "modules/core-scan/src/api/putaway.ts POST /putaway/:x/setup-bins",
     "modules/core-scan/src/api/putaway.ts POST /putaway/:x/undo",
-    "modules/core-templates/src/api/templates.ts POST /templates/:x/instantiate",
     "modules/digifab/src/api/fleet.ts PUT /fleet/:x/:x/position",
     "modules/digifab/src/api/library.ts PATCH /library/:x",
     "modules/digifab/src/api/print-rules.ts PATCH /print-rules/channels/:x",

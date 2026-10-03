@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../lib/api";
 
 export interface CredentialCheck {
-  state: "idle" | "checking" | "ok" | "bad";
+  state: "idle" | "checking" | "ok" | "warning" | "bad";
   message: string;
   /** What the provider says it can serve. Empty until a check succeeds. */
   models: string[];
@@ -63,8 +63,8 @@ export function useCredentialCheck(scope: CredentialScope, providerId: string) {
           setCheck(
             r.ok
               ? {
-                  state: "ok",
-                  message: r.note ?? r.detail ?? "Works.",
+                  state: r.warning?.trim() ? "warning" : "ok",
+                  message: r.warning?.trim() || r.note || r.detail || "Works.",
                   models: (r.models ?? []).filter(Boolean),
                 }
               : { state: "bad", message: r.error ?? "That did not work.", models: [] },

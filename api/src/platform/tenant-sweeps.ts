@@ -69,6 +69,22 @@ interface Registered {
 const FAILURES_KEPT = 5;
 
 const registry = new Map<string, Registered>();
+
+/** A share space nobody has touched for a week holds copies that do not
+ *  change, so every pass visiting it on its own cadence is pure idle cost
+ *  (share-spaces.md §13). Each pass visits such a space at most once a day,
+ *  remembered here per process; a change in it makes it ordinary again on the
+ *  next round, and a run naming it is never held back. */
+const QUIET_EVERY_MS = 24 * 60 * 60 * 1000;
+const quietVisits = new Map<string, Map<string, number>>();
+export function quietVisitDue(pass: TenantSweepPass, orgId: string, now: number): boolean {
+  const seen = quietVisits.get(pass.name) ?? new Map<string, number>();
+  quietVisits.set(pass.name, seen);
+  const last = seen.get(orgId);
+  if (last !== undefined && now - last < Math.max(QUIET_EVERY_MS, pass.everyMs)) return false;
+  seen.set(orgId, now);
+  return true;
+}
 let started: { stop: () => void } | null = null;
 let rand: () => number = Math.random;
 
@@ -220,8 +236,10 @@ function noteFailure(result: TenantSweepRunResult, orgId: string, message: strin
 /** What a walk needs from the world, so the walk itself is a unit test. */
 export interface WalkDeps {
   holdLock: (name: string) => Promise<{ release: () => Promise<void> } | null>;
-  /** Every workspace (or the ones asked for), oldest first, with what it has enabled. */
-  listWorkspaces: (orgIds?: string[]) => Promise<Array<{ id: string; modules: string[] }>>;
+  /** Every workspace (or the ones asked for), oldest first, with what it has
+   *  enabled, and whether it is a share space nothing has happened in for a
+   *  week (`quiet`). */
+  listWorkspaces: (orgIds?: string[]) => Promise<Array<{ id: string; modules: string[]; quiet?: boolean }>>;
   openDb: (orgId: string) => Promise<unknown>;
   releaseDb: (orgId: string) => Promise<void>;
   concurrency: number;
@@ -235,16 +253,19 @@ async function realDeps(): Promise<WalkDeps> {
     holdLock: tryHoldExclusive,
     listWorkspaces: async (orgIds) => {
       // One meta read for the round: every workspace and what it has enabled.
-      const q = sql<{ id: string; modules: string[] | null }>`
-        select o.id, array_remove(array_agg(m.module_name), null) as modules
+      const q = sql<{ id: string; modules: string[] | null; quiet: boolean }>`
+        select o.id, array_remove(array_agg(m.module_name), null) as modules,
+               (o.kind = 'share'
+                 and not exists (select 1 from activity_log a where a.org_id = o.id and a.occurred_at > now() - interval '7 days')
+                 and not exists (select 1 from share_links l where l.org_id = o.id and l.last_synced_at > now() - interval '7 days')) as quiet
           from orgs o
           left join org_modules m on m.org_id = o.id
          -- A sandbox waiting for its visitor is visited by nothing (sandbox-awaiting.ts).
          where not (o.sandbox and o.trial_expires_at is null)
          ${orgIds ? sql`and o.id = any(${orgIds})` : sql``}
-         group by o.id, o.created_at
+         group by o.id, o.created_at, o.kind
          order by o.created_at asc`;
-      return (await q.execute(meta)).rows.map((r) => ({ id: r.id, modules: r.modules ?? [] }));
+      return (await q.execute(meta)).rows.map((r) => ({ id: r.id, modules: r.modules ?? [], quiet: r.quiet === true }));
     },
     openDb: getTenantDb,
     releaseDb: releaseSweepPool,
@@ -291,7 +312,7 @@ export async function walkWith(
   if (scoped.length === 0) return out;
 
   try {
-    let rows: Array<{ id: string; modules: string[] }>;
+    let rows: Array<{ id: string; modules: string[]; quiet?: boolean }>;
     try {
       rows = await deps.listWorkspaces(opts.orgIds);
     } catch (err) {
@@ -299,8 +320,12 @@ export async function walkWith(
       for (const s of scoped) s.result.failed++;
       return out;
     }
+    const quiet = new Set(rows.filter((r) => r.quiet).map((r) => r.id));
     for (const s of scoped) {
-      const inScope = rows.filter((r) => !s.pass.module || r.modules.includes(s.pass.module)).map((r) => r.id);
+      const inScope = rows
+        .filter((r) => !s.pass.module || r.modules.includes(s.pass.module))
+        .filter((r) => opts.orgIds !== undefined || !quiet.has(r.id) || quietVisitDue(s.pass, r.id, opts.now.getTime()))
+        .map((r) => r.id);
       let chosen: string[] | null = null;
       if (s.pass.candidates) {
         try {
@@ -372,6 +397,7 @@ export const tenantSweeps: PlatformSweeps = {
 
 /** Tests: forget every pass (the registry is process-wide). */
 export function resetTenantSweepsForTests(): void {
+  quietVisits.clear();
   started?.stop();
   registry.clear();
 }

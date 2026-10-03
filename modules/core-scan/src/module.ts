@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.58.0",
+  version: "0.58.4",
   displayName: "Scan",
   description:
     "Scan a barcode or snap a photo, and get the thing named and ready to file in one tap.",
@@ -30,11 +30,17 @@ export default defineModule({
   // for its own queue workers.
   lifecycle: {
     onBoot: async () => {
+      const { registerScanTidyFinders } = await import("./services/tidy-finders.js");
+      registerScanTidyFinders();
       const { registerRetryLookupWorker } = await import("./services/retry-worker.js");
       registerRetryLookupWorker();
       // A document that waited for the document model while every one was busy.
       const { registerDocumentReadWorker } = await import("./services/document-read-worker.js");
       registerDocumentReadWorker();
+      // A photo the hosted identify queued while every engine it has was
+      // busy or out: collected later and landed as if answered at once.
+      const { registerHostedIdentifyJobWorker } = await import("./services/hosted-identify-job.js");
+      registerHostedIdentifyJobWorker();
       // How a thing must be kept vs where it just got put. Subscribes to
       // core-placement.placed; costs nothing until something moves.
       const { registerStorageFitCheck } = await import("./services/storage-fit.js");

@@ -100,6 +100,16 @@ export function registerPlacementActionHandlers(): void {
   // What a thing is built from, with what each part is worth and the total:
   // "what's inside the Gaming PC?", "what is it worth?". Values a person may
   // not see (a part's cost) are withheld and the answer says so.
+  platform().actions.registerHandler("core-placement.contents-worth", async (ctx) => {
+    const entity = requireActionEntity(ctx);
+    if (!ctx.userId) {
+      return { ok: false, error: "You need permission to view costs." };
+    }
+    const worth = await platform().placement.worth({ orgId: ctx.orgId, within: entity, viewer: { userId: ctx.userId } });
+    if (worth.withheld) return { ok: false, error: "You need permission to view costs." };
+    return { ok: true, ...worth };
+  });
+
   platform().actions.registerHandler("core-placement.built-from", async (ctx) => {
     const entity = requireActionEntity(ctx);
     const built = await platform().placement.builtValue({

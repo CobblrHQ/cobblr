@@ -56,13 +56,14 @@ export interface ChoiceFieldProps {
   className?: string;
   live?: boolean;
   placeholder?: string;
+  draftOnly?: boolean;
 }
 
 function asOptions(list: readonly UsedValueBody[] | undefined): ChoiceOption[] {
   return (list ?? []).map((u) => ({ value: u.value, uses: u.uses, lastUsed: u.lastUsed }));
 }
 
-export function ChoiceField({ def, kind, value, onCommit, note, onCommitNote, detailField, autoFocus, onCancel, className, live, placeholder }: ChoiceFieldProps) {
+export function ChoiceField({ def, kind, value, onCommit, note, onCommitNote, detailField, autoFocus, onCancel, className, live, placeholder, draftOnly }: ChoiceFieldProps) {
   const { api, orgSlug } = usePlatformWeb();
   // PRESS-ARGS: learn-choice and its forget step take entity_kind, field and value, all from this field and the value just typed.
   const run = useRunAction();
@@ -95,7 +96,7 @@ export function ChoiceField({ def, kind, value, onCommit, note, onCommitNote, de
 
   const commit = async (v: string | null, final: boolean) => {
     await onCommit(v);
-    if (!final) return;
+    if (!final || draftOnly) return;
     const before = settled.current;
     settled.current = v;
     // A person's new value, on a field that learns: remembered, and undoable.

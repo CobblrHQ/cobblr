@@ -1,3 +1,4 @@
+import { registerDeletedPlacesHeal } from "../heal-deleted-records.js";
 // Entity-kind resolvers for core-locations. Lets every module that
 // references a location_id resolve it back to a human-displayable
 // chip without knowing the locations table shape.
@@ -11,6 +12,7 @@ let registered = false;
 export function registerLocationsResolvers(): void {
   if (registered) return;
   registered = true;
+  registerDeletedPlacesHeal();
 
   platform().entities.registerResolver(
     "core-locations:location",

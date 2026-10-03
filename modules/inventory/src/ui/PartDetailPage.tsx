@@ -1,3 +1,5 @@
+import { fieldCurrency } from "@cobblr/platform-contract/money";
+import { useMoneyCurrency } from "@cobblr/platform-web";
 // Part detail — fields inline-editable, allocations panel below.
 // Stock adjustments are explicit (a button) so accidental qty edits
 // don't silently rewrite history.
@@ -6,7 +8,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, ArrowRightLeft, Copy, Library, Minus, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { consumptionGauge, type ConsumptionGauge as ConsumptionGaugeT } from "@cobblr/platform-contract/consumption-gauge";
-import { Lightbox, PresentationGate, StickyBottomBar, MutationError, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, EntityThumb, FaceSection, faceShows, useHoldsContents, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, editFieldItem, moneyFieldItem, usedValueFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits, usedInUnit } from "@cobblr/platform-web";
+import { RecordPhoto, PresentationGate, StickyBottomBar, MutationError, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FaceSection, faceShows, useHoldsContents, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, editFieldItem, moneyFieldItem, usedValueFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits, usedInUnit } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { QtyStepper } from "./QtyStepper";
 import { isAssorted } from "./assorted";
@@ -178,6 +180,7 @@ const FACE_HELD: Record<string, { field: string; fallback: unknown }> = {
 };
 
 export function PartDetailPage({ id, onClose }: { id: string; onClose: () => void }) {
+  const mainCurrency = useMoneyCurrency();
   const { api, orgSlug, getToken, entityKind, instance, itemNoun, parent, countWords } = useInventory();
   const fp = useFieldPresentation(entityKind);
   const disclosure = useDisclosure();
@@ -222,7 +225,6 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
   const toast = useToast();
   const confirm = useConfirm();
   const [dup, setDup] = useState(false);
-  const [viewingCover, setViewingCover] = useState(false);
   const [moving, setMoving] = useState(false);
   const [counting, setCounting] = useState(false);
   const [addingKind, setAddingKind] = useState(false);
@@ -513,30 +515,22 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
       )}
 
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 sm:p-5 space-y-3">
-        <div className="flex items-start gap-4">
-          <button
-            type="button"
-            disabled={!(p.image_path ?? matched.data?.image_path)}
-            onClick={() => setViewingCover(true)}
-            aria-label={`See the photo of ${p.name}`}
-            className="shrink-0 cursor-zoom-in disabled:cursor-default"
-          >
-            <EntityThumb
-              src={p.image_path ?? matched.data?.image_path ?? null}
-              alt={p.name}
-              size={96}
-              color={(p.metadata as Record<string, unknown> | null)?.color as string | undefined}
-              values={p.metadata as Record<string, unknown> | null}
-              className="ring-1 ring-line dark:ring-slate-700"
-            />
-          </button>
-          {viewingCover && (p.image_path ?? matched.data?.image_path) && (
-            <Lightbox
-              items={[{ key: "cover", caption: p.name, src: (p.image_path ?? matched.data?.image_path)! }]}
-              index={0}
-              onClose={() => setViewingCover(false)}
-            />
-          )}
+        <div className="flex flex-wrap items-start gap-4">
+          <RecordPhoto
+            kind={entityKind}
+            id={p.id}
+            instance={instance}
+            src={p.image_path ?? matched.data?.image_path ?? null}
+            alt={p.name}
+            brand={p.manufacturer}
+            size={96}
+            onChange={(imagePath) => update.mutate({ image_path: imagePath })}
+            onSaved={() => {
+              void qc.invalidateQueries({ queryKey: ["inventory-part", id] });
+              void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
+              void qc.invalidateQueries({ queryKey: ["part-gallery", orgSlug, p.id] });
+            }}
+          />
           <div className="flex-1 min-w-0">
             <div className="min-w-0">
               <EditableTitle
@@ -645,7 +639,18 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
                 }
               : null,
             !hide("min_qty") ? editFieldItem("min_qty", { label: fp.label("min_qty", "Min qty"), value: p.min_qty ?? "", placeholder: "—", numeric: true, onCommit: (v) => update.mutate({ min_qty: v === "" ? null : Number(v) }) }) : null,
-            !hide("cost") ? moneyFieldItem("cost", { label: fp.label("cost", "Cost"), value: p.cost, storage: "amount", placeholder: "—", onCommit: (v) => update.mutate({ cost: v }) }) : null,
+            !hide("min_qty") ? {
+              need: fieldNeed("low-stock-alerts", { control: "checkbox", label: "Don't tell me when this item runs low" }),
+              node: (
+                <label className="flex items-center gap-2 text-sm text-content dark:text-mortar-100">
+                  <input type="checkbox" className="accent-cobble-500" checked={p.metadata.low_stock_alerts_excluded === true}
+                    disabled={update.isPending}
+                    onChange={(e) => update.mutate({ metadata: { low_stock_alerts_excluded: e.target.checked } })} />
+                  Don't tell me when this item runs low
+                </label>
+              ),
+            } : null,
+            !hide("cost") ? moneyFieldItem("cost", { label: fp.label("cost", "Cost"), value: p.cost, storage: "amount", currency: fieldCurrency(p.metadata, "cost", mainCurrency), onCurrencyChange: (currency) => update.mutate({ metadata: { money_currency_cost: currency } }), placeholder: "—", onCommit: (v) => update.mutate({ cost: v, metadata: { money_currency_cost: fieldCurrency(p.metadata, "cost", mainCurrency) } }) }) : null,
             !hide("category")
               ? {
                   need: fieldNeed("category", { control: "choice", label: fp.label("category", "Category"), choices: (cats.data?.items ?? []).map((c) => c.name) }),
@@ -902,7 +907,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           onClick={async () => {
             const ok = await confirm({
               title: `Delete "${p.name}"?`,
-              message: "This can't be undone. Allocations to other modules' entities are released.",
+              message: "You can restore this record from Recently deleted for 30 days.",
               confirmLabel: "Delete part",
               destructive: true,
             });

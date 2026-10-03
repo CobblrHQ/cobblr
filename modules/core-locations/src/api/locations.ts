@@ -102,6 +102,7 @@ locationsRouter.get(
         "depth",
         "position",
         "kind",
+        "image_path",
         "metadata",
         "created_at",
         "updated_at",
@@ -113,7 +114,9 @@ locationsRouter.get(
       .orderBy("position")
       .orderBy("name")
       .execute();
-    res.json({ items: rows });
+    const occupied = await platform().placement.holders({ orgId: tenantContext(req).org.id, includePlaces: true });
+    const counts = new Map(occupied.filter((r) => r.kind === "core-locations:location").map((r) => [r.id, r.holds]));
+    res.json({ items: rows.map((r) => ({ ...r, contents_count: counts.get(r.id) ?? 0 })) });
   }),
 );
 

@@ -31,9 +31,9 @@ export function placeChoices(locations: Location[]): PlaceChoice[] {
 type ListMove = { fromInstance: string };
 
 /** `onMoved` clears the list's ticks and may return what Undo calls to tick them again. */
-export function BulkMoveToPlace({ rows, onMoved, listMove }: { rows: Row[]; onMoved: () => (() => void) | void; listMove?: ListMove }) {
+export function BulkMoveToPlace({ rows, onMoved, listMove, label = "Move to…" }: { rows: Row[]; onMoved: () => (() => void) | void; listMove?: ListMove; label?: string }) {
   return (
-    <FooterActionPopover label="Move to…" icon={<ArrowRightLeft size={12} />} title="Move to a place" data-testid="bulk-move">
+    <FooterActionPopover label={label} icon={<ArrowRightLeft size={12} />} title="Move to a place" data-testid="bulk-move">
       {(close) => <MoveBody rows={rows} close={close} onMoved={onMoved} listMove={listMove} />}
     </FooterActionPopover>
   );
@@ -55,6 +55,7 @@ function MoveBody({ rows, close, onMoved, listMove }: { rows: Row[]; close: () =
     void qc.invalidateQueries({ queryKey: ["inventory-part"] });
     void qc.invalidateQueries({ queryKey: ["placement-path"] });
     void qc.invalidateQueries({ queryKey: ["placement-holders"] });
+    void qc.invalidateQueries({ queryKey: ["inventory-family"] });
   };
 
   async function move(to: PlaceChoice) {

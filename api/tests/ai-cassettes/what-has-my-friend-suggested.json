@@ -1,0 +1,7 @@
+{
+  "match": "what has my friend suggested",
+  "rounds": [
+    { "tool_calls": [{ "name": "list_suggestions", "args": {} }] },
+    { "content": "One suggestion is waiting: a new colour on the CR-10." }
+  ]
+}

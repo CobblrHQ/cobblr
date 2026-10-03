@@ -20,7 +20,8 @@ import {
   type ModuleInstance,
   type OrgModuleListItem,
 } from "../lib/api";
-import { applyNavOrder, readNavHidden, readNavOrder, readNavOverflow, readNavPinned, readNavPlacement, type NavPlacement } from "../lib/nav-order";
+import { applyNavOrder, readNavHidden, readNavOrder, readNavOverflow, readNavPinned, readNavPlacement, readNavRows, reconcileNavRows, type NavSplitRow, type NavPlacement } from "../lib/nav-order";
+import { FEATURED_BUNDLES } from "../lib/featured-bundles";
 import { inManagedAppSurface } from "../lib/managed-apps";
 
 /** Synthetic top-level name prefix for a user-defined heading group. */
@@ -300,7 +301,7 @@ export function collapseNavGroups(
   for (const t of rawTops) {
     const g = groupOf.get(t.name);
     const members = g ? membersByKey.get(g.key) ?? [] : [];
-    if (g && members.length >= 2) {
+    if (g && members.length >= 2 && members.length <= 3) {
       if (!insertedKey.has(g.key)) {
         insertedKey.add(g.key);
         const groupName = `${NAVGROUP_PREFIX}${g.key}`;
@@ -383,6 +384,7 @@ export function useNavModules(activeSlug: string): NavModules {
   const [navOverflow, setNavOverflow] = useState<string[]>(() => readNavOverflow(activeSlug));
   const [navPinned, setNavPinned] = useState<string[]>(() => readNavPinned(activeSlug));
   const [placement, setPlacement] = useState<Record<string, NavPlacement>>(() => readNavPlacement(activeSlug));
+  const [rowPrefs, setRowPrefs] = useState(() => readNavRows(activeSlug));
   useEffect(() => {
     function reload() {
       setNavOrder(readNavOrder(activeSlug));
@@ -390,6 +392,7 @@ export function useNavModules(activeSlug: string): NavModules {
       setNavOverflow(readNavOverflow(activeSlug));
       setNavPinned(readNavPinned(activeSlug));
       setPlacement(readNavPlacement(activeSlug));
+      setRowPrefs(readNavRows(activeSlug));
     }
     reload();
     window.addEventListener("cobblr:nav-order-changed", reload);
@@ -439,7 +442,7 @@ export function useNavModules(activeSlug: string): NavModules {
   // band:"foundational" by manifest — operator plumbing like a hosted cloud
   // overlay isn't core-prefixed but is still not a user-facing nav noun.
   const userFacing = enabled.filter(
-    (m) => !m.name.startsWith("core-") && m.band !== "foundational",
+    (m) => !m.name.startsWith("core-") && m.band !== "foundational" && !m.integration,
   );
   // Hide a multi-instance module's own entry when its auto-created default
   // instance is empty and the workspace has named instances (see helper).
@@ -617,6 +620,31 @@ export function useNavModules(activeSlug: string): NavModules {
   const folded = foldTypeFamilies(rawTops, groupOf, parentOf);
   rawTops.length = 0;
   rawTops.push(...folded);
+  const offers = new Map<string, NavSplitRow>();
+  for (const b of bundles.data?.items ?? []) {
+    const embedded = FEATURED_BUNDLES.find((f) => f.manifest.id === b.external_id)?.manifest;
+    const manifest = b.manifest;
+    const declarations = [...(manifest?.provides_instances ?? []), ...(manifest?.features ?? []).flatMap((f) => f.provides_instances ?? []), ...(embedded?.provides_instances ?? []), ...(embedded?.features ?? []).flatMap((f) => f.provides_instances ?? [])];
+    for (const inst of declarations) {
+      if (!inst.nav_group) continue;
+      const { key, label } = inst.nav_group;
+      const row = offers.get(key) ?? { key, label, members: [] };
+      const name = `${INSTANCE_PREFIX}${inst.instance_name}`;
+      if (!row.members.includes(name)) row.members.push(name);
+      offers.set(key, row);
+    }
+  }
+  const available = rawTops.map((t) => t.name);
+  const moved = [...navOrder, ...Object.keys(placement), ...rawTops.filter((t) => (t as { navOrder?: number | null }).navOrder != null).map((t) => t.name), ...(headings.data?.items ?? []).flatMap((h) => h.members.map((m) => m.target_kind === "instance" ? `${INSTANCE_PREFIX}${m.target_id}` : m.target_id))];
+  const offerKey = JSON.stringify([...offers.values()]);
+  const availableKey = JSON.stringify(available);
+  const movedKey = JSON.stringify(moved);
+  useEffect(() => {
+    if (!instances.data || !overrides.data || !headings.data || !bundles.data) return;
+    reconcileNavRows(activeSlug, JSON.parse(offerKey), JSON.parse(availableKey), JSON.parse(movedKey));
+  }, [activeSlug, offerKey, availableKey, movedKey, instances.data, overrides.data, headings.data, bundles.data]);
+  for (const name of rowPrefs.separated) groupOf.delete(name);
+  for (const row of rowPrefs.rows) for (const name of row.members) groupOf.set(name, { key: row.key, label: row.label });
   const { tops: groupedTops, groups: instanceGroups } = collapseNavGroups(rawTops, groupOf);
   rawTops.length = 0;
   rawTops.push(...groupedTops);

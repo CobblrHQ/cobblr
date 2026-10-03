@@ -19,7 +19,7 @@ import { quantityWithUnit, type EntityListQuery, type ResolvedEntity } from "@co
 import { meta } from "../db/meta.js";
 import { hiddenFieldsFor, listAll, listKindsForOrg } from "./entities.js";
 import { resolveFieldDefsForKind } from "./field-defs.js";
-import { formatMoneyPlain, moneyStorageOf, storedCents, type MoneyStorage } from "@cobblr/platform-contract/money";
+import { readMoney, fieldCurrency, formatMoneyPlain, moneyStorageOf, storedCents, type MoneyStorage } from "@cobblr/platform-contract/money";
 
 export interface ExportColumn {
   /** The header a person reads. */
@@ -51,7 +51,10 @@ const moneyCell = (name: string, storage: MoneyStorage) => (row: ResolvedEntity)
   const f = row.fields as Record<string, unknown>;
   const raw = name in f ? f[name] : ((f.metadata as Record<string, unknown> | undefined) ?? {})[name];
   const c = storedCents(raw, storage);
-  return c === null ? readable(raw) : formatMoneyPlain(c);
+  const own = typeof raw === "object" ? readMoney(raw) : null;
+  if (own) return `${own.amount} ${own.currency}`;
+  const explicit = fieldCurrency(f.metadata, name, "");
+  return c === null ? readable(raw) : explicit ? `${readMoney(raw, storage)?.amount ?? formatMoneyPlain(c)} ${explicit}` : formatMoneyPlain(c);
 };
 
 /** The columns a viewer's export of a kind carries, in order: the name, the

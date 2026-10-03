@@ -1,3 +1,4 @@
+import { NewItemMenu } from "@cobblr/platform-web";
 // /machines — list view for the machines module, with a detail
 // modal launched per row. URL pattern:
 //
@@ -49,9 +50,9 @@ import { useDeclaredChoices } from "../components/ViewBuilder";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { ContentsPanel, useHoldsContents } from "../components/ContentsPanel";
-import { BulkGiveTo, CustomFieldsPanel, EditField, EditSelect, EntityActionsBar, FaceSection, FacesOn, faceShows, FieldPack, RecordFaces, editFieldItem, fieldNeed, useAskCobbAboutSelection, useTickedRows, Modal, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton } from "@cobblr/platform-web";
+import { BulkGiveTo, BulkShareWith, CustomFieldsPanel, EditField, EditSelect, EntityActionsBar, FaceSection, FacesOn, faceShows, FieldPack, RecordFaces, editFieldItem, fieldNeed, useAskCobbAboutSelection, useTickedRows, Modal, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton } from "@cobblr/platform-web";
 import {
-  BulkActionBar,
+  BulkActionBar, BulkSetField,
   BulkTagAction,
   EntityThumb,
   EntityTile,
@@ -519,9 +520,11 @@ export function MachinesPage({
         actions={
           <>
             <ViewModeToggle mode={viewMode} onChange={setViewMode} />
-            <button onClick={() => setNewOpen(true)} className={headerButton("primary")}>
-              <Plus size={14} /> New {noun}
-            </button>
+            <NewItemMenu kind="machines:machine" instance={instance}>
+              <button onClick={() => setNewOpen(true)} className={headerButton("primary")}>
+                <Plus size={14} /> New {noun}
+              </button>
+            </NewItemMenu>
           </>
         }
       />
@@ -707,8 +710,10 @@ export function MachinesPage({
         onClear={() => setSelected(new Set())}
         actions={
           <>
+            <BulkSetField records={Array.from(selected).map((id) => ({ kind: instance ? `${instance}:item` : ENTITY_KIND, id }))} onDone={() => setSelected(new Set())} />
             <BulkTagAction count={selected.size} placeholder="e.g. in-progress, voron, archive" onTag={(name) => bulkTag.mutateAsync(name)} />
             <BulkGiveTo kind={instance ? `${instance}:item` : ENTITY_KIND} ids={Array.from(selected)} onDone={() => setSelected(new Set())} />
+            <BulkShareWith kind={instance ? `${instance}:item` : ENTITY_KIND} ids={Array.from(selected)} onDone={() => setSelected(new Set())} />
             <button
               type="button"
               onClick={async () => {
@@ -1226,7 +1231,7 @@ export function MachineDetailModal({
     if (!m) return;
     const ok = await confirm({
       title: `Delete "${m.name}"?`,
-      message: "This can't be undone. Pairings referencing this machine will be orphaned.",
+      message: "You can restore this record from Recently deleted for 30 days.",
       confirmLabel: "Delete machine",
       destructive: true,
     });
@@ -1342,7 +1347,7 @@ export function MachineDetailModal({
               !fp.hidden("quantity") && faceShows(stockOn && !instance, m.quantity, 1) ? editFieldItem("quantity", { label: fp.label("quantity", "Quantity"), value: String(m.quantity), numeric: true, onCommit: (v) => update.mutate({ quantity: Number(v) || 0 }) }) : null,
               {
                 need: fieldNeed("location", { control: "picker", label: "Location" }),
-                node: <LocationTreePicker label="Location" kind="area" value={m.location_id} onChange={(id) => update.mutate({ location_id: id })} size="sm" thing={{ kind: "machines:machine", id: m.id }} onPlaced={() => { void qc.invalidateQueries({ queryKey: ["machine", activeSlug, machineId] }); void qc.invalidateQueries({ queryKey: ["machines", activeSlug] }); }} />,
+                node: <LocationTreePicker label="Location" value={m.location_id} onChange={(id) => update.mutate({ location_id: id })} size="sm" thing={{ kind: "machines:machine", id: m.id }} onPlaced={() => { void qc.invalidateQueries({ queryKey: ["machine", activeSlug, machineId] }); void qc.invalidateQueries({ queryKey: ["machines", activeSlug] }); }} />,
               },
             ]}
           />
@@ -1811,7 +1816,7 @@ function NewMachineModal({
           <span className={lblCls}>{words.familyExample ? `Family (${words.familyExample})` : "Family"}</span>
           <input value={family} onChange={(e) => setFamily(e.target.value)} className="input" />
         </label>
-        <LocationTreePicker label="Location" kind="area" value={locationId} onChange={setLocationId} />
+        <LocationTreePicker label="Location" value={locationId} onChange={setLocationId} />
 
         {instance && !digifabEnabled && (
           <EnableJobManagerCard words={words} noun={noun} pending={enableDigifab.isPending} onEnable={() => enableDigifab.mutate()} />

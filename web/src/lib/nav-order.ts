@@ -12,6 +12,55 @@
 
 const KEY = (slug: string) => `cobblr:nav-order:${slug}`;
 
+export type NavSplitRow = { key: string; label: string; members: string[] };
+type NavRows = { rows: NavSplitRow[]; separated: string[]; reconciled: string[] };
+const ROWKEY = (slug: string) => `cobblr:nav-rows:${slug}`;
+export function readNavRows(slug: string): NavRows {
+  try {
+    const value = JSON.parse(localStorage.getItem(ROWKEY(slug)) ?? "null");
+    if (value && Array.isArray(value.rows) && Array.isArray(value.separated) && Array.isArray(value.reconciled)) {
+      return { rows: value.rows.filter((r: NavSplitRow) => typeof r.key === "string" && typeof r.label === "string" && Array.isArray(r.members) && r.members.length >= 2 && r.members.length <= 3 && r.members.every((m) => typeof m === "string")), separated: value.separated.filter((m: unknown) => typeof m === "string"), reconciled: value.reconciled.filter((m: unknown) => typeof m === "string") };
+    }
+  } catch { /* A damaged preference must not hide a collection. */ }
+  return { rows: [], separated: [], reconciled: [] };
+}
+function writeNavRows(slug: string, value: NavRows): void {
+  if (!slug) return;
+  try {
+    localStorage.setItem(ROWKEY(slug), JSON.stringify(value));
+    window.dispatchEvent(new CustomEvent("cobblr:nav-order-changed", { detail: { slug } }));
+  } catch { /* Disabled storage keeps the default view. */ }
+}
+export function joinNavRow(slug: string, row: NavSplitRow): void {
+  const members = [...new Set(row.members)];
+  if (members.length < 2 || members.length > 3) throw new Error("A navigation row holds two or three collections.");
+  const prefs = readNavRows(slug);
+  const displaced = prefs.rows.filter((r) => r.members.some((m) => members.includes(m)));
+  writeNavRows(slug, {
+    ...prefs,
+    rows: [...prefs.rows.filter((r) => !displaced.includes(r)), { ...row, members }],
+    separated: [...new Set([...prefs.separated, ...displaced.flatMap((r) => r.members), ...members])],
+  });
+}
+export function splitNavRow(slug: string, members: string[]): void {
+  const prefs = readNavRows(slug);
+  const removed = prefs.rows.filter((r) => r.members.some((m) => members.includes(m)));
+  writeNavRows(slug, { ...prefs, rows: prefs.rows.filter((r) => !removed.includes(r)), separated: [...new Set([...prefs.separated, ...members, ...removed.flatMap((r) => r.members)])] });
+}
+export function reconcileNavRows(slug: string, offers: NavSplitRow[], available: string[], moved: string[]): void {
+  const prefs = readNavRows(slug);
+  let changed = false;
+  for (const row of offers) {
+    if (prefs.reconciled.includes(row.key) || row.members.length < 2 || row.members.length > 3 || !row.members.every((m) => available.includes(m))) continue;
+    prefs.reconciled.push(row.key);
+    changed = true;
+    if (row.members.some((m) => moved.includes(m) || prefs.separated.includes(m) || prefs.rows.some((r) => r.members.includes(m)))) {
+      prefs.separated = [...new Set([...prefs.separated, ...row.members])];
+    } else prefs.rows.push(row);
+  }
+  if (changed) writeNavRows(slug, prefs);
+}
+
 export function readNavOrder(slug: string): string[] {
   if (!slug) return [];
   try {

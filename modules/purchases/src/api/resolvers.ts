@@ -2,6 +2,7 @@
 // the platform's EntityActionsBar look up an order or order_item by
 // (kind, id) without touching the purchases tables directly.
 
+import { registerRowHistoryWriter } from "@cobblr/platform-contract";
 import { columnSet, platform, parseSort, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { PurchasesDB } from "../db.js";
@@ -41,6 +42,8 @@ const ITEM_SORTABLE = new Set(Object.keys(ITEM_SORT_COL));
 export function registerPurchasesResolvers(): void {
   if (registered) return;
   registered = true;
+  registerRowHistoryWriter("purchases:order", "purchases_orders");
+  registerRowHistoryWriter("purchases:vendor", "purchases_vendors");
 
   platform().entities.registerResolver(
     "purchases:order",

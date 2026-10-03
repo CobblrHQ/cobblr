@@ -2,6 +2,53 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-10-03
+
+### Features
+- Sharing with a friend whose Cobblr is somewhere else no longer means editing the invite link by hand: the invite asks where their Cobblr is and makes the link for it. Someone with no account there yet can make one from the invite and comes straight back to it, ready to accept.
+- Selected records can now have a built-in or custom field set or cleared together, with skipped rows named and one Undo for the batch.
+- Connection tests gained amber warnings that explain the limitations of a working connection.
+- You can now hand things over to someone you share with. Give to… on a thing's page (or on ticked rows) offers it; it arrives in their scan inbox with its photos and details, where they Take, Pass or choose Maybe later. Once taken, your record is marked given away to them, with its history kept, and when they file it, it says it came from you. They can send it back within 14 days, and you can withdraw an offer until they answer.
+- Added Hide empty to Locations and Tags, with a count of what is hidden and your choice remembered on this device.
+- See what each field was before an edit and restore a saved version from the record's history.
+- Parts and places now share the photo picker for pasted images, image links, web search and AI Pick.
+- Lend something to the person you share with and it appears in their shared workspace until you get it back. Any record can now be shared on its own: Share with… on its page or in a list's selection bar, and its page says who it is shared with, with Stop beside it.
+- Added a daily low-stock summary with counts and minimums, optional alerts for existing workspaces, and a way to leave individual items out.
+- Prices kept their original currency, and totals converted them into your workspace currency at purchase-date rates.
+- Adding Sets offered BrickLink as an optional service, with existing BrickLink data kept out of the sidebar.
+- Added photo editing to every place page, with camera, upload, paste, web search and a gallery, and the main photo appears in the tree and on shapes with photo fill on the floor plan.
+- See what everything in a place cost, including sub-places and containers, and download an insurance list as CSV or PDF.
+- Floor plan outlines now use workspace tag colours and names, with existing manual colours kept as a Custom option.
+- The label already on your things can now be a public door: turn on "Its things' labels open it" for a public page, and a stranger who scans the label sees that thing as the page shows it, while you and your members still get the full record. Booth mode makes a page, its links and its labels private again on their own at a time you choose.
+- A public page can have a memorable address, like /p/your-workspace/my-printers, that people can remember and type. It is off until you set one, shows what the page shows, and ends the moment you clear it.
+- Choose how a public page looks: which fields a thing shows and in what order, a few words and links shown with every thing, or your own HTML for the whole look, which is only ever handed what the page shows. A page also counts how often its labels are opened, and nothing about who.
+- A thing on a public page now says so: a Public chip beside who it is shared with, or "Public until Sun 6 pm" in booth mode. Public pages wear your workspace's colours and logo, with an accent of their own if you like, and search engines are told not to list them unless you say they may. A public card with no links no longer shows a stray 0.
+- Make a public page of your things: choose which with the same rules as a share, then give it as many links as you like, each with its own detail and its own end. Anyone with a link sees only what that link allows, with no account; revoke a link or give it a new address at any time.
+- Deleted records can now be restored with their original details and contents from Recently deleted for 30 days.
+- Edits suggested by someone you share with now wait where you look: on the thing itself, on a new Suggested edits page, and in Needs you. Accept or reject each one, a whole record's or a whole person's at once, and undo either. When you changed the same field too, you choose whose value stays. You hear about their edits once per burst, and they hear your answer.
+- Something the person you share with adds to the shared workspace now reaches you: take it into your own collection or leave it. When you both changed the same thing, their copy tells them what yours says now. An edit they make right after you decide on the last one is no longer lost.
+- What the person you share with changes now comes back to you. By default you review each edit first (Accept or Reject under Their edits); for someone you trust, let their edits change your records at once. Either way your history names them, each applied edit can be undone, and when you both changed the same thing it waits for you instead of one overwriting the other.
+- A shared thing now has one conversation across both workspaces: what the person you share with says about their copy is in your thing's Discussion, and your replies are on their copy, each marked as coming through the share.
+- See a share the way the other person sees it: View as in Settings, Sharing opens their shared workspace in a new tab, read-only, for half an hour. They can see that you looked.
+- A share now holds the things you choose. What's shared picks whole collections, things whose field says something (loaned to Vince), or things one by one, and shows how many match as you build it. Their copies stay in step as you change them, and prices, private notes, real places and restricted fields stay out until you turn each on. Any field can now be marked Private.
+- You can now share part of your workspace with someone, even when their account is on another Cobblr. Settings, Sharing, Share with someone makes an invite link; they accept it on their own Cobblr and get a workspace of their own for it, named after you. Each share shows when it last synced and what is waiting, keeps trying while the other side is offline, and either of you can end it.
+- A thing you sold, gave away or threw out can now say so. No longer mine… on its page asks how it left, when, for how much and to whom; it then leaves your lists and totals (an asset no longer counts in "paid X in all"), stays findable under Gone and in search, and its page reads "Sold 2026-09-12 for $180 to a neighbour · kept 3 years 2 months". Bring back undoes it, and you can tell the assistant ("I sold the old Ender 3 for $120").
+- Sets and Bricks share one navigation row, and you can join or split collection rows from their menu or by asking Cobb.
+- Turn on Tidy to get up to five overnight ideas for organising your workspace, with review, Undo and remembered dismissals.
+- Added warranty and purchase dates to the calendar and iCal feed, with separate filters and optional 30-day warranty reminders.
+
+### Improvements
+- Ask Cobb about suggested edits. Cobb can now tell you what the people you share with have suggested ("what has Vince suggested?"), grouped by thing and by person, and act on it: "accept Vince's suggestions on the CR-10" or "take what Vince added" comes back as a card to confirm. The same works for assistants connected over MCP.
+- Modules gained alternate names that keep existing workspace data, and retired modules now explain why they are no longer available to enable.
+
+### Fixes
+- A big collection's page loads. On a workspace with a few hundred assets, the assets list and each asset page could fail with "URI Too Long" because the page asked about every record's picture in one very long address. It now asks in the body of the request, so a collection of thousands loads, and every record shows whether a picture is suggested, being looked for, or was not found.
+- A photo the free photo identify could not read straight away, because every AI it has was busy or used up for the night, now says "Identifying, back shortly" instead of saying it could not be identified. Its name arrives on the card by itself once an AI answers. A photographed receipt waits the same way, and its lines are filed when the read comes back.
+- Made Inventory tabs distinguishable from the app menu for screen readers.
+- Added New from template to item lists, Add a thing, and scanner filing, with editable defaults before saving.
+- Local thinking models answer in seconds. A model run with Ollama that can "think" (such as Qwen 3) used to think through every request, taking up to a minute where a few seconds would do. Cobblr now asks it to answer directly. An empty reply from a local model is treated as a failure, so the next AI you have set up answers instead.
+- Containers on a floor plan can now be opened with the keyboard, with their full names available even when the drawing is too small to show them.
+
 ## 2026-10-02
 
 ### Features

@@ -12,7 +12,7 @@
 import type { AdapterFetch, AdapterResponse, BuiltInConnectionDef, BuiltInServiceContext, BuiltInServiceDef } from "@cobblr/platform-contract/services";
 import { ADAPTER_TRANSIT_PROPERTY } from "@cobblr/platform-contract/services";
 import { platform } from "@cobblr/platform-contract";
-import { registerPushSetup } from "./matching.js";
+
 import {
   LIBRARY_CAPABILITY_DECLS,
   LIBRARY_COPY,
@@ -32,10 +32,31 @@ export const PAPERLESS_LINK_FIELD = "Cobblr";
 const EXCERPT = 2000;
 const THUMB_MAX = 400 * 1024;
 
+export const PAPERLESS_PUSH = {
+  setup: {
+    library: "Paperless",
+    arrives: "new documents",
+    before: ["In Paperless, open Workflows and add one.", "Trigger: Document Added.", "Action: Webhook, with this address:"],
+    after: [
+      "Turn on Use parameters for webhook body.",
+      "Add a parameter named doc_url with value {{doc_url}}.",
+      "Turn on Send webhook payload as JSON.",
+    ],
+  },
+  refs: [
+    ...["document_id", "doc_id", "id"].map(key => ({ path: [key], pattern: "^\\d{1,12}$" })),
+    ...["doc_url", "document_url", "url"].map(key => ({ path: [key], pattern: "/documents/(\\d{1,12})(?:/|$)" })),
+  ],
+};
 const connection: BuiltInConnectionDef = {
   title: "Paperless-ngx",
   summary: "Your receipts, manuals and warranties, matched to the things they belong to. Cobblr links to them where they are; nothing is copied unless you ask.",
+  disconnect: {
+    stops: "Matching, previews, and new links or copies from Paperless stop until you reconnect.",
+    keeps: "Existing links stay on records, and copies already brought into Cobblr stay in Files.",
+  },
   group: PAPERLESS_GROUP,
+  metadata: { library: { push: PAPERLESS_PUSH } },
   config_schema: {
     type: "object",
     properties: {
@@ -180,7 +201,8 @@ const find: BuiltInServiceDef = {
       const f = input.facts;
       // A code printed on the document is the strongest match there is: ask
       // for it as a phrase first, then for the name's words.
-      for (const code of [f?.serial, f?.barcode, f?.model]) {
+      const codes = [...new Set([f?.serial, f?.barcode, f?.model, ...(f?.identifiers ?? [])].filter((code): code is string => !!code))];
+      for (const code of codes) {
         if (code && code.trim().length >= 4 && docs.size < limit) add((await search(ctx, `query=${encodeURIComponent(phrase(code))}`, limit)).results);
       }
       const name = wordsOf(f?.name ?? "");
@@ -274,11 +296,4 @@ export function registerPaperless(): void {
   if (registered) return;
   registered = true;
   for (const def of PAPERLESS_BUILT_INS) platform().services.registerBuiltIn(def);
-  // Paperless pushes a new document to Cobblr through a workflow.
-  registerPushSetup(PAPERLESS_GROUP, {
-    library: "Paperless",
-    arrives: "new documents",
-    before: ["In Paperless, open Workflows and add one.", "Trigger: Document Added.", "Action: Webhook, with this address:"],
-    after: ['Send the body as JSON: {"doc_url": "{doc_url}"}'],
-  });
 }

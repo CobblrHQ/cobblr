@@ -26,7 +26,25 @@ import { platform } from "@cobblr/platform-contract";
 import { classifyAiFailure } from "@cobblr/platform-contract/ai-refusal";
 import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
 import { receiptReadWords } from "@cobblr/platform-contract/scan-session";
-import { hostedIdentify, receiptAsModelReply } from "./hosted-identify.js";
+import { HOSTED_RECEIPT_QUEUED_WORDS, hostedIdentifyJob, hostedIdentifyWhy, receiptAsModelReply } from "./hosted-identify.js";
+
+/** The hosted identify queued the picture and the workspace's own AI could
+ *  not read it either: the read finishes when the job does
+ *  (hosted-identify-job.ts), never the old way. */
+export class HostedReadQueued extends Error {
+  constructor(readonly jobId: string) {
+    super(`the hosted identify queued this receipt as ${jobId}`);
+    this.name = "HostedReadQueued";
+  }
+}
+
+/** What the receipt read is told about the hosted service's queue: a job
+ *  that has finished (collect its answer instead of asking again), and
+ *  whether the caller will wait for one (`queueIfBusy`). */
+export interface HostedReadOpts {
+  hostedJobId?: string;
+  queueIfBusy?: boolean;
+}
 import {
   buildReceipt,
   type ParsedReceipt,
@@ -154,17 +172,38 @@ async function visionExtract(
   sourceId: string,
   userId?: string | null,
   visitorIp?: string | null,
+  hostedRead: HostedReadOpts = {},
 ): Promise<string> {
+  // A queued read that finished: its answer, collected, not asked again.
+  if (hostedRead.hostedJobId) {
+    const job = await hostedIdentifyJob(hostedRead.hostedJobId);
+    if (job.state === "done" && job.answer.kind === "receipt" && job.answer.receipt) return receiptAsModelReply(job.answer.receipt);
+  }
   // Hosted first (see hosted-identify.ts). The endpoint returns core's own
   // receipt schema, so a stringify is the whole shim and the parser downstream
   // never learns which engine answered. We send OUR receipt prompt - its
   // recorded fixtures pin the exact text, and the endpoint honors the override.
+  let queued: string | null = null;
   {
-    const hosted = await hostedIdentify({ orgId, imageB64, receiptPrompt: RECEIPT_VISION_PROMPT, visitorIp, userId });
+    const why = await hostedIdentifyWhy({ orgId, imageB64, receiptPrompt: RECEIPT_VISION_PROMPT, visitorIp, userId });
+    const hosted = why.answer;
     if (hosted?.kind === "receipt" && hosted.receipt) return receiptAsModelReply(hosted.receipt);
+    // Every engine the service has is busy or out: it reads this later.
+    if (why.queued) queued = why.queued.jobId;
     // Any other outcome - an item mistaken for a receipt upstream, a hosted
     // outage - falls through to the tenant path this call always had.
   }
+  try {
+    return await tenantVisionExtract(orgId, imageB64, mediaType, sourceId, userId);
+  } catch (e) {
+    // The workspace's own AI could not read it either, and the hosted
+    // service has it queued: wait for that, for a caller that will.
+    if (queued && hostedRead.queueIfBusy) throw new HostedReadQueued(queued);
+    throw e;
+  }
+}
+
+async function tenantVisionExtract(orgId: string, imageB64: string, mediaType: string, sourceId: string, userId?: string | null): Promise<string> {
   const r = await platform().ai.invoke({
     orgId,
     userId: userId ?? undefined,
@@ -283,7 +322,7 @@ export async function parseReceipt(
    *  when the text shows one (a price, a total, a bill of sale), so pasting a
    *  manual never spends an AI read, and a picture with no text to judge is
    *  not sent at all. The inbox's own reads keep today's behaviour. */
-  opts: { requireTransaction?: boolean } = {},
+  opts: { requireTransaction?: boolean } & HostedReadOpts = {},
 ): Promise<ReceiptResult> {
   const mayAsk = (text: string | null | undefined): boolean => !opts.requireTransaction || (!!text && looksLikeTransaction(text));
   const file = await platform().files.read(orgId, fileId, "original");
@@ -369,12 +408,13 @@ export async function parseReceipt(
     }
     if (!mayAsk(read?.text)) return failed({ ok: false, reason: "It does not read as a sale.", code: "no_line_items" }, source);
     try {
-      const receipt = shapeReceipt(await visionExtract(orgId, img.toString("base64"), imgMime, fileId, userId, visitorIp));
+      const receipt = shapeReceipt(await visionExtract(orgId, img.toString("base64"), imgMime, fileId, userId, visitorIp, { hostedJobId: opts.hostedJobId, queueIfBusy: opts.queueIfBusy }));
       if (!receipt) return failed({ ok: false, reason: "Couldn't find any line items on that receipt.", code: "no_line_items" }, source);
       // The engine's text, when it read any, is the evidence for the date
       // even though the lines came from the model.
       return done(receipt, "ai-vision", read?.text ?? null, source);
     } catch (e) {
+      if (e instanceof HostedReadQueued) return { ok: false, code: "ai_unavailable", reason: HOSTED_RECEIPT_QUEUED_WORDS, hosted_job: e.jobId, source };
       return failed(aiFailed(e, userId), source);
     }
   };

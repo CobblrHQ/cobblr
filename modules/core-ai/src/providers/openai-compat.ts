@@ -109,6 +109,8 @@ export function retryDelayMs(status: number, retryAfter: string | null, attempt:
 }
 
 export interface CompatPresetOpts {
+  freeBackground?: boolean;
+  freeBackgroundModel?: string;
   id: string;
   label: string;
   describeCredentials: AiProviderDef["describeCredentials"];
@@ -159,6 +161,8 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
     describeCredentials: opts.describeCredentials,
     setup: opts.setup,
     rank: opts.rank,
+    freeBackground: opts.freeBackground,
+    freeBackgroundModel: opts.freeBackgroundModel,
     capabilities: opts.modelsFor
       ? Object.fromEntries(
           Object.entries(SUPPORTED).map(([cap, def]) => {

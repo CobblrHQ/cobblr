@@ -1,3 +1,12 @@
+import { registerDeletedRelations } from "./platform/deleted-relations.js";
+import { money, registerExchangeRates } from "./platform/money.js";
+import { roundMoneyAmount } from "@cobblr/platform-contract/money";
+function mergeExcluded(totals: import("@cobblr/platform-contract/money").MoneyTotal[]): Record<string, number> {
+  const excluded: Record<string, number> = {};
+  for (const t of totals) for (const [c, n] of Object.entries(t.excluded)) excluded[c] = (excluded[c] || 0) + n;
+  return excluded;
+}
+import { sumPlaceWorth } from "./platform/placement-worth.js";
 // Process entry point. Boot sequence:
 //   1. Verify cobblr_meta is reachable
 //   2. Run pending platform migrations
@@ -30,6 +39,7 @@ import { describeBlock, describeCapabilityBlock } from "./platform/approvals.js"
 import { mergeJsonb } from "./platform/jsonb-merge.js";
 import { deleteFieldDef, effectiveFieldDefsForKind } from "./platform/field-defs.js";
 import { choiceLearns } from "@cobblr/platform-contract/field-choices";
+import { pairingResultMetadata } from "@cobblr/platform-contract/pairing-presentation";
 import { sql, type Kysely, type Generated } from "kysely";
 import { env } from "./env.js";
 import { meta, metaPool, pingMeta } from "./db/meta.js";
@@ -42,11 +52,17 @@ import { signAppToken, signSession } from "./auth/jwt.js";
 import { loadAllModules } from "./modules/loader.js";
 import { loadAllSandboxedModules } from "./sandbox/loader.js";
 import { syncTenantMigrations, reconcileDefaultModules } from "./modules/enable.js";
+import { registerWarrantyReminders } from "./platform/warranty-reminders.js";
+import { registerStationSweep } from "./platform/scan-stations.js";
+import { comparePlacementRemove, comparePlacementWrite } from "./platform/placement-compare.js";
 import { startDeliverySweeper } from "./platform/delivery-sweeper.js";
 import { registerShareLinkOps } from "./platform/share-links.js";
 import { addShareSyncPass, startShareSync } from "./platform/share-sync.js";
 import * as shareMirror from "./platform/share-mirror.js";
 import * as shareEdits from "./platform/share-edits.js";
+import { registerShareNoticeOps, sendDueShareNotices } from "./platform/share-notices.js";
+import { registerShareAdditionOps } from "./platform/share-additions.js";
+import { registerShareComments } from "./platform/share-comments.js";
 import { observeEvents } from "./platform/events.js";
 import * as shareOffers from "./platform/share-offers.js";
 import type { OfferIntake } from "@cobblr/platform-contract/share-offer";
@@ -55,6 +71,7 @@ import type { OfferIntake } from "@cobblr/platform-contract/share-offer";
 let offerIntakeImpl: OfferIntake | null = null;
 import { startBridgeOutageWatch } from "./platform/edge-outages.js";
 import { startPhotoRetentionSweeper } from "./platform/photo-retention.js";
+import { tidy, registerTidySweep } from "./platform/tidy-suggestions.js";
 import { tenantSweeps, startTenantSweeps } from "./platform/tenant-sweeps.js";
 import { startPoolWatch, poolCounts } from "./db/pool-stats.js";
 import { poolHolders } from "./db/client-error-guard.js";
@@ -68,6 +85,8 @@ import * as live from "./platform/live.js";
 import * as devices from "./platform/devices.js";
 import * as entities from "./platform/entities.js";
 import * as counters from "./platform/counters.js";
+import * as deletedRecords from "./platform/deleted-records.js";
+import { registerHistoryWriter } from "./platform/history-store.js";
 import { announceWrites } from "./platform/entity-saved.js";
 import * as files from "./platform/files.js";
 import * as hostedSeams from "./platform/hosted-seams.js";
@@ -115,6 +134,7 @@ import { backfillPlacements } from "./platform/migrate-location-to-placement.js"
 import { registerDanglingPlacesHeal } from "./platform/heal-dangling-places.js";
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
 import { reconcileContributedFields } from "./platform/reconcile-contributed-fields.js";
+import { reconcileIntegrationNav } from "./platform/integration-nav.js";
 import { reconcileBundleUpdates, startBundleUpdateSweeper } from "./platform/bundle-updates.js";
 import { reconcileBundleFieldRoles } from "./platform/bundle-field-roles.js";
 import { repairReplayTruncatedNames } from "./platform/repair-replay-truncated-names.js";
@@ -178,9 +198,10 @@ const placeParents = new Map<string, (orgId: string, id: string) => Promise<{ ki
 /** How a counted kind splits and rejoins (placement.registerQuantity). */
 const placeQuantities = new Map<string, import("@cobblr/platform-contract").PlacementQuantity>();
 /** What a record of a kind is worth (placement.registerValue). */
-const placeValues = new Map<string, (orgId: string, ids: string[] | "all") => Promise<Map<string, number>>>();
+const placeValues = new Map<string, (orgId: string, ids: string[] | "all") => Promise<Map<string, number | null | import("@cobblr/platform-contract").DatedMoney>>>();
 /** The capability each valued kind needs a viewer to hold (a part's cost). */
 const placeValueScopes = new Map<string, string>();
+const placeInsuranceDetails = new Map<string, (orgId: string, ids: string[]) => Promise<Map<string, { serial?: string | null; date?: string | null }>>>();
 
 /** The kinds whose values this viewer may not see. The system sees all. */
 async function withheldKinds(orgId: string, viewer: { userId: string; role?: string } | undefined): Promise<Set<string>> {
@@ -203,18 +224,20 @@ const BUILT_DEPTH_MAX = 6;
 
 /** The own value of each of these records, by `kind:id`, read from each
  *  kind's registered value. A kind that keeps none is absent. */
-async function valuesOf(orgId: string, refs: ReadonlyArray<{ kind: string; id: string }>): Promise<Map<string, number>> {
+async function valuesOf(orgId: string, refs: ReadonlyArray<{ kind: string; id: string }>, totals: import("@cobblr/platform-contract/money").MoneyTotal[] = []): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   const byKind = new Map<string, string[]>();
+  const main = await money.currency(orgId);
   for (const r of refs) byKind.set(r.kind, [...(byKind.get(r.kind) ?? []), r.id]);
   for (const [kind, ids] of byKind) {
     const fn = placeValues.get(kind);
     if (!fn) continue;
-    const got = await fn(orgId, ids).catch((err: unknown) => {
-      console.warn(`[placement] value of ${kind} not read:`, (err as Error).message);
-      return new Map<string, number>();
-    });
-    for (const [id, v] of got) if (Number.isFinite(v)) out.set(`${kind}:${id}`, v);
+    const got = await fn(orgId, ids);
+    const entries = [...got].flatMap(([id, v]) => v === null ? [] : [{ id, ...(typeof v === "number" ? { value: { amount: v, currency: main }, day: "" } : v) }]);
+    const total = await money.total(orgId, entries, main);
+    totals.push(total);
+    const converted = new Map(total.conversions.map((v) => [v.original, v.amount]));
+    for (const v of entries) if (converted.has(v.value)) out.set(`${kind}:${v.id}`, converted.get(v.value)!);
   }
   return out;
 }
@@ -342,7 +365,9 @@ async function boot() {
   // module-load side effects (event subscriptions, entity resolver
   // registrations, action handler registrations) can call into it.
   setPlatform({
-    activity: { log: activity.log },
+    deletedRecords,
+    money,
+    activity: { log: activity.log, registerHistoryWriter },
     events: { emit: events.emit, on: events.on },
     tenants: {
       getDb: (orgId) => getTenantDb(orgId),
@@ -411,13 +436,13 @@ async function boot() {
             choices: d.choices,
             learns: choiceLearns(d),
           }));
-        // The kind's own columns that declare a role (a vehicle's Paid,
+        // The kind's own columns that declare a role (a vehicle's VIN, Paid,
         // Purchased at, Bought from) come FIRST: the record's own field is
         // the answer every screen reads, so a fact lands there before any
         // custom field claiming the same role (#4523).
         const rec = await entities.kindRecordForOrg(orgId, kind);
         const native = (rec?.fields ?? [])
-          .filter((f) => f.fieldRole && f.fieldRole !== "identifier")
+          .filter((f) => f.fieldRole)
           .map((f) => ({ name: f.name, field_role: f.fieldRole!, type: f.type, choices: null, native: true, money: f.money ?? null }));
         return [...native, ...custom];
       },
@@ -462,6 +487,7 @@ async function boot() {
       listKindsForOrg: entities.listKindsForOrg,
       getKind: entities.getKind,
       detailPathForEntity: entities.detailPathForEntity,
+      recordAddressForEntity: entities.recordAddressForEntity,
       titleForEntity: entities.titleForEntity,
       resolvedKindForEntity: entities.resolvedKindForEntity,
       baseKindOf: entities.baseKindOf,
@@ -520,6 +546,7 @@ async function boot() {
     },
     exclusive: { run: runExclusive },
     sweeps: tenantSweeps,
+    tidy,
     sharedCache: {
       get: sharedCache.get,
       put: sharedCache.put,
@@ -838,7 +865,7 @@ async function boot() {
     // B1 from 2026-05-25-audit.md: pairings + catalogs platform
     // surfaces so modules stop SELECTing each other's tables.
     pairings: {
-      create: async ({ orgId, sourceKind, sourceId, targetKind, targetId, relationshipKind, createdBy, notes }) => {
+      create: async ({ orgId, sourceKind, sourceId, targetKind, targetId, relationshipKind, createdBy, notes, presentation }) => {
         const row = await meta
           .insertInto("entity_pairings")
           .values({
@@ -850,10 +877,28 @@ async function boot() {
             relationship_kind: relationshipKind,
             created_by: createdBy ?? null,
             ...(notes ? { notes: notes.slice(0, 500) } : {}),
+            ...(presentation ? { metadata: pairingResultMetadata(presentation) } : {}),
           })
           .returning("id")
           .executeTakeFirstOrThrow();
         return { id: row.id };
+      },
+      present: async ({ orgId, sourceKind, sourceId, targetKind, targetId, relationshipKind, presentation }) => {
+        const safe = pairingResultMetadata(presentation);
+        const result = JSON.stringify(safe);
+        const rows = await meta
+          .updateTable("entity_pairings")
+          .set({ metadata: sql`coalesce(metadata, '{}'::jsonb) || ${result}::jsonb` as unknown as Record<string, unknown> })
+          .where("org_id", "=", orgId)
+          .where("source_kind", "=", sourceKind)
+          .where("source_id", "=", sourceId)
+          .where("target_kind", "=", targetKind)
+          .where("target_id", "=", targetId)
+          .where("relationship_kind", "=", relationshipKind)
+          .where(sql<boolean>`metadata -> 'result' is distinct from ${JSON.stringify(safe.result)}::jsonb`)
+          .returning("id")
+          .execute();
+        return { updated: rows.length };
       },
       remove: async ({ orgId, sourceKind, sourceId, targetKind, targetId, relationshipKind }) => {
         // Org-scoped and rel-scoped, exactly like the DELETE route the UI's
@@ -1047,7 +1092,8 @@ async function boot() {
     },
     services: createServices(),
     placement: {
-      place: async ({ orgId, containee: asked, container: askedContainer, slot, placedBy, position, via, oneToASlot, qty }) => {
+      place: async ({ orgId, containee: asked, container: askedContainer, slot, placedBy, position, via, oneToASlot, qty, preserveIdentity, expected }) => {
+        if (expected && (!preserveIdentity || qty !== undefined || oneToASlot)) throw new Error("placement: a guarded move keeps the whole record distinct");
         if (position && !(Number.isFinite(position.x_mm) && Number.isFinite(position.y_mm))) {
           throw new Error("placement: a position is two numbers, x_mm and y_mm");
         }
@@ -1178,7 +1224,10 @@ async function boot() {
           }
         }
         const metadata = sql`${JSON.stringify(md)}::jsonb`;
-        await tdb
+        if (expected) await comparePlacementWrite(tdb, containee, {
+          ...expected, container: expected.container ? await canonicalRef(orgId, expected.container) : null,
+        }, { container, slot: slot ?? null, metadata: md, userId: placedBy ?? null });
+        else await tdb
           .insertInto("core_placement_placements")
           .values({
             containee_kind: containee.kind,
@@ -1286,7 +1335,7 @@ async function boot() {
         // The same thing already in there as another record becomes one with
         // it: a second stick installed, a part taken back to its spares.
         let placed = containee;
-        if (counted) {
+        if (counted && !preserveIdentity) {
           try {
             placed = { kind: containee.kind, id: await counted.settle({ orgId, id: containee.id, container, userId: placedBy ?? null }) };
           } catch (err) {
@@ -1321,7 +1370,7 @@ async function boot() {
         await seams.remove({ orgId, containee });
         return null;
       },
-      remove: async ({ orgId, containee: asked }) => {
+      remove: async ({ orgId, containee: asked, expected }) => {
         const containee = await canonicalRef(orgId, asked);
         const tdb = (await getTenantDb(orgId)) as unknown as Kysely<PlacementDB>;
         // If the containee was in a LOCATION container, clear the legacy
@@ -1333,7 +1382,10 @@ async function boot() {
           .where("containee_kind", "=", containee.kind)
           .where("containee_id", "=", containee.id)
           .executeTakeFirst();
-        await tdb
+        if (expected) await comparePlacementRemove(tdb, containee, {
+          ...expected, container: expected.container ? await canonicalRef(orgId, expected.container) : null,
+        });
+        else await tdb
           .deleteFrom("core_placement_placements")
           .where("containee_kind", "=", containee.kind)
           .where("containee_id", "=", containee.id)
@@ -1362,13 +1414,14 @@ async function boot() {
         return row ? { kind: row.container_kind, id: row.container_id } : null;
       },
       pathsOf: async ({ orgId, containees }) => placePaths(orgId, containees),
-      holders: async ({ orgId }) => {
+      holders: async ({ orgId, includePlaces }) => {
         const tdb = (await getTenantDb(orgId)) as unknown as Kysely<PlacementDB>;
         const rows = await tdb
           .selectFrom("core_placement_placements")
           .select(["container_kind", "container_id", sql<string>`count(*)`.as("n")])
           .groupBy(["container_kind", "container_id"])
           .execute();
+        if (includePlaces) return rows.map((r) => ({ kind: r.container_kind, id: r.container_id, holds: Number(r.n) }));
         // A kind whose records are places by nature (containment: container)
         // is its own module's to offer; only things that hold things are here.
         const placeKind = new Map<string, boolean>();
@@ -1389,7 +1442,9 @@ async function boot() {
       registerValue: (kind, valueOf, opts) => {
         placeValues.set(kind, valueOf);
         if (opts?.readScope) placeValueScopes.set(kind, opts.readScope);
+        if (opts?.insuranceDetails) placeInsuranceDetails.set(kind, opts.insuranceDetails);
       },
+      registerInsuranceDetails: (kind, reader) => { placeInsuranceDetails.set(kind, reader); },
       contentsWord: ({ orgId, kind }) => contentsWordOf(orgId, kind),
       setContentsWord: ({ orgId, kind, word }) => setContentsWord(orgId, kind, word),
       builtValue: async ({ orgId, container: asked, viewer }) => {
@@ -1398,6 +1453,7 @@ async function boot() {
         const top = await canonicalRef(orgId, asked);
         const hidden = await withheldKinds(orgId, viewer);
         let withheld = false;
+        const totals: import("@cobblr/platform-contract/money").MoneyTotal[] = [];
         const tdb = (await getTenantDb(orgId)) as unknown as Kysely<PlacementDB>;
         const seen = new Set<string>([`${top.kind}:${top.id}`]);
         async function partsOf(c: { kind: string; id: string }, depth: number): Promise<import("@cobblr/platform-contract").BuiltPart[]> {
@@ -1411,7 +1467,7 @@ async function boot() {
           const refs = rows.map((r) => ({ kind: r.containee_kind, id: r.containee_id })).filter((r) => !seen.has(`${r.kind}:${r.id}`));
           for (const r of refs) seen.add(`${r.kind}:${r.id}`);
           if (!refs.length) return [];
-          const [vals, found] = await Promise.all([valuesOf(orgId, refs.filter((r) => !hidden.has(r.kind))), entities.lookupMany(orgId, refs, { system: true }).catch(() => [])]);
+          const [vals, found] = await Promise.all([valuesOf(orgId, refs.filter((r) => !hidden.has(r.kind)), totals), entities.lookupMany(orgId, refs, { system: true }).catch(() => [])]);
           if (refs.some((r) => hidden.has(r.kind) && placeValues.has(r.kind))) withheld = true;
           const names = new Map(found.map((e) => [`${e.kind}:${e.id}`, e.title]));
           const out: import("@cobblr/platform-contract").BuiltPart[] = [];
@@ -1428,30 +1484,66 @@ async function boot() {
         }
         const parts = await partsOf(top, 0);
         if (hidden.has(top.kind) && placeValues.has(top.kind)) withheld = true;
-        const own = hidden.has(top.kind) ? undefined : (await valuesOf(orgId, [top])).get(`${top.kind}:${top.id}`);
+        const own = hidden.has(top.kind) ? undefined : (await valuesOf(orgId, [top], totals)).get(`${top.kind}:${top.id}`);
         const other = own === undefined ? null : own;
-        const built = Math.round(parts.reduce((sum, p) => sum + p.value_total, 0) * 100) / 100;
-        return { other, parts, built, total: Math.round(((other ?? 0) + built) * 100) / 100, withheld, word };
+        const currency = await money.currency(orgId);
+        const built = roundMoneyAmount(parts.reduce((sum, p) => sum + p.value_total, 0), currency);
+        return { other, parts, built, total: roundMoneyAmount((other ?? 0) + built, currency), withheld, word, currency, excluded: mergeExcluded(totals), conversions: totals.flatMap((t) => t.conversions) };
       },
-      worth: async ({ orgId, within, viewer }) => {
+      worth: async ({ orgId, within, viewer, insurance }) => {
+        if (insurance && !viewer) throw new Error("An insurance list needs a viewer.");
+        if ((within || insurance) && viewer) {
+          const role = viewer.role ?? (await meta.selectFrom("org_memberships").select("role").where("org_id", "=", orgId).where("user_id", "=", viewer.userId).executeTakeFirst())?.role ?? "guest";
+          if (!await platformSeams().auth.userHasCapability({ orgId, userId: viewer.userId, role, actionId: "inventory:view-costs" })) {
+            return { total: 0, records: 0, unpriced: 0, items: [], withheld: true };
+          }
+        }
         const hidden = await withheldKinds(orgId, viewer);
-        // Every record that keeps a value, each once, by its own value. A
-        // computer's own value is what is not itemized, so adding its parts
-        // as themselves counts nothing twice.
-        const all: Array<{ kind: string; id: string; value: number }> = [];
+        const main = await money.currency(orgId);
+        const all = new Map<string, { kind: string; id: string; value: number | null }>();
+        const dated = new Map<string, import("@cobblr/platform-contract").DatedMoney>();
         for (const [kind, fn] of placeValues) {
           if (hidden.has(kind)) continue;
-          const got = await fn(orgId, "all").catch(() => new Map<string, number>());
-          for (const [id, value] of got) if (Number.isFinite(value)) all.push({ kind, id, value });
+          const got = await fn(orgId, "all");
+          for (const [id, value] of got) {
+            const key = `${kind}:${id}`;
+            all.set(key, { kind, id, value: typeof value === "number" ? value : null });
+            if (value !== null) dated.set(key, typeof value === "number" ? { value: { amount: value, currency: main }, day: "" } : value);
+          }
         }
-        let counted = all;
-        if (within) {
-          const w = await canonicalRef(orgId, within);
-          const paths = await placePaths(orgId, all);
-          counted = all.filter((r) => (paths.get(`${r.kind}:${r.id}`) ?? []).some((s) => s.kind === w.kind && s.id === w.id));
+        const db = (await getTenantDb(orgId)) as unknown as Kysely<PlacementDB>;
+        const placed = await db.selectFrom("core_placement_placements").select(["containee_kind", "containee_id"]).execute();
+        const otherKinds = new Set(placed.map((r) => r.containee_kind).filter((kind) => !placeValues.has(kind)));
+        for (const kind of otherKinds) {
+          const registered = await entities.getKind(kind);
+          if (!registered || registered.traits?.containment === "container" || !await entities.listable(orgId, kind)) continue;
+          const active = await entities.listAll(orgId, kind, {}, viewer);
+          if (!active.complete) throw new Error("Too many records to total safely. Narrow the inventory before exporting.");
+          const ids = new Set(placed.filter((r) => r.containee_kind === kind).map((r) => r.containee_id));
+          for (const record of active.items) if (ids.has(record.id)) all.set(`${kind}:${record.id}`, { kind, id: record.id, value: null });
         }
-        const total = Math.round(counted.reduce((sum, r) => sum + r.value, 0) * 100) / 100;
-        return { total, records: counted.length, withheld: [...hidden].some((k) => placeValues.has(k)) };
+        const w = within ? await canonicalRef(orgId, within) : null;
+        const rows = [...all.values()];
+        const paths = w ? await placePaths(orgId, rows) : new Map();
+        const selected = sumPlaceWorth(rows, paths, w);
+        const entries = selected.items.flatMap((r) => {
+          const value = dated.get(`${r.kind}:${r.id}`);
+          return value ? [value] : [];
+        });
+        const sum = await money.total(orgId, entries, main);
+        const converted = new Map(sum.conversions.map((v) => [v.original, v.amount]));
+        const worth = { ...selected, total: sum.amount, unpriced: selected.items.filter((r) => !dated.has(`${r.kind}:${r.id}`)).length,
+          currency: main, excluded: sum.excluded, conversions: sum.conversions,
+          items: selected.items.map((r) => ({ ...r, value: converted.get(dated.get(`${r.kind}:${r.id}`)?.value!) ?? null })) };
+        if (insurance) {
+          for (const kind of new Set(worth.items.map((r) => r.kind))) {
+            const detailsOf = placeInsuranceDetails.get(kind);
+            if (!detailsOf) continue;
+            const details = await detailsOf(orgId, worth.items.filter((r) => r.kind === kind).map((r) => r.id));
+            worth.items = worth.items.map((r) => r.kind === kind ? { ...r, ...details.get(r.id) } : r);
+          }
+        }
+        return { ...worth, withheld: [...hidden].some((k) => placeValues.has(k)) };
       },
       contents: async ({ orgId, container: asked }) => {
         const container = await canonicalRef(orgId, asked);
@@ -1759,6 +1851,7 @@ async function boot() {
   // A field a module contributes after a workspace enabled it reaches that
   // workspace too (reconcile-contributed-fields.ts).
   const contributed = await T("reconcileContributedFields", reconcileContributedFields());
+  await T("reconcileIntegrationNav", reconcileIntegrationNav());
   if (contributed.added > 0) console.log(`[cobblr-api] contributed fields reconciled: ${contributed.added} added (${contributed.modules.join(", ")})`);
   const seeded = await T("backfillDefaultBindings", backfillDefaultBindings());
   console.log(`[cobblr-api] default bindings backfilled: ${seeded} added`);
@@ -1783,6 +1876,12 @@ async function boot() {
   // which is the failure this exists to prevent. Costs nothing on a box where
   // nobody has set a window (one indexed "any pending?" read per tick).
   startDeliverySweeper();
+  await registerTidySweep();
+  registerDeletedRelations();
+  deletedRecords.registerDeletedRecordsSweep();
+  registerWarrantyReminders();
+  registerStationSweep();
+  registerExchangeRates();
   // Shares: what each side has to tell the other, retried until it arrives.
   registerShareLinkOps();
   shareOffers.registerShareOfferOps();
@@ -1800,6 +1899,10 @@ async function boot() {
     void shareEdits.noteCopiesChanged(orgId).catch(() => undefined);
   });
   addShareSyncPass(shareEdits.sendDueCopyEdits);
+  registerShareNoticeOps();
+  registerShareAdditionOps();
+  registerShareComments();
+  addShareSyncPass(sendDueShareNotices);
   startShareSync();
   startBridgeOutageWatch();
   startPhotoRetentionSweeper();

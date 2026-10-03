@@ -236,9 +236,9 @@ async function chatPrefsOf(req: Parameters<typeof tenantDb>[0]): Promise<ChatToo
  *  write off → [] → no tools sent, pure conversation. Exported for tests. */
 export function toolDefsFor(
   prefs: ChatToolPrefs,
-  opts: { services?: boolean } = {},
+  opts: { services?: boolean; "scan-stations"?: boolean } = {},
 ): Array<{ name: string; description: string; parameters: unknown }> {
-  return WORKSPACE_TOOLS.filter((t) => (t.sentWhen === "services" ? !!opts.services : true))
+  return WORKSPACE_TOOLS.filter((t) => !t.sentWhen || !!opts[t.sentWhen])
     .filter((t) => (t.consentBy ? true : t.mode === "read" ? prefs.read_tools : prefs.write_mode !== "off"))
     .map(
     (t) => ({
@@ -796,7 +796,10 @@ async function answerTurn(
   const hasServices = await callApi(c, "GET", "/services/capabilities")
     .then((r) => r.status < 400 && Array.isArray(r.body.items) && r.body.items.length > 0)
     .catch(() => false);
-  const toolDefs = toolDefsFor(prefs, { services: hasServices });
+  const hasStations = await callApi(c, "GET", "/scan-stations")
+    .then((r) => r.status < 400 && Array.isArray(r.body.items) && r.body.items.length > 0)
+    .catch(() => false);
+  const toolDefs = toolDefsFor(prefs, { services: hasServices, "scan-stations": hasStations });
   // Service jobs are started on Cobb's door, not the person's: the header
   // makes the api stamp them as Cobb's, so they follow Cobb's consent.
   const cobbApi = chatWorkspaceApi({ ...c, client: "cobb" });
@@ -2211,8 +2214,22 @@ chatRouter.post(
   }),
 );
 
-// GET /chat/offers?ids=a,b       → my offers, with what became of each: what
-//                                  a reloaded panel redraws its cards from.
+// POST /chat/offers/lookup {ids} → my offers, with what became of each: what
+//                                  a reloaded panel redraws its cards from. The
+//                                  ids ride in the body (#4653).
+// AI-REACH: exempt internal: this module IS the assistant; a panel redrawing its own cards is not a thing it should reach into
+chatRouter.post(
+  "/offers/lookup",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = z.object({ ids: z.array(z.string().max(100)).max(1_000) }).safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    res.json({ items: await readOffers(tenantDb(req), sessionUserId(req) ?? "", parsed.data.ids) });
+  }),
+);
+
+// GET /chat/offers?ids=a,b: the pre-#4653 address, kept for a page loaded
+// before the update.
 chatRouter.get(
   "/offers",
   asyncHandler(async (req, res) => {

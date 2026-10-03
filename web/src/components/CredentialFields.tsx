@@ -6,6 +6,7 @@ import { groupModels, displayModel } from "../lib/modelGroups";
 export interface CredentialFieldDef {
   label: string;
   secret?: boolean;
+  format?: "uri";
   choices?: { value: string; label: string }[];
 }
 
@@ -107,6 +108,7 @@ export function CredentialFields({
               fieldKey={key}
               label={d.label}
               secret={!!d.secret}
+              format={d.format}
               value={creds[key] ?? ""}
               note={noteFor?.(key, d)}
               placeholder={placeholderFor?.(key, d)}
@@ -144,12 +146,14 @@ export function CredentialFields({
             "text-xs " +
             (check.state === "ok"
               ? "text-moss-600 dark:text-moss-400"
+              : check.state === "warning"
+                ? "text-amber-700 dark:text-amber-400"
               : check.state === "bad"
                 ? "text-ember-600 dark:text-ember-400"
                 : "text-muted")
           }
         >
-          {check.state === "ok" ? "✓ " : check.state === "bad" ? "✗ " : ""}
+          {check.state === "ok" ? "✓ " : check.state === "warning" ? "⚠ " : check.state === "bad" ? "✗ " : ""}
           {check.message}
         </p>
       )}

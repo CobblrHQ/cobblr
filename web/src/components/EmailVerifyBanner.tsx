@@ -7,6 +7,7 @@ import { useState } from "react";
 import { MailWarning, X } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../lib/api";
+import { getShareViewToken } from "../lib/share-view";
 
 export function EmailVerifyBanner({ variant = "bar" }: { variant?: "bar" | "sidebar" } = {}) {
   const { user } = useAuth();
@@ -25,7 +26,8 @@ export function EmailVerifyBanner({ variant = "bar" }: { variant?: "bar" | "side
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
 
-  if (!user || user.email_verified !== false || dismissed) return null;
+  // A View as through a share borrows someone else's eyes, not their account.
+  if (!user || user.email_verified !== false || dismissed || getShareViewToken()) return null;
 
   async function resend() {
     setBusy(true);

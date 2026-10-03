@@ -46,6 +46,7 @@ const EXEMPT: Record<string, string> = {
   "/reset/:token": "the password-reset email",
   "/verify/:token": "the email-verification email",
   "/pair": "the QR code the desktop shows for phone sign-in",
+  "/view-as": "the link another Cobblr makes for View as through a share; Settings, Sharing opens it in a new tab with the grant in its fragment",
   "/scan/share": "the phone's share sheet: another app shares a product to the installed Cobblr (the manifests' share_target)",
   "/start/:app": "the managed app's own signup link on its landing page",
   "/try/ended": "a preview of the sandbox's ending, opened by hand on test-door boxes",

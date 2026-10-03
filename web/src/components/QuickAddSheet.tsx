@@ -5,7 +5,7 @@
 // and says where the first one went.
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Modal } from "@cobblr/platform-web";
+import { Modal, NewFromTemplateButton } from "@cobblr/platform-web";
 import { FreeformAdd } from "./FreeformAdd";
 import { useAddByWords } from "../lib/useAddByWords";
 import { OPEN_ADD_SHEET_EVENT } from "./CommandPalette";
@@ -29,6 +29,7 @@ export function QuickAddSheet({ slug }: { slug: string }) {
         Type what you&rsquo;ve got. Cobblr finds or builds the right home and files it.
       </p>
       <FreeformAdd slug={slug} placeholder="e.g. a box of screws, a cordless drill" add={add} autoFocus onAdded={(t) => setAdded((a) => [...a, t])} />
+      <NewFromTemplateButton onOpen={() => setOpen(false)} />
       {added.length > 0 && (
         <p className="mt-3 text-xs text-muted dark:text-slate-400" data-testid="quick-add-landed">
           {added.length === 1 ? <>&ldquo;{added[0]}&rdquo; is</> : <>{added.length} things are</>} in the{" "}

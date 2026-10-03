@@ -182,6 +182,8 @@ export function activityVerb(a: string): string {
     record_lost: "lost",
     record_scrapped: "disposed of",
     record_brought_back: "got back",
+    // A thing handed over through a share, filed: the friend gave it (#4683).
+    record_handed_over: "gave you",
     sheet_import_undone: "undid the import of",
     sheet_import_partly_undone: "partly undid the import of",
     // Tags. An attach or detach is logged on the record that was tagged, so
@@ -206,6 +208,7 @@ export function activityVerb(a: string): string {
     // (documentWords).
     library_item_linked: "linked",
     library_item_unlinked: "unlinked",
+    library_item_copied: "copied into Cobblr",
   };
   if (map[a]) return map[a];
   // A module that named its action the way it names events
@@ -225,7 +228,7 @@ export function activityVerb(a: string): string {
  *  it in the diff), or null for any other row. */
 export function documentWords(e: { action: string; diff?: unknown }): string | null {
   const d = (e.diff ?? {}) as { document?: unknown; item?: unknown };
-  const named = e.action === "document_linked" || e.action === "document_unlinked" ? d.document : e.action === "library_item_linked" || e.action === "library_item_unlinked" ? d.item : null;
+  const named = e.action === "document_linked" || e.action === "document_unlinked" ? d.document : e.action === "library_item_linked" || e.action === "library_item_unlinked" || e.action === "library_item_copied" ? d.item : null;
   return typeof named === "string" && named.trim() ? named.trim() : null;
 }
 

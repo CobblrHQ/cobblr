@@ -1,3 +1,4 @@
+import { commonBulkFields } from "../platform/bulk-set-field.js";
 // Platform-level routes for the registries + wires.
 //
 // All scoped to an org (auth + tenant context). Modules + web shell
@@ -1383,6 +1384,14 @@ platformOrgRouter.delete(
     }
   },
 );
+
+platformOrgRouter.get("/:slug/bulk-field-options", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const kinds = typeof req.query.kinds === "string" ? req.query.kinds.split(",").filter(Boolean) : [];
+    res.json({ items: await commonBulkFields(req.tenant!.org.id, kinds) });
+  } catch (err) { next(err); }
+});
 
 // ──────────────────────── field defs (Pillar D-lite) ───────────────
 //

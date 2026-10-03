@@ -3,7 +3,6 @@
 // it when a task is given to them, and nobody is told about their own doing.
 
 import { platform } from "@cobblr/platform-contract";
-import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 
 export function assigneeOf(metadata: unknown): string | null {
   const v = (metadata as Record<string, unknown> | null)?.assignee;
@@ -21,6 +20,7 @@ export async function tellAssignee(
   const userId = await platform().accounts.userForPerson(orgId, personId).catch(() => null);
   if (!userId || userId === byUserId) return false;
   const by = byUserId ? (await platform().accounts.displayNames(orgId, [byUserId]))[byUserId] : undefined;
+  const link = await platform().entities.recordAddressForEntity(orgId, "projects:task", task.id).catch(() => undefined);
   await platform().notifications.dispatch({
     orgId,
     userId,
@@ -30,7 +30,9 @@ export async function tellAssignee(
     module: "projects",
     entityType: "task",
     entityId: task.id,
-    link_url: resolveDetailPath({ kind: "projects:task", id: task.id, instance: null, detailUrl: null, baseDetailRoute: "/projects/tasks/{id}" })!,
+    ...(link
+      ? { link_url: link }
+      : { no_link_reason: "the task has no detail page" }),
   });
   platform().events.emit("projects.task.assigned", { orgId, taskId: task.id, personId, userId });
   return true;

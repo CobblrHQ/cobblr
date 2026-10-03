@@ -8,7 +8,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "purchases",
-  version: "0.12.0",
+  version: "0.12.1",
   displayName: "Purchases",
   description:
     "Orders you placed and what they cost, with each line tied to the parts it bought and what they went into.",
@@ -193,7 +193,7 @@ export default defineModule({
         id: "purchases:record-paperwork",
         label: "Record the purchase a document shows",
         description:
-          "Record a purchase from a document put on a record (a bill of sale on a car): the order with every line as the paper printed it, each marked as a charge or an add-on where it is one, and the line the paper is about claimed for that record, which fills its Paid, Purchased at and Bought from. Used by the paperwork door; to attach a document to a record ask for core-scan:attach-paperwork. Args: { vendor?, ordered_at?, order_ref?, total?, source_file_id?, lines, claim? }.",
+          "Record a purchase from a document put on a record (a bill of sale on a car): the order with every line as the paper printed it, each marked as a charge or an add-on where it is one, and the line the paper is about claimed for that record, which fills its Paid, Purchased at and Bought from. Used by the paperwork door; to attach a document to a record ask for core-scan:attach-paperwork. Args: { vendor?, ordered_at?, order_ref?, total?, currency?, source_file_id?, lines, claim? }.",
         icon: "receipt",
         scope: "workspace" as const,
         invokeHandler: "purchases.record-paperwork",
@@ -203,6 +203,7 @@ export default defineModule({
           ordered_at: { label: "Date of the sale", type: "date" },
           order_ref: { label: "Order or invoice number", type: "text" },
           total: { label: "Total", type: "number" },
+          currency: { label: "Currency (ISO code)", type: "text" },
           source_file_id: { label: "The document's file", type: "text" },
           lines: { label: "Every line: description, qty, unit_cost, line_amount, kind", type: "json", required: true },
           claim: { label: "Which line is the record's: index, kind, id", type: "json" },

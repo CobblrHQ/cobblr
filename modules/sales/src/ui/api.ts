@@ -192,7 +192,7 @@ export class SalesApi {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const out = await this.parse<T>(res);
-    if (method.toUpperCase() !== "GET") noteWorkspaceWrite(url);
+    if (method.toUpperCase() !== "GET") noteWorkspaceWrite(url, res);
     return out;
   }
 

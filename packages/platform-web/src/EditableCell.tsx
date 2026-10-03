@@ -26,8 +26,9 @@ import { Pencil } from "lucide-react";
 import { cellPlan, type CellPlan, type EditableCellDef } from "./cellPlan";
 import { FieldRenderer, boolTruthy, boolLabel } from "./FieldRenderer";
 import { fieldInputText } from "./fieldControl";
-import { MoneyInput } from "./MoneyInput";
-import { moneyStorageOf } from "@cobblr/platform-contract/money";
+import { MoneyInput, MoneyValueInput } from "./MoneyInput";
+import { useMoneyCurrency } from "./MoneyCurrency";
+import { fieldCurrency, moneyStorageOf } from "@cobblr/platform-contract/money";
 import { RelationSelect, MemberSelect } from "./CustomFieldsPanel";
 import { PersonSelect, useMemberName, usePersonName } from "./PersonSelect";
 import { ChoiceCombobox } from "./ChoiceCombobox";
@@ -38,6 +39,8 @@ export type { EditableCellDef } from "./cellPlan";
 interface Props {
   def: EditableCellDef;
   value: unknown;
+  metadata?: unknown;
+  onCurrencyChange?: (currency: string) => void;
   /** Commit a new value. The host owns persistence + invalidation. Fires only
    *  when the value actually CHANGED — a click-in/click-out never writes. */
   onCommit: (value: unknown) => void;
@@ -89,7 +92,11 @@ export function EditableCell({
   fallbackLabel,
   children,
   note,
+  metadata,
+  onCurrencyChange,
 }: Props) {
+  const mainCurrency = useMoneyCurrency();
+  const currency = fieldCurrency(metadata, def.name, mainCurrency);
   const [editing, setEditing] = useState(false);
 
   // An id-valued column displays its label, never the raw id. When the options
@@ -120,6 +127,7 @@ export function EditableCell({
       unit={def.unit}
       money={def.money}
       fieldRole={def.field_role}
+      currency={currency}
       size="inline"
       note={note}
     />
@@ -251,20 +259,14 @@ export function EditableCell({
       return (
         <ColorCell value={value} onCommit={commit} onCancel={close} label={def.display_label} />
       );
-    case "money":
+    case "money": {
+      const props = { autoFocus: true, value, storage: moneyStorageOf(def) ?? "amount" as const, onCancel: close, ariaLabel: def.display_label, className: "text-sm " + (align === "right" ? "justify-end" : "") };
       return (
         <span onClick={(e) => e.stopPropagation()}>
-          <MoneyInput
-            autoFocus
-            value={value}
-            storage={moneyStorageOf(def) ?? "amount"}
-            onCommit={(v) => commit(v)}
-            onCancel={close}
-            ariaLabel={def.display_label}
-            className={"text-sm " + (align === "right" ? "justify-end" : "")}
-          />
+          {def.type === "money" ? <MoneyValueInput {...props} onCommit={commit} /> : <MoneyInput {...props} currency={currency} onCurrencyChange={onCurrencyChange} onCommit={(v) => { commit(v); if (v !== null) onCurrencyChange?.(currency); }} />}
         </span>
       );
+    }
     case "input":
       return (
         <span onClick={(e) => e.stopPropagation()}>

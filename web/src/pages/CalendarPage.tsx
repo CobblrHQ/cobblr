@@ -9,6 +9,9 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, CalendarDays, Link2, RefreshCw, Copy } from "lucide-react";
 import { api, type CalendarEvent } from "../lib/api";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { usePersistedState } from "../lib/use-persisted-state";
+import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { usePageTitle, useToast } from "@cobblr/platform-web";
 import { WEEKDAYS, MONTHS, isoLocal as iso, buildMonthGrid, shiftMonth } from "../lib/month-grid";
@@ -20,6 +23,8 @@ const CAT_STYLE: Record<string, string> = {
   task: "bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-200",
   expiry: "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200",
   date: "bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-200",
+  warranty: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
+  purchase: "bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200",
   order: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200",
   _default: "bg-cobble-100 text-accent dark:bg-cobble-900/40 dark:text-cobble-200",
 };
@@ -29,6 +34,8 @@ export function CalendarPage() {
   usePageTitle("Calendar");
   const { activeSlug: slug } = useActiveOrg();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const [hiddenSources, setHiddenSources] = usePersistedState<string[]>(`calendar.sources.${user?.id}.${slug}`, []);
   // `?date=YYYY-MM-DD` opens the month that date is in and rings the day.
   // A notification about something dated ("three things expire on the 9th")
   // has to be able to land you ON it; without this the only destination the
@@ -55,18 +62,18 @@ export function CalendarPage() {
   const byDay = useMemo(() => {
     const m: Record<string, CalendarEvent[]> = {};
     for (const ev of events.data?.items ?? []) {
+      if (hiddenSources.includes(ev.source)) continue;
       const key = ev.date.slice(0, 10);
       (m[key] ||= []).push(ev);
     }
     return m;
-  }, [events.data]);
+  }, [events.data, hiddenSources]);
 
   const todayKey = iso(new Date());
 
   function openEvent(ev: CalendarEvent) {
-    if (ev.entityModule === "inventory" && ev.entityType === "part" && ev.entityId) {
-      // The event names a part, not its collection: the open door asks.
-      navigate(openRecordPath("inventory:part", ev.entityId));
+    if (ev.entityModule && ev.entityType && ev.entityId) {
+      navigate(openRecordPath(`${ev.entityModule}:${ev.entityType}`, ev.entityId));
     } else if (ev.source === "maintenance") {
       navigate("/configuration/maintenance");
     } else if (ev.source === "task") {
@@ -95,8 +102,10 @@ export function CalendarPage() {
           </button>
         </div>
         <div className="flex-1" />
-        <span className="text-[10px] font-mono text-faint dark:text-slate-500">{events.data?.items.length ?? 0} events</span>
+        <span className="text-[10px] font-mono text-faint dark:text-slate-500">{Object.values(byDay).reduce((n, list) => n + list.length, 0)} events</span>
       </div>
+
+      <SourceFilters events={events.data?.items ?? []} hidden={hiddenSources} onChange={setHiddenSources} />
 
       {/* month grid */}
       <div className="rounded-xl border border-line dark:border-slate-700 overflow-hidden">
@@ -143,22 +152,54 @@ export function CalendarPage() {
         </div>
       </div>
 
-      <Legend />
+      <WarrantyReminders slug={slug} />
       <SubscribeBar slug={slug} />
     </div>
   );
 }
 
-function Legend() {
-  const items: [string, string][] = [["maintenance", "Maintenance due"], ["task", "Task due"], ["expiry", "Expiring"], ["order", "Order arriving"], ["date", "Renewal / due date"]];
+function SourceFilters({ events, hidden, onChange }: { events: CalendarEvent[]; hidden: string[]; onChange: (sources: string[]) => void }) {
+  const sources = new Map<string, string>([
+    ["maintenance", "Maintenance due"], ["task", "Task due"], ["expiry", "Expiring"],
+    ["order", "Order arriving"], ["warranty", "Warranty ends"], ["purchase", "Purchased"],
+  ]);
+  for (const event of events) if (!sources.has(event.source)) sources.set(event.source, event.sourceLabel ?? "Other dates");
   return (
-    <div className="flex flex-wrap gap-3 text-[10px] font-mono text-faint dark:text-slate-500">
-      {items.map(([cat, label]) => (
-        <span key={cat} className="inline-flex items-center gap-1.5">
-          <span className={"inline-block w-2.5 h-2.5 rounded-sm " + catStyle(cat)} /> {label}
-        </span>
+    <fieldset className="flex flex-wrap gap-3 text-xs text-content">
+      <legend className="mb-2 font-medium">Show on calendar</legend>
+      {[...sources].map(([source, label]) => (
+        <label key={source} className="inline-flex items-center gap-1.5">
+          <input type="checkbox" checked={!hidden.includes(source)}
+            onChange={(e) => onChange(e.target.checked ? hidden.filter((s) => s !== source) : [...hidden, source])} />
+          {label}
+        </label>
       ))}
-    </div>
+    </fieldset>
+  );
+}
+
+function WarrantyReminders({ slug }: { slug: string }) {
+  const { activeOrg } = useActiveOrg();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const settings = useQuery({ queryKey: ["warranty-reminders", slug], queryFn: () => api.getWarrantyReminders(slug), enabled: !!slug });
+  const save = useMutation({
+    mutationFn: (enabled: boolean) => api.setWarrantyReminders(slug, enabled),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ["warranty-reminders", slug] }); },
+    onError: (e) => toast.error((e as Error).message),
+  });
+  const canEdit = roleSatisfies(activeOrg?.role, ["owner", "admin"]);
+  return (
+    <section className="rounded-xl border border-line bg-surface p-4 space-y-2">
+      <label className="flex items-center gap-2 text-sm font-medium">
+        <input type="checkbox" checked={settings.data?.enabled ?? false}
+          disabled={!canEdit || !settings.data || save.isPending}
+          onChange={(e) => save.mutate(e.target.checked)} />
+        Remind us 30 days before a warranty ends
+      </label>
+      <p className="text-xs text-content">Reminders appear in notifications and join your daily digest. Choose when it arrives in your account’s Delivery settings.</p>
+      {!canEdit && <p className="text-xs text-faint">An owner or admin can change this for the workspace.</p>}
+    </section>
   );
 }
 

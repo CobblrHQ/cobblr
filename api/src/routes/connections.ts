@@ -17,7 +17,7 @@ import * as aiImpl from "../platform/ai.js";
 import * as connectionProviders from "../platform/connections.js";
 import { notifyAccount } from "../platform/notifications.js";
 import { absoluteAppUrl } from "../platform/public-url.js";
-import { unverifiedRefusal } from "@cobblr/platform-contract/connection-verification";
+import { isWorkingVerification, unverifiedRefusal } from "@cobblr/platform-contract/connection-verification";
 import { isCapabilityId } from "@cobblr/platform-contract/connection-capability";
 import { carriesCredentials, probeConnection, testStoredConnection } from "../platform/connection-probe.js";
 import {
@@ -369,8 +369,8 @@ connectionsRouter.patch("/me/connections/:id", requireAuth, async (req, res, nex
     // A rejected key is always refused until confirmed; an unsettled one only
     // when it would displace a key that VERIFIED. A row never verified takes
     // the new state as it is.
-    const displacesWorking = stored?.verification?.state === "verified";
-    if (verification && (verification.state === "invalid" || (verification.state !== "verified" && displacesWorking)) && !parsed.data.confirm_unverified) {
+    const displacesWorking = isWorkingVerification(stored?.verification);
+    if (verification && (verification.state === "invalid" || (!isWorkingVerification(verification) && displacesWorking)) && !parsed.data.confirm_unverified) {
       res.status(409).json(unverifiedRefusal(verification));
       return;
     }

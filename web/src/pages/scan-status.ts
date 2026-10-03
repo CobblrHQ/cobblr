@@ -40,7 +40,12 @@ export function itemEnriching(it: ScanInboxItem, now = Date.now()): boolean {
   const meta = (it.suggested_metadata ?? {}) as {
     matched_at?: string;
     rate_limited?: boolean;
+    hosted_identify_job?: unknown;
   };
+  // Queued at the hosted identify (barcode-intelligence #43): it may wait
+  // hours, and a server job lands it. Waiting, not working, like a
+  // rate-limited lookup, so the inbox does not poll fast all night.
+  if (meta.hosted_identify_job) return false;
   const cands = (it.suggested_candidates ?? []).length;
   const aiAgeMs = it.ai_suggested_at ? now - new Date(it.ai_suggested_at).getTime() : Infinity;
   // Enrichment finished but produced no name/candidates → it needs the USER, not

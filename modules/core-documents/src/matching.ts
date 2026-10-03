@@ -38,6 +38,7 @@ import {
   type LibraryFindOutput,
   type LibraryGetOutput,
   type LibraryPushSetup,
+  libraryRefFromPush,
   type RecordFacts,
 } from "@cobblr/platform-contract/library";
 import type { CoreDocumentsDB } from "./db.js";
@@ -404,21 +405,15 @@ export function subscribeRecordSaves(): void {
 
 export const DOCUMENT_ADDED_EVENT = "core-documents.document.added";
 
-/** Each library's webhook setup, by its program (the adapter's group). */
-const PUSH_SETUPS = new Map<string, LibraryPushSetup>();
-export function registerPushSetup(provider: string, setup: LibraryPushSetup): void {
-  PUSH_SETUPS.set(provider, setup);
-}
 export function pushSetupOf(provider: string): LibraryPushSetup | null {
-  return PUSH_SETUPS.get(provider) ?? null;
+  return platform().services.adapterMetadata(provider)?.library?.push?.setup ?? null;
 }
 
-/** A new document in a system: read it once and score it here. Which system
- *  rang is not trusted from the push, so each one here is asked for that
- *  ref, and the first that has it answers. */
+/** The push only names an item. Read it back through the originating
+ *  adapter's connections before trusting its facts. */
 export function subscribeDocumentAdded(): void {
   platform().events.on(DOCUMENT_ADDED_EVENT, "core-documents", async (payload: unknown) => {
-    const p = payload as { orgId?: string; ref?: string };
+    const p = payload as { orgId?: string; ref?: string; provider?: string };
     if (!p.orgId || !p.ref) return;
     const orgId = p.orgId;
     const ref = p.ref;
@@ -426,6 +421,7 @@ export function subscribeDocumentAdded(): void {
       void (async () => {
         const db = (await platform().tenants.getDb(orgId)) as Db;
         for (const h of await holdersOf(orgId)) {
+          if (p.provider && h.provider !== p.provider) continue;
           const got = await getOn(orgId, h.credentialId, ref).catch(() => null);
           if (!got?.item) continue;
           const made = await matchItems(db, h, [got.item]);
@@ -437,37 +433,23 @@ export function subscribeDocumentAdded(): void {
   });
 }
 
-/** The ref a push names: Paperless's workflow webhook sends whatever body
- *  its placeholders make, so the document's id is read from the likely
- *  places (an explicit id, or the document's own address). Nothing else in
- *  the push is trusted: the document is read back through the connection. */
-export function refFromPush(body: unknown): string | null {
-  if (!body || typeof body !== "object") return null;
-  const b = body as Record<string, unknown>;
-  for (const k of ["document_id", "doc_id", "id"]) {
-    const v = b[k];
-    if ((typeof v === "number" || typeof v === "string") && /^\d{1,12}$/.test(String(v).trim())) return String(v).trim();
-  }
-  for (const k of ["doc_url", "document_url", "url"]) {
-    const v = b[k];
-    const m = typeof v === "string" ? /\/documents\/(\d{1,12})(?:\/|$)/.exec(v) : null;
-    if (m) return m[1]!;
-  }
-  return null;
-}
-
 export function registerDocumentsInbound(): void {
   platform().integrations.registerInboundHandler({
     id: "document-added",
-    label: "A new document in your document system (Paperless-ngx workflow webhook)",
+    label: "A new item in your library",
     describeWebhookConfig: () => ({}),
     emits: [DOCUMENT_ADDED_EVENT],
     handle: async (req, ctx) => {
-      const ref = refFromPush(req.body);
-      // A doorbell, not a data channel: a body that names no document is a
-      // 400 so a misconfigured workflow finds out; webhooks retry on errors.
-      if (!ref) return { status: 400, body: { error: 'expected the new document\'s address, e.g. { "doc_url": "{doc_url}" }' } };
-      await ctx.emit(DOCUMENT_ADDED_EVENT, { orgId: ctx.orgId, ref });
+      const matches: Array<{ provider: string; ref: string }> = [];
+      const groups = new Set((await holdersOf(ctx.orgId)).map(h => h.provider));
+      for (const provider of groups) {
+        const push = platform().services.adapterMetadata(provider)?.library?.push;
+        if (!push) continue;
+        const ref = libraryRefFromPush(req.body, push);
+        if (ref) matches.push({ provider, ref });
+      }
+      if (matches.length !== 1) return { status: 400, body: { error: "Expected an item reference from one connected library. Follow that library's webhook setup steps." } };
+      await ctx.emit(DOCUMENT_ADDED_EVENT, { orgId: ctx.orgId, ...matches[0]! });
       return { status: 202, body: { ok: true } };
     },
   });

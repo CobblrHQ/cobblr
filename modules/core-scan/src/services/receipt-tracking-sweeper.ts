@@ -428,6 +428,7 @@ async function notifyArrival(orgId: string, row: TrackedRow, state: string): Pro
         // dispatch does NOT derive a link from the entity fields — it passes
         // link_url straight through, so omitting it leaves the notification
         // with nowhere to go at all (the arrivals bug, 2026-08).
+        // OUTSIDE-RECORD-ADDRESS: a receipt batch is scan workflow state, not a registered record kind.
         link_url: `/scan?batch=${row.id}`,
         payload: { state, tracking_number: row.tracking_number },
       });

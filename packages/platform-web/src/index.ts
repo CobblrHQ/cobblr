@@ -3,6 +3,8 @@ export { JsonField, evaluateJson, type JsonFieldProps, type JsonEval } from "./J
 
 export {
   PlatformWebProvider,
+  RecordPhoto,
+  type RecordPhotoProps,
   usePlatformWeb, useViewerRole,
   useFlowHost,
   type FlowComponent,
@@ -11,6 +13,8 @@ export {
 export { EntityActionsBar } from "./EntityActionsBar";
 export { RecordHeaderChips } from "./RecordHeaderChips";
 export { RecordDisposition } from "./RecordDisposition";
+export { BulkShareWith } from "./BulkShareWith";
+export type { SuggestedEdit } from "./types";
 export { BulkGiveTo } from "./BulkGiveTo";
 export { RecordFaces, FaceSection, FacesOn, faceShows, useFaces, useFaceOn } from "./faces";
 export { useInvokeEntityAction } from "./use-invoke-action";
@@ -85,7 +89,7 @@ export {
 export { FeedbackCard, PriorityChip, FEEDBACK_STATUSES, fbStatusLabel } from "./FeedbackCard";
 
 export { fieldControl, fieldInputText, valueFromInput, type FieldControl, type FieldValueDef } from "./fieldControl";
-export { MoneyInput, type MoneyInputProps } from "./MoneyInput";
+export { MoneyInput, MoneyValueInput, type MoneyInputProps } from "./MoneyInput";
 export { packFields, fieldNeed, MIN_COL_PX, GAP_PX, type FieldNeed, type FieldSpace, type FieldPacking, type PackedCell, type PackOptions } from "./field-pack";
 export { FieldPack, fieldPackControlClass, type FieldPackItem } from "./FieldPack";
 export { EditField, EditSelect, FieldLabel, LabeledField, editFieldNeed, editFieldItem, editFieldText, moneyFieldItem, usedValueFieldItem, type EditFieldProps } from "./EditField";
@@ -315,7 +319,19 @@ export { QueryError } from "./QueryError";
 export { missingRequired, type RequiredLike } from "./required-fields";
 export type { PlatformWire, PlatformWireInput } from "./types";
 export type { FieldValuesUsedBody, UsedValueBody } from "./types";
-export { noteWorkspaceWrite, subscribeWorkspaceWrite, refreshStockViews, STOCK_VIEW_KEYS, STOCK_LIST_KEYS, type WorkspaceWriteListener } from "./workspace-writes";
+export { noteWorkspaceWrite, subscribeWorkspaceWrite, subscribeDeletedRecord, refreshStockViews, STOCK_VIEW_KEYS, STOCK_LIST_KEYS, type WorkspaceWriteListener } from "./workspace-writes";
 export { ChoiceCombobox, matchChoice, orderChoices, type ChoiceComboboxProps, type ChoiceDetail, type ChoiceOption } from "./ChoiceCombobox";
+export { NfcTags, type NfcTarget } from "./NfcTags";
+export { StationTagWriter, type StationTagClient } from "./StationTagWriter";
+export { isWebNfcAvailable, createNfcReader, nfcLabelMessage, nfcUrl, nfcFailure, type NfcReader, type NfcRecord } from "./nfc";
 export { ChoiceField, detailOptions, type ChoiceFieldProps, type ChoiceFieldDef } from "./ChoiceField";
 export { UsedValueInput, type UsedValueInputProps } from "./UsedValueInput";
+
+export { BulkSetField } from "./BulkSetField";
+export type { BulkFieldOption } from "./types";
+
+export { MoneyCurrencyProvider, useMoneyCurrency, CurrencyPicker } from "./MoneyCurrency";
+
+export { MoneyTotalNotice } from "./MoneyTotalNotice";
+
+export { NewItemMenu, NewFromTemplateButton, type TemplateCreateArgs } from "./NewItemMenu";

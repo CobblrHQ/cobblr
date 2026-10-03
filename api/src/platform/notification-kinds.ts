@@ -25,10 +25,15 @@ export interface NotificationKindDecl {
 
 /** Sent by the kernel itself. */
 export const KERNEL_NOTIFICATION_KINDS: readonly NotificationKindDecl[] = [
+  { eventType: "scan.station.review", label: "Station scan review", description: "A scan station finished a session. Review its actions or undo them.", module: "scan" },
+  { eventType: "platform.tidy.suggested", label: "Tidy-up suggestions", description: "Up to five overnight suggestions for the things you keep." },
+  { eventType: "warranty.ending", label: "Warranty ending", description: "A warranty ends within 30 days.", module: "calendar" },
   ...BRIDGE_NOTIFICATION_KINDS.map((k) => ({ ...k, module: "bridges" })),
   { eventType: "test.notification", label: "Test notification", description: "The one you send yourself to check a channel." },
   { eventType: "platform.approval.requested", label: "Approval requested", description: "Someone asked to do something that needs an owner's or admin's yes." },
   { eventType: "platform.approval.decided", label: "Approval answered", description: "Your request was approved or declined." },
+  { eventType: "share.edits.suggested", label: "Edits from someone you share with", description: "Someone you share with suggested edits to your things, or changed them on a share that lets them.", module: "sharing" },
+  { eventType: "share.edits.decided", label: "Your suggested edits answered", description: "The person who shared with you accepted, turned down or undid your edits.", module: "sharing" },
   { eventType: "workspace.invited", label: "Invited to a workspace", description: "Someone invited you to their workspace." },
   { eventType: "workspace.join_link_paused", label: "Join link paused", description: "The workspace's join link stopped itself after too many joins at once." },
   { eventType: "platform.invite.accepted", label: "Invite accepted", description: "Someone you invited joined." },

@@ -13,6 +13,7 @@
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { api, type RegistryIndex } from "./api";
 import { FEATURED_BUNDLES, type FeaturedBundle } from "./featured-bundles";
+import { classifyBundleUpdate } from "@cobblr/platform-contract/bundle-update-tier";
 
 export type CatalogBundle = FeaturedBundle & { source?: string };
 
@@ -31,14 +32,16 @@ export function useBundleCatalog(sources?: string[]): {
     registry.data && registry.data.bundles.length > 0
       ? registry.data.bundles.map((e) => {
           const embedded = EMBEDDED_BY_ID.get(e.manifest.id);
+          const manifest = embedded && classifyBundleUpdate(e.manifest.version, embedded.manifest.version) !== "prompt"
+            ? embedded.manifest : e.manifest;
           return {
             // A registry entry may predate (or strip) the `catalog` tier field;
             // restore it from the embedded flagship catalog like the other
             // dropped fields below, so tier-aware surfaces (the ready-made
             // strip) don't misread a demoted bundle as core.
             manifest: {
-              ...e.manifest,
-              catalog: e.manifest.catalog ?? embedded?.manifest.catalog,
+              ...manifest,
+              catalog: manifest.catalog ?? embedded?.manifest.catalog,
             },
             // Prefer the EMBEDDED flagship glyph over the registry entry's: the
             // official index carries no real glyph (it is a web-only card field),

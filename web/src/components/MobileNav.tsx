@@ -32,6 +32,7 @@ import { useTheme } from "../theme/ThemeContext";
 import { useNavHasRow, useNavModules, NAVGROUP_PREFIX, navTargetFor, surfaceTops } from "./useNavModules";
 import { useNavBadges } from "./useNavBadges";
 import { NavCountBadge } from "./NavCountBadge";
+import { NavSplitRow, NavRowMenu } from "./NavSplitRow";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { OverlayLayer, useEscapeToClose, useLockPageScroll } from "@cobblr/platform-web";
 import { notificationKeys } from "../lib/notification-keys";
@@ -52,12 +53,12 @@ function ChildDot() {
 export function menuRowsBefore(
   tops: ReadonlyArray<{ name: string }>,
   childrenByParent: ReadonlyMap<string, readonly unknown[]>,
-  instanceGroups: ReadonlyMap<string, { members: readonly unknown[] }>,
+  _instanceGroups: ReadonlyMap<string, { members: readonly unknown[] }>,
   leading: number,
 ): number {
   let n = leading;
   for (const t of tops) {
-    n += 1 + (t.name.startsWith(NAVGROUP_PREFIX) ? (instanceGroups.get(t.name)?.members.length ?? 0) : (childrenByParent.get(t.name)?.length ?? 0));
+    n += 1 + (t.name.startsWith(NAVGROUP_PREFIX) ? 0 : (childrenByParent.get(t.name)?.length ?? 0));
   }
   return n;
 }
@@ -72,6 +73,7 @@ export function MobileNav() {
   // cannot disagree about what is inside the app.
   const appMode = !!activeOrg?.app_mode;
   const visibleTops = surfaceTops(tops, appMode);
+  const rowCandidates = visibleTops.flatMap((t) => instanceGroups.get(t.name)?.members ?? (t.name.startsWith("__instance__") ? [t] : []));
   const moreAppsSpans = menuRowsBefore(visibleTops, childrenByParent, instanceGroups, appMode ? 0 : 2) % 2 === 0;
   const badges = useNavBadges(activeSlug);
   const pendingShares = usePendingAiShares(activeSlug, activeOrg?.role === "owner");
@@ -268,37 +270,10 @@ export function MobileNav() {
               )}
 
               {visibleTops.map((m) => {
-                // Instance nav-group → a stem section label + its members as
-                // indented instance rows (the inline segment treatment doesn't
-                // fit a stacked mobile list).
                 if (m.name.startsWith(NAVGROUP_PREFIX)) {
                   const g = instanceGroups.get(m.name);
                   if (!g) return null;
-                  return (
-                    <div key={m.name}>
-                      {/* leading-5 matches text-sm's line box. Without it a
-                          10px section label made a SHORTER row than a normal
-                          link, so from that point down the left column's rules
-                          no longer lined up with the right column's - the two
-                          columns are independent flows and only equal row
-                          heights keep their borders in step. */}
-                      <div className={linkClass + " leading-5 text-faint dark:text-slate-500 uppercase text-[10px] font-mono tracking-widest"}>
-                        {g.label}
-                      </div>
-                      {g.members.map((mem) => (
-                        <button
-                          key={mem.name}
-                          type="button"
-                          onClick={() => go(navTargetFor(mem.name, appMode))}
-                          className={childClass}
-                        >
-                          <ChildDot />
-                          <span className="truncate">{mem.displayName}</span>
-                          {pointed === mem.displayName && <NewInNav />}
-                        </button>
-                      ))}
-                    </div>
-                  );
+                  return <div key={m.name} className="h-11"><NavSplitRow slug={activeSlug} group={g} candidates={rowCandidates} appMode={appMode} onNavigate={() => setOpen(false)} /></div>;
                 }
                 const kids = childrenByParent.get(m.name) ?? [];
                 const isHeading = m.name.startsWith("__heading__");
@@ -316,9 +291,9 @@ export function MobileNav() {
                         {m.displayName}
                       </div>
                     ) : (
-                      <NavLink
+                      <div className="flex min-w-0 items-center"><NavLink
                         to={navTargetFor(m.name, appMode)}
-                        className={linkClass}
+                        className={linkClass + " min-w-0 flex-1"}
                         onClick={() => setOpen(false)}
                       >
                         <span className="truncate">{m.displayName}</span>
@@ -327,7 +302,7 @@ export function MobileNav() {
                             fixed row height, and ml-auto keeps it off the label
                             so a long name still truncates before the number. */}
                         <NavCountBadge count={badges.get(m.name)} label={m.displayName} className="ml-auto" />
-                      </NavLink>
+                      </NavLink>{m.name.startsWith("__instance__") && <NavRowMenu slug={activeSlug} label={m.displayName} members={[m]} candidates={rowCandidates} />}</div>
                     )}
                     {kids.map((k) => {
                       const isInstance = k.name.startsWith("__instance__");

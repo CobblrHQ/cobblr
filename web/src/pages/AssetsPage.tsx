@@ -1,3 +1,5 @@
+import { NewItemMenu } from "@cobblr/platform-web";
+import { MoneyTotalNotice, useMoneyCurrency } from "@cobblr/platform-web";
 // /assets — list + detail modal for the assets module. Same shape
 // as MachinesPage. No specialisations yet (no assets:asset Pillar-E
 // modules ship), so no lens UI here — but the column rendering is
@@ -20,6 +22,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { CustomFieldsPanel,
   BulkGiveTo,
+  BulkShareWith,
   EditField, EntityActionsBar, FaceSection, FieldPack, RecordFaces,
   FacesOn, faceShows, editFieldItem, moneyFieldItem, fieldNeed, EditSelect,
   useAskCobbAboutSelection,
@@ -28,7 +31,7 @@ import { CustomFieldsPanel,
   useToast,
   useConfirm, usePageTitle, usePageWidth, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton } from "@cobblr/platform-web";
 import {
-  BulkActionBar,
+  BulkActionBar, BulkSetField,
   MoveToInstanceModal,
   MoveToInstancePanel,
   FooterActionPopover,
@@ -45,7 +48,7 @@ import { ContentsPanel, useHoldsContents } from "../components/ContentsPanel";
 import { useDeclaredChoices } from "../components/ViewBuilder";
 import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
-import { formatMoney, toCents } from "@cobblr/platform-contract/money";
+import { fieldCurrency, formatMoney, toCents } from "@cobblr/platform-contract/money";
 import { PresentationGate, useFaces, UsedValueInput, usedValueFieldItem } from "@cobblr/platform-web";
 
 const ENTITY_KIND = "assets:asset";
@@ -264,7 +267,7 @@ export function AssetsPage({
     <div className="space-y-4">
       <CollectionHeader
         title={displayName ?? "assets"}
-        count={showArchived ? `${list.data?.total ?? allRows.length} gone or put away` : `${filtered.length} of ${list.data?.total ?? allRows.length}${paidTotal > 0 ? ` · paid ${formatMoney(paidTotal)} in all` : ""}`}
+        count={showArchived ? `${list.data?.total ?? allRows.length} gone or put away` : `${filtered.length} of ${list.data?.total ?? allRows.length}${paidTotal > 0 ? ` · paid ${formatMoney(paidTotal, { currency: list.data?.money_total?.currency })} in all` : ""}`}
         hint={hint} kind={instance ? `${instance}:item` : ENTITY_KIND}
         filters={
           (list.data?.archived_count ?? 0) > 0 || showArchived ? (
@@ -291,12 +294,15 @@ export function AssetsPage({
         actions={
           <>
             <ViewModeToggle mode={viewMode} onChange={setViewMode} />
-            <button onClick={() => setNewOpen(true)} className={headerButton("primary")}>
-              <Plus size={14} /> New {noun}
-            </button>
+            <NewItemMenu kind="assets:asset" instance={instance}>
+              <button onClick={() => setNewOpen(true)} className={headerButton("primary")}>
+                <Plus size={14} /> New {noun}
+              </button>
+            </NewItemMenu>
           </>
         }
       />
+      <MoneyTotalNotice total={list.data?.money_total} />
 
       {/* Saved-view chips — bundles ship pinned ones; the wizard lands here. */}
       {views.length > 0 && (
@@ -383,8 +389,10 @@ export function AssetsPage({
         onClear={() => setSelected(new Set())}
         actions={
           <>
+            <BulkSetField records={Array.from(selected).map((id) => ({ kind: entityKind, id }))} onDone={() => setSelected(new Set())} />
             <BulkTagAction count={selected.size} placeholder="e.g. urgent, summer-2026, archive" onTag={(name) => bulkTag.mutateAsync(name)} />
             <BulkGiveTo kind={entityKind} ids={Array.from(selected)} noun={noun} onDone={clearTicks} />
+            <BulkShareWith kind={entityKind} ids={Array.from(selected)} noun={noun} onDone={clearTicks} />
             <FooterActionPopover label="Move to…" icon={<ArrowRightLeft size={12} />} title="Move to another list" width={360} data-testid="bulk-move">
               {(close) => (
                 <div className="overflow-y-auto p-3">
@@ -682,11 +690,12 @@ export function AssetDetailModal({
   });
 
   const a = asset.data;
+  const mainCurrency = useMoneyCurrency();
   async function handleDelete() {
     if (!a) return;
     const ok = await confirm({
       title: `Delete "${a.name}"?`,
-      message: "This can't be undone.",
+      message: "You can restore this record from Recently deleted for 30 days.",
       confirmLabel: "Delete asset",
       destructive: true,
     });
@@ -794,6 +803,8 @@ export function AssetDetailModal({
                     // its total (under Contents) adds them, each once.
                     label: holdsContents ? "Other value (not itemized)" : fp.label("purchase_price_cents", "Paid"),
                     value: a.purchase_price_cents,
+                    currency: fieldCurrency(a.metadata, "purchase_price_cents", mainCurrency),
+                    onCurrencyChange: (currency) => update.mutate({ metadata: { money_currency_purchase_price_cents: currency } }),
                     storage: "cents",
                     onCommit: (cents) => update.mutate({ purchase_price_cents: cents }),
                   })

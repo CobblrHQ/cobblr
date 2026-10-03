@@ -17,7 +17,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MoreHorizontal } from "lucide-react";
 import { AmountControl, colorSwatch, PopoverLayer, Swatch, swatchFill, useConfirm, useEscapeToClose, useToast } from "@cobblr/platform-web";
 import { countOf, pluralise, withArticle } from "@cobblr/platform-contract";
-import { useInventory } from "./context";
+import { InventoryProvider, useInventory } from "./context";
+import { BulkMoveToPlace } from "./BulkMoveToPlace";
 import type { FamilyPayload, FamilyThing, FamilyType } from "./api";
 
 type View = "all" | "material" | "colour" | "low";
@@ -45,7 +46,7 @@ export function thingSubline(t: Pick<FamilyThing, "qty" | "metadata">, place: st
 }
 
 function ThingRow({ t, childInstance, childPath, place, highlighted, named, noun }: { t: FamilyThing; childInstance: string; childPath: string; place: string | null; highlighted: boolean; named?: boolean; noun: string }) {
-  const { api } = useInventory();
+  const { api, orgSlug, getToken } = useInventory();
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
@@ -80,7 +81,14 @@ function ThingRow({ t, childInstance, childPath, place, highlighted, named, noun
           {thingSubline(t, place, named, noun) || " "}
         </span>
       </Link>
-      <span className="inline-flex items-center gap-1.5">
+      <span className="inline-flex flex-wrap items-center gap-1.5">
+        <InventoryProvider orgSlug={orgSlug} getToken={getToken} instance={childInstance} itemNoun={noun}>
+          <BulkMoveToPlace
+            rows={[{ id: t.id, location_id: t.location_id, location_name: place }]}
+            label={place ? "Move to a place…" : "Set place"}
+            onMoved={refresh}
+          />
+        </InventoryProvider>
         <AmountControl qty={t.qty} unit={t.unit} label={t.name} onChange={change} />
         <PopMenu label={`More for this ${noun}`} size="md">
           {(close) => (
@@ -168,7 +176,7 @@ function TypeCard({
       {type.children.length > 0 ? (
         <ul className="divide-y divide-line dark:divide-slate-800 border-t border-line dark:border-slate-800">
           {type.children.map((t) => (
-            <ThingRow key={t.id} t={t} childInstance={data.child} childPath={childPath} place={t.location_id ? (places.get(t.location_id) ?? null) : null} highlighted={highlight === t.id} noun={data.child_noun ?? "item"} />
+            <ThingRow key={t.id} t={t} childInstance={data.child} childPath={childPath} place={t.location_name ?? (t.location_id ? (places.get(t.location_id) ?? null) : null)} highlighted={highlight === t.id} noun={data.child_noun ?? "item"} />
           ))}
         </ul>
       ) : (
@@ -435,7 +443,7 @@ export function FamilyPage({ childPath, tablePath }: { childPath: string; tableP
           </div>
           <ul className="divide-y divide-line dark:divide-slate-800">
             {data.unclaimed.map((t) => (
-              <ThingRow key={t.id} t={t} childInstance={data.child} childPath={childPath} place={t.location_id ? (places.get(t.location_id) ?? null) : null} highlighted={highlight === t.id} named noun={data.child_noun ?? "item"} />
+              <ThingRow key={t.id} t={t} childInstance={data.child} childPath={childPath} place={t.location_name ?? (t.location_id ? (places.get(t.location_id) ?? null) : null)} highlighted={highlight === t.id} named noun={data.child_noun ?? "item"} />
             ))}
           </ul>
         </section>

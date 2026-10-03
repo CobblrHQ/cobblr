@@ -1,3 +1,5 @@
+import { roundMoneyAmount, fieldCurrency } from "@cobblr/platform-contract/money";
+import { fieldDay } from "@cobblr/platform-contract/field-day";
 // Parts installed in things built from them: 2 of 4 RAM sticks inside a
 // computer, an SSD in it, the rest on the shelf.
 //
@@ -112,31 +114,36 @@ async function settle(args: { orgId: string; id: string; container: { kind: stri
 /** What each record is worth: its unit cost times its count. A place's row
  *  without a cost of its own is priced at its card's. Archived records (put
  *  away, or rows joined into another) count for nothing in "all". */
-async function valueOf(orgId: string, ids: string[] | "all"): Promise<Map<string, number>> {
+async function valueOf(orgId: string, ids: string[] | "all"): Promise<Map<string, import("@cobblr/platform-contract").DatedMoney | null>> {
   const db = await dbOf(orgId);
-  let q = db.selectFrom("inventory_parts").select(["id", "qty", "cost", "instance"]);
+  const main = await platform().money.currency(orgId);
+  const acquired = (await platform().entities.roledFieldsFor(orgId, PART)).find((f) => f.field_role === "acquired-on");
+  let q = db.selectFrom("inventory_parts").select(["id", "qty", "cost", "instance", "metadata", "created_at"]);
   q = ids === "all" ? q.where("archived", "=", false) : q.where("id", "in", ids.length ? ids : ["00000000-0000-0000-0000-000000000000"]);
   const rows = await q.execute();
-  const out = new Map<string, number>();
+  const out = new Map<string, import("@cobblr/platform-contract").DatedMoney | null>();
   const unpriced = rows.filter((r) => r.cost == null).map((r) => r.id);
-  const cardCost = new Map<string, number>();
+  const cardCost = new Map<string, { cost: number; metadata: unknown; created_at: unknown }>();
   if (unpriced.length) {
     const pairs = await platform().pairings.findBySources({ orgId, sourceKind: PART, sourceIds: unpriced, targetKind: PART, relationshipKind: HOLDING_OF });
     const cards = [...new Set(pairs.map((p) => p.targetId))];
     if (cards.length) {
-      const priced = await db.selectFrom("inventory_parts").select(["id", "cost"]).where("id", "in", cards).execute();
-      const byCard = new Map(priced.map((p) => [p.id, p.cost]));
+      const priced = await db.selectFrom("inventory_parts").select(["id", "cost", "metadata", "created_at"]).where("id", "in", cards).execute();
+      const byCard = new Map(priced.map((p) => [p.id, p]));
       for (const p of pairs) {
         const cost = byCard.get(p.targetId);
-        if (cost != null) cardCost.set(p.sourceId, Number(cost));
+        if (cost?.cost != null) cardCost.set(p.sourceId, { ...cost, cost: Number(cost.cost) });
       }
     }
   }
   for (const r of rows) {
-    const unit = r.cost != null ? Number(r.cost) : cardCost.get(r.id);
+    const unit = r.cost != null ? Number(r.cost) : cardCost.get(r.id)?.cost;
     const n = Number(r.qty);
-    if (unit === undefined || !Number.isFinite(unit) || !Number.isFinite(n)) continue;
-    out.set(r.id, Math.round(unit * n * 100) / 100);
+    if (Number.isFinite(n) && n <= 0) continue;
+    if (unit === undefined || !Number.isFinite(unit) || !Number.isFinite(n)) { out.set(r.id, null); continue; }
+    const source = r.cost != null ? r : cardCost.get(r.id)!;
+    const meta = source.metadata as { [key: string]: unknown; receipt?: { date?: string }; acquired_on?: string } | null;
+    out.set(r.id, { value: { amount: roundMoneyAmount(unit * n, fieldCurrency(source.metadata, "cost", main)), currency: fieldCurrency(source.metadata, "cost", main) }, day: fieldDay((acquired ? meta?.[acquired.name] : null) || meta?.receipt?.date || meta?.acquired_on) || fieldDay(source.created_at) || "" });
   }
   return out;
 }
@@ -148,7 +155,13 @@ export function registerInstalledParts(): void {
   registered = true;
   platform().placement.registerQuantity(PART, { quantityOf, split, settle });
   // A part's value is its cost: seen only by a viewer who may see costs.
-  platform().placement.registerValue(PART, valueOf, { readScope: "inventory:view-costs" });
+  platform().placement.registerValue(PART, valueOf, {
+    readScope: "inventory:view-costs",
+    insuranceDetails: async (orgId, ids) => {
+      const rows = await (await dbOf(orgId)).selectFrom("inventory_parts").select(["id", "serial_number"]).where("id", "in", ids).execute();
+      return new Map(rows.map((r) => [r.id, { serial: r.serial_number }]));
+    },
+  });
 }
 
 /** Where some of a thing is installed: the holder and how many are in it. */

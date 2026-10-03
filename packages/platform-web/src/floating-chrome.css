@@ -17,7 +17,7 @@
   position: fixed;
 }
 .fc-top {
-  top: 0;
+  top: var(--fc-top, var(--top-chrome-height, 0px));
   left: 0;
   right: 0;
 }
@@ -35,7 +35,8 @@
 }
 .fc-overlay {
   position: fixed;
-  inset: 0;
+  inset: var(--top-chrome-height, 0px) 0 0;
+  --overlay-height: calc(100dvh - var(--top-chrome-height, 0px));
 }
 .fc-popover {
   position: fixed;

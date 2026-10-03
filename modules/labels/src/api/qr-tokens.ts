@@ -160,7 +160,9 @@ qrTokensRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     const ctx = tenantContext(req);
-    const entityKind = typeof req.query.entity_kind === "string" ? req.query.entity_kind : undefined;
+    const entityKind = typeof req.query.entity_kind === "string"
+      ? await platform().entities.baseKindOf(ctx.org.id, req.query.entity_kind)
+      : undefined;
     const entityId = typeof req.query.entity_id === "string" ? req.query.entity_id : undefined;
     const meta = platform().db.meta as unknown as {
       selectFrom: (table: string) => {

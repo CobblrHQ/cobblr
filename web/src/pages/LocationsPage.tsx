@@ -1,3 +1,4 @@
+import { NewItemMenu } from "@cobblr/platform-web";
 // /locations — the workspace-wide tree of physical places.
 // core-locations is foundational, so this page always exists when an
 // org is loaded. The tree below is rendered as boxed nested list
@@ -33,10 +34,11 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { BulkActionBar, useTickedRows, Modal, useToast, useConfirm, usePageTitle, useAskCobbAboutSelection, RecordRow, useSelectionResolver, buildLocationForest, type LocationNode as SharedLocationNode, usePublishChatContext, SearchInput } from "@cobblr/platform-web";
+import { EntityThumb, BulkActionBar, BulkSetField, useTickedRows, Modal, useToast, useConfirm, usePageTitle, useAskCobbAboutSelection, RecordRow, useSelectionResolver, buildLocationForest, type LocationNode as SharedLocationNode, usePublishChatContext, SearchInput } from "@cobblr/platform-web";
 import { ApiError, api, fetchAuthBlobUrl, type Location } from "../lib/api";
 import { deleteDialogMessage, restorePlaces, restoredSentence } from "../lib/placeDelete";
 import { countOf } from "@cobblr/platform-contract/plural";
+import { useHideEmpty } from "../lib/useHideEmpty";
 import { totalUsage, useLocationUsage, type UsageCounts } from "../lib/useLocationUsage";
 import { queueLabelsBulk } from "../lib/queue-label";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -92,6 +94,7 @@ export function LocationsPage() {
   // Fold + filter (lib/tree-fold.ts). Filtering wins: while a query is typed
   // every surviving node is open and fold memory is left alone.
   const [q, setQ] = useState("");
+  const [hideEmpty, setHideEmpty] = useHideEmpty("locations");
   const [fold, setFold] = useFoldOverrides(activeSlug);
   const filtering = q.trim().length > 0;
   const exportCsv = async () => {
@@ -250,10 +253,24 @@ export function LocationsPage() {
   const askCobb = useAskCobbAboutSelection(selected, items, "core-locations:location", "location");
   // Shared model → the areas tree + loose-container roots, sorted.
   const forest = useMemo(() => buildLocationForest(items, LOCATION_ACCESSORS), [items]);
-  const shown = useMemo(
-    () => ({ areas: filterForest(forest.areas, q), containers: filterForest(forest.containers, q) }),
-    [forest, q],
-  );
+  // An older server or a failed read is unknown occupancy, never empty.
+  const occupied = useMemo(() => new Set(items.filter((l) => l.contents_count === undefined || l.contents_count > 0).map((l) => l.id)), [items]);
+  const nonEmpty = useMemo(() => ({
+    areas: filterForest(forest.areas, "", occupied),
+    containers: filterForest(forest.containers, "", occupied),
+  }), [forest, occupied]);
+  const hiddenCount = items.length - [...nonEmpty.areas, ...nonEmpty.containers].reduce((n, r) => n + 1 + subtreeSize(r).nodes, 0);
+  const shown = useMemo(() => {
+    const source = hideEmpty ? nonEmpty : forest;
+    return { areas: filterForest(source.areas, q), containers: filterForest(source.containers, q) };
+  }, [forest, nonEmpty, hideEmpty, q]);
+  const shownIds = useMemo(() => {
+    const ids: string[] = [];
+    const walk = (n: LocationNode) => { ids.push(n.id); n.children.forEach(walk); };
+    [...shown.areas, ...shown.containers].forEach(walk);
+    return ids;
+  }, [shown]);
+  const allShownSelected = shownIds.length > 0 && shownIds.every((id) => selected.has(id));
   // A CLOSED node's chip has to count everything it hides, so the subtree
   // totals are computed once here rather than re-walked per card.
   const subtreeUsageById = useMemo(() => {
@@ -385,6 +402,7 @@ export function LocationsPage() {
 
   return (
     <div className="space-y-4">
+      <Link className="inline-block text-xs text-muted underline" to="/configuration/recently-deleted?kind=core-locations:location">Recently deleted</Link>
       {/* ONE row on every width. It used to wrap, which kept the page from
           scrolling sideways but spent three of a phone's rows on chrome before
           the first location. The secondary actions keep their icon and drop
@@ -482,16 +500,18 @@ export function LocationsPage() {
             No locations yet. Add a top-level area (a room, a workshop, a garage)
             and start nesting bins and shelves inside it.
           </p>
-          <button
-            onClick={() => {
-              setCreateParentId(null);
-              setCreateOpen(true);
-            }}
-            className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition"
-          >
-            <Plus size={14} />
-            New location
-          </button>
+          <NewItemMenu kind="core-locations:location">
+            <button
+              onClick={() => {
+                setCreateParentId(null);
+                setCreateOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition"
+            >
+              <Plus size={14} />
+              New location
+            </button>
+          </NewItemMenu>
           <button
             onClick={() => setBinSheetOpen(true)}
             className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-700 px-3 py-1.5 text-sm text-accent hover:border-cobble-300 transition"
@@ -520,16 +540,18 @@ export function LocationsPage() {
              rest. */
           <div className="flex items-center gap-2 sm:gap-4">
             <SearchInput value={q} onChange={setQ} placeholder="Find a place - Bin 87, shelf, garage…" aria-label="Filter locations" wrapperClassName="flex-1 min-w-0 sm:max-w-md" />
-            <button
-              onClick={() => {
-                setCreateParentId(null);
-                setCreateOpen(true);
-              }}
-              className="shrink-0 inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2.5 sm:px-3 py-1.5 text-sm transition"
-            >
-              <Plus size={14} />
-              New<span className="hidden sm:inline">&nbsp;location</span>
-            </button>
+            <NewItemMenu kind="core-locations:location">
+              <button
+                onClick={() => {
+                  setCreateParentId(null);
+                  setCreateOpen(true);
+                }}
+                className="shrink-0 inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2.5 sm:px-3 py-1.5 text-sm transition"
+              >
+                <Plus size={14} />
+                New<span className="hidden sm:inline">&nbsp;location</span>
+              </button>
+            </NewItemMenu>
             <span className="hidden lg:inline text-xs text-muted dark:text-slate-400 truncate min-w-0">
               {filtering
                 ? "Showing matches and the path to them. Drag is off while filtering."
@@ -537,6 +559,13 @@ export function LocationsPage() {
             </span>
           </div>
         )}
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <label className="inline-flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={hideEmpty} onChange={(e) => setHideEmpty(e.target.checked)} />
+            Hide empty
+          </label>
+          {hideEmpty && <span className="text-muted" role="status">{hiddenCount} empty hidden</span>}
+        </div>
         {filtering && rootAreas.length === 0 && looseContainers.length === 0 && (
           <div className="text-sm italic text-muted dark:text-slate-400">No place matches "{q.trim()}".</div>
         )}
@@ -549,16 +578,16 @@ export function LocationsPage() {
             <button
               onClick={() =>
                 setSelected(
-                  selected.size === items.length
+                  allShownSelected
                     ? new Set()
-                    : new Set(items.map((l) => l.id)),
+                    : new Set(shownIds),
                 )
               }
               title="Select every location (e.g. to bulk-delete)"
               className="inline-flex shrink-0 items-center gap-1 rounded text-muted hover:text-content dark:hover:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 px-1.5 py-0.5 text-xs transition"
             >
               <CheckSquare size={13} />
-              {selected.size === items.length ? "Deselect all" : "Select all"}
+              {allShownSelected ? "Deselect all" : "Select all"}
             </button>
             <h2 className="text-xs font-mono uppercase tracking-widest text-faint dark:text-slate-500">
               Areas
@@ -659,6 +688,7 @@ export function LocationsPage() {
         onAskCobb={askCobb}
         actions={
           <>
+            <BulkSetField records={Array.from(selected).map((id) => ({ kind: "core-locations:location", id }))} onDone={() => setSelected(new Set())} />
             <button
               type="button"
               disabled={printing}
@@ -772,7 +802,7 @@ function LocationCard({
         ) : (
           <span className="hidden sm:block w-4 shrink-0" aria-hidden />
         )}
-        <KindIcon size={16} className="text-accent shrink-0" />
+        {node.image_path ? <EntityThumb src={node.image_path} alt={node.name} size={24} /> : <KindIcon size={16} className="text-accent shrink-0" />}
         {/* The name sizes to itself (min-w-0 so a long one still truncates)
             rather than claiming the free width. What matters next — what is
             inside this place — then reads immediately after it, and the spacer
@@ -1025,7 +1055,7 @@ function ZoneCard({
             aria-label={`Select ${node.name}`}
             title="Select for bulk actions"
           />
-          <AreaIcon size={12} className="text-accent shrink-0" />
+          {node.image_path ? <EntityThumb src={node.image_path} alt={node.name} size={18} /> : <AreaIcon size={12} className="text-accent shrink-0" />}
           <Link
             to={`/locations/${node.id}`}
             className="font-mono text-[11px] uppercase tracking-wider font-medium text-content dark:text-mortar-100 hover:text-accent"
@@ -1064,7 +1094,7 @@ function ZoneCard({
             <Pencil size={12} />
           </button>
         </RecordRow>
-        {node.children.length === 0 && (
+        {node.children.length === 0 && (node.contents_count ?? usageTotal) === 0 && (
           <div className="text-xs text-faint dark:text-slate-500 italic px-1 py-1">
             empty - scan or file into it
           </div>

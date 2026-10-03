@@ -43,6 +43,8 @@ export interface CommentFanOutArgs {
    *  back to the honest generic — "your workspace" reads fine in a DM, and a
    *  wrong name would not. */
   roomLabel?: string;
+  /** Who wrote it: a member (the default), or a guest through a share. */
+  authorKind?: "user" | "guest";
 }
 
 /**
@@ -76,7 +78,7 @@ export async function fanOutComment(db: Kysely<CoreDiscussionDB>, args: CommentF
     try {
       const resolved = await platform().entities.lookup(args.orgId, kind, source.source_id);
       if (resolved?.title) recordLabel = resolved.title;
-      if (resolved?.detailUrl) link = resolved.detailUrl;
+      link = (await platform().entities.recordAddressForEntity(args.orgId, kind, source.source_id)) ?? null;
     } catch {
       /* the name and link are niceties; the notification still has to go */
     }
@@ -138,5 +140,8 @@ export async function fanOutComment(db: Kysely<CoreDiscussionDB>, args: CommentF
     comment_id: args.commentId,
     ...source,
     author_user_id: args.authorUserId,
+    author_kind: args.authorKind ?? "user",
+    author_name: args.authorName,
+    body: args.body,
   });
 }

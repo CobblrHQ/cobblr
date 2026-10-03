@@ -1,3 +1,5 @@
+import { fieldCurrency, isCurrency } from "@cobblr/platform-contract/money";
+import { orderFigures, combineOrderTotals } from "../order-money.js";
 // /orders — REST for purchases orders + the nested /items collection.
 // A 'status' transition to 'arrived' emits purchases.order.arrived
 // so downstream wires (e.g. bump inventory stock) can react.
@@ -203,7 +205,7 @@ ordersRouter.get(
             id: String(last.id),
           })
         : null;
-    res.json({ items: items.map(({ _day, _created, ...o }) => o), next_cursor });
+    res.json({ items: await orderFigures(tenantContext(req).org.id, tenantDb(req), items.map(({ _day, _created, ...o }) => o)), next_cursor });
   }),
 );
 
@@ -215,38 +217,30 @@ ordersRouter.get(
   "/summary",
   asyncHandler(async (req, res) => {
     const { q } = filteredOrders(req);
-    const total = orderTotal("o");
-    const head = await q
-      .select([
-        sql<number>`count(*)::int`.as("count"),
-        sql<number>`(count(*) filter (where o.status in ('planned', 'ordered', 'in-transit')))::int`.as("open"),
-        sql<number>`(count(*) filter (where o.status = 'in-transit'))::int`.as("in_transit"),
-        sql<number>`(count(*) filter (where o.metadata ? 'receipt_file_id'))::int`.as("from_receipts"),
-        sql<string>`coalesce(sum(${total}), 0)`.as("spend"),
-        sql<number>`(count(${total}))::int`.as("priced"),
-      ])
-      .executeTakeFirstOrThrow();
-    const months = await q
-      .select([sql<string>`to_char(${orderDay}, 'YYYY-MM')`.as("month"), sql<string>`coalesce(sum(${total}), 0)`.as("spend")])
-      .where(sql<boolean>`${orderDay} >= (date_trunc('month', current_date) - interval '5 months')::date`)
-      .groupBy(sql`to_char(${orderDay}, 'YYYY-MM')`)
-      .execute();
-    const vendors = await q
-      .select([sql<string>`coalesce(o.vendor, '')`.as("vendor"), sql<string>`coalesce(sum(${total}), 0)`.as("spend")])
-      .groupBy(sql`coalesce(o.vendor, '')`)
-      .orderBy(sql`coalesce(sum(${total}), 0)`, "desc")
-      // list-cap-ok: the top five vendors by spend is the answer, not a list cut short
-      .limit(5)
-      .execute();
+    const orgId = tenantContext(req).org.id;
+    const rows = await orderFigures(orgId, tenantDb(req), await q.selectAll("o").execute());
+    const currency = await platform().money.currency(orgId);
+    const sum = combineOrderTotals(rows.map((o) => o.money_total), currency);
+    const byMonth = new Map<string, number>();
+    const byVendor = new Map<string, number>();
+    const from = new Date(); from.setUTCMonth(from.getUTCMonth() - 5, 1);
+    const firstMonth = from.toISOString().slice(0, 7);
+    for (const o of rows) {
+      const month = String(o.ordered_at || o.created_at).slice(0, 7);
+      const date = o.ordered_at || o.created_at;
+      const key = date instanceof Date ? date.toISOString().slice(0, 7) : month;
+      if (key >= firstMonth) byMonth.set(key, (byMonth.get(key) || 0) + o.money_total.amount);
+      byVendor.set(o.vendor || "", (byVendor.get(o.vendor || "") || 0) + o.money_total.amount);
+    }
     res.json({
-      count: head.count,
-      open: head.open,
-      in_transit: head.in_transit,
-      from_receipts: head.from_receipts,
-      spend: Number(head.spend),
-      priced: head.priced,
-      by_month: months.map((m) => ({ month: m.month, spend: Number(m.spend) })),
-      top_vendors: vendors.filter((v) => Number(v.spend) > 0).map((v) => ({ vendor: v.vendor || null, spend: Number(v.spend) })),
+      count: rows.length,
+      open: rows.filter((o) => ["planned", "ordered", "in-transit"].includes(o.status)).length,
+      in_transit: rows.filter((o) => o.status === "in-transit").length,
+      from_receipts: rows.filter((o) => "receipt_file_id" in o.metadata).length,
+      spend: sum.amount, money_total: sum, currency,
+      priced: rows.filter((o) => o.total !== null).length,
+      by_month: [...byMonth].map(([month, spend]) => ({ month, spend })),
+      top_vendors: [...byVendor].filter(([, spend]) => spend > 0).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([vendor, spend]) => ({ vendor: vendor || null, spend })),
     });
   }),
 );
@@ -277,7 +271,8 @@ ordersRouter.get(
       .where("order_id", "=", id)
       .orderBy("created_at")
       .execute();
-    res.json({ ...order, items });
+    const [priced] = await orderFigures(tenantContext(req).org.id, db, [order]);
+    res.json({ ...priced, items: items.map((i) => ({ ...i, currency: fieldCurrency(i.metadata, "unit_cost", priced!.currency) })) });
   }),
 );
 
@@ -294,6 +289,8 @@ ordersRouter.post(
     // Dual-write the legacy `vendor` text from the linked vendor's name so
     // cross-module readers + the orders list stay correct without a join.
     const vendorText = await vendorTextFor(req, parsed.data.vendor_id, parsed.data.vendor);
+    const main = await platform().money.currency(ctx.org.id);
+    const orderMetadata = Object.assign({}, parsed.data.metadata, { currency: fieldCurrency(parsed.data.metadata, "total_cost", main) });
     const inserted = await db
       .insertInto("purchases_orders")
       .values({
@@ -301,7 +298,7 @@ ordersRouter.post(
         vendor: vendorText,
         instance: instanceOf(req),
         status: parsed.data.status ?? "ordered",
-        metadata: parsed.data.metadata ?? {},
+        metadata: orderMetadata,
         // An order born with a tracking number is owned by whoever placed it —
         // the arrival sweep interrupts them alone (parcelAudience). Orders
         // recorded no creator at all, so this is their only ownership signal.
@@ -455,6 +452,9 @@ ordersRouter.post(
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const session = sessionUser(req);
+    const orderCurrency = await db.selectFrom("purchases_orders").select("metadata").where("id", "=", orderId).executeTakeFirstOrThrow();
+    const main = await platform().money.currency(ctx.org.id);
+    const lineMetadata = Object.assign({}, parsed.data.metadata, { currency: fieldCurrency(parsed.data.metadata, "unit_cost", fieldCurrency(orderCurrency.metadata, "total_cost", main)) });
     const { subject_kind, subject_id, add_to_stock, ...lineFields } = parsed.data;
     let inserted = await db
       .insertInto("purchases_order_items")
@@ -462,7 +462,7 @@ ordersRouter.post(
         ...lineFields,
         part_id: null,
         order_id: orderId,
-        metadata: parsed.data.metadata ?? {},
+        metadata: lineMetadata,
       } as never)
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -512,6 +512,7 @@ const ItemEdit = z
     description: z.string().max(500).nullable().optional(),
     qty: z.number().positive().optional(),
     unit_cost: z.number().min(0).nullable().optional(),
+    currency: z.string().refine(isCurrency).optional(),
   })
   .strict();
 const CLAIM_KEYS = new Set(["part_id", "subject_kind", "subject_id"]);

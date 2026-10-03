@@ -1,0 +1,10 @@
+{
+  "lint": "lint:photo-field-has-web-picker",
+  "run": "node scripts/lint-photo-field-has-web-picker.ts",
+  "rows": [
+    "generic-web-component"
+  ],
+  "ms": 500,
+  "recorded": "2026-10-03",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

@@ -11,9 +11,23 @@
 
 export interface RoutedConnection {
   id: string;
+  kind: string;
   label: string;
   provider_id: string;
   routes?: Array<{ org_id: string; mode: string; primary?: boolean }>;
+}
+
+/** Connections of one kind that are routed into one workspace. Ranking is
+ * kind-local: an AI provider cannot compete with a service, mailbox or
+ * tracking account merely because both are available in the same workspace. */
+export function routedConnectionsOfKind<T extends RoutedConnection>(
+  others: T[],
+  orgId: string,
+  kind: string,
+): T[] {
+  return others.filter(
+    (c) => c.kind === kind && (c.routes ?? []).some((r) => r.org_id === orgId),
+  );
 }
 
 /**
@@ -28,8 +42,9 @@ export interface RoutedConnection {
 export function incumbentConnection<T extends RoutedConnection>(
   others: T[],
   orgId: string,
+  kind: string,
 ): T | null {
-  const routedHere = others.filter((c) => (c.routes ?? []).some((r) => r.org_id === orgId));
+  const routedHere = routedConnectionsOfKind(others, orgId, kind);
   if (routedHere.length === 0) return null;
   const primary = routedHere.find((c) =>
     (c.routes ?? []).some((r) => r.org_id === orgId && r.primary),
@@ -38,6 +53,6 @@ export function incumbentConnection<T extends RoutedConnection>(
 }
 
 /** Is more than one of mine routed here — i.e. is there a choice to make? */
-export function hasCompetition(others: RoutedConnection[], orgId: string): boolean {
-  return others.some((c) => (c.routes ?? []).some((r) => r.org_id === orgId));
+export function hasCompetition(others: RoutedConnection[], orgId: string, kind: string): boolean {
+  return routedConnectionsOfKind(others, orgId, kind).length > 0;
 }

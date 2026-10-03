@@ -45,6 +45,10 @@ export interface LinkedTable extends DocumentRowCommon {
   written_back: Generated<boolean>;
   linked_by: string | null;
   linked_at: Stamp;
+  copied_at: Date | null;
+  copied_filename: string | null;
+  copied_file_id: string | null;
+  copy_requested_by: string | null;
 }
 
 export interface ConnectionsTable {

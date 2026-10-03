@@ -16,9 +16,11 @@
 // looking AT things; list is available via the ?view=list query.
 
 import { MAIN_ID, SkipToContent } from "../components/a11y/shell-landmarks";
+import { useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useParams, useSearchParams } from "react-router-dom";
 import { CobblestoneMark } from "../CobblestoneMark";
+import { PublicBrand, PublicPageView, type PublicFrame, type PublicRecord } from "./PublicPageView";
 import { EntityTile, EntityThumb, usePageTitle, TILE_GRID } from "@cobblr/platform-web";
 import {
   PublicAppPlayer,
@@ -45,9 +47,10 @@ interface SurfaceSection {
 interface SurfaceResponse {
   surface: {
     name: string;
-    scope_type: "view" | "entity" | "collection" | "board" | "app";
+    scope_type: "view" | "entity" | "collection" | "board" | "app" | "page";
     config: Record<string, unknown>;
   };
+  page?: PublicFrame & { name: string; layout: string };
   view?: { name: string; entity_kind: string; view_type: string };
   collection?: { kind: string; query: Record<string, unknown> };
   entity?: SurfaceItem | null;
@@ -79,15 +82,39 @@ interface SurfaceTheme {
   epaper?: boolean;
 }
 
-export function PublicSurfacePage() {
+/** A public page by its memorable address, /p/<workspace>/<address>: the
+ *  link it opens through, rendered as that link. Nothing there reads the same
+ *  as an ended link. */
+export function NamedPublicPage() {
+  const { org, address } = useParams<{ org: string; address: string }>();
+  const named = useQuery({
+    queryKey: ["public-named", org, address],
+    queryFn: async () => {
+      const res = await fetch(`/api/v1/public/named/${encodeURIComponent(org ?? "")}/${encodeURIComponent(address ?? "")}`);
+      if (!res.ok) throw new Error("not_found");
+      return (await res.json()) as { token: string };
+    },
+    retry: false,
+  });
+  if (named.isLoading) return <PublicShell>Loading…</PublicShell>;
+  return <PublicSurfacePage token={named.data?.token} missing={!named.data} />;
+}
+
+export function PublicSurfacePage({ token: given, missing }: { token?: string; missing?: boolean } = {}) {
   usePageTitle("Public surface");
-  const { token } = useParams<{ token: string }>();
+  const routed = useParams<{ token: string }>().token;
+  const token = given ?? routed;
   const [params] = useSearchParams();
+  const opened = useRef<string | undefined>(undefined);
 
   const surface = useQuery({
     queryKey: ["public-surface", token],
     queryFn: async (): Promise<SurfaceResponse> => {
-      const res = await fetch(`/api/v1/public/${token}`);
+      const visit = opened.current !== token;
+      opened.current = token;
+      const res = await fetch(`/api/v1/public/${token}`, {
+        headers: { "X-Cobblr-Visit": visit ? "1" : "0" },
+      });
       if (res.status === 404) throw new Error("not_found");
       if (res.status === 410) throw new Error("expired");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -95,6 +122,7 @@ export function PublicSurfacePage() {
     },
     enabled: !!token,
     retry: false,
+    refetchOnMount: "always",
     // Re-fetch so a wall-mounted screen picks up new items without anyone
     // touching the page. Cadence is per-surface (config.refresh_seconds,
     // default 60); 0 = never — for a static e-paper panel that mustn't ghost on
@@ -113,6 +141,7 @@ export function PublicSurfacePage() {
   const layout: "list" | "tiles" =
     theme.layout ?? (params.get("view") === "list" ? "list" : "tiles");
 
+  if (missing) return <PublicShell theme={theme}><Gone /></PublicShell>;
   if (surface.isLoading) {
     return <PublicShell theme={theme}>Loading…</PublicShell>;
   }
@@ -120,27 +149,30 @@ export function PublicSurfacePage() {
     const e = (surface.error as Error).message;
     return (
       <PublicShell theme={theme}>
-        <div className="text-center py-12">
-          <h1 className="font-display text-3xl font-extrabold text-content dark:text-mortar-100 page-title mb-2">
-            {e === "not_found"
-              ? "not found"
-              : e === "expired"
-                ? "expired"
-                : "error"}
-          </h1>
-          <p className="text-sm text-muted dark:text-slate-400">
-            {e === "not_found"
-              ? "this surface doesn't exist or has been revoked."
-              : e === "expired"
-                ? "this surface's token has expired."
-                : `${e}, try refreshing.`}
-          </p>
-        </div>
+        <Gone error={e === "not_found" || e === "expired" ? undefined : e} />
       </PublicShell>
     );
   }
   const data = surface.data;
   if (!data) return <PublicShell theme={theme}>—</PublicShell>;
+
+  if (data.surface.scope_type === "page" && data.page) {
+    return (
+      <PublicBrand frame={data.page} testId="public-page-brand">
+      <PublicShell theme={data.page.theme ? { ...theme, theme: "light" } : theme} title={data.page.name}>
+        <PublicPageView token={token!} layout={data.page.layout} items={(data.items ?? []) as unknown as PublicRecord[]} />
+        {data.page.contact && (
+          <p className="mt-6 text-center">
+            <a href={data.page.contact} rel="noopener noreferrer" target="_blank" className="inline-flex rounded-lg bg-cobble-600 px-3 py-2 text-sm font-medium text-white">
+              Get in touch
+            </a>
+          </p>
+        )}
+        {data.page.footer !== false && <p className="mt-6 text-center text-xs text-faint">Made with Cobblr</p>}
+      </PublicShell>
+      </PublicBrand>
+    );
+  }
 
   // scope_type "app" renders a full-bleed, themed, read-only App Player —
   // its own header/theme, no PublicShell chrome.
@@ -206,6 +238,19 @@ export function PublicSurfacePage() {
         </footer>
       )}
     </PublicShell>
+  );
+}
+
+/** A revoked link and one that never was read the same, so a guess learns
+ *  nothing. */
+function Gone({ error }: { error?: string }) {
+  return (
+    <div className="text-center py-12">
+      <h1 className="font-display text-3xl font-extrabold text-content dark:text-mortar-100 page-title mb-2">{error ? "error" : "expired"}</h1>
+      <p className="text-sm text-muted dark:text-slate-400" data-testid="public-gone">
+        {error ? `${error}, try refreshing.` : "This link has expired."}
+      </p>
+    </div>
   );
 }
 

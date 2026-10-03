@@ -39,7 +39,7 @@ import { meta } from "../db/meta.js";
 import * as connections from "./connections.js";
 import { guardedFetch } from "./egress.js";
 import { listBuiltIns, type ServiceConnectionPort, type ServiceConnectionRef } from "./services.js";
-import { resolvePersonalProvider, storedCredentialById } from "./user-credentials.js";
+import { resolvePersonalProvider, rotateCredentialSecrets, storedCredentialById } from "./user-credentials.js";
 
 /** One hop's budget. The job's length lives in the service; a hop is short. */
 const HOP_TIMEOUT_MS = 20_000;
@@ -332,6 +332,7 @@ export interface ServiceAdapter {
   id: string;
   title: string;
   summary?: string;
+  disconnect?: { stops: string; keeps: string };
   config_schema: {
     type: "object";
     properties: Record<string, { type: "string"; title: string; description?: string; format?: "uri"; writeOnly?: boolean; default?: string; enum?: string[]; enumLabels?: string[] }>;
@@ -352,7 +353,7 @@ let adapterCatalogue: () => ServiceAdapter[] = () => {
     const group = adapterGroupOf(b);
     if (seen.has(group)) return [];
     seen.add(group);
-    return [{ id: group, title: b.connection.title, ...(b.connection.summary ? { summary: b.connection.summary } : {}), config_schema: b.connection.config_schema, test: b.connection.test } as ServiceAdapter];
+    return [{ id: group, title: b.connection.title, ...(b.connection.summary ? { summary: b.connection.summary } : {}), ...(b.connection.disconnect ? { disconnect: b.connection.disconnect } : {}), config_schema: b.connection.config_schema, test: b.connection.test } as ServiceAdapter];
   });
 };
 /** Where the installed adapters come from: the kernel's built-ins that
@@ -375,12 +376,14 @@ export function adapterProvider(a: ServiceAdapter): ConnectionProviderDef {
     kind: SERVICE_KIND,
     label: a.title,
     ...(a.summary ? { blurb: a.summary } : {}),
+    ...(a.disconnect ? { disconnect: a.disconnect } : {}),
     credentials: Object.fromEntries(
       Object.entries(a.config_schema.properties).map(([k, p]) => [
         k,
         {
           label: p.title,
           secret: p.writeOnly === true,
+          ...(p.format ? { format: p.format } : {}),
           ...(p.enum?.length ? { choices: p.enum.map((value, i) => ({ value, label: p.enumLabels?.[i] || value || "Default" })) } : {}),
         },
       ]),
@@ -480,7 +483,10 @@ function refOf(c: ServiceConnection, userId: string | null): ServiceConnectionRe
 /** The port, plus an adapter's config for the kernel to hand its built-in
  *  (`ctx.config`), read only when it runs one, so a connection ref never
  *  carries a secret. */
-export type ServicePort = ServiceConnectionPort & { configFor(credentialId: string): Promise<Record<string, string> | null> };
+export type ServicePort = ServiceConnectionPort & {
+  configFor(credentialId: string): Promise<Record<string, string> | null>;
+  updateSecrets(credentialId: string, group: string, expected: Readonly<Record<string, string>>, patch: Readonly<Record<string, string>>): Promise<void>;
+};
 
 /** An adapter's connection as the kernel sees it: the built-ins of its
  *  group that run it, with a manifest made from their own declarations. Null
@@ -577,6 +583,23 @@ export function serviceConnectionPort(): ServicePort {
       const row = await storedCredentialById(credentialId);
       if (!row || row.kind !== SERVICE_KIND || !row.provider_id.startsWith(ADAPTER_PREFIX)) return null;
       return configOf(row.credentials);
+    },
+    updateSecrets: async (credentialId, group, expected, patch) => {
+      const adapter = adapterCatalogue().find(a => a.id === group);
+      const properties = adapter?.config_schema.properties;
+      if (!properties || !patch || typeof patch !== "object" || Array.isArray(patch)
+        || Object.entries(patch).some(([key, value]) => key.startsWith("__") || !Object.hasOwn(properties, key) || properties[key]?.writeOnly !== true || typeof value !== "string")) {
+        throw new Error("Only declared secret fields can be refreshed.");
+      }
+      if (!Object.keys(patch).length) return;
+      const secrets = Object.fromEntries(Object.entries(properties).filter(([, property]) => property.writeOnly === true).map(([key]) => [key, expected[key]]));
+      try {
+        const saved = await rotateCredentialSecrets(credentialId, `${ADAPTER_PREFIX}${group}`, SERVICE_KIND, secrets, patch);
+        if (saved) return;
+      } catch {
+        throw new Error("The refreshed credentials could not be saved.");
+      }
+      throw new Error("This connection changed or was removed. Reload it before refreshing credentials again.");
     },
     adapterFetch: async (credentialId) => {
       const row = await storedCredentialById(credentialId);

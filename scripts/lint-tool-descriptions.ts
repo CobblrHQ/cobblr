@@ -26,7 +26,9 @@ const MAX_TOTAL_SCHEMA_CHARS = 17_300;
 // from the set that is. The service tools (list_services, invoke_service,
 // get_service_job, #4034) go out only where a service capability is
 // connected. A conditional tool still pays when it is sent, so it is capped.
-const MAX_CONDITIONAL_SCHEMA_CHARS = 1_400;
+// Station review adds 938 characters only for a person with a station. Its
+// three reads cover setup, paged history and a whole session for Cobb and MCP.
+const MAX_CONDITIONAL_SCHEMA_CHARS = 2_350;
 
 let bad = 0;
 let total = 0;

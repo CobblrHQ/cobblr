@@ -72,6 +72,15 @@ export default defineModule({
         },
       },
       {
+        id: "core-placement:contents-worth",
+        examples: ["what's the garage worth?", "what did everything in the toolbox cost?"],
+        label: "Contents worth",
+        description: "Total paid for everything inside the targeted place or holder, including sub-places and containers. Each record counts once. Includes the thing count and how many have no price. Requires inventory:view-costs. Read-only.",
+        appliesTo: { traits: ["physical"] },
+        invokeHandler: "core-placement.contents-worth",
+        userInvokable: false,
+      },
+      {
         id: "core-placement:built-from",
         examples: ["what's inside the Gaming PC?", "what is the server worth with its parts?"],
         label: "What it is built from",

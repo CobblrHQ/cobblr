@@ -1,3 +1,5 @@
+import { registerDeletedAttachments } from "../deletion-participant.js";
+import { purgeFile, restoreFile } from "../purge.js";
 // Entity-kind resolver for core-files:file. Lets other modules
 // look up a file via platform.entities.lookup() — typically to
 // render a thumbnail or pull the medium-variant URL into a card.
@@ -7,12 +9,13 @@
 // file's raw bytes — print farm uploading gcode, vision reading a
 // scan photo — without importing core-files or its disk layout.
 
+import { RecordRestoreRefused } from "@cobblr/platform-contract";
 import { readableFilename } from "./filename.js";
 import { sameBytes } from "./intake.js";
 import { notePhotoSource, photoSourceOf } from "./photo-source.js";
 import { randomUUID } from "node:crypto";
 import { sql, type Kysely } from "kysely";
-import { likeEscape, platform, type ResolvedEntity } from "@cobblr/platform-contract";
+import { registerRowHistoryWriter, likeEscape, platform, type ResolvedEntity } from "@cobblr/platform-contract";
 import type { CoreFilesDB, FileVariants } from "../db.js";
 import { registerDocumentImageReader } from "@cobblr/platform-contract/document-images";
 import { extractPdfImages } from "./pdf-images.js";
@@ -23,6 +26,19 @@ let registered = false;
 export function registerFileResolvers(): void {
   if (registered) return;
   registered = true;
+  registerDeletedAttachments();
+  platform().deletedRecords.registerLifecycle("core-files:file", {
+    restore: async (orgId, id) => {
+      const result = await restoreFile(await platform().tenants.getDb(orgId) as Kysely<CoreFilesDB>, orgId, id);
+      if (!result.ok) throw new RecordRestoreRefused(result.message, result.code === "quota_exceeded" ? 413 : 404);
+    },
+    purge: async (orgId, id) => {
+      const db = await platform().tenants.getDb(orgId) as Kysely<CoreFilesDB>;
+      if (!await db.selectFrom("core_files_files").select("id").where("id", "=", id).executeTakeFirst()) return true;
+      return purgeFile(db, orgId, id);
+    },
+  });
+  registerRowHistoryWriter("core-files:file", "core_files_files");
 
   platform().entities.registerResolver(
     "core-files:file",

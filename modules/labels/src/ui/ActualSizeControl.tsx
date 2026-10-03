@@ -62,7 +62,7 @@ export function ActualSizeControl({
 
       {actual && (
         <>
-          <div className="relative shrink-0" style={{ height: 24, width: rulerW + 26 }}>
+          <div className="relative shrink-0" style={{ height: 28, width: rulerW + 30 }}>
             <div
               ref={rulerRef}
               className="absolute left-0 top-1 rounded-sm border border-line dark:border-slate-500 bg-surface dark:bg-slate-900"
@@ -90,7 +90,7 @@ export function ActualSizeControl({
                 );
               })}
             </div>
-            <span className="absolute text-[8px] text-faint dark:text-slate-500" style={{ left: rulerW + 5, top: 15 }}>
+            <span className="absolute whitespace-nowrap text-[8px] text-faint dark:text-slate-500" style={{ left: rulerW + 5, top: 14 }}>
               cm
             </span>
             <span

@@ -265,6 +265,7 @@ export async function attachPaperwork(args: {
       args: {
         vendor: from,
         ordered_at: receipt.date,
+        currency: receipt.currency,
         order_ref: receipt.order_ref,
         total: priceOk ? receipt.total : null,
         source_file_id: args.fileId,

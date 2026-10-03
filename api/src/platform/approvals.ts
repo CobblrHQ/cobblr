@@ -53,7 +53,7 @@ import type { ApprovalResume, ApprovalStatus } from "../db/schema.js";
 import { effectiveCapabilities } from "../auth/effective-capabilities.js";
 import { grantCapability, grantableActions } from "./capability-grants.js";
 import { capabilityModule } from "./grantable-scope.js";
-import { getEntry } from "../modules/registry.js";
+import { canonicalModuleName, getEntry } from "../modules/registry.js";
 import { getFlagshipManifest } from "../lib/flagship-bundles.js";
 import { dispatch } from "./notifications.js";
 import * as activity from "./activity.js";
@@ -211,7 +211,7 @@ const KINDS: Record<ApprovalRemedy["kind"], RemedyKind> = {
       return shown ? `${shown} turned on` : null;
     },
     async holds(orgId, _requesterId, _role, key) {
-      const row = await meta.selectFrom("org_modules").select("module_name").where("org_id", "=", orgId).where("module_name", "=", key).executeTakeFirst();
+      const row = await meta.selectFrom("org_modules").select("module_name").where("org_id", "=", orgId).where("module_name", "=", canonicalModuleName(key)).executeTakeFirst();
       return !!row;
     },
     async apply({ orgId, key, approver }) {
@@ -432,6 +432,7 @@ async function notifyApprovers(row: ApprovalRequestRow): Promise<void> {
         eventType: REQUESTED_EVENT,
         message,
         priority: "high",
+        // OUTSIDE-RECORD-ADDRESS: an approval is a workflow row on its settings page, not a registered record kind.
         link_url: `/configuration/permissions#request-${row.id}`,
         entityType: "approval_request",
         entityId: row.id,

@@ -1,6 +1,7 @@
 // Entity-kind resolver — lets other modules + core-views read builds via
 // platform().entities.lookup()/list() without knowing our tables.
 
+import { registerRowHistoryWriter } from "@cobblr/platform-contract";
 import { type Kysely } from "kysely";
 import { platform, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import type { BuildsDB } from "../db.js";
@@ -10,6 +11,7 @@ let registered = false;
 export function registerBuildsResolvers(): void {
   if (registered) return;
   registered = true;
+  registerRowHistoryWriter("builds:build", "builds_builds");
 
   platform().entities.registerResolver("builds:build", async (orgId, id) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<BuildsDB>;

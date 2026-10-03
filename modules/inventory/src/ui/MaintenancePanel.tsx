@@ -87,7 +87,7 @@ export function MaintenancePanel({ entityModule, entityType, entityId }: Props) 
         body: JSON.stringify({}),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      noteWorkspaceWrite(`${base}/${id}/complete`);
+      noteWorkspaceWrite(`${base}/${id}/complete`, res);
     },
     onSuccess: () => {
       toast.success("Marked done.");
@@ -101,7 +101,7 @@ export function MaintenancePanel({ entityModule, entityType, entityId }: Props) 
     mutationFn: async (id: string) => {
       const res = await fetch(`${base}/${id}`, { method: "DELETE", headers: auth() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      noteWorkspaceWrite(`${base}/${id}`);
+      noteWorkspaceWrite(`${base}/${id}`, res);
     },
     onSuccess: () => {
       toast.success("Entry deleted.");
@@ -325,7 +325,7 @@ function AddEntryModal({
         };
         throw new Error(err.error?.message ?? `HTTP ${res.status}`);
       }
-      noteWorkspaceWrite(`/api/v1/orgs/${orgSlug}/modules/core-maintenance/entries`);
+      noteWorkspaceWrite(`/api/v1/orgs/${orgSlug}/modules/core-maintenance/entries`, res);
       toast.success("Maintenance entry added.");
       void qc.invalidateQueries({
         queryKey: ["maintenance", orgSlug, entityModule, entityType, entityId],

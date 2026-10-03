@@ -4,12 +4,14 @@
 // stores: cents for a cents column, the amount for everything else. A form
 // never shows 430000 for a $4,300 price, and never stores 4.3 for "4,300".
 
+import { CurrencyPicker, useMoneyCurrency } from "./MoneyCurrency";
+import { amountOf, toCents, readMoney, type Money } from "@cobblr/platform-contract/money";
 import { useEffect, useState } from "react";
 import {
   currencySymbol,
-  DEFAULT_CURRENCY,
   moneyForStorage,
   moneyInputText,
+  parseMoneyAmount,
   type MoneyStorage,
 } from "@cobblr/platform-contract/money";
 
@@ -21,6 +23,7 @@ export interface MoneyInputProps {
    *  an amount is not committed: the box says so and keeps what was typed. */
   onCommit: (stored: number | null) => void;
   currency?: string | null;
+  onCurrencyChange?: (currency: string) => void;
   placeholder?: string;
   className?: string;
   autoFocus?: boolean;
@@ -36,6 +39,7 @@ export function MoneyInput({
   storage,
   onCommit,
   currency,
+  onCurrencyChange,
   placeholder,
   className,
   autoFocus,
@@ -43,14 +47,16 @@ export function MoneyInput({
   live,
   onCancel,
 }: MoneyInputProps) {
-  const shown = moneyInputText(value, storage);
+  const main = useMoneyCurrency();
+  const selectedCurrency = currency || readMoney(value, storage, main)?.currency || main;
+  const shown = moneyInputText(value, storage, undefined, selectedCurrency);
   const [draft, setDraft] = useState(shown);
   const [bad, setBad] = useState(false);
   useEffect(() => setDraft(shown), [shown]);
 
   const read = (text: string): { ok: true; stored: number | null } | { ok: false } => {
     if (!text.trim()) return { ok: true, stored: null };
-    const stored = moneyForStorage(text, storage);
+    const stored = storage === "amount" ? parseMoneyAmount(text) : moneyForStorage(text, storage);
     return stored === null ? { ok: false } : { ok: true, stored };
   };
   const commit = () => {
@@ -60,8 +66,8 @@ export function MoneyInput({
       return;
     }
     setBad(false);
-    setDraft(moneyInputText(r.stored, storage));
-    const before = shown.trim() ? moneyForStorage(shown, storage) : null;
+    setDraft(moneyInputText(r.stored, storage, undefined, selectedCurrency));
+    const before = shown.trim() ? storage === "amount" ? parseMoneyAmount(shown) : moneyForStorage(shown, storage) : null;
     if (r.stored === before) return;
     onCommit(r.stored);
   };
@@ -69,7 +75,7 @@ export function MoneyInput({
   return (
     <div className={"flex items-center gap-1 " + (className ?? "")}>
       <span className="text-muted dark:text-slate-400 select-none" aria-hidden>
-        {currencySymbol(currency || DEFAULT_CURRENCY)}
+        {currencySymbol(selectedCurrency)}
       </span>
       <input
         type="text"
@@ -98,9 +104,20 @@ export function MoneyInput({
             onCancel?.();
           }
         }}
-        className={"input w-full tabular-nums " + (bad ? "border-ember-500 dark:border-ember-400" : "")}
+        className={"input w-full min-w-0 flex-1 tabular-nums " + (bad ? "border-ember-500 dark:border-ember-400" : "")}
       />
+      {onCurrencyChange && <CurrencyPicker value={selectedCurrency} onChange={onCurrencyChange} label={`${ariaLabel || "Price"} currency`} />}
       {bad && <span className="shrink-0 text-xs text-ember-600 dark:text-ember-400">not an amount</span>}
     </div>
   );
+}
+
+export function MoneyValueInput({ value, onCommit, ...props }: Omit<MoneyInputProps, "onCommit" | "currency" | "onCurrencyChange"> & { onCommit: (value: Money | null) => void }) {
+  const main = useMoneyCurrency();
+  const selected = readMoney(value, props.storage, main);
+  const [currency, setCurrency] = useState(selected?.currency || main);
+  useEffect(() => setCurrency(selected?.currency || main), [selected?.currency, main]);
+  return <MoneyInput {...props} value={value} currency={currency}
+    onCommit={(n) => onCommit(n === null ? null : { amount: props.storage === "cents" ? amountOf(toCents(n)) : n, currency })}
+    onCurrencyChange={(c) => { setCurrency(c); if (selected) onCommit({ amount: selected.amount, currency: c }); }} />;
 }

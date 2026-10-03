@@ -8,6 +8,7 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Pin, Plus, Tag as TagIcon, Trash2 } from "lucide-react";
 import { ApiError, api, type TagRecord } from "../lib/api";
+import { useHideEmpty } from "../lib/useHideEmpty";
 import { EditTagModal } from "../components/EditTagModal";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { DragInput, Modal, SearchInput, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
@@ -99,6 +100,7 @@ export function TagsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<TagRecord | null>(null);
   const [find, setFind] = useState("");
+  const [hideEmpty, setHideEmpty] = useHideEmpty("tags");
 
   const list = useQuery({
     queryKey: ["tags", activeSlug],
@@ -145,14 +147,23 @@ export function TagsPage() {
     onError: (e) => toast.error((e as Error).message),
   });
 
-  const items = list.data?.items ?? [];
+  const allItems = list.data?.items ?? [];
+  const items = hideEmpty ? allItems.filter((t) => (t.uses ?? 0) > 0) : allItems;
+  const hiddenCount = allItems.length - items.length;
 
   // Group into a tree by parent_id (a parent_id pointing at a missing tag is
   // treated as top-level, so nothing is ever hidden).
   const ids = new Set(items.map((t) => t.id));
+  const allById = new Map(allItems.map((t) => [t.id, t]));
   const byParent = new Map<string | null, TagRecord[]>();
   for (const t of items) {
-    const key = t.parent_id && ids.has(t.parent_id) ? t.parent_id : null;
+    let key = t.parent_id;
+    const seen = new Set([t.id]);
+    while (key && !ids.has(key) && !seen.has(key)) {
+      seen.add(key);
+      key = allById.get(key)?.parent_id ?? null;
+    }
+    if (key && (!ids.has(key) || seen.has(key))) key = null;
     const arr = byParent.get(key) ?? [];
     arr.push(t);
     byParent.set(key, arr);
@@ -195,11 +206,17 @@ export function TagsPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
         <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">Tags</h1>
+        <Link className="text-xs text-muted underline" to="/configuration/recently-deleted?kind=core-tags:tag">Recently deleted</Link>
         <span className="text-sm text-muted dark:text-slate-400">
           {needle ? `${found.length} of ${items.length}` : items.length} {items.length === 1 ? "tag" : "tags"}
         </span>
         <div className="flex-1" />
-        {items.length > 0 && (
+        <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
+          <input type="checkbox" checked={hideEmpty} onChange={(e) => setHideEmpty(e.target.checked)} />
+          Hide empty
+        </label>
+        {hideEmpty && <span className="text-sm text-muted" role="status">{hiddenCount} empty hidden</span>}
+        {allItems.length > 0 && (
           <SearchInput value={find} onChange={setFind} placeholder="find a tag…" aria-label="Find a tag" wrapperClassName="w-44 max-sm:w-full max-sm:order-last" />
         )}
         <button
@@ -211,7 +228,7 @@ export function TagsPage() {
       </div>
 
       {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
-      {items.length === 0 && !list.isLoading && (
+      {allItems.length === 0 && !list.isLoading && (
         <div className="text-sm text-muted dark:text-slate-400 italic">
           No tags yet. Tags get created on demand when you attach one to an
           entity, or you can pre-define them here.

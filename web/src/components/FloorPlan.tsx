@@ -14,7 +14,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { Check, Flame, Grid3x3, Loader2, MapPin, Pencil, Plus, Printer, Redo2, ScanLine, Sparkles, Tag, Undo2, X } from "lucide-react";
 import { diffPlaces, historyKey, planHistoryFor, type PlanChange, type PlanStep } from "../lib/planHistory";
 import { Modal, useImageSrc, useToast } from "@cobblr/platform-web";
-import { ApiError, api, type Location } from "../lib/api";
+import { ApiError, api, type Location, type TagAttachment, type TagRecord } from "../lib/api";
 import { totalUsage, useLocationUsage } from "../lib/useLocationUsage";
 import {
   SNAP_MM,
@@ -23,6 +23,7 @@ import {
   freeSpot,
   hasOwnLayout,
   newChildRect,
+  partitionPlanRecords,
   planOwnerOf,
   readBound,
   readRect,
@@ -49,11 +50,28 @@ import { gridPitches, planPitch } from "../lib/planGrid";
 import { usePlanHeightCap } from "./plan-fits-the-screen";
 import { layoutPinLabels } from "../lib/pinLabels";
 import { PinPeek } from "./PinPeek";
-import { PLAN_COLOURS, isPlanColour, planColourOf, type PlanColour } from "@cobblr/platform-contract/plan-colours";
+import { PLAN_COLOURS, isPlanColour, planColourOf } from "@cobblr/platform-contract/plan-colours";
 import { GROUP_COLOURS, PLAN_COLOUR_STYLE } from "../lib/planColourStyles";
 import { groupPins, groupableFields, shortFor } from "../lib/pinGroups";
 import { fieldKindOf } from "@cobblr/platform-contract/kind-label";
 import { jsonbPatchBetween } from "@cobblr/platform-contract/jsonb-merge";
+
+type PlaceOutline = { key: string; label: string; colour: string | null; border: string; swatch: string; tagId?: string };
+
+function outlineFor(loc: Location, attachments: TagAttachment[], tags: TagRecord[]): PlaceOutline | null {
+  const fp = (loc.metadata?.floorplan ?? {}) as Record<string, unknown>;
+  const attached = tags.filter((t) => attachments.some((a) => a.tag_id === t.id)).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  const tag = fp.outline_tag_id === "custom" ? undefined
+    : typeof fp.outline_tag_id === "string" ? attached.find((t) => t.id === fp.outline_tag_id)
+    : attached.find((t) => t.color) ?? attached[0];
+  if (tag) return { key: tag.id, label: tag.name, colour: tag.color, border: "border-2 border-slate-400 dark:border-slate-500", swatch: "bg-slate-400 dark:bg-slate-500", tagId: tag.id };
+  const colour = planColourOf(loc.metadata);
+  return colour ? { key: `custom:${colour}`, label: "Custom", colour: null, border: `border-2 ${PLAN_COLOUR_STYLE[colour].border}`, swatch: PLAN_COLOUR_STYLE[colour].swatch } : null;
+}
+
+const [placeModule, placeType] = LOCATION_KIND.split(":") as [string, string];
+const placeTagKey = (slug: string, id: string) => ["tag-attachments", slug, placeType, id];
+const readPlaceTags = (slug: string, id: string) => api.listTagAttachments(slug, { source_module: placeModule, source_type: placeType, source_id: id });
 
 type Sel =
   | { type: "item"; id: string }
@@ -229,6 +247,12 @@ function PlanFor({
         .map((l) => ({ loc: l, rect: readRect(l.metadata)! })),
     [items, byId, room.id],
   );
+  const tags = useQuery({ queryKey: ["tags", slug], queryFn: () => api.listTags(slug), staleTime: 30_000 });
+  const containers = placed.filter(({ loc }) => loc.kind !== "area");
+  const attachedTags = useQueries({ queries: containers.map(({ loc }) => ({
+    queryKey: placeTagKey(slug, loc.id), queryFn: () => readPlaceTags(slug, loc.id), staleTime: 30_000,
+  })) });
+  const outlines = new Map(containers.map(({ loc }, i) => [loc.id, outlineFor(loc, attachedTags[i]?.data?.items ?? [], tags.data?.items ?? [])]));
   // Placed areas split by whether they own a plan of their own:
   //   • zones (no bound)  — invisible regions, faint labels (the garage bays)
   //   • rooms (own bound) — VISIBLE rects that drill into their own plan (the
@@ -289,18 +313,17 @@ function PlanFor({
     };
     return all.filter((e) => e.location_id && ownerOfLoc(e.location_id) === room.id);
   }, [placeable, byId, room.id]);
-  const placedOccupants = useMemo(
-    () =>
-      occupants
-        .filter((e) => readRect(e.metadata))
-        .map((e) => ({ ent: e, rect: readRect(e.metadata)! }))
-        .sort(byAreaDesc),
-    [occupants],
-  );
-  const unplacedOccupants = useMemo(
-    () => occupants.filter((e) => !readRect(e.metadata)),
-    [occupants],
-  );
+  const held = useQuery({
+    queryKey: ["location-contents", slug, room.id],
+    queryFn: () => api.placementContents(slug, LOCATION_KIND, room.id),
+    enabled: !!bound,
+    staleTime: 30_000,
+  });
+  const { pins, placedOccupants, unplacedOccupants } = useMemo(() => {
+    const result = partitionPlanRecords(occupants, held.data?.items ?? [], bound);
+    result.placedOccupants.sort(byAreaDesc);
+    return result;
+  }, [occupants, held.data, bound]);
   // Two things in one place is a mistake the plan should SHOW rather than
   // silently accept — a floor plan that quietly stacks records misrepresents
   // the space it exists to describe. Containers and the things placed in them
@@ -323,15 +346,6 @@ function PlanFor({
     () => items.filter((l) => l.parent_id === room.id && l.kind !== "area"),
     [items, room.id],
   );
-  // Pins: things put at an exact spot on this plan (dropped on its bare
-  // floor in place mode), from what this place holds. The same read the
-  // place's own page lists, so the two never disagree.
-  const held = useQuery({
-    queryKey: ["location-contents", slug, room.id],
-    queryFn: () => api.placementContents(slug, LOCATION_KIND, room.id),
-    enabled: !!bound,
-    staleTime: 30_000,
-  });
   // A thing on the plan that holds things (a Backpack) says so: what is in it
   // is not drawn, and without this the plan read as if it were nowhere.
   const holders = useQuery({
@@ -347,13 +361,6 @@ function PlanFor({
       return n > 0 ? `holds ${n} ${n === 1 ? "thing" : "things"}` : null;
     };
   }, [holders.data]);
-  const pins = useMemo(
-    () =>
-      (held.data?.items ?? []).filter(
-        (t) => t.position && bound && t.position.x_mm <= bound.w_mm && t.position.y_mm <= bound.d_mm,
-      ),
-    [held.data, bound],
-  );
   // The drawing's width on screen, so pin labels are laid out where they
   // will actually be drawn (a phone's 358 px drawer is not a desk's 900).
   const [planPx, setPlanPx] = useState(0);
@@ -411,15 +418,14 @@ function PlanFor({
     );
   }, [pins, bound, planPx, holdsLabel, placeable, groupable]);
 
-  const planLegend = useMemo(() => {
-    const by = new Map<PlanColour, string[]>();
-    for (const { loc } of placed) {
-      if (loc.kind === "area") continue;
-      const c = planColourOf(loc.metadata);
-      if (c) by.set(c, [...(by.get(c) ?? []), loc.name]);
-    }
-    return PLAN_COLOURS.filter((c) => by.has(c)).map((colour) => ({ colour, names: by.get(colour)! }));
-  }, [placed]);
+  const planLegend = new Map<string, { outline: PlaceOutline; names: string[] }>();
+  for (const { loc } of containers) {
+    const outline = outlines.get(loc.id);
+    if (!outline) continue;
+    const group = planLegend.get(outline.key) ?? { outline, names: [] };
+    group.names.push(loc.name);
+    planLegend.set(outline.key, group);
+  }
   // A tap on a pin with a finger opens its card first (a finger has no hover
   // to read a packed drawer by); a mouse click opens the record, as before.
   const [pinPeek, setPinPeek] = useState<string | null>(null);
@@ -591,9 +597,10 @@ function PlanFor({
     saveMeta.mutate({ id: loc.id, before: loc.metadata, metadata });
   };
   /** Patch decoration keys (fill/outline) on a placed location's blob. */
-  const patchLocFloorplan = (loc: Location, patch: Record<string, unknown>) => {
+  const patchLocFloorplan = (loc: Location, patch: Record<string, unknown>, previousGroup?: string) => {
     const metadata = withDecor(loc.metadata, patch);
-    note(`Changed how ${loc.name} looks`, [{ kind: "place", id: loc.id, before: { metadata: loc.metadata }, after: { metadata } }]);
+    const before = previousGroup === undefined ? loc.metadata : withDecor(loc.metadata, { outline_tag_id: previousGroup });
+    note(`Changed how ${loc.name} looks`, [{ kind: "place", id: loc.id, before: { metadata: before }, after: { metadata } }]);
     saveMeta.mutate({ id: loc.id, before: loc.metadata, metadata });
   };
   const saveBound = (next: FpBound, label = `Changed the outline of ${room.name}`) => {
@@ -1282,7 +1289,9 @@ function PlanFor({
             const rotate = r.wall_mounted ? pxW < 40 : pxW < 56 && pxH > pxW * 1.4;
             const selected = sel?.type === "item" && sel.id === loc.id;
             return (
-              <div
+              <button
+                type="button"
+                aria-label={loc.name}
                 key={loc.id}
                 onPointerDown={(e) => startDrag(e, loc, r, "move")}
                 onClick={(e) => {
@@ -1303,15 +1312,17 @@ function PlanFor({
                 title={loc.name}
                 {...(placing ? { [PLACE_TARGET]: loc.id } : {})}
                 data-collides={colliding.has(loc.id) ? "true" : undefined}
-                data-plan-colour={planColourOf(loc.metadata) ?? undefined}
-                className={`absolute rounded overflow-hidden text-[11px] leading-tight px-1 py-0.5
+                data-plan-colour={outlines.get(loc.id)?.tagId ? outlines.get(loc.id)?.colour ?? undefined : planColourOf(loc.metadata) ?? undefined}
+                data-plan-tag={outlines.get(loc.id)?.tagId}
+                className={`absolute rounded overflow-hidden text-left content-start focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent text-[11px] leading-tight px-1 py-0.5
                   ${r.wall_mounted ? "bg-slate-200/80 dark:bg-slate-700/70" : "bg-white dark:bg-slate-800"}
-                  ${planColourOf(loc.metadata) ? `border-2 ${PLAN_COLOUR_STYLE[planColourOf(loc.metadata)!].border}` : "border border-slate-400 dark:border-slate-500"} text-content dark:text-slate-200
+                  ${outlines.get(loc.id)?.border ?? "border border-slate-400 dark:border-slate-500"} text-content dark:text-slate-200
                   ${edit ? "cursor-move touch-none" : "cursor-pointer hover:border-accent hover:text-accent"}
                   ${colliding.has(loc.id) ? "border-dashed !border-ember-500 ring-1 ring-ember-500/60" : ""}
                   ${selected ? "ring-1 ring-accent border-accent" : ""}
                   ${placing?.over === loc.id ? "ring-2 ring-accent border-accent" : ""}`}
                 style={{
+                  borderColor: outlines.get(loc.id)?.colour ?? undefined,
                   left: pct(r.x_mm, bound.w_mm),
                   top: pct(r.y_mm, bound.d_mm),
                   width: pct(r.w_mm, bound.w_mm),
@@ -1324,7 +1335,7 @@ function PlanFor({
                   className="absolute inset-0 pointer-events-none rounded"
                   style={{ ...(heatStyle(loc.id) ?? {}), ...(rotate ? { writingMode: "horizontal-tb" as const } : {}) }}
                 />
-                <span className="relative">
+                <span className="relative break-words">
                   {pxW < 30 && pxH < 30 ? (loc.short_name || "·") : (loc.short_name && pxW < 90 && !rotate ? loc.short_name : loc.name)}
                 </span>
                 {heatBadge(loc.id)}
@@ -1336,7 +1347,7 @@ function PlanFor({
                     style={rotate ? { writingMode: "horizontal-tb" } : undefined}
                   />
                 )}
-              </div>
+              </button>
             );
           })}
 
@@ -1462,13 +1473,13 @@ function PlanFor({
           ))}
         </div>
       )}
-      {planLegend.length > 0 && (
+      {planLegend.size > 0 && (
         <div data-testid="plan-legend" className="mt-2 flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs text-muted dark:text-slate-400">
-          {planLegend.map(({ colour, names }) => (
-            <span key={colour} className="inline-flex items-center gap-1.5">
-              <span aria-hidden className={`inline-block h-2.5 w-2.5 rounded-sm ${PLAN_COLOUR_STYLE[colour].swatch}`} />
+          {[...planLegend.values()].map(({ outline, names }) => (
+            <span key={outline.key} className="inline-flex items-center gap-1.5">
+              <span aria-hidden className={`inline-block h-2.5 w-2.5 rounded-sm ${outline.swatch}`} style={{ backgroundColor: outline.colour ?? undefined }} />
               <span>
-                <span className="font-medium text-content dark:text-slate-200">{PLAN_COLOUR_STYLE[colour].label}</span>: {names.join(", ")}
+                <span className="font-medium text-content dark:text-slate-200">{outline.label}</span>: {names.join(", ")}
               </span>
             </span>
           ))}
@@ -1495,6 +1506,7 @@ function PlanFor({
       )}
       {sel?.type !== "entity" && (
         <EditPanel
+          slug={slug}
           bound={bound}
           unit={unit}
           view={view}
@@ -1536,7 +1548,7 @@ function PlanFor({
 
       {/* items filed here but not yet on the plan — tap to drop at center */}
       {edit && unplacedOccupants.length > 0 && (
-        <div className="flex items-baseline gap-2 flex-wrap text-xs text-faint dark:text-slate-500">
+        <div data-testid="plan-unplaced-records" className="flex items-baseline gap-2 flex-wrap text-xs text-faint dark:text-slate-500">
           <span>items here, not placed:</span>
           {unplacedOccupants.slice(0, 24).map((e) => (
             <button
@@ -1740,6 +1752,7 @@ function NameInput({ name, onCommit }: { name: string; onCommit: (name: string) 
 }
 
 function EditPanel({
+  slug,
   bound,
   unit,
   view,
@@ -1754,6 +1767,7 @@ function EditPanel({
   onOpen,
   onAddDrawers,
 }: {
+  slug: string;
   bound: FpBound;
   unit: LengthUnit;
   view: "plan" | "front";
@@ -1762,7 +1776,7 @@ function EditPanel({
   byId: Map<string, Location>;
   onBound: (b: FpBound) => void;
   onRect: (loc: Location, r: FpRect | null) => void;
-  onFloorplanPatch: (loc: Location, patch: Record<string, unknown>) => void;
+  onFloorplanPatch: (loc: Location, patch: Record<string, unknown>, previousGroup?: string) => void;
   onDeleteWall: (idx: number) => void;
   onRename: (loc: Location, name: string) => void;
   /** Open a place's own plan or face in place. */
@@ -1893,9 +1907,10 @@ function EditPanel({
             wall-mounted
           </label>
         )}
+        {loc.kind !== "area" && <PlanOutlineControl slug={slug} loc={loc} onPatch={(patch, previousGroup) => onFloorplanPatch(loc, patch, previousGroup)} />}
         <DecorControls
           fp={(loc.metadata?.floorplan as Record<string, unknown>) ?? {}}
-          onPatch={(patch) => onFloorplanPatch(loc, patch)}
+          onPatch={(patch) => onFloorplanPatch(loc, { ...patch, ...("color" in patch ? { outline_tag_id: "custom" } : {}) })}
           withColour={loc.kind !== "area"}
         />
         <div className="flex-1" />
@@ -2486,6 +2501,33 @@ function RectDecor({
   );
 }
 
+function PlanOutlineControl({ slug, loc, onPatch }: { slug: string; loc: Location; onPatch: (patch: Record<string, unknown>, previousGroup: string) => void }) {
+  const qc = useQueryClient();
+  const tags = useQuery({ queryKey: ["tags", slug], queryFn: () => api.listTags(slug) });
+  const attached = useQuery({ queryKey: placeTagKey(slug, loc.id), queryFn: () => readPlaceTags(slug, loc.id) });
+  const outline = outlineFor(loc, attached.data?.items ?? [], tags.data?.items ?? []);
+  const choose = useMutation({
+    mutationFn: async (tagId: string) => {
+      if (tagId !== "custom" && !(attached.data?.items ?? []).some((a) => a.tag_id === tagId)) {
+        await api.attachTag(slug, { tag_id: tagId, source_module: placeModule, source_type: placeType, source_id: loc.id });
+        await qc.invalidateQueries({ queryKey: ["tag-attachments", slug] });
+      }
+      onPatch({ outline_tag_id: tagId }, outline?.tagId ?? "custom");
+    },
+  });
+  return <>
+    <label className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400">
+      Outline group
+      <select aria-label="Outline group" value={outline?.tagId ?? "custom"} disabled={choose.isPending || tags.isPending || attached.isPending}
+        onChange={(e) => choose.mutate(e.target.value)} className="max-w-48 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1.5 py-1">
+        {(tags.data?.items ?? []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+        <option value="custom">Custom colour</option>
+      </select>
+    </label>
+    {choose.isError && <span role="alert" className="text-xs text-ember-700 dark:text-ember-300">{choose.error.message}</span>}
+  </>;
+}
+
 /** Fill + outline pickers, shared by the location and entity panels. */
 function DecorControls({
   fp,
@@ -2507,7 +2549,7 @@ function DecorControls({
     <>
       {withColour && (
         <span role="group" aria-label="Colour on the plan" className="inline-flex items-center gap-1 text-xs text-muted dark:text-slate-400">
-          colour
+          custom colour
           <button
             type="button"
             aria-label="No colour"

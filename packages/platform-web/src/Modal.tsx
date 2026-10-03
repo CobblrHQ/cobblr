@@ -275,7 +275,7 @@ function ModalOverlay({ overLive, onBackdrop, onEscape, panel, labelledBy, child
       // "the active window is the part without the sidebar" (the author).
       // Defaults to 0, so shells without chrome are unaffected.
       className={
-        "fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-start justify-center overflow-y-auto md:pl-[calc(1rem+var(--modal-inset-left,0px))] xl:pr-[calc(1rem+var(--modal-inset-right,0px))] " +
+        "fc-overlay z-50 bg-slate-900/50 backdrop-blur-sm flex items-start justify-center overflow-y-auto md:pl-[calc(1rem+var(--modal-inset-left,0px))] xl:pr-[calc(1rem+var(--modal-inset-right,0px))] " +
         modalOverlayPadding(overLive)
       }
       onClick={onBackdrop}

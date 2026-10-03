@@ -162,7 +162,7 @@ export interface FieldSpace {
 const CONTROL_MIN_PX: Record<FieldSpace["control"], number> = {
   checkbox: 120,
   number: 110,
-  money: 130,
+  money: 220,
   date: DATE_MIN_PX,
   choice: 120,
   text: MIN_COL_PX,

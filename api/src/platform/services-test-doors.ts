@@ -60,6 +60,10 @@ function overlay(real: ServiceConnectionPort | null): ServiceConnectionPort {
     },
     byId: async (id) => byId.get(id)?.ref ?? (real ? real.byId(id) : null),
     configFor: async (id) => adapterConfigs.get(id) ?? (real?.configFor ? real.configFor(id) : null),
+    updateSecrets: async (id, group, expected, patch) => {
+      if (!real?.updateSecrets || adapterConfigs.has(id)) throw new Error("This test connection cannot save refreshed credentials.");
+      await real.updateSecrets(id, group, expected, patch);
+    },
     adapterFetch: async (id) => {
       const config = adapterConfigs.get(id);
       if (config) return adapterFetchFor(config, adapterOwners.get(id) ?? "");
@@ -258,6 +262,32 @@ export function openServicesTestDoors(realPort: ServiceConnectionPort | null): v
       test: async (config) => (config.token ? { ok: true, note: `site ${config.site}` } : { ok: false, reason: "invalid_key", error: "no token" }),
     },
     run: async ({ config }) => ({ output: { site: config?.site ?? "", key_length: (config?.token ?? "").length } }),
+  });
+  platform().services.registerBuiltIn({
+    id: "platform.test-refresh", name: "Test credential refresh",
+    capability: {
+      id: "test.refresh", version: 1, title: "Refresh (test)",
+      summary: "Checks a recorded credential rotation without contacting a provider.",
+      effect: "none", mode: "sync",
+      input_schema: { type: "object", properties: { refresh: { type: "boolean" } } },
+      output_schema: { type: "object", properties: { refreshed: { type: "boolean" } }, required: ["refreshed"], additionalProperties: false },
+    },
+    connection: {
+      title: "Test credential refresh",
+      config_schema: { type: "object", properties: {
+        site: { type: "string", title: "Site" },
+        access_token: { type: "string", title: "Access token", writeOnly: true },
+        refresh_token: { type: "string", title: "Refresh token", writeOnly: true },
+      } },
+      test: async () => ({ ok: true }),
+    },
+    run: async ctx => {
+      if ((ctx.input as { refresh?: boolean }).refresh) {
+        if (!ctx.updateSecrets) throw new Error("This connection cannot save refreshed credentials.");
+        await ctx.updateSecrets({ access_token: "recorded-rotated-access", refresh_token: "recorded-rotated-refresh" });
+      }
+      return { output: { refreshed: ctx.config?.access_token === "recorded-rotated-access" && ctx.config?.refresh_token === "recorded-rotated-refresh" } };
+    },
   });
   // A library core-documents has never heard of, for the proof that
   // library.* is generic: a stub with no code of its own anywhere else,

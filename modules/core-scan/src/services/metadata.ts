@@ -72,6 +72,9 @@ export const IDENTIFY_OWNED_KEYS = [
   // while it was away (hint-without-ai.ts): a read that lands settles both.
   "ai_rerun_queued",
   "renamed_from_hint",
+  // A hosted identify the service queued (hosted-identify-job.ts): a read
+  // that lands, from that job or any other, settles it.
+  "hosted_identify_job",
   "receipt_shape",
   // What a listing screenshot printed about the sale (listing-evidence.ts):
   // a read of THIS picture, so a new read replaces it.

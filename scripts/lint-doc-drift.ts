@@ -15,6 +15,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import ts from "typescript";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ARCH = join(ROOT, "docs", "architecture");
@@ -24,6 +25,26 @@ const MODULES = new Set(
     try { return statSync(join(ROOT, "modules", d)).isDirectory(); } catch { return false; }
   }),
 );
+
+for (const name of [...MODULES]) {
+  const file = join(ROOT, "modules", name, "src", "module.ts");
+  let source: string;
+  try { source = readFileSync(file, "utf8"); } catch { continue; }
+  const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && node.expression.getText(tree) === "defineModule") {
+      const manifest = node.arguments[0];
+      if (manifest && ts.isObjectLiteralExpression(manifest)) {
+        for (const property of manifest.properties) {
+          if (!ts.isPropertyAssignment(property) || property.name.getText(tree) !== "aliases" || !ts.isArrayLiteralExpression(property.initializer)) continue;
+          for (const alias of property.initializer.elements) if (ts.isStringLiteral(alias)) MODULES.add(alias.text);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(tree);
+}
 
 // Retired module names (renamed or removed) that must not appear as current.
 const RETIRED: Record<string, string> = {

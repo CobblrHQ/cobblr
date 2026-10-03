@@ -16,6 +16,7 @@
 // three response shapes agree.
 
 import { namedRecords, unlinkInventedPaths, type RecordRef } from "@cobblr/platform-contract/record-mentions";
+import { pairingResultPresentation } from "@cobblr/platform-contract/pairing-presentation";
 
 export type ChatMention = RecordRef;
 
@@ -44,17 +45,21 @@ export function recordsFromToolResult(result: unknown): ChatMention[] {
     if (typeof v !== "object") return;
     const rec = v as Record<string, unknown>;
     const kind = typeof rec.kind === "string" && KIND.test(rec.kind) ? rec.kind : null;
-    const id = typeof rec.id === "string" && rec.id && !KIND.test(rec.id) ? rec.id : null;
     const label =
       typeof rec.title === "string" ? rec.title
       : typeof rec.name === "string" ? rec.name
       : typeof rec.label === "string" ? rec.label
       : null;
+    const presentation = pairingResultPresentation({ label, href: rec.href, open_label: rec.open_label });
+    // Kind-shaped ids normally identify schemas/actions rather than records.
+    // Outside results legitimately use namespaced ids (paperless:6), and are
+    // only admitted when the server also vouched for their presentation.
+    const id = typeof rec.id === "string" && rec.id && (!KIND.test(rec.id) || presentation) ? rec.id : null;
     if (kind && id && label?.trim()) {
       const key = `${kind} ${id}`;
       if (!seen.has(key)) {
         seen.add(key);
-        out.push({ kind, id, label: label.trim() });
+        out.push({ kind, id, label: label.trim(), ...(presentation ? { href: presentation.href, ...(presentation.open_label ? { open_label: presentation.open_label } : {}) } : {}) });
       }
     }
     for (const x of Object.values(rec)) visit(x, depth + 1);

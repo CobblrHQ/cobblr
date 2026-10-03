@@ -9,9 +9,11 @@ import { Router } from "express";
 import { discussionRouter } from "./conversations.js";
 import { registerDiscussionActionHandlers } from "./action-handlers.js";
 import { registerCobbWorker } from "./cobb.js";
+import { registerGuestComments } from "./guest-comments.js";
 
 registerDiscussionActionHandlers();
 registerCobbWorker();
+registerGuestComments();
 
 const router = Router({ mergeParams: true });
 

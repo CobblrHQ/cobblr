@@ -33,6 +33,7 @@
 
 import { platform } from "@cobblr/platform-contract";
 import { sql } from "kysely";
+import { HOSTED_RECEIPT_QUEUED_WORDS } from "./hosted-identify.js";
 
 /** The fields this decision reads. A structural subset of PhotoIdentity, so the
  *  rule can be tested against a recorded reply or a stored row without building
@@ -174,6 +175,8 @@ export type ReceiptRouteResult =
       ai?: string;
       /** The sentence written under the photo. */
       note: string;
+      /** Waiting on the hosted identify's queue, not failed. */
+      queued?: boolean;
     };
 
 /** A door-sized tenant handle: the two writes this file makes. */
@@ -217,7 +220,9 @@ export type ReceiptAnswer =
   | { kind: "empty" }
   | { kind: "already-in"; batch_id: string; label: string | null; lines: number }
   | { kind: "refused"; status: number; failure?: string; ai?: string; message?: string; keptBatchId: string | null }
-  | { kind: "unknown"; status: number };
+  | { kind: "unknown"; status: number }
+  /** The hosted identify queued it (barcode-intelligence #43): read later. */
+  | { kind: "queued"; jobId: string; message: string | null };
 
 export function readReceiptAnswer(status: number, body: unknown): ReceiptAnswer {
   const b = (body ?? {}) as {
@@ -226,7 +231,12 @@ export function readReceiptAnswer(status: number, body: unknown): ReceiptAnswer 
     existing?: { batch_id?: unknown; label?: unknown; item_count?: unknown };
     error?: { message?: string; failure?: string; ai?: string };
     kept_batch_id?: string;
+    queued?: { job_id?: unknown };
+    message?: unknown;
   };
+  if (status === 202 && typeof b.queued?.job_id === "string") {
+    return { kind: "queued", jobId: b.queued.job_id, message: typeof b.message === "string" ? b.message : null };
+  }
   if (status < 200 || status >= 300) {
     return { kind: "refused", status, failure: b.error?.failure, ai: b.error?.ai, message: b.error?.message, keptBatchId: b.kept_batch_id ?? null };
   }
@@ -294,6 +304,9 @@ export async function routeScannedReceiptPhoto(opts: {
   userId?: string | null;
   /** Read it in even when the door recognises it as a receipt already here. */
   force?: boolean;
+  /** A queued hosted read that finished (hosted-identify-job.ts): its
+   *  answer is collected by the door, not asked for again. */
+  hostedJobId?: string;
 }): Promise<ReceiptRouteResult> {
   const failed = async (
     reason: string,
@@ -326,7 +339,9 @@ export async function routeScannedReceiptPhoto(opts: {
       {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
-        body: JSON.stringify({ file_id: opts.fileId, ...(opts.force ? { force: true } : {}) }),
+        // This route has a row to wait on, so a read the hosted identify
+        // queued waits here instead of being read the old way (#43).
+        body: JSON.stringify({ file_id: opts.fileId, queue_if_busy: true, ...(opts.hostedJobId ? { hosted_job_id: opts.hostedJobId } : {}), ...(opts.force ? { force: true } : {}) }),
       },
     );
     answer = readReceiptAnswer(r.status, await r.json().catch(() => null));
@@ -334,6 +349,31 @@ export async function routeScannedReceiptPhoto(opts: {
     return failed((e as Error).message);
   }
 
+  if (answer.kind === "queued") {
+    // Reading, not failed: the row keeps reading_receipt, says so in words,
+    // and waits for the job; the worker files the lines from its answer.
+    const note = HOSTED_RECEIPT_QUEUED_WORDS;
+    try {
+      const db = (await platform().tenants.getDb(opts.orgId)) as unknown as RowDb;
+      await db
+        .updateTable("core_scan_inbox_items")
+        .set({
+          ai_notes: note,
+          updated_at: new Date(),
+          suggested_metadata: sql`(coalesce(suggested_metadata, '{}'::jsonb) - 'identify_failure' - 'receipt_read_failed') || ${JSON.stringify({
+            reading_receipt: true,
+            hosted_identify_job: { id: answer.jobId, since: new Date().toISOString(), user_id: opts.userId ?? null, receipt: true },
+          })}::jsonb`,
+        })
+        .where("id", "=", opts.itemId)
+        .execute();
+      const { enqueueHostedIdentifyJob } = await import("./hosted-identify-job.js");
+      await enqueueHostedIdentifyJob({ orgId: opts.orgId, itemId: opts.itemId, jobId: answer.jobId, imageFileId: opts.fileId, userId: opts.userId ?? null });
+    } catch (e) {
+      return failed(`could not wait for the queued read: ${(e as Error).message}`);
+    }
+    return { routed: false, queued: true, reason: "queued at the hosted identify", note };
+  }
   if (answer.kind === "refused") {
     return failed(answer.failure ? `${answer.failure}: ${answer.message ?? ""}`.trim() : `receipt parse returned ${answer.status}`, {
       failure: answer.failure,

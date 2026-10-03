@@ -24,6 +24,10 @@ platform().calendar.registerDateFieldSource({
   table: "assets_assets",
   entityModule: "assets",
   entityType: "asset",
+  dateColumns: [
+    { column: "warranty_until", label: "Warranty ends", source: "warranty", direction: "due" },
+    { column: "purchased_at", label: "Purchased", source: "purchase", direction: "record" },
+  ],
 });
 
 // Per-instance item count — lets the nav hide an empty auto-created default

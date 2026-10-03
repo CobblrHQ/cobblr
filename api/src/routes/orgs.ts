@@ -1,3 +1,5 @@
+import { currencyFromLocale, isCurrency } from "@cobblr/platform-contract/money";
+import { getHistoryWriterFor } from "../platform/history-store.js";
 // /api/v1/orgs/* — org-scoped routes. Composes requireAuth +
 // withTenant on every endpoint so handlers can rely on req.tenant.
 //
@@ -29,9 +31,11 @@ import { provisionOrgForUser } from "./auth.js";
 import { applyBlueprint, BlueprintManifest } from "./blueprint.js";
 import { provisionAppWorkspace, ProvisionAppError, refreshManagedApp, importAppData, pointScanFallbackAtApp } from "../platform/provision-app.js";
 import { checkEntitlement } from "../platform/hosted-seams.js";
-import { disableModuleForOrg, enableModuleForOrg, isDefaultModule } from "../modules/enable.js";
+import { disableModuleForOrg, enableModuleForOrg, isDefaultModule, ModuleRetiredError } from "../modules/enable.js";
 import { USER_SOURCE } from "../platform/bundle-claims.js";
 import { baseKindOf, lookup as lookupEntity } from "../platform/entities.js";
+import { publicHistoryDiff, historyBag } from "../platform/record-history.js";
+import { hiddenHistoryFields, restoreHistoryVersion, HistoryRestoreError } from "../platform/history-restore.js";
 import { describeChanges } from "../platform/history-describe.js";
 
 /** The kind a resolved record is FILED under: `<instance>:item` for a record
@@ -49,6 +53,23 @@ import { getEntry as getModuleEntry } from "../modules/registry.js";
 import { encodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
 
 export const orgsRouter = Router();
+
+orgsRouter.get("/:slug/currency", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    const row = await meta.selectFrom("orgs").select("main_currency").where("id", "=", req.tenant!.org.id).executeTakeFirstOrThrow();
+    res.json({ currency: row.main_currency });
+  } catch (err) { next(err); }
+});
+// AI-REACH: exempt - the workspace accounting preference is chosen by an owner or admin in General settings.
+orgsRouter.put("/:slug/currency", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const parsed = z.object({ currency: z.string().refine(isCurrency, "Choose an ISO currency") }).safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: { code: "bad_body", message: "Choose an ISO currency" } }); return; }
+    await meta.updateTable("orgs").set({ main_currency: parsed.data.currency }).where("id", "=", req.tenant!.org.id).execute();
+    res.json(parsed.data);
+  } catch (err) { next(err); }
+});
 
 // ──────────────────────── multi-org listing + create ────────────────
 
@@ -103,13 +124,16 @@ orgsRouter.get("/:slug/modules", requireAuth, withTenant, async (req, res, next)
       .where("org_id", "=", req.tenant!.org.id)
       .execute();
     const enabledSet = new Map(enabled.map((e) => [e.module_name, e]));
-    const items = registered.map((m) => {
+    const items = registered.filter(m => !m.retirement || enabledSet.has(m.name)).map((m) => {
       const on = enabledSet.get(m.name);
       return {
         name: m.name,
+        aliases: m.aliases ?? [],
+        retirement: m.retirement ?? null,
         version: m.version,
         displayName: m.displayName,
         description: m.description,
+        integration: m.integration ?? null,
         icon: m.icon ?? null,
         // Module layer (foundational/stock/marketplace/user) — the empty
         // dashboard suggests only `stock` first-party domains.
@@ -135,7 +159,7 @@ orgsRouter.get("/:slug/modules", requireAuth, withTenant, async (req, res, next)
         // Icon-only quick-action for the navbar's right cluster (only
         // surfaced when the module is enabled — the web filters on that).
         headerAction: m.headerAction ?? null,
-        dependencies: m.dependencies,
+        dependencies: m.dependencies.map(name => getModuleEntry(name)?.manifest.name ?? name),
         contributes: {
           fieldDefs: m.contributes.fieldDefs.length,
           wires: m.contributes.wires.length,
@@ -189,12 +213,16 @@ orgsRouter.post(
         claimedBy: USER_SOURCE,
       });
       res.status(result.alreadyEnabled ? 200 : 201).json({
-        module: name,
+        module: getModuleEntry(name)!.manifest.name,
         already_enabled: result.alreadyEnabled,
         migrations_applied: result.migrationsApplied,
         last_migration: result.lastMigration,
       });
     } catch (err) {
+      if (err instanceof ModuleRetiredError) {
+        res.status(409).json({ error: { code: "module_retired", message: err.message } });
+        return;
+      }
       next(err);
     }
   },
@@ -671,6 +699,7 @@ orgsRouter.post("/", requireAuth, async (req, res, next) => {
     } else {
       ({ orgId, slug } = await provisionOrgForUser(req.session!.id, parsed.data.name));
     }
+    await meta.updateTable("orgs").set({ main_currency: currencyFromLocale(req.get("Accept-Language")?.split(",")[0]?.split(";")[0]) }).where("id", "=", orgId).execute();
     // Seed the fresh workspace from a blueprint (validated; the caller is the
     // brand-new org's owner, so the same trust as the Settings→Blueprint
     // import applies). A bad manifest fails the request BEFORE anything else
@@ -737,6 +766,7 @@ orgsRouter.post("/provision-app", requireAuth, async (req, res, next) => {
       auth_method: req.session!.auth_method,
       api_token_id: req.session!.api_token_id ?? null,
     });
+    await meta.updateTable("orgs").set({ main_currency: currencyFromLocale(req.get("Accept-Language")?.split(",")[0]?.split(";")[0]) }).where("id", "=", result.orgId).execute();
     res.status(201).json({ slug: result.slug, app_mode: result.app });
   } catch (err) {
     if (err instanceof ProvisionAppError) {
@@ -797,6 +827,23 @@ orgsRouter.get("/:slug/queue/jobs", requireAuth, withTenant, async (req, res, ne
     res.json({ items });
   } catch (err) {
     next(err);
+  }
+});
+
+// AI-ACTION: platform:restore-record-version
+orgsRouter.post("/:slug/activity/:entryId/restore", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const body = z.object({ kind: z.string().min(1), entity_id: z.string().min(1), expected_latest_id: z.number().int().positive() }).safeParse(req.body);
+    const entryId = Number(req.params.entryId);
+    if (!body.success || !Number.isSafeInteger(entryId) || entryId < 1) {
+      res.status(400).json({ error: { code: "bad_body", message: "Choose a history entry and its record." } }); return;
+    }
+    await restoreHistoryVersion(req.tenant!.org.id, req.session!.id, req.tenant!.role, body.data.kind, body.data.entity_id, entryId, body.data.expected_latest_id);
+    res.json({ ok: true });
+  } catch (err) {
+    if (err instanceof HistoryRestoreError) res.status(err.status).json({ error: { code: "history_restore", message: err.message } });
+    else next(err);
   }
 });
 
@@ -907,12 +954,18 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
       }),
     );
 
+    const shown = await Promise.all(items.map(async (i) => {
+      const kind = kindByEntity.get(`${i.entity_type}:${i.entity_id}`) ?? (i.module_name ? `${i.module_name}:${i.entity_type}` : i.entity_type);
+      const hidden = await hiddenHistoryFields(req.tenant!.org.id, kind, req.session!.id, req.tenant!.role, i.diff);
+      return { ...i, diff: publicHistoryDiff(i.diff, hidden), restorable: roleSatisfies(req.tenant!.role, ["owner", "admin"]) && Object.keys(historyBag(historyBag(i.diff).version_before)).length > 0 && !!await getHistoryWriterFor(req.tenant!.org.id, kind) };
+    }));
+
     // What each edit changed, in words: labels, values by type, a photo as a
     // photo, never a column name, an id or a path (history-describe.ts).
     const said = await describeChanges(
       req.tenant!.org.id,
       req.tenant!.org.slug,
-      items.map((i) => {
+      shown.map((i) => {
         const base = i.module_name ? `${i.module_name}:${i.entity_type}` : i.entity_type;
         const coll = kindByEntity.get(`${i.entity_type}:${i.entity_id}`) ?? (entityKind || null);
         return { action: i.action, diff: i.diff, kinds: coll && coll !== base ? [coll, base] : [base] };
@@ -923,7 +976,7 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
     });
 
     res.json({
-      items: items.map((i, n) => ({
+      items: shown.map((i, n) => ({
         ...i,
         said: said[n] ?? [],
         entity_title: titleByEntity.get(`${i.entity_type}:${i.entity_id}`) ?? null,

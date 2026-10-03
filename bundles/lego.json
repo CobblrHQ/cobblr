@@ -1,8 +1,18 @@
 {
   "manifest": {
     "id": "cobblr.community.lego",
-    "version": "0.6.1",
+    "version": "0.6.3",
     "releases": [
+      {
+        "version": "0.6.3",
+        "released_at": "2026-10-03",
+        "notes": "Sets and Bricks share a navigation row that you can join or split on this device."
+      },
+      {
+        "version": "0.6.2",
+        "released_at": "2026-10-03",
+        "notes": "Adding Sets offers BrickLink as an optional service instead of turning it on or adding a sidebar row."
+      },
       {
         "version": "0.6.1",
         "released_at": "2026-10-02",
@@ -23,6 +33,10 @@
       {
         "module": "inventory",
         "instance_name": "sets",
+        "nav_group": {
+          "key": "lego",
+          "label": "LEGO"
+        },
         "faces": {
           "stock": false
         },
@@ -189,6 +203,10 @@
           {
             "module": "inventory",
             "instance_name": "bricks",
+            "nav_group": {
+              "key": "lego",
+              "label": "LEGO"
+            },
             "display_name": "Bricks",
             "glyph": "🧱",
             "item_noun": "brick",
@@ -455,10 +473,11 @@
       },
       {
         "key": "disassemble",
-        "name": "Disassemble into bricks",
-        "question": "Disassemble a set into its bricks and sort them?",
-        "description": "Adds a one-tap Disassemble on a set: it spawns the set's parts (from the Rebrickable bill of materials) into your Bricks table and opens the sorting planner to file them into bins. Needs the Bricks table and the Rebrickable catalog.",
-        "default": true,
+        "name": "BrickLink",
+        "kind": "integration",
+        "question": "Sets works with BrickLink. Turn it on?",
+        "description": "Bring in wanted lists and orders, see which parts you have, and disassemble a built set into bricks using the Rebrickable catalog. Available under your services, not as another sidebar app.",
+        "default": false,
         "requires": [
           {
             "module": "bricklink-connector"

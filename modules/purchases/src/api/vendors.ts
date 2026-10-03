@@ -1,3 +1,4 @@
+import { orderFigures, combineOrderTotals } from "../order-money.js";
 // /vendors — purchasing-depth: vendors as a managed entity (was free text on
 // each order). CRUD + a per-vendor order-count + total-spend rollup, and the
 // "orders from this vendor" list. Orders link via orders.vendor_id; the legacy
@@ -11,7 +12,6 @@ import { platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { routeUnknownToMetadata, refuseUnknownFields, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
-import { orderTotal } from "../order-total.js";
 
 export const vendorsRouter = Router({ mergeParams: true });
 
@@ -49,16 +49,18 @@ vendorsRouter.get(
         "v.lead_time_days", "v.notes", "v.metadata", "v.created_at", "v.updated_at",
         eb.selectFrom("purchases_orders as o").select(eb.fn.countAll().as("c"))
           .whereRef("o.vendor_id", "=", "v.id").as("order_count"),
-        eb.selectFrom("purchases_orders as o").select(sql<string>`coalesce(sum(${orderTotal("o")}), 0)`.as("s"))
-          .whereRef("o.vendor_id", "=", "v.id").as("total_spend"),
       ])
       .orderBy("v.name")
       .execute();
+    const orgId = tenantContext(req).org.id;
+    const orders = items.length ? await orderFigures(orgId, db, await db.selectFrom("purchases_orders").selectAll().where("instance", "=", instanceOf(req)).where("vendor_id", "in", items.map((v) => v.id)).execute()) : [];
+    const currency = await platform().money.currency(orgId);
     res.json({
       items: items.map((v) => ({
         ...v,
         order_count: Number(v.order_count ?? 0),
-        total_spend: Number(v.total_spend ?? 0),
+        total_spend: combineOrderTotals(orders.filter((o) => o.vendor_id === v.id).map((o) => o.money_total), currency).amount,
+        currency, money_total: combineOrderTotals(orders.filter((o) => o.vendor_id === v.id).map((o) => o.money_total), currency),
       })),
     });
   }),
@@ -81,14 +83,15 @@ vendorsRouter.get(
     }
     const orders = await db
       .selectFrom("purchases_orders as o")
-      .select(["o.id", "o.order_number", "o.status", "o.ordered_at", "o.expected_arrival", "o.arrived_at", "o.total_cost"])
-      .select(orderTotal("o").as("total"))
+      .selectAll("o")
       .where("o.vendor_id", "=", id)
       .where("o.instance", "=", instanceOf(req))
       .orderBy("o.ordered_at", "desc")
       .execute();
-    const total_spend = orders.reduce((sum, o) => sum + (Number(o.total) || 0), 0);
-    res.json({ ...vendor, orders, order_count: orders.length, total_spend });
+    const priced = await orderFigures(tenantContext(req).org.id, db, orders);
+    const currency = await platform().money.currency(tenantContext(req).org.id);
+    const sum = combineOrderTotals(priced.map((o) => o.money_total), currency);
+    res.json({ ...vendor, orders: priced, order_count: priced.length, total_spend: sum.amount, currency, money_total: sum });
   }),
 );
 

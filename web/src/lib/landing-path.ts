@@ -1,11 +1,14 @@
 // A page on this site that a sign-in or a join may send someone back to: a
-// workspace page (the item they scanned), an invite, or a machine share.
+// workspace page (the item they scanned), an invite, a share invite, or a
+// machine share.
 // Anything else, and in
 // particular another origin ("//evil.example", "https://…"), is not a place
 // to land, so the caller falls back to its own default.
 export function landingPath(raw: string | null | undefined): string | null {
   if (!raw) return null;
   if (raw.length > 500 || /\s/.test(raw)) return null;
+  // A share invite (#4737): its token rides in the fragment, nowhere else.
+  if (/^\/share\/join#[A-Za-z0-9_-]{8,}$/.test(raw)) return raw;
   return /^\/(w|invite|join-machines)\/[^/\\]/.test(raw) ? raw : null;
 }
 

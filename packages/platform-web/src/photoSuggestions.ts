@@ -14,7 +14,9 @@ import type { PhotoSuggestionRow } from "./types";
  *  module's record too), and asking by kind alone left its card blank. */
 export function usePhotoSuggestions(kind: string | null | undefined, ids: readonly string[]): Map<string, PhotoSuggestionRow> {
   const { api, orgSlug } = usePlatformWeb();
-  const shown = useMemo(() => [...ids].sort().slice(0, 500), [ids]);
+  // Every record the list shows: the ids go in a request body, so a
+  // collection of thousands is one ask (#4653).
+  const shown = useMemo(() => [...ids].sort().slice(0, 5_000), [ids]);
   const q = useQuery({
     queryKey: ["photo-suggestions", orgSlug, kind, shown.join(",")],
     queryFn: () => api.listPhotoSuggestions!(orgSlug, kind!, shown),

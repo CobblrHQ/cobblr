@@ -10,7 +10,7 @@
 // cut short can be read in full: hover on a desk, tap on a phone.
 
 import { useState, type PointerEvent, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, History, Loader2 } from "lucide-react";
 import { EntityPhoto, relativeTime, useImageSrc } from "@cobblr/platform-web";
 import { api, type ActivityEntry, type ShownPhoto, type ShownValue } from "../../lib/api";
@@ -168,6 +168,12 @@ export function SaidList({ entry, name }: { entry: ActivityEntry; name: string }
 
 export function HistoryPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
   const { activeSlug } = useActiveOrg();
+  const client = useQueryClient();
+  const [restoring, setRestoring] = useState<ActivityEntry | null>(null);
+  const restore = useMutation({
+    mutationFn: (entry: ActivityEntry) => api.restoreHistoryVersion(activeSlug, entry.id, { kind: ctx.kind ?? "", entity_id: ctx.entityId, expected_latest_id: Number(q.data?.items[0]?.id ?? entry.id) }),
+    onSuccess: async () => { setRestoring(null); await client.invalidateQueries(); },
+  });
   const [limit, setLimit] = useState(FIRST);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const q = useQuery({
@@ -192,11 +198,30 @@ export function HistoryPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
       {relativeTime(at)}
     </span>
   );
+  const versions = (rows: ActivityEntry[]) => rows.some((e) => e.restorable) ? (
+    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+      {rows.filter((e) => e.restorable).map((e) => (
+        <button key={e.id} type="button" onClick={() => { restore.reset(); setRestoring(e); }} disabled={restore.isPending} className="text-accent hover:underline" aria-label={`Restore this version from ${new Date(e.occurred_at).toLocaleString()}`}>
+          Restore this version{rows.length > 1 ? ` · ${new Date(e.occurred_at).toLocaleTimeString()}` : ""}
+        </button>
+      ))}
+    </div>
+  ) : null;
   return (
     <div data-testid="record-history" className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3">
       <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-accent">
         <History size={12} aria-hidden /> {"// history"}
       </div>
+      {restoring && (
+        <div className="rounded-lg border border-line dark:border-slate-700 p-3 space-y-2 text-sm">
+          <p>Restore the values from before this edit? Later edits will be replaced. The restoration will appear in history so you can undo it.</p>
+          <div className="flex flex-wrap gap-3">
+            <button type="button" disabled={restore.isPending} onClick={() => restore.mutate(restoring)} className="text-accent hover:underline">{restore.isPending ? "Restoring…" : "Restore values"}</button>
+            <button type="button" disabled={restore.isPending} onClick={() => setRestoring(null)} className="text-muted hover:underline">Cancel</button>
+          </div>
+        </div>
+      )}
+      {restore.isError && <p role="alert" className="text-sm text-ember-600 dark:text-ember-400">{(restore.error as Error).message}</p>}
       {q.isLoading ? (
         <Loader2 size={14} className="animate-spin text-faint" />
       ) : q.isError ? (
@@ -211,7 +236,8 @@ export function HistoryPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
               const part = partWords(e.action, e.diff, word.data?.word ?? null);
               const fields = part ? part.what : e.action.endsWith("updated") ? updatedFieldsWords(e.said) : documentWords(e);
               return (
-                <li key={it.key} data-testid="history-entry" className={`text-sm ${ACTIVITY_ROW}`}>
+                <li key={it.key} data-testid="history-entry" className="text-sm">
+                  <div className={ACTIVITY_ROW}>
                   <span className={`text-muted dark:text-slate-400 ${ACTOR_CELL}`}>
                     <ActorVia entry={e} />
                   </span>
@@ -222,6 +248,8 @@ export function HistoryPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
                     </span>
                   ) : null}
                   {time(e.occurred_at)}
+                  </div>
+                  {versions([e])}
                 </li>
               );
             }
@@ -239,6 +267,7 @@ export function HistoryPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
                     </span>
                     {time(one.at)}
                   </div>
+                  {versions(it.entries)}
                 </li>
               );
             }
@@ -261,6 +290,7 @@ export function HistoryPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
                     </li>
                   ))}
                 </ul>
+                {versions(it.entries)}
                 {it.lines.length > GROUP_SHOWN && (
                   <button
                     type="button"

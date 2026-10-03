@@ -3,6 +3,8 @@
 // the bound's top-left; x → right, y → down.
 // See docs/design-decisions/location-floor-plan.md.
 
+import { fieldKindOf } from "@cobblr/platform-contract/kind-label";
+
 export interface FpOpening {
   at_mm: number;
   w_mm: number;
@@ -209,6 +211,25 @@ export function readRect(metadata: Record<string, unknown> | null | undefined): 
   const x = num(fp.x_mm), y = num(fp.y_mm), w = num(fp.w_mm), d = num(fp.d_mm);
   if (x === null || y === null || !w || !d) return null;
   return { x_mm: x, y_mm: y, w_mm: w, d_mm: d, wall_mounted: fp.wall_mounted === true };
+}
+
+export function partitionPlanRecords<
+  R extends { kind: string; id: string; metadata: Record<string, unknown> },
+  P extends { kind: string; id: string; instance?: string | null; position?: { x_mm: number; y_mm: number } | null },
+>(records: readonly R[], contents: readonly P[], bound: FpBound | null) {
+  const pins = contents.filter(({ position: p }) => p && bound &&
+    Number.isFinite(p.x_mm) && Number.isFinite(p.y_mm) &&
+    p.x_mm >= 0 && p.y_mm >= 0 && p.x_mm <= bound.w_mm && p.y_mm <= bound.d_mm);
+  const pinned = new Set(pins.map((p) => `${fieldKindOf(p)}:${p.id}`));
+  const placedOccupants: Array<{ ent: R; rect: FpRect }> = [];
+  const unplacedOccupants: R[] = [];
+  for (const ent of records) {
+    if (pinned.has(`${fieldKindOf(ent)}:${ent.id}`)) continue;
+    const rect = readRect(ent.metadata);
+    if (rect) placedOccupants.push({ ent, rect });
+    else unplacedOccupants.push(ent);
+  }
+  return { pins, placedOccupants, unplacedOccupants };
 }
 
 /** The first spot, in reading order (top-left first), where a w × d rect sits

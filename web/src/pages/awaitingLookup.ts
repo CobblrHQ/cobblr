@@ -14,6 +14,9 @@ import type { ScanInboxItem } from "../lib/api";
  *  two to six seconds; past this it is worth a sentence. */
 export const AWAITING_SAYS_WHY_AFTER_MS = 8_000;
 
+/** A photo the hosted identify queued while every engine it has was busy. */
+export const HOSTED_QUEUED_LINE = "Identifying, back shortly. Every AI was busy, so this one is queued and lands here by itself.";
+
 export interface AwaitingWords {
   /** The line under the name. */
   line: string;
@@ -24,6 +27,11 @@ export interface AwaitingWords {
 type Waiting = Pick<ScanInboxItem, "created_at" | "source_kind" | "barcode_text" | "suggested_metadata">;
 
 export function awaitingWords(item: Waiting, now: number, opts: { identifyAvailable?: boolean } = {}): AwaitingWords {
+  // The hosted identify accepted the photo and answers when an engine is
+  // back (barcode-intelligence #43): not a failure, so it never reads as one.
+  if ((item.suggested_metadata as { hosted_identify_job?: unknown } | null)?.hosted_identify_job) {
+    return { line: HOSTED_QUEUED_LINE, offerWaysOut: true };
+  }
   const queued = (item.suggested_metadata as { ai_rerun_queued?: { next_at?: string } } | null)?.ai_rerun_queued;
   if (queued) {
     return { line: "The AI was busy, so this waits for it to come back. It tries again by itself.", offerWaysOut: true };

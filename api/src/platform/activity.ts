@@ -8,6 +8,7 @@
 // prune rows past the window; best-effort, never blocks the write) — same
 // pattern as product_events. Unset (default) = keep everything.
 
+import { currentHistoryWrite, historyDiff } from "./record-history.js";
 import { changesOf } from "@cobblr/platform-contract/activity-changes";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
@@ -67,9 +68,13 @@ export async function log(p: LogParams): Promise<void> {
   const apiTokenId =
     p.apiTokenId !== undefined ? p.apiTokenId : (actor?.apiTokenId ?? null);
   const via = p.via !== undefined ? p.via : currentVia();
-  const diff =
+  const write = p.action === "updated" || p.action.endsWith("_updated")
+    ? currentHistoryWrite(p.orgId, `${p.ref.module}:${p.ref.entityType}`, p.ref.entityId)
+    : null;
+  const after = write ? await write.readAfter() : null;
+  const diff = write && after ? historyDiff(write.before, after) :
     p.before !== undefined && p.diff && typeof p.diff === "object" && !Array.isArray(p.diff)
-      ? { ...(p.diff as Record<string, unknown>), changes: changesOf(p.before, p.diff) }
+      ? { ...(p.diff as Record<string, unknown>), changes: changesOf(p.before, p.diff), ...((p.before as { id?: unknown })?.id === p.ref.entityId ? { version_before: p.before } : {}) }
       : p.diff;
 
   await meta
@@ -88,6 +93,7 @@ export async function log(p: LogParams): Promise<void> {
       via_label: via?.label ?? null,
     })
     .execute();
+  if (write) write.logged = true;
   for (const fn of writeObservers) {
     try {
       fn(p.orgId, p.ref);

@@ -229,7 +229,7 @@ export function BrowsePanel() {
         )}
         {/* Flat tab (parts, machines, …): a simple two-column grid. */}
         {items.length > 0 && !sections && (
-          <ul className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+          <ul className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-1.5">
             {items.map((it) => renderRow(it))}
           </ul>
         )}
@@ -245,7 +245,7 @@ export function BrowsePanel() {
             {sections.areas.length > 0 && (
               <div>
                 <SectionHeader label="Areas" count={sections.areas.length} />
-                <div className="columns-1 sm:columns-2 [column-gap:0.5rem]">
+                <div className="columns-1 sm:columns-2 xl:columns-3 [column-gap:0.5rem]">
                   {groupByRoot(sections.areas).map((block) => (
                     <ul key={block[0]!.node.id} className="break-inside-avoid space-y-1.5 mb-2.5">
                       {block.map((r) => renderRow(r.node, r.depth))}
@@ -257,7 +257,7 @@ export function BrowsePanel() {
             {sections.containers.length > 0 && (
               <div>
                 <SectionHeader label="Containers" count={sections.containers.length} />
-                <div className="columns-1 sm:columns-2 [column-gap:0.5rem]">
+                <div className="columns-1 sm:columns-2 xl:columns-3 [column-gap:0.5rem]">
                   {groupByRoot(sections.containers).map((block) => (
                     <ul key={block[0]!.node.id} className="break-inside-avoid space-y-1.5 mb-2.5">
                       {block.map((r) => renderRow(r.node, r.depth))}

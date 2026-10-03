@@ -9,7 +9,7 @@
 // to the same asset; an emit here would re-fire the wire. Same reasoning as
 // inventory's writer (see modules/inventory/src/api/sync-writer.ts).
 
-import { adoptAxisValuesIntoField, findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow } from "@cobblr/platform-contract";
+import { adoptAxisValuesIntoField, findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow, snapshotRowTree, restoreRowTree } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { AssetsDB } from "../db.js";
 import { DISPOSITION_LABELS, dispositionOf } from "@cobblr/platform-contract/disposition";
@@ -23,6 +23,8 @@ export function registerAssetsWriter(): void {
   registered = true;
 
   platform().entities.registerWriter("assets:asset", {
+    snapshotDeletion: async (orgId, id) => snapshotRowTree(await platform().tenants.getDb(orgId), "assets_assets", id, "assets_"),
+    restoreDeletion: async (orgId, snapshot) => restoreRowTree(await platform().tenants.getDb(orgId), "assets_assets", snapshot, "assets_"),
     // A record that already carries the source's key is adopted by a sync, never
     // duplicated (#3836).
     findByKey: async (orgId, key, value) => findRowIdByKey(await platform().tenants.getDb(orgId), "assets_assets", key, value),

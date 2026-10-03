@@ -21,7 +21,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-activity-log",
-  version: "0.1.1",
+  version: "0.1.2",
   displayName: "Activity Log",
   description:
     "A record of every change made in your workspace: who did what, and when.",

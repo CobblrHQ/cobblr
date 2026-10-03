@@ -12,6 +12,7 @@ import { Router } from "express";
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { categoriesRouter } from "./categories.js";
+import { lowStockAlertsRouter } from "./low-stock-alerts.js";
 import { partsRouter } from "./parts.js";
 import { holdingsRouter, registerHoldingActions } from "./holdings.js";
 import { familiesRouter } from "./families.js";
@@ -59,6 +60,9 @@ platform().calendar.registerDateFieldSource({
   table: "inventory_parts",
   entityModule: "inventory",
   entityType: "part",
+  dateColumns: [
+    { column: "warranty_expires", label: "Warranty ends", source: "warranty", direction: "due", excludeWhen: "lifetime_warranty" },
+  ],
   // A stock-face record with nothing on hand has nothing left to date.
   onHand: { column: "qty", instanceColumn: "instance" },
 });
@@ -113,6 +117,7 @@ platform().instances.registerMover("inventory", {
 const router = Router({ mergeParams: true });
 
 router.use("/categories", categoriesRouter);
+router.use("/low-stock-alerts", lowStockAlertsRouter);
 // The importer rides on the parts router so it reaches BOTH doors:
 // /modules/inventory/parts/import (the base table) and
 // /instances/<name>/items/import (a named collection), scoped by the same

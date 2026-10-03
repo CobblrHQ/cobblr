@@ -28,8 +28,8 @@
     "hash": "a0820f71685331d51eee0c07c92439bbf2dca21a1025fb91a0fa8904d4fcead6"
   },
   "cobblr.community.lego": {
-    "version": "0.6.1",
-    "hash": "9981450461e4382515815ef5aaaee1f7efca5233233533624a5107268670e562"
+    "version": "0.6.3",
+    "hash": "db791f39fdab0d03c5702be0539d60a8b53963a7d7e7f33e5421eea3cea90704"
   },
   "cobblr.community.lending-library": {
     "version": "0.1.4",
@@ -80,8 +80,8 @@
     "hash": "43feaa2b337e00b359474acaad6d29d584b39908bc91133d8a4ef5768e6471e7"
   },
   "cobblr.flagship.groceries": {
-    "version": "0.13.1",
-    "hash": "66c31aaab8474e927e3ad1c8e79dbe8d2ccb56e25dca08fc4d7ac90c9e68e9a4"
+    "version": "0.13.3",
+    "hash": "472f473ea43ae48fca24ebf3a6c579dc370920cfee6ee1f03591aa97fc88b300"
   },
   "cobblr.flagship.grocery-spend": {
     "version": "0.1.2",

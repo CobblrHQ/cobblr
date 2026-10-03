@@ -23,8 +23,10 @@ export function useConfigVisibility(): VisibilityContext {
     enabled: !!activeSlug,
     staleTime: 30_000,
   });
+  const tidyQ = useQuery({ queryKey: ["tidy-settings", activeSlug], queryFn: () => api.tidySuggestions(activeSlug), enabled: !!activeSlug, staleTime: 60_000 });
   const items = modulesQ.data?.items;
   return {
+    tidyAvailable: tidyQ.data?.available === true,
     // null while loading — nothing is module-hidden yet, so the settings area
     // never flickers entries in as the query resolves.
     enabledModules: items

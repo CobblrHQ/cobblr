@@ -82,7 +82,7 @@ async function fetchBuffer(url) {
   // when Accept is octet-stream — keeps Authorization safe through
   // the redirect chain. Browser-facing release URLs (releases/download/…)
   // also work; undici strips Authorization on cross-origin redirect.
-  const res = await fetch(url, { headers: { ...authHeaders(url), Accept: "application/octet-stream" } });
+  const res = await fetch(url, { headers: { ...authHeaders(url), accept: "application/octet-stream" } });
   if (!res.ok) fail(`fetch ${url} → ${res.status} ${res.statusText}`);
   return Buffer.from(await res.arrayBuffer());
 }

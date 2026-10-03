@@ -85,7 +85,14 @@ export function subtreeSize(node: FoldableNode): { nodes: number } {
 /** Prune the forest to nodes that match `q` or contain one. Case- and
  *  accent-insensitive on name and short name. An empty query returns the input
  *  untouched (same reference, so memoised callers do not re-render). */
-export function filterForest<T extends FoldableNode>(roots: T[], q: string): T[] {
+export function filterForest<T extends FoldableNode>(roots: T[], q: string, occupied?: ReadonlySet<string>): T[] {
+  if (occupied) {
+    const keepOccupied = (n: T): T | null => {
+      const children = (n.children as T[]).map(keepOccupied).filter((c): c is T => c !== null);
+      return occupied.has(n.id) || children.length ? { ...n, children } : null;
+    };
+    roots = roots.map(keepOccupied).filter((r): r is T => r !== null);
+  }
   const needle = norm(q);
   if (!needle) return roots;
   const prune = (n: T): T | null => {

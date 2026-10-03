@@ -289,3 +289,14 @@ export function placementPreview(
     unplaced,
   };
 }
+
+/** The done-toast for a filing: where each row went, and the one place when
+ *  they all share it. "Filed 1 to Spices, in Top Cabinet 1", "Filed 3 to Tea
+ *  and 2 to Spices" (#4584). Nothing is asked first; this is the receipt. */
+export function filedLine(filed: ReadonlyArray<{ label: string }>, place?: string | null): string {
+  const counts = new Map<string, number>();
+  for (const f of filed) counts.set(f.label, (counts.get(f.label) ?? 0) + 1);
+  const where = [...counts].map(([label, n]) => `${n} to ${label}`);
+  const list = where.length > 1 ? `${where.slice(0, -1).join(", ")} and ${where[where.length - 1]}` : (where[0] ?? "0");
+  return `Filed ${list}${place ? `, in ${place}` : ""}`;
+}

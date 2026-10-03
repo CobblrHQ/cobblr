@@ -1,3 +1,4 @@
+import { canPurgeDeletedRecord } from "@cobblr/platform-contract";
 // /files — upload, list, get, delete, serve.
 
 import { notePhotoSource } from "./photo-source.js";
@@ -348,9 +349,14 @@ filesRouter.post(
 filesRouter.delete(
   "/:id/forever",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
     const id = req.params.id!;
     const ctx = tenantContext(req);
+    const kept = await platform().deletedRecords.get(ctx.org.id, "core-files:file", id);
+    if (!canPurgeDeletedRecord(ctx.role, kept?.deletedBy ?? null, sessionUser(req)?.id ?? "")) {
+      res.status(403).json({ error: { code: "purge_refused", message: "Only the person who deleted this file or a workspace admin can delete it forever." } });
+      return;
+    }
     const gone = await purgeFile(tenantDb(req), ctx.org.id, id);
     if (!gone) {
       res.status(409).json({

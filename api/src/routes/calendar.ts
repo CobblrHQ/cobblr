@@ -21,6 +21,7 @@ import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
 import * as calendar from "../platform/calendar-registry.js";
 import { buildICS } from "../platform/ical.js";
+import { recordAddressForEntity } from "../platform/entities.js";
 
 // ── authed, org-scoped ────────────────────────────────────────────────
 export const calendarOrgRouter = Router({ mergeParams: true });
@@ -48,6 +49,35 @@ calendarOrgRouter.get(
     } catch (err) {
       next(err);
     }
+  },
+);
+
+calendarOrgRouter.get(
+  "/:slug/calendar/reminders", requireAuth, withTenant,
+  async (req, res, next) => {
+    try {
+      const row = await meta.selectFrom("orgs").select("warranty_reminders")
+        .where("id", "=", req.tenant!.org.id).executeTakeFirstOrThrow();
+      res.json({ enabled: row.warranty_reminders });
+    } catch (err) { next(err); }
+  },
+);
+
+// AI-REACH: workspace-wide reminders are an owner's choice on the calendar.
+calendarOrgRouter.put(
+  "/:slug/calendar/reminders", requireAuth, withTenant,
+  async (req, res, next) => {
+    try {
+      if (!requireRole(req, res, "owner", "admin")) return;
+      const parsed = z.object({ enabled: z.boolean() }).safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: { code: "invalid_body", message: "Choose whether warranty reminders are on." } });
+        return;
+      }
+      await meta.updateTable("orgs").set({ warranty_reminders: parsed.data.enabled })
+        .where("id", "=", req.tenant!.org.id).execute();
+      res.json(parsed.data);
+    } catch (err) { next(err); }
   },
 );
 
@@ -159,7 +189,14 @@ calendarPublicRouter.get("/:token", async (req, res, next) => {
     const from = shiftISO(-31);
     const to = shiftISO(366);
     const events = await calendar.collect(feed.org_id, from, to);
-    const ics = buildICS(events, { name: "Cobblr" });
+    const addressed = await Promise.all(
+      events.map(async (event) => {
+        if (!event.entityModule || !event.entityType || !event.entityId) return event;
+        const detailUrl = await recordAddressForEntity(feed.org_id, `${event.entityModule}:${event.entityType}`, event.entityId).catch(() => undefined);
+        return detailUrl ? { ...event, detailUrl } : event;
+      }),
+    );
+    const ics = buildICS(addressed, { name: "Cobblr" });
     res
       .status(200)
       .type("text/calendar; charset=utf-8")

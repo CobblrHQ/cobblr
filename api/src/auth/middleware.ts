@@ -56,6 +56,9 @@ export interface SessionUser {
   token_access?: TokenAccess | null;
   /** The one workspace a personal token is held to; null = every workspace. */
   token_org_id?: string | null;
+  /** Set while the request is a View as through a share: the grant, the one
+   *  workspace it is held to, and who is looking. Read-only, enforced above. */
+  share_view?: { session_id: string; org_id: string; slug: string; viewer_name: string | null; expires_at: string } | null;
   /** True while the account carries a temp/admin-set password. Re-read from
    *  the DB on every request, so completing the reset (POST /me/password or
    *  /auth/password/reset) clears it immediately. `withTenant` refuses
@@ -165,6 +168,8 @@ const MCP_READ_PATHS: Array<string | RegExp> = [
   "/modules/core-locations/locations",
   // what needs me / what happened / what is coming
   "/attention",
+  // edits and additions people sharing with this workspace suggested (list_suggestions)
+  "/suggestions",
   "/activity",
   "/notifications",
   // list_notifications reports the true unread total, not the page's
@@ -181,6 +186,8 @@ const MCP_READ_PATHS: Array<string | RegExp> = [
   // never an item's own sub-routes), and its put-away plan
   /^\/modules\/core-scan\/inbox(\/stats|\/[A-Za-z0-9-]+)?$/,
   "/modules/core-scan/organize/plan/latest",
+  "/scan-stations",
+  /^\/scan-stations\/[0-9A-Fa-f-]{36}\/sessions(\/[0-9A-Fa-f-]{36})?$/,
   // the outside services usable here, and one job (list_services,
   // get_service_job); a job's confirm is never reachable from here
   "/services/capabilities",
@@ -251,6 +258,18 @@ export function mcpWritePathAllowed(method: string, originalUrl: string, slug: s
  *  words in Cobb's mouth. */
 const MCP_NARRATE_PATH = "/modules/core-ai/chat/turns/open/steps";
 
+/** What a View as grant may reach: reads of its one workspace, the account
+ *  read the app starts from (answered narrowed, me.ts), and ending itself. */
+export function shareViewPathAllowed(method: string, originalUrl: string, slug: string): boolean {
+  const path = (originalUrl.split("?")[0] ?? "").replace(/\/+$/, "");
+  if (path.includes("..")) return false;
+  if (method === "POST") return path === "/api/v1/share-view/end" || path === "/api/v1/share-view/renew";
+  if (method !== "GET" && method !== "HEAD") return false;
+  const safe = slug.replace(/[^a-z0-9-]/gi, "");
+  if (!safe) return false;
+  return path === "/api/v1/me" || path === `/api/v1/orgs/${safe}` || path.startsWith(`/api/v1/orgs/${safe}/`);
+}
+
 export function mcpReadPathAllowed(method: string, originalUrl: string, slug: string): boolean {
   if (method === "POST") {
     const safe = slug.replace(/[^a-z0-9-]/gi, "");
@@ -300,6 +319,7 @@ export async function requireAuth(
     let appScope: string | null = null;
     let mcpReadSlug: string | null = null;
     let mcpWriteSlug: string | null = null;
+    let shareViewSid: string | null = null;
     let tokenScopes: string[] | null = null;
     let tokenGrant: { access: TokenAccess | null; orgId: string | null; orgSlug: string | null } | null = null;
     let tokenIssuedAt: number | null = null; // JWT iat (seconds), session/app only
@@ -332,6 +352,8 @@ export async function requireAuth(
         mcpReadSlug = claims.aud.slice("mcp-read:".length);
       } else if (typeof claims.aud === "string" && claims.aud.startsWith("mcp-write:")) {
         mcpWriteSlug = claims.aud.slice("mcp-write:".length);
+      } else if (typeof claims.aud === "string" && claims.aud.startsWith("share-view:")) {
+        shareViewSid = claims.aud.slice("share-view:".length);
       }
     }
     if (!userId) {
@@ -394,6 +416,45 @@ export async function requireAuth(
       });
       return;
     }
+    // View as, through a share — GETs in the one share space, until the grant
+    // is ended or runs out. Read-only by construction, not by hiding buttons.
+    let shareView: SessionUser["share_view"] = null;
+    if (shareViewSid !== null) {
+      const grant = await meta
+        .selectFrom("share_view_sessions as v")
+        .innerJoin("orgs as o", "o.id", "v.org_id")
+        .innerJoin("share_links as l", "l.id", "v.link_id")
+        .select(["v.id", "v.org_id", "o.slug", "v.viewer_name", "v.expires_at", "v.ended_at", "v.target_user_id", "l.status as share_status"])
+        .where("v.id", "=", shareViewSid)
+        .executeTakeFirst()
+        .catch(() => undefined);
+      // A share that ended ends its views at once, not when the grant runs out.
+      if (!grant || grant.ended_at || grant.expires_at.getTime() <= Date.now() || grant.target_user_id !== userId || grant.share_status !== "active") {
+        res.status(401).json({ error: { code: "share_view_ended", message: "This view has ended." } });
+        return;
+      }
+      if (!shareViewPathAllowed(req.method, req.originalUrl, grant.slug)) {
+        // Carries `blocked`, so whichever form asked, the app's one refusal
+        // sheet says why at once instead of the form failing silently (#4687).
+        res.status(403).json({
+          error: {
+            code: "share_view_read_only",
+            message: "Viewing as someone is read-only.",
+            blocked: {
+              sentence: "This is a read-only preview of what they see, so nothing can be changed here.",
+              remedies: [],
+              requestable: false,
+              reason: "Exit the view to make changes in your own workspace.",
+              approvers: { count: 0, names: [] },
+              pending: null,
+            },
+          },
+        });
+        return;
+      }
+      shareView = { session_id: grant.id, org_id: grant.org_id, slug: grant.slug, viewer_name: grant.viewer_name, expires_at: grant.expires_at.toISOString() };
+      void meta.updateTable("share_view_sessions").set((eb) => ({ request_count: eb("request_count", "+", 1) })).where("id", "=", grant.id).execute().catch(() => undefined);
+    }
     // MCP write-grant — record routes in its own workspace, nothing else.
     if (mcpWriteSlug !== null && !mcpWritePathAllowed(req.method, req.originalUrl, mcpWriteSlug)) {
       res.status(403).json({
@@ -445,6 +506,7 @@ export async function requireAuth(
       // composed with it (core-scan's withTitle), so every surface shows the
       // one format without each reading the account (#3061).
       title_pref: user.title_pref ?? null,
+      share_view: shareView,
       ai_door:
         mcpReadSlug !== null || mcpWriteSlug !== null
           ? "relay"

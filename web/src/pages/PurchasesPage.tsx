@@ -1,3 +1,5 @@
+import { NewItemMenu } from "@cobblr/platform-web";
+import { CurrencyPicker, MoneyTotalNotice, useMoneyCurrency } from "@cobblr/platform-web";
 // /purchases — list of orders with a detail modal that shows the
 // order's line items. Same overall shape as MachinesPage /
 // AssetsPage. Order items live inside the detail modal (they're a
@@ -18,7 +20,7 @@ import { QueryError } from "../components/QueryError";
 import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
 import { ModulePurposeHint } from "../components/ModulePurposeHint";
 import { usePublishChatContext, useAskCobbAboutSelection } from "../lib/chat-context";
-import { BulkActionBar, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton } from "@cobblr/platform-web";
+import { BulkActionBar, BulkSetField, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton } from "@cobblr/platform-web";
 import { ContributedDetailPanels } from "../panels/registry";
 import { receiptGroupSummary } from "./receiptLabel";
 import { ReceiptAddressChip } from "../components/ReceiptAddressChip";
@@ -32,7 +34,7 @@ function fmtOrderDate(d: string | null): string | null {
 }
 
 /** An order's amounts are kept in the currency's main unit. */
-const money = (v: string | number | null | undefined): string | null => formatStoredMoney(v, "amount");
+const money = (v: string | number | null | undefined, currency?: string): string | null => formatStoredMoney(v, "amount", { currency });
 
 type SortKey = "vendor" | "ordered_at" | "arrived_at" | "total" | "status" | "items";
 const STATUS_ORDER: Record<Order["status"], number> = {
@@ -359,9 +361,11 @@ export function PurchasesPage() {
             <button onClick={() => setVendorsOpen(true)} aria-label="Vendors" className={headerButton()}>
               <Store size={14} /> <span className="hidden lg:inline">Vendors</span>
             </button>
-            <button onClick={() => setNewOpen(true)} aria-label="New order" className={headerButton("primary")}>
-              <Plus size={14} /> <span className="hidden lg:inline">New order</span>
-            </button>
+            <NewItemMenu kind="purchases:order">
+              <button onClick={() => setNewOpen(true)} aria-label="New order" className={headerButton("primary")}>
+                <Plus size={14} /> <span className="hidden lg:inline">New order</span>
+              </button>
+            </NewItemMenu>
           </>
         }
       />
@@ -392,12 +396,13 @@ export function PurchasesPage() {
           <StatCard label="From receipts" value={String(receiptsCount)} />
           <StatCard
             label={statusFilter || query ? "Spend (filtered)" : "Total spend"}
-            value={money(filteredSpend) ?? "$0.00"}
+            value={money(filteredSpend, shown?.currency) ?? money(0, shown?.currency)!}
             hint={`${shown?.count ?? 0} order${shown?.count === 1 ? "" : "s"}`}
           />
         </div>
       )}
 
+      <MoneyTotalNotice total={shown?.money_total} />
       <UnconfirmedReceiptsBanner slug={activeSlug} />
       {whole && totalOrders > 0 && <PurchasesInsights summary={whole} />}
 
@@ -482,7 +487,7 @@ export function PurchasesPage() {
                   {o.item_count ?? "—"}
                 </td>
                 <td className="px-3 py-2 text-right font-mono text-xs text-content dark:text-mortar-200">
-                  {money(o.total) ?? "—"}
+                  {money(o.total, o.currency) ?? "—"}
                 </td>
                 <td className="px-2 py-2 text-faint dark:text-slate-600">
                   <ChevronRight size={14} />
@@ -535,7 +540,9 @@ export function PurchasesPage() {
         count={selected.size}
         onClear={() => setSelected(new Set())}
         actions={
-          mayDeleteOrders && <button
+          <>
+            <BulkSetField records={Array.from(selected).map((id) => ({ kind: "purchases:order", id }))} onDone={() => setSelected(new Set())} />
+            {mayDeleteOrders && <button
             type="button"
             disabled={bulkDelete.isPending}
             onClick={async () => {
@@ -550,7 +557,8 @@ export function PurchasesPage() {
             className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-ember-600 dark:text-ember-400 hover:text-ember-700 disabled:opacity-50"
           >
             <Trash2 size={12} /> Delete
-          </button>
+          </button>}
+          </>
         }
       />
     </div>
@@ -587,11 +595,13 @@ function ReceiptRenderModal({
   onViewOriginal: (() => void) | null;
   onClose: () => void;
 }) {
+  const money = (v: string | number | null | undefined, currency = order.currency) => formatStoredMoney(v, "amount", { currency });
   const items = order.items ?? [];
   const subtotal = items.reduce((s, it) => s + (it.unit_cost != null ? Number(it.qty) * Number(it.unit_cost) : 0), 0);
   const shipping = order.shipping_cost != null ? Number(order.shipping_cost) : 0;
-  const total = order.total_cost != null ? Number(order.total_cost) : subtotal + shipping;
-  const other = total - subtotal - shipping;
+  const computed = order.computed_total ?? subtotal + shipping;
+  const total = order.total_cost != null ? Number(order.total_cost) : computed;
+  const other = total - computed;
   const host = order.url ? order.url.replace(/^https?:\/\//, "").replace(/\/.*$/, "") : null;
   const meta = [host, order.order_number ? `Order #${order.order_number}` : null, fmtOrderDate(order.ordered_at)]
     .filter(Boolean)
@@ -614,7 +624,7 @@ function ReceiptRenderModal({
                     {it.description ?? "—"}
                     {qty > 1 ? `  ×${qty}` : ""}
                   </span>
-                  <span className="shrink-0 tabular-nums">{ext != null ? money(ext) : ""}</span>
+                  <span className="shrink-0 tabular-nums">{ext != null ? money(ext, it.currency) : ""}</span>
                 </div>
               );
             })}
@@ -623,7 +633,7 @@ function ReceiptRenderModal({
         <div className="mt-3 space-y-1 text-xs">
           <div className="flex justify-between">
             <span>Subtotal</span>
-            <span className="tabular-nums">{money(subtotal)}</span>
+            <span className="tabular-nums">{money(order.computed_total != null ? computed - shipping : subtotal)}</span>
           </div>
           {shipping > 0 && (
             <div className="flex justify-between">
@@ -656,6 +666,7 @@ function ReceiptRenderModal({
 }
 
 function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClose: () => void }) {
+  const money = (v: string | number | null | undefined, currency = order.data?.currency) => formatStoredMoney(v, "amount", { currency });
   const { activeSlug, activeOrg } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
@@ -695,7 +706,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
   // obvious: Σ(qty × unit) + shipping vs the recorded total.
   const subtotal = items.reduce((s, it) => s + (it.unit_cost != null ? Number(it.qty) * Number(it.unit_cost) : 0), 0);
   const shipping = o?.shipping_cost != null ? Number(o.shipping_cost) : 0;
-  const computed = subtotal + shipping;
+  const computed = o?.computed_total ?? subtotal + shipping;
   const totalNum = o?.total_cost != null ? Number(o.total_cost) : null;
   const reconciles = totalNum != null && Math.abs(totalNum - computed) < 0.01;
 
@@ -742,9 +753,9 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
           <span className="inline-flex items-center gap-2 flex-wrap">
             {fmtOrderDate(o.ordered_at) && <span>{fmtOrderDate(o.ordered_at)}</span>}
             <StatusPill status={o.status} />
-            {money(o.total) && (
+            {money(o.total, o.currency) && (
               <span className="font-mono text-content dark:text-mortar-100 font-semibold">
-                {money(o.total)}
+                {money(o.total, o.currency)}
                 <span className="text-faint font-normal"> · {items.length} item{items.length === 1 ? "" : "s"}</span>
               </span>
             )}
@@ -801,8 +812,8 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
               !fp.hidden("expected_arrival") ? editFieldItem("expected_arrival", { label: fp.label("expected_arrival", "Expected arrival"), value: o.expected_arrival ?? "", type: "date", onCommit: (v) => update.mutate({ expected_arrival: v || null }) }) : null,
               !fp.hidden("arrived_at") ? editFieldItem("arrived_at", { label: fp.label("arrived_at", "Arrived at"), value: o.arrived_at ?? "", type: "date", onCommit: (v) => update.mutate({ arrived_at: v || null }) }) : null,
               !fp.hidden("url") ? editFieldItem("url", { label: fp.label("url", "URL"), value: o.url ?? "", type: "url", onCommit: (v) => update.mutate({ url: v || null }) }) : null,
-              !fp.hidden("total_cost") ? moneyFieldItem("total_cost", { label: fp.label("total_cost", "Total cost"), value: o.total_cost, storage: "amount", onCommit: (v) => update.mutate({ total_cost: v == null ? null : String(v) }) }) : null,
-              !fp.hidden("shipping_cost") ? moneyFieldItem("shipping_cost", { label: fp.label("shipping_cost", "Shipping cost"), value: o.shipping_cost, storage: "amount", onCommit: (v) => update.mutate({ shipping_cost: v == null ? null : String(v) }) }) : null,
+              !fp.hidden("total_cost") ? moneyFieldItem("total_cost", { label: fp.label("total_cost", "Total cost"), value: o.total_cost, storage: "amount", currency: o.currency, onCurrencyChange: (currency) => update.mutate({ metadata: { currency } }), onCommit: (v) => update.mutate({ total_cost: v == null ? null : String(v), metadata: { currency: o.currency } }) }) : null,
+              !fp.hidden("shipping_cost") ? moneyFieldItem("shipping_cost", { label: fp.label("shipping_cost", "Shipping cost"), value: o.shipping_cost, storage: "amount", currency: o.currency, onCurrencyChange: (currency) => update.mutate({ metadata: { currency } }), onCommit: (v) => update.mutate({ shipping_cost: v == null ? null : String(v), metadata: { currency: o.currency } }) }) : null,
               editFieldItem("notes", { label: "Notes", value: o.notes ?? "", multiline: true, onCommit: (v) => update.mutate({ notes: v || null }) }),
             ]}
           />
@@ -810,7 +821,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
               the figure spend counts. Saying so beside the empty field. */}
           {o.total_cost == null && o.total != null && (
             <p className="text-xs text-muted" data-testid="total-from-lines">
-              No total entered, so it counts as {money(o.total)}: its lines{shipping > 0 ? " plus shipping" : ""}.
+              No total entered, so it counts as {money(o.total, o.currency)}: its lines{shipping > 0 ? " plus shipping" : ""}.
             </p>
           )}
 
@@ -865,7 +876,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
                 <div className="mt-3 pt-2.5 border-t border-dashed border-line dark:border-slate-700 space-y-1 text-sm">
                   <div className="flex justify-between text-muted">
                     <span>Subtotal ({items.length} line{items.length === 1 ? "" : "s"})</span>
-                    <span className="font-mono">{money(subtotal)}</span>
+                    <span className="font-mono">{money(computed - shipping)}</span>
                   </div>
                   {shipping > 0 && (
                     <div className="flex justify-between text-muted">
@@ -916,6 +927,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
       ) : (
         <div className="text-xs text-faint">loading…</div>
       )}
+      <MoneyTotalNotice total={o?.money_total} />
     </Modal>
     </>
   );
@@ -935,6 +947,7 @@ function OrderLineItem({
   routeFor: (kind: string, id: string) => string | null;
   controls?: ReactNode;
 }) {
+  const money = (v: string | number | null | undefined, currency = item.currency) => formatStoredMoney(v, "amount", { currency });
   const resolved = useQuery({
     queryKey: ["entity", slug, "inventory:part", item.part_id],
     queryFn: () => api.lookupEntity(slug, "inventory:part", item.part_id!),
@@ -992,6 +1005,8 @@ function OrderLineItem({
 }
 
 function NewOrderModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const mainCurrency = useMoneyCurrency();
+  const [currency, setCurrency] = useState(mainCurrency);
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
@@ -1005,13 +1020,14 @@ function NewOrderModal({ open, onClose }: { open: boolean; onClose: () => void }
   const [addToStock, setAddToStock] = useState(true);
   useEffect(() => {
     if (open) {
+      setCurrency(mainCurrency);
       setVendorId(null);
       setVendorName("");
       setOrderNumber("");
       setStatus("ordered");
       setAddToStock(true);
     }
-  }, [open]);
+  }, [open, mainCurrency]);
 
   const create = useMutation({
     mutationFn: () =>
@@ -1021,6 +1037,7 @@ function NewOrderModal({ open, onClose }: { open: boolean; onClose: () => void }
         order_number: orderNumber.trim() || null,
         status,
         add_to_stock: status === "arrived" ? addToStock : true,
+        metadata: { currency },
       }),
     onSuccess: (o) => {
       toast.success("Order created.");
@@ -1060,6 +1077,7 @@ function NewOrderModal({ open, onClose }: { open: boolean; onClose: () => void }
             ))}
           </select>
         </label>
+        <CurrencyPicker value={currency} onChange={setCurrency} label="Order currency" />
         {status === "arrived" && <AddToStockChoice checked={addToStock} onChange={setAddToStock} />}
         <div className="flex items-center justify-end gap-2 pt-2 border-t border-line dark:border-slate-700">
           <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition">
@@ -1369,7 +1387,7 @@ function VendorDetailPane({
                       <span className="font-mono text-xs text-muted w-24 shrink-0 truncate">{o.order_number || "—"}</span>
                       <StatusPill status={o.status} />
                       <span className="text-xs text-muted flex-1 whitespace-nowrap">{fmtOrderDate(o.ordered_at) ?? ""}</span>
-                      <span className="font-mono text-xs text-content dark:text-mortar-100">{money(o.total) ?? "—"}</span>
+                      <span className="font-mono text-xs text-content dark:text-mortar-100">{money(o.total, o.currency) ?? "—"}</span>
                     </button>
                   </li>
                 ))}

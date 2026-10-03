@@ -10,9 +10,17 @@
 // Buildless subpath: no runtime import of a sibling.
 import type { ProviderReason } from "./provider-reason.js";
 
+export interface ConnectionTestOutcome {
+  ok: boolean;
+  /** A successful probe's limitation, shown in amber instead of as verified. */
+  warning?: string;
+}
+
 export type VerificationState =
   /** The probe reached the provider and the key was accepted. */
   | "verified"
+  /** The connection works, but the probe found a limitation. */
+  | "warning"
   /** The provider rejected the key (or named a model it does not serve). */
   | "invalid"
   /** The probe could not settle it: the provider was unreachable or refused for a quota. */
@@ -45,7 +53,7 @@ export interface ConnectionVerification {
  *  provider says nothing about the key, so those are "unverifiable", not
  *  "invalid"; a rejected key or a missing model is "invalid". */
 export function verificationOf(
-  probe: { ok: boolean; reason?: ConnectionVerification["reason"]; error?: string; detail?: string; models?: string[]; note?: string; photos?: { read: boolean; said?: string } },
+  probe: ConnectionTestOutcome & { reason?: ConnectionVerification["reason"]; error?: string; detail?: string; models?: string[]; note?: string; photos?: { read: boolean; said?: string } },
   model?: string | null,
   now: Date = new Date(),
   latencyMs?: number,
@@ -55,7 +63,8 @@ export function verificationOf(
   const photos = probe.photos
     ? { photos: probe.photos.read ? ("read" as const) : ("not-read" as const), ...(!probe.photos.read && probe.photos.said ? { photos_said: probe.photos.said.slice(0, 200) } : {}) }
     : {};
-  if (probe.ok) return { state: "verified", at, ...(model ? { model } : probe.models?.[0] ? { model: probe.models[0] } : {}), ...(probe.note ? { message: probe.note } : {}), ...photos, ...took };
+  const warning = probe.warning?.trim();
+  if (probe.ok) return { state: warning ? "warning" : "verified", at, ...(model ? { model } : probe.models?.[0] ? { model: probe.models[0] } : {}), ...(warning || probe.note ? { message: warning || probe.note } : {}), ...photos, ...took };
   const reason = probe.reason ?? "unknown";
   const state: VerificationState = reason === "invalid_key" || reason === "model_unavailable" ? "invalid" : "unverifiable";
   return { state, reason, at, ...(probe.error ? { message: probe.error } : {}), ...took };
@@ -65,7 +74,7 @@ export function verificationOf(
 export function verificationFrom(value: unknown): ConnectionVerification | null {
   if (!value || typeof value !== "object") return null;
   const v = value as Record<string, unknown>;
-  if (!["verified", "invalid", "unverifiable", "unverified"].includes(String(v.state))) return null;
+  if (!["verified", "warning", "invalid", "unverifiable", "unverified"].includes(String(v.state))) return null;
   if (typeof v.at !== "string") return null;
   return v as unknown as ConnectionVerification;
 }
@@ -75,6 +84,8 @@ export function verificationLabel(v: ConnectionVerification | null | undefined):
   switch (v?.state) {
     case "verified":
       return "Verified";
+    case "warning":
+      return "Works with limitations";
     case "invalid":
       return v.reason === "model_unavailable" ? "Model not available" : "Key not valid";
     case "unverifiable":
@@ -84,6 +95,10 @@ export function verificationLabel(v: ConnectionVerification | null | undefined):
     default:
       return "Not checked yet";
   }
+}
+
+export function isWorkingVerification(v: { state?: string } | null | undefined): boolean {
+  return v?.state === "verified" || v?.state === "warning";
 }
 
 /** The 409 body for a key saved without the person's say-so: one the probe

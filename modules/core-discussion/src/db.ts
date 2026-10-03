@@ -21,8 +21,13 @@ export interface CommentsTable {
   conversation_id: string;
   /** A reference to another comment, not a tree edge. */
   in_reply_to: string | null;
-  author_kind: Generated<"user" | "assistant">;
+  /** `guest`: someone outside the workspace, through a share. */
+  author_kind: Generated<"user" | "assistant" | "guest">;
   author_user_id: string | null;
+  /** A guest's name, as it arrived; null for a member (read from the account). */
+  author_name: string | null;
+  /** The key a guest's comment arrived under, so a repeat is the same comment. */
+  external_ref: string | null;
   requested_by: string | null;
   status: Generated<"posted" | "pending" | "failed">;
   body: Generated<string>;

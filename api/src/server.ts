@@ -1,3 +1,4 @@
+import { deletedRecordsRouter } from "./routes/deleted-records.js";
 // Express app factory. Two-phase setup so module routers can attach
 // between the platform's static routes and the 404 fallback:
 //
@@ -49,6 +50,7 @@ import { platformOrgRouter } from "./routes/platform.js";
 import { calendarOrgRouter, calendarPublicRouter } from "./routes/calendar.js";
 import { bundlesRouter } from "./routes/bundles.js";
 import { quickstartRouter } from "./routes/quickstart.js";
+import { tidyRouter } from "./routes/tidy-suggestions.js";
 import { attentionRouter } from "./routes/attention.js";
 import { edgePairRouter, edgeRouter } from "./routes/edge.js";
 import { shareLinksOrgRouter, shareLinksRouter } from "./routes/share-links.js";
@@ -76,6 +78,7 @@ import { customRolesRouter } from "./routes/custom-roles.js";
 import { driveRouter } from "./routes/drive.js";
 import { resolveRouter } from "./routes/resolve.js";
 import { scanDriveRouter } from "./routes/scan-drive.js";
+import { scanStationsRouter } from "./routes/scan-stations.js";
 import { liveRouter } from "./routes/live.js";
 import { instancesRouter, overridesRouter } from "./routes/instances.js";
 import { navHeadingsRouter } from "./routes/nav-headings.js";
@@ -154,8 +157,9 @@ export function createApp(): AppHandles {
       ? scanImportJson(req, res, next)
       : next(),
   );
-  // What another Cobblr sends over a share: changes signed over their exact
-  // bytes (so the raw body is kept), photos inline (so the limit is high).
+  // What another Cobblr sends over a share: changes (and a View as request)
+  // signed over their exact bytes (so the raw body is kept), photos inline (so
+  // the limit is high).
   // Same pre-mount pattern as above, for that one path.
   const shareOpsJson = express.json({
     limit: "64mb",
@@ -164,7 +168,7 @@ export function createApp(): AppHandles {
     },
   });
   app.use((req, res, next) =>
-    req.method === "POST" && /^\/api\/v1\/share-links\/[^/]+\/ops$/.test(req.path) ? shareOpsJson(req, res, next) : next(),
+    req.method === "POST" && /^\/api\/v1\/share-links\/[^/]+\/[a-z-]+$/.test(req.path) ? shareOpsJson(req, res, next) : next(),
   );
   app.use(
     express.json({
@@ -419,6 +423,7 @@ export function createApp(): AppHandles {
   v1.use("/orgs", resolveRouter);
   // A scan drives the user's designated tab (scan-drives-screen, Phase 1).
   v1.use("/orgs", scanDriveRouter);
+  v1.use("/orgs", scanStationsRouter);
   // The Live box's applicable session controls for this workspace.
   v1.use("/orgs", liveRouter);
   // Super-admin (platform operator) surface — cross-workspace
@@ -444,6 +449,7 @@ export function createApp(): AppHandles {
   // docs/design-decisions/capture-first-onboarding.md.
   v1.use("/orgs/:slug/quickstart", quickstartRouter);
   v1.use("/orgs/:slug/attention", attentionRouter);
+  v1.use("/orgs/:slug/tidy-suggestions", tidyRouter);
   // Generic edge-bridge surface: the dial-out relay wire, the pane of glass,
   // the consumer registry, and the bridge self-update release. Module paths
   // (digifab's /modules/digifab/edge/*) remain as wire-compatible aliases.
@@ -462,6 +468,7 @@ export function createApp(): AppHandles {
   v1.use("/orgs/:slug/outbound-email", outboundEmailRouter);
   // Google Drive OAuth callback (the fixed redirect URI — not org-scoped).
   v1.use(backupGoogleCallbackRouter);
+  v1.use("/orgs/:slug/deleted-records", deletedRecordsRouter);
   v1.use("/orgs/:slug/members", membersRouter);
   v1.use("/orgs/:slug/people", peopleRouter);
   // Who each kind of workspace notification is for (owner/admin setting).

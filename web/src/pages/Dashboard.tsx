@@ -17,6 +17,7 @@
 // /projects/tasks?blocked=1 and 404. Each query stays cached for
 // 30s so navigating away + back doesn't refire everything.
 
+import { getShareViewToken } from "../lib/share-view";
 import { isSandboxSession } from "../lib/sandbox-session";
 import { BringInBackup } from "../components/BringInBackup";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
@@ -37,6 +38,7 @@ import { choosePinnedViews, navNamesWithViewCards } from "../lib/dashboard-pinne
 import { useBundleUpdates, type BundleUpdate } from "../lib/useBundleUpdates";
 import { classifyBundleUpdate, tierAutoApplies, updateMayTeardownCatalogs } from "../lib/bundleUpdateTier";
 import { useDetailRoute } from "../lib/useDetailRoute";
+import { TidySuggestionCard } from "../components/TidySuggestionCard";
 import { composeAttention } from "../lib/attention-cards";
 import { DatedCard } from "../components/DatedCard";
 import { DiscordReminderOffer } from "../components/DiscordReminderOffer";
@@ -468,8 +470,9 @@ function AttentionFeed({ slug }: { slug: string }) {
     // A date nothing can read: amber, because a reminder that will never
     // fire is a deadline problem, not a note.
     unreadable_date: "border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/20",
+    suggested_edits: "border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20",
   };
-  const glyph: Record<string, string> = { overdue: "⏰", due_today: "📆", low_stock: "📉", pending_scans: "📷", photo_wanted: "📷", upcoming: "📅", unreadable_date: "❓" };
+  const glyph: Record<string, string> = { overdue: "⏰", due_today: "📆", low_stock: "📉", pending_scans: "📷", photo_wanted: "📷", upcoming: "📅", unreadable_date: "❓", suggested_edits: "✏️" };
   const cards = composeAttention(items);
   return (
     <section className="space-y-1.5">
@@ -481,7 +484,7 @@ function AttentionFeed({ slug }: { slug: string }) {
         {/* A collection's overdue, today and coming-up rows as ONE card
             (attention-cards.ts); every other row as it was. */}
         {cards.map((c, i) =>
-          c.type === "dated" ? (
+          c.type === "row" && c.item.suggestion ? (<TidySuggestionCard key={c.item.suggestion.id} slug={slug} suggestion={c.item.suggestion} />) : c.type === "dated" ? (
             <DatedCard key={`dated-${c.collection.key}`} slug={slug} card={c} />
           ) : (
             <AttentionRow key={`${c.item.kind}-${c.item.route}-${i}`} slug={slug} item={c.item} tone={tone[c.item.kind] ?? tone.upcoming ?? ""} glyph={glyph[c.item.kind] ?? "•"} />
@@ -979,7 +982,9 @@ export function WorkspaceHeader({
   const [detail, setDetail] = useState<{ manifest: BundleUpdate["manifest"]; glyph: string; installedVersion: string } | null>(null);
   const pending = updates.filter((u) => !completed[u.externalId]);
   const completedList = Object.entries(completed);
-  const guest = role !== "owner";
+  // A View as of one's own share is not a role to be told about: the banner
+  // says read-only, and "you're an admin" beside it misleads (#4695).
+  const guest = role !== "owner" && !getShareViewToken();
   // One tip at a time, where the person already is (the tips seam decides
   // which, and whether today is a day for a new one).
   const tips = useTipState();

@@ -94,7 +94,7 @@ function registerEditLine(): void {
     const r = await editOrderLine(db, { orgId: ctx.orgId, userId: ctx.userId ?? null }, lineId, edit, order.id);
     if (!r.ok) return { ok: false, error: r.message };
     // What it was, only for the fields this changed: the way back.
-    const before = Object.fromEntries(Object.keys(edit).map((k) => [k, r.before[k as keyof LineEdit]]));
+    const before = Object.fromEntries(Object.keys(edit).map((k) => [k, r.before[k as keyof typeof r.before]]));
     return { ok: true, result: { line_id: lineId, ...edit }, before };
   });
 }
@@ -140,6 +140,7 @@ function registerRecordPaperwork(): void {
       ordered_at?: string | null;
       order_ref?: string | null;
       total?: number | null;
+      currency?: string | null;
       source_file_id?: string | null;
       lines?: PaperworkLine[];
       claim?: { index: number; kind: string; id: string } | null;
@@ -173,7 +174,7 @@ function registerRecordPaperwork(): void {
         // Nothing to count: the record it bought exists already.
         add_to_stock: false,
         total_cost: typeof args.total === "number" ? args.total : null,
-        metadata: { ...(args.source_file_id ? { source_file_id: args.source_file_id } : {}), from_paperwork: true },
+        metadata: { currency: args.currency || undefined, ...(args.source_file_id ? { source_file_id: args.source_file_id } : {}), from_paperwork: true },
       } as never)
       .returning("id")
       .executeTakeFirstOrThrow();
@@ -188,7 +189,7 @@ function registerRecordPaperwork(): void {
           qty: Number(l.qty) > 0 ? Number(l.qty) : 1,
           unit_cost: typeof l.unit_cost === "number" ? l.unit_cost : null,
           line_amount: typeof l.line_amount === "number" ? l.line_amount : null,
-          metadata: l.kind ? { line_kind: l.kind } : {},
+          metadata: { currency: args.currency || undefined, ...(l.kind ? { line_kind: l.kind } : {}) },
         } as never)
         .returning("id")
         .executeTakeFirstOrThrow();

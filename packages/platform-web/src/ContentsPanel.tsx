@@ -1,3 +1,4 @@
+import { MoneyTotalNotice } from "./MoneyTotalNotice";
 // ContentsPanel — "what's installed / stored inside this container?".
 //
 // Generic + self-contained: drop it on ANY container entity's detail (a server
@@ -111,6 +112,9 @@ export function assortedSummary(
 
 /** A thing built from parts, as /built answers it. */
 interface BuiltResp {
+  currency?: string;
+  excluded?: Record<string, number>;
+  conversions?: import("@cobblr/platform-contract/money").MoneyConversion[];
   other: number | null;
   parts: Array<{ kind: string; id: string; name: string; qty: number | null; value: number | null; value_total: number }>;
   built: number;
@@ -582,6 +586,7 @@ export function ContentsPanel({
           {built.data.other != null && <span>Other value (not itemized) {money(built.data.other)}</span>}
           {built.data.parts.length > 0 && <span>Parts {money(built.data.built)}</span>}
           <span className="font-medium text-content dark:text-slate-200">Total {money(built.data.total)}</span>
+          <MoneyTotalNotice total={{ excluded: built.data.excluded || {}, conversions: built.data.conversions || [] }} />
           {built.data.withheld && <span className="text-faint">Some part values are not shown to you, so they are left out.</span>}
         </div>
       )}

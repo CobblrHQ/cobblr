@@ -232,8 +232,14 @@ listsRouter.post(
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "member")) return;
     const db = tenantDb(req);
-    const r = await db.deleteFrom("lists_items").where("list_id", "=", req.params.id!).where("checked", "=", true).executeTakeFirst();
-    res.json({ cleared: Number(r.numDeletedRows ?? 0) });
+    const rows = await db.selectFrom("lists_items").select("id").where("list_id", "=", req.params.id!).where("checked", "=", true).execute();
+    let cleared = 0;
+    for (const row of rows) {
+      const r = await platform().deletedRecords.capture(tenantContext(req).org.id, "lists:item", row.id,
+        () => db.deleteFrom("lists_items").where("id", "=", row.id).where("checked", "=", true).executeTakeFirst());
+      cleared += Number(r.numDeletedRows ?? 0);
+    }
+    res.json({ cleared });
   }),
 );
 

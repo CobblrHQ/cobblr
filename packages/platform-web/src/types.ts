@@ -168,6 +168,8 @@ export interface FieldSection {
 /** The adapter the host (web app) injects. Every shared component
  *  takes one of these via a Provider so the components stay
  *  framework-agnostic and the host owns network + auth. */
+export type BulkFieldOption = Pick<PlatformFieldDef, "name" | "display_label" | "type" | "required" | "choices" | "learns" | "ref_kind" | "unit" | "field_role"> & { native: boolean; money?: "cents" | "amount" };
+
 export interface PlatformWebApi {
   /** How a collection presents its native fields: relabels and hides
    *  (GET /:slug/native-field-overrides?kind=). Read through
@@ -199,8 +201,8 @@ export interface PlatformWebApi {
     slug: string,
     body: {
       actionId: string;
-      entityKind: string;
-      entityId: string;
+      entityKind?: string;
+      entityId?: string;
       bindingId?: string;
       args?: Record<string, unknown>;
       /** A scanned action label's code (#3897). */
@@ -212,6 +214,13 @@ export interface PlatformWebApi {
    *  handed over. Optional: a host without sharing offers no Give to. */
   listShareOffers?(slug: string): Promise<{ items: Array<{ id: string; direction: "out" | "in"; status: string; can_withdraw: boolean }>; targets: Array<{ link_id: string; to: string }> }>;
   withdrawShareOffer?(slug: string, id: string): Promise<unknown>;
+  /** The shares of this workspace's own things, and which of them hold this
+   *  record now ("Shared with Vince"). */
+  /** Edits suggested through shares on one record, waiting for a decision. */
+  listSuggestions?(slug: string, q: { kind: string; id: string }): Promise<{ items: SuggestedEdit[] }>;
+  /** On a copy in a share space: what the owner changed since you edited it. */
+  copyNotes?(slug: string, kind: string, id: string): Promise<{ from: string | null; notes: Array<{ field: string; label: string; theirs: string | null }> }>;
+  recordShares?(slug: string, kind?: string, id?: string): Promise<{ targets: Array<{ link_id: string; to: string }>; shared_with: Array<{ link_id: string; to: string }> }>;
   /** The workspace's printers. Needed only to honour a `ui.print` directive,
    *  which is how walk-up printing reaches a browser-driven printer. Optional:
    *  a host that doesn't wire it never walk-up prints, and the module's normal
@@ -243,6 +252,7 @@ export interface PlatformWebApi {
   listPeople?(slug: string): Promise<{ items: PlatformPerson[] }>;
   /** Add someone by name from a person picker ("+ Someone else…"). */
   addPerson?(slug: string, name: string): Promise<PlatformPerson>;
+  listBulkFieldOptions?(slug: string, kinds: string[]): Promise<{ items: BulkFieldOption[] }>;
   listFieldDefs(slug: string, kind: string): Promise<{
     items: PlatformFieldDef[];
     sections?: FieldSection[];
@@ -299,6 +309,16 @@ export interface PlatformWebApi {
   /** File one waiting row where it is headed, in one tap (installing its
    *  table first when needed), the way the inbox's Add does. */
   fileWaitingScan?(slug: string, id: string): Promise<{ label: string; record: { kind: string; id: string } | null }>;
+  /** Show a refusal the server explained (error.blocked) in the app's one
+   *  refusal sheet. Optional: a host without it shows the sentence as a toast. */
+  raiseBlocked?(blocked: import("@cobblr/platform-contract/blocked-action").BlockedAction): void;
+  /** The public pages a record can be seen through right now (#4502), for
+   *  the "Public" chip on its header. Optional: a host without it shows none. */
+  recordPublicPages?(slug: string, id: string): Promise<{ pages: Array<{ name: string; public_until: string | null; label_door: boolean; links: number }> }>;
+  /** The hand-over a record was taken from, while it can still be sent back
+   *  (#4684). Optional: a host without it offers no Send back on the record. */
+  receivedFrom?(slug: string, kind: string, id: string): Promise<{ received: { offer_id: string; from: string | null; until: string } | null }>;
+  sendBackShareOffer?(slug: string, offerId: string): Promise<unknown>;
 }
 
 /** One scan inbox row waiting to be filed, as a collection's search shows it. */
@@ -373,4 +393,21 @@ export interface PlatformWireInput {
   trigger_type: "event";
   trigger_event: string;
   args?: Record<string, unknown>;
+}
+
+/** One field someone you share with changed on a record of yours, said in
+ *  words (share-spaces.md §8). */
+export interface SuggestedEdit {
+  id: string;
+  field: string;
+  label: string;
+  /** What it said when they changed it. */
+  was: string | null;
+  /** What they made it. */
+  now: string | null;
+  /** On a conflict: what the record says now. */
+  yours: string | null;
+  status: "pending" | "conflict" | "applied" | "undone" | "accepted" | "rejected";
+  still_shared: boolean;
+  by_name: string | null;
 }

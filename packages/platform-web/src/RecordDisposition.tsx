@@ -10,6 +10,7 @@
 // Placed once by the platform; a detail page only says which record it is.
 
 import { useState } from "react";
+import type { BlockedAction } from "@cobblr/platform-contract/blocked-action";
 import { useQuery } from "@tanstack/react-query";
 import { Gift, HandCoins, Undo2 } from "lucide-react";
 import { readRecordOffer } from "@cobblr/platform-contract/share-offer";
@@ -72,7 +73,7 @@ export function RecordDisposition({
   const run = async (actionId: string, args: Record<string, unknown>) => {
     const r = await runAction({ actionId, entityKind: kind, entityId: id, args: { entity_kind: kind, ids: [id], ...args } });
     const res = r.result as { ok?: boolean; error?: string; summary?: string } | null;
-    if (!res?.ok) throw new Error(res?.error ?? "That did not go through.");
+    if (!res?.ok) throw Object.assign(new Error(res?.error ?? "That did not go through."), { blocked: (res as { blocked?: unknown } | null)?.blocked });
     return res.summary ?? "Done.";
   };
 
@@ -97,7 +98,12 @@ export function RecordDisposition({
               toast.success(await run("platform:bring-back", {}));
               changed();
             } catch (e) {
-              toast.error((e as Error).message);
+              // Refused with a reason (a thing someone else has now, #4736):
+              // the refusal sheet says who and what brings it back, where a
+              // toast would be gone before it was read.
+              const blocked = (e as { blocked?: BlockedAction }).blocked;
+              if (blocked && api.raiseBlocked) api.raiseBlocked(blocked);
+              else toast.error((e as Error).message);
             } finally {
               setBusy(false);
             }

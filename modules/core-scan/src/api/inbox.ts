@@ -60,7 +60,7 @@ import { retargetByCategory } from "../services/retarget-by-category.js";
 import { lineQuantity, sameOrder } from "../services/receipt-shared.js";
 import { FiledQuantity, filedQuantityOf } from "../services/filed-quantity.js";
 import { expiryDefaults } from "../services/shelf-life.js";
-import { Router, type Request } from "express";
+import { Router, type Request, type Response } from "express";
 import { sql } from "kysely";
 import { attachPaperwork, type AttachPaperworkResult } from "../services/attach-paperwork.js";
 import { takePaperworkValue, undoPaperworkFill } from "../services/record-paperwork.js";
@@ -118,7 +118,7 @@ import {
   refreshCatalogImageByName,
 } from "../services/enrich-photo.js";
 import { dropMeta, mergeMeta, standingHint, standingHints } from "../services/metadata.js";
-import { parseHintFacts } from "../services/hint-facts.js";
+import { hintWithoutCount, parseHintFacts } from "../services/hint-facts.js";
 import { enqueueDocumentRead } from "../services/document-read-worker.js";
 import { newPlaceAt } from "../services/tracked-stamp.js";
 import { identifyTypedIdentifier } from "../services/identify-identifier.js";
@@ -529,6 +529,7 @@ const ScanBody = z.object({
    *  it (a placement) instead of stamping location_id. */
   target_container_kind: z.string().max(120).optional(),
   target_container_id: z.string().max(200).optional(),
+  capture_id: z.string().uuid().optional(),
   /** Per-scan budget for the inline enrichment race. After this
    *  the response returns the bare row and enrichment continues
    *  detached. Default 12s. */
@@ -571,6 +572,11 @@ inboxRouter.post(
     const ctx = tenantContext(req);
     const session = sessionUser(req);
 
+    if (body.capture_id) {
+      const prior = await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", body.capture_id).executeTakeFirst();
+      if (prior) { res.status(200).json(prior); return; }
+    }
+
     // Create-time defaults: a module (e.g. presence) may default scan_area from
     // context — the room the user is physically in. The seam is provider-
     // agnostic and inert when nothing's registered; the client's explicit
@@ -594,7 +600,7 @@ inboxRouter.post(
     // The matched item is re-assigned to the CURRENT session + bumped to the top.
     // Only for barcode scans (photos/notes/receipts are each distinct); a re-scan
     // after commit/dismiss starts fresh — we only match `pending`.
-    if (body.source_kind === "barcode" && body.barcode) {
+    if (body.source_kind === "barcode" && body.barcode && !body.capture_id) {
       const hasPhoto = !!body.image_file_id;
       // Preferred match when this scan carries a PHOTO: an existing pending entry
       // for the SAME UPC that still has no photo — even in another batch/session.
@@ -736,6 +742,7 @@ inboxRouter.post(
       visitorIp: req.ip ?? null,
       door: "scan",
       values: {
+        ...(body.capture_id ? { id: body.capture_id } : {}),
         source_kind: body.source_kind,
         barcode_text: body.barcode ?? null,
         source_url: body.source_url ?? null,
@@ -1690,6 +1697,13 @@ const ReceiptBody = z.object({
    *  are recorded as usual, the item is linked to it, and NO inbox rows are
    *  created. Nothing needs triaging; it already was. */
   target_item_id: z.string().uuid().optional(),
+  /** The caller will wait for the hosted identify's queue (barcode-
+   *  intelligence #43): when every engine is busy and the workspace's own AI
+   *  cannot read it either, answer 202 with the job instead of failing. Only
+   *  the photographed-receipt route sends it; it owns a row to wait on. */
+  queue_if_busy: z.boolean().optional(),
+  /** A queued read that finished: its answer is collected, not asked again. */
+  hosted_job_id: z.string().uuid().optional(),
 });
 
 // AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
@@ -1704,7 +1718,17 @@ inboxRouter.post(
     const ctx = tenantContext(req);
     const session = sessionUser(req);
 
-    const result = await parseReceipt(ctx.org.id, parsed.data.file_id, session?.id ?? null, req.ip ?? null);
+    const result = await parseReceipt(ctx.org.id, parsed.data.file_id, session?.id ?? null, req.ip ?? null, {
+      ...(parsed.data.queue_if_busy ? { queueIfBusy: true } : {}),
+      ...(parsed.data.hosted_job_id ? { hostedJobId: parsed.data.hosted_job_id } : {}),
+    });
+    // Accepted, not read: the hosted identify reads it when an engine is
+    // back, and the caller (which asked to wait) collects it. No session yet:
+    // there is nothing read to keep, and the caller's row holds the file.
+    if (!result.ok && result.hosted_job) {
+      res.status(202).json({ queued: { job_id: result.hosted_job }, message: result.reason });
+      return;
+    }
     if (!result.ok) {
       // NEVER-VANISH: keep the upload as a re-parseable session instead of
       // orphaning the file. The email path has done this since it shipped
@@ -1958,6 +1982,7 @@ inboxRouter.post(
           vendor: sellerDoubted(doubts) ? null : receipt.vendor,
           orderRef,
           orderedAt: receipt.date,
+          currency: receipt.currency,
           // Nobody has typed one yet — unless a shipping notice got here first
           // and left the session awaiting, in which case its parcel (number,
           // state, promised day) carries into the order it now makes.
@@ -2556,10 +2581,14 @@ inboxRouter.get(
 // and every inbox load got a 400 for it - the session theme had been dead in
 // production without a single test noticing (found by the e2e walk,
 // 2026-09-01). lint:route-shadowing keeps the order true.
-inboxRouter.get(
-  "/inbox/session-theme",
-  asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+const SessionThemeBody = z.object({
+  batch_id: z.string().max(200),
+  ids: z.array(z.string().max(100)).max(1_000).optional(),
+});
+
+/** The theme of one session, about exactly the ids asked (the group on
+ *  screen), or the whole session when none are named. */
+async function sessionTheme(req: Request, res: Response, batchId: string, asked: readonly string[] | null): Promise<void> {
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     // ONE SESSION, named by the caller. This used to read the 50 most recent
@@ -2567,14 +2596,14 @@ inboxRouter.get(
     // person was looking at, so a filtered view of two humidifiers was offered
     // a grocery category "to 50 of them" - two populations in one sentence,
     // and an Apply that would have stamped 50 rows off screen (2026-09-03).
-    const batchId = typeof req.query.batch_id === "string" ? req.query.batch_id : "";
+
     if (!batchId) {
       res.status(400).json({ error: { code: "missing_batch", message: "batch_id required: a theme is a question about one session." } });
       return;
     }
     // The ids the group on screen shows (session-theme.ts): the answer is
     // about exactly those, so its sentence and its Apply name one set.
-    const askedIds = typeof req.query.ids === "string" && req.query.ids ? req.query.ids.split(",").filter((x) => /^[0-9a-f-]{36}$/i.test(x)).slice(0, 200) : null;
+    const askedIds = asked ? asked.filter((x) => /^[0-9a-f-]{36}$/i.test(x)).slice(0, 200) : null;
     const items = themeScope(await pendingThemeItems(db, batchId, askedIds), askedIds);
     if (items.length < 2) {
       res.json(themeFromReply(items, null));
@@ -2604,6 +2633,29 @@ inboxRouter.get(
       /* AI off / errored → no suggestion */
     }
     res.json(themeFromReply(items, parsed));
+}
+
+// The ids ride in the body (#4653): a session of a couple of hundred scans
+// put them past what a proxy accepts in a query string.
+// AI-REACH: exempt a question the session header asks about the group on screen; the assistant reads the inbox through list_scan_inbox
+inboxRouter.post(
+  "/inbox/session-theme",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = SessionThemeBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    await sessionTheme(req, res, parsed.data.batch_id, parsed.data.ids ?? null);
+  }),
+);
+
+/** The pre-#4653 address, kept for a page loaded before the update. */
+inboxRouter.get(
+  "/inbox/session-theme",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const batchId = typeof req.query.batch_id === "string" ? req.query.batch_id : "";
+    const asked = typeof req.query.ids === "string" && req.query.ids ? req.query.ids.split(",") : null;
+    await sessionTheme(req, res, batchId, asked);
   }),
 );
 
@@ -4368,10 +4420,13 @@ inboxRouter.post(
     }
     const db = tenantDb(req);
     const ctx = tenantContext(req);
+    const expected = z.object({ kind: z.string(), id: z.string() }).optional().parse(req.body?.expected_container);
     const row = await db
       .updateTable("core_scan_inbox_items")
       .set({ status: "discarded", updated_at: new Date() })
       .where("id", "=", id)
+      .$if(!!expected, (q) => q.where("status", "=", "pending")
+        .where("target_container_kind", "=", expected!.kind).where("target_container_id", "=", expected!.id))
       .returningAll()
       .executeTakeFirst();
     if (!row) {
@@ -5024,6 +5079,11 @@ inboxRouter.post(
     const effectiveHints = typedHint
       ? [...priorHints.filter((h) => h.toLowerCase() !== typedHint.toLowerCase()), typedHint]
       : priorHints;
+    // A model is shown what a hint says WITHOUT its count: the count is the
+    // person's own fact, set below, and a model asked to weigh it answered
+    // "unconfirmed" and left one (#4552). The stored hint stays whole.
+    const modelHint = hintWithoutCount(effectiveHint);
+    const modelHints = effectiveHints.map(hintWithoutCount).filter((h): h is string => !!h);
 
     // Record the triage action in the item's history (covers the photo branch's
     // early return too) so the source panel can show "you asked for more detail".
@@ -5111,7 +5171,15 @@ inboxRouter.post(
     // counts, so a later re-run never puts back a count they changed since.
     // The part number is looked up the way a typed one is (web, for the
     // identifier itself), never handed to the vision model as prose (#4552).
-    const typedCount = typedHint ? parseHintFacts(typedHint).quantity : null;
+    // A standing hint's count applies too, until a person sets one: the first
+    // press of "8x s-12415" may have run before the count was read by shape
+    // (the model declined it), and a later re-run carries no typed text. Once
+    // the count is the person's (the hint, the stepper) a re-run leaves it.
+    const typedCount = typedHint
+      ? parseHintFacts(typedHint).quantity
+      : fieldProvenanceOf(row.suggested_metadata).quantity?.by === "person"
+        ? null
+        : parseHintFacts(effectiveHint).quantity;
     if (typedCount != null) {
       const stamps = { ...fieldProvenanceOf(row.suggested_metadata), quantity: { by: "person" as const, from: "hint", at: new Date().toISOString() } };
       await db
@@ -5261,7 +5329,7 @@ inboxRouter.post(
           res.status(400).json({ error: { code: "no_input", message: "item has no barcode, photo, or name to look up" } });
           return;
         }
-        const nameQuery = [displayName(row), effectiveHint].filter(Boolean).join(" ").trim();
+        const nameQuery = [displayName(row), modelHint].filter(Boolean).join(" ").trim();
         const nameBrand = row.suggested_manufacturer;
         await db
           .updateTable("core_scan_inbox_items")
@@ -5311,7 +5379,7 @@ inboxRouter.post(
       }
       const imageFileId = row.image_file_id;
       const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
-      const photoHint = effectiveHint ?? undefined;
+      const photoHint = modelHint ?? undefined;
       // Mark the pipeline RUNNING before we return, and clear the terminal
       // markers the last run left behind. Without this the card kept the previous
       // run's `matched_at`/`finalized_at` (and its candidate list), so the UI's
@@ -5431,7 +5499,7 @@ inboxRouter.post(
             force: true,
             visitorIp: req.ip ?? null,
             hint: photoHint,
-            hints: effectiveHints,
+            hints: modelHints,
             // Names the person turned down are off the table for this read.
             ...(rejectedNames.length ? { rejectedNames } : {}),
           });
@@ -5453,8 +5521,9 @@ inboxRouter.post(
             // Could not read it after all: fall through, so the row keeps the
             // ordinary re-run behaviour rather than being left half-done.
           }
-          // Identity actually (re)landed → let the wires react.
-          void platform().events.emit("core-scan.scan.enriched", { orgId: ctx.org.id, itemId: id });
+          // Identity actually (re)landed → let the wires react. A queued
+          // identify raises the event when its answer lands (hosted-identify-job.ts).
+          if (outcome !== "identify-queued") void platform().events.emit("core-scan.scan.enriched", { orgId: ctx.org.id, itemId: id });
         }
         await matchItem({
           orgId: ctx.org.id,
@@ -5512,8 +5581,8 @@ inboxRouter.post(
       // "needs detail" → keep identity, fill it in. Either way fold in the note.
       wrong: rerun?.wrong,
       enrich: rerun?.enrich,
-      hint: effectiveHint ?? undefined,
-      hints: effectiveHints,
+      hint: modelHint ?? undefined,
+      hints: modelHints,
     });
 
     // Stamp the user's hint AFTER enrichment, so the matchmaker sees it as
@@ -5781,7 +5850,7 @@ inboxRouter.post(
           force: true,
           ...readCtx,
         });
-        if (outcome !== "is-receipt") void platform().events.emit("core-scan.scan.enriched", { orgId: ctx.org.id, itemId: id });
+        if (outcome !== "is-receipt" && outcome !== "identify-queued") void platform().events.emit("core-scan.scan.enriched", { orgId: ctx.org.id, itemId: id });
       } catch (err) {
         console.error("[core-scan] read after first-look answer failed:", (err as Error).message);
       }
@@ -9463,9 +9532,15 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     // the inbox are headed to, the most specific of them (kept-route.ts,
     // #4591). The same thing then lands in the same place on every add,
     // replay and re-run.
+    // A thing handed over through a share says which collection the giver
+    // kept it in: one of its known tables, by the same rule (#4682).
+    const offeredIn = (row.suggested_metadata as { offered_collection?: { module?: string; instance?: string | null } } | null)?.offered_collection;
     const keptIn = routeWhereKept(candidates, menu, {
       tracked: trackedStamp ? { instance: trackedStamp.instance ?? null, kind: trackedStamp.kind } : null,
-      twins: await twinTables(dbAfter, opts.itemId, adoptName ? candName : row.suggested_name, destinationTables(menu)).catch(() => []),
+      twins: [
+        ...(offeredIn?.module ? [{ module: offeredIn.module, instance: offeredIn.instance ?? null }] : []),
+        ...(await twinTables(dbAfter, opts.itemId, adoptName ? candName : row.suggested_name, destinationTables(menu)).catch(() => [])),
+      ],
     });
     if (keptIn) console.log(`[core-scan] ${opts.itemId}: routed to ${keptIn.label}, where the workspace keeps the same thing`);
     // The values a person or their agent gave follow this route, and who it

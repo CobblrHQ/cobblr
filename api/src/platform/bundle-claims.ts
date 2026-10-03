@@ -14,6 +14,7 @@
 // See docs/design-decisions/bundle-uninstall-refcount.md.
 
 import { meta } from "../db/meta.js";
+import { canonicalModuleName } from "../modules/registry.js";
 
 /** `place` is a location an install created (resource_key = its id). */
 export type ClaimType = "module" | "instance" | "place";
@@ -33,6 +34,7 @@ export async function recordClaim(
   resourceType: ClaimType,
   resourceKey: string,
 ): Promise<void> {
+  if (resourceType === "module") resourceKey = canonicalModuleName(resourceKey);
   await meta
     .insertInto("bundle_resource_claims")
     .values({ org_id: orgId, source, resource_type: resourceType, resource_key: resourceKey })
@@ -72,6 +74,7 @@ export async function removeClaimsForSource(orgId: string, source: string): Prom
 
 /** How many sources still claim a resource — the refcount. 0 ⇒ safe to tear down. */
 export async function countClaimsFor(orgId: string, type: ClaimType, key: string): Promise<number> {
+  if (type === "module") key = canonicalModuleName(key);
   const r = await meta
     .selectFrom("bundle_resource_claims")
     .select((eb) => eb.fn.countAll<string>().as("n"))

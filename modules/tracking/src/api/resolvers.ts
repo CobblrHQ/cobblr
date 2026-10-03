@@ -2,6 +2,7 @@
 // measurements. The measurement list resolver (filterable by metric_id) is
 // what the trend-chart view renderer consumes.
 
+import { registerRowHistoryWriter } from "@cobblr/platform-contract";
 import { type Kysely } from "kysely";
 import { platform, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import type { TrackingDB } from "../db.js";
@@ -11,6 +12,7 @@ let registered = false;
 export function registerTrackingResolvers(): void {
   if (registered) return;
   registered = true;
+  registerRowHistoryWriter("tracking:metric", "tracking_metrics");
 
   platform().entities.registerResolver("tracking:metric", async (orgId, id) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<TrackingDB>;

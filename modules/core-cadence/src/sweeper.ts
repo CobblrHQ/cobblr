@@ -241,7 +241,7 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
           const only = buyLess.length === 1 ? buyLess[0]! : null;
           const link = only
             ? await platform()
-                .entities.detailPathForEntity(org.id, only.kind, only.id)
+                .entities.recordAddressForEntity(org.id, only.kind, only.id)
                 .catch(() => undefined)
             : undefined;
           const destination = link

@@ -7,6 +7,7 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
 import { useInventory } from "./context";
+import { LowStockAlerts } from "./LowStockAlerts.js";
 import { InventoryApiError, type InvFieldDef } from "./api";
 import { NounChoiceButtons, changeWorkspaceShape, nounChoiceHeading, usePageTitle, MutationError } from "@cobblr/platform-web";
 
@@ -14,6 +15,7 @@ export function SettingsPage() {
   usePageTitle("Inventory settings");
   return (
     <div className="grid gap-5 sm:grid-cols-2">
+      <LowStockAlerts />
       <FieldsCard />
       <NounCard />
       <OfferedNounCard />
@@ -392,4 +394,3 @@ function CategoryRow() {
     </li>
   );
 }
-

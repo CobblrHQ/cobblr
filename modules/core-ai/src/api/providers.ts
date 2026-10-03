@@ -6,7 +6,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
-import { unverifiedRefusal, verificationOf, type ConnectionVerification } from "@cobblr/platform-contract/connection-verification";
+import { isWorkingVerification, unverifiedRefusal, verificationOf, type ConnectionVerification } from "@cobblr/platform-contract/connection-verification";
 import { providerSentence } from "@cobblr/platform-contract/provider-reason";
 import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
@@ -250,8 +250,8 @@ providersRouter.patch(
       // A rejected key is always refused until confirmed; an unsettled one only
       // when it would displace a key that VERIFIED (there is a working key to
       // protect). A row never verified takes the new state as it is.
-      const displacesWorking = (current.verification as { state?: string } | null)?.state === "verified";
-      if ((verification.state === "invalid" || (verification.state !== "verified" && displacesWorking)) && !parsed.data.confirm_unverified) {
+      const displacesWorking = isWorkingVerification(current.verification as { state?: string } | null);
+      if ((verification.state === "invalid" || (!isWorkingVerification(verification) && displacesWorking)) && !parsed.data.confirm_unverified) {
         res.status(409).json(unverifiedRefusal(verification));
         return;
       }

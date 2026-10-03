@@ -4,6 +4,7 @@
 // source), and lets search, views and an assistant list and count jobs.
 // Registered as a side-effect of mounting the api.
 
+import { registerRowHistoryWriter } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import { platform, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import type { DigifabDB } from "../db.js";
@@ -14,6 +15,8 @@ let registered = false;
 export function registerFarmResolvers(): void {
   if (registered) return;
   registered = true;
+  registerRowHistoryWriter("digifab:job", "digifab_jobs");
+  registerRowHistoryWriter("digifab:make", "digifab_makes");
 
   // A Make: found by name, prompt, printer, material and outcome, from
   // search and from any view (services.md §13).

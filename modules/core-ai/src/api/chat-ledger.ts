@@ -557,6 +557,7 @@ export async function performWrite(
   }
 
   // delete
+  if (!opts.orgId) return { ok: false, message: "The workspace is needed before deleting a record." };
   const r = await getTool("delete_record")!.execute(wsApi, { kind: entity_kind, id });
   if (!r.ok) return { ok: false, message: r.error ?? "Delete failed." };
   const row = await db
@@ -567,12 +568,12 @@ export async function performWrite(
       entity_kind,
       entity_id: id,
       entity_label: label,
-      before: JSON.stringify(before) as unknown,
+      before: null,
       // There is no after-state to compare: the record is gone. A restore that
       // finds something back at that id learns it from the id being taken.
       after: null,
       after_hash: null,
-      payload: null,
+      payload: JSON.stringify({ deletion_id: (await platform().deletedRecords.get(opts.orgId, entity_kind, id))?.id ?? null }) as unknown,
       auto_applied: opts.auto,
       undone_at: null,
       undo_of: opts.undoOf ?? null,
@@ -854,32 +855,17 @@ export async function undoWrite(
       break;
     }
     case "delete": {
-      if (!before) return { ok: false, message: "This delete can't be undone (no before-image)." };
-      const image = imageWithId(before, row.entity_id);
-      // The SAME row, with its own id — so every child location, every label
-      // and every part that pointed at it is pointing at it again. A recreated
-      // copy would leave all of them pointing at nothing.
-      const restored = await restoreState(orgId, row.entity_kind, image);
-      if (restored) {
-        outcome = {
-          ok: true,
-          message: `Put ${row.entity_label} back.`,
-          entity: { kind: row.entity_kind, id: row.entity_id ?? undefined },
-        };
-      } else {
-        const fields: Record<string, unknown> = {};
-        for (const [k, v] of Object.entries(await settableOnly(wsApi, row.entity_kind, image))) {
-          if (v !== undefined && v !== null && k !== "id") fields[k] = v;
-        }
-        outcome = await performWrite(
-          wsApi,
-          db,
-          userId,
-          { tool: "create", entity_kind: row.entity_kind, fields },
-          { auto: false, orgId, undoOf: row.id },
-        );
-        if (outcome.ok) outcome.message = `Recreated ${row.entity_label} (as a new record — this kind can't restore the original).`;
-      }
+      const kept = row.entity_id ? await platform().deletedRecords.get(orgId, row.entity_kind, row.entity_id) : null;
+      if (payload?.deletion_id) {
+        if (!kept || kept.id !== payload.deletion_id) return { ok: false, message: "That record is no longer in Recently deleted." };
+        try {
+          const restored = await platform().deletedRecords.restore(orgId, row.entity_kind, row.entity_id!, payload.deletion_id as string);
+          outcome = restored ? { ok: true, message: `Put ${row.entity_label} back.`, entity: { kind: row.entity_kind, id: row.entity_id! } } : { ok: false, message: "That record is no longer in Recently deleted." };
+        } catch (err) { return { ok: false, message: (err as Error).message }; }
+      } else if (before) {
+        const restored = await restoreState(orgId, row.entity_kind, imageWithId(before, row.entity_id));
+        outcome = restored ? { ok: true, message: `Put ${row.entity_label} back.` } : { ok: false, message: `Couldn't put ${row.entity_label} back.` };
+      } else return { ok: false, message: "That record is no longer in Recently deleted." };
       break;
     }
     case "action": {

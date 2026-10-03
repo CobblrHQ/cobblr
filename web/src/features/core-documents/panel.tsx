@@ -8,9 +8,10 @@
 // Cobblr, so the browser never holds its address or token. With no document
 // system connected the panel is not there at all.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ImageIcon, Search, X } from "lucide-react";
+import { Link } from "react-router-dom";
 import { SearchInput, useConfirm, useToast, type EntityDetailPanelCtx } from "@cobblr/platform-web";
 import { api, fetchAuthBlobUrl, type DocumentFindSystem, type DocumentRow, type RecordDocuments } from "../../lib/api";
 import { useActiveOrg } from "../../auth/ActiveOrgContext";
@@ -35,7 +36,20 @@ export function DocumentsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
     refetchInterval: (q) => (q.state.data?.matching ? 5_000 : false),
   });
   const refresh = () => void qc.invalidateQueries({ queryKey: key(activeSlug, kind, ctx.entityId) });
+  const refreshHistory = () => void qc.invalidateQueries({ queryKey: ["record-history", activeSlug, kind, ctx.entityId] });
   const fail = (e: unknown) => toast.error(e instanceof Error ? e.message : String(e));
+  const identity = useRef({ id: ctx.entityId, title: ctx.entityTitle });
+
+  useEffect(() => {
+    const before = identity.current;
+    identity.current = { id: ctx.entityId, title: ctx.entityTitle };
+    if (before.id !== ctx.entityId || before.title === ctx.entityTitle) return;
+    setFound(null);
+    qc.setQueryData<RecordDocuments>(key(activeSlug, kind, ctx.entityId), (old) =>
+      old ? { ...old, suggestions: [], matching: true, unanswered: null } : old,
+    );
+    void api.rematchDocuments(activeSlug, kind, ctx.entityId).then(refresh).catch(fail);
+  }, [activeSlug, ctx.entityId, ctx.entityTitle, kind]);
 
   const find = useMutation({
     mutationFn: (q?: string) => api.findDocuments(activeSlug, kind, ctx.entityId, q),
@@ -48,6 +62,7 @@ export function DocumentsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
       toast.success(r.already ? `"${r.linked.title}" was linked already` : `Linked "${r.linked.title}"`);
       setFound((f) => f?.map((s) => ({ ...s, items: s.items.filter((d) => d.title !== r.linked.title) })) ?? null);
       refresh();
+      refreshHistory();
     },
     onError: fail,
   });
@@ -56,6 +71,7 @@ export function DocumentsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
     onSuccess: () => {
       toast.success("Unlinked. It is still in your library.");
       refresh();
+      refreshHistory();
     },
     onError: fail,
   });
@@ -65,8 +81,22 @@ export function DocumentsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
     onError: fail,
   });
   const copy = useMutation({
-    mutationFn: (d: DocumentRow) => api.copyDocument(activeSlug, kind, ctx.entityId, d),
-    onSuccess: () => toast.success("Bringing a copy into Cobblr. It will be in this record's files."),
+    mutationFn: async (d: DocumentRow) => {
+      const started = await api.copyDocument(activeSlug, kind, ctx.entityId, d);
+      for (let attempt = 0; attempt < 120; attempt++) {
+        const job = await api.getServiceJob(activeSlug, started.job.id);
+        if (job.status === "done") return job;
+        if (job.status === "failed" || job.status === "cancelled") throw new Error(job.error?.message ?? "The copy did not finish.");
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      throw new Error("The copy is still running. You can check it in Services.");
+    },
+    onSuccess: () => {
+      toast.success("Copied to this record.");
+      void qc.invalidateQueries({ queryKey: ["file-attachments", activeSlug, kind.split(":", 2)[1], ctx.entityId] });
+      void qc.invalidateQueries({ queryKey: ["record-history", activeSlug, kind, ctx.entityId] });
+      refresh();
+    },
     onError: fail,
   });
   const retry = useMutation({
@@ -76,15 +106,24 @@ export function DocumentsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
   });
 
   const data = docs.data;
-  if (!kind || !data?.available) return null;
+  if (!kind || !data || (!data.available && data.linked.length === 0)) return null;
+  // Suggestions belong to the facts they were matched against. While a new
+  // identity is being matched, linked items still belong here but the old
+  // suggestions do not.
+  const suggestions = data.matching ? [] : data.suggestions;
   const labelOf = new Map(data.systems.map((x) => [x.connection_id, x.label]));
   const canOf = new Map(data.systems.map((x) => [x.connection_id, x]));
+  const disconnected = [...new Set(
+    data.linked
+      .filter((d) => d.connected === false)
+      .map((d) => d.system || "Library"),
+  )];
   const where = data.systems.length === 1 ? data.systems[0]!.label : "your libraries";
   const linkedRefs = new Set(data.linked.map((d) => `${d.connection_id}|${d.ref}`));
   // One section per kind of item (Documents, Games), in the order they first
   // appear, linked ones first: a cartridge with a ROM and a manual reads as
   // both, each under its own heading.
-  const groups = [...new Set([...data.linked, ...data.suggestions].map((d) => d.type_label))];
+  const groups = [...new Set([...data.linked, ...suggestions].map((d) => d.type_label))];
   const offersLinkBack = data.systems.some((x) => x.can_link_back);
   const countLine = (rows: DocumentRow[], label: string) => {
     const systems = [...new Set(rows.map((d) => labelOf.get(d.connection_id) ?? where))];
@@ -93,6 +132,14 @@ export function DocumentsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
 
   return (
     <section data-testid="documents-panel">
+      {disconnected.map((system) => (
+        <div key={system} className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100" data-testid="library-disconnected">
+          <p><strong>{system} is disconnected.</strong> Existing links stay here, and copies already brought into Cobblr stay with this record. Reconnect to refresh matches or previews, or to make new links and copies.</p>
+          <Link to="/me/connections?add=service" className="mt-1 inline-flex min-h-8 items-center font-medium text-accent">
+            Reconnect {system}
+          </Link>
+        </div>
+      ))}
       {groups.length === 0 && (
         <>
           <h3 className="mb-2 text-[10px] font-mono uppercase tracking-widest text-accent">// from your libraries</h3>
@@ -102,7 +149,7 @@ export function DocumentsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
 
       {groups.map((label) => {
         const linked = data.linked.filter((d) => d.type_label === label);
-        const suggested = data.suggestions.filter((d) => d.type_label === label);
+        const suggested = suggestions.filter((d) => d.type_label === label);
         return (
           <div key={label} className="mb-3" data-testid={`library-group-${label.toLowerCase()}`}>
             <div className="flex items-center justify-between mb-2 gap-2">
@@ -117,18 +164,22 @@ export function DocumentsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
               <ul className="space-y-1.5 mb-1.5" data-testid="documents-linked">
                 {linked.map((d) => (
                   <DocumentLine key={`${d.connection_id}|${d.ref}`} slug={activeSlug} doc={d}>
-                    {canOf.get(d.connection_id)?.can_copy && (
+                    {d.copied_at ? (
+                      <span className="text-xs text-muted" title={d.copied_filename ?? undefined}>
+                        Copied into Cobblr
+                      </span>
+                    ) : canOf.get(d.connection_id)?.can_copy ? (
                       <button type="button" className="text-xs text-accent min-h-8" onClick={() => copy.mutate(d)} disabled={copy.isPending}>
-                        Bring a copy into Cobblr
+                        {copy.isPending ? "Copying…" : "Bring a copy into Cobblr"}
                       </button>
-                    )}
+                    ) : null}
                     <button
                       type="button"
                       aria-label={`Unlink ${d.title}`}
                       title="Unlink"
                       className="text-faint hover:text-ember-500 transition min-h-8"
                       onClick={async () => {
-                        const at = labelOf.get(d.connection_id) ?? "your library";
+                        const at = labelOf.get(d.connection_id) ?? d.system ?? "your library";
                         if (await confirm({ title: `Unlink this ${d.type}?`, message: `It stays in ${at}; only the link to this record goes.`, confirmLabel: "Unlink", destructive: true })) unlink.mutate(d);
                       }}
                     >
@@ -156,20 +207,22 @@ export function DocumentsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
         );
       })}
 
-      <form
-        className="flex items-center gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          find.mutate(query.trim() || undefined);
-        }}
-      >
-        <div className="flex-1 min-w-0">
-          <SearchInput value={query} onChange={setQuery} placeholder={`Search ${where}`} aria-label={`Search ${where}`} />
-        </div>
-        <button type="submit" className="min-h-9 shrink-0 rounded-md border border-line dark:border-slate-600 px-3 text-sm inline-flex items-center gap-1 text-content dark:text-mortar-100 hover:border-cobble-500 hover:text-accent disabled:opacity-50" disabled={find.isPending} data-testid="documents-find">
-          <Search size={14} /> {find.isPending ? "Finding…" : "Find"}
-        </button>
-      </form>
+      {data.systems.length > 0 && (
+        <form
+          className="flex items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            find.mutate(query.trim() || undefined);
+          }}
+        >
+          <div className="flex-1 min-w-0">
+            <SearchInput value={query} onChange={setQuery} placeholder={`Search ${where}`} aria-label={`Search ${where}`} />
+          </div>
+          <button type="submit" className="min-h-9 shrink-0 rounded-md border border-line dark:border-slate-600 px-3 text-sm inline-flex items-center gap-1 text-content dark:text-mortar-100 hover:border-cobble-500 hover:text-accent disabled:opacity-50" disabled={find.isPending} data-testid="documents-find">
+            <Search size={14} /> {find.isPending ? "Finding…" : "Find"}
+          </button>
+        </form>
+      )}
       {offersLinkBack && (
         <label className="mt-1.5 flex items-center gap-1.5 text-xs text-muted">
           <input type="checkbox" checked={writeBack} onChange={(e) => setWriteBack(e.target.checked)} />
@@ -326,7 +379,7 @@ function DocumentLine({ slug, doc, dashed = false, children }: { slug: string; d
 function Thumb({ slug, doc }: { slug: string; doc: DocumentRow }) {
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => {
-    if (!doc.has_thumb) return;
+    if (!doc.has_thumb || doc.connected === false) return;
     let url: string | null = null;
     let live = true;
     void fetchAuthBlobUrl(api.documentThumbPath(slug, doc)).then((u) => {
@@ -338,7 +391,7 @@ function Thumb({ slug, doc }: { slug: string; doc: DocumentRow }) {
       live = false;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [slug, doc.connection_id, doc.ref, doc.has_thumb]);
+  }, [slug, doc.connection_id, doc.ref, doc.has_thumb, doc.connected]);
   return src ? (
     <img src={src} alt="" className="h-10 w-8 shrink-0 rounded object-cover bg-cobble-50 dark:bg-slate-800" />
   ) : (

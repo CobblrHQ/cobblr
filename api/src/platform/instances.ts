@@ -8,7 +8,7 @@
 import { sql } from "kysely";
 import { applyContributedFieldDefsToCollection } from "./contributed-fields.js";
 import { meta } from "../db/meta.js";
-import { getEntry } from "../modules/registry.js";
+import { canonicalModuleName, getEntry } from "../modules/registry.js";
 import { getTenantDb } from "../db/tenant.js";
 import { deleteOverride, getOverrideConfig, upsertOverride } from "./entity-kind-overrides.js";
 import { fillItemNounIfAbsent } from "./override-config-merge.js";
@@ -94,6 +94,7 @@ function validateInstanceCreate(args: CreateInstanceArgs): void {
  *  for the default install and by the user-facing "+ New thing" funnel
  *  for additional instances. */
 export async function createInstance(args: CreateInstanceArgs): Promise<ModuleInstance> {
+  args = { ...args, moduleName: canonicalModuleName(args.moduleName) };
   validateInstanceCreate(args);
   const inserted = await meta
     .insertInto("workspace_module_instances")
@@ -128,7 +129,7 @@ export async function listInstances(
     .selectFrom("workspace_module_instances")
     .selectAll()
     .where("org_id", "=", orgId);
-  if (moduleName) q = q.where("module_name", "=", moduleName);
+  if (moduleName) q = q.where("module_name", "=", canonicalModuleName(moduleName));
   return (await q.orderBy("module_name").orderBy("created_at").execute()) as ModuleInstance[];
 }
 
@@ -425,6 +426,7 @@ export async function provisionInstance(args: {
   instanceName: string;
   displayName: string;
 }): Promise<ProvisionInstanceResult> {
+  args = { ...args, moduleName: canonicalModuleName(args.moduleName) };
   // Confirm the module is enabled for the workspace before creating an
   // instance of it.
   const enabled = await meta

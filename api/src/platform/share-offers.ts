@@ -27,7 +27,9 @@ import {
 import { ORG_ROLES, roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { meta } from "../db/meta.js";
 import { bringBack, markGone } from "./dispositions.js";
-import { lookup } from "./entities.js";
+import { lookup, resolveKind } from "./entities.js";
+import { resolveFieldDefsForKind } from "./field-defs.js";
+import { PROVENANCE_FIELDS } from "@cobblr/platform-contract/provenance-fields";
 import { fileIdFromRawPath } from "./file-paths.js";
 import { enqueueShareOp, getShareLink, registerShareOp, type ShareLinkRow } from "./share-sync.js";
 
@@ -67,6 +69,15 @@ async function photosOf(orgId: string, kind: string, id: string, imagePath: unkn
 
 /** A record as a thing to hand over: its name, its make, its fields by their
  *  labels, its photos. */
+/** The collection a record is kept in: its module and, for a collection of
+ *  its own, the instance, whichever kind its page named it by (#4682). */
+async function collectionOf(orgId: string, kind: string, f: Record<string, unknown>): Promise<{ module: string; instance: string | null }> {
+  const r = await resolveKind(orgId, kind).catch(() => ({ base: kind, instance: null as string | null }));
+  const module = r.base.split(":")[0]!;
+  const own = typeof f.instance === "string" && f.instance && f.instance !== module ? f.instance : null;
+  return { module, instance: r.instance ?? own };
+}
+
 export async function recordAsThing(orgId: string, kind: string, id: string): Promise<OfferedThing | null> {
   const ent = await lookup(orgId, kind, id);
   if (!ent) return null;
@@ -86,6 +97,7 @@ export async function recordAsThing(orgId: string, kind: string, id: string): Pr
     manufacturer: str(f.manufacturer),
     model: str(f.model),
     kind_words: kindRec?.display_name ?? null,
+    collection: await collectionOf(orgId, kind, f),
     quantity: typeof f.quantity === "number" ? f.quantity : null,
     notes: str(f.notes) ?? str(f.description),
     fields,
@@ -284,7 +296,8 @@ async function offerRow(orgId: string, offerId: string) {
     .select(["o.id", "o.link_id", "o.direction", "o.peer_offer_id", "o.status", "o.source", "o.landed", "o.taken_at", "l.peer_name", "l.org_id"])
     .where("o.id", "=", offerId)
     .executeTakeFirst()
-    .then((r) => (r && r.org_id === orgId ? r : null));
+    // The share's workspace, or the one a taken thing was taken into.
+    .then((r) => (r && (r.org_id === orgId || (r.landed as Landed | null)?.org_id === orgId) ? r : null));
 }
 
 /** Only the people who can offer over a share may change its offers; the
@@ -339,6 +352,32 @@ export async function sendBack(orgId: string, offerId: string, userId: string): 
   return { ok: true };
 }
 
+/** The hand-over a record here came from, while it can still be sent back:
+ *  so the record itself offers Send back, not only Settings, Sharing (#4684). */
+export async function receivedOffer(orgId: string, id: string): Promise<{ offer_id: string; from: string | null; until: string } | null> {
+  const since = new Date(Date.now() - SEND_BACK_DAYS * 86_400_000);
+  const rows = await meta
+    .selectFrom("share_offers as o")
+    .innerJoin("share_links as l", "l.id", "o.link_id")
+    .select(["o.id", "o.landed", "o.taken_at", "l.peer_name"])
+    .where("o.direction", "=", "in")
+    .where("o.status", "=", "taken")
+    .where("o.taken_at", ">", since)
+    .where(sql<string>`(o.landed->>'org_id')`, "=", orgId)
+    .execute();
+  if (!rows.length) return null;
+  const it = platform().scan.offerIntake();
+  if (!it) return null;
+  for (const r of rows) {
+    const landed = r.landed as Landed;
+    const st = await it.state(landed.org_id, landed.inbox_id).catch(() => null);
+    if (st?.status === "filed" && st.record?.id === id) {
+      return { offer_id: r.id, from: r.peer_name, until: new Date(r.taken_at!.getTime() + SEND_BACK_DAYS * 86_400_000).toISOString() };
+    }
+  }
+  return null;
+}
+
 async function clearSourceMark(src: Source | null): Promise<void> {
   if (!src) return;
   if (isRecord(src)) await platform().entities.mergeMetadata(src.org_id, src.kind, src.id, { [RECORD_OFFER_KEY]: null }).catch(() => undefined);
@@ -382,7 +421,42 @@ export async function listOffers(orgId: string): Promise<OfferView[]> {
 }
 
 /** What the other side of a share says about offers. */
+/** A taken hand-over, filed: the record says who it came from (#4683). Its
+ *  History reads "<them> gave you <it> · through your share" whatever its
+ *  fields, and where its collection keeps provenance (Acquired from, Acquired
+ *  on), those are filled, unless someone already did. */
+async function noteHandedOverFiled(p: { orgId?: unknown; itemId?: unknown; targetModule?: unknown; targetKind?: unknown; entityId?: unknown }): Promise<void> {
+  const orgId = typeof p.orgId === "string" ? p.orgId : "";
+  const itemId = typeof p.itemId === "string" ? p.itemId : "";
+  const entityId = typeof p.entityId === "string" ? p.entityId : "";
+  if (!orgId || !itemId || !entityId || typeof p.targetModule !== "string" || typeof p.targetKind !== "string") return;
+  const row = await meta
+    .selectFrom("share_offers as o")
+    .innerJoin("share_links as l", "l.id", "o.link_id")
+    .select(["o.taken_at", "l.peer_name"])
+    .where("o.direction", "=", "in")
+    .where("o.status", "=", "taken")
+    .where(sql<string>`(o.landed->>'org_id')`, "=", orgId)
+    .where(sql<string>`(o.landed->>'inbox_id')`, "=", itemId)
+    .executeTakeFirst();
+  if (!row) return;
+  const from = row.peer_name ?? "someone you share with";
+  const kind = p.targetKind.includes(":") ? p.targetKind : `${p.targetModule}:${p.targetKind}`;
+  const [module, entityType] = kind.split(":", 2);
+  await platform().activity.log({ orgId, userId: null, action: "record_handed_over", ref: { module: module ?? null, entityType: entityType ?? kind, entityId }, via: { kind: "share", label: from } });
+  const roles = new Map((await resolveFieldDefsForKind(orgId, kind).catch(() => [])).map((d) => [d.field_role, d.name] as const));
+  const rec = await lookup(orgId, kind, entityId).catch(() => null);
+  const have = ((rec?.fields as Record<string, unknown> | undefined)?.metadata ?? {}) as Record<string, unknown>;
+  const fill: Record<string, unknown> = {};
+  const fromField = roles.get(PROVENANCE_FIELDS.from.field_role);
+  const onField = roles.get(PROVENANCE_FIELDS.on.field_role);
+  if (fromField && !have[fromField]) fill[fromField] = from;
+  if (onField && !have[onField] && row.taken_at) fill[onField] = await platform().accounts.dayFor(null, { now: row.taken_at });
+  if (Object.keys(fill).length) await platform().entities.mergeMetadata(orgId, kind, entityId, fill).catch(() => undefined);
+}
+
 export function registerShareOfferOps(): void {
+  platform().events.on("core-scan.scan.confirmed", "platform", (payload) => noteHandedOverFiled((payload ?? {}) as Record<string, unknown>).catch((err) => console.error("[share] noting a hand-over filed failed:", (err as Error).message)));
   // A thing offered: it lands in this side's scan inbox, as an offer.
   registerShareOp("offer.create", async (link, p) => {
     const offerId = String(p.offer_id ?? "");

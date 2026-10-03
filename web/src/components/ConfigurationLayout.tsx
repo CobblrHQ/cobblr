@@ -83,7 +83,7 @@ export function ConfigSidebarBody() {
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ctx.enabledModules, ctx.role, panels]);
+  }, [ctx.enabledModules, ctx.role, ctx.tidyAvailable, panels]);
 
   const query = q.trim();
   const filtered = query

@@ -214,7 +214,7 @@ export function registerStorageFitCheck(): void {
       // which would make "ambient food is in the wrong place" expressible.
       if (mismatch.requirement !== "ambient") {
         const link = await platform()
-          .entities.detailPathForEntity(p.orgId, p.containeeKind, p.containeeId)
+          .entities.recordAddressForEntity(p.orgId, p.containeeKind, p.containeeId)
           .catch(() => undefined);
         warnBatcher.add(p.orgId, {
           name: record.title,

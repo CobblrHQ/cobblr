@@ -15,7 +15,7 @@ import { meta } from "../db/meta.js";
 import { runMigrations } from "../db/migrate.js";
 import { describeMigrationFiles, healthVerdict, moduleIsBehind, newerName, type ModuleMigrationFiles } from "./migration-currency.js";
 import { getTenantPool, evictTenantPool } from "../db/tenant.js";
-import { getEntry, listEntries } from "./registry.js";
+import { canonicalModuleName, getEntry, listEntries } from "./registry.js";
 import * as activity from "../platform/activity.js";
 import { isTrialDenied, isTrialDeniedForOrg } from "../platform/trial.js";
 import { clearEnabledModulesCache } from "../platform/entities.js";
@@ -24,6 +24,7 @@ import { runSweepEnableSteps } from "../platform/tenant-sweeps.js";
 import { recordClaim } from "../platform/bundle-claims.js";
 import { releaseEmptyDefaultInstance } from "../platform/instances.js";
 import { applyContributedFieldDefs } from "../platform/contributed-fields.js";
+import { hideIntegrationNavForOrg } from "../platform/integration-nav.js";
 
 /** Maintainer-curated foundational set. A module manifest can declare
  *  `band: "foundational"`, but the kernel only TREATS it as foundational
@@ -48,7 +49,8 @@ const warnedNonCuratedFoundational = new Set<string>();
 /** A module a workspace is born with, no decision asked: foundational or
  *  autoEnable. Everything else is a person's choice (and carries their
  *  claim when they make it). */
-export function isDefaultModule(entry: { manifest: { name: string; band: string; autoEnable?: boolean } }): boolean {
+export function isDefaultModule(entry: { manifest: { name: string; band: string; autoEnable?: boolean; retirement?: unknown } }): boolean {
+  if (entry.manifest.retirement) return false;
   return isFoundational(entry) || entry.manifest.autoEnable === true;
 }
 
@@ -101,6 +103,8 @@ async function ensureAllSandboxRolesForOrg(orgId: string): Promise<void> {
   for (const r of rows) await ensureSandboxRole(orgId, r.module_name);
 }
 
+export class ModuleRetiredError extends Error {}
+
 export interface EnableResult {
   alreadyEnabled: boolean;
   migrationsApplied: number;
@@ -141,9 +145,20 @@ export async function enableModuleForOrg(
   moduleName: string,
   options: { userId?: string; claimedBy?: string } = {},
 ): Promise<EnableResult> {
+  moduleName = canonicalModuleName(moduleName);
   const entry = getEntry(moduleName);
   if (!entry) {
     throw new Error(`Module not registered: ${moduleName}`);
+  }
+
+  const existing = await meta
+    .selectFrom("org_modules")
+    .select(["version", "last_migration"])
+    .where("org_id", "=", orgId)
+    .where("module_name", "=", moduleName)
+    .executeTakeFirst();
+  if (entry.manifest.retirement && !existing) {
+    throw new ModuleRetiredError(`Module ${entry.manifest.displayName} is retired. ${entry.manifest.retirement.reason}`);
   }
 
   // On the trial tier, withheld modules can't be enabled at all — this guards
@@ -162,7 +177,7 @@ export async function enableModuleForOrg(
       .selectFrom("org_modules")
       .select("module_name")
       .where("org_id", "=", orgId)
-      .where("module_name", "=", dep)
+      .where("module_name", "=", canonicalModuleName(dep))
       .executeTakeFirst();
     if (!depRow) {
       throw new Error(
@@ -171,12 +186,8 @@ export async function enableModuleForOrg(
     }
   }
 
-  const existing = await meta
-    .selectFrom("org_modules")
-    .select(["version", "last_migration"])
-    .where("org_id", "=", orgId)
-    .where("module_name", "=", moduleName)
-    .executeTakeFirst();
+  if (entry.manifest.integration) await hideIntegrationNavForOrg(orgId, moduleName);
+
   if (existing) {
     await ensurePlacementSyncIfLocated(orgId, moduleName);
     if (options.claimedBy && !isDefaultModule(entry)) await recordClaim(orgId, options.claimedBy, "module", moduleName);
@@ -325,6 +336,7 @@ export async function disableModuleForOrg(orgId: string, moduleName: string): Pr
   // Foundational modules can't be disabled — the platform assumes
   // they're always there. The web UI hides the toggle, but enforce
   // server-side so API/CLI callers can't bypass it either.
+  moduleName = canonicalModuleName(moduleName);
   const entry = getEntry(moduleName);
   if (entry && isFoundational(entry)) {
     throw new Error(
@@ -334,7 +346,7 @@ export async function disableModuleForOrg(orgId: string, moduleName: string): Pr
   // Refuse if a dependent module is still enabled.
   const allEntries = listEntries();
   const dependents = allEntries
-    .filter((e) => e.manifest.dependencies.includes(moduleName))
+    .filter((e) => e.manifest.dependencies.some((dep) => canonicalModuleName(dep) === moduleName))
     .map((e) => e.manifest.name);
   if (dependents.length > 0) {
     const stillOn = await meta

@@ -54,6 +54,7 @@ import {
   Sliders,
   Sparkles,
   Terminal,
+  Trash2,
   Users,
 } from "lucide-react";
 
@@ -219,6 +220,8 @@ export function sectionForHostedPanel(): HostedSectionId {
 }
 
 export const CONFIG_DESTINATIONS: ConfigDestination[] = [
+  { section: "system", icon: Trash2, label: "Recently deleted", description: "Restore records deleted in the last 30 days, or remove them forever.", to: "/configuration/recently-deleted", minRole: "member", keywords: ["trash", "restore", "undo", "deleted"] },
+  { label: "Tidy", description: "Tidy-up suggestions for the things you keep.", icon: Home, section: "workspace", to: "/configuration/tidy", keywords: ["tidy", "organise", "overnight"] },
   // ── Workspace ─────────────────────────────────────────────────────
   {
     section: "workspace",
@@ -634,6 +637,7 @@ export function destinationMatches(
 }
 
 export interface VisibilityContext {
+  tidyAvailable?: boolean;
   /** Names of the modules enabled for the active workspace. Pass `null` while
    *  the list is still loading — nothing is hidden on a module basis then, so
    *  the settings area never flickers items in. */
@@ -649,6 +653,7 @@ export function isDestinationVisible(
   d: ConfigDestination,
   ctx: VisibilityContext,
 ): boolean {
+  if (d.to === "/configuration/tidy" && ctx.tidyAvailable !== true) return false;
   if (d.module && ctx.enabledModules && !ctx.enabledModules.has(d.module)) return false;
   const min = d.minRole ?? "admin";
   const role = ctx.role ?? undefined;
@@ -711,7 +716,8 @@ export function destinationForPath(pathname: string): ConfigDestination | null {
 export function pageOpenTo(pathname: string, role: string | null | undefined): boolean {
   const d = destinationForPath(pathname);
   if (!d) return true;
-  return isDestinationVisible(d, { role, enabledModules: null });
+  // The page checks instance availability after loading; this guard answers only the role.
+  return isDestinationVisible(d, { role, enabledModules: null, tidyAvailable: true });
 }
 
 /** A section's primary button, when its page is open to this viewer: the

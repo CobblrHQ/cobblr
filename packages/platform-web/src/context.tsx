@@ -5,8 +5,29 @@
 
 import { createContext, useCallback, useContext, useState, type ComponentType, type ReactNode } from "react";
 import type { PlatformWebApi } from "./types";
+import { EntityPhoto } from "./EntityPhoto";
+
+export interface RecordPhotoProps {
+  kind: string;
+  id: string;
+  instance?: string | null;
+  src: string | null | undefined;
+  alt: string;
+  brand?: string | null;
+  size?: number;
+  fit?: "cover" | "contain";
+  onChange: (imagePath: string | null) => void;
+  onSaved: () => void;
+}
+
+export function RecordPhoto(props: RecordPhotoProps) {
+  const Photo = useContext(Ctx)?.recordPhoto;
+  return Photo ? <Photo {...props} /> : <EntityPhoto src={props.src} alt={props.alt} size={props.size ?? 96} />;
+}
 
 interface PlatformWebCtx {
+  /** The host photo editor, including the shared web picker. */
+  recordPhoto?: ComponentType<RecordPhotoProps>;
   api: PlatformWebApi;
   orgSlug: string;
   /** The viewer's role in the workspace ("owner" | "admin" | "member" | …),
@@ -59,10 +80,12 @@ export function PlatformWebProvider({
   appMode = false,
   flows,
   cobbIcon,
+  recordPhoto,
   children,
 }: {
   api: PlatformWebApi;
   orgSlug: string;
+  recordPhoto?: ComponentType<RecordPhotoProps>;
   role?: string | null;
   appMode?: boolean;
   cobbIcon?: ComponentType<{ size?: number; title?: string }>;
@@ -81,7 +104,7 @@ export function PlatformWebProvider({
   );
   const Active = active && flows ? flows[active.flow] : null;
   return (
-    <Ctx.Provider value={{ api, orgSlug, role, appMode, cobbIcon }}>
+    <Ctx.Provider value={{ api, orgSlug, role, appMode, cobbIcon, recordPhoto }}>
       <FlowCtx.Provider value={{ openFlow }}>
         {children}
         {active && Active && <Active args={active.args} onClose={() => setActive(null)} />}

@@ -258,6 +258,29 @@ export async function updateUserCredential(
   return true;
 }
 
+/** Compare and merge a server-side credential rotation without losing an edit. */
+export async function rotateCredentialSecrets(
+  credentialId: string,
+  providerId: string,
+  kind: string,
+  expected: Readonly<Record<string, string | undefined>>,
+  patch: Readonly<Record<string, string>>,
+): Promise<boolean> {
+  const row = await meta.selectFrom("user_credentials")
+    .select(["credentials_encrypted"])
+    .where("id", "=", credentialId).where("provider_id", "=", providerId).where("kind", "=", kind)
+    .executeTakeFirst();
+  if (!row) return false;
+  const current = JSON.parse(decryptCreds(row.credentials_encrypted)) as Record<string, unknown>;
+  if (Object.keys(expected).some(key => current[key] !== expected[key])) return false;
+  const result = await meta.updateTable("user_credentials")
+    .set({ credentials_encrypted: encryptCreds(JSON.stringify({ ...current, ...patch })), updated_at: new Date() })
+    .where("id", "=", credentialId).where("provider_id", "=", providerId).where("kind", "=", kind)
+    .where("credentials_encrypted", "=", row.credentials_encrypted)
+    .executeTakeFirst();
+  return result.numUpdatedRows === 1n;
+}
+
 /** The stored credentials of a connection the user owns, decrypted, for a
  *  server-side probe only (the Test button re-checks a key nobody can read
  *  back). Null when the connection is not theirs. */

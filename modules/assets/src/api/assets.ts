@@ -1,3 +1,5 @@
+import { amountOf, centsFromAmount, fieldCurrency } from "@cobblr/platform-contract/money";
+import { fieldDay } from "@cobblr/platform-contract/field-day";
 import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
@@ -84,17 +86,24 @@ assetsRouter.get(
       .selectFrom("assets_assets")
       .select(() => [
         sql<string>`count(*) filter (where archived_at is not null)`.as("n"),
-        sql<string>`coalesce(sum(purchase_price_cents) filter (where archived_at is null), 0)`.as("paid"),
       ])
       .where("instance", "=", instanceOf(req))
       .executeTakeFirst();
+    const main = await platform().money.currency(tenantContext(req).org.id);
+    const priced = await db.selectFrom("assets_assets").select(["purchase_price_cents", "metadata", "purchased_at", "created_at"])
+      .where("instance", "=", instanceOf(req)).where("archived_at", "is", null).where("purchase_price_cents", "is not", null).execute();
+    const total = await platform().money.total(tenantContext(req).org.id, priced.map((r) => ({
+      value: { amount: amountOf(r.purchase_price_cents as import("@cobblr/platform-contract/money").Cents), currency: fieldCurrency(r.metadata, "purchase_price_cents", main) },
+      day: fieldDay(r.purchased_at) || fieldDay(r.created_at) || "",
+    })), main);
     const answer = pagedAnswer(rows, page);
     // Person and relation fields read as names (assigned_to_label).
     res.json({
       ...answer,
       items: await platform().entities.withFieldLabels(tenantContext(req).org.id, kindOf(req), answer.items),
       archived_count: Number(put?.n ?? 0),
-      paid_total_cents: Number(put?.paid ?? 0),
+      paid_total_cents: centsFromAmount(total.amount),
+      money_total: total,
     });
   }),
 );
@@ -141,7 +150,7 @@ assetsRouter.post(
         ...createRest,
         instance: instanceOf(req),
         flags: jsonbArray(parsed.data.flags ?? []),
-        metadata: parsed.data.metadata ?? {},
+        metadata: { ...parsed.data.metadata, ...(parsed.data.purchase_price_cents == null ? {} : { money_currencies: { ...((parsed.data.metadata?.money_currencies as Record<string, string>) || {}), purchase_price_cents: fieldCurrency(parsed.data.metadata, "purchase_price_cents", await platform().money.currency(ctx.org.id)) } }) },
       } as never)
       .returningAll()
       .executeTakeFirstOrThrow();

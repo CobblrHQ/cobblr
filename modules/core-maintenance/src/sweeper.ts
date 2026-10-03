@@ -190,7 +190,7 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
       if (only?.entity_type && only.entity_id) {
         link =
           (await platform()
-            .entities.detailPathForEntity(org.id, only.entity_type, only.entity_id)
+            .entities.recordAddressForEntity(org.id, only.entity_type, only.entity_id)
             .catch(() => undefined)) ?? "/maintenance";
       }
       for (const userId of memberIds) {

@@ -4,7 +4,6 @@
 // a person and one linked by the assistant are the same link.
 
 import { platform } from "@cobblr/platform-contract";
-import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
 import {
   LIBRARY_ITEM_KIND,
   LIBRARY_LINK_REL,
@@ -17,6 +16,8 @@ import {
 } from "@cobblr/platform-contract/library";
 import type { ServiceConnectionHolder, ServiceJobRef } from "@cobblr/platform-contract/services";
 import { findOn, getOn, holdersOf, readFacts, type Db } from "./matching.js";
+import { recordCompletedCopy } from "./copy-completion.js";
+import { libraryPairingPresentation } from "./pairing-presentation.js";
 
 /** The libraries this person may ask, here: the connections in their
  *  own order for library.find (theirs, then the workspace's shared ones),
@@ -91,13 +92,6 @@ export async function findFresh(
   return out;
 }
 
-/** Where the record is, as an address a library can store. */
-async function recordUrl(orgId: string, kind: string, id: string, origin?: string | null): Promise<string> {
-  const path = (await platform().entities.detailPathForEntity(orgId, kind, id).catch(() => undefined)) ?? "";
-  const base = (origin ?? "").replace(/\/+$/, "") || publicBaseUrl();
-  return `${base}${path}`;
-}
-
 export interface LinkResult {
   linked: { connection_id: string; ref: string; title: string; system: string };
   /** The write-back job, when one was asked for. */
@@ -153,6 +147,7 @@ export async function linkItem(
       })
       .onConflict((oc) => oc.columns(["record_id", "connection_id", "ref"]).doNothing())
       .execute();
+    const presentation = libraryPairingPresentation(d);
     await platform().pairings.create({
       orgId,
       sourceKind: record.kind,
@@ -162,6 +157,7 @@ export async function linkItem(
       relationshipKind: LIBRARY_LINK_REL,
       createdBy: userId,
       notes: `${d.title} (in ${system.label})`,
+      ...(presentation ? { presentation } : {}),
     });
     await platform()
       .activity.log({ orgId, userId, action: "library_item_linked", ref: activityRef(record), diff: { item: d.title, type: d.type, system: system.label } })
@@ -173,10 +169,12 @@ export async function linkItem(
   let job: ServiceJobRef | null = null;
   if (opts.writeBack) {
     const entity = await platform().entities.lookup(orgId, record.kind, record.id).catch(() => null);
+    const recordUrl = await platform().entities.recordAddressForEntity(orgId, record.kind, record.id, opts.origin).catch(() => undefined);
+    if (!recordUrl) throw new LibraryRefusal(404, "This record has no page to link back to.");
     job = await platform().services.invoke({
       orgId,
       capability: LIBRARY_LINK,
-      input: { ref, record_url: await recordUrl(orgId, record.kind, record.id, opts.origin), record_title: entity?.title ?? "" },
+      input: { ref, record_url: recordUrl, record_title: entity?.title ?? "" },
       via: { credentialId: connectionId },
       attachTo: { kind: record.kind, id: record.id },
     });
@@ -216,7 +214,25 @@ export async function unlinkItem(orgId: string, db: Db, userId: string | null, r
  *  the record: a job, since a file can take a while. */
 export async function copyItem(orgId: string, userId: string | null, record: { kind: string; id: string }, connectionId: string, ref: string): Promise<ServiceJobRef> {
   await systemOf(orgId, userId, connectionId);
-  return platform().services.invoke({ orgId, capability: LIBRARY_COPY, input: { ref }, via: { credentialId: connectionId }, attachTo: { kind: record.kind, id: record.id } });
+  const db = (await platform().tenants.getDb(orgId)) as Db;
+  await db
+    .updateTable("core_documents_linked")
+    .set({ copy_requested_by: userId })
+    .where("record_id", "=", record.id)
+    .where("connection_id", "=", connectionId)
+    .where("ref", "=", ref)
+    .execute();
+  const job = await platform().services.invoke({
+    orgId,
+    capability: LIBRARY_COPY,
+    input: { ref },
+    via: { credentialId: connectionId },
+    attachTo: { kind: record.kind, id: record.id },
+  });
+  // An earlier identical job may already be done, so no new completion event
+  // will arrive. Reconcile it now as well as subscribing for new jobs.
+  if (job.status === "done") await recordCompletedCopy(orgId, job.id);
+  return job;
 }
 
 /** The item a sentence names ("the warranty PDF", "the Zelda cartridge"), among what this

@@ -47,6 +47,7 @@ export interface WorkspaceShape {
 const META_LEDGERS: Record<string, string> = {
   activity_log: "a ledger of what happened to the workspace; the bake and the boot are events the signup never had",
   notifications: "what was sent to whom, and when",
+  warranty_reminder_deliveries: "which warranty reminders reached each person, rather than a workspace capability",
   api_tokens: "minted by tests and people, never by a boot pass",
   test_org_pool: "the pool's own bookkeeping: only the pooled org has a row",
   org_memberships: "who is in the workspace; the pool's owner and the signup's are different people",

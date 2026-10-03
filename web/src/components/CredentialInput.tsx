@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { SecretInput } from "@cobblr/platform-web";
+import { AddressInput, SecretInput } from "@cobblr/platform-web";
 import { cleanPastedSecret, pastedSecretHint } from "../lib/pastedSecret";
 
 /** One credential field, for both AI connection forms.
@@ -20,6 +20,7 @@ export function CredentialInput({
   fieldKey,
   label,
   secret,
+  format,
   value,
   onChange,
   note,
@@ -28,6 +29,7 @@ export function CredentialInput({
   fieldKey: string;
   label: string;
   secret: boolean;
+  format?: "uri";
   value: string;
   onChange: (v: string) => void;
   /** Shown greyed after the label. The personal page uses it for "set (leave blank to
@@ -43,31 +45,50 @@ export function CredentialInput({
         {label}
         {note && <span className="text-faint font-normal"> {note}</span>}
       </label>
-      <SecretInput
-        secret={secret}
-        // Shown while being entered (see above); the eye masks it on demand.
-        defaultShown
-        what="value"
-        id={`cred-${fieldKey}`}
-        // A name that is not "password"/"email" so a browser has less to guess from.
-        name={`cobblr-cred-${fieldKey}`}
-        value={value}
-        placeholder={placeholder}
-        onChange={(e) => {
-          // Clean on CHANGE rather than onPaste: this catches a paste, a drag and an
-          // autofill through one path, and onPaste alone misses the last two.
-          const c = cleanPastedSecret(e.target.value);
-          onChange(c.value);
-          setHint(pastedSecretHint(c) ?? "");
-        }}
-        // Browsers autofill saved logins into anything resembling a sign-in form, which
-        // put an email address into "Ollama base URL" once. These hints are honoured by
-        // Chrome, 1Password and LastPass respectively.
-        autoComplete="off"
-        data-1p-ignore
-        data-lpignore="true"
-        className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900 font-mono"
-      />
+      {format === "uri" ? (
+        <AddressInput
+          id={`cred-${fieldKey}`}
+          name={`cobblr-cred-${fieldKey}`}
+          value={value}
+          placeholder={placeholder ?? "https://server.example"}
+          onChange={(e) => {
+            onChange(e.target.value);
+            setHint("");
+          }}
+          className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900 font-mono"
+        />
+      ) : (
+        <SecretInput
+          secret={secret}
+          // Shown while being entered (see above); the eye masks it on demand.
+          defaultShown
+          what="value"
+          id={`cred-${fieldKey}`}
+          // A name that is not "password"/"email" so a browser has less to guess from.
+          name={`cobblr-cred-${fieldKey}`}
+          value={value}
+          placeholder={placeholder}
+          onChange={(e) => {
+            if (!secret) {
+              onChange(e.target.value);
+              setHint("");
+              return;
+            }
+            // Clean on CHANGE rather than onPaste: this catches a paste, a drag and an
+            // autofill through one path, and onPaste alone misses the last two.
+            const c = cleanPastedSecret(e.target.value);
+            onChange(c.value);
+            setHint(pastedSecretHint(c) ?? "");
+          }}
+          // Browsers autofill saved logins into anything resembling a sign-in form, which
+          // put an email address into "Ollama base URL" once. These hints are honoured by
+          // Chrome, 1Password and LastPass respectively.
+          autoComplete="off"
+          data-1p-ignore
+          data-lpignore="true"
+          className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900 font-mono"
+        />
+      )}
       {hint && <p className="text-xs text-muted mt-1">{hint}</p>}
     </div>
   );

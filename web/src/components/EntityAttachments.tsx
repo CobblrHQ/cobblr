@@ -28,6 +28,8 @@ interface Props {
   /** The table the record is in (`3d-printers:item`), so the links it
    *  declares are offered first. Defaults to `kind`. */
   collection?: string;
+  /** Refresh the host page and its related views after a photo changes. */
+  onRecordChanged?: () => void;
   /** Compact mode: an EMPTY section collapses to a small "+ Tag / + File /
    *  + Link" add-pill (no header, no big dropzone) and only grows into the full
    *  section once it has content — so a detail modal opens without a wall of
@@ -42,7 +44,7 @@ interface Props {
   omit?: Array<"tags" | "discussion" | "files" | "pairings">;
 }
 
-export function EntityAttachments({ kind, entityId, collection, compact = false, omit = [] }: Props) {
+export function EntityAttachments({ kind, entityId, collection, onRecordChanged, compact = false, omit = [] }: Props) {
   const [moduleName, sourceType] = kind.split(":");
   if (!moduleName || !sourceType) return null;
   const shows = (part: NonNullable<Props["omit"]>[number]) => !omit.includes(part);
@@ -70,6 +72,7 @@ export function EntityAttachments({ kind, entityId, collection, compact = false,
           sourceType={sourceType}
           sourceId={entityId}
           compact={compact}
+          onRecordChanged={onRecordChanged}
         />
       )}
       {shows("pairings") && <LinksSection kind={kind} entityId={entityId} collection={collection} compact={compact} />}
@@ -319,12 +322,14 @@ export function FilesSection({
   sourceModule,
   sourceType,
   sourceId,
+  onRecordChanged,
   compact = false,
 }: {
   sourceModule: string;
   sourceType: string;
   sourceId: string;
   compact?: boolean;
+  onRecordChanged?: () => void;
 }) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
@@ -435,11 +440,7 @@ export function FilesSection({
       void qc.invalidateQueries({
         queryKey: ["file-attachments", activeSlug, sourceType, sourceId],
       });
-      // Bust the entity's list/detail queries so a freshly auto-set cover renders.
-      void qc.invalidateQueries({ queryKey: [sourceType + "s"] });
-      void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
-      void qc.invalidateQueries({ queryKey: ["assets"] });
-      void qc.invalidateQueries({ queryKey: ["machines"] });
+      refreshRecord();
     },
     onError: (e) => toast.error(`Upload failed: ${(e as Error).message}`),
   });
@@ -552,6 +553,7 @@ export function FilesSection({
     onError: (e) => toast.error(`Couldn't change the main photo: ${(e as Error).message}`),
   });
   function refreshRecord() {
+    onRecordChanged?.();
     void qc.invalidateQueries({ queryKey: ["file-attachments", activeSlug, sourceType, sourceId] });
     // The record's page shows its main photo too; we do not know which page
     // the person came from, so every list and detail that might.

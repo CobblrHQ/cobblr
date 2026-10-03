@@ -29,6 +29,7 @@
 // document-shaped parts. Pure: no I/O.
 
 import type { BuiltInServiceDef } from "./services.js";
+import { identifierKey, identifierValues } from "@cobblr/platform-contract/same-product";
 
 export const LIBRARY_FIND = "library.find";
 export const LIBRARY_GET = "library.get";
@@ -44,6 +45,10 @@ export interface RecordFacts {
   model?: string;
   barcode?: string;
   brand?: string;
+  /** Values that say which individual record this is. Field roles and known
+   *  identifier names count, with a conservative fallback for old unroled
+   *  fields that contain a long letter-and-digit code. */
+  identifiers?: string[];
   /** The record's other short fields, by name ("platform": "SNES",
    *  "igdb_id": "1074"): what a library that understands them matches on.
    *  Core never interprets these. */
@@ -172,6 +177,7 @@ const factsSchema = {
     model: { type: "string", maxLength: 120 },
     barcode: { type: "string", maxLength: 120 },
     brand: { type: "string", maxLength: 120 },
+    identifiers: { type: "array", maxItems: 24, items: { type: "string", maxLength: 200 } },
     fields: { type: "object", additionalProperties: { type: "string", maxLength: 200 } },
   },
 } as const;
@@ -253,7 +259,7 @@ export const LIBRARY_CAPABILITY_DECLS: Record<LibraryCapability, Decl> = {
 
 /** A field holds the serial, model or maker by its name: the words a person
  *  uses for them, in the order a form usually has them. */
-const FACT_FIELD_NAMES: Array<[keyof Omit<RecordFacts, "name" | "fields">, RegExp]> = [
+const FACT_FIELD_NAMES: Array<[keyof Omit<RecordFacts, "name" | "fields" | "identifiers">, RegExp]> = [
   ["serial", /^(serial|serial_?(no|number|num)|sn|s_n)$/i],
   ["model", /^(model|model_?(no|number|num)|mpn|part_?(no|number)|sku)$/i],
   ["brand", /^(brand|make|maker|manufacturer|mfr|vendor)$/i],
@@ -273,13 +279,15 @@ const MAX_FIELDS = 24;
 const FIELD_MAX = 200;
 
 /** What a record says about itself that an item could match on: its title,
- *  its serial, model, maker and barcode by field name (or the barcode by the
- *  `identifier` role), and its other short fields as they are. */
+ *  its serial, model, maker and barcode by field name, every identifier by
+ *  field meaning (plus the conservative legacy fallback), and its other
+ *  short fields as they are. */
 export function recordFactsOf(
   record: { title: string; fields: Record<string, unknown> },
   roled: ReadonlyArray<{ name: string; field_role?: string | null }> = [],
 ): RecordFacts {
   const facts: RecordFacts = { name: record.title.trim().slice(0, 300) };
+  const roles = Object.fromEntries(roled.map((field) => [field.name, field.field_role ?? null]));
   for (const [key, re] of FACT_FIELD_NAMES) {
     for (const [field, value] of Object.entries(record.fields ?? {})) {
       if (facts[key] || !re.test(field)) continue;
@@ -292,6 +300,8 @@ export function recordFactsOf(
     const t = id ? text(record.fields?.[id.name]) : undefined;
     if (t) facts.barcode = t;
   }
+  const identifiers = identifierValues(record.fields, roles).slice(0, MAX_FIELDS);
+  if (identifiers.length) facts.identifiers = identifiers.map((value) => value.slice(0, FIELD_MAX));
   const fields: Record<string, string> = {};
   for (const [field, value] of Object.entries(record.fields ?? {})) {
     if (Object.keys(fields).length >= MAX_FIELDS) break;
@@ -309,7 +319,12 @@ export function factsKey(f: RecordFacts): string {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([k, v]) => `${k}=${v.trim().toLowerCase()}`)
     .join(",");
-  return [f.name, f.serial, f.model, f.barcode, f.brand].map((v) => (v ?? "").trim().toLowerCase()).join("|") + `|${fields}`;
+  const identifiers = [...(f.identifiers ?? [])]
+    .map((value) => identifierKey(value) ?? "")
+    .filter(Boolean)
+    .sort()
+    .join(",");
+  return [f.name, f.serial, f.model, f.barcode, f.brand].map((v) => (v ?? "").trim().toLowerCase()).join("|") + `|${identifiers}|${fields}`;
 }
 
 // ── The matching rule ───────────────────────────────────────────────────
@@ -390,6 +405,10 @@ function ruleScore(facts: RecordFacts, item: Pick<LibraryItem, "title" | "excerp
   if (serial && squashed.includes(serial)) return { score: 1, because: "serial" };
   const barcode = codeOf(facts.barcode);
   if (barcode && squashed.includes(barcode)) return { score: 1, because: "barcode" };
+  for (const identifier of facts.identifiers ?? []) {
+    const code = codeOf(identifier);
+    if (code && squashed.includes(code)) return { score: 1, because: "identifier" };
+  }
   const model = codeOf(facts.model);
   if (model && squashed.includes(model)) return { score: 0.8, because: "model" };
   const name = words(facts.name);
@@ -413,6 +432,41 @@ export interface LibraryPushSetup {
   arrives: string;
   before: string[];
   after: string[];
+}
+
+/** A data-only recipe so an adapter in another module or sandbox can
+ *  describe a push without giving the consumer a JavaScript callback. */
+export interface LibraryAdapterMetadata {
+  push?: {
+    setup: LibraryPushSetup;
+    refs: Array<{
+      path: string[];
+      /** A matching value is the ref; the first capture, when present,
+       *  selects it from an address. */
+      pattern?: string;
+    }>;
+  };
+}
+
+export function libraryRefFromPush(body: unknown, push: NonNullable<LibraryAdapterMetadata["push"]>): string | null {
+  if (typeof body === "string" && body.length <= 10_000) {
+    try { body = JSON.parse(body) as unknown; } catch { return null; }
+  }
+  for (const rule of push.refs) {
+    let value: unknown = body;
+    for (const key of rule.path) {
+      value = value && typeof value === "object" && Object.hasOwn(value, key)
+        ? (value as Record<string, unknown>)[key] : undefined;
+    }
+    if (typeof value !== "string" && typeof value !== "number") continue;
+    const text = String(value).trim();
+    if (!text || text.length > 1_024) continue;
+    const match = rule.pattern ? new RegExp(rule.pattern).exec(text) : null;
+    if (rule.pattern && !match) continue;
+    const ref = match ? (match[1] ?? match[0]) : text;
+    if (ref) return ref;
+  }
+  return null;
 }
 
 /** The score an item needs to be suggested for a record. */

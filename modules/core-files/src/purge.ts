@@ -37,6 +37,10 @@ export function purgeAfter(deletedAt: Date): Date {
 /** Remove a deleted file's bytes and row, unless a live copy still points at
  *  it. Returns whether it went. Never touches a live file. */
 export async function purgeFile(db: Kysely<CoreFilesDB>, orgId: string, fileId: string): Promise<boolean> {
+  return platform().deletedRecords.exclusive(orgId, "core-files:file", fileId, () => purgeFileLocked(db, orgId, fileId));
+}
+
+async function purgeFileLocked(db: Kysely<CoreFilesDB>, orgId: string, fileId: string): Promise<boolean> {
   const row = await db
     .selectFrom("core_files_files")
     .select(["id", "deleted_at"])
@@ -52,6 +56,7 @@ export async function purgeFile(db: Kysely<CoreFilesDB>, orgId: string, fileId: 
   if (pointedAt) return false;
   await removeStoredFile(orgId, fileId);
   await db.deleteFrom("core_files_files").where("id", "=", fileId).where("deleted_at", "is not", null).execute();
+  await platform().deletedRecords.forget(orgId, "core-files:file", fileId);
   return true;
 }
 
@@ -92,17 +97,22 @@ export type RestoreResult = { ok: true } | { ok: false; code: "not_found" | "quo
 /** Bring a deleted file back where it was. It counts against the quota again,
  *  so a restore that would not fit is refused the way an upload is. */
 export async function restoreFile(db: Kysely<CoreFilesDB>, orgId: string, fileId: string): Promise<RestoreResult> {
+  return platform().deletedRecords.exclusive(orgId, "core-files:file", fileId, () => restoreFileLocked(db, orgId, fileId));
+}
+
+async function restoreFileLocked(db: Kysely<CoreFilesDB>, orgId: string, fileId: string): Promise<RestoreResult> {
   const row = await db
     .selectFrom("core_files_files")
     .select(["id", "size_bytes"])
     .where("id", "=", fileId)
-    .where("deleted_at", "is not", null)
+    .where("deleted_at", ">", new Date(Date.now() - RECENTLY_DELETED_DAYS * DAY_MS))
     .executeTakeFirst();
   if (!row) return { ok: false, code: "not_found", message: "That file is not in Recently deleted." };
   const fits = quotaDecision(await bytesUsed(db), Number(row.size_bytes), QUOTA_BYTES);
   if (!fits.allow) return { ok: false, code: "quota_exceeded", message: fits.reason ?? "That would not fit." };
   await db.updateTable("core_files_files").set({ deleted_at: null }).where("id", "=", fileId).execute();
   await platform().events.emit("core-files.file.restored", { orgId, fileId });
+  await platform().deletedRecords.forget(orgId, "core-files:file", fileId);
   return { ok: true };
 }
 

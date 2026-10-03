@@ -15,7 +15,8 @@ import { Navigate, useSearchParams } from "react-router-dom";
 import { useDeployEnv } from "../lib/deploy-env";
 import { SandboxEnded } from "./SandboxEnded";
 import { DEFAULT_TRIAL_DAYS } from "@cobblr/platform-contract/trial-length";
-import type { SandboxLedger } from "../lib/api";
+import { api, type SandboxLedger } from "../lib/api";
+import { useQuery } from "@tanstack/react-query";
 
 /** A ledger to look at on the preview route, so the words can be criticised
  *  without waiting an hour and building something first. */
@@ -45,6 +46,7 @@ const SAMPLE_LEDGER: SandboxLedger = {
 
 export function EndingPreview() {
   const { testDoors, ready } = useDeployEnv();
+  const paths = useQuery({ queryKey: ["sandbox-paths"], queryFn: () => api.sandboxPaths(), staleTime: 300_000 });
   const [params] = useSearchParams();
   // No verdict until the box has answered: the flag reads false while the
   // answer is on its way, and a redirect on that lands on the login screen.
@@ -56,7 +58,8 @@ export function EndingPreview() {
     <SandboxEnded
       kind={kind}
       preview={{
-        cloud_url: params.get("cloud") ?? "https://app.cobblr.xyz/signup",
+        // The cloud this box names (COBBLR_CLOUD_URL), never a hostname here.
+        cloud_url: params.get("cloud") ?? paths.data?.cloud_url ?? null,
         selfhost_url: "https://github.com/CobblrHQ/cobblr",
         decision_hours: Number.isFinite(hold) ? hold : 24,
         carry_available: params.get("carry") === "1",

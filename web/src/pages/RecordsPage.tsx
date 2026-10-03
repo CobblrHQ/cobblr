@@ -376,7 +376,7 @@ export function RecordDetailModal({
     if (!r) return;
     const ok = await confirm({
       title: `Delete "${r.name}"?`,
-      message: "This can't be undone.",
+      message: "You can restore this record from Recently deleted for 30 days.",
       confirmLabel: `Delete ${noun}`,
       destructive: true,
     });

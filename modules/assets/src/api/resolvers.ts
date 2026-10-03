@@ -1,3 +1,5 @@
+import { fieldCurrency } from "@cobblr/platform-contract/money";
+import { fieldDay } from "@cobblr/platform-contract/field-day";
 import { columnSet, placeNames as placeNamesOf, platform, parseSort, textSearchWhere, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { AssetsDB } from "../db.js";
@@ -62,10 +64,18 @@ export function registerAssetsResolvers(): void {
   // its total adds the parts, each counted once (placement.builtValue).
   platform().placement.registerValue("assets:asset", async (orgId, ids) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<AssetsDB>;
-    let q = db.selectFrom("assets_assets").select(["id", "purchase_price_cents"]).where("purchase_price_cents", "is not", null);
+    const main = await platform().money.currency(orgId);
+    let q = db.selectFrom("assets_assets").select(["id", "purchase_price_cents", "metadata", "purchased_at", "created_at"]);
     q = ids === "all" ? q.where("archived_at", "is", null) : q.where("id", "in", ids.length ? ids : ["00000000-0000-0000-0000-000000000000"]);
     const rows = await q.execute();
-    return new Map(rows.map((r) => [r.id, amountOf(toCents(Number(r.purchase_price_cents)))]));
+    return new Map(rows.map((r) => [r.id, r.purchase_price_cents == null ? null : { value: { amount: amountOf(toCents(Number(r.purchase_price_cents))), currency: fieldCurrency(r.metadata, "purchase_price_cents", main) }, day: fieldDay(r.purchased_at) || fieldDay(r.created_at) || "" }]));
+  }, {
+    readScope: "assets:view-costs",
+    insuranceDetails: async (orgId, ids) => {
+      const db = (await platform().tenants.getDb(orgId)) as Kysely<AssetsDB>;
+      const rows = await db.selectFrom("assets_assets").select(["id", "serial_number", "purchased_at"]).where("id", "in", ids).execute();
+      return new Map(rows.map((r) => [r.id, { serial: r.serial_number, date: r.purchased_at?.toISOString() ?? null }]));
+    },
   });
 
   platform().entities.registerResolver("assets:asset", async (orgId, id) => {

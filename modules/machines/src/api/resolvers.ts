@@ -29,6 +29,12 @@ export function registerMachinesResolvers(): void {
   if (registered) return;
   registered = true;
 
+  platform().placement.registerInsuranceDetails("machines:machine", async (orgId, ids) => {
+    const db = (await platform().tenants.getDb(orgId)) as Kysely<MachinesDB>;
+    const rows = await db.selectFrom("machines_machines").select(["id", "serial_number"]).where("id", "in", ids).execute();
+    return new Map(rows.map((r) => [r.id, { serial: r.serial_number }]));
+  });
+
   platform().entities.registerResolver("machines:machine", async (orgId, id) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<MachinesDB>;
     const row = await db

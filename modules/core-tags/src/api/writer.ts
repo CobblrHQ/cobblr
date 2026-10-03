@@ -1,3 +1,5 @@
+import { registerDeletedTagAssignments } from "../deletion-participant.js";
+import { registerDeletedTagsHeal } from "../heal-deleted-records.js";
 // In-process entity writer for core-tags:tag.
 //
 // The assistant's change ledger undoes a delete through a kind's writer
@@ -5,7 +7,7 @@
 // writer, undoing a tag delete made a lookalike tag under a new id and
 // carried by nothing; now restore finds what the delete kept (tag-writes.ts)
 // and puts the tag back on every record that carried it.
-import { platform, imageId, restoreRow, snapshotRow } from "@cobblr/platform-contract";
+import { platform, imageId, restoreRow, snapshotRow, restoreRowTree, snapshotRowTree } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { CoreTagsDB } from "../db.js";
 import { createTag, deleteTagKept, restoreTag, updateTag } from "../tag-writes.js";
@@ -16,6 +18,8 @@ const str = (v: unknown): string | null => (typeof v === "string" && v.length ? 
 export function registerTagWriter(): void {
   if (registered) return;
   registered = true;
+  registerDeletedTagsHeal();
+  registerDeletedTagAssignments();
   const dbOf = async (orgId: string) => (await platform().tenants.getDb(orgId)) as Kysely<CoreTagsDB>;
   platform().entities.registerWriter("core-tags:tag", {
     async create(orgId, fields) {
@@ -42,6 +46,15 @@ export function registerTagWriter(): void {
       const db = await dbOf(orgId);
       if (id && (await restoreTag(db, orgId, id))) return;
       await restoreRow(db, "core_tags_tags", image);
+    },
+    async restoreDeletion(orgId, snapshot) {
+      const id = imageId(snapshot.image);
+      const db = await dbOf(orgId);
+      if (id && await restoreTag(db, orgId, id)) return;
+      await restoreRowTree(db, "core_tags_tags", snapshot, "core_tags_");
+    },
+    async snapshotDeletion(orgId, id) {
+      return snapshotRowTree(await dbOf(orgId), "core_tags_tags", id, "core_tags_");
     },
     async snapshot(orgId, id) {
       return snapshotRow(await dbOf(orgId), "core_tags_tags", id);

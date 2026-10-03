@@ -2,7 +2,7 @@ import type { Generated, Kysely } from "kysely";
 import type { Request } from "express";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 
-export type ScopeType = "view" | "entity" | "collection" | "board" | "app";
+export type ScopeType = "view" | "entity" | "collection" | "board" | "app" | "page";
 
 export interface SurfacesTable {
   id: Generated<string>;
@@ -28,7 +28,48 @@ export interface SurfaceViewsTable {
   referer: string | null;
 }
 
+/** A public page: a scope and a visibility (the share primitive), shown
+ *  through any number of links (surfaces with scope_type 'page'). */
+export interface PagesTable {
+  id: Generated<string>;
+  name: string;
+  scope: Generated<Record<string, unknown>>;
+  visibility: Generated<Record<string, unknown>>;
+  layout: Generated<"gallery" | "table">;
+  /** A signed-out scan of its records' labels opens their public view. */
+  label_door: Generated<boolean>;
+  /** Booth mode: private again, on its own, at this time. */
+  public_until: Date | null;
+  /** Where a visitor can get in touch (a site, or mailto:). */
+  contact: string | null;
+  footer: Generated<boolean>;
+  /** The fields a record shows, in order; null: all the visibility allows. */
+  show_fields: string[] | null;
+  about: string | null;
+  links: Generated<Array<{ label: string; url: string }>>;
+  /** A custom look, run sandboxed with only the record as the page shows it. */
+  skin_html: string | null;
+  /** Search engines may list it; off, every page of it says noindex. */
+  indexable: Generated<boolean>;
+  /** Its own accent over the workspace brand (#rrggbb); null wears the brand. */
+  accent: string | null;
+  /** Its memorable address, /p/<workspace>/<address>; null: none. */
+  address: string | null;
+  created_by: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+/** Label scans per page per day: counts only. */
+export interface LabelScansTable {
+  page_id: string;
+  day: string;
+  count: Generated<number>;
+}
+
 export interface CorePublicSurfacesDB {
+  core_public_surfaces_label_scans: LabelScansTable;
+  core_public_surfaces_pages: PagesTable;
   core_public_surfaces_surfaces: SurfacesTable;
   core_public_surfaces_views: SurfaceViewsTable;
 }

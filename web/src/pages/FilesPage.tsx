@@ -195,6 +195,7 @@ export function FilesPage() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-2 border-b border-line dark:border-slate-700 pb-3">
         <h1 className="text-2xl font-semibold text-content dark:text-mortar-100 mr-2">Files</h1>
+        <Link className="text-xs text-muted underline" to="/configuration/recently-deleted?kind=core-files:file">Recently deleted</Link>
         {usage.data && (
           <span className="text-xs text-muted tabular-nums" data-testid="files-usage">
             {formatBytes(usage.data.bytes_used)} {usage.data.quota_bytes ? `of ${formatBytes(usage.data.quota_bytes)}` : "used"}

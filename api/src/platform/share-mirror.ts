@@ -27,12 +27,18 @@ import { baseKindOf, kindRecordForOrg, lookup } from "./entities.js";
 import { fileIdFromRawPath, rawPathFor } from "./file-paths.js";
 import { privateFieldNames } from "./field-defs.js";
 import { gatedFields, recordsInScope } from "./scope-eval.js";
+import { sharePerson } from "./share-person.js";
 import { enqueueShareOp, kickShareSync, registerShareOp, type ShareLinkRow } from "./share-sync.js";
 import { runExclusive } from "./exclusive.js";
 
 /** The metadata key a copy carries: which share and which original it is. */
 export const ORIGIN_REF_KEY = "origin_ref";
 const SHAPE_KEY = "shape:all";
+/** Part of every record's digest: raising it resends every record once, on
+ *  each share's next pass (the daily reconcile at the latest). 2: a copy is
+ *  cleared of what is no longer sent, so copies left holding a revoked field
+ *  before that fix are cleared too (#4688). */
+const MIRROR_FORMAT = 2;
 const sha = (s: string | Uint8Array) => createHash("sha256").update(s).digest("hex");
 
 /** Every field of a kind, with what it is: its own columns and the custom
@@ -75,7 +81,7 @@ async function locationChain(orgId: string, locationId: unknown): Promise<Array<
   return out;
 }
 
-interface Projected {
+export interface Projected {
   title: string;
   fields: Record<string, unknown>;
   metadata: Record<string, unknown>;
@@ -83,7 +89,7 @@ interface Projected {
   photo: { fileId: string } | null;
 }
 
-async function project(orgId: string, ref: ScopeRef, vis: VisibilityDef, gated: ReadonlySet<string>): Promise<Projected | null> {
+export async function project(orgId: string, ref: ScopeRef, vis: VisibilityDef, gated: ReadonlySet<string>): Promise<Projected | null> {
   const ent = await lookup(orgId, ref.entity_kind, ref.id);
   if (!ent) return null;
   const defs = await fieldsOf(orgId, ref.entity_kind);
@@ -152,7 +158,8 @@ export async function mirrorShare(linkId: string): Promise<{ sent: number; remov
   const scope = readScope(settings.scope);
   const vis = readVisibility(settings.visibility);
   const gated = new Set((await gatedFields(link.org_id)).map((f) => f.name));
-  const { refs } = await recordsInScope(link.org_id, scope);
+  const person = await sharePerson(linkId).catch(() => null);
+  const { refs } = await recordsInScope(link.org_id, scope, { person: person?.id ?? null });
   const state = new Map<string, { entity_kind: string; entity_id: string; digest: string; photo_digest: string | null }>(
     (await meta.selectFrom("share_mirror_state").select(["entity_kind", "entity_id", "digest", "photo_digest"]).where("link_id", "=", linkId).execute()).map(
       (r) => [`${r.entity_kind}\u0000${r.entity_id}`, r] as const,
@@ -161,10 +168,10 @@ export async function mirrorShare(linkId: string): Promise<{ sent: number; remov
   // A field the friend changed and the owner has not decided on keeps the
   // friend's value in their copy: the owner's next edit elsewhere on the
   // record must not undo it under them.
-  const held = new Map<string, Array<{ field: string; in_metadata: boolean; proposed: unknown }>>();
+  const held = new Map<string, Array<{ id: string; field: string; in_metadata: boolean; base: unknown; proposed: unknown; status: string }>>();
   for (const s of await meta
     .selectFrom("share_suggestions")
-    .select(["entity_kind", "entity_id", "field", "in_metadata", "proposed"])
+    .select(["id", "entity_kind", "entity_id", "field", "in_metadata", "base", "proposed", "status"])
     .where("link_id", "=", linkId)
     .where("status", "in", ["pending", "conflict"])
     .orderBy("created_at")
@@ -197,9 +204,19 @@ export async function mirrorShare(linkId: string): Promise<{ sent: number; remov
     inScope.add(k);
     const p = await project(link.org_id, ref, vis, gated);
     if (!p) continue;
+    // The owner's value of a field both changed, so the friend's copy can
+    // say "changed by <owner> since you edited".
+    const changedSince: Record<string, unknown> = {};
     for (const h of held.get(k) ?? []) {
       const into = h.in_metadata ? p.metadata : p.fields;
-      if (h.field in into) into[h.field] = h.proposed;
+      if (!(h.field in into)) continue;
+      // The owner changed it after the friend did: a conflict now (#4692).
+      if (h.status === "pending" && JSON.stringify(into[h.field] ?? null) !== JSON.stringify(h.base ?? null)) {
+        await meta.updateTable("share_suggestions").set({ status: "conflict", owner_before: JSON.stringify(into[h.field] ?? null) as never }).where("id", "=", h.id).where("status", "=", "pending").execute();
+        h.status = "conflict";
+      }
+      if (h.status === "conflict") changedSince[h.field] = into[h.field];
+      into[h.field] = h.proposed;
     }
     let photo: { mime: string; data: string } | null = null;
     let photoDigest: string | null = null;
@@ -210,8 +227,8 @@ export async function mirrorShare(linkId: string): Promise<{ sent: number; remov
         if (state.get(k)?.photo_digest !== photoDigest) photo = { mime: got.mimeType, data: Buffer.from(got.bytes).toString("base64") };
       }
     }
-    const body = { origin: { kind: ref.entity_kind, id: ref.id }, title: p.title, fields: p.fields, metadata: p.metadata, place: p.place, photo_digest: photoDigest };
-    const digest = sha(JSON.stringify(body));
+    const body = { origin: { kind: ref.entity_kind, id: ref.id }, title: p.title, fields: p.fields, metadata: p.metadata, place: p.place, photo_digest: photoDigest, changed_since: changedSince };
+    const digest = sha(JSON.stringify({ format: MIRROR_FORMAT, ...body }));
     if (state.get(k)?.digest === digest && !photo) continue;
     await enqueueShareOp(linkId, "mirror.upsert", { ...body, ...(photo ? { photo } : {}) });
     await save(ref.entity_kind, ref.id, digest, photoDigest);
@@ -272,9 +289,9 @@ export async function mirrorDueShares(): Promise<void> {
 
 // ── The share's side ─────────────────────────────────────────────────────
 
-const originRef = (link: ShareLinkRow, kind: string, id: string) => `${link.id}/${kind}/${id}`;
+export const originRef = (link: ShareLinkRow, kind: string, id: string) => `${link.id}/${kind}/${id}`;
 
-async function copyOf(orgId: string, kind: string, ref: string): Promise<string | null> {
+export async function copyOf(orgId: string, kind: string, ref: string): Promise<string | null> {
   const w = await platform().entities.getWriter(orgId, kind);
   if (w?.findByKey) return w.findByKey(orgId, { field: ORIGIN_REF_KEY, metadata: true }, ref);
   const all = await platform().entities.listAll(orgId, kind, { filter: { [ORIGIN_REF_KEY]: ref }, include_retired: true }, undefined, { cap: 2 });
@@ -332,7 +349,16 @@ async function unsentEdits(link: ShareLinkRow, originKind: string, originId: str
   return out;
 }
 
-async function recordCopyBase(link: ShareLinkRow, originKind: string, originId: string, copyId: string, fieldKeys: string[], metadataKeys: string[], unsent: Unsent = { fields: {}, metadata: {} }): Promise<void> {
+async function recordCopyBase(
+  link: ShareLinkRow,
+  originKind: string,
+  originId: string,
+  copyId: string,
+  fieldKeys: string[],
+  metadataKeys: string[],
+  unsent: Unsent = { fields: {}, metadata: {} },
+  ownerChanged: Record<string, unknown> = {},
+): Promise<void> {
   const copy = await lookup(link.org_id, originKind, copyId);
   if (!copy) return;
   const f = (copy.fields ?? {}) as Record<string, unknown>;
@@ -344,9 +370,21 @@ async function recordCopyBase(link: ShareLinkRow, originKind: string, originId: 
   const metadata = Object.fromEntries(metadataKeys.filter((k) => !COPY_BOOKKEEPING.has(k)).map((k) => [k, at(m, unsent.metadata, k)]));
   await meta
     .insertInto("share_copy_base")
-    .values({ link_id: link.id, origin_kind: originKind, origin_id: originId, copy_kind: originKind, copy_id: copyId, fields: JSON.stringify(fields) as never, metadata: JSON.stringify(metadata) as never })
-    .onConflict((oc) => oc.columns(["link_id", "origin_kind", "origin_id"]).doUpdateSet({ copy_id: copyId, fields: JSON.stringify(fields) as never, metadata: JSON.stringify(metadata) as never, updated_at: new Date() }))
+    .values({ link_id: link.id, origin_kind: originKind, origin_id: originId, copy_kind: originKind, copy_id: copyId, fields: JSON.stringify(fields) as never, metadata: JSON.stringify(metadata) as never, owner_changed: JSON.stringify(ownerChanged) as never })
+    .onConflict((oc) =>
+      oc.columns(["link_id", "origin_kind", "origin_id"]).doUpdateSet({ copy_id: copyId, fields: JSON.stringify(fields) as never, metadata: JSON.stringify(metadata) as never, owner_changed: JSON.stringify(ownerChanged) as never, updated_at: new Date() }),
+    )
     .execute();
+}
+
+/** The keys the copy was last sent and is not sent now, each cleared. */
+async function revokedKeys(link: ShareLinkRow, originKind: string, originId: string, fields: Record<string, unknown>, metadata: Record<string, unknown>): Promise<Unsent> {
+  const out: Unsent = { fields: {}, metadata: {} };
+  const base = await meta.selectFrom("share_copy_base").select(["fields", "metadata"]).where("link_id", "=", link.id).where("origin_kind", "=", originKind).where("origin_id", "=", originId).executeTakeFirst();
+  if (!base) return out;
+  for (const k of Object.keys((base.fields ?? {}) as Record<string, unknown>)) if (!(k in fields) && !COPY_BOOKKEEPING.has(k)) out.fields[k] = null;
+  for (const k of Object.keys((base.metadata ?? {}) as Record<string, unknown>)) if (!(k in metadata) && !COPY_BOOKKEEPING.has(k)) out.metadata[k] = null;
+  return out;
 }
 
 async function slugOf(orgId: string): Promise<string> {
@@ -388,11 +426,14 @@ export function registerShareMirrorOps(): void {
       const current = await lookup(link.org_id, kind, id);
       const m = ((current?.fields as Record<string, unknown> | undefined)?.metadata ?? {}) as Record<string, unknown>;
       for (const k of Object.keys(unsent.metadata)) metadata[k] = m[k] ?? null;
-      // What the owner's side sent IS the copy: a field it no longer sends
-      // (a toggle turned off) leaves the copy with it.
-      await w.update(link.org_id, id, { ...fields, metadata: { ...metadata, [ORIGIN_REF_KEY]: ref } });
+      // What the owner's side sent IS the copy. An update merges, so a field
+      // it sent last time and no longer sends (a toggle turned off: private
+      // notes, prices, a restricted field) is cleared here, or the friend
+      // keeps reading it (#4688).
+      const gone = await revokedKeys(link, kind, origin.id, { ...fields, ...unsent.fields }, metadata);
+      await w.update(link.org_id, id, { ...fields, ...gone.fields, metadata: { ...metadata, ...gone.metadata, [ORIGIN_REF_KEY]: ref } });
     }
-    await recordCopyBase(link, kind, origin.id, id, [...Object.keys(fields), ...Object.keys(unsent.fields)], Object.keys(metadata), unsent);
+    await recordCopyBase(link, kind, origin.id, id, [...Object.keys(fields), ...Object.keys(unsent.fields)], Object.keys(metadata), unsent, (p.changed_since ?? {}) as Record<string, unknown>);
     if (place.path?.length) {
       const where = await ensurePlace(link.org_id, place.path);
       if (where) await platform().placement.place({ orgId: link.org_id, containee: { kind, id }, container: { kind: "core-locations:location", id: where } });

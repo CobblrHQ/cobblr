@@ -28,6 +28,10 @@ export function kindForRoute(kinds: readonly Pick<EntityKindRecord, "id" | "modu
   for (const k of kinds) {
     if (k.module_name !== moduleName || !k.endpoints) continue;
     if (m === "POST" && k.endpoints.create && clean === k.endpoints.create.replace(/\/+$/, "")) return { kind: k.id, created: true };
+    if (m === "DELETE" && k.endpoints.delete) {
+      const re = new RegExp(`^${k.endpoints.delete.replace(/[.*+?^$()|[\]\\]/g, "\\$&").replace(/\{id\}/g, "[^/]+")}$`);
+      if (re.test(clean)) return { kind: k.id, created: false };
+    }
     if ((m === "PATCH" || m === "PUT") && k.endpoints.update) {
       const re = new RegExp(`^${k.endpoints.update.replace(/[.*+?^$()|[\]\\]/g, "\\$&").replace(/\{id\}/g, "[^/]+")}$`);
       if (re.test(clean)) return { kind: k.id, created: false };

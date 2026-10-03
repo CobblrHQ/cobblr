@@ -139,7 +139,7 @@ function Quote({
         ) : (
           <>
             <span className="font-medium">
-              {target.author_kind === "assistant" ? "Cobb" : names(target.author_user_id ?? "")}
+              {target.author_kind === "assistant" ? "Cobb" : target.author_kind === "guest" ? (target.author_name ?? "Someone you share with") : names(target.author_user_id ?? "")}
             </span>
             : {target.body}
           </>
@@ -298,7 +298,9 @@ export function DiscussionTab() {
     return (c: DiscussionComment) =>
       c.author_kind === "assistant"
         ? "Cobb"
-        : c.author_user_id
+        : c.author_kind === "guest"
+          ? (c.author_name ?? "Someone you share with")
+          : c.author_user_id
           ? (by.get(c.author_user_id) ?? "Someone")
           : "Someone";
   }, [members.data]);
@@ -617,6 +619,11 @@ export function DiscussionTab() {
             >
               <div className="flex items-baseline gap-2 text-[11px]">
                 <span className="font-medium text-content dark:text-mortar-100">{nameOf(c)}</span>
+                {c.author_kind === "guest" && (
+                  <span className="text-faint" data-testid="comment-through-share">
+                    through the share
+                  </span>
+                )}
                 {c.author_kind === "assistant" && c.requested_by && (
                   <span className="text-faint">asked by {nameOfUser(c.requested_by)}</span>
                 )}
@@ -772,7 +779,7 @@ export function DiscussionTab() {
                   const t = comments.find((c) => c.id === replyTo);
                   if (!t) return "replying";
                   const who =
-                    t.author_kind === "assistant" ? "Cobb" : nameOfUser(t.author_user_id ?? "");
+                    t.author_kind === "assistant" ? "Cobb" : t.author_kind === "guest" ? (t.author_name ?? "Someone you share with") : nameOfUser(t.author_user_id ?? "");
                   return `${who}: ${t.body}`;
                 })()}
               </span>

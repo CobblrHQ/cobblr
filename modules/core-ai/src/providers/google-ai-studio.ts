@@ -169,6 +169,8 @@ export function googleAiStudioProvider(): ReturnType<typeof buildCompatProvider>
 function googleAiStudioPreset(): ReturnType<typeof buildCompatProvider> {
   return buildCompatProvider({
       id: "google-ai-studio",
+      freeBackground: true,
+      freeBackgroundModel: "gemini-flash-lite-latest",
       label: "Google AI Studio (free tier)",
       describeCredentials: () => ({
         api_key: {

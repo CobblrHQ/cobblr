@@ -14,6 +14,7 @@ import "./DashboardWidget";
 import { LabelsProvider, useLabels } from "./context";
 import { QueuePage } from "./QueuePage";
 import { ActionLabelsPage } from "./ActionLabelsPage";
+import { NfcPage } from "./NfcPage";
 import { BasketWidget } from "./BasketWidget";
 import { ClientAutoflushMount } from "./client-autoflush";
 
@@ -31,6 +32,7 @@ export function LabelsUI({ orgSlug, getToken }: LabelsUIProps) {
     <LabelsProvider orgSlug={orgSlug} getToken={getToken}>
       <Routes>
         <Route index element={<QueuePage />} />
+        <Route path="nfc" element={<NfcPage />} />
         <Route path="action" element={<ActionLabelsPage />} />
         <Route path="action/new" element={<ActionLabelsPage />} />
       </Routes>
