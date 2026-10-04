@@ -24,6 +24,7 @@ import { sql } from "kysely";
 import { browserImageHeaders } from "./image-fetch-headers.js";
 import { platform } from "@cobblr/platform-contract";
 import { isShortBarcode } from "@cobblr/platform-contract/scan-triage";
+import { PHOTO_CHECK_NOTE } from "@cobblr/platform-contract/scan-copy";
 import { answerAgreesWithCode, durableOutcome, namedByOnePerson, type BarcodeHit, type DurableBarcodeOutcome } from "./barcode-lookup.js";
 import { resolveBarcodeViaWebSearch, productTitle } from "./barcode-websearch.js";
 import { reportBarcodeCorrection, unitLotsOf } from "./barcode-corrections.js";
@@ -887,7 +888,7 @@ async function enrichCode(ctx: EnrichContext): Promise<void> {
               : {}),
           }) as never,
           ai_confidence: webGate ? "0.5" : String(web.confidence),
-          ai_notes: webGate ? "Checking this against your photo…" : web.evidence,
+          ai_notes: webGate ? PHOTO_CHECK_NOTE : web.evidence,
           ai_suggested_at: new Date(),
           updated_at: new Date(),
         })
@@ -1104,7 +1105,7 @@ async function enrichCode(ctx: EnrichContext): Promise<void> {
       }) as never,
       // Damp the confidence + say we're checking, until the photo cross-check lands.
       ai_confidence: gateOnPhoto ? "0.5" : confirmedConfidence,
-      ai_notes: gateOnPhoto ? "Checking this against your photo…" : confirmedNotes,
+      ai_notes: gateOnPhoto ? PHOTO_CHECK_NOTE : confirmedNotes,
       ai_suggested_at: new Date(),
       updated_at: new Date(),
     })

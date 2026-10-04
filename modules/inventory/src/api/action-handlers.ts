@@ -1,3 +1,4 @@
+import { stockTrackerAllows } from "../stock-tracker.js";
 // Action handlers — the wire-engine-callable + Tier-B-invokable side of
 // inventory. All GENERIC inventory capabilities (a use-case lives in a bundle +
 // its app, never here):
@@ -182,7 +183,7 @@ async function inPartUnit(orgId: string, partId: string, delta: number, unit: st
  *  opt-out. A non-zero `delta` is assumed (callers guard). */
 export async function applyStockDelta(
   orgId: string,
-  p: { partId: string; delta: number; reason: string; sourceKind?: string | null; sourceId?: string | null; correction?: boolean },
+  p: { partId: string; delta: number; reason: string; sourceKind?: string | null; sourceId?: string | null; correction?: boolean; reporter?: "firmware" },
 ): Promise<Record<string, unknown>> {
   const { partId, delta, reason } = p;
   const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
@@ -196,7 +197,7 @@ export async function applyStockDelta(
     .where("id", "=", partId)
     .executeTakeFirst();
   if (!ext) return { ok: false, error: "part_not_found" };
-  if (ext.tracked_by) {
+  if (!stockTrackerAllows(ext.tracked_by, p.reporter)) {
     return { ok: true, skipped: true, reason: `externally tracked by ${ext.tracked_by}` };
   }
 
@@ -214,9 +215,10 @@ export async function applyStockDelta(
     .updateTable("inventory_parts")
     .set({ qty: sql<string>`greatest(0, qty + ${applied}::numeric)`, updated_at: new Date() })
     .where("id", "=", partId)
+    .where(sql<boolean>`coalesce(metadata->>'tracked_by', '') = ${p.reporter === "firmware" ? "firmware" : ""}`)
     .returning(["id", "name", "qty", "min_qty"])
     .executeTakeFirst();
-  if (!updated) return { ok: false, error: "part_not_found" };
+  if (!updated) return { ok: false, error: "This item is no longer available to this usage tracker." };
 
   // The statement line (WHAT drew it down, HOW MUCH: also what the burn-rate
   // predictor reads), stock.changed, and low stock on a decrease, the one

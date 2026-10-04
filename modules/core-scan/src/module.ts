@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.58.4",
+  version: "0.58.5",
   displayName: "Scan",
   description:
     "Scan a barcode or snap a photo, and get the thing named and ready to file in one tap.",
@@ -153,6 +153,8 @@ export default defineModule({
       "core-scan.organize.applied",
       "core-scan.putaway.session-started",
       "core-scan.putaway.item-placed",
+      "core-scan.putaway.destination-selected",
+      "core-scan.label.scanned",
       // Something was put somewhere that contradicts how it must be kept -
       // frozen food in a cupboard. A FACT, not a prediction, which is why it is
       // worth telling someone about at the moment it happens.
@@ -182,6 +184,7 @@ export default defineModule({
     ],
     actions: [
       {
+        group: "more",
         id: "core-scan:confirm-receipt-arrival",
         examples: ["I have the parcel", "the package is here", "got the delivery in hand"],
         label: "Confirm a parcel is in hand",
@@ -203,6 +206,7 @@ export default defineModule({
       },
       {
         // NO-PHRASING: the scan pipeline's own step; a person asking to identify something means core-scan:identify
+        group: "more",
         id: "core-scan:identify-photo",
         label: "Identify a scanned photo",
         description:
@@ -218,6 +222,7 @@ export default defineModule({
       },
       {
         // NO-PHRASING: an internal ranking step between enrichment and the draft; there is no sentence for it
+        group: "more",
         id: "core-scan:rank-catalog-photo",
         label: "Pick the best catalog photo",
         description:
@@ -233,6 +238,7 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /scan
+        group: "more",
         id: "core-scan:attach-paperwork",
         examples: ["attach this bill of sale to the Civic", "this receipt is for my mower, put it on it"],
         label: "Attach paperwork to a record",
@@ -249,6 +255,7 @@ export default defineModule({
       },
       {
         // NO-PHRASING: a table's own wire runs it when a record is made or changed; the person's door is the record's identifier box
+        group: "more",
         id: "core-scan:fill-known",
         label: "Fill what the record already says",
         description:
@@ -264,6 +271,7 @@ export default defineModule({
       {
         // NO-PHRASING: the undo step of fill-known, handed back on its card
         // DELIBERATELY universal: the undo of fill-known, which runs on whatever record that did.
+        group: "more",
         id: "core-scan:unfill-known",
         label: "Empty what was filled",
         description:
@@ -274,6 +282,7 @@ export default defineModule({
         internal: true,
       },
       {
+        group: "organise",
         id: "core-scan:fill-fields-from-receipts",
         examples: [
           "fill in where my things came from",
@@ -301,6 +310,7 @@ export default defineModule({
         userInvokable: true,
       },
       {
+        group: "more",
         id: "core-scan:identify",
         examples: ["what is this thing", "identify this for me"],
         label: "Identify a thing",

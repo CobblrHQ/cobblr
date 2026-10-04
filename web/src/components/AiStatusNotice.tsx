@@ -3,7 +3,7 @@
 // path — never silently degrade. Extracted from ScanPage (which pioneered it);
 // the scan page, the homepage funnel, and /build all render this now.
 import { aiAvailabilityKeys } from "../lib/ai-availability-keys";
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { CobbHead } from "./Cobb";
@@ -157,7 +157,9 @@ export function AiOffNotice({
   // Said once already on this screen: keep only what is particular to this
   // surface, as a quiet line, never a second banner (#4146: the scan page and
   // the put-away plan inside it both showed "plan doesn't include AI").
-  if (given) {
+  const fact = needs === "identify" && status?.identify_reason === "hosted_scope" && status.reason !== "operator_disabled"
+    ? "hosted_scope" : status?.reason;
+  if (given.all || (fact && given.reasons.has(fact))) {
     return !line.text && children ? <p className="text-xs text-muted dark:text-slate-400">{children}</p> : null;
   }
   return (
@@ -194,10 +196,16 @@ export function AiOffNotice({
   );
 }
 
-const AiNoticeGivenContext = createContext(false);
+const AiNoticeGivenContext = createContext<{ all: boolean; reasons: ReadonlySet<string> }>({ all: false, reasons: new Set() });
 
 /** Wrap what sits below a page's own AI notice: a notice inside does not
- *  repeat it. `when` is whether the page's notice actually showed. */
-export function AiNoticeGiven({ when, children }: { when: boolean; children: ReactNode }) {
-  return <AiNoticeGivenContext.Provider value={when}>{children}</AiNoticeGivenContext.Provider>;
+ *  repeat it. `when` is whether the notice actually showed. `reason` limits
+ *  suppression to that fact; nested pages keep the parent scope. */
+export function AiNoticeGiven({ when, reason, children }: { when: boolean; reason?: AiStatus["reason"]; children: ReactNode }) {
+  const parent = useContext(AiNoticeGivenContext);
+  const value = useMemo(() => ({
+    all: parent.all || (when && !reason),
+    reasons: new Set([...parent.reasons, ...(when && reason ? [reason] : [])]),
+  }), [parent, when, reason]);
+  return <AiNoticeGivenContext.Provider value={value}>{children}</AiNoticeGivenContext.Provider>;
 }

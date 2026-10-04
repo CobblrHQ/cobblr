@@ -367,6 +367,15 @@ export async function keepSandbox(
       .set({ email, display_name: displayNameFromEmail(email) })
       .where("id", "=", userId)
       .execute();
+    // The feedback they filed as a guest could not be answered; it can now,
+    // through the account they just made (#4645).
+    await trx
+      .updateTable("feedback")
+      .set({ reachable: true, unreachable_reason: null })
+      .where("user_id", "=", userId)
+      .where("reachable", "=", false)
+      .where("unreachable_reason", "=", "anonymous sandbox")
+      .execute();
     await trx
       .updateTable("orgs")
       .set({ name: "My workspace" })

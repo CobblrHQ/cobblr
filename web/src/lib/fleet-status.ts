@@ -25,12 +25,15 @@ export function deviceBucket(d: DigifabFleetDevice): FleetBucket {
 export function fleetStatusChip(dev: DigifabFleetDevice | undefined): { label: string; dot: string } {
   if (!dev) return { label: "linked", dot: "bg-emerald-500" };
   if (dev.needs_attention) return { label: "needs clearing", dot: "bg-amber-500" };
-  if (dev.active_job?.status === "printing" || dev.state === "printing") {
+  const state = dev.active_job?.status === "printing" ? "running" : dev.active_job?.status === "paused" ? "paused" : dev.state.toLowerCase();
+  const laser = dev.id === "lightburn" || !!dev.lightburn_readiness;
+  if (state === "paused") return { label: "paused", dot: "bg-amber-500" };
+  if (state === "printing" || state === "running") {
     const p = dev.active_job?.progress;
-    return { label: typeof p === "number" ? `printing ${Math.round(p * 100)}%` : "printing", dot: "bg-cobble-500" };
+    const action = laser ? "running" : "printing";
+    return { label: typeof p === "number" ? `${action} ${Math.round(p * 100)}%` : action, dot: "bg-cobble-500" };
   }
-  switch (dev.state) {
-    case "paused": return { label: "paused", dot: "bg-amber-500" };
+  switch (state) {
     case "idle": return { label: "idle", dot: "bg-emerald-500" };
     case "completed": return { label: "done", dot: "bg-emerald-500" };
     case "failed":

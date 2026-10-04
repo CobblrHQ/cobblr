@@ -1,5 +1,4 @@
-import { NewItemMenu } from "@cobblr/platform-web";
-import { MoneyTotalNotice, useMoneyCurrency } from "@cobblr/platform-web";
+import { RecordFormModal, NewItemMenu, MoneyTotalNotice, useMoneyCurrency, PresentationGate, useFaces, usePlatformWeb, UsedValueInput, usedValueFieldItem } from "@cobblr/platform-web";
 // /assets — list + detail modal for the assets module. Same shape
 // as MachinesPage. No specialisations yet (no assets:asset Pillar-E
 // modules ship), so no lens UI here — but the column rendering is
@@ -27,7 +26,6 @@ import { CustomFieldsPanel,
   FacesOn, faceShows, editFieldItem, moneyFieldItem, fieldNeed, EditSelect,
   useAskCobbAboutSelection,
   useTickedRows,
-  Modal,
   useToast,
   useConfirm, usePageTitle, usePageWidth, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton } from "@cobblr/platform-web";
 import {
@@ -49,7 +47,6 @@ import { useDeclaredChoices } from "../components/ViewBuilder";
 import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 import { fieldCurrency, formatMoney, toCents } from "@cobblr/platform-contract/money";
-import { PresentationGate, useFaces, UsedValueInput, usedValueFieldItem } from "@cobblr/platform-web";
 
 const ENTITY_KIND = "assets:asset";
 
@@ -648,6 +645,17 @@ export function AssetDetailModal({
   const kind = instance ? `${instance}:item` : ENTITY_KIND;
   const [moveOpen, setMoveOpen] = useState(false);
   const fp = useFieldPresentation(kind);
+  const { api: platformApi } = usePlatformWeb();
+  const declaredActions = useQuery({
+    queryKey: ["platform-actions", activeSlug, ENTITY_KIND],
+    queryFn: () => platformApi.listActions(activeSlug, ENTITY_KIND),
+    staleTime: 60_000,
+  });
+  const moveDescription = declaredActions.data?.items.find((action) => action.id === "core-placement:place")?.description;
+  const refreshPlace = () => {
+    void qc.invalidateQueries({ queryKey: ["asset", activeSlug, instance ?? null, assetId] });
+    void qc.invalidateQueries({ queryKey: ["assets", activeSlug] });
+  };
   // The states the kind declares, in the order a thing lives them. Every
   // collection of assets shares the base kind's native state field.
   const assetStates = useDeclaredChoices(activeSlug, ENTITY_KIND, "state");
@@ -715,7 +723,7 @@ export function AssetDetailModal({
     : undefined;
 
   return (
-    <Modal open={!!assetId} onClose={onClose} title={a?.name ?? (asset.isError ? "Couldn't load" : "loading…")} subtitle={subtitle} size="xl">
+    <RecordFormModal open={!!assetId} onClose={onClose} title={a?.name ?? (asset.isError ? "Couldn't load" : "loading…")} subtitle={subtitle}>
       {a ? (
         <PresentationGate ready={fp.ready && shape.ready} failed={fp.failed || shape.failed} retry={() => { fp.retry(); shape.retry(); }}>
         <div className="space-y-4">
@@ -741,12 +749,16 @@ export function AssetDetailModal({
               />
               {a.archived_at && !readRecordDisposition(a.metadata) ? (
                 <p className="text-xs text-muted dark:text-slate-400">
-                  Put away on {new Date(a.archived_at).toLocaleDateString()}. It keeps its history; Restore brings it back to the register.
+                  Archived on {new Date(a.archived_at).toLocaleDateString()}. It keeps its history; Restore to the register brings it back.
                 </p>
               ) : null}
+              {fp.hidden("location_id") && (
+                <LocationTreePicker triggerLabel="Move to…" description={moveDescription ?? undefined} value={a.location_id} onChange={(id) => update.mutate({ location_id: id })} size="sm" thing={{ kind: ENTITY_KIND, id: a.id }} onPlaced={refreshPlace} />
+              )}
               <EntityActionsBar
                 entityKind={ENTITY_KIND}
                 entityId={a.id}
+                overflowActionIds={["assets:archive"]}
                 excludeActionIds={[
                   // A thing that was sold or given away comes back through
                   // Bring back on its line; Put away and Restore are for the
@@ -814,10 +826,10 @@ export function AssetDetailModal({
               !fp.hidden("warranty_until") && faceShows(maintainedOn, a.warranty_until) ? editFieldItem("warranty_until", { label: fp.label("warranty_until", "Warranty until"), value: a.warranty_until ?? "", type: "date", onCommit: (v) => update.mutate({ warranty_until: v || null }) }) : null,
               !fp.hidden("last_service_at") && faceShows(maintainedOn, a.last_service_at) ? editFieldItem("last_service_at", { label: fp.label("last_service_at", "Last service"), value: a.last_service_at ?? "", type: "date", onCommit: (v) => update.mutate({ last_service_at: v || null }) }) : null,
               !fp.hidden("quantity") && faceShows(stockOn, a.quantity, 1) ? editFieldItem("quantity", { label: fp.label("quantity", "Quantity"), value: String(a.quantity), numeric: true, onCommit: (v) => update.mutate({ quantity: Number(v) || 0 }) }) : null,
-              {
+              !fp.hidden("location_id") ? {
                 need: fieldNeed("location", { control: "picker", label: "Location" }),
-                node: <LocationTreePicker label="Location" value={a.location_id} onChange={(id) => update.mutate({ location_id: id })} size="sm" thing={{ kind: "assets:asset", id: a.id }} onPlaced={() => { void qc.invalidateQueries({ queryKey: ["asset", activeSlug, instance ?? null, assetId] }); void qc.invalidateQueries({ queryKey: ["assets", activeSlug] }); }} />,
-              },
+                node: <LocationTreePicker label="Location" value={a.location_id} onChange={(id) => update.mutate({ location_id: id })} size="sm" thing={{ kind: "assets:asset", id: a.id }} onPlaced={refreshPlace} />,
+              } : null,
             ]}
           />
             )}
@@ -905,7 +917,7 @@ export function AssetDetailModal({
       ) : (
         <div className="text-xs text-faint">loading…</div>
       )}
-    </Modal>
+    </RecordFormModal>
   );
 }
 
@@ -961,25 +973,42 @@ function NewAssetModal({
   }
 
   return (
-    <Modal open={open} onClose={onClose} title={`New ${noun}`} size="sm">
+    <RecordFormModal open={open} onClose={onClose} title={`New ${noun}`}>
       <form onSubmit={submit} className="space-y-3">
         <label className="block">
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Name</span>
           <input value={name} onChange={(e) => setName(e.target.value)} autoFocus className="input" />
         </label>
-        <div className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{fp.label("manufacturer", "Manufacturer")}</span>
-          <UsedValueInput kind={instance ? `${instance}:item` : ENTITY_KIND} field="manufacturer" label={fp.label("manufacturer", "Manufacturer")} value={manufacturer} onCommit={(v) => setManufacturer(v ?? "")} live />
-        </div>
-        <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Type / category</span>
-          <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder='e.g. "Appliance", "Hand tool"' className="input" />
-        </label>
-        <LocationTreePicker
-          label="Location"
-          value={locationId}
-          onChange={setLocationId}
-        />
+        <FieldPack items={[
+          {
+            need: fieldNeed("manufacturer", { control: "text", label: fp.label("manufacturer", "Manufacturer") }),
+            node: (
+              <div className="block">
+                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{fp.label("manufacturer", "Manufacturer")}</span>
+                <UsedValueInput kind={instance ? `${instance}:item` : ENTITY_KIND} field="manufacturer" label={fp.label("manufacturer", "Manufacturer")} value={manufacturer} onCommit={(v) => setManufacturer(v ?? "")} live />
+              </div>
+            ),
+          },
+          {
+            need: fieldNeed("category", { control: "text", label: "Type / category" }),
+            node: (
+              <label className="block">
+                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Type / category</span>
+                <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder='e.g. "Appliance", "Hand tool"' className="input" />
+              </label>
+            ),
+          },
+          {
+            need: fieldNeed("location", { control: "picker", label: "Location" }),
+            node: (
+              <LocationTreePicker
+                label="Location"
+                value={locationId}
+                onChange={setLocationId}
+              />
+            ),
+          },
+        ]} />
         <div className="flex items-center justify-end gap-2 pt-2 border-t border-line dark:border-slate-700">
           <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition">
             Cancel
@@ -989,7 +1018,7 @@ function NewAssetModal({
           </button>
         </div>
       </form>
-    </Modal>
+    </RecordFormModal>
   );
 }
 

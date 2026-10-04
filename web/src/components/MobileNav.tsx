@@ -12,7 +12,7 @@
 // descendants, so an in-header panel would be clipped. Same trick
 // the ModuleNav popover uses.
 
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { useNavPointer } from "../lib/navPointer";
 import { createPortal } from "react-dom";
 import { dismissOnEmptySpace } from "../lib/dismiss-on-empty";
@@ -45,24 +45,6 @@ function ChildDot() {
   return <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-moss-300 dark:bg-moss-200" />;
 }
 
-/** How many rows the menu's two columns hold before the More apps door: Home,
- *  search, and every top with what sits under it. The door fills the free
- *  cell beside the last row when there is one, and takes the whole width when
- *  there is not, so the menu never ends on a half row with a hole beside it
- *  (#4374). Pure, for the test. */
-export function menuRowsBefore(
-  tops: ReadonlyArray<{ name: string }>,
-  childrenByParent: ReadonlyMap<string, readonly unknown[]>,
-  _instanceGroups: ReadonlyMap<string, { members: readonly unknown[] }>,
-  leading: number,
-): number {
-  let n = leading;
-  for (const t of tops) {
-    n += 1 + (t.name.startsWith(NAVGROUP_PREFIX) ? 0 : (childrenByParent.get(t.name)?.length ?? 0));
-  }
-  return n;
-}
-
 export function MobileNav() {
   const { activeOrg, activeSlug } = useActiveOrg();
   const { tops, childrenByParent, instanceGroups } = useNavModules(activeSlug);
@@ -74,7 +56,6 @@ export function MobileNav() {
   const appMode = !!activeOrg?.app_mode;
   const visibleTops = surfaceTops(tops, appMode);
   const rowCandidates = visibleTops.flatMap((t) => instanceGroups.get(t.name)?.members ?? (t.name.startsWith("__instance__") ? [t] : []));
-  const moreAppsSpans = menuRowsBefore(visibleTops, childrenByParent, instanceGroups, appMode ? 0 : 2) % 2 === 0;
   const badges = useNavBadges(activeSlug);
   const pendingShares = usePendingAiShares(activeSlug, activeOrg?.role === "owner");
   const { logout, user } = useAuth();
@@ -119,21 +100,46 @@ export function MobileNav() {
     setOpen(false);
   }
 
-  // FIXED height + no wrapping. The two columns are independent flows, so their
-  // rules only stay in step if every row is exactly the same height - and the
-  // moment one label wrapped to a second line ("Digital Fabrication" once the
-  // `instance` badge was taking width), everything below it in that column
-  // slipped out of step with the other (reported 2026-08-11). A fixed height
-  // with truncation makes that unrepresentable rather than merely fixed today:
-  // no label, badge or future addition can push a row onto two lines.
   const linkClass =
-    "flex h-11 items-center gap-2 px-4 text-sm border-b border-line dark:border-slate-800 " +
+    "flex min-h-11 h-full min-w-0 items-center gap-2 px-3 text-sm " +
     "text-content dark:text-mortar-100 active:bg-subtle dark:active:bg-slate-800 transition";
-  // A child of an instance group. The dot plus the group heading above it say
-  // "belongs to Machines" on their own, which is why the rows no longer spell
-  // out "instance" - the layout was already carrying it.
-  const childClass =
-    linkClass + " w-full text-left pl-7 text-muted dark:text-slate-400";
+  const standaloneLinkClass = linkClass + " border-b border-line dark:border-slate-800";
+  const childClass = linkClass + " w-full text-left pl-6 text-muted dark:text-slate-400";
+  const entries: MenuEntry[] = [];
+  if (!appMode) {
+    entries.push({ key: "home", content: <NavLink to="/" end className={linkClass} onClick={() => setOpen(false)}>Home</NavLink> });
+    entries.push({ key: "search", content: <NavLink to="/search" className={linkClass} onClick={() => setOpen(false)}>Search</NavLink> });
+  }
+  for (const m of visibleTops) {
+    if (m.name.startsWith(NAVGROUP_PREFIX)) {
+      const group = instanceGroups.get(m.name);
+      if (group) entries.push({ key: m.name, content: <NavSplitRow slug={activeSlug} group={group} candidates={rowCandidates} appMode={appMode} plain onNavigate={() => setOpen(false)} /> });
+      continue;
+    }
+    const isHeading = m.name.startsWith("__heading__");
+    entries.push({ key: m.name, fullWidth: isHeading, content: isHeading ? (
+      <div className="flex min-h-11 h-full items-center px-3 text-faint dark:text-slate-500 uppercase text-[10px] font-mono tracking-widest">{m.displayName}</div>
+    ) : (
+      <div className="flex h-full min-w-0 items-stretch">
+        <NavLink to={navTargetFor(m.name, appMode)} className={linkClass + " flex-1"} onClick={() => setOpen(false)}>
+          <span className="truncate">{m.displayName}</span>
+          {pointed === m.displayName && <NewInNav />}
+          <NavCountBadge count={badges.get(m.name)} label={m.displayName} className="ml-auto" />
+        </NavLink>
+        {m.name.startsWith("__instance__") && <NavRowMenu slug={activeSlug} label={m.displayName} members={[m]} candidates={rowCandidates} className="flex w-7 items-center justify-center" />}
+      </div>
+    ) });
+    for (const k of childrenByParent.get(m.name) ?? []) {
+      const isInstance = k.name.startsWith("__instance__");
+      const to = isInstance ? navTargetFor(k.name, appMode) : isHeading ? `/${k.name}` : `/${m.name}?lens=${k.name}`;
+      entries.push({ key: k.name, content: <button type="button" onClick={() => go(to)} className={childClass}>
+        <ChildDot />
+        <span className="truncate">{k.displayName}</span>
+        {!isInstance && !isHeading && <span className="shrink-0 text-[10px] font-mono text-faint">lens</span>}
+      </button> });
+    }
+  }
+  if (!appMode) entries.push({ key: "more-apps", fullWidth: true, content: <MoreAppsDoor plain onNavigate={() => setOpen(false)} className={linkClass} /> });
   // One cell of the pinned account footer. min-w-0 + flex-1 so five of them
   // share a 393px phone evenly without any one pushing the row wide.
   const footItem =
@@ -152,6 +158,7 @@ export function MobileNav() {
           }
           setOpen((o) => !o);
         }}
+        title={open ? "Close menu" : "Open menu"}
         aria-label={open ? "Close menu" : "Open menu"}
         aria-expanded={open}
         data-tour="menu"
@@ -220,6 +227,7 @@ export function MobileNav() {
                 <button
                   type="button"
                   onClick={() => setOpen(false)}
+                  title="Close menu"
                   aria-label="Close menu"
                   className="text-faint hover:text-accent transition p-1"
                 >
@@ -234,123 +242,7 @@ export function MobileNav() {
                 className="flex-1 overflow-y-auto"
                 onClick={dismissOnEmptySpace(() => setOpen(false))}
               >
-              {/* TWO COLUMNS, for the destinations only.
-                  A workspace with a normal number of modules ran this list past
-                  the bottom of the screen: measured at 19 items it was 855px of
-                  content, which overflows an iPhone 13 by 62px and an SE by
-                  239px, so six destinations sat below the fold behind a scroll
-                  nobody knows to do (reported 2026-08-11: "the mobile hamburger
-                  nav goes off page, could do 2 cols if properly laid out").
-
-                  CSS columns rather than a grid, because the list is not flat:
-                  a parent and its indented lenses/instances are one <div>, and
-                  `break-inside-avoid` keeps each of those groups whole inside a
-                  single column. A grid would have split a parent from its
-                  children across the gutter, which is the "properly laid out"
-                  part of the ask.
-
-                  The ACCOUNT rows below stay one column on purpose — they carry
-                  ml-auto badges (unread count, update dots) that need the full
-                  width to right-align against, and they are five fixed rows
-                  rather than the part that grows. */}
-              <div className="columns-2 gap-x-0 [&>*]:break-inside-avoid [&_a]:px-3 [&_button]:px-3 [&_.pl-8]:pl-6">
-              {!appMode && (
-              <NavLink to="/" end className={linkClass} onClick={() => setOpen(false)}>
-                home
-              </NavLink>
-              )}
-
-              {/* The phone header carries a search icon too
-                  (PhoneHeaderShortcuts); this row stays for anyone who looks
-                  for search in the menu. */}
-              {!appMode && (
-              <NavLink to="/search" className={linkClass} onClick={() => setOpen(false)}>
-                search
-              </NavLink>
-              )}
-
-              {visibleTops.map((m) => {
-                if (m.name.startsWith(NAVGROUP_PREFIX)) {
-                  const g = instanceGroups.get(m.name);
-                  if (!g) return null;
-                  return <div key={m.name} className="h-11"><NavSplitRow slug={activeSlug} group={g} candidates={rowCandidates} appMode={appMode} onNavigate={() => setOpen(false)} /></div>;
-                }
-                const kids = childrenByParent.get(m.name) ?? [];
-                const isHeading = m.name.startsWith("__heading__");
-                return (
-                  <div key={m.name}>
-                    {isHeading ? (
-                      // A heading has no page — just a section label above
-                      // its members. `leading-5` matches text-sm's line box:
-                      // without it a 10px label made a SHORTER row than a
-                      // normal link, so from there down the left column's rules
-                      // stopped lining up with the right column's (the two
-                      // columns are independent flows, and only equal row
-                      // heights keep their borders in step).
-                      <div className={linkClass + " leading-5 text-faint dark:text-slate-500 uppercase text-[10px] font-mono tracking-widest"}>
-                        {m.displayName}
-                      </div>
-                    ) : (
-                      <div className="flex min-w-0 items-center"><NavLink
-                        to={navTargetFor(m.name, appMode)}
-                        className={linkClass + " min-w-0 flex-1"}
-                        onClick={() => setOpen(false)}
-                      >
-                        <span className="truncate">{m.displayName}</span>
-                        {pointed === m.displayName && <NewInNav />}
-                        {/* The one badge a destination row carries. It fits the
-                            fixed row height, and ml-auto keeps it off the label
-                            so a long name still truncates before the number. */}
-                        <NavCountBadge count={badges.get(m.name)} label={m.displayName} className="ml-auto" />
-                      </NavLink>{m.name.startsWith("__instance__") && <NavRowMenu slug={activeSlug} label={m.displayName} members={[m]} candidates={rowCandidates} />}</div>
-                    )}
-                    {kids.map((k) => {
-                      const isInstance = k.name.startsWith("__instance__");
-                      const to = isInstance
-                        ? navTargetFor(k.name, appMode)
-                        : isHeading
-                          ? `/${k.name}`
-                          : `/${m.name}?lens=${k.name}`;
-                      // "instance" is gone: the dot and the heading above it
-                      // already say this belongs to the parent. A LENS is a
-                      // different thing (a filtered view of the parent rather
-                      // than a table of its own) with no other signal for it,
-                      // so that one keeps its word - it cannot cost a second
-                      // line now that the row is a fixed height.
-                      const badge = isInstance || isHeading ? "" : "lens";
-                      return (
-                        <button
-                          key={k.name}
-                          type="button"
-                          onClick={() => go(to)}
-                          className={childClass}
-                        >
-                          <ChildDot />
-                          <span className="truncate">{k.displayName}</span>
-                          {badge && (
-                            <span className="shrink-0 text-[10px] font-mono text-faint">
-                              {badge}
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                );
-              })}
-              {!appMode && (
-                // A row's height, so the two columns keep their rules in step,
-                // and the whole width when it would otherwise sit alone.
-                <div
-                  data-testid="menu-more-apps"
-                  data-spans={moreAppsSpans ? "" : undefined}
-                  className={"flex h-11 items-center px-2 border-b border-line dark:border-slate-800" + (moreAppsSpans ? " [column-span:all]" : "")}
-                >
-                  <MoreAppsDoor onNavigate={() => setOpen(false)} />
-                </div>
-              )}
-
-              </div>
+              <MenuGrid entries={entries} />
 
               {/* The label queue's count rides on the Labels row as a badge
                   (nav.count). This row is for a person who took Labels out of
@@ -362,7 +254,7 @@ export function MobileNav() {
                   orgSlug={activeSlug}
                   getToken={getToken}
                   asRow
-                  rowClassName={linkClass + " flex items-center gap-2"}
+                  rowClassName={standaloneLinkClass}
                   onNavigate={() => setOpen(false)}
                 />
               )}
@@ -375,7 +267,7 @@ export function MobileNav() {
               {!appMode && (
                 <CommunityLinks
                   user={user}
-                  itemClassName={linkClass}
+                  itemClassName={standaloneLinkClass}
                   onNavigate={() => setOpen(false)}
                   heading={<div className="mt-2 px-4 pt-2 border-t border-line dark:border-slate-800 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">{COMMUNITY_HEADING}</div>}
                 />
@@ -486,4 +378,30 @@ function NewInNav() {
       New
     </span>
   );
+}
+
+type MenuEntry = { key: string; content: ReactNode; fullWidth?: boolean };
+
+function MenuGrid({ entries }: { entries: MenuEntry[] }) {
+  const rows: MenuEntry[][] = [];
+  let pair: MenuEntry[] = [];
+  for (const entry of entries) {
+    if (entry.fullWidth) {
+      if (pair.length) rows.push(pair);
+      rows.push([entry]);
+      pair = [];
+    } else {
+      pair.push(entry);
+      if (pair.length === 2) { rows.push(pair); pair = []; }
+    }
+  }
+  if (pair.length) rows.push(pair);
+  return <div data-testid="menu-grid" className="grid grid-cols-2">
+    {rows.map((row) => <div key={row[0]!.key} data-menu-row className="col-span-2 grid grid-cols-subgrid border-b border-line dark:border-slate-800">
+      {row.map((entry) => <div key={entry.key} data-testid={entry.key === "more-apps" ? "menu-more-apps" : undefined} className={"min-h-11 min-w-0" + (entry.fullWidth ? " col-span-2" : "")}>
+        {entry.content}
+      </div>)}
+      {row.length === 1 && !row[0]!.fullWidth && <div aria-hidden="true" className="min-h-11 min-w-0" />}
+    </div>)}
+  </div>;
 }

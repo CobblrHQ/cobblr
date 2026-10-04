@@ -366,6 +366,18 @@ export const GENERATED_SURFACE: Capability[] = [
     ]
   },
   {
+    "feature": "Record actions",
+    "does": "Arrange action menus, choose primary actions and hide actions for each kind of record.",
+    "where": "/configuration/record-actions",
+    "also": [
+      "menus",
+      "buttons",
+      "pin",
+      "groups",
+      "toolbar"
+    ]
+  },
+  {
     "feature": "Scan rules",
     "does": "Teach the scanner to read labels printed by another app, so an existing barcode resolves to the right record here.",
     "where": "/configuration/scan-rules",

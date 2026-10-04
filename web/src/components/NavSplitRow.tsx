@@ -7,7 +7,7 @@ import { joinNavRow, splitNavRow } from "../lib/nav-order";
 import { navTargetFor, stripNavStem } from "./useNavModules";
 
 export type RowCollection = { name: string; displayName: string };
-export function NavRowMenu({ slug, label, members, candidates }: { slug: string; label: string; members: RowCollection[]; candidates: RowCollection[] }) {
+export function NavRowMenu({ slug, label, members, candidates, className = "" }: { className?: string; slug: string; label: string; members: RowCollection[]; candidates: RowCollection[] }) {
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const [joining, setJoining] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -21,7 +21,7 @@ export function NavRowMenu({ slug, label, members, candidates }: { slug: string;
   }, [pos]);
   const choices = candidates.filter((c) => !members.some((m) => m.name === c.name));
   return <>
-    <button ref={trigger} type="button" aria-label={`Arrange ${label}`} aria-expanded={!!pos} className="shrink-0 p-1 text-muted dark:text-slate-400 hover:text-accent" onClick={() => {
+    <button ref={trigger} type="button" aria-label={`Arrange ${label}`} aria-expanded={!!pos} className={"shrink-0 p-1 text-muted dark:text-slate-400 hover:text-accent " + className} onClick={() => {
       const rect = trigger.current?.getBoundingClientRect();
       setJoining(false);
       setPos(pos || !rect ? null : { left: rect.left, top: rect.bottom });
@@ -37,14 +37,14 @@ export function NavRowMenu({ slug, label, members, candidates }: { slug: string;
     </PopoverLayer>, document.body)}
   </>;
 }
-export function NavSplitRow({ slug, group, candidates, appMode = false, onNavigate, handle = {} }: { slug: string; group: { label: string; members: RowCollection[] }; candidates: RowCollection[]; appMode?: boolean; onNavigate?: () => void; handle?: Record<string, unknown> }) {
+export function NavSplitRow({ slug, group, candidates, appMode = false, onNavigate, handle = {}, plain = false }: { plain?: boolean; slug: string; group: { label: string; members: RowCollection[] }; candidates: RowCollection[]; appMode?: boolean; onNavigate?: () => void; handle?: Record<string, unknown> }) {
   const label = group.label || "Collections";
-  return <div role="group" aria-label={`${label} navigation row`} className="flex min-w-0 items-center rounded border border-line dark:border-slate-700">
-    <span {...handle} title={label} className="min-w-0 truncate pl-2 text-[10px] font-mono uppercase text-faint dark:text-slate-500">{group.label || "⋮"}</span>
-    {group.members.map((mem, i) => <span key={mem.name} className="flex shrink-0 items-center">
+  return <div role="group" aria-label={`${label} navigation row`} className={"flex min-w-0 items-center " + (plain ? "min-h-11 h-full pl-3 gap-0.5" : "rounded border border-line dark:border-slate-700")}>
+    <span {...handle} title={label} className={"min-w-0 truncate text-[10px] font-mono uppercase text-faint dark:text-slate-500 " + (plain ? "" : "pl-2")}>{group.label || "⋮"}</span>
+    {group.members.map((mem, i) => <span key={mem.name} className={plain ? "flex min-w-0 items-center" : "flex shrink-0 items-center"}>
       {i > 0 && <span aria-hidden className="text-faint dark:text-slate-500">|</span>}
-      <NavLink to={navTargetFor(mem.name, appMode)} aria-label={stripNavStem(mem.displayName, group.label)} onClick={onNavigate} className={({ isActive }) => "whitespace-nowrap px-1.5 py-2 text-sm transition " + (isActive ? "text-accent font-semibold bg-subtle dark:bg-slate-800" : "text-muted dark:text-slate-400 hover:text-accent")}>{stripNavStem(mem.displayName, group.label)}</NavLink>
+      <NavLink to={navTargetFor(mem.name, appMode)} aria-label={stripNavStem(mem.displayName, group.label)} onClick={onNavigate} className={({ isActive }) => (plain ? "min-w-0 truncate px-1 py-2 text-sm transition " : "whitespace-nowrap px-1.5 py-2 text-sm transition ") + (isActive ? "text-accent font-semibold bg-subtle dark:bg-slate-800" : "text-muted dark:text-slate-400 hover:text-accent")}>{stripNavStem(mem.displayName, group.label)}</NavLink>
     </span>)}
-    <NavRowMenu slug={slug} label={label} members={group.members} candidates={candidates} />
+    <NavRowMenu slug={slug} label={label} members={group.members} candidates={candidates} className={plain ? "ml-auto flex w-7 self-stretch items-center justify-center" : ""} />
   </div>;
 }

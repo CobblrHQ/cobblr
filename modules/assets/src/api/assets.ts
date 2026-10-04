@@ -62,6 +62,17 @@ const AssetUpdate = AssetCreate.partial();
 /** The kind these rows are: an instance's items, or plain assets. */
 const kindOf = (req: Parameters<typeof instanceOf>[0]): string => (instanceOf(req) === "assets" ? "assets:asset" : `${instanceOf(req)}:item`);
 
+// AI-REACH: exempt — dashboard-only aggregate; Cobb reads the register.
+assetsRouter.get("/dashboard", asyncHandler(async (req, res) => {
+  const db = tenantDb(req);
+  const rows = await db.selectFrom("assets_assets")
+    .select(["state", sql<number>`count(*)::int`.as("total")])
+    .where("instance", "=", instanceOf(req))
+    .where("archived_at", "is", null)
+    .groupBy("state").orderBy("state").execute();
+  res.json({ total: rows.reduce((n, r) => n + r.total, 0), states: rows.map((r) => ({ state: r.state, count: r.total })) });
+}));
+
 assetsRouter.get(
   "/",
   asyncHandler(async (req, res) => {

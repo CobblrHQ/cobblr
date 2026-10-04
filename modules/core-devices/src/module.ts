@@ -12,7 +12,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-devices",
-  version: "0.2.6",
+  version: "0.2.7",
   displayName: "Devices",
   description:
     "Connect a scale, a reader or another device to the thing it measures, in one place.",
@@ -29,6 +29,11 @@ export default defineModule({
 
   dependencies: [],
 
+  contributes: { panels: [{
+    // DELIBERATELY universal: a sensor can measure any record; its kind does not restrict the attachment.
+    id: "core-devices:readings", surface: "entity-detail-panel", target: "*", title: "Sensor readings",
+  }] },
+
   provides: {
     entityKinds: [],
   },
@@ -38,6 +43,7 @@ export default defineModule({
     // the ingest path's link resolution — turns these into entity actions.
     events: [
       "core-devices.device.reading",
+      "core-devices.record.reading",
       "core-devices.device.scanned",
       "core-devices.device.counted",
       // The actuator ack (moved here from digifab.command.sent).
@@ -46,9 +52,11 @@ export default defineModule({
       // watches connections keeps its watch-list from (#3034).
       "core-devices.connection.changed",
     ],
+    eventPayloads: { "core-devices.record.reading": ["orgId", "connection", "device", "entityKind", "entityId", "value", "unit", "at"] },
     actions: [
       {
         // NO-PHRASING: fires on a DEVICE reading and self-locates the entity; nobody asks for it, they ask for what it does to the thing
+        group: "more",
         id: "core-devices:apply-to-linked-entity",
         label: "Apply a device event to its linked entity",
         description:
@@ -62,6 +70,7 @@ export default defineModule({
         userInvokable: false,
       },
       {
+        group: "more",
         id: "core-devices:run-command",
         examples: ["open the valve for 30 seconds", "send that command to the controller"],
         label: "Run a device command",

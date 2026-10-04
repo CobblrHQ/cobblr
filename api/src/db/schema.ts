@@ -952,6 +952,8 @@ export interface EntityCommandsTable {
 }
 
 export interface EntityActionsTable {
+  action_group: string | null;
+  is_primary: Generated<boolean>;
   id: string;
   module_name: string;
   label: string;
@@ -1337,6 +1339,14 @@ export interface FeedbackTable {
   /** Per-channel outcome of the LAST reply we sent (20260821-106). Null for an
    *  item nobody has replied to, or one replied to before the column existed. */
   reply_delivery: DeliveryOutcomes | null;
+  /** Can anyone be reached about this item (20261004-197)? False for an
+   *  anonymous sandbox guest with no contact address. Decided where the item is
+   *  written (feedback-reachability.ts); every surface reads it. */
+  reachable: Generated<boolean>;
+  unreachable_reason: string | null;
+  /** An address a sandbox visitor chose to leave, and when they agreed. */
+  contact_email: string | null;
+  contact_consented_at: Date | null;
   origin_ref: {
     channel_id: string;
     thread_id: string;
@@ -1674,7 +1684,12 @@ export interface TidySuppressionsTable {
 export interface TidyRouteCacheTable {
   org_id: string; record_key: string; fingerprint: string; result: unknown;
 }
+export interface RecordActionLayoutsTable { org_id: string; entity_kind: string; state: Generated<unknown>; revision: Generated<number> }
+export interface RecordActionPinsTable { org_id: string; user_id: string; entity_kind: string; state: Generated<unknown> }
+
 export interface MetaDB {
+  record_action_layouts: RecordActionLayoutsTable;
+  record_action_pins: RecordActionPinsTable;
   tidy_suggestions: TidySuggestionsTable;
   tidy_suppressions: TidySuppressionsTable;
   tidy_route_cache: TidyRouteCacheTable;

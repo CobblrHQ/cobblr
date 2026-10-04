@@ -54,6 +54,19 @@ const MachineCreate = z.object({
 const MACHINE_NATIVE_KEYS = new Set(Object.keys(MachineCreate.shape));
 const MachineUpdate = MachineCreate.partial();
 
+// AI-REACH: exempt — dashboard-only aggregate; Cobb reads the register.
+machinesRouter.get("/dashboard", asyncHandler(async (req, res) => {
+  const db = tenantDb(req);
+  const units = await unitIdsIn(db, tenantContext(req).org.id, instanceOf(req));
+  const rows = await db.selectFrom("machines_machines")
+    .select(["state", sql<number>`count(*)::int`.as("total")])
+    .where("instance", "=", instanceOf(req))
+    .$if(units.length > 0, (q) => q.where("id", "not in", units))
+    .where(sql<boolean>`lower(coalesce(state, '')) not in (${sql.join([...GONE_STATES])})`)
+    .groupBy("state").orderBy("state").execute();
+  res.json({ total: rows.reduce((n, r) => n + r.total, 0), states: rows.map((r) => ({ state: r.state, count: r.total })) });
+}));
+
 machinesRouter.get(
   "/",
   asyncHandler(async (req, res) => {

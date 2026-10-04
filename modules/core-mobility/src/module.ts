@@ -94,6 +94,7 @@ export default defineModule({
       {
         // NO-PHRASING: recomputes a flag from an update delta; it is bookkeeping
         // after a move, not something anybody asks for
+        group: "more",
         id: "core-mobility:recompute-away",
         undoable: true,
         label: "Recompute away-from-home",
@@ -106,6 +107,7 @@ export default defineModule({
       },
       {
         // NO-PHRASING: the way back for another action, run only from Undo
+        group: "more",
         id: "core-mobility:set-away-since",
         internal: true,
         label: "Set the away stamp",
@@ -122,6 +124,7 @@ export default defineModule({
         },
       },
       {
+        group: "more",
         id: "core-mobility:return-home",
         examples: ["it is back home", "put it back where it lives"],
         undoable: true,

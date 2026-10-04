@@ -42,6 +42,7 @@ export default defineModule({
     actions: [
       {
         // NO-PHRASING: the way back for another action, run only from Undo
+        group: "more",
         id: "core-units:remove-unit",
         internal: true,
         label: "Remove a unit",
@@ -61,6 +62,7 @@ export default defineModule({
         // — the labels:set-code pattern. Purely additive: a new code never
         // rewrites a value already stored against a different one.
         // UI-SCREEN: /configuration/units
+        group: "more",
         id: "core-units:add-unit",
         examples: ["we measure yarn in balls", "add a fathom unit"],
         undoable: true,

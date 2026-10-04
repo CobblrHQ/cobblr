@@ -31,6 +31,7 @@ interface ResolveResult {
   status: "active" | "revoked" | "expired" | "not_found";
   org_slug?: string;
   entity_kind?: string;
+  entity_id?: string;
   mode?: "navigate" | "action";
   detail_path?: string;
   join?: { token: string; org_name: string };
@@ -116,6 +117,9 @@ export function QrResolvePage() {
           return;
         }
         if (body.mode === "navigate" && body.detail_path) {
+          if (body.org_slug && body.entity_kind && body.entity_id && getToken()) {
+            await api.requestLight(body.org_slug, { kind: body.entity_kind, id: body.entity_id }, "label-scanned").catch(() => undefined);
+          }
           // The whole point: a scanned label lands on the thing it's
           // stuck to. replace() keeps the token URL out of history so
           // Back doesn't bounce through the resolver.

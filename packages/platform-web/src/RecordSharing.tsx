@@ -1,3 +1,4 @@
+import { RecordActionItem } from "./RecordActionContributions";
 // Who a record is shared with, on its own page (docs/design-decisions/share-spaces.md §9).
 //
 // When this workspace shares its things with someone, a record says which
@@ -58,16 +59,16 @@ export function RecordSharing({ kind, id, className }: { kind: string; id: strin
   return (
     <>
       {(q.data?.shared_with ?? []).map((t) => (
-        <span key={t.link_id} data-testid="record-shared-with" className={`order-last inline-flex items-center gap-1 rounded border border-line bg-subtle px-2 py-1 text-xs text-content dark:border-slate-600 ${className ?? ""}`}>
+        <RecordActionItem key={t.link_id} id={`record:stop-sharing:${t.link_id}`} group="share" label={`Stop sharing with ${t.to}`} description="Remove this record from their share." badge={t.to}><span data-testid="record-shared-with" className={`order-last inline-flex items-center gap-1 rounded border border-line bg-subtle px-2 py-1 text-xs text-content dark:border-slate-600 ${className ?? ""}`}>
           <Share2 size={12} aria-hidden className="text-muted" />
           Shared with {t.to}
           <button type="button" disabled={busy} data-testid="record-stop-sharing" onClick={() => void run("platform:stop-sharing", t.link_id)} className="ml-1 text-muted underline-offset-2 hover:text-accent hover:underline">
             Stop
           </button>
-        </span>
+        </span></RecordActionItem>
       ))}
       {others.length > 0 &&
-        (choosing && others.length > 1 ? (
+        <RecordActionItem id="record:share-with" group="share" label="Share with…" description="Choose someone who can see this record.">{(choosing && others.length > 1 ? (
           <span className={`order-last inline-flex flex-wrap items-center gap-1 ${className ?? ""}`}>
             {others.map((t) => (
               <button key={t.link_id} type="button" disabled={busy} data-testid="record-share-with-who" onClick={() => void run("platform:share-with", t.link_id)} className={chip}>
@@ -86,7 +87,7 @@ export function RecordSharing({ kind, id, className }: { kind: string; id: strin
             <Share2 size={12} aria-hidden />
             {others.length === 1 ? `Share with ${others[0]!.to}` : "Share with…"}
           </button>
-        ))}
+        ))}</RecordActionItem>}
     </>
   );
 }

@@ -22,6 +22,7 @@ import { metaPool } from "./db/meta.js";
 import { tenantPoolStats } from "./db/tenant.js";
 import { poolCounts } from "./db/pool-stats.js";
 import { errors5xxRecent, noteResponse } from "./platform/error-rate.js";
+import { outboundReport, outboundSnapshot } from "./platform/outbound-reach.js";
 import compression from "compression";
 import cors from "cors";
 import express, { type Application, type Router } from "express";
@@ -254,9 +255,16 @@ export function createApp(): AppHandles {
     // Asked only of a database that just answered: a starving pool must not
     // make this reply wait a second time (#3033).
     const shims = dbOk ? await healShimRuns() : null;
+    const outbound = outboundSnapshot();
     res.json({
       ok: true,
       db_ok: dbOk,
+      // Can it reach what it is configured to call (#4847): DNS and the
+      // captcha, resolver, BIdb and identity hosts it uses. The last minute's
+      // answer, never waited for here; null until the first one is in.
+      // /readyz is the version a monitor polls: 503 when any is out.
+      outbound_ok: outbound ? outbound.every((o) => o.ok) : null,
+      outbound,
       pools,
       migrations_pending: pending,
       // Pairs whose ledger a declared shared-database peer has taken past
@@ -321,6 +329,28 @@ export function createApp(): AppHandles {
       registry: externalRegistry(),
       catalog_bundles: listFlagshipManifests("all").length,
       time: new Date().toISOString(),
+    });
+  });
+
+  // Ready to serve people, not only up (#4847): the database answers and every
+  // outbound dependency this deployment is configured to use resolves and
+  // connects. 503 with what is out otherwise. A monitor polls this; /healthz
+  // stays the deploy readers' always-200 report. After a power cut try's api
+  // had no DNS, signups failed on the captcha, and /healthz said 200.
+  v1.get("/readyz", async (_req, res) => {
+    let dbOk = true;
+    try {
+      await metaPool.query("select 1");
+    } catch {
+      dbOk = false;
+    }
+    const outbound = await outboundReport();
+    const down = outbound.filter((o) => !o.ok);
+    res.status(dbOk && !down.length ? 200 : 503).json({
+      ready: dbOk && !down.length,
+      db_ok: dbOk,
+      outbound_down: down.map((o) => ({ name: o.name, host: o.host, error: o.error })),
+      checked: outbound.map((o) => o.name),
     });
   });
 

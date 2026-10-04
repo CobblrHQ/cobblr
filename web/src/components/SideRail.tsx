@@ -317,6 +317,7 @@ export function SideRail({
                 type="button"
                 onClick={() => setOpen(false)}
                 className="text-faint hover:text-content dark:hover:text-mortar-200 transition"
+                title="Close"
                 aria-label="Close"
               >
                 <X size={18} />

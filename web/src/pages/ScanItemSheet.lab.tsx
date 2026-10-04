@@ -14,11 +14,14 @@ import { CheckCircle, Download } from "lucide-react";
 import * as copy from "@cobblr/platform-contract/scan-copy";
 import { SHEET_ACTION_CLASS, SheetActionLabel, ScanItemSheetFooter } from "./ScanItemSheet";
 
-const ACTION_WORDS: string[] = Object.entries(copy)
-  .filter(([k, v]) => k.startsWith("ACTION_") && typeof v === "string")
-  .map(([, v]) => v as string);
-
 const TABLES = ["Home Inventory", "Grandmother's sewing notions, buttons and trims"];
+
+const ACTION_WORDS: string[] = [
+  ...Object.entries(copy)
+    .filter(([k, v]) => k.startsWith("ACTION_") && typeof v === "string")
+    .map(([, v]) => v as string),
+  ...TABLES.map((t) => copy.actionInstallAdd(t)),
+];
 
 export interface SheetFooterLabState {
   name: string;
@@ -34,7 +37,7 @@ export function sheetFooterLabStates(): SheetFooterLabState[] {
   for (const w of ACTION_WORDS) {
     states.push({ name: `open: primary ${w}`, formOpen: true, primary: { label: w, busy: false } });
     states.push({ name: `open: primary ${w}, busy`, formOpen: true, primary: { label: w, busy: true } });
-    states.push({ name: `open: form's ${w}`, formOpen: true, slot: { label: w, install: w === copy.ACTION_INSTALL_ADD } });
+    states.push({ name: `open: form's ${w}`, formOpen: true, slot: { label: w, install: w.startsWith("Turn on ") } });
   }
   for (const t of TABLES) states.push({ name: `open: installing ${t}`, formOpen: true, slot: { label: `Installing ${t}…`, install: true } });
   return states;

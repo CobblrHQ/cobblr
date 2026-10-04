@@ -33,12 +33,18 @@ export interface SalesOrdersTable {
   customer_name: string | null;
   order_number: string | null;
   status: SalesOrderStatus;
+  paid: Generated<boolean>;
+  auto_closed_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
+  auto_close_undone: Generated<boolean>;
   order_date: ColumnType<Date | null, string | null | undefined, string | null | undefined>;
   fulfilled_at: ColumnType<Date | null, string | null | undefined, string | null | undefined>;
   carrier: string | null;
   tracking_number: string | null;
   shipped_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null | undefined>;
   shipping_address: string | null;
+  source_name: string | null;
+  source_ref: string | null;
+  source_url: string | null;
   notes: string | null;
   metadata: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown> | undefined>;
   instance: Generated<string>;

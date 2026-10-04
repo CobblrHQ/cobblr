@@ -6,11 +6,11 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, ExternalLink, QrCode, Ban, Globe } from "lucide-react";
+import { Copy, ExternalLink, QrCode, Ban, Globe, Download } from "lucide-react";
 import { ApiError, api, type QrToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
-import { useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
+import { useConfirm, useToast, usePageTitle, downloadBlob } from "@cobblr/platform-web";
 
 export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) {
   usePageTitle("QR codes");
@@ -34,6 +34,12 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
     },
     onError: (e: unknown) =>
       toast.error(e instanceof ApiError ? e.message : "Couldn't revoke"),
+  });
+
+  const download = useMutation({
+    mutationFn: (id: string) => api.downloadQrPng(activeSlug, id),
+    onSuccess: (blob, id) => downloadBlob(blob, `qr-${id}.png`),
+    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : "Couldn't download the QR image."),
   });
 
   const settings = useQuery({
@@ -272,6 +278,16 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
                   >
                     <ExternalLink size={14} />
                   </a>
+                  <button
+                    type="button"
+                    onClick={() => download.mutate(t.id)}
+                    disabled={download.isPending && download.variables === t.id}
+                    aria-label="Download QR PNG"
+                    title="Download QR PNG"
+                    className="text-faint hover:text-accent transition p-1 disabled:opacity-40"
+                  >
+                    <Download size={14} />
+                  </button>
                   {isAdmin && st === "active" && (
                     <button
                       onClick={async () => {

@@ -17,7 +17,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "builds",
-  version: "0.1.14",
+  version: "0.1.15",
   displayName: "Builds",
   description:
     "Describe what you make as a recipe of parts, see how many you could build right now and what runs out first, and take the parts from stock when you build one.",
@@ -89,6 +89,7 @@ export default defineModule({
     ],
     actions: [
       {
+        group: "make",
         id: "builds:build-one",
         examples: ["built one of those", "make two of these"],
         undoable: true,
@@ -105,6 +106,7 @@ export default defineModule({
       },
       {
         // NO-PHRASING: a wire target the good print verdict fires; nobody asks for it by name
+        group: "make",
         id: "builds:credit-output",
         label: "Count a build's output as made",
         description:
@@ -119,6 +121,7 @@ export default defineModule({
       },
       {
         // NO-PHRASING: a wire target the print verdict fires; nobody asks for it by name
+        group: "make",
         id: "builds:record-yield",
         label: "Record a print's good and scrap",
         description:
@@ -132,6 +135,7 @@ export default defineModule({
       {
         // NO-PHRASING: the door behind an order line's "Make this"; people ask the order, not builds
         // UI-REACH: a sales order line's "Make this" button plans it (sales POST /orders/:id/items/:itemId/make)
+        group: "make",
         id: "builds:plan-for",
         label: "Plan a work order for a part",
         description:
@@ -150,6 +154,7 @@ export default defineModule({
       {
         // NO-PHRASING: a read another module makes of its own work orders; nobody asks for it by name
         // UI-REACH: a sales order's lines show what is being made for them and how many are made (sales GET /orders/:id)
+        group: "make",
         id: "builds:work-orders-for",
         label: "Work orders made for a record",
         description:
@@ -163,6 +168,7 @@ export default defineModule({
         userInvokable: false,
       },
       {
+        group: "make",
         id: "builds:reverse-one",
         examples: ["that build failed", "undo the last build"],
         undoable: true,

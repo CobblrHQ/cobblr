@@ -9,6 +9,8 @@ import type { ActionArgSpec } from "@cobblr/platform-contract/action-args";
 /** An action this record would have if a module that is off here were on:
  *  shown as a door to that module, never as a button that runs (#3883). */
 export interface PlatformDormantAction {
+  group?: string | null;
+  primary?: boolean;
   id: string;
   label: string;
   description: string | null;
@@ -18,6 +20,8 @@ export interface PlatformDormantAction {
 }
 
 export interface PlatformAction {
+  group?: string | null;
+  primary?: boolean;
   id: string;
   module_name: string;
   label: string;
@@ -36,6 +40,8 @@ export interface PlatformAction {
 }
 
 export interface PlatformActionBinding {
+  group?: string | null;
+  primary?: boolean;
   binding_id: string;
   action_id: string;
   template: string | null;
@@ -183,6 +189,8 @@ export interface PlatformWebApi {
    *  the faces row uses it to turn a face on. */
   upsertOverride?(slug: string, body: { target_kind: "instance" | "entity_kind" | "bundle"; target_id: string; config?: Record<string, unknown> }): Promise<unknown>;
   listActions(slug: string, kind: string): Promise<{
+    layout?: import("@cobblr/platform-contract/action-groups").RecordActionLayout;
+    pins?: import("@cobblr/platform-contract/action-groups").RecordActionPins;
     items: PlatformAction[];
     bindings: PlatformActionBinding[];
     /** What an off module would add here; a host that omits it shows none. */
@@ -191,6 +199,7 @@ export interface PlatformWebApi {
      *  back (its writer retires and unretires). */
     lifecycle?: boolean;
   }>;
+  setRecordActionPin?(slug: string, kind: string, action: string, pinned: boolean): Promise<unknown>;
   /** Turn a module on for the workspace (an owner's or admin's act). Optional:
    *  a host without it offers the ask instead. */
   enableModule?(slug: string, module: string): Promise<unknown>;
@@ -210,6 +219,7 @@ export interface PlatformWebApi {
     },
   ): Promise<{ ok: boolean; result: unknown; undo?: unknown; affected?: { kinds: string[]; entity?: { kind: string; id: string } } }>;
   lookupEntity(slug: string, kind: string, id: string): Promise<PlatformResolvedEntity>;
+  requestLight?(slug: string, ref: { kind: string; id: string }, reason?: "shown" | "found" | "picked" | "put-away" | "label-scanned"): Promise<{ requested: boolean; place: string | null; note: string }>;
   /** Who this workspace can hand things to (its shares), and what it has
    *  handed over. Optional: a host without sharing offers no Give to. */
   listShareOffers?(slug: string): Promise<{ items: Array<{ id: string; direction: "out" | "in"; status: string; can_withdraw: boolean }>; targets: Array<{ link_id: string; to: string }> }>;

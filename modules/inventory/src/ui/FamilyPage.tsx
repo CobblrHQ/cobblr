@@ -1,3 +1,5 @@
+import { FilamentCatalog } from "./FilamentCatalog";
+import { SpoolmanModal } from "./SpoolmanModal";
 // A type collection and its things on one page (Filament: a card per filament
 // type, its spools as rows). The two tables stay underneath: a type is a
 // record of this collection, a spool a record of the child collection paired
@@ -15,7 +17,7 @@ import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MoreHorizontal } from "lucide-react";
-import { AmountControl, colorSwatch, PopoverLayer, Swatch, swatchFill, useConfirm, useEscapeToClose, useToast } from "@cobblr/platform-web";
+import { AmountControl, colorSwatch, PopoverLayer, Swatch, swatchFill, useConfirm, useEscapeToClose, useToast, useUnits } from "@cobblr/platform-web";
 import { countOf, pluralise, withArticle } from "@cobblr/platform-contract";
 import { InventoryProvider, useInventory } from "./context";
 import { BulkMoveToPlace } from "./BulkMoveToPlace";
@@ -47,6 +49,7 @@ export function thingSubline(t: Pick<FamilyThing, "qty" | "metadata">, place: st
 
 function ThingRow({ t, childInstance, childPath, place, highlighted, named, noun }: { t: FamilyThing; childInstance: string; childPath: string; place: string | null; highlighted: boolean; named?: boolean; noun: string }) {
   const { api, orgSlug, getToken } = useInventory();
+  const units = useUnits();
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
@@ -79,6 +82,7 @@ function ThingRow({ t, childInstance, childPath, place, highlighted, named, noun
         <span className="block truncate">{named ? t.name : (place ?? "No place set")}</span>
         <span className="block text-[11px] text-muted dark:text-slate-400 truncate" data-testid="family-thing-sub">
           {thingSubline(t, place, named, noun) || " "}
+          {t.material && <span className="block" data-testid="spool-use-summary">{fmt(t.material.used_g)} g used{t.material.remaining_m != null ? ` · ${fmt(t.material.remaining_m)} m left` : ""} · {t.material.jobs === 1 ? "1 linked use" : `${t.material.jobs} linked uses`}</span>}
         </span>
       </Link>
       <span className="inline-flex flex-wrap items-center gap-1.5">
@@ -89,7 +93,7 @@ function ThingRow({ t, childInstance, childPath, place, highlighted, named, noun
             onMoved={refresh}
           />
         </InventoryProvider>
-        <AmountControl qty={t.qty} unit={t.unit} label={t.name} onChange={change} />
+        {t.metadata.tracked_by ? <span className="text-xs text-muted">{units.format(t.qty, t.unit)} · {t.metadata.tracked_by === "firmware" ? "Firmware reports" : "External tracking"}</span> : <AmountControl qty={t.qty} unit={t.unit} label={t.name} onChange={change} />}
         <PopMenu label={`More for this ${noun}`} size="md">
           {(close) => (
             <>
@@ -378,7 +382,9 @@ function PopMenu({ label, children, size = "sm" }: { label: string; children: (c
 }
 
 export function FamilyPage({ childPath, tablePath }: { childPath: string; tablePath: string }) {
-  const { api } = useInventory();
+  const { api, instance } = useInventory();
+  const qc = useQueryClient();
+  const [spoolmanOpen, setSpoolmanOpen] = useState(false);
   const [params] = useSearchParams();
   const highlight = params.get("highlight");
   const [view, setView] = useState<View>("all");
@@ -413,6 +419,7 @@ export function FamilyPage({ childPath, tablePath }: { childPath: string; tableP
         <button type="button" onClick={() => setAdding({ type: null })} className="px-3 py-1.5 rounded-md text-sm bg-cobble-600 text-white">
           + {noun[0]!.toUpperCase() + noun.slice(1)}
         </button>
+        {instance === "filament-types" && <button type="button" onClick={() => setSpoolmanOpen(true)} className="rounded border border-line px-3 py-1.5 text-sm">Spoolman</button>}
         <MoreMenu childPath={childPath} tablePath={tablePath} noun={noun} typeNoun={typeNoun} />
       </div>
       <div className="flex flex-wrap gap-1.5" role="group" aria-label="View">
@@ -421,6 +428,8 @@ export function FamilyPage({ childPath, tablePath }: { childPath: string; tableP
         {chip("colour", "By colour")}
         {chip("low", "Low")}
       </div>
+      {instance === "filament-types" && <FilamentCatalog />}
+      {spoolmanOpen && <SpoolmanModal instance={data.child} onClose={() => setSpoolmanOpen(false)} onSynced={() => { void qc.invalidateQueries({ queryKey: ["inventory-family"] }); }} />}
       {adding && <AddForm data={data} initialType={adding.type} onDone={() => setAdding(null)} />}
       {[...groups.entries()].map(([key, types]) => (
         <div key={key || "all"} className="space-y-2">

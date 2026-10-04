@@ -1,3 +1,4 @@
+import { useScanOrigins } from "../lib/useScanOrigins";
 // /scan — the inbox review queue, photo-inbox-grade.
 import { createPortal } from "react-dom";
 import { FileEverythingSheet } from "../components/FileEverythingSheet";
@@ -33,7 +34,8 @@ import { } from "../components/CameraCaptureSheet";
 import { } from "../panels/registry";
 import { LocationChipPicker } from "../components/LocationChipPicker";
 import { SessionLocationModal } from "../components/SessionLocationModal";
-import { sessionPlaceSuggestion } from "../lib/sessionPlaceSuggestion";
+import { committedGroupsOf, sendBackIdsOf } from "../lib/committedGroups";
+import { placeForFilingLine, sessionPlaceSuggestion, suggestedPlaceNames } from "../lib/sessionPlaceSuggestion";
 import { OrganizePlanSheet, SortingPlanView } from "../components/OrganizePlanSheet";
 import { OrganizeWalkSheet } from "../components/OrganizeWalkSheet";
 import { LiveSortSheet } from "../components/LiveSortSheet";
@@ -69,7 +71,7 @@ import { ScanTwinsContext, twinsOf } from "./scanTwins";
 import { usePendingPictures } from "../lib/pendingPictures";
 import { } from "./scanNameEdit";
 import { useAiStatus, AiOffNotice, AiNoticeGiven, aiStatusLine } from "../components/AiStatusNotice";
-import { putawayWalkChip } from "@cobblr/platform-contract/scan-copy";
+import { putawayWalkChip, sessionAddCaption } from "@cobblr/platform-contract/scan-copy";
 export { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 import { decideLocationScan, filingLabel } from "../lib/scanFiling";
 import { useScanItemLink } from "./scanItemLink";
@@ -488,6 +490,7 @@ export function ScanPage() {
   const later = useLater();
   usePageTitle("Scan");
   const { activeSlug, activeOrg } = useActiveOrg();
+  const scanOrigins = useScanOrigins(activeSlug);
   // Desk work stays at a desk: the menu rows below that act on files, on
   // many rows, or on settings are not offered on a phone (scan-inbox-device-split.md §3.1).
   const handheld = useHandheld();
@@ -728,7 +731,7 @@ export function ScanPage() {
   // `classifyOmni` is pure + unit-tested because mistaking a search for an add
   // is the one failure that costs the user something (a spurious item to
   // delete); everything ambiguous therefore stays a search.
-  const omniIntent = classifyOmni(searchQ);
+  const omniIntent = classifyOmni(searchQ, scanOrigins);
   // Only PLAIN WORDS filter - a half-typed barcode must not empty the list.
   const searchTokens =
     omniIntent.kind === "text" ? omniIntent.value.toLowerCase().split(/\s+/).filter(Boolean) : [];
@@ -1248,24 +1251,7 @@ export function ScanPage() {
   // Recently-committed grouped by the SESSION they were committed from, so a whole
   // receipt/scan session committed at once (e.g. "Confirm all") can be sent back in
   // ONE click — not 20 (reported 2026-07-24). Loose items (no batch) stay as singletons.
-  const committedGroups = useMemo(() => {
-    const byBatch = new Map<string, ScanInboxItem[]>();
-    const groups: Array<{ key: string; batchId: string | null; items: ScanInboxItem[] }> = [];
-    for (const it of recentlyCommitted) {
-      if (it.scan_batch_id) {
-        const arr = byBatch.get(it.scan_batch_id);
-        if (arr) arr.push(it);
-        else {
-          const g = { key: it.scan_batch_id, batchId: it.scan_batch_id, items: [it] };
-          byBatch.set(it.scan_batch_id, g.items);
-          groups.push(g);
-        }
-      } else {
-        groups.push({ key: it.id, batchId: null, items: [it] });
-      }
-    }
-    return groups;
-  }, [recentlyCommitted]);
+  const committedGroups = useMemo(() => committedGroupsOf(recentlyCommitted), [recentlyCommitted]);
   const unconfirm = useMutation({
     mutationFn: (id: string) => api.unconfirmScanItem(activeSlug, id),
     onSuccess: (r) => {
@@ -1293,25 +1279,89 @@ export function ScanPage() {
   });
   const splitPieces = (it: ScanInboxItem): number =>
     ((it.suggested_metadata as { split_into?: unknown } | null)?.split_into as unknown[] | undefined)?.length ?? 0;
-  // Revert a set of committed items. Returns how many ACTUALLY went back —
-  // allSettled hides per-item failures (a split parent 409s, an already-pending
-  // item 422s), so the caller can report the truth instead of always "N sent".
-  const revertIds = async (ids: string[]): Promise<{ ok: number; failed: number }> => {
+  // Revert a set of committed items. Returns who ACTUALLY went back and, for
+  // each that did not, the reason in the server's words: a failure is never
+  // anonymous (#4579), it is shown on the row it belongs to.
+  const [revertFailures, setRevertFailures] = useState<Record<string, string>>({});
+  const revertIds = async (ids: string[]): Promise<{ ok: number; failed: number; failures: Array<{ id: string; message: string }> }> => {
     const results = await Promise.allSettled(ids.map((id) => api.unconfirmScanItem(activeSlug, id)));
-    const ok = results.filter((r) => r.status === "fulfilled").length;
+    const failures: Array<{ id: string; message: string }> = [];
+    results.forEach((r, i) => {
+      if (r.status === "rejected") failures.push({ id: ids[i]!, message: r.reason instanceof ApiError ? r.reason.message : String(r.reason) });
+    });
     await qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
-    return { ok, failed: ids.length - ok };
+    return { ok: ids.length - failures.length, failed: failures.length, failures };
   };
-  const reportRevert = ({ ok, failed }: { ok: number; failed: number }) => {
-    if (ok) toast.success(`Sent ${ok} item${ok === 1 ? "" : "s"} back to the inbox.`);
-    if (failed)
-      toast.error(
-        `${failed} item${failed === 1 ? "" : "s"} couldn't be sent back. Open ${failed === 1 ? "it" : "them"} to see why.`,
-      );
+  const reportRevert = ({ ok, failed, failures }: { ok: number; failed: number; failures: Array<{ id: string; message: string }> }) => {
+    setRevertFailures((prev) => {
+      const next = { ...prev };
+      for (const f of failures) next[f.id] = f.message;
+      return next;
+    });
+    if (failed) {
+      toast.error(`${ok} sent back, ${failed} needs you`);
+      const first = failures[0]?.id;
+      if (first) requestAnimationFrame(() => document.getElementById(`committed-${first}`)?.scrollIntoView({ block: "center", behavior: "smooth" }));
+    } else if (ok) toast.success(`Sent ${ok} item${ok === 1 ? "" : "s"} back to the inbox.`);
   };
+  // "Also undo the split?" per session, off by default: sending the filed
+  // pieces back does not by itself bring the group photo back.
+  const [alsoUndoSplit, setAlsoUndoSplit] = useState<Record<string, boolean>>({});
+  // One filed row of Recently committed, with its own failure line when
+  // sending it back was refused.
+  const committedFailure = (id: string, groupKey: string) => (
+    <div data-testid="send-back-failure" className="flex flex-wrap items-center gap-2 px-3 pb-1.5 pl-9 text-[11px] text-amber-700 dark:text-amber-300">
+      <span className="min-w-0">Couldn't send back: {revertFailures[id]}</span>
+      <button
+        type="button"
+        disabled={sendingBackAll === groupKey}
+        onClick={() => {
+          setRevertFailures((m) => {
+            const { [id]: _drop, ...rest } = m;
+            return rest;
+          });
+          unconfirm.mutate(id);
+        }}
+        className="underline"
+      >
+        Try again
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          setRevertFailures((m) => {
+            const { [id]: _drop, ...rest } = m;
+            return rest;
+          })
+        }
+        className="underline"
+      >
+        Keep
+      </button>
+    </div>
+  );
+  const committedFiledRow = (d: ScanInboxItem, groupKey: string, indent: string) => (
+    <div key={d.id} id={`committed-${d.id}`}>
+      <div className={`flex items-center gap-2 px-3 py-1.5 ${indent}`}>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm text-muted truncate">{displayName(d) ?? d.barcode_text ?? "Unknown scan"}</div>
+          <CommittedDestination item={d} tables={destinationTables} />
+        </div>
+        <button
+          type="button"
+          onClick={() => unconfirm.mutate(d.id)}
+          disabled={unconfirm.isPending || sendingBackAll === groupKey}
+          className="shrink-0 text-xs text-faint hover:text-content disabled:opacity-50"
+        >
+          {SCAN_UNDO_ACTIONS.sendBack}
+        </button>
+      </div>
+      {revertFailures[d.id] && committedFailure(d.id, groupKey)}
+    </div>
+  );
   // Send a whole session's committed items back to the inbox at once.
   const [sendingBackAll, setSendingBackAll] = useState<string | null>(null);
-  const sendBackSession = async (key: string, batchId: string | null, visibleIds: string[]) => {
+  const sendBackSession = async (key: string, batchId: string | null, visibleIds: string[], splitParents: ScanInboxItem[] = []) => {
     setSendingBackAll(key);
     try {
       let ids = visibleIds;
@@ -1325,13 +1375,26 @@ export function ScanPage() {
             batch_id: batchId,
             limit: 200,
           });
-          const fullIds = (full.items ?? []).map((i) => i.id);
+          // A split parent is structure, not a filed item: it is never sent back.
+          const fullIds = sendBackIdsOf(full.items ?? []);
           if (fullIds.length) ids = Array.from(new Set([...ids, ...fullIds]));
         } catch {
           /* fall back to the visible ids */
         }
       }
-      reportRevert(await revertIds(ids));
+      const result = await revertIds(ids);
+      if (alsoUndoSplit[key]) {
+        for (const p of splitParents) {
+          try {
+            await api.unsplitScanItem(activeSlug, p.id);
+          } catch (e) {
+            result.failures.push({ id: p.id, message: e instanceof ApiError ? e.message : String(e) });
+            result.failed++;
+          }
+        }
+        await qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
+      }
+      reportRevert(result);
     } finally {
       setSendingBackAll(null);
     }
@@ -1395,7 +1458,9 @@ export function ScanPage() {
       }
       // The one classifier (lib/scanPayload.ts): what the wedge read decides
       // where it goes, the same rule as the camera and the typed field.
-      const payload = classifyScanPayload(code);
+      const payload = classifyScanPayload(code, scanOrigins);
+      if (payload.kind === "own-route") { navigate(payload.path); return; }
+      if (payload.kind === "own-link" || payload.kind === "empty") return;
       if (payload.kind !== "cobblr-qr") {
         wedgeScan.mutate(code);
         return;
@@ -1516,7 +1581,12 @@ export function ScanPage() {
   const [omniOpen, setOmniOpen] = useState(false);
   const omniRef = useRef<HTMLInputElement>(null);
   const submitOmni = async () => {
-    const intent = classifyOmni(searchQ);
+    const intent = classifyOmni(searchQ, scanOrigins);
+    if (intent.kind === "own-route") {
+      setSearchQ("");
+      navigate(intent.value);
+      return;
+    }
     if (intent.kind === "cobblr-qr") {
       // A pasted Cobblr label: go where the QR goes, as the camera would.
       setSearchQ("");
@@ -4173,6 +4243,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       total={placeIds.length}
                       missing={sessionLoc.missing}
                       suggested={sessionLoc.suggested}
+                      suggestedNames={suggestedPlaceNames(placeItems)}
                       mixed={sessionLoc.mixed}
                       placeName={sessionLocName ? filingLabel(sessionLocName) : null}
                       onClick={(e) => {
@@ -4201,7 +4272,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                         });
                       }}
                       title="Shows a plan first: what gets added to things you already have, what is filed as new, what is left for you. Nothing is written until you confirm."
-                      aria-label="File everything"
+                      aria-label="Choose for each"
                       // Not on a phone's queue: the put-away strip above is the
                       // plan door for every session, and the File N dialog
                       // carries it per session ("Review the plan first"). The
@@ -4211,7 +4282,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       {/* On a phone the label says what OPENS: a plan to review,
                           not a file. "File" beside "File 2" was the owner's own
                           finding (#2982): two doors with one word. */}
-                      <Zap size={11} /> <span className="sm:hidden">Review plan</span><span className="hidden lg:inline">File everything</span>
+                      <Zap size={11} /> <span className="sm:hidden">Review plan</span><span className="hidden lg:inline">Choose for each…</span>
                     </button>
                   )}
                   {busy > 0 ? (
@@ -4385,6 +4456,17 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                 </div>
                 {!collapsed && (
                   <div className="space-y-2">
+                  {busy === 0 && readyIds.length > 0 && (() => {
+                    // What the button cannot hold, and a phone has no tooltip:
+                    // every destination, what turning a collection on means,
+                    // and the session's place (#4577).
+                    const caption = sessionAddCaption(readyIds.length, sessionAction.tables, sessionAction.off, placeForFilingLine(sessionLocName ? filingLabel(sessionLocName) : null, suggestedPlaceNames(placeItems)));
+                    return caption ? (
+                      <div data-testid="session-add-caption" className="px-2.5 text-[11px] text-muted dark:text-slate-400">
+                        {caption}
+                      </div>
+                    ) : null;
+                  })()}
                     {/* The header's "Added by", opened: when, and how. */}
                     {source.addedBy && addedByOpen === g.key && (
                       <div data-testid="session-added-by-detail" className="px-2.5 text-xs text-muted">
@@ -4634,18 +4716,30 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
               {committedGroups.map((grp) =>
                 grp.batchId && grp.items.length > 1 ? (
                   <div key={grp.key} className="rounded-md border border-line dark:border-slate-700 bg-surface/50 dark:bg-slate-800/30">
-                    <div className="flex items-center gap-2 px-3 py-1.5 border-b border-line/70 dark:border-slate-700/70">
+                    <div className="flex flex-wrap items-center gap-2 px-3 py-1.5 border-b border-line/70 dark:border-slate-700/70">
                       <span className="text-xs text-muted">
-                        {grp.items.length} item{grp.items.length === 1 ? "" : "s"} from one session
+                        {grp.filed.length} item{grp.filed.length === 1 ? "" : "s"} from one session
                       </span>
                       <div className="flex-1" />
+                      {grp.splits.length > 0 && (
+                        <label className="inline-flex items-center gap-1 text-[11px] text-faint">
+                          <input
+                            type="checkbox"
+                            data-testid="also-undo-split"
+                            checked={!!alsoUndoSplit[grp.key]}
+                            onChange={(e) => setAlsoUndoSplit((m) => ({ ...m, [grp.key]: e.target.checked }))}
+                          />
+                          Also undo the split
+                        </label>
+                      )}
                       <button
                         type="button"
                         onClick={() =>
                           void sendBackSession(
                             grp.key,
                             grp.batchId,
-                            grp.items.map((i) => i.id),
+                            grp.filed.map((i) => i.id),
+                            grp.splits.map((sp) => sp.parent),
                           )
                         }
                         disabled={sendingBackAll === grp.key}
@@ -4654,37 +4748,26 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                         <RotateCcw size={12} className={sendingBackAll === grp.key ? "animate-spin" : ""} /> Send whole session back
                       </button>
                     </div>
-                    {grp.items.map((d) => (
-                      <div key={d.id} className="flex items-center gap-2 px-3 py-1.5 pl-6">
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm text-muted truncate">{displayName(d) ?? d.barcode_text ?? "Unknown scan"}</div>
-                          {splitPieces(d) ? (
-                            <div className="text-[10px] font-mono text-faint truncate">✂ split into {splitPieces(d)} items</div>
-                          ) : (
-                            <CommittedDestination item={d} tables={destinationTables} />
-                          )}
-                        </div>
-                        {splitPieces(d) ? (
+                    {grp.splits.map((sp) => (
+                      <div key={sp.parent.id} data-testid="split-parent" id={`committed-${sp.parent.id}`}>
+                        <div className="flex items-center gap-2 px-3 py-1 pl-4 bg-surface/60 dark:bg-slate-800/40">
+                          <div className="min-w-0 flex-1 truncate text-[11px] text-faint">
+                            ✂ {displayName(sp.parent) ?? "Group photo"} · split into {splitPieces(sp.parent)}
+                          </div>
                           <button
                             type="button"
-                            onClick={() => undoSplit.mutate(d.id)}
+                            onClick={() => undoSplit.mutate(sp.parent.id)}
                             disabled={undoSplit.isPending || sendingBackAll === grp.key}
                             className="shrink-0 text-xs text-faint hover:text-content disabled:opacity-50"
                           >
                             Undo split
                           </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => unconfirm.mutate(d.id)}
-                            disabled={unconfirm.isPending || sendingBackAll === grp.key}
-                            className="shrink-0 text-xs text-faint hover:text-content disabled:opacity-50"
-                          >
-                            {SCAN_UNDO_ACTIONS.sendBack}
-                          </button>
-                        )}
+                        </div>
+                        {revertFailures[sp.parent.id] && committedFailure(sp.parent.id, grp.key)}
+                        {sp.children.map((d) => committedFiledRow(d, grp.key, "pl-9"))}
                       </div>
                     ))}
+                    {grp.loose.map((d) => committedFiledRow(d, grp.key, "pl-6"))}
                   </div>
                 ) : (
                   grp.items[0] && (

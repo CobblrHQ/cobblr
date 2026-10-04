@@ -82,10 +82,13 @@ export function bootPasses(indexSrc: string, indexPath: string): Array<{ name: s
   return out;
 }
 
+let sources: string[] | undefined;
+
 /** Whether an identifier is defined somewhere under api/src. */
 function definedUnderSrc(ident: string): boolean {
   const re = new RegExp(`\\b(?:function|const|let|class)\\s+${ident}\\b|\\b${ident}\\s*=\\s*(?:async\\s*)?\\(`);
-  for (const f of walk(SRC)) if (re.test(readFileSync(f, "utf8"))) return true;
+  sources ??= [...walk(SRC)].map(f => readFileSync(f, "utf8"));
+  if (sources.some(src => re.test(src))) return true;
   return false;
 }
 

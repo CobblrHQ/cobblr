@@ -5,6 +5,7 @@
 // load failures, which a Suspense fallback alone does not.
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { dropStaleBuild } from "../lib/staleBuild";
 
 // A lazy route chunk can 404 when a deploy lands while the tab is open: the
 // loaded index.html references chunk hashes the freshly-deployed container no
@@ -21,7 +22,10 @@ function isChunkLoadError(error: Error): boolean {
 const RELOAD_GUARD_KEY = "cobblr:chunk-reload-at";
 const RELOAD_GUARD_MS = 10_000;
 
-/** Reload once for a stale-chunk error; returns true if a reload was kicked off. */
+/** Reload once for a stale-chunk error; returns true if a reload was kicked off.
+ *  The reload follows dropping the app's cached copy and its service worker
+ *  (#4813): an installed app's worker answers a plain reload with the same
+ *  stale build, so the guard would trip and show the error page. */
 function reloadForStaleChunk(): boolean {
   try {
     const last = Number(sessionStorage.getItem(RELOAD_GUARD_KEY) || 0);
@@ -30,8 +34,14 @@ function reloadForStaleChunk(): boolean {
   } catch {
     /* sessionStorage unavailable (private mode) — fall through and reload anyway */
   }
-  window.location.reload();
+  void dropStaleBuild().finally(() => window.location.reload());
   return true;
+}
+
+/** "Get the latest version": the same steps, whatever the loop guard says. */
+async function getLatestVersion(): Promise<void> {
+  await dropStaleBuild();
+  window.location.reload();
 }
 
 interface Props {
@@ -87,6 +97,16 @@ export class ErrorBoundary extends Component<Props, State> {
           {this.state.error.message}
         </pre>
         <div className="mt-3 flex gap-2">
+          {isChunkLoadError(this.state.error) && (
+            <button
+              type="button"
+              data-testid="get-latest-version"
+              onClick={() => void getLatestVersion()}
+              className="rounded bg-cobble-600 px-3 py-1.5 text-sm text-white hover:bg-cobble-700"
+            >
+              Get the latest version
+            </button>
+          )}
           <button
             type="button"
             onClick={() => this.setState({ error: null })}

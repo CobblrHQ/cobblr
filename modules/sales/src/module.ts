@@ -10,7 +10,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "sales",
-  version: "0.1.23",
+  version: "0.1.27",
   displayName: "Sales",
   description:
     "Customers and the orders they place; fulfilling an order takes what you sold out of stock.",
@@ -65,6 +65,7 @@ export default defineModule({
           { name: "customer_name", type: "text", role: "title" },
           { name: "order_number", type: "text", role: "summary" },
           { name: "status", type: "text" },
+          { name: "paid", type: "boolean" },
           { name: "order_date", type: "date" },
           { name: "fulfilled_at", type: "date" },
           { name: "carrier", type: "text" },
@@ -79,7 +80,7 @@ export default defineModule({
         // ("blocked until sales order #12 ships"). Address / notes stay private.
         // A bundle's own fields ride in `metadata`, readable like a part's, so
         // a label or view naming one prints its value (#3591).
-        exposableFields: ["customer_name", "order_number", "status", "order_date", "fulfilled_at", "carrier", "tracking_number", "shipped_at", "metadata"],
+        exposableFields: ["customer_name", "order_number", "status", "paid", "order_date", "fulfilled_at", "carrier", "tracking_number", "shipped_at", "metadata"],
         detailRoute: "/sales/{id}",
       },
       {
@@ -116,9 +117,21 @@ export default defineModule({
       // A sent parcel's delivered scan, when "Follow parcels I send" is on.
       "sales.order.delivered",
     ],
+    notifications: [{ eventType: "sales.order.closed", label: "Delivered orders closed", description: "A paid, fully fulfilled order closed after delivery, with Undo." }],
     actions: [
       {
+        // NO-PHRASING: offered by the notification and order sheet after an automatic close
+        group: "more",
+        id: "sales:undo-delivery-close",
+        internal: true,
+        label: "Undo delivery close", icon: "undo",
+        description: "Reopen an order closed automatically after delivery. Leaves it shipped and prevents another automatic close.",
+        invokeHandler: "sales.undo-delivery-close", userInvokable: false, scope: "workspace",
+        argsSchema: { order_id: { label: "Order id", type: "text", required: true } },
+      },
+      {
         // NO-PHRASING: the way back for another action, run only from Undo
+        group: "more",
         id: "sales:remove-line",
         internal: true,
         label: "Remove an order line",
@@ -132,6 +145,7 @@ export default defineModule({
         },
       },
       {
+        group: "more",
         id: "sales:add-line",
         examples: ["add a line to that order", "they want two more"],
         undoable: true,
@@ -149,6 +163,7 @@ export default defineModule({
         },
       },
       {
+        group: "more",
         id: "sales:cancel-order",
         examples: ["cancel that order", "they cancelled"],
         undoable: true,
@@ -164,6 +179,7 @@ export default defineModule({
       },
       {
         // NO-PHRASING: the way back for a cancel, run only from Undo
+        group: "more",
         id: "sales:reinstate-order",
         internal: true,
         label: "Reinstate a cancelled order",
@@ -178,6 +194,7 @@ export default defineModule({
         },
       },
       {
+        group: "more",
         id: "sales:fulfill-order",
         examples: ["that order went out", "mark it shipped"],
         label: "Fulfill order",
@@ -192,6 +209,7 @@ export default defineModule({
         },
       },
       {
+        group: "more",
         id: "sales:make-line",
         examples: ["make the brackets for that order", "put 5 of those in to be made"],
         label: "Make this for the order",
@@ -207,6 +225,7 @@ export default defineModule({
         },
       },
       {
+        group: "more",
         id: "sales:ship-order",
         examples: ["that order went out with UPS", "it shipped, here is the tracking number"],
         label: "Ship order",
@@ -222,6 +241,23 @@ export default defineModule({
         },
       },
       {
+        // UI-REACH: inbound mail creates a draft; the Sales order sheet offers review and confirmation.
+        group: "more",
+        id: "sales:read-order-email",
+        examples: ["read this order email"],
+        label: "Read an order email",
+        description: "Read a sales order email using templates then free AI, and save a draft with the email for review. Non-orders create nothing.",
+        scope: "workspace",
+        invokeHandler: "sales.read-order-email",
+        argsSchema: {
+          subject: { label: "Email subject", type: "text", required: true },
+          text: { label: "Full email body", type: "text", required: true },
+          ref: { label: "Stable message reference", type: "text", required: true },
+          from_email: { label: "Sender email", type: "text" },
+        },
+      },
+      {
+        group: "more",
         id: "sales:create-order",
         examples: ["a new order came in", "record an order from the shop"],
         label: "Create order",
@@ -232,6 +268,8 @@ export default defineModule({
         scope: "workspace",
         invokeHandler: "sales.create-order",
         argsSchema: {
+          source: { label: "Source name, stable order reference and optional URL for duplicate prevention", type: "json" },
+          instance: { label: "Sales instance to receive the order", type: "text" },
           order_number: { label: "Your reference for the order, generated if you leave it out", type: "text" },
           customer: { label: "The customer: name, email, phone, address", type: "json" },
           items: { label: "The line items to order", type: "json", required: true },

@@ -1,3 +1,4 @@
+import type { ActionGroupId } from "@cobblr/platform-contract/action-groups";
 // The KERNEL's own actions — workspace configuration the platform owns.
 //
 // Custom fields, module instances and wires are kernel primitives (CLAUDE.md
@@ -31,6 +32,7 @@ export const PLATFORM_ACTION_OWNER = PLATFORM_OWNER;
 
 /** Shape-compatible with the rows registry-sync builds from module manifests. */
 export interface PlatformActionDecl {
+  group: ActionGroupId;
   id: string;
   label: string;
   description: string;
@@ -93,7 +95,14 @@ export interface PlatformActionDecl {
 
 export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
+    // UI-SCREEN: /configuration/record-actions
+    id: "platform:edit-record-actions", group: "organise", label: "Arrange record actions", description: "Rename or reorder action groups, move actions, hide them or choose primaries on a kind of record. Changes can be undone.", icon: "sliders", scope: "workspace", min_role: "admin", invoke_handler: "platform.edit-record-actions", user_invokable: true, undoable: true,
+    examples: ["put Log service and Set a schedule under Vehicle care on printers", "hide Print label on parts"],
+    args_schema: { kind: { label: "Kind of record", type: "text", required: true }, group: { label: "Group", type: "text" }, label: { label: "Group name", type: "text" }, actions: { label: "Actions to move", type: "list" }, order: { label: "Group order", type: "number" }, hidden: { label: "Hidden", type: "boolean" }, primary: { label: "Primary", type: "boolean" }, layout: { label: "Complete layout", type: "json" }, expected_revision: { label: "Version being edited", type: "number" } }, version: "0.1.0",
+  },
+  {
     // UI-SCREEN: /configuration/recently-deleted
+    group: "lifecycle",
     id: "platform:restore-deleted-record", label: "Restore a deleted record", icon: "history",
     description: "Bring a record from Recently deleted back with its original id and contents. Deleted records are kept for 30 days. Args: kind and entity_id.",
     scope: "workspace", min_role: "member", invoke_handler: "platform.restore-deleted-record", user_invokable: true, undoable: false,
@@ -102,6 +111,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-REACH: Restore this version in every record's History panel
+    group: "lifecycle",
     id: "platform:restore-record-version",
     label: "Restore a record version",
     description: "Restore the values from before a saved edit, replacing later edits and recording a restorable change. Read the record's activity first; entry_id selects the edit and expected_latest_id is its newest history entry. Runs on the workspace. Fields you cannot read stay unchanged.",
@@ -122,6 +132,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /inventory, /assets, /machines, /views
+    group: "organise",
     id: "platform:set-field-on-records",
     label: "Set field on selected records",
     description: "Set or clear one writable built-in or custom field on up to 500 records. Pass records as [{kind,id}], the exact field name and value (null clears it). Only fields shared by every selected kind are accepted. Failed rows are listed and skipped. One Undo restores the successful rows. Runs on the workspace.",
@@ -142,6 +153,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // NO-PHRASING: the undo of a batch field edit, returned on its card
     // UI-REACH: Undo in the Set field toast
+    group: "lifecycle",
     id: "platform:restore-batch-field",
     label: "Undo setting a field",
     description: "Restore the previous field values from a bulk field edit. A row changed since the batch keeps its newer value and is listed as skipped.",
@@ -160,6 +172,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /fields
+    group: "organise",
     id: "platform:add-field",
     min_role: "grantable",
     label: "Add a field",
@@ -185,6 +198,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     version: "0.1.0",
   },
   {
+    group: "more",
     id: "platform:track-sellers",
     label: "Track sellers as their own field",
     icon: "store",
@@ -205,6 +219,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // NO-PHRASING: the undo step of track-sellers, handed back on its card
     // UI-REACH: an undo step; the toast after Track sellers runs it
+    group: "more",
     id: "platform:untrack-sellers",
     label: "Put sellers back as notes",
     icon: "undo-2",
@@ -222,6 +237,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     },
   },
   {
+    group: "organise",
     id: "platform:decline-seller-field",
     label: "Keep sellers as notes",
     icon: "x",
@@ -239,6 +255,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     },
   },
   {
+    group: "more",
     id: "platform:settle-same-meaning",
     label: "Settle two fields that mean one thing",
     icon: "merge",
@@ -261,6 +278,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // NO-PHRASING: the undo step of settle-same-meaning, handed back on its card
     // UI-REACH: an undo step; the toast after Keep runs it
+    group: "more",
     id: "platform:unsettle-same-meaning",
     label: "Put two fields back as they were",
     icon: "undo-2",
@@ -281,6 +299,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /fields
+    group: "organise",
     id: "platform:edit-field",
     min_role: "grantable",
     label: "Change a field",
@@ -317,6 +336,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /assets (any record's choice field: typing a new value)
+    group: "more",
     id: "platform:learn-choice",
     min_role: "member",
     label: "Remember a new choice",
@@ -338,6 +358,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /assets (the Undo on "remembered as a choice")
+    group: "more",
     id: "platform:forget-choice",
     min_role: "member",
     label: "Forget a choice",
@@ -357,6 +378,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /fields
+    group: "organise",
     id: "platform:remove-field",
     min_role: "grantable",
     label: "Remove a field",
@@ -378,6 +400,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /fields
+    group: "organise",
     id: "platform:group-fields",
     min_role: "grantable",
     label: "Group fields under a heading",
@@ -404,6 +427,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /fields
+    group: "organise",
     id: "platform:ungroup-fields",
     min_role: "grantable",
     label: "Take fields out of a heading",
@@ -423,6 +447,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     version: "0.1.0",
   },
   {
+    group: "organise",
     id: "platform:create-instance",
     min_role: "grantable",
     label: "Create a list (instance)",
@@ -444,6 +469,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     version: "0.1.0",
   },
   {
+    group: "more",
     id: "platform:remove-list",
     min_role: "grantable",
     label: "Remove an empty list",
@@ -464,6 +490,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /configuration/modules
+    group: "more",
     id: "platform:enable-module",
     min_role: "grantable",
     label: "Turn on a feature",
@@ -484,6 +511,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: / (the dashboard's offer to move records into the collection they belong in)
+    group: "more",
     id: "platform:move-records",
     min_role: "grantable",
     label: "Move records into another list",
@@ -529,6 +557,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /assets (and every record page: "No longer mine…" under its actions)
+    group: "lifecycle",
     id: "platform:mark-gone",
     min_role: "grantable",
     label: "Mark as sold or given away",
@@ -554,6 +583,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /assets (and every record page: Bring back, on the line of a thing that left)
+    group: "lifecycle",
     id: "platform:bring-back",
     min_role: "grantable",
     label: "Bring back",
@@ -574,6 +604,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /configuration/sharing (and every record page: "Give to…")
+    group: "share",
     id: "platform:offer-to",
     min_role: "grantable",
     label: "Give to someone you share with",
@@ -595,6 +626,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /machines (and every record page: "Share with…", and a list's selection bar)
+    group: "share",
     id: "platform:share-with",
     min_role: "grantable",
     label: "Share with someone",
@@ -617,6 +649,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /machines (and every record page: "Shared with <them>", Stop)
+    group: "more",
     id: "platform:stop-sharing",
     min_role: "grantable",
     label: "Stop sharing with someone",
@@ -639,6 +672,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /suggestions (and every record page: "2 suggested edits by Vince")
+    group: "more",
     id: "platform:accept-suggestions",
     min_role: "grantable",
     label: "Accept suggested edits",
@@ -661,6 +695,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /suggestions (and every record page: Reject on a suggested edit)
+    group: "more",
     id: "platform:reject-suggestions",
     min_role: "grantable",
     label: "Reject suggested edits",
@@ -683,6 +718,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /suggestions (the Undo after Accept or Reject)
+    group: "more",
     id: "platform:reopen-suggestions",
     min_role: "grantable",
     label: "Put suggested edits back to waiting",
@@ -702,6 +738,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /suggestions ("Added to the share": Take)
+    group: "more",
     id: "platform:take-additions",
     min_role: "grantable",
     label: "Take what someone added to a share",
@@ -719,6 +756,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /suggestions ("Added to the share": Leave)
+    group: "more",
     id: "platform:leave-additions",
     min_role: "grantable",
     label: "Leave what someone added to a share",
@@ -735,6 +773,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /configuration/modules
+    group: "more",
     id: "platform:disable-module",
     min_role: "grantable",
     label: "Turn off a feature",
@@ -755,6 +794,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /bundles (Remove, on an installed bundle)
+    group: "organise",
     id: "platform:remove-bundle",
     min_role: "admin",
     label: "Remove a bundle",
@@ -776,6 +816,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   // UI-SCREEN: /configuration/presentation (and the pencil on every record's Contents heading)
   {
+    group: "organise",
     id: "platform:rename-contents",
     min_role: "grantable",
     label: "Rename what a list calls the things inside its records",
@@ -794,6 +835,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     version: "0.1.0",
   },
   {
+    group: "organise",
     id: "platform:rename-thing",
     min_role: "grantable",
     label: "Rename what a list is called",
@@ -814,6 +856,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     version: "0.1.0",
   },
   {
+    group: "more",
     id: "platform:promote-category",
     min_role: "grantable",
     label: "Give a category its own list",
@@ -836,6 +879,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     version: "0.1.0",
   },
   {
+    group: "more",
     id: "platform:demote-category",
     min_role: "grantable",
     label: "Fold a list back into another",
@@ -857,6 +901,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: / (the workspace switcher's Rename, in the header of every screen)
+    group: "organise",
     id: "platform:rename-workspace",
     label: "Rename this workspace",
     description:
@@ -878,6 +923,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     version: "0.1.0",
   },
   {
+    group: "more",
     id: "platform:set-simple-mode",
     min_role: "grantable",
     label: "Turn simple mode on or off",
@@ -897,6 +943,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /fields
+    group: "organise",
     id: "platform:set-field-preset",
     min_role: "grantable",
     label: "Switch a set of fields on or off",
@@ -917,6 +964,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /wires
+    group: "more",
     id: "platform:set-wire-enabled",
     min_role: "grantable",
     label: "Turn an automation on or off",
@@ -946,6 +994,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   // awaiting_confirm for a person however the wire was set up.
   {
     // UI-SCREEN: /wires (the wire composer's "No record" list, read from /wire-actions)
+    group: "more",
     id: "platform:invoke-service",
     min_role: "admin",
     label: "Run a service",
@@ -966,6 +1015,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /me/notifications   the job's card, and the bell; a missed one waits there
+    group: "more",
     id: "platform:confirm-service-job",
     min_role: "member",
     label: "Start a service job",
@@ -986,6 +1036,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   // a stuck run's notice, by the person whose run it is, or an owner or admin
   // for a run an automation started. Never the assistant's to press.
   {
+    group: "more",
     id: "platform:retry-service-job",
     min_role: "member",
     label: "Retry a service step",
@@ -1001,6 +1052,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     wire_only: true,
   },
   {
+    group: "more",
     id: "platform:skip-service-job",
     min_role: "member",
     label: "Skip a service step",
@@ -1016,6 +1068,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     wire_only: true,
   },
   {
+    group: "more",
     id: "platform:cancel-service-run",
     min_role: "member",
     label: "Cancel a service run",
@@ -1039,6 +1092,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   // make, and `user_invokable: false` keeps them out of the grantable list.
   {
     // UI-SCREEN: /configuration/permissions
+    group: "more",
     id: "platform:approve-request",
     min_role: "admin",
     label: "Approve a request",
@@ -1060,6 +1114,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /configuration/permissions
+    group: "more",
     id: "platform:deny-request",
     min_role: "admin",
     label: "Decline a request",
@@ -1082,6 +1137,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   // grantable, so nothing but the card reaches them.
   {
     // UI-SCREEN: /me/notifications   the held change's card, and the bell; a missed one waits there
+    group: "more",
     id: "platform:confirm-held-change",
     min_role: "member",
     label: "Delete what an assistant asked to delete",
@@ -1098,6 +1154,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /me/notifications   the held change's card, and the bell; a missed one waits there
+    group: "more",
     id: "platform:keep-held-change",
     min_role: "member",
     label: "Keep what an assistant asked to delete",

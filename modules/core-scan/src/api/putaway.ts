@@ -822,6 +822,7 @@ putawayRouter.post(
     }
     state.entries = nextEntries;
     await saveState(db, session.id, state);
+    if (entry.directive.location_id) await platform().events.emit("core-scan.putaway.destination-selected", { orgId: ctx.org.id, locationId: entry.directive.location_id });
     res.json({ entry });
   }),
 );

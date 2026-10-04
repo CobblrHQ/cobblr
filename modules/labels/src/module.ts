@@ -69,6 +69,7 @@ export default defineModule({
     // ──────────────── Pillar B — labels' actions ──────────────────
     actions: [
       {
+        group: "label",
         id: "labels:print",
         examples: ["print a label for this", "sticker it"],
         label: "Print label",
@@ -90,6 +91,7 @@ export default defineModule({
         // invoke_action rail — no bespoke per-op AI tool. A rename on a printed
         // (frozen) group keeps the printed stickers valid and only changes new
         // labels (keep_existing), so it's always safe to run.
+        group: "label",
         id: "labels:set-code",
         examples: ["change the code prefix", "stop printing codes on those labels"],
         label: "Change label codes",

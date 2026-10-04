@@ -1,4 +1,4 @@
-import { NewItemMenu } from "@cobblr/platform-web";
+import { RecordFormModal, NewItemMenu, BulkGiveTo, BulkShareWith, CustomFieldsPanel, EditField, EditSelect, EntityActionsBar, FaceSection, FacesOn, faceShows, FieldPack, RecordFaces, editFieldItem, fieldNeed, useAskCobbAboutSelection, useTickedRows, Modal, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PresentationGate, useFaces, UsedValueInput, usedValueFieldItem } from "@cobblr/platform-web";
 // /machines — list view for the machines module, with a detail
 // modal launched per row. URL pattern:
 //
@@ -50,7 +50,6 @@ import { useDeclaredChoices } from "../components/ViewBuilder";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { ContentsPanel, useHoldsContents } from "../components/ContentsPanel";
-import { BulkGiveTo, BulkShareWith, CustomFieldsPanel, EditField, EditSelect, EntityActionsBar, FaceSection, FacesOn, faceShows, FieldPack, RecordFaces, editFieldItem, fieldNeed, useAskCobbAboutSelection, useTickedRows, Modal, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton } from "@cobblr/platform-web";
 import {
   BulkActionBar, BulkSetField,
   BulkTagAction,
@@ -63,7 +62,6 @@ import {
 import { EntityAttachments } from "../components/EntityAttachments";
 import { LocationTreePicker } from "../components/LocationTreePicker";
 import { itemNounFor, pluralise } from "@cobblr/platform-contract";
-import { PresentationGate, useFaces, UsedValueInput, usedValueFieldItem } from "@cobblr/platform-web";
 
 const ENTITY_KIND = "machines:machine";
 
@@ -946,7 +944,7 @@ function SaveViewModal({
 function LiveChip({ dev }: { dev: DigifabFleetDevice }) {
   const c = fleetStatusChip(dev);
   return (
-    <span className="inline-flex items-center gap-1 text-[10px] text-muted dark:text-slate-400 whitespace-nowrap" title="live print-manager status">
+    <span className="inline-flex items-center gap-1 text-[10px] text-muted dark:text-slate-400 whitespace-nowrap" title="Live machine status">
       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${c.dot}`} />
       {c.label}
     </span>
@@ -1250,12 +1248,11 @@ export function MachineDetailModal({
     : undefined;
 
   return (
-    <Modal
+    <RecordFormModal
       open={!!machineId}
       onClose={onClose}
       title={m?.name ?? "loading…"}
       subtitle={subtitle}
-      size="xl"
     >
       {m ? (
         <PresentationGate ready={fp.ready && shape.ready} failed={fp.failed || shape.failed} retry={() => { fp.retry(); shape.retry(); }}>
@@ -1445,7 +1442,7 @@ export function MachineDetailModal({
       ) : (
         <div className="text-xs text-faint">loading…</div>
       )}
-    </Modal>
+    </RecordFormModal>
   );
 }
 
@@ -1788,12 +1785,12 @@ function NewMachineModal({
     : [["manager", "Through a manager"], ["later", "Set up later"]]) as [typeof connect, string][];
 
   return (
-    <Modal open={open} onClose={onClose} title={`New ${noun ?? "machine"}`} size="sm">
+    <RecordFormModal open={open} onClose={onClose} title={`New ${noun ?? "machine"}`}>
       <form onSubmit={submit} className="space-y-3">
         {printerFlow && (
           <div>
             <span className={lblCls}>What kind of printer is this?</span>
-            <div className="grid grid-cols-2 gap-1.5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
               {KINDS.map((k) => (
                 <button key={k.id} type="button" onClick={() => pickKind(k.id)}
                   className={"text-left px-2.5 py-1.5 rounded border transition " + (kind === k.id ? "border-cobble-500 bg-subtle dark:bg-slate-800" : "border-line dark:border-slate-600 hover:border-cobble-400")}>
@@ -1808,15 +1805,23 @@ function NewMachineModal({
           <span className={lblCls}>Name</span>
           <input value={name} onChange={(e) => setName(e.target.value)} autoFocus className="input" />
         </label>
-        <div className="block">
-          <span className={lblCls}>{fp.label("manufacturer", "Manufacturer")}</span>
-          <UsedValueInput kind={instance ? `${instance}:item` : ENTITY_KIND} field="manufacturer" label={fp.label("manufacturer", "Manufacturer")} value={manufacturer} onCommit={(v) => setManufacturer(v ?? "")} live />
-        </div>
-        <label className="block">
-          <span className={lblCls}>{words.familyExample ? `Family (${words.familyExample})` : "Family"}</span>
-          <input value={family} onChange={(e) => setFamily(e.target.value)} className="input" />
-        </label>
-        <LocationTreePicker label="Location" value={locationId} onChange={setLocationId} />
+        <FieldPack maxCols={3} items={[
+          { need: fieldNeed("manufacturer", { control: "text", label: fp.label("manufacturer", "Manufacturer") }), node: (
+            <div className="block">
+              <span className={lblCls}>{fp.label("manufacturer", "Manufacturer")}</span>
+              <UsedValueInput kind={instance ? `${instance}:item` : ENTITY_KIND} field="manufacturer" label={fp.label("manufacturer", "Manufacturer")} value={manufacturer} onCommit={(v) => setManufacturer(v ?? "")} live />
+            </div>
+          ) },
+          { need: fieldNeed("family", { control: "text", label: "Family" }), node: (
+            <label className="block">
+              <span className={lblCls}>{words.familyExample ? `Family (${words.familyExample})` : "Family"}</span>
+              <input value={family} onChange={(e) => setFamily(e.target.value)} className="input" />
+            </label>
+          ) },
+          { need: fieldNeed("location", { control: "picker", label: "Location" }), node: (
+            <LocationTreePicker label="Location" value={locationId} onChange={setLocationId} />
+          ) }
+        ]} />
 
         {instance && !digifabEnabled && (
           <EnableJobManagerCard words={words} noun={noun} pending={enableDigifab.isPending} onEnable={() => enableDigifab.mutate()} />
@@ -1952,8 +1957,7 @@ function NewMachineModal({
           </button>
         </div>
       </form>
-    </Modal>
+    </RecordFormModal>
   );
 }
-
 

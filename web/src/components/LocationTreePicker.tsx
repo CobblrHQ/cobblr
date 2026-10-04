@@ -22,7 +22,7 @@ function placeKindWords(kind: string | null | undefined): string {
   return withArticle(kind || "place");
 }
 import { QuickCreateLocation } from "./QuickCreateLocation";
-import { OverlayLayer, PopoverLayer, SearchInput, useEscapeToClose, useToast } from "@cobblr/platform-web";
+import { ActionDescription, OverlayLayer, PopoverLayer, SearchInput, useEscapeToClose, useToast } from "@cobblr/platform-web";
 
 interface Props {
   value: string | null;
@@ -38,6 +38,8 @@ interface Props {
   kind?: Location["kind"];
   label?: string;
   placeholder?: string;
+  triggerLabel?: string;
+  description?: string;
   /** What the "no place" row says. A parent picker says "(top-level)". */
   noneLabel?: string;
   className?: string;
@@ -67,6 +69,8 @@ export function LocationTreePicker({
   kind,
   label,
   placeholder = "Select a location…",
+  triggerLabel,
+  description,
   noneLabel = "(no location)",
   className,
   size = "md",
@@ -245,7 +249,7 @@ export function LocationTreePicker({
     >
       <MapPin size={13} className="shrink-0 text-faint" />
       <span className="truncate flex-1 text-left">
-        {inside ? (
+        {triggerLabel ? triggerLabel : inside ? (
           where.data!.line
         ) : pickedHolder ? (
           pickedHolder.line ? `${pickedHolder.title}, in ${pickedHolder.line}` : pickedHolder.title
@@ -255,7 +259,7 @@ export function LocationTreePicker({
           <span className="text-faint">{placeholder}</span>
         )}
       </span>
-      {(selected || inside) && (
+      {!triggerLabel && (selected || inside) && (
         <button
           type="button"
           onClick={(e) => {
@@ -418,7 +422,7 @@ export function LocationTreePicker({
 
   return (
     <>
-      {body}
+      {description ? <ActionDescription description={description}>{body}</ActionDescription> : body}
       {panel}
       {createOpen && (
         <QuickCreateLocation

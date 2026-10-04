@@ -1,3 +1,4 @@
+import { readRecordActionLayout, setRecordActionPin } from "../platform/record-action-layout.js";
 import { commonBulkFields } from "../platform/bulk-set-field.js";
 // Platform-level routes for the registries + wires.
 //
@@ -465,6 +466,24 @@ platformOrgRouter.get("/:slug/faces", requireAuth, withTenant, async (req, res, 
   }
 });
 
+// AI-REACH: a person's own pins are display preferences, not workspace configuration.
+platformOrgRouter.put("/:slug/record-action-pins", requireAuth, withTenant, async (req, res, next) => {
+  // ROLE: any member (only their own account's pins are written)
+  try {
+    const parsed = z.object({ kind: z.string().min(1).max(160), action: z.string().min(1).max(160), pinned: z.boolean() }).safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: { code: "invalid_body", message: "Choose an action and whether to pin it." } }); return; }
+    try { await setRecordActionPin(req.tenant!.org.id, parsed.data.kind, req.session!.id, parsed.data.action, parsed.data.pinned); }
+    catch (err) { if ((err as Error).message.startsWith("Four actions")) { res.status(409).json({ error: { code: "pin_limit", message: (err as Error).message } }); return; } throw err; }
+    res.status(204).end();
+  } catch (err) { next(err); }
+});
+platformOrgRouter.get("/:slug/record-action-layout", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (typeof req.query.kind !== "string") { res.status(400).json({ error: { code: "missing_kind", message: "Choose a record kind." } }); return; }
+    res.json(await readRecordActionLayout(req.tenant!.org.id, req.query.kind, req.session!.id));
+  } catch (err) { next(err); }
+});
+
 // ──────────────────────── actions ──────────────────────────────────
 
 platformOrgRouter.get(
@@ -509,6 +528,8 @@ platformOrgRouter.get(
           // or a line joins the queue; the description does ("Queue a
           // printable label for this entity").
           "a.description",
+          "a.action_group as group",
+          "a.is_primary as primary",
           "a.icon",
           "a.invoke_route",
           "a.invoke_handler",
@@ -536,7 +557,8 @@ platformOrgRouter.get(
       const writer = await platform().entities.getWriter(req.tenant!.org.id, kind).catch(() => null);
       res.json({
         items: applicable.filter((a) => installedSet.has(a.module_name)).map((a) => ({ ...a, args_schema: choose(a.args_schema) })),
-        dormant: dormant.map((a) => ({ id: a.id, label: a.label, description: a.description, icon: a.icon, module_name: a.module_name, module_label: a.module_label })),
+        ...(await readRecordActionLayout(req.tenant!.org.id, kind, req.session!.id)),
+        dormant: dormant.map((a) => ({ group: a.group, primary: a.primary, id: a.id, label: a.label, description: a.description, icon: a.icon, module_name: a.module_name, module_label: a.module_label })),
         bindings: bindings.map((b) => ({ ...b, args_schema: choose(b.args_schema), ask: bindingAskOf(b.ask) })),
         lifecycle: !!(writer?.retire && writer.unretire),
       });

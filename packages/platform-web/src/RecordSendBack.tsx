@@ -1,3 +1,4 @@
+import { RecordActionItem } from "./RecordActionContributions";
 // "Send back to <them>": a thing taken from someone through a share, on its
 // own page while it can still go back (#4684, docs/design-decisions/share-spaces.md §6).
 // The hand-over is one thing with one owner, so the way back is the
@@ -39,7 +40,7 @@ export function RecordSendBack({ kind, id }: { kind: string; id: string }) {
     }
   };
   return (
-    <button
+    <RecordActionItem id="record:send-back" group="share" label={`Send back to ${who}`} description="Return this thing to the person who gave it to you."><button
       type="button"
       disabled={busy}
       onClick={() => void send()}
@@ -48,6 +49,6 @@ export function RecordSendBack({ kind, id }: { kind: string; id: string }) {
       className="inline-flex items-center gap-1 rounded border border-line px-2 py-1 text-xs text-muted hover:border-accent hover:text-accent disabled:opacity-50 dark:border-slate-600"
     >
       <Undo2 size={12} aria-hidden /> Send back to {who}
-    </button>
+    </button></RecordActionItem>
   );
 }

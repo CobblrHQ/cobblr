@@ -1,3 +1,4 @@
+import { fieldNeed, FieldPack, RecordFormModal, DragInput, SearchInput, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 // /tags — list every tag the workspace has, what each is attached
 // to, and a quick "new tag" affordance. The attach-to-entity UX
 // happens module-side (Files page, parts page, etc.) — this page
@@ -11,7 +12,6 @@ import { ApiError, api, type TagRecord } from "../lib/api";
 import { useHideEmpty } from "../lib/useHideEmpty";
 import { EditTagModal } from "../components/EditTagModal";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { DragInput, Modal, SearchInput, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 
 
 
@@ -297,7 +297,7 @@ function CreateTagModal({
   const parentOptions = allTags.data?.items ?? [];
 
   return (
-    <Modal open onClose={onClose} title="New tag">
+    <RecordFormModal open onClose={onClose} title="New tag">
       <form
         onSubmit={async (e) => {
           e.preventDefault();
@@ -340,33 +340,43 @@ function CreateTagModal({
           />
           <span className="font-mono text-xs">{color}</span>
         </label>
-        <label className="flex items-center gap-3 text-sm">
-          <span className="text-xs text-muted">Icon</span>
-          <input
-            type="text"
-            value={icon}
-            onChange={(e) => setIcon(e.target.value)}
-            placeholder="🏷️"
-            maxLength={8}
-            className="w-14 px-2 py-1 text-sm text-center border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-          />
-          <span className="text-[11px] text-faint">an emoji</span>
-        </label>
-        {parentOptions.length > 0 && (
-          <label className="block">
-            <div className="text-xs text-muted mb-1">Parent tag (optional - for grouping)</div>
-            <select
-              value={parentId}
-              onChange={(e) => setParentId(e.target.value)}
-              className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-            >
-              <option value=""> - none (top-level) - </option>
-              {parentOptions.map((t) => (
-                <option key={t.id} value={t.id}>{t.icon ? `${t.icon} ` : ""}{t.name}</option>
-              ))}
-            </select>
-          </label>
-        )}
+        <FieldPack items={[
+          {
+            need: fieldNeed("icon", { control: "text", label: "Icon" }),
+            node: (
+              <label className="flex items-center gap-3 text-sm">
+                <span className="text-xs text-muted">Icon</span>
+                <input
+                  type="text"
+                  value={icon}
+                  onChange={(e) => setIcon(e.target.value)}
+                  placeholder="🏷️"
+                  maxLength={8}
+                  className="w-14 px-2 py-1 text-sm text-center border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+                />
+                <span className="text-[11px] text-faint">an emoji</span>
+              </label>
+            ),
+          },
+          parentOptions.length > 0 ? {
+            need: fieldNeed("parentId", { control: "choice", label: "Parent tag (optional - for grouping)" }),
+            node: (
+              <label className="block">
+                <div className="text-xs text-muted mb-1">Parent tag (optional - for grouping)</div>
+                <select
+                  value={parentId}
+                  onChange={(e) => setParentId(e.target.value)}
+                  className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+                >
+                  <option value=""> - none (top-level) - </option>
+                  {parentOptions.map((t) => (
+                    <option key={t.id} value={t.id}>{t.icon ? `${t.icon} ` : ""}{t.name}</option>
+                  ))}
+                </select>
+              </label>
+            ),
+          } : null,
+        ]} />
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"
@@ -384,6 +394,6 @@ function CreateTagModal({
           </button>
         </div>
       </form>
-    </Modal>
+    </RecordFormModal>
   );
 }

@@ -4,6 +4,7 @@
 // One profile per machine, not per slicer: a slicer maps the neutral printer
 // model id to its own presets, so a second slicer reads the same values.
 
+import { filamentValues } from "../slicer-filament.js";
 import { Router } from "express";
 import { z } from "zod";
 import type { Kysely } from "kysely";
@@ -181,10 +182,11 @@ export async function gatherCandidates(orgId: string, db: Kysely<DigifabDB>): Pr
     for (const c of contents) {
       const snap = await platform().entities.snapshot(orgId, c.kind, c.id).catch(() => null);
       if (!snap) continue;
-      const md = (snap.metadata ?? {}) as Record<string, unknown>;
       const types = await platform()
         .pairings.findBySources({ orgId, sourceKind: c.kind, sourceIds: [c.id], targetKind: c.kind, relationshipKind: "instance-of" })
         .catch(() => []);
+      const type = types[0]?.targetId ? await platform().entities.snapshot(orgId, c.kind, types[0].targetId) : null;
+      const md = { ...((type?.metadata ?? {}) as Record<string, unknown>), ...((snap.metadata ?? {}) as Record<string, unknown>) };
       loaded.push({
         spool: { kind: c.kind, id: c.id, name: typeof snap.name === "string" ? snap.name : null },
         slot: c.slot ?? null,
@@ -192,6 +194,7 @@ export async function gatherCandidates(orgId: string, db: Kysely<DigifabDB>): Pr
         color: typeof md.color === "string" ? md.color : null,
         grams_left: gramsLeft(snap),
         type_id: types[0]?.targetId ?? null,
+        values: filamentValues(md, snap.manufacturer ?? type?.manufacturer),
       });
     }
     out.push({

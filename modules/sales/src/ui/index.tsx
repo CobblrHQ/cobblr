@@ -1,3 +1,4 @@
+import { downloadBlob, useMoneyCurrency, RecordFormModal, CollectionHeader, ContributedDetailPanels, MoneyInput, useRecordInPath, CustomFieldsPanel, FieldPack, fieldNeed, fieldPackControlClass, Modal, headerButton, useFieldDraft, useToast, useConfirm, usePageTitle, SearchInput } from "@cobblr/platform-web";
 // sales UI — the host mounts <SalesUI /> at /sales. A list of sales orders; the
 // detail modal carries the customer, line items (each an inventory part + qty +
 // price), a running total, and the **Fulfill** button that decrements the sold
@@ -6,14 +7,16 @@
 
 import { useEffect, useState } from "react";
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { CollectionHeader, ContributedDetailPanels, MoneyInput, useRecordInPath, CustomFieldsPanel, FieldPack, fieldNeed, fieldPackControlClass, Modal, headerButton, useFieldDraft, useToast, useConfirm, usePageTitle, SearchInput } from "@cobblr/platform-web";
 import { ShoppingCart, Plus, Trash2, X, Users, PackageCheck, Truck, Copy, ExternalLink, Hammer, Settings } from "lucide-react";
 import {
   SalesApi, SalesApiError,
   type SalesOrder, type SalesOrderStatus, type CustomerSummary, type PartOption, type FulfilDoor, type HistoryRow, type OrderSort, type Paged,
 } from "./api.js";
+import { IntakeSettings } from "./intake.js";
+import { invoiceCsv, invoiceHtml } from "../invoice.js";
 import { Link } from "react-router-dom";
-import { formatStoredMoney } from "@cobblr/platform-contract/money";
+import { fieldCurrency, formatStoredMoney } from "@cobblr/platform-contract/money";
+import { PickToLight } from "@cobblr/platform-web";
 
 export const navItems = [{ label: "Sales", path: "/sales", icon: ShoppingCart }];
 
@@ -180,6 +183,11 @@ function SalesSettingsModal({ api, onClose }: { api: SalesApi; onClose: () => vo
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["sales-follow-parcels"] }),
     onError: (e) => toast.error(e instanceof SalesApiError ? e.message : String(e)),
   });
+  const closeDelivered = useMutation({
+    mutationFn: (on: boolean) => api.setCloseDelivered(on),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["sales-follow-parcels"] }),
+    onError: (e) => toast.error(e instanceof SalesApiError ? e.message : String(e)),
+  });
   const check = useMutation({
     mutationFn: () => api.checkParcelsNow(),
     onSuccess: (r) => {
@@ -203,6 +211,12 @@ function SalesSettingsModal({ api, onClose }: { api: SalesApi; onClose: () => vo
             </span>
           </span>
         </label>
+        <label className="flex items-start gap-3">
+          <input type="checkbox" className="mt-1" checked={f?.close_delivered_orders ?? true} disabled={!f || closeDelivered.isPending} onChange={(e) => closeDelivered.mutate(e.target.checked)} />
+          <span><span className="font-medium text-content dark:text-mortar-100">Close delivered orders automatically</span>
+            <span className="block text-xs text-muted">When a delivery is recorded, close the order if it is paid and fully fulfilled. You get a notification with Undo. Parcel following still needs your tracking connection.</span>
+          </span>
+        </label>
         {f?.on && (
           <div className="rounded border border-line dark:border-slate-700 p-3 space-y-2">
             <div className="text-xs text-muted">Following {f.following ?? 0} parcel{f.following === 1 ? "" : "s"} that have not been delivered yet.</div>
@@ -212,6 +226,7 @@ function SalesSettingsModal({ api, onClose }: { api: SalesApi; onClose: () => vo
             </button>
           </div>
         )}
+        <IntakeSettings api={api} />
       </div>
     </Modal>
   );
@@ -260,28 +275,63 @@ function NewOrderModal({ api, orgSlug, onClose, onCreated }: { api: SalesApi; or
   });
 
   return (
-    <Modal open onClose={onClose} title="New sales order" size="sm">
+    <RecordFormModal open onClose={onClose} title="New sales order">
       <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); create.mutate(); }}>
-        <div>
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Customer</span>
-          <CustomerPicker api={api} customerId={customerId} customerName={customerName} onChange={(id, name) => { setCustomerId(id); setCustomerName(name); }} />
-        </div>
-        <div>
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Order #</span>
-          <input value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
-        </div>
+        <FieldPack items={[
+          {
+            need: fieldNeed("customer", { control: "picker", label: "Customer" }),
+            node: (
+              <div>
+                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Customer</span>
+                <CustomerPicker api={api} customerId={customerId} customerName={customerName} onChange={(id, name) => { setCustomerId(id); setCustomerName(name); }} />
+              </div>
+            ),
+          },
+          {
+            need: fieldNeed("order_number", { control: "text", label: "Order #" }),
+            node: (
+              <div>
+                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Order #</span>
+                <input value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
+              </div>
+            ),
+          },
+        ]} />
         <div className="flex justify-end gap-2 pt-1">
           <button type="button" onClick={onClose} className="px-3 py-1.5 text-xs rounded bg-subtle dark:bg-slate-800">Cancel</button>
           <button type="submit" disabled={create.isPending} className="px-3 py-1.5 text-xs rounded bg-cobble-600 text-white disabled:opacity-50">Create</button>
         </div>
       </form>
-    </Modal>
+    </RecordFormModal>
   );
 }
 
 function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; orgSlug: string; orderId: string; onClose: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const currency = useMoneyCurrency();
+  const [exporting, setExporting] = useState(false);
+  const exportOrder = async (kind: "pdf" | "csv") => {
+    const target = kind === "pdf" ? window.open("", "_blank") : null;
+    if (kind === "pdf" && !target) { toast.error("Allow pop-ups to open the invoice, then try again."); return; }
+    setExporting(true);
+    try {
+      const order = await api.getOrder(orderId);
+      if (target) {
+        target.opener = null;
+        target.document.write(invoiceHtml(order, currency));
+        target.document.close();
+        await target.document.fonts.ready;
+        target.focus();
+        target.print();
+      } else {
+        downloadBlob(new Blob([invoiceCsv(order, currency)], { type: "text/csv;charset=utf-8" }), `invoice-${order.id}.csv`);
+      }
+    } catch (e) {
+      target?.close();
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally { setExporting(false); }
+  };
   const detail = useQuery({ queryKey: ["sales-order", orderId], queryFn: () => api.getOrder(orderId) });
 
   const invalidate = () => {
@@ -295,7 +345,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
     onError: (e) => toast.error(e instanceof SalesApiError ? e.message : String(e)),
   });
   const addItem = useMutation({
-    mutationFn: (b: { part_id: string | null; description: string | null; qty: number; unit_price: number | null }) => api.addItem(orderId, b),
+    mutationFn: (b: { part_id: string | null; description: string | null; qty: number; unit_price: number | null }) => api.addItem(orderId, { ...b, metadata: { currency: fieldCurrency(detail.data?.metadata, "total", currency) } }),
     onSuccess: invalidate,
     onError: (e) => toast.error(e instanceof SalesApiError ? e.message : String(e)),
   });
@@ -367,11 +417,16 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
     },
   });
   const d = detail.data;
+  const reopen = useMutation({
+    mutationFn: () => api.undoDeliveryClose(orderId),
+    onSuccess: () => { invalidate(); toast.success("Order reopened. It will stay open until you close it."); },
+    onError: (e) => toast.error(e instanceof SalesApiError ? e.message : String(e)),
+  });
   const fulfilled = d ? ["fulfilled", "shipped", "closed"].includes(d.status) : false;
   const shippable = d ? !["shipped", "closed", "cancelled"].includes(d.status) && d.items.length > 0 : false;
 
   return (
-    <Modal open onClose={onClose} title={[d?.customer_name, d?.order_number].filter(Boolean).join(" · ") || "Sales order"} size="lg">
+    <RecordFormModal open onClose={onClose} title={[d?.order_number, d?.customer_name].filter(Boolean).join(" · ") || "Sales order"}>
       <div className="space-y-4">
         {detail.isLoading && <div className="text-sm text-muted">Loading…</div>}
         {d && (
@@ -379,6 +434,13 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
             {/* Laid out by the platform's packer, as every record form is: a
                 phone gets two columns where the fields fit and a row where one
                 needs it, instead of a hand grid squeezing the customer picker. */}
+            {d.source_ref && <p className="text-xs text-muted break-words">Source: {d.source_name}, order {d.source_ref}{d.source_url && /^https?:\/\//.test(d.source_url) && <> · <a href={d.source_url} target="_blank" rel="noopener noreferrer" className="underline">Open source order</a></>}</p>}
+            {d.metadata?.order_email && typeof d.metadata.order_email === "object" && "text" in d.metadata.order_email && <section aria-label="Original order email" className="rounded border border-line p-3 space-y-2">
+              <h3 className="font-medium">Original order email</h3>
+              <p className="text-sm break-words">{String((d.metadata.order_email as Record<string, unknown>).subject || "")}</p>
+              <pre className="text-xs whitespace-pre-wrap break-words font-sans">{String((d.metadata.order_email as Record<string, unknown>).text || "")}</pre>
+              {d.status === "draft" && <button type="button" disabled={update.isPending} onClick={() => update.mutate({ status: "confirmed" })} className="rounded border border-line px-3 py-1.5">Confirm order</button>}
+            </section>}
             <FieldPack
               className="gap-y-3 text-xs"
               items={[
@@ -426,20 +488,44 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
               onCommit={(name, value) => update.mutate({ metadata: { [name]: value } })}
             />
 
+            <label className="flex items-center gap-2 text-sm text-content dark:text-mortar-100">
+              <input type="checkbox" checked={!!d.paid} disabled={update.isPending} onChange={(e) => update.mutate({ paid: e.target.checked })} />
+              Paid
+            </label>
+            {d.status === "closed" && d.auto_closed_at && <div className="text-sm text-muted flex flex-wrap items-center gap-2">
+              Closed automatically after delivery.
+              <button type="button" disabled={reopen.isPending} onClick={() => reopen.mutate()} className="px-3 py-1.5 rounded border border-line dark:border-slate-600">Undo</button>
+            </div>}
+            {d.delivered_at && d.status === "shipped" && !d.paid && <p className="text-sm text-muted">Delivered. Mark Paid when payment is received.</p>}
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" className={headerButton()} disabled={exporting || update.isPending || addItem.isPending || updateItem.isPending || removeItem.isPending} onClick={() => void exportOrder("pdf")}>Invoice PDF</button>
+              <button type="button" className={headerButton()} disabled={exporting || update.isPending || addItem.isPending || updateItem.isPending || removeItem.isPending} onClick={() => void exportOrder("csv")}>Export CSV</button>
+              <p className="w-full text-xs text-muted">Choose Save as PDF in the print dialog. Export CSV for your accounting tool.</p>
+            </div>
+
+            <PickToLight key={orderId} lines={d.items.flatMap(it => it.part_id ? [{ id: it.id, label: `${it.description || "Part"} (${it.qty})`, ref: { kind: "inventory:part", id: it.part_id } }] : [])} />
             {/* line items */}
             <div>
               <div className="flex items-baseline justify-between mb-1.5">
                 <span className="text-[10px] font-mono uppercase tracking-widest text-muted">Line items</span>
-                <span className="text-sm font-semibold text-content dark:text-mortar-100">Total {formatStoredMoney(d.total, "amount")}</span>
+                <span className="text-sm font-semibold text-content dark:text-mortar-100">Total {formatStoredMoney(d.total, "amount", { currency: fieldCurrency(d.metadata, "total", currency) })}</span>
               </div>
               {d.items.length === 0 && <div className="text-sm text-muted italic">No line items yet. Add what was sold.</div>}
               <ul className="divide-y divide-slate-100 dark:divide-slate-800 border border-line dark:border-slate-700 rounded">
                 {d.items.map((it) => (
-                  <li key={it.id} className="flex items-center gap-3 px-3 py-2 text-sm group">
-                    <span className="flex-1 text-content dark:text-mortar-100">{it.description || (it.part_id ? "(part)" : "(item)")}</span>
+                  <li key={it.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 text-sm group">
+                    <span className="flex-1 min-w-0 text-content dark:text-mortar-100">
+                      {it.description || (it.part_id ? "(part)" : "(item)")}
+                      {!fulfilled && d.status !== "cancelled" && (() => {
+                        const a = d.availability?.find((a) => a.line_id === it.id);
+                        return a ? <span className="block text-xs text-muted" data-testid="line-availability">
+                          {[`${a.in_stock} in stock`, ...(a.being_made > 0 ? [`${a.being_made} being made`] : []), ...(a.short > 0 ? [`${a.short} short`] : [])].join(" · ")}
+                        </span> : null;
+                      })()}
+                    </span>
                     {fulfilled ? (
                       <span className="text-xs text-muted tabular-nums">
-                        {Number(it.qty)}{it.unit_price ? ` × ${formatStoredMoney(it.unit_price, "amount")}` : ""}
+                        {Number(it.qty)}{it.unit_price ? ` × ${formatStoredMoney(it.unit_price, "amount", { currency: fieldCurrency(it.metadata, "unit_price", fieldCurrency(d.metadata, "total", currency)) })}` : ""}
                       </span>
                     ) : (
                       // A line's quantity and price are the two things a
@@ -455,6 +541,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
                         <span aria-hidden>×</span>
                         <MoneyInput
                           ariaLabel={`Price each for ${it.description || "this line"}`}
+                          currency={fieldCurrency(it.metadata, "unit_price", fieldCurrency(d.metadata, "total", currency))}
                           value={it.unit_price}
                           storage="amount"
                           onCommit={(v) => updateItem.mutate({ itemId: it.id, body: { unit_price: v } })}
@@ -467,6 +554,14 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
                     )}
                     {it.part_id && (() => {
                       const wo = (d.work_orders ?? []).find((w) => w.output_part_id === it.part_id && w.status !== "cancelled");
+                      const a = d.availability?.find((a) => a.line_id === it.id);
+                      const makeButton = !fulfilled && d.status !== "cancelled" && (!a || a.short > 0) ? (
+                        <button type="button"
+                          onClick={() => setMaking({ lineId: it.id, name: it.description || "this part", qty: Math.max(1, a?.make_qty ?? Number(it.qty) - Number(it.qty_fulfilled || 0)) })}
+                          className="inline-flex items-center gap-1 text-xs text-accent hover:underline">
+                          <Hammer size={12} aria-hidden /> {wo && a ? `Make ${a.short} more` : "Make this"}
+                        </button>
+                      ) : null;
                       if (wo) {
                         return (
                           <>
@@ -478,18 +573,11 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
                                 Make
                               </Link>
                             )}
+                            {makeButton}
                           </>
                         );
                       }
-                      return !fulfilled && d.status !== "cancelled" ? (
-                        <button
-                          type="button"
-                          onClick={() => setMaking({ lineId: it.id, name: it.description || "this part", qty: Math.max(1, Number(it.qty) - Number(it.qty_fulfilled || 0)) })}
-                          className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
-                        >
-                          <Hammer size={12} aria-hidden /> Make this
-                        </button>
-                      ) : null;
+                      return makeButton;
                     })()}
                     {!fulfilled && (
                       <button
@@ -519,7 +607,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
               </div>
             )}
 
-            {!fulfilled && <AddLineRow api={api} onAdd={(b) => addItem.mutate(b)} />}
+            {!fulfilled && <AddLineRow api={api} currency={fieldCurrency(d.metadata, "total", currency)} onAdd={(b) => addItem.mutate(b)} />}
 
             <div className="flex items-center justify-between pt-2 border-t border-line dark:border-slate-700">
               <span className="text-xs text-muted">
@@ -609,7 +697,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
         </Modal>
       )}
       {making && (
-        <Modal open onClose={() => setMaking(null)} title={`Make ${making.name}`} size="sm">
+        <RecordFormModal open onClose={() => setMaking(null)} title={`Make ${making.name}`}>
           <form
             className="space-y-3"
             onSubmit={(e) => { e.preventDefault(); make.mutate({ lineId: making.lineId, qty: making.qty }); }}
@@ -632,7 +720,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
               </button>
             </div>
           </form>
-        </Modal>
+        </RecordFormModal>
       )}
       {shipping && d && (
         <ShipDialog
@@ -642,7 +730,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
           onShipped={() => { setShipping(false); invalidate(); }}
         />
       )}
-    </Modal>
+    </RecordFormModal>
   );
 }
 
@@ -925,7 +1013,7 @@ function OrderHistory({ api, orderId }: { api: SalesApi; orderId: string }) {
   );
 }
 
-function AddLineRow({ api, onAdd }: { api: SalesApi; onAdd: (b: { part_id: string | null; description: string | null; qty: number; unit_price: number | null }) => void }) {
+function AddLineRow({ api, currency, onAdd }: { api: SalesApi; currency: string; onAdd: (b: { part_id: string | null; description: string | null; qty: number; unit_price: number | null }) => void }) {
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<PartOption | null>(null);
   const [desc, setDesc] = useState("");
@@ -974,7 +1062,7 @@ function AddLineRow({ api, onAdd }: { api: SalesApi; onAdd: (b: { part_id: strin
       </div>
       <div className="flex items-center gap-2">
         <label className="text-xs text-muted">Qty <input type="number" min={1} value={qty} onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))} className="w-16 ml-1 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm" /></label>
-        <label className="text-xs text-muted flex items-center gap-1">Each <MoneyInput value={price} storage="amount" live onCommit={setPrice} ariaLabel="Price each" className="w-28 text-sm" /></label>
+        <label className="text-xs text-muted flex items-center gap-1">Each <MoneyInput value={price} currency={currency} storage="amount" live onCommit={setPrice} ariaLabel="Price each" className="w-28 text-sm" /></label>
         <div className="flex-1" />
         <button type="button" disabled={!picked && !desc.trim()} onClick={submit} className="px-3 py-1.5 text-xs rounded bg-cobble-600 text-white disabled:opacity-50">Add</button>
       </div>
@@ -1062,7 +1150,7 @@ function CustomersModal({ api, initialEditing, onClose }: { api: SalesApi; initi
   });
 
   return (
-    <Modal open onClose={onClose} title="Customers" size="md">
+    <RecordFormModal open onClose={onClose} title="Customers">
       <div className="space-y-3">
         {customers.isLoading && <div className="text-sm text-muted">Loading…</div>}
         {(q || customers.total > PAGE) && <SearchInput value={find} onChange={setFind} placeholder="search customers…" aria-label="Search customers" />}
@@ -1099,7 +1187,7 @@ function CustomersModal({ api, initialEditing, onClose }: { api: SalesApi; initi
           <button type="button" onClick={() => setEditing("new")} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded bg-cobble-600 text-white"><Plus size={14} /> Add customer</button>
         )}
       </div>
-    </Modal>
+    </RecordFormModal>
   );
 }
 
@@ -1129,10 +1217,20 @@ function CustomerForm({ api, customer, onDone, onCancel }: { api: SalesApi; cust
   return (
     <form className="rounded-lg border border-line dark:border-slate-700 p-3 space-y-2" onSubmit={(e) => { e.preventDefault(); if (name.trim()) save.mutate(); }}>
       <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Name *" className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
-      <div className="grid grid-cols-2 gap-2">
-        <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" className="rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
-        <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Phone" className="rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
-      </div>
+      <FieldPack items={[
+        {
+          need: fieldNeed("email", { control: "text", label: "Email" }),
+          node: (
+            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" className="w-full min-w-0 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
+          ),
+        },
+        {
+          need: fieldNeed("phone", { control: "text", label: "Phone" }),
+          node: (
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Phone" className="w-full min-w-0 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
+          ),
+        },
+      ]} />
       <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Address" className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
       {customer && (
         <CustomFieldsPanel entityKind="sales:customer" entityId={customer.id} values={fields} onCommit={(name, value) => setField.mutate({ name, value })} />

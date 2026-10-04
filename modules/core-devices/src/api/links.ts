@@ -43,7 +43,7 @@ linksRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member", "guest")) return;
-    let q = tenantDb(req).selectFrom("core_devices_links").select(COLS);
+    let q = tenantDb(req).selectFrom("core_devices_links").leftJoin("core_devices_readings", "core_devices_readings.link_id", "core_devices_links.id").select(COLS).select(["core_devices_readings.value", "core_devices_readings.unit", "core_devices_readings.sampled_at"]);
     const { entity_kind, entity_id, connection_id } = req.query;
     if (typeof entity_kind === "string") q = q.where("entity_kind", "=", entity_kind);
     if (typeof entity_id === "string") q = q.where("entity_id", "=", entity_id);

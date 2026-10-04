@@ -1,13 +1,18 @@
 {
   "manifest": {
     "id": "cobblr.flagship.filament",
-    "version": "0.8.2",
+    "version": "0.8.6",
     "name": "Filament",
     "description": "A filament type (Royal Blue PLA) says the filament once: material, colour, diameter, temperatures, whether it needs drying. Each spool picks its type and adds its own size, batch code, how much is left and its state. Each type adds up its spools and kilograms.",
     "author": "Cobblr",
     "released_at": "2026-06-17",
     "changelog": "Filament's description in the bundle list reads plainly, without capitals shouting TYPE and SPOOLS. Earlier: A filament type's fields sit under three headings, Identity, Printing and Spool, and each folds away, so a type's page reads in parts instead of one long list. A field you moved to another section stays where you put it when Filament updates. Earlier: A filament type has ONE colour field. It holds one colour, a blend or several, so a rainbow reads as a rainbow, and the separate colour swatch field is folded into it. Earlier: A scanned spool files as a spool: its type is found or made under it, and a scan never offers the table of types. The spools also know what filament is called (PLA, PETG, 1.75 mm), so a spool is not filed as generic inventory. Earlier: Scanning a spool's QR fills in everything its maker publishes: the exact colour swatch, the UPC, the nozzle and bed temperature ranges, the drying temperature, density, the empty spool weight, and the date the spool was made and its measured length. The UPC is the type's identifier, so scanning the box barcode finds the same type. Earlier: Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: Types and Spools now sit together in the navbar as one element, a quiet \"Filament\" stem with \"Types │ Spools\" links, so the two related tables read as one thing. (0.5.1: scanning a spool's QR find-or-creates its filament TYPE and links the spool automatically, a scan lands in the type→spool model instead of a flat row. 0.5.0: the TYPE defines the whole filament: colour, diameter, nozzle/bed temps and needs-drying live on the type, not re-entered per spool; a SPOOL just picks its type and carries the per-spool facts: size, batch code, remaining, state. Upgrading carries your existing temps + colour up onto the type automatically.)",
     "releases": [
+      {
+        "version": "0.8.6",
+        "released_at": "2026-10-04",
+        "notes": "Spools show use and length, accept scale and firmware reports, and can send Cobblr counts back to Spoolman. Import filament types and vendors from the public catalog."
+      },
       {
         "version": "0.8.2",
         "released_at": "2026-10-02",
@@ -248,6 +253,40 @@
             "position": 17,
             "section": "Spool",
             "help": "What the empty spool weighs, to weigh what is left."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "vendor_id",
+            "display_label": "Vendor",
+            "type": "relation",
+            "ref_kind": "filament-vendors:item",
+            "position": 18,
+            "section": "Identity",
+            "help": "The maker's record and default empty spool weight."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "article_number",
+            "display_label": "Article number",
+            "type": "text",
+            "position": 19,
+            "section": "Identity"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "price_per_kg",
+            "display_label": "Price per kg",
+            "type": "money",
+            "position": 20,
+            "section": "Spool"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "spoolmandb_id",
+            "display_label": "Filament catalog id",
+            "type": "text",
+            "position": 21,
+            "section": "Identity"
           }
         ],
         "field_overrides": [
@@ -432,6 +471,14 @@
             "type": "number",
             "position": 5,
             "help": "The filament length the maker measured on this spool."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "initial_g",
+            "display_label": "Initial filament (g)",
+            "type": "number",
+            "position": 6,
+            "help": "The filament weight when this spool was new, without the empty spool."
           }
         ],
         "field_overrides": [
@@ -503,6 +550,71 @@
                 "state"
               ]
             }
+          }
+        ]
+      },
+      {
+        "module": "inventory",
+        "instance_name": "filament-vendors",
+        "display_name": "Filament vendors",
+        "nav_group": {
+          "key": "filament",
+          "label": "Filament"
+        },
+        "glyph": "🏷️",
+        "item_noun": "vendor",
+        "faces": {
+          "stock": false
+        },
+        "scan_keywords": [
+          "filament vendor",
+          "filament manufacturer"
+        ],
+        "field_defs": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "empty_spool_g",
+            "display_label": "Empty spool g",
+            "type": "number",
+            "position": 1,
+            "help": "The maker's default empty spool weight; a type or spool can override it."
+          }
+        ],
+        "field_overrides": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "qty",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "unit",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "cost",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "min_qty",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "location",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "warranty",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "category",
+            "hidden": true
           }
         ]
       }

@@ -6,7 +6,17 @@
 
 const SHELL = `cobblr-shell-${BUILD}`;
 const STATIC = "cobblr-static-v1";
-const API = "cobblr-api-v1";
+const API = "cobblr-api-v2";
+let readsEpoch = 0;
+let readsMutation = Promise.resolve();
+
+// Deletion must follow any write already started, and an earlier fetch must
+// never enqueue a write after that boundary.
+function mutateReads(work) {
+  const done = readsMutation.then(work);
+  readsMutation = done.catch(() => {});
+  return done;
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(SHELL).then((c) => c.addAll(PRECACHE)).then(() => self.skipWaiting()));
@@ -20,7 +30,7 @@ self.addEventListener("activate", (event) => {
       .keys()
       .then((keys) => {
         const shells = keys.filter((k) => k.startsWith("cobblr-shell-") && k !== SHELL).sort();
-        return Promise.all(shells.slice(0, -1).map((k) => caches.delete(k)));
+        return Promise.all([...shells.slice(0, -1), "cobblr-api-v1"].map((k) => caches.delete(k)));
       })
       .then(() => self.clients.claim()),
   );
@@ -29,7 +39,12 @@ self.addEventListener("activate", (event) => {
 // The page asks for its kept reads to be forgotten: sign-out, or another
 // person signing in on this device.
 self.addEventListener("message", (event) => {
-  if (event.data && event.data.type === "cobblr:forget-reads") event.waitUntil(caches.delete(API));
+  if (event.data && event.data.type === "cobblr:forget-reads") {
+    readsEpoch++;
+    event.waitUntil(mutateReads(() => caches.delete(API)));
+  }
+  // A page that found itself on a stale build asks the waiting worker to take over.
+  if (event.data && event.data.type === "cobblr:skip-waiting") self.skipWaiting();
 });
 
 self.addEventListener("fetch", (event) => {
@@ -89,6 +104,7 @@ async function staticFile(req) {
 }
 
 async function apiRead(req) {
+  const epoch = readsEpoch;
   try {
     const res = await fetch(req);
     if (keepable(res.status, res.headers.get("content-type"))) {
@@ -96,14 +112,24 @@ async function apiRead(req) {
       const body = await copy.arrayBuffer();
       const headers = new Headers(copy.headers);
       headers.set("x-cobblr-fetched-at", new Date().toISOString());
-      void caches.open(API).then((c) => c.put(req, new Response(body, { status: 200, headers })));
+      const vary = headers.get("vary");
+      headers.set("vary", vary ? `${vary}, Authorization` : "Authorization");
+      await mutateReads(async () => {
+        if (epoch !== readsEpoch) return;
+        const cache = await caches.open(API);
+        if (epoch !== readsEpoch) return;
+        await cache.put(req, new Response(body, { status: 200, headers }));
+      }).catch(() => {});
     }
     return res;
   } catch {
-    const kept = await caches.match(req, { cacheName: API });
+    const kept = epoch === readsEpoch ? await caches.match(req, { cacheName: API }).catch(() => undefined) : undefined;
     if (kept) {
-      const { body, init } = asOfflineCopy(await kept.arrayBuffer(), kept.headers, kept.headers.get("x-cobblr-fetched-at") || "");
-      return new Response(body, init);
+      const bytes = await kept.arrayBuffer();
+      if (epoch === readsEpoch) {
+        const { body, init } = asOfflineCopy(bytes, kept.headers, kept.headers.get("x-cobblr-fetched-at") || "");
+        return new Response(body, init);
+      }
     }
     const { body, init } = offlineAnswer();
     return new Response(body, init);

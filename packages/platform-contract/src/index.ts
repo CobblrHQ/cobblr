@@ -1,3 +1,4 @@
+import { ActionGroupReference } from "@cobblr/platform-contract/action-groups";
 export type { Money, MoneyTotal, MoneyConversion, ExchangeRates } from "@cobblr/platform-contract/money";
 // The platform contract — types and validators that modules import
 // when registering with cobblr-core. Modules MUST NOT import from
@@ -1409,13 +1410,9 @@ export const NotificationKind = z.object({
 });
 export type NotificationKind = z.infer<typeof NotificationKind>;
 
-// ORDER MATTERS. Declare actions in the order a person wants them: the record's
-// own module leads its strip, and the first few declared stay in the open while
-// the rest fold behind "+N more". The registry stores each action's position
-// in its manifest and lists by it. Until it did, the strip was ordered by
-// action ID, so "core-maintenance:log" and "core-scan:confirm-receipt-arrival"
-// led every inventory item and "use one" sat behind the fold (2026-09-08).
 const EntityAction = z.object({
+  group: ActionGroupReference.optional(),
+  primary: z.boolean().default(false),
   id: z
     .string()
     .regex(ActionIdRegex, "action id must be <module>:<name>"),
@@ -2436,6 +2433,7 @@ export interface PlatformEvents {
 export interface PlatformOrgInfo {
   id: string;
   slug: string;
+  accent?: string | null;
   /** The managed app this workspace is locked into, or null for a platform
    *  workspace. Mirrors `orgs.app_mode`. */
   app_mode: { app: string; home_path: string; label?: string } | null;
@@ -3664,6 +3662,8 @@ export interface FaceVerdict {
 }
 
 export interface EntityActionRecord {
+  group?: string | null;
+  primary?: boolean;
   id: string;
   module_name: string;
   label: string;
@@ -6996,7 +6996,7 @@ export interface DeviceDriver {
   testConnection?(): Promise<{ ok: boolean; detail?: string }>;
   listDevices?(): Promise<Array<{ id: string; name: string; state?: string | null; enabled?: boolean }>>;
   /** The actuator verb — fire a parameterised command-and-forget. */
-  runCommand?(command: string, params: Record<string, unknown>): Promise<{ ok: boolean; ref?: string; detail?: string }>;
+  runCommand?(command: string, params: Record<string, unknown>): Promise<{ ok: boolean; ref?: string; detail?: string; data?: Record<string, unknown> }>;
   /** The sensor verb — a point reading. */
   readSensor?(deviceId: string): Promise<{ value: number; unit?: string; at?: string }>;
 }
@@ -7070,7 +7070,7 @@ export interface DeviceConnectionStore {
 
 export interface PlatformDevices {
   /** The connection/driver owner registers this at boot (one provider). */
-  registerDriverProvider(provider: DeviceDriverProvider): void;
+  registerDriverProvider(provider: DeviceDriverProvider, types?: readonly string[]): void;
   /** Resolve a connection ref to a driver via the registered provider. */
   getDriver(orgId: string, connectionRef: string): Promise<DeviceDriver | null>;
   /** The connections-table owner (core-devices) registers the store at boot. */

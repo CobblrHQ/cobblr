@@ -7,6 +7,8 @@ import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { followRound, readFollowSetting, setFollowing } from "../follow-parcels.js";
 
+import { readDeliveryCloseSetting, setDeliveryCloseSetting } from "../close-delivered.js";
+
 export const followParcelsRouter = Router({ mergeParams: true });
 
 /** The setting, and how many sent parcels are being followed right now. */
@@ -22,7 +24,7 @@ followParcelsRouter.get(
       .where("tracking_number", "is not", null)
       .where("delivered_at", "is", null)
       .executeTakeFirst();
-    res.json({ ...setting, following: Number(following?.n ?? 0) });
+    res.json({ ...setting, close_delivered_orders: await readDeliveryCloseSetting(db), following: Number(following?.n ?? 0) });
   }),
 );
 
@@ -48,3 +50,13 @@ followParcelsRouter.post(
     res.json(r);
   }),
 );
+
+const CloseToggle = z.object({ on: z.boolean() });
+// AI-REACH: exempt — a workspace preference controlled from Sales settings
+followParcelsRouter.put("/close-delivered", asyncHandler(async (req, res) => {
+  if (!requireRole(req, res, "owner", "admin", "member")) return;
+  const body = CloseToggle.safeParse(req.body ?? {});
+  if (!body.success) return badBody(res, body.error);
+  await setDeliveryCloseSetting(tenantDb(req), tenantContext(req).org.id, sessionUser(req)?.id ?? null, body.data.on);
+  res.json({ on: body.data.on });
+}));

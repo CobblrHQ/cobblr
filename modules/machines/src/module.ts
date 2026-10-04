@@ -111,6 +111,7 @@ export default defineModule({
     ],
     actions: [
       {
+        group: "service",
         id: "machines:record-usage",
         examples: ["that machine ran four hours", "log the usage on it"],
         undoable: true,
@@ -130,6 +131,7 @@ export default defineModule({
       // identity of its own (docs/design-decisions/holdings-and-units.md,
       // phase 5). The same doors the machine's page uses.
       {
+        group: "service",
         id: "machines:name-unit",
         examples: ["the second Replicator is the one with the new hotend", "give one of these its own name"],
         label: "Name one of these",
@@ -144,6 +146,7 @@ export default defineModule({
         },
       },
       {
+        group: "service",
         id: "machines:split-unit",
         examples: ["unit 2 is its own machine now", "split this one out"],
         undoable: true,
@@ -155,6 +158,7 @@ export default defineModule({
         userInvokable: false,
       },
       {
+        group: "service",
         id: "machines:split-one",
         examples: ["one of the five printers is going to the other shop, track it on its own"],
         undoable: true,
@@ -167,6 +171,7 @@ export default defineModule({
         argsSchema: { name: { label: "Name", type: "text" } },
       },
       {
+        group: "service",
         id: "machines:make-unit-of",
         examples: ["this printer is one of the three Replicators", "merge it back into the group"],
         undoable: true,

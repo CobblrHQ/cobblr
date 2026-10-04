@@ -47,6 +47,8 @@ export async function syncManifestRegistries(): Promise<{
     invoke_route: string | null;
     invoke_handler: string | null;
     user_invokable: boolean;
+    action_group: string | null;
+    is_primary: boolean;
     internal: boolean;
     wire_only: boolean;
     record_optional: boolean;
@@ -125,6 +127,8 @@ export async function syncManifestRegistries(): Promise<{
         invoke_route: a.invokeRoute ?? null,
         invoke_handler: a.invokeHandler ?? null,
         user_invokable: userInvokable,
+        action_group: a.group ?? null,
+        is_primary: a.primary ?? false,
         internal: a.internal ?? false,
         wire_only: a.wireOnly ?? false,
         record_optional: a.recordOptional ?? false,
@@ -157,6 +161,8 @@ export async function syncManifestRegistries(): Promise<{
       invoke_route: null,
       invoke_handler: a.invoke_handler,
       user_invokable: a.user_invokable,
+      action_group: a.group,
+      is_primary: false,
       internal: false,
       wire_only: a.wire_only ?? false,
       record_optional: false,
@@ -293,6 +299,8 @@ export async function syncManifestRegistries(): Promise<{
           invoke_route: a.invoke_route,
           invoke_handler: a.invoke_handler,
           user_invokable: a.user_invokable,
+          action_group: a.action_group,
+          is_primary: a.is_primary,
           args_schema: a.args_schema ? sql`${JSON.stringify(a.args_schema)}::jsonb` : null,
           undoable: a.undoable,
           effect: a.effect,
@@ -316,6 +324,8 @@ export async function syncManifestRegistries(): Promise<{
             invoke_route: a.invoke_route,
             invoke_handler: a.invoke_handler,
             user_invokable: a.user_invokable,
+            action_group: a.action_group,
+            is_primary: a.is_primary,
             args_schema: a.args_schema ? sql`${JSON.stringify(a.args_schema)}::jsonb` : null,
             undoable: a.undoable,
             effect: a.effect,

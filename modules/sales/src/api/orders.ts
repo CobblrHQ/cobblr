@@ -9,6 +9,7 @@ import { z } from "zod";
 import { likeEscape, platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb, type SalesOrderStatus } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { orderAvailability } from "../availability.js";
 import { fulfilOrder } from "../fulfilment.js";
 import { nextOrderNumber } from "../order-number.js";
 import { orderHappened, readHistory } from "../history.js";
@@ -23,11 +24,14 @@ export const ordersRouter = Router({ mergeParams: true });
 
 const Status = z.enum(["draft", "confirmed", "fulfilled", "shipped", "closed", "cancelled"]);
 
+import { closeDeliveredOrder, undoDeliveryClose } from "../close-delivered.js";
+
 const OrderCreate = z.object({
   customer_id: z.string().uuid().nullable().optional(),
   customer_name: z.string().max(200).nullable().optional(),
   order_number: z.string().max(160).nullable().optional(),
   status: Status.optional(),
+  paid: z.boolean().optional(),
   order_date: z.string().nullable().optional(),
   shipping_address: z.string().max(2_000).nullable().optional(),
   notes: z.string().max(8_000).nullable().optional(),
@@ -96,6 +100,7 @@ const ORDER_SORTS = {
 const OrderList = z.object({
   q: z.string().trim().max(200).optional(),
   status: Status.optional(),
+  paid: z.boolean().optional(),
   sort: z.enum(Object.keys(ORDER_SORTS) as [keyof typeof ORDER_SORTS, ...Array<keyof typeof ORDER_SORTS>]).optional(),
 });
 
@@ -143,7 +148,8 @@ ordersRouter.get(
     // What is being made for it, and how many of each are made so far.
     const makes = await makeIdsByWorkOrder(db, order.id);
     const work_orders = (await workOrdersFor(tenantContext(req).org.id, order.id)).map((w) => ({ ...w, make_id: makes.get(w.id) ?? null }));
-    res.json({ ...order, items, total, work_orders });
+    const availability = await orderAvailability(tenantContext(req).org.id, items.map((it) => ({ ...it, qty: Number(it.qty), qty_fulfilled: Number(it.qty_fulfilled) })), work_orders);
+    res.json({ ...order, items, total, work_orders, availability });
   }),
 );
 
@@ -191,7 +197,7 @@ ordersRouter.patch(
     const ctx = tenantContext(req);
     const before = await db
       .selectFrom("sales_orders")
-      .select(["status"])
+      .select(["status", "auto_closed_at"])
       .where("id", "=", req.params.id!)
       .where("instance", "=", instanceOf(req))
       .executeTakeFirst();
@@ -231,6 +237,10 @@ ordersRouter.patch(
     }
     // Custom fields MERGE into the live row (withMetadataMerged, #3625).
     const patch: Record<string, unknown> = withMetadataMerged({ ...parsed.data, updated_at: new Date() } as Record<string, unknown>);
+    if (parsed.data.status && parsed.data.status !== before.status) {
+      patch.auto_closed_at = null;
+      if (before.auto_closed_at) patch.auto_close_undone = true;
+    }
     if ("customer_id" in parsed.data) {
       const cn = await customerNameFor(req, parsed.data.customer_id, parsed.data.customer_name);
       if (cn !== undefined) patch.customer_name = cn;
@@ -254,7 +264,8 @@ ordersRouter.patch(
       diff: parsed.data as Record<string, unknown>,
       before,
     });
-    res.json(row);
+    if (parsed.data.paid !== undefined) await closeDeliveredOrder(db, ctx.org.id, row.id);
+    res.json(await db.selectFrom("sales_orders").selectAll().where("id", "=", row.id).executeTakeFirstOrThrow());
   }),
 );
 
@@ -527,3 +538,14 @@ ordersRouter.post(
     res.json({ order: updated, decremented, complete: result.complete });
   }),
 );
+
+// AI-REACH: exempt — Undo of an automatic close, offered only by the order sheet or its notification
+ordersRouter.post("/:id/undo-delivery-close", asyncHandler(async (req, res) => {
+  if (!requireRole(req, res, "owner", "admin", "member")) return;
+  if (!(await orderHere(req))) {
+    res.status(404).json({ error: { code: "not_found", message: "Order not found" } });
+    return;
+  }
+  const undone = await undoDeliveryClose(tenantDb(req), tenantContext(req).org.id, sessionUser(req)?.id ?? null, req.params.id!);
+  res.json({ undone });
+}));

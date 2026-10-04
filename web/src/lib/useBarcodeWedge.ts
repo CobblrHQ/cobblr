@@ -43,7 +43,12 @@ export function useBarcodeWedge({ enabled = true, onScan, config }: UseBarcodeWe
 
     const handler = (e: KeyboardEvent) => {
       // Don't compete with a field the user is typing into.
-      if (isEditableTarget(e.target)) return;
+      // AltGraph produces printable characters on some scanner layouts.
+      const shortcut = !e.getModifierState("AltGraph") && (e.ctrlKey || e.metaKey || e.altKey);
+      if (isEditableTarget(e.target) || shortcut) {
+        detector.reset();
+        return;
+      }
       const code = detector.feed(e.key, performance.now());
       if (code) {
         // Swallow the trailing Enter so it can't also trigger something else.

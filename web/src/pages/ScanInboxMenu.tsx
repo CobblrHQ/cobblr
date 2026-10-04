@@ -252,7 +252,7 @@ export function ScanInboxMenu(p: ScanInboxMenuProps) {
           )}
           <MenuItem
             icon={<Zap size={14} />}
-            label="File everything"
+            label="Choose for each…"
             hint="a plan first: what gets added to things you have, what is filed as new, what is left for you"
             onClick={() => {
               p.onFileEverything();

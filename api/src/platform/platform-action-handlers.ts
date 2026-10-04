@@ -1,3 +1,5 @@
+import { EditRecordActionLayout, editRecordActionLayout, readRecordActionLayout } from "./record-action-layout.js";
+import { ACTION_GROUPS, RecordActionLayout, similarActionGroup } from "@cobblr/platform-contract/action-groups";
 import { restore as restoreDeletedRecord } from "./deleted-records.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { restoreHistoryVersion } from "./history-restore.js";
@@ -267,7 +269,81 @@ function kindsInWords(kinds: Array<{ id: string; display_name_plural?: string | 
   return `${shown.join(", ")}${named.length > shown.length ? ` and ${named.length - shown.length} more` : ""}`;
 }
 
+async function resolveRecordActionArrangement(ctx: ActionInvokeContext) {
+  const parsed = EditRecordActionLayout.safeParse(ctx.args);
+  if (!parsed.success) return { ok: false as const, error: "Choose a kind of record and the arrangement to change." };
+  const input = parsed.data;
+  const kinds = await listKindsForOrg(ctx.orgId);
+  const kind = kinds.find((k) => k.id === input.kind || k.display_name.toLowerCase() === input.kind.toLowerCase() || k.display_name_plural?.toLowerCase() === input.kind.toLowerCase());
+  if (!kind) return { ok: false as const, error: "Choose a kind of record in this workspace." };
+  input.kind = kind.id;
+  if (input.group && !ACTION_GROUPS.some((g) => g.id === input.group) && !input.layout) {
+    const requested = input.group;
+    const { layout } = await readRecordActionLayout(ctx.orgId, kind.id);
+    const chosen = layout.groups.find((g) => g.id === requested || g.label.toLowerCase() === requested.toLowerCase());
+    const registered = similarActionGroup(requested);
+    if (chosen) input.group = chosen.id;
+    else if (registered) {
+      input.group = registered.id;
+      if (requested.toLowerCase() !== registered.label.toLowerCase()) input.label ??= requested;
+    } else {
+      input.label ??= requested;
+      input.group = `workspace:${requested.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+    }
+  }
+  const actions = await platform().actions.listApplicable(kind.id, ctx.orgId);
+  for (let i = 0; i < (input.actions?.length ?? 0); i++) {
+    const word = input.actions![i]!;
+    const action = actions.find((a) => a.id === word || a.label.toLowerCase() === word.toLowerCase());
+    if (word.startsWith("record:")) continue;
+    if (!action) return { ok: false as const, error: `Choose an action offered on ${kind.display_name_plural ?? kind.display_name}.` };
+    input.actions![i] = action.id;
+  }
+  return { ok: true as const, input, kind, actions };
+}
+
 export function registerPlatformActionHandlers(): void {
+  registerPlanner("platform.edit-record-actions", async (ctx) => {
+    const resolved = await resolveRecordActionArrangement(ctx);
+    if (!resolved.ok) return { error: resolved.error };
+    const { input, kind, actions } = resolved;
+    const current = await readRecordActionLayout(ctx.orgId, kind.id);
+    if (input.expected_revision !== undefined && input.expected_revision !== current.revision) return { error: "The record actions changed since you opened them. Refresh before saving." };
+    const groups = input.layout?.groups ?? current.layout.groups;
+    const groupName = (id: string) => groups.find((g) => g.id === id)?.label ?? ACTION_GROUPS.find((g) => g.id === id)?.label ?? id;
+    const actionName = (id: string) => actions.find((a) => a.id === id)?.label ?? id;
+    const lines: string[] = [];
+    if (input.layout) {
+      lines.push("Replace the current arrangement with these groups and action choices.");
+      for (const g of groups) lines.push(`${g.label}: position ${g.order}.`);
+      for (const [id, choice] of Object.entries(input.layout.actions)) {
+        lines.push(`${actionName(id)}: ${[choice.group ? groupName(choice.group) : null, choice.hidden === undefined ? null : choice.hidden ? "hidden" : "visible", choice.primary === undefined ? null : choice.primary ? "primary" : "in its menu"].filter(Boolean).join(", ") || "default placement"}.`);
+      }
+    } else {
+      const names = (input.actions ?? []).map(actionName).join(", ");
+      const group = input.label ?? (input.group ? groupName(input.group) : "");
+      if (input.group && names) lines.push(`Move ${names} to ${group}.`);
+      if (input.label) lines.push(`Call the group ${input.label}.`);
+      if (input.order !== undefined) lines.push(`Put ${group} in position ${input.order}.`);
+      if (names && input.hidden !== undefined) lines.push(`${input.hidden ? "Hide" : "Show"} ${names}.`);
+      if (names && input.primary !== undefined) lines.push(`${input.primary ? "Keep" : "Remove"} ${names} ${input.primary ? "on" : "from"} the primary bar.`);
+    }
+    return { title: `Arrange record actions on ${kind.display_name_plural ?? kind.display_name}`, lines };
+  });
+  registerHandler("platform.edit-record-actions", async (ctx) => {
+    const resolved = await resolveRecordActionArrangement(ctx);
+    if (!resolved.ok) return { ok: false, error: resolved.error };
+    const { input, kind } = resolved;
+    try {
+      const result = await editRecordActionLayout(ctx.orgId, input);
+      return { ok: true, summary: `Updated record actions on ${kind.display_name_plural ?? kind.display_name}.`, data: { kind: kind.id, before: result.before, revision: result.revision } };
+    } catch (err) { return { ok: false, error: (err as Error).message }; }
+  });
+  registerUndo("platform.edit-record-actions", (result) => {
+    const parsed = z.object({ kind: z.string(), before: RecordActionLayout, revision: z.number() }).safeParse((result as { data?: unknown } | null)?.data);
+    return parsed.success ? { action_id: "platform:edit-record-actions", args: { kind: parsed.data.kind, layout: parsed.data.before, expected_revision: parsed.data.revision } } : null;
+  });
+
   registerHandler("platform.restore-deleted-record", async (ctx) => {
     const parsed = z.object({ kind: z.string().min(1), entity_id: z.string().min(1) }).safeParse(ctx.args);
     if (!parsed.success) return { ok: false, error: "Choose a deleted record." };

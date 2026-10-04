@@ -39,3 +39,31 @@ export function sessionPlaceSuggestion(rows: readonly Row[]): PlaceSuggestion | 
   for (const e of votes) if (!best || e[1].n > best[1].n) best = e;
   return best ? { id: best[0], reason: best[1].reason } : null;
 }
+
+/** The place half of a note "<place> — <reason>". */
+export function placeOf(note: string | null | undefined): string | null {
+  if (!note) return null;
+  const m = note.match(/^(.+?)\s[–—-]\s/);
+  return (m ? m[1]! : note).trim() || null;
+}
+
+/** The distinct places a session's unplaced rows are suggested, as the person
+ *  reads them. A count in the header expands to this (#4582). Pure. */
+export function suggestedPlaceNames(rows: readonly Row[]): string[] {
+  const names = new Map<string, string>();
+  for (const r of rows) {
+    if (r.target_location_id || !r.suggested_location_id) continue;
+    if (!names.has(r.suggested_location_id)) names.set(r.suggested_location_id, placeOf(r.suggested_location_note) ?? "a suggested place");
+  }
+  return [...new Set(names.values())];
+}
+
+/** The place the session's filing line names ("Add 1 to Spices, in Kitchen ›
+ *  Spice rack"): the one the session is set to, else the suggestion filing will
+ *  use, said as a suggestion. Null when there is nothing to name (#4582). */
+export function placeForFilingLine(setPlace: string | null, suggested: readonly string[]): string | null {
+  if (setPlace) return setPlace;
+  if (suggested.length === 1) return `${suggested[0]} (suggested)`;
+  if (suggested.length > 1) return `${suggested.length} suggested places`;
+  return null;
+}

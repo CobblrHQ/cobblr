@@ -12,6 +12,7 @@ import { driveHub } from "./drive-hub.js";
 import { resolveQrToken } from "../routes/qr-scan.js";
 import { invoke } from "./actions.js";
 import { withStation } from "./scan-stations.js";
+import { emit } from "./events.js";
 import type { StationResult } from "@cobblr/platform-contract/scan-station";
 
 const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
@@ -67,6 +68,7 @@ export async function routeScanToDrive(opts: {
   if (tok) {
     const r = await resolveQrToken(tok);
     if (r.ok && r.org_id === opts.orgId) {
+      if (r.entity_kind && r.entity_id) await emit("core-scan.label.scanned", { orgId: opts.orgId, entityKind: r.entity_kind, entityId: r.entity_id });
       // Print mode: a QR label already points at a real, labelable entity — so
       // scanning one under `print` reprints/accumulates its label rather than
       // navigating. Fires labels:print (which queues + evaluates the user's

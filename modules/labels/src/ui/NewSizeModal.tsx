@@ -11,8 +11,7 @@ import type { CustomLabelSize } from "./api";
 import { useLabels } from "./context";
 import { articleFor } from "@cobblr/platform-contract/plural";
 
-/** Cap a dimension at 2 decimals for display (1.96, not 1.9685039370078740). */
-const round2 = (n: number) => Number(n.toFixed(2));
+const dimensionText = (n: number) => String(Number(n.toPrecision(12)));
 const MM_PER_IN = 25.4;
 const UNIT_LS = "cobblr:label-size-unit";
 type Unit = "in" | "mm";
@@ -36,28 +35,30 @@ export function NewSizeModal({
   open,
   onClose,
   onCreated,
+  initialSize,
 }: {
   open: boolean;
   onClose: () => void;
   onCreated: (size: CustomLabelSize) => void;
+  initialSize?: CustomLabelSize | null;
 }) {
   const { api, orgSlug } = useLabels();
   const qc = useQueryClient();
   const toast = useToast();
 
-  const [name, setName] = useState("");
+  const [name, setName] = useState(initialSize?.name ?? "");
   // The fields hold whatever UNIT the user is working in; the stored size is always
   // inches (deriveGrid + createCustomSize speak inches). Metric label stock (50×30
   // mm) is the common case, so mm is a first-class choice, remembered per browser.
   const [unit, setUnitState] = useState<Unit>(() => (localStorage.getItem(UNIT_LS) === "mm" ? "mm" : "in"));
-  const [mediaW, setMediaW] = useState("1.5");
-  const [mediaH, setMediaH] = useState("3");
-  const [labelW, setLabelW] = useState("1.5");
-  const [labelH, setLabelH] = useState("1.5");
-  const [marginL, setMarginL] = useState("0");
-  const [marginT, setMarginT] = useState("0");
-  const [colGap, setColGap] = useState("0");
-  const [rowGap, setRowGap] = useState("0");
+  const [mediaW, setMediaW] = useState(() => dimensionText((initialSize?.media_w ?? 1.5) * (unit === "mm" ? MM_PER_IN : 1)));
+  const [mediaH, setMediaH] = useState(() => dimensionText((initialSize?.media_h ?? 3) * (unit === "mm" ? MM_PER_IN : 1)));
+  const [labelW, setLabelW] = useState(() => dimensionText((initialSize?.label_w ?? 1.5) * (unit === "mm" ? MM_PER_IN : 1)));
+  const [labelH, setLabelH] = useState(() => dimensionText((initialSize?.label_h ?? 1.5) * (unit === "mm" ? MM_PER_IN : 1)));
+  const [marginL, setMarginL] = useState(() => dimensionText((initialSize?.margin_l ?? 0) * (unit === "mm" ? MM_PER_IN : 1)));
+  const [marginT, setMarginT] = useState(() => dimensionText((initialSize?.margin_t ?? 0) * (unit === "mm" ? MM_PER_IN : 1)));
+  const [colGap, setColGap] = useState(() => dimensionText((initialSize?.col_gap ?? 0) * (unit === "mm" ? MM_PER_IN : 1)));
+  const [rowGap, setRowGap] = useState(() => dimensionText((initialSize?.row_gap ?? 0) * (unit === "mm" ? MM_PER_IN : 1)));
 
   const num = (v: string) => (Number.isFinite(Number(v)) ? Number(v) : 0);
   const toIn = (v: string) => (unit === "mm" ? num(v) / MM_PER_IN : num(v));
@@ -73,7 +74,7 @@ export function NewSizeModal({
   const setUnit = (u: Unit) => {
     if (u === unit) return;
     const f = u === "mm" ? MM_PER_IN : 1 / MM_PER_IN;
-    const conv = (s: string) => (num(s) ? String(round2(num(s) * f)) : s);
+    const conv = (s: string) => (num(s) ? dimensionText(num(s) * f) : s);
     setMediaW(conv(mediaW)); setMediaH(conv(mediaH));
     setLabelW(conv(labelW)); setLabelH(conv(labelH));
     setMarginL(conv(marginL)); setMarginT(conv(marginT));
@@ -94,10 +95,12 @@ export function NewSizeModal({
   const fits = perSheet >= 1;
 
   const create = useMutation({
-    mutationFn: () => api.createCustomSize({ name: name.trim(), ...dims }),
+    mutationFn: () => initialSize
+      ? api.updateCustomSize(initialSize.id, { name: name.trim(), ...dims })
+      : api.createCustomSize({ name: name.trim(), ...dims }),
     onSuccess: (size) => {
       void qc.invalidateQueries({ queryKey: ["labels-custom-sizes", orgSlug] });
-      toast.success(`Added “${size.name}” (${size.per_sheet} up)`);
+      toast.success(`${initialSize ? "Saved" : "Added"} “${size.name}” (${size.per_sheet} up)`);
       onCreated(size);
       onClose();
     },
@@ -105,7 +108,7 @@ export function NewSizeModal({
   });
 
   return (
-    <Modal open={open} onClose={onClose} title="New label size">
+    <Modal open={open} onClose={onClose} title={initialSize ? "Edit label size" : "New label size"}>
       <div className="space-y-4">
         <label className="flex flex-col gap-1">
           <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">name</span>

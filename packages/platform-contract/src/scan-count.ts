@@ -5,13 +5,14 @@
 // words on the card and the line in the ledger cannot say different things.
 //
 // Change by is a change, never the total: it starts at +1, because a scan
-// usually means "I have another", and below zero it TAKES ("I scanned the
+// can add another; a use session starts at -1. Below zero it takes ("I scanned the
 // empty box, one is used up"). The person never does arithmetic: the card
 // shows "You have 3 → 4". Set total is the recount, a different mode with a
 // different colour, and the ledger files it as a correction, so a shelf that
 // held two fewer than the record said is never read as two eaten.
 
 export type ScanCountMode = "change" | "set";
+export type ScanCountSessionMode = "use" | "kitchen" | "restock" | "put-away";
 
 /** Why, for the ledger line. Optional: a chip, never a question. */
 export const SCAN_COUNT_REASONS = ["replaced", "still_had", "used_up", "went_bad", "tossed"] as const;
@@ -57,24 +58,17 @@ export function scanCountLedgerReason(move: { change: number; correction: boolea
   }
 }
 
-/** What the card says about the value in the stepper. */
-export function scanCountLabel(mode: ScanCountMode, value: number): string {
-  if (mode === "set") return "Recount";
-  if (value > 0) return `Adding ${value}`;
-  if (value < 0) return `Taking ${-value}`;
-  return "Nothing";
-}
-
 /** The count the record will have. Taking never goes below zero: the floor
  *  takes what is there and the card says so. */
 export function scanCountResult(mode: ScanCountMode, have: number, value: number): number {
   return mode === "set" ? Math.max(0, value) : Math.max(0, have + value);
 }
 
-/** Where a new card's stepper starts: +1 in Change by (the scan in your
- *  hand), the current count in Set total. */
-export function scanCountStart(mode: ScanCountMode, have: number, scanned = 1): number {
-  return mode === "set" ? Math.max(0, have) : Math.max(1, scanned);
+/** A use session takes one; a recount starts at the current total. */
+export function scanCountStart(mode: ScanCountMode, have: number, sessionMode?: ScanCountSessionMode): number {
+  if (mode === "set") return Math.max(0, have);
+  if ((sessionMode === "use" || sessionMode === "kitchen") && have > 0) return -1;
+  return 1;
 }
 
 /** The request body the card sends, and the only shape the route accepts:

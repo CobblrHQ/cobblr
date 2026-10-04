@@ -1,3 +1,4 @@
+import { RecordActionItem } from "./RecordActionContributions";
 // What became of a thing that is no longer yours, on its own page.
 //
 // A record that left (sold, given away, thrown out) says so in one line above
@@ -88,7 +89,7 @@ export function RecordDisposition({
           {sayDisposition(gone, money)}
           {gone.note && <span className="block text-xs text-muted">{gone.note}</span>}
         </span>
-        <button
+        <RecordActionItem id="record:bring-back" group="lifecycle" label="Bring back" description="Return this thing to your active lists and totals."><button
           type="button"
           disabled={busy}
           data-testid="bring-back"
@@ -112,7 +113,7 @@ export function RecordDisposition({
         >
           <Undo2 size={12} aria-hidden />
           Bring back
-        </button>
+        </button></RecordActionItem>
       </div>
     );
   }
@@ -123,7 +124,7 @@ export function RecordDisposition({
         <Gift size={14} className="shrink-0 text-muted" aria-hidden />
         <span className="min-w-0 flex-1">Offered to {offered.to}. When they take it, it is marked given away to them.</span>
         {api.withdrawShareOffer && (
-          <button
+          <RecordActionItem id="record:withdraw-offer" group="share" label="Withdraw offer" description="Cancel the offer before they take it."><button
             type="button"
             disabled={busy}
             data-testid="withdraw-offer"
@@ -143,7 +144,7 @@ export function RecordDisposition({
             className="inline-flex items-center gap-1 rounded border border-line px-2 py-1 text-xs text-muted hover:border-accent hover:text-accent dark:border-slate-600"
           >
             Withdraw
-          </button>
+          </button></RecordActionItem>
         )}
       </div>
     );
@@ -152,7 +153,7 @@ export function RecordDisposition({
   return (
     <>
       {targets.length > 0 && (
-        <button
+        <RecordActionItem id="record:give-to" group="share" label="Give to…" description="Offer this thing to someone. It leaves yours when they take it."><button
           type="button"
           data-testid="give-to"
           onClick={() => setGiving(true)}
@@ -160,7 +161,7 @@ export function RecordDisposition({
         >
           <Gift size={12} aria-hidden />
           Give to…
-        </button>
+        </button></RecordActionItem>
       )}
       <Modal open={giving} onClose={() => setGiving(false)} title={`Give ${data.title} to someone`} size="sm">
         {giving && (
@@ -176,7 +177,7 @@ export function RecordDisposition({
           />
         )}
       </Modal>
-      <button
+      <RecordActionItem id="record:mark-gone" group="lifecycle" label="No longer mine…" description="Record how this thing left your things. Its history is kept."><button
         type="button"
         data-testid="mark-gone"
         onClick={() => setAsking(true)}
@@ -184,7 +185,7 @@ export function RecordDisposition({
       >
         <HandCoins size={12} aria-hidden />
         No longer mine…
-      </button>
+      </button></RecordActionItem>
       <Modal open={asking} onClose={() => setAsking(false)} title={`What happened to ${data.title}?`} size="sm">
         {asking && (
           <GoneForm

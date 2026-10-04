@@ -38,6 +38,7 @@ export default defineModule({
     actions: [
       {
         // NO-PHRASING: the way back for another action, run only from Undo
+        group: "service",
         id: "core-cadence:remove-event",
         internal: true,
         label: "Remove a recorded event",
@@ -56,6 +57,7 @@ export default defineModule({
         // Wire/AI-invokable so a receipt import or a list check-off can record a
         // purchase without knowing this module's HTTP shape. NOT userInvokable:
         // people record consumption by using the app, not by filing ledger rows.
+        group: "service",
         id: "core-cadence:record-event",
         examples: ["bought two more today", "used one of those"],
         undoable: true,

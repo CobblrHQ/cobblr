@@ -62,6 +62,24 @@ export interface PlacementRow {
 
 export const PLACEMENT: PlacementRow[] = [
   {
+    id: "bridge-installer",
+    what: "a native edge bridge installer for macOS or Linux",
+    keywords: ["native", "macos", "edge", "bridge", "install", "lightburn", "setup", "installer"],
+    dir: "api/src/platform/",
+    exemplar: "api/src/platform/edge-bridge-install.sh",
+    why: "The public installer is kernel infrastructure, embedded in the API so every image can serve it before enabling a module.",
+    lints: ["lint:no-file-reads-at-module-load", "lint:generated-artifact-paths"],
+  },
+  {
+    id: "sales-order-email",
+    what: "parse an order email into a sales draft",
+    keywords: ["parse an order email", "sales email", "order email", "email intake"],
+    dir: "modules/sales/src/",
+    exemplar: "modules/sales/src/order-email.ts",
+    why: "Sales owns the draft; shared email body and receipt money parsers live in platform-contract and the existing API dispatcher owns addresses and archiving.",
+    lints: ["lint:no-emdash"],
+  },
+  {
     id: "assistant-prompt-sentence",
     what: "a sentence the assistant is told on every turn: a rule, a situational line, a consent notice",
     keywords: ["system prompt", "prompt", "prompt rule", "what cobb is told", "grounding", "current view", "consent line"],

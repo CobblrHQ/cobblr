@@ -18,18 +18,27 @@
 // own state: the slice's completion arrives as an event whenever the services
 // poller settles the job, and the handler is a no-op for a step already moved.
 
+import { createHash } from "node:crypto";
+import { canonicalJson } from "@cobblr/platform-contract/service-consent";
 import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { DigifabDB } from "./db.js";
 import { gatherCandidates } from "./api/printing-profiles.js";
 import { rankPrinters, type PickedPrinter } from "./pick-printer.js";
 import { reportedSize, stlSize, type Size } from "./model-size.js";
-import { MAKE_KIND, SLICE_CAPABILITY, folderFor, recordMakeStep, type MakeFileRole } from "./makes-core.js";
+import { MAKE_KIND, SLICE_CAPABILITY, DESIGN_CAPABILITY, folderFor, recordMakeStep, type MakeFileRole } from "./makes-core.js";
+import { extractPlateMetadata } from "./library/extract-metadata.js";
 import { sendAndWatch } from "./api/jobs.js";
 
 export interface PrintThisAsk {
   /** A model (STL or 3MF) or G-code in the workspace's files. */
   file_id?: string;
+  prompt?: string;
+  source?: string;
+  source_lang?: "build123d" | "openscad";
+  template?: string;
+  params?: Record<string, unknown>;
+  quantity?: number;
   /** A Make that already has its model. */
   make_id?: string;
   material: string;
@@ -46,11 +55,12 @@ export type PrintThisResult =
 
 type MakeRow = { id: string; name: string; folder_id: string | null; start_step: string; created_by: string | null };
 
-const MODEL_ROLES: readonly MakeFileRole[] = ["stl", "3mf"];
+const MODEL_ROLES: readonly MakeFileRole[] = ["stl", "step", "3mf"];
 
-function roleOf(filename: string, mime: string): "stl" | "3mf" | "gcode" | null {
+function roleOf(filename: string, mime: string): "stl" | "step" | "3mf" | "gcode" | null {
   const f = filename.toLowerCase();
   if (f.endsWith(".stl") || mime === "model/stl") return "stl";
+  if (/\.(step|stp)$/.test(f) || mime === "model/step") return "step";
   if (f.endsWith(".3mf") || mime === "model/3mf") return "3mf";
   if (f.endsWith(".gcode") || f.endsWith(".bgcode") || mime === "text/x.gcode") return "gcode";
   return null;
@@ -63,14 +73,14 @@ async function loadMake(db: Kysely<DigifabDB>, id: string): Promise<MakeRow | un
 }
 
 /** The model file a Make's Model step (or its Slice step, for G-code) holds. */
-async function modelOf(orgId: string, db: Kysely<DigifabDB>, makeId: string): Promise<{ fileId: string; role: "stl" | "3mf" | "gcode"; report: unknown } | null> {
+async function modelOf(orgId: string, db: Kysely<DigifabDB>, makeId: string): Promise<{ fileId: string; role: "stl" | "step" | "3mf" | "gcode"; report: unknown } | null> {
   const steps = await db.selectFrom("digifab_make_steps").select(["id", "step", "data"]).where("make_id", "=", makeId).where("step", "in", ["model", "slice"]).execute();
   for (const want of ["model", "slice"] as const) {
     const step = steps.find((s) => s.step === want);
     if (!step) continue;
     const files = (await platform().files.listAttachments(orgId, { source_module: "digifab", source_type: "make-step", source_id: step.id })) ?? [];
     for (const f of files) {
-      const role = want === "model" ? (MODEL_ROLES.includes(f.role as MakeFileRole) ? (f.role as "stl" | "3mf") : roleOf(f.filename, f.mimeType)) : roleOf(f.filename, f.mimeType);
+      const role = want === "model" ? (MODEL_ROLES.includes(f.role as MakeFileRole) ? (f.role as "stl" | "step" | "3mf") : roleOf(f.filename, f.mimeType)) : roleOf(f.filename, f.mimeType);
       if (role && (want === "slice" ? role === "gcode" : role !== "gcode")) return { fileId: f.fileId, role, report: (step.data as Record<string, unknown>)?.report };
     }
   }
@@ -79,19 +89,29 @@ async function modelOf(orgId: string, db: Kysely<DigifabDB>, makeId: string): Pr
 
 /** Start Print this: a Make, a printer, a slice. Sends nothing. */
 export async function startPrintThis(orgId: string, userId: string | null, ask: PrintThisAsk): Promise<PrintThisResult> {
+  if (ask.quantity != null && ask.quantity !== 1) return { ok: false, code: "batch_confirmation_required", error: "Print this prepares one print at a time. Batch printing needs a confirmation policy before it can start." };
   const material = ask.material?.trim();
   if (!material) return { ok: false, code: "no_material", error: "Say which material to print in (PLA, PETG, ...)." };
   const db = await tenantDb(orgId);
+  if (ask.make_id) return db.transaction().execute(async (tx) => {
+    await tx.selectFrom("digifab_makes").select("id").where("id", "=", ask.make_id!).forUpdate().executeTakeFirst();
+    return preparePrintThis(tx, orgId, userId, ask, material);
+  });
+  return preparePrintThis(db, orgId, userId, ask, material);
+}
 
+async function preparePrintThis(db: Kysely<DigifabDB>, orgId: string, userId: string | null, ask: PrintThisAsk, material: string): Promise<PrintThisResult> {
   // 1. The Make and its model.
   let make: MakeRow | undefined;
   let created = false;
-  let model: { fileId: string; role: "stl" | "3mf" | "gcode"; report: unknown } | null = null;
+  let model: { fileId: string; role: "stl" | "step" | "3mf" | "gcode"; report: unknown } | null = null;
   if (ask.make_id) {
     make = await loadMake(db, ask.make_id);
     if (!make) return { ok: false, code: "not_found", error: "That Make was not found." };
     model = await modelOf(orgId, db, make.id);
-    if (!model) return { ok: false, code: "no_model", error: "This Make has no model to print yet. Upload one, or let its design finish.", make_id: make.id };
+    if (!model) return startDesign(db, orgId, userId, make, ask);
+    const existing = await db.selectFrom("digifab_make_steps").select("id").where("make_id", "=", make.id).where("step", "in", make.start_step === "slice" ? ["print"] : ["slice", "print"]).executeTakeFirst();
+    if (existing) return { ok: false, code: "already_prepared", error: "This Make already has a slice or print. Make it again from that step to change it.", make_id: make.id };
   } else if (ask.file_id) {
     const file = await platform().files.read(orgId, ask.file_id, "original");
     if (!file) return { ok: false, code: "no_file", error: "That file was not found." };
@@ -113,6 +133,11 @@ export async function startPrintThis(orgId: string, userId: string | null, ask: 
     await platform().activity.log({ orgId, userId, action: "make_created", ref: { module: "digifab", entityType: "make", entityId: make.id }, diff: { name: make.name } });
     await platform().events.emit("digifab.make.created", { orgId, makeId: make.id });
     model = { fileId: ask.file_id, role, report: null };
+  } else if (ask.prompt || ask.source || ask.template) {
+    make = await db.insertInto("digifab_makes").values({ name: (ask.name?.trim() || ask.prompt?.trim() || "New part").slice(0, 200), prompt: ask.prompt ?? null, start_step: "request", created_by: userId }).returning(["id", "name", "folder_id", "start_step", "created_by"]).executeTakeFirstOrThrow();
+    await recordMakeStep(db, orgId, userId, make, "request", { data: { prompt: ask.prompt ?? ask.name ?? "New part", origin: ask.origin ?? "page", requested_by: userId }, produced_by: { kind: "person" } });
+    const result = await startDesign(db, orgId, userId, make, ask);
+    return { ...result, created_make: true };
   } else {
     return { ok: false, code: "nothing_to_print", error: "Say which file or which Make to print." };
   }
@@ -150,8 +175,10 @@ export async function startPrintThis(orgId: string, userId: string | null, ask: 
   // A G-code is already sliced: straight to the one yes.
   if (model.role === "gcode") {
     const sliceStep = await db.selectFrom("digifab_make_steps").select(["id", "data"]).where("make_id", "=", make.id).where("step", "=", "slice").executeTakeFirst();
-    await recordMakeStep(db, orgId, userId, make, "slice", { data: { ...((sliceStep?.data as Record<string, unknown>) ?? {}), ...choice }, produced_by: { kind: "upload" } });
-    const ready = await readyToPrint(db, orgId, make, { gcodeFileId: model.fileId, choice, grams: null, seconds: null, previewFileId: null });
+    const bytes = await platform().files.read(orgId, model.fileId, "original");
+    const metadata = bytes ? extractPlateMetadata(bytes.filename, Buffer.from(bytes.bytes)) : {};
+    await recordMakeStep(db, orgId, userId, make, "slice", { data: { ...((sliceStep?.data as Record<string, unknown>) ?? {}), ...choice, grams_by_tool: metadata.filament_g_by_tool ?? null, time_s: metadata.estimated_sec ?? null }, produced_by: { kind: "upload" } });
+    const ready = await readyToPrint(db, orgId, make, { gcodeFileId: model.fileId, choice, grams: metadata.filament_g ?? null, gramsByTool: metadata.filament_g_by_tool, seconds: metadata.estimated_sec ?? null, previewFileId: null });
     if (!ready.ok) return fail(ready.code, ready.error);
     return { ok: true, make_id: make.id, created_make: created, printer: { machine: printer.machine, reason: printer.reason }, slice_job_id: null, summary: `Ready to print on ${printer.machine ?? printer.device ?? "the printer"}. Confirm it on the Make.` };
   }
@@ -161,10 +188,11 @@ export async function startPrintThis(orgId: string, userId: string | null, ask: 
   if (!profile?.printer_model || profile.nozzle_mm == null || !profile.quality) {
     return fail("no_profile", `${printer.machine ?? "The chosen printer"} has no Printing profile yet. Set its printer model, nozzle and quality on its page, then print this again.`);
   }
-  const filament: Record<string, unknown> = { material, ...(ask.color ? { color: ask.color } : {}), ...(profile.preset_hint ? { preset: profile.preset_hint } : {}) };
+  const filament: Record<string, unknown> = { ...best.loaded?.values, material, ...(profile.preset_hint ? { preset_hint: profile.preset_hint } : {}) };
+  const sliceInput = { printer_model: profile.printer_model, nozzle_mm: profile.nozzle_mm, quality: profile.quality, filament: [filament] };
   const sliceStepId = await recordMakeStep(db, orgId, userId, make, "slice", {
     status: "running",
-    data: { ...choice, printer_model: profile.printer_model, nozzle_mm: profile.nozzle_mm, quality: profile.quality },
+    data: { ...choice, printer_model: profile.printer_model, nozzle_mm: profile.nozzle_mm, quality: profile.quality, invocation: { input: sliceInput, files: { model: model.fileId } } },
     produced_by: { kind: "service", capability: SLICE_CAPABILITY },
   });
   let job: { id: string; status: string };
@@ -172,7 +200,7 @@ export async function startPrintThis(orgId: string, userId: string | null, ask: 
     job = await platform().services.invoke({
       orgId,
       capability: SLICE_CAPABILITY,
-      input: { printer_model: profile.printer_model, nozzle_mm: profile.nozzle_mm, quality: profile.quality, filament: [filament] },
+      input: sliceInput,
       files: { model: model.fileId },
       attachTo: { kind: "digifab:make-step", id: sliceStepId },
       idempotencyKey: `print-this:${make.id}:${sliceStepId}`,
@@ -183,7 +211,7 @@ export async function startPrintThis(orgId: string, userId: string | null, ask: 
     return fail("slice_refused", `The slice could not start: ${message}`);
   }
   await db.updateTable("digifab_make_steps").set({ service_job_id: job.id, updated_at: new Date() }).where("id", "=", sliceStepId).execute();
-  if (job.status === "done" || job.status === "failed" || job.status === "cancelled") await onSliceSettled(orgId, job.id);
+
   return {
     ok: true,
     make_id: make.id,
@@ -192,6 +220,51 @@ export async function startPrintThis(orgId: string, userId: string | null, ask: 
     slice_job_id: job.id,
     summary: `Slicing for ${printer.machine ?? printer.device ?? "the printer"} (${printer.reason}). The Make asks you before anything prints.`,
   };
+}
+
+async function startDesign(db: Kysely<DigifabDB>, orgId: string, userId: string | null, make: MakeRow, ask: PrintThisAsk): Promise<PrintThisResult> {
+  const existing = await db.selectFrom("digifab_make_steps").select("id").where("make_id", "=", make.id).where("step", "=", "design").executeTakeFirst();
+  if (existing) return { ok: false, code: "design_exists", error: "This Make already has a design. Make it again from Design to change it.", make_id: make.id };
+  const request = await db.selectFrom("digifab_make_steps").select("data").where("make_id", "=", make.id).where("step", "=", "request").executeTakeFirst();
+  const prompt = ask.prompt ?? (request?.data as Record<string, unknown> | undefined)?.prompt;
+  const input = { ...(typeof prompt === "string" ? { prompt } : {}), ...(ask.source ? { source: ask.source, source_lang: ask.source_lang ?? "build123d" } : {}), ...(ask.template ? { template: ask.template } : {}), params: ask.params ?? {}, material: ask.material, units: "mm" };
+  const id = await recordMakeStep(db, orgId, userId, make, "design", { status: "running", data: { input, invocation: { input }, material: ask.material, color: ask.color ?? null }, produced_by: { kind: "service", capability: DESIGN_CAPABILITY } });
+  try {
+    const job = await platform().services.invoke({ orgId, capability: DESIGN_CAPABILITY, input, attachTo: { kind: "digifab:make-step", id }, idempotencyKey: `make-design:${make.id}:${id}` });
+    await db.updateTable("digifab_make_steps").set({ service_job_id: job.id }).where("id", "=", id).execute();
+
+    return { ok: true, make_id: make.id, created_make: false, printer: { machine: null, reason: "Review the model before choosing a printer." }, slice_job_id: job.id, summary: "Design started. Review the preview on the Make, then choose Print this to slice it." };
+  } catch (err) {
+    const error = (err as Error).message;
+    await recordMakeStep(db, orgId, userId, make, "design", { status: "failed", data: { input }, produced_by: { kind: "service", capability: DESIGN_CAPABILITY }, error });
+    return { ok: false, code: "design_refused", error: `The design could not start: ${error}`, make_id: make.id };
+  }
+}
+
+export async function onDesignSettled(orgId: string, jobId: string): Promise<void> {
+  const db = await tenantDb(orgId);
+  await db.transaction().execute(async (tx) => {
+    const step = await tx.selectFrom("digifab_make_steps").selectAll().where("step", "=", "design").where("service_job_id", "=", jobId).forUpdate().executeTakeFirst();
+    if (!step || !["running", "done"].includes(step.status)) return;
+    if (await tx.selectFrom("digifab_make_steps").select("id").where("make_id", "=", step.make_id).where("step", "=", "model").executeTakeFirst()) return;
+    const make = await loadMake(tx, step.make_id);
+    const job = await platform().services.job(orgId, jobId);
+    if (!make || !job || !["done", "failed", "cancelled"].includes(job.status)) return;
+    const prior = (step.data ?? {}) as Record<string, unknown>;
+    const output = (job.output ?? {}) as Record<string, unknown>;
+    const by = { kind: "service", capability: DESIGN_CAPABILITY, connection_id: job.connection_id, version: job.service_version, job_id: job.id };
+    if (job.status !== "done") {
+      await recordMakeStep(tx, orgId, null, make, "design", { status: "failed", service_job_id: jobId, data: prior, produced_by: by, error: job.error?.message ?? "The design was stopped." });
+      return;
+    }
+    const files = job.files.filter((f) => f.direction === "out").map((f) => ({ file_id: f.file_id, role: (["source", "step", "stl", "3mf", "preview", "report"].includes(f.name) ? f.name : "other") as MakeFileRole }));
+    if (!files.some((f) => ["stl", "step", "3mf"].includes(f.role))) {
+      await recordMakeStep(tx, orgId, null, make, "design", { status: "failed", service_job_id: jobId, data: prior, produced_by: by, error: "The design finished without a model to review." });
+      return;
+    }
+    await recordMakeStep(tx, orgId, null, make, "design", { data: { ...prior, ...output, parameters: output.params }, produced_by: by, service_job_id: jobId, files: files.filter((f) => f.role === "source" || f.role === "other") });
+    await recordMakeStep(tx, orgId, null, make, "model", { data: { report: output.report, material: prior.material, color: prior.color }, produced_by: by, service_job_id: jobId, files: files.filter((f) => f.role !== "source" && f.role !== "other") });
+  });
 }
 
 function brief(p: PickedPrinter) {
@@ -205,14 +278,20 @@ function brief(p: PickedPrinter) {
 export async function onSliceSettled(orgId: string, jobId: string): Promise<void> {
   const db = await tenantDb(orgId).catch(() => null);
   if (!db) return;
+  await db.transaction().execute(async (tx) => settleSlice(tx, orgId, jobId));
+}
+
+async function settleSlice(db: Kysely<DigifabDB>, orgId: string, jobId: string): Promise<void> {
   const step = await db
     .selectFrom("digifab_make_steps")
     .select(["id", "make_id", "status", "data"])
     .where("service_job_id", "=", jobId)
     .where("step", "=", "slice")
-    .executeTakeFirst()
-    .catch(() => undefined);
-  if (!step || step.status !== "running") return;
+    .forUpdate()
+    .executeTakeFirst();
+  if (!step || (step.status !== "running" && step.status !== "done")) return;
+  const print = await db.selectFrom("digifab_make_steps").select("id").where("make_id", "=", step.make_id).where("step", "=", "print").executeTakeFirst();
+  if (print) return;
   const make = await loadMake(db, step.make_id);
   if (!make) return;
   const sj = await platform().services.job(orgId, jobId);
@@ -245,7 +324,11 @@ export async function onSliceSettled(orgId: string, jobId: string): Promise<void
   // The service already attached its outputs to this step; they join the
   // Make and its folder here.
   const files: Array<{ file_id: string; role: MakeFileRole }> = [];
-  for (const f of outFiles) files.push({ file_id: f.file_id, role: f.name === "preview" ? "preview" : f.name === "gcode" && gcodeIs3mf(f) ? "3mf" : "gcode" });
+  for (const f of outFiles) {
+    const stored = await platform().files.read(orgId, f.file_id, "original");
+    const role: MakeFileRole = f.name === "preview" ? "preview" : stored && roleOf(stored.filename, stored.mimeType) === "3mf" ? "3mf" : f.name === "gcode" || f.name === "plain_gcode" ? "gcode" : f.name === "settings" ? "settings" : "other";
+    files.push({ file_id: f.file_id, role });
+  }
   for (const f of files) await adoptIntoMake(db, orgId, make, f.file_id, f.role);
   await recordMakeStep(db, orgId, null, make, "slice", {
     status: "done",
@@ -263,7 +346,7 @@ export async function onSliceSettled(orgId: string, jobId: string): Promise<void
     service_job_id: jobId,
   });
   const choice = prior as { printer?: Record<string, unknown>; material?: string };
-  await readyToPrint(db, orgId, make, { gcodeFileId: gcode.file_id, choice, grams: total, seconds, previewFileId: preview?.file_id ?? null });
+  await readyToPrint(db, orgId, make, { gcodeFileId: gcode.file_id, choice, grams: total, gramsByTool: grams, seconds, previewFileId: preview?.file_id ?? null });
 }
 
 function sliceName(output: unknown): string | null {
@@ -273,9 +356,6 @@ function sliceName(output: unknown): string | null {
 function sliceVersion(output: unknown): string | null {
   const s = (output as { slicer?: { version?: unknown } } | null)?.slicer;
   return typeof s?.version === "string" ? s.version : null;
-}
-function gcodeIs3mf(f: { name: string; file_id: string }): boolean {
-  return /3mf/i.test(f.name);
 }
 
 /** A service's output file joins the Make (and its folder); the step already
@@ -292,7 +372,7 @@ async function readyToPrint(
   db: Kysely<DigifabDB>,
   orgId: string,
   make: MakeRow,
-  o: { gcodeFileId: string; choice: { printer?: Record<string, unknown>; material?: string | null }; grams: number | null; seconds: number | null; previewFileId: string | null },
+  o: { gcodeFileId: string; choice: { printer?: Record<string, unknown>; material?: string | null }; grams: number | null; gramsByTool?: number[] | null; seconds: number | null; previewFileId: string | null },
 ): Promise<{ ok: true; jobId: string } | { ok: false; code: string; error: string }> {
   const p = (o.choice.printer ?? {}) as { machine_id?: string; machine?: string | null; connection_id?: string; remote_device_id?: string; device?: string | null; spool?: { id?: string; name?: string | null; slot?: string | null } | null };
   if (!p.connection_id || !p.remote_device_id) return { ok: false, code: "no_printer", error: "The chosen printer is no longer known." };
@@ -308,14 +388,12 @@ async function readyToPrint(
       material_part_id: p.spool?.id ?? null,
       material_grams: o.grams != null ? String(o.grams) : null,
       material_type: o.choice.material ?? null,
+      material_grams_by_tool: o.gramsByTool ? JSON.stringify(o.gramsByTool) : null,
     })
-    .returning(["id"])
+    .returningAll()
     .executeTakeFirstOrThrow();
   await platform().activity.log({ orgId, userId: null, action: "job_created", ref: { module: "digifab", entityType: "job", entityId: job.id }, diff: { name: file?.filename ?? make.name, make: make.id } });
-  await recordMakeStep(db, orgId, null, make, "print", {
-    status: "awaiting_confirm",
-    job_id: job.id,
-    data: {
+  const card = {
       printer: p.machine ?? p.device ?? null,
       machine_id: p.machine_id ?? null,
       spool: p.spool?.name ?? null,
@@ -323,7 +401,11 @@ async function readyToPrint(
       grams: o.grams,
       time_s: o.seconds,
       preview_file_id: o.previewFileId,
-    },
+      spool_id: p.spool?.id ?? null,
+  };
+  await recordMakeStep(db, orgId, null, make, "print", {
+    status: "awaiting_confirm", job_id: job.id,
+    data: { ...card, confirm_hash: printHash(job, card, file?.bytes) },
     produced_by: { kind: "digifab" },
   });
   await announceReady(orgId, make, p.machine ?? p.device ?? null);
@@ -346,14 +428,58 @@ async function announceReady(orgId: string, make: MakeRow, printer: string | nul
   );
 }
 
+function printHash(job: Record<string, unknown>, data: Record<string, unknown>, bytes?: Uint8Array): string {
+  const { confirm_hash: _hash, ...card } = data;
+  const fields = ["id", "connection_id", "target_device", "target_pool", "file_id", "file_ref", "linked_machine_id", "material_part_id", "material_grams", "material_type", "material_grams_by_tool"];
+  return createHash("sha256").update(canonicalJson({ card, job: Object.fromEntries(fields.map((k) => [k, job[k] ?? null])), file: bytes ? createHash("sha256").update(bytes).digest("hex") : null })).digest("hex");
+}
+
+export async function recoverPrintThis(orgId: string, db: Kysely<DigifabDB>): Promise<void> {
+  for (const [stage, next] of [["design", "model"], ["slice", "print"]] as const) {
+    const pending = await db.selectFrom("digifab_make_steps as pending").select(["pending.id", "pending.make_id", "pending.step", "pending.status", "pending.data", "pending.service_job_id"])
+      .where("pending.step", "=", stage).where("pending.status", "in", ["running", "done"])
+      .where((eb) => eb.not(eb.exists(eb.selectFrom("digifab_make_steps as following").select("following.id").whereRef("following.make_id", "=", "pending.make_id").where("following.step", "=", next))))
+      .limit(100).execute();
+    for (const step of pending) {
+      try {
+        let jobId = step.service_job_id;
+        if (!jobId && step.status === "running") {
+          const invocation = (step.data as { invocation?: { input: unknown; files?: Record<string, string> } }).invocation;
+          if (!invocation) continue;
+          const ref = await platform().services.invoke({ orgId, capability: stage === "design" ? DESIGN_CAPABILITY : SLICE_CAPABILITY, ...invocation, attachTo: { kind: "digifab:make-step", id: step.id }, idempotencyKey: stage === "design" ? `make-design:${step.make_id}:${step.id}` : `print-this:${step.make_id}:${step.id}` });
+          jobId = ref.id;
+          await db.updateTable("digifab_make_steps").set({ service_job_id: jobId }).where("id", "=", step.id).where("service_job_id", "is", null).execute();
+        }
+        if (!jobId) continue;
+        if (stage === "design") await onDesignSettled(orgId, jobId);
+        else await onSliceSettled(orgId, jobId);
+      } catch (err) {
+        console.warn(`[digifab] make step ${step.id} could not resume: ${(err as Error).message}`);
+      }
+    }
+  }
+}
+
 /** The one yes: send the Make's waiting print. A person's press on the Make's
  *  card, and nothing else, reaches here. */
-export async function startPrint(orgId: string, userId: string | null, makeId: string): Promise<{ ok: true; status: string } | { ok: false; code: string; error: string }> {
+export async function startPrint(orgId: string, userId: string | null, makeId: string, confirmHash?: string): Promise<{ ok: true; status: string } | { ok: false; code: string; error: string }> {
+  if (!userId) return { ok: false, code: "person_required", error: "A person must confirm the print in Cobblr." };
   const db = await tenantDb(orgId);
   const make = await loadMake(db, makeId);
   if (!make) return { ok: false, code: "not_found", error: "Make not found." };
   const step = await db.selectFrom("digifab_make_steps").select(["status", "job_id", "data"]).where("make_id", "=", makeId).where("step", "=", "print").executeTakeFirst();
   if (!step?.job_id) return { ok: false, code: "nothing_waiting", error: "This Make has no print waiting to start." };
+  if (step.status !== "awaiting_confirm") return { ok: false, code: "already_started", error: "This print has already been started." };
+  const card = (step.data ?? {}) as Record<string, unknown>;
+  const job = await db.selectFrom("digifab_jobs").selectAll().where("id", "=", step.job_id).executeTakeFirst();
+  const file = job?.file_id ? await platform().files.read(orgId, job.file_id, "original") : null;
+  if (!job || !file || !confirmHash || card.confirm_hash !== confirmHash || printHash(job, card, file.bytes) !== confirmHash) {
+    return { ok: false, code: "print_changed", error: "This print changed after its card was prepared. Run Print this on a new Make to review it again." };
+  }
+  if (typeof card.spool_id === "string" && typeof card.machine_id === "string") {
+    const loaded = await platform().placement.contents({ orgId, container: { kind: "machines:machine", id: card.machine_id } });
+    if (!loaded.some((s) => s.id === card.spool_id && s.slot === card.slot)) return { ok: false, code: "spool_changed", error: "The spool shown is no longer loaded in that slot. Prepare this print again." };
+  }
   // The yes is claimed before anything is sent: of two presses (two tabs, the
   // card and a notification) exactly one moves the step off awaiting_confirm,
   // and only that one sends.
@@ -380,9 +506,10 @@ export async function startPrint(orgId: string, userId: string | null, makeId: s
 export function registerPrintThis(): void {
   const settled = async (payload: unknown) => {
     const p = payload as { orgId?: string; jobId?: string; capability?: string };
-    if (!p.orgId || !p.jobId || p.capability !== SLICE_CAPABILITY) return;
+    if (!p.orgId || !p.jobId || ![SLICE_CAPABILITY, DESIGN_CAPABILITY].includes(p.capability ?? "")) return;
     try {
-      await onSliceSettled(p.orgId, p.jobId);
+      if (p.capability === DESIGN_CAPABILITY) await onDesignSettled(p.orgId, p.jobId);
+      else await onSliceSettled(p.orgId, p.jobId);
     } catch (err) {
       console.warn(`[digifab] print this: slice ${p.jobId} not taken up: ${(err as Error).message}`);
     }
@@ -396,6 +523,12 @@ export function registerPrintThis(): void {
     return startPrintThis(ctx.orgId, ctx.userId ?? null, {
       file_id: typeof a.file_id === "string" ? a.file_id : undefined,
       make_id: typeof a.make_id === "string" ? a.make_id : undefined,
+      prompt: typeof a.prompt === "string" ? a.prompt : undefined,
+      source: typeof a.source === "string" ? a.source : undefined,
+      source_lang: a.source_lang === "openscad" ? "openscad" : "build123d",
+      template: typeof a.template === "string" ? a.template : undefined,
+      quantity: typeof a.quantity === "number" ? a.quantity : undefined,
+      params: a.params && typeof a.params === "object" && !Array.isArray(a.params) ? a.params as Record<string, unknown> : undefined,
       material: typeof a.material === "string" ? a.material : "",
       color: typeof a.color === "string" ? a.color : null,
       bbox_mm: size,

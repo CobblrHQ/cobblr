@@ -12,12 +12,13 @@ import { useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Circle, CircleDashed, FileText, Loader2, RotateCcw, Sparkles, Upload, XCircle } from "lucide-react";
-import { CustomFieldsPanel, FilePreview, Modal, SearchInput, useConfirm, useFilePreviewRegistry, usePageTitle, usePasteImage, useToast } from "@cobblr/platform-web";
+import { RecordFormModal, CustomFieldsPanel, EntityPhoto, FilePreview, Modal, SearchInput, useConfirm, useFilePreviewRegistry, usePageTitle, usePasteImage, useToast } from "@cobblr/platform-web";
 import { api, ApiError, MAKE_STEPS, type MakeDetail, type MakeFileRole, type MakeStepName, type MakeStepRecord, type MakeSummary } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useEnabledModules } from "../lib/useEnabledModules";
 import { openAuthedFile } from "../lib/authed-file";
 import { ServiceJobCard } from "../components/ServiceJobCard";
+import { DesignMakeDoor } from "../features/digifab/designMake";
 import { PrintConfirmCard, PrintThisDialog } from "../features/digifab/printThis";
 
 const STEP_TITLE: Record<MakeStepName, string> = {
@@ -169,7 +170,7 @@ function NewMakeModal({ onClose }: { onClose: () => void }) {
   const ready = file ? !!brought : prompt.trim().length > 0;
 
   return (
-    <Modal open onClose={onClose} title="New make">
+    <RecordFormModal open onClose={onClose} title="New make">
       <div className="space-y-3">
         <label className="block text-sm">
           <span className="text-muted">What to make</span>
@@ -214,7 +215,7 @@ function NewMakeModal({ onClose }: { onClose: () => void }) {
           </button>
         </div>
       </div>
-    </Modal>
+    </RecordFormModal>
   );
 }
 
@@ -491,10 +492,10 @@ function StepBody({ row, detail, onOutcome }: { row: MakeStepRecord; detail: Mak
   const { activeSlug } = useActiveOrg();
   switch (row.step) {
     case "request":
-      return <p className="text-sm text-content dark:text-mortar-200 whitespace-pre-wrap">{str(d.prompt) ?? "Started here."}</p>;
+      return <><p className="text-sm text-content dark:text-mortar-200 whitespace-pre-wrap">{str(d.prompt) ?? "Started here."}</p>{detail.reach.design && !detail.steps.some((s) => s.step === "design" || s.step === "model") && <DesignMakeDoor makeId={detail.make.id} />}</>;
     case "design": {
       const params = d.parameters && typeof d.parameters === "object" ? Object.entries(d.parameters as Record<string, unknown>) : [];
-      return params.length > 0 ? <Facts rows={params.map(([k, v]) => [k.replace(/_/g, " "), String(v)])} /> : null;
+      return <>{row.service_job_id && <ServiceJobCard slug={activeSlug} jobId={row.service_job_id} capability="design.part" />}{params.length > 0 && <Facts rows={params.map(([k, v]) => [k.replace(/_/g, " "), String(v)])} />}</>;
     }
     case "model": {
       const r = (d.report ?? {}) as Record<string, unknown>;
@@ -507,6 +508,7 @@ function StepBody({ row, detail, onOutcome }: { row: MakeStepRecord; detail: Mak
       return (
         <>
           {d.source === "uploaded" && rows.length === 0 ? <p className="text-sm text-muted">Brought as a file.</p> : rows.length ? <Facts rows={rows} /> : null}
+          {row.files.filter((f) => f.role === "preview").map((f) => <EntityPhoto key={f.file_id} src={api.fileRawUrl(activeSlug, f.file_id, "medium")} alt="Model preview" fit="contain" aspect="4/3" />)}
           {printable && <PrintThisDoor makeId={detail.make.id} what={detail.make.name} />}
         </>
       );
@@ -635,7 +637,7 @@ function RerunModal({ make, onClose }: { make: MakeDetail; onClose: () => void }
     onError: (err) => toast.error(err instanceof ApiError ? err.message : (err as Error).message),
   });
   return (
-    <Modal open onClose={onClose} title="Make again">
+    <RecordFormModal open onClose={onClose} title="Make again">
       {choices.length === 0 ? (
         <p className="text-sm text-muted">Nothing after the first step has happened yet, so there is nothing to make again. Start a new make instead.</p>
       ) : (
@@ -662,6 +664,6 @@ function RerunModal({ make, onClose }: { make: MakeDetail; onClose: () => void }
           </div>
         </div>
       )}
-    </Modal>
+    </RecordFormModal>
   );
 }

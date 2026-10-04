@@ -1,3 +1,11 @@
+import type { MaterialNumbers } from "../material-numbers";
+export interface MaterialView extends MaterialNumbers {
+  spool_id: number;
+  empty_spool_g: number | null;
+  place: { kind: string; id: string } | null;
+  jobs: Array<{ reason: string | null }>;
+  tracked_by: string | null;
+}
 // Thin fetch wrapper scoped to the inventory module's REST surface.
 // The host app provides the auth token via getToken(); we just build
 // URLs and parse responses.
@@ -601,17 +609,23 @@ export class InventoryApi {
   };
   getPart = (id: string) => this.partsRequest<Part>("GET", `/${id}`);
   /** A consumable's ledger — what drew it down and how much, newest first. */
+  material = (id: string) => this.partsRequest<MaterialView | null>("GET", `/${id}/material`);
+  measureMaterial = (id: string, body: { gross_g?: number; used_mm?: number }) =>
+    this.partsRequest<unknown>("POST", `/${id}/material`, body);
   listConsumption = (id: string) =>
     this.partsRequest<{ items: ConsumptionRow[] }>("GET", `/${id}/consumption`);
+
+  searchFilamentCatalog = (q: string) => this.request<{ items: Array<{ id: string; manufacturer: string; name: string; material: string }>; total: number }>("GET", `/filament-catalog?q=${encodeURIComponent(q)}`);
+  importFilamentType = (catalog_id: string) => this.request<{ id: string }>("POST", "/filament-catalog", { catalog_id });
 
   // ── Spoolman: when present, it's the tracker; we pull a spool's remaining in. ──
   listSpoolman = () => this.request<{ items: SpoolmanConnection[] }>("GET", "/spoolman/connections");
   createSpoolman = (b: { label: string; base_url: string; api_key?: string }) =>
     this.request<SpoolmanConnection>("POST", "/spoolman/connections", b);
   deleteSpoolman = (id: string) => this.request<void>("DELETE", `/spoolman/connections/${id}`);
-  syncSpoolman = (connection_id: string, instance?: string) =>
+  syncSpoolman = (connection_id: string, instance?: string, authority?: "spoolman" | "cobblr") =>
     this.request<{ ok: boolean; synced: number; created: number; updated: number }>("POST", "/spoolman/sync", {
-      connection_id,
+      connection_id, authority,
       instance,
     });
   /** The kinds inside an assortment, and adding one.
@@ -965,6 +979,7 @@ export interface CatalogSearchHit {
 }
 
 export interface FamilyThing {
+  material?: (MaterialNumbers & { jobs: number }) | null;
   id: string;
   name: string;
   qty: number;

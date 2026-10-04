@@ -22,12 +22,12 @@ import type { ConnectionTestOutcome } from "./connection-verification.js";
 
 /** What a capability does to the world, which decides who has to say yes
  *  (§9). Cobblr may treat a capability as MORE than it declares, never less. */
-export const SERVICE_EFFECTS = ["none", "writes", "physical", "spends"] as const;
+export const SERVICE_EFFECTS = ["none", "signal", "writes", "physical", "spends"] as const;
 export type ServiceEffect = (typeof SERVICE_EFFECTS)[number];
 
 /** How strongly an effect needs a person: the order a declaration may only
  *  be raised along. */
-export const SERVICE_EFFECT_RANK: Record<ServiceEffect, number> = { none: 0, writes: 1, spends: 2, physical: 3 };
+export const SERVICE_EFFECT_RANK: Record<ServiceEffect, number> = { none: 0, signal: 1, writes: 2, spends: 3, physical: 4 };
 
 /** The stronger of two effects (a person or the platform raising one). */
 export function strongerEffect(a: ServiceEffect, b: ServiceEffect): ServiceEffect {

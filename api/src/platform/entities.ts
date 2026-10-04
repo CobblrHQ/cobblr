@@ -210,7 +210,7 @@ const ENABLED_MODULES_TTL_MS = 30_000;
  *
  *  Fails OPEN: meta being unreachable is not the same as "nothing is enabled",
  *  and answering "disabled" on a blip would make every list silently empty. */
-async function moduleEnabledForOrg(orgId: string, moduleName: string): Promise<boolean> {
+export async function moduleEnabledForOrg(orgId: string, moduleName: string): Promise<boolean> {
   moduleName = canonicalModuleName(moduleName);
   const hit = enabledModulesCache.get(orgId);
   const now = Date.now();
@@ -965,7 +965,9 @@ export async function list(
   // A resolver that did not count still yields a known total when the page
   // came back short: everything there is fits in it. Small workspaces (the
   // common case) then get "N of N" instead of "the first N, there may be more".
-  if (total === undefined && typeof query.limit === "number" && items.length < query.limit) {
+  // An empty page past the end says nothing about how many there are: it
+  // used to report its own offset as the total (400 for 300 parts).
+  if (total === undefined && typeof query.limit === "number" && items.length < query.limit && (items.length > 0 || !query.offset)) {
     total = (query.offset ?? 0) + items.length;
   }
   return { items, total, ...(unapplied ? { unapplied } : {}), ...(failed ? { failed: true as const } : {}) };

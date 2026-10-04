@@ -1,4 +1,4 @@
-import { NewItemMenu } from "@cobblr/platform-web";
+import { RecordFormModal, NewItemMenu, SnippetText } from "@cobblr/platform-web";
 // Projects index. Status-grouped list + search + new-project form.
 
 import { useDeferredValue, useMemo, useState, type FormEvent } from "react";
@@ -9,7 +9,6 @@ import {
   BulkActionBar, BulkSetField,
   CustomFieldsPanel,
   TableFileIntake,
-  Modal,
   useToast,
   useConfirm,
   usePageTitle,
@@ -17,7 +16,6 @@ import {
 import { useProjects } from "./context";
 import type { Project } from "./api";
 import { pluralise } from "@cobblr/platform-contract";
-import { SnippetText } from "@cobblr/platform-web";
 
 type SavedViewLite = {
   id: string;
@@ -235,7 +233,7 @@ export function ProjectsListPage() {
       {/* Create modal — name + the instance's custom fields (a Design's pattern
           link + category) so you capture the pattern at creation, not just a
           name. Mirrors inventory's "New yarn" field-promoting create. */}
-      <Modal
+      <RecordFormModal
         open={creating}
         onClose={() => {
           setCreating(false);
@@ -243,7 +241,6 @@ export function ProjectsListPage() {
           setNewMeta({});
         }}
         title={`New ${noun}`}
-        size="md"
       >
         <form onSubmit={submit} className="space-y-4 p-1">
           <div>
@@ -285,7 +282,7 @@ export function ProjectsListPage() {
             </button>
           </div>
         </form>
-      </Modal>
+      </RecordFormModal>
 
       {/* Saved-view chips — bundles (Yarn → Designs) ship pinned ones. */}
       {views.length > 0 && (

@@ -20,6 +20,8 @@ export interface SessionPlaceChipProps {
   missing: number;
   /** How many of the missing have a suggested spot File all will use. */
   suggested: number;
+  /** Where the missing ones are suggested to go, by name (distinct). */
+  suggestedNames?: readonly string[];
   /** Set to different places. */
   mixed: boolean;
   /** The one place they are set to, as the user reads it; null when none is. */
@@ -31,13 +33,18 @@ export function sessionPlaceTitle(p: Omit<SessionPlaceChipProps, "onClick">): st
   if (p.mixed) return "These are set to different places - tap to give the whole session one location";
   if (p.placeName && p.missing === 0) return `All ${p.total} are set to ${p.placeName} - tap to move them somewhere else`;
   if (p.placeName) return `${p.total - p.missing} of ${p.total} are in ${p.placeName}; the other ${p.missing} have no location yet - tap to set it`;
-  if (p.missing > 0 && p.suggested === p.missing) return `${p.suggested} have a suggested location that File all will use - tap to set one yourself`;
+  if (p.missing > 0 && p.suggested === p.missing) {
+    const names = p.suggestedNames ?? [];
+    if (names.length > 0) return `Suggested: ${names.join(", ")}. File all will use ${names.length === 1 ? "it" : "them"} - tap to set one yourself`;
+    return `${p.suggested} have a suggested location that File all will use - tap to set one yourself`;
+  }
   return `None of these ${p.total} have a location yet - tap to set it`;
 }
 
 export function SessionPlaceChip(props: SessionPlaceChipProps) {
   const { total, missing, suggested, mixed, placeName, onClick } = props;
   const title = sessionPlaceTitle(props);
+  const names = props.suggestedNames ?? [];
   const allSuggested = missing > 0 && suggested === missing;
   const settled = (placeName && missing === 0) || allSuggested;
   return (
@@ -60,8 +67,9 @@ export function SessionPlaceChip(props: SessionPlaceChipProps) {
         // Every unplaced item has a suggested spot, and File all will use
         // them. Amber "Location" over that read as "nothing has a home"
         // (2026-09-06); this says what will actually happen.
-        <span>
-          {suggested}
+        // Never a bare count (#4582): one place is named, several say how many places.
+        <span className={names.length === 1 ? "min-w-0 max-w-[10rem] truncate" : undefined}>
+          {names.length === 1 ? names[0] : names.length > 1 ? `${names.length} places` : suggested}
           <span className="max-lg:hidden"> suggested</span>
         </span>
       ) : placeName && missing === 0 ? (

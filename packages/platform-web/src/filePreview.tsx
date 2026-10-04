@@ -126,7 +126,7 @@ export function FilePreview({
   // The renderer is chosen by what the file IS (its bytes), the name only
   // when the bytes name nothing: a PDF stored without its extension, or under
   // a wrong one, still opens in the PDF viewer (#4523).
-  const [loader, setLoader] = useState<RendererLoader | undefined>(byName);
+  const [loader, setLoader] = useState<RendererLoader | undefined>(() => byName);
   const [data, setData] = useState<{ blobUrl: string; bytes: ArrayBuffer } | null>(null);
   const [err, setErr] = useState(false);
   const [probed, setProbed] = useState(false);
@@ -137,7 +137,7 @@ export function FilePreview({
     setData(null);
     setErr(false);
     setProbed(false);
-    setLoader(byName);
+    setLoader(() => byName);
     const token = typeof window !== "undefined" ? window.localStorage.getItem(TOKEN_KEY) : null;
     const auth: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
     void (async () => {

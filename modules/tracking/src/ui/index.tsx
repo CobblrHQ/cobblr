@@ -1,3 +1,4 @@
+import { fieldNeed, FieldPack, RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, useRecordInPath, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 // tracking UI — host mounts <TrackingUI /> at /tracking. A grid of metrics
 // (each with a progress bar + sparkline); clicking one opens a detail MODAL to
 // log values and see the trend. Modals not pages; toasts not dialogs; confirm
@@ -7,7 +8,6 @@
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ContributedDetailPanels, CustomFieldsPanel, Modal, useRecordInPath, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { TrendingUp, Plus, Trash2 } from "lucide-react";
 import { TrackingApi, type MetricSummary, type Measurement, type GoalDirection, TrackingApiError } from "./api.js";
 import { valueWithUnit } from "@cobblr/platform-contract/money";
@@ -145,13 +145,13 @@ function CreateMetricModal({ api, orgSlug, onClose }: { api: TrackingApi; orgSlu
 
   const field = "w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm";
   return (
-    <Modal open onClose={onClose} title="New metric">
+    <RecordFormModal open onClose={onClose} title="New metric">
       <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); if (name.trim()) create.mutate(); }}>
-        <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Weight" className={field} />
-        <div className="flex gap-2">
-          <input value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="unit (kg, km, reps…)" className={field} />
-          <input value={goal} onChange={(e) => setGoal(e.target.value)} type="number" step="any" placeholder="goal" className={field} />
-        </div>
+        <FieldPack maxCols={3} items={[
+          { need: fieldNeed("name", { control: "text", label: "Name" }), node: <input aria-label="Name" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Weight" className={field} /> },
+          { need: fieldNeed("unit", { control: "text", label: "Unit" }), node: <input aria-label="Unit" value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="unit (kg, km, reps…)" className={field} /> },
+          { need: fieldNeed("goal", { control: "number", label: "Goal" }), node: <input aria-label="Goal" value={goal} onChange={(e) => setGoal(e.target.value)} type="number" step="any" placeholder="goal" className={field} /> },
+        ]} />
         <label className="block">
           <div className="text-xs text-muted mb-1">Goal direction</div>
           <div className="flex gap-1">
@@ -167,7 +167,7 @@ function CreateMetricModal({ api, orgSlug, onClose }: { api: TrackingApi; orgSlu
           <button type="submit" disabled={!name.trim() || create.isPending} className="px-3 py-1.5 text-xs rounded bg-cobble-600 text-white disabled:opacity-50">Create</button>
         </div>
       </form>
-    </Modal>
+    </RecordFormModal>
   );
 }
 
@@ -214,7 +214,7 @@ function MetricDetailModal({ metricId, api, orgSlug, onClose }: { metricId: stri
 
   const d = detail.data;
   return (
-    <Modal open onClose={onClose} title={d?.name ?? "Metric"} subtitle={d?.goal_value != null ? `goal ${valueWithUnit(Number(d.goal_value), d.unit)} (${d.goal_direction})` : undefined} size="lg">
+    <RecordFormModal open onClose={onClose} title={d?.name ?? "Metric"} subtitle={d?.goal_value != null ? `goal ${valueWithUnit(Number(d.goal_value), d.unit)} (${d.goal_direction})` : undefined}>
       <div className="space-y-3">
         <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); if (val !== "") log.mutate(Number(val)); }}>
           <input autoFocus value={val} onChange={(e) => setVal(e.target.value)} type="number" step="any" placeholder={`Log a value${d?.unit ? ` (${d.unit})` : ""}…`} className="flex-1 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
@@ -245,7 +245,7 @@ function MetricDetailModal({ metricId, api, orgSlug, onClose }: { metricId: stri
           ctx={{ slug: orgSlug, entityId: metricId, entityTitle: d?.name ?? "Metric" }}
         />
       </div>
-    </Modal>
+    </RecordFormModal>
   );
 }
 

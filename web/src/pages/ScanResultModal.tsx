@@ -6,6 +6,7 @@
 // re-arms the scanner. The item lands in the inbox either way, so desktop
 // triage still works; this just lets you set qty / commit on the spot.
 
+import type { ScanCountSessionMode } from "@cobblr/platform-contract/scan-count";
 import { useEffect, useState } from "react";
 import { leadYours, rowPictures, scanFileUrl, yourPictures } from "../lib/rowPictures";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -22,8 +23,8 @@ import { EntityActionChip } from "../components/EntityActionChip";
 import { useAiStatus } from "./ScanPage";
 import { AiOffMissHint } from "./ScanInboxCard";
 import { Link, useNavigate } from "react-router-dom";
-import { filedIntoOf, needsScanReview, scanReviewReason, scanRowState, scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
-import { NO_MATCH_ASK_FOR_PHOTO, STORE_CODE_TITLE } from "@cobblr/platform-contract/scan-copy";
+import { filedIntoOf, needsScanReview, scanReviewReason, scanRowState, scanTrackedMatch, scanDeclinesRecord } from "@cobblr/platform-contract/scan-triage";
+import { NO_MATCH_ASK_FOR_PHOTO, STORE_CODE_TITLE, PHOTO_CHECK_NOTE, photoCheckIsLive } from "@cobblr/platform-contract/scan-copy";
 import { itemEnriching } from "./scan-status";
 import { ScanNameItInline } from "../components/ScanNameItInline";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
@@ -57,6 +58,7 @@ export function ScanResultModal({
   onEarly,
   moveMode,
   countMode,
+  sessionMode,
   onAttached,
 }: {
   barcode: string;
@@ -102,6 +104,7 @@ export function ScanResultModal({
   /** Count mode (a stocktake): a scan of something you have opens its count
    *  in Set total, the number you see being the number on the shelf. */
   countMode?: boolean;
+  sessionMode?: ScanCountSessionMode;
   /** Fired after an attach (manual or auto-move) so the camera can offer undo. */
   onAttached?: (
     r: { itemId: string; prevLocationId: string | null; entityTitle: string },
@@ -154,7 +157,7 @@ export function ScanResultModal({
     photo_check_pending?: boolean;
     photo_mismatch?: { reason?: string };
   };
-  const photoCheckPending = modalMeta.photo_check_pending === true;
+  const photoCheckPending = !!item && photoCheckIsLive(item);
   const photoMismatch = !!modalMeta.photo_mismatch;
   // Keep the live poll going while the cross-check is unresolved, so the
   // "checking…" state flips to confirmed/corrected in-place (same 180s bound).
@@ -328,12 +331,16 @@ export function ScanResultModal({
   });
   const viewer = useScanViewer(menuQ.data?.items ?? null);
   const rowState = item ? scanRowState(item, viewer) : null;
-  // Count mode on something you already have is a stocktake: the only
-  // question is how many there are now (the banner's Set total). Every way
-  // of making a NEW record (the one-tap add, the ?into add, "this is the
-  // bin itself") is withheld, or a count of a book would file a second copy.
+  // Count mode must never create a second record during a stocktake.
   const { all: liveMatches } = useTrackedMatchList(item ?? null);
-  const countingWhatYouHave = !!countMode && !!item && (!!scanTrackedMatch(item) || liveMatches.length > 0);
+  const stampedMatch = item ? scanTrackedMatch(item) : null;
+  const stampedOwned = !!(item && stampedMatch?.kind && stampedMatch.id && !scanDeclinesRecord(item, {
+    kind: stampedMatch.kind,
+    id: stampedMatch.id,
+    instance: stampedMatch.instance,
+  }));
+  const alreadyOwned = stampedOwned || liveMatches.length > 0;
+  const countingWhatYouHave = !!countMode && alreadyOwned;
   const oneTap =
     !countingWhatYouHave && !scanTarget.into && item && item.suggested_name && rowState && (rowState.eligibility === "ready" || rowState.eligibility === "needs-install")
       ? oneTapDestination(item, rowState.destination)
@@ -485,7 +492,7 @@ export function ScanResultModal({
             )}
             {photoCheckPending && (
               <div className="text-[11px] text-accent animate-pulse mt-0.5 flex items-center gap-1">
-                <Camera size={11} /> Checking this against your photo…
+                <Camera size={11} /> {PHOTO_CHECK_NOTE}
               </div>
             )}
             {!photoCheckPending && photoMismatch && (
@@ -605,7 +612,7 @@ export function ScanResultModal({
         {/* A scan of something the workspace already counts says how many
             in the match's own count (Change by / Set total) below; a second
             stepper here would ask the same question twice (#3884). */}
-        {!(item && scanTrackedMatch(item)?.counted) && (
+        {!alreadyOwned && (
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-mono uppercase tracking-widest text-muted">quantity</span>
             <QtyStepper value={qty} onBump={bumpQty} big />
@@ -622,6 +629,7 @@ export function ScanResultModal({
             locationName={scanArea ?? null}
             autoMove={moveMode}
             countMode={countMode ? "set" : "change"}
+            sessionMode={sessionMode}
             onAttached={(r, m, mode) => {
               onAttached?.(
                 { itemId: item.id, prevLocationId: r.prev_location_id, entityTitle: r.entity_title },
@@ -650,9 +658,9 @@ export function ScanResultModal({
                 instance: scanTarget.into!,
               })
             }
-            className="w-full inline-flex items-center justify-center gap-2 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-2 disabled:opacity-50"
+            className={alreadyOwned ? "w-full min-h-10 rounded-md border border-line dark:border-slate-600 px-3 py-2 text-sm text-muted disabled:opacity-50" : "w-full inline-flex items-center justify-center gap-2 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-2 disabled:opacity-50"}
           >
-            <CheckCircle size={15} /> Add to {scanTarget.label ?? scanTarget.into}
+            {alreadyOwned ? "Add as a separate one" : <><CheckCircle size={15} /> Add to {scanTarget.label ?? scanTarget.into}</>}
           </button>
         ) : oneTap ? (
           <div className="space-y-1">
@@ -661,9 +669,9 @@ export function ScanResultModal({
               data-testid="sheet-add-to"
               disabled={busy}
               onClick={() => fileHere.mutate()}
-              className="w-full h-11 inline-flex items-center justify-center gap-2 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white text-[14px] font-semibold px-3 disabled:opacity-50"
+              className={alreadyOwned ? "w-full min-h-10 rounded-lg border border-line dark:border-slate-600 px-3 py-2 text-sm text-muted disabled:opacity-50" : "w-full h-11 inline-flex items-center justify-center gap-2 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white text-[14px] font-semibold px-3 disabled:opacity-50"}
             >
-              {fileHere.isPending ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle size={15} />} Add to {oneTap.label}
+              {alreadyOwned ? "Add as a separate one" : <>{fileHere.isPending ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle size={15} />} Add to {oneTap.label}</>}
             </button>
             {rowState?.eligibility === "needs-install" && (
               <div className="text-center text-[11px] text-muted dark:text-slate-400">Sets up the {oneTap.label} table on the way.</div>

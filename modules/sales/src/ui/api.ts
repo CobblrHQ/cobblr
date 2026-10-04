@@ -1,6 +1,8 @@
 // Thin fetch wrapper for the sales REST surface + a generic part lookup (for
 // line items). Routes mount at /api/v1/orgs/:slug/modules/sales/...
 
+import type { IntakeSetting } from "../intake.js";
+import type { LineAvailability } from "../availability.js";
 import { describeUnreadableBody, noteWorkspaceWrite } from "@cobblr/platform-web";
 
 export type SalesOrderStatus = "draft" | "confirmed" | "fulfilled" | "shipped" | "closed" | "cancelled";
@@ -25,6 +27,9 @@ export interface SalesOrder {
   customer_name: string | null;
   order_number: string | null;
   status: SalesOrderStatus;
+  paid: boolean;
+  auto_closed_at?: string | null;
+  auto_close_undone?: boolean;
   order_date: string | null;
   fulfilled_at: string | null;
   carrier: string | null;
@@ -33,6 +38,9 @@ export interface SalesOrder {
   /** When the carrier said the parcel was delivered ("Follow parcels I send"). */
   delivered_at?: string | null;
   shipping_address: string | null;
+  source_name?: string | null;
+  source_ref?: string | null;
+  source_url?: string | null;
   notes: string | null;
   /** A bundle's custom fields on the order, by field name. */
   metadata?: Record<string, unknown>;
@@ -40,6 +48,7 @@ export interface SalesOrder {
 }
 
 export interface SalesOrderItem {
+  metadata?: Record<string, unknown>;
   id: string;
   order_id: string;
   part_id: string | null;
@@ -67,6 +76,7 @@ export interface SalesOrderDetail extends SalesOrder {
   items: SalesOrderItem[];
   total: number;
   work_orders?: WorkOrderView[];
+  availability?: LineAvailability[];
 }
 
 export interface PartOption {
@@ -126,6 +136,7 @@ export interface Paged<T> {
 /** "Follow parcels I send": whether it is on, whose connection it uses, and
  *  why the last round stopped short, if it did. */
 export interface FollowParcels {
+  close_delivered_orders: boolean;
   on: boolean;
   by: string | null;
   paused_until: string | null;
@@ -154,7 +165,14 @@ export class SalesApiError extends Error {
   }
 }
 
+export interface IntakeView { setting: IntakeSetting | null; connections: Array<{ id: string; label: string }> }
+
 export class SalesApi {
+  get workspace() { return this.slug; }
+  async orderEmailAddress() { return this.parse<{ order_address: string | null }>(await fetch(`/api/v1/orgs/${this.slug}/receipt-address`, { headers: this.headers() })); }
+  intake() { return this.req<IntakeView>("GET", "/intake"); }
+  setIntake(config: { on: boolean; connection: string; mapping: Record<string, string> }) { return this.req<IntakeSetting>("PUT", "/intake", config); }
+  checkIntake() { return this.req<IntakeSetting | null>("POST", "/intake/check", {}); }
   constructor(private readonly slug: string, private readonly getToken: () => string | null) {}
 
   private headers(json = false): Record<string, string> {
@@ -224,7 +242,7 @@ export class SalesApi {
     return this.req<{ ok: true; plannedId: string; buildName: string; qty: number; reused: boolean; makeId: string | null }>("POST", `/orders/${orderId}/items/${lineId}/make`, { qty });
   }
   orderHistory(id: string) { return this.req<{ items: HistoryRow[] }>("GET", `/orders/${id}/history`); }
-  addItem(orderId: string, body: { part_id?: string | null; description?: string | null; qty: number; unit_price?: number | null }) {
+  addItem(orderId: string, body: { part_id?: string | null; description?: string | null; qty: number; unit_price?: number | null; metadata?: Record<string, unknown> }) {
     return this.req<SalesOrderItem>("POST", `/orders/${orderId}/items`, body);
   }
   removeItem(orderId: string, itemId: string) { return this.req<void>("DELETE", `/orders/${orderId}/items/${itemId}`); }
@@ -254,6 +272,8 @@ export class SalesApi {
   deleteCustomer(id: string) { return this.req<void>("DELETE", `/customers/${id}`); }
 
   // following sent parcels
+  setCloseDelivered(on: boolean) { return this.req<{ on: boolean }>("PUT", "/follow-parcels/close-delivered", { on }); }
+  undoDeliveryClose(orderId: string) { return this.req<{ undone: boolean }>("POST", `/orders/${orderId}/undo-delivery-close`, {}); }
   followParcels() { return this.req<FollowParcels>("GET", "/follow-parcels"); }
   setFollowParcels(on: boolean) { return this.req<FollowParcels>("PUT", "/follow-parcels", { on }); }
   checkParcelsNow() { return this.req<{ asked: number; delivered: number; stopped: string | null }>("POST", "/follow-parcels/check"); }

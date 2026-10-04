@@ -158,6 +158,7 @@ const BundleComposerPage = lazy(() => import("./pages/BundleComposerPage").then(
 const CatalogsPage = lazy(() => import("./pages/CatalogsPage").then((m) => ({ default: m.CatalogsPage })));
 const CatalogDetailPage = lazy(() => import("./pages/CatalogDetailPage").then((m) => ({ default: m.CatalogDetailPage })));
 const CatalogMatchPage = lazy(() => import("./pages/CatalogMatchPage").then((m) => ({ default: m.CatalogMatchPage })));
+const RecordActionsPage = lazy(() => import("./pages/RecordActionsPage").then((m) => ({ default: m.RecordActionsPage })));
 const PresentationPage = lazy(() => import("./pages/PresentationPage").then((m) => ({ default: m.PresentationPage })));
 const IntegrationsPage = lazy(() => import("./pages/IntegrationsPage").then((m) => ({ default: m.IntegrationsPage })));
 const AiPage = lazy(() => import("./pages/AiPage").then((m) => ({ default: m.AiPage })));
@@ -650,6 +651,7 @@ function ActiveOrgScopedRoutes() {
       cobbIcon={CobbHead}
       api={{
         listActions: (slug, kind) => api.listActions(slug, kind),
+        setRecordActionPin: (slug, kind, action, pinned) => api.setRecordActionPin(slug, kind, action, pinned),
         // A record's door to a module that is off (#3883): turning it on is an
         // owner's or admin's act; everyone else asks, through the one sheet.
         enableModule: (slug, name) => api.enableModule(slug, name),
@@ -661,6 +663,7 @@ function ActiveOrgScopedRoutes() {
         listNativeFieldOverrides: (slug, kind) => api.listNativeFieldOverrides(slug, kind),
         upsertOverride: (slug, body) => api.upsertOverride(slug, body),
         invokeAction: (slug, body) => api.invokeAction(slug, body),
+        requestLight: (slug, ref, reason) => api.requestLight(slug, ref, reason),
         lookupEntity: (slug, kind, id) => api.lookupEntity(slug, kind, id),
         listShareOffers: (slug) => api.listShareOffers(slug),
         withdrawShareOffer: (slug, id) => api.withdrawShareOffer(slug, id),
@@ -915,6 +918,7 @@ function ActiveOrgScopedRoutes() {
             <Route path="/configuration/locations" element={<LocationsConfigRedirect />} />
             <Route path="/configuration/locations/:id" element={<LocationsConfigRedirect />} />
             <Route path="/configuration/templates" element={<TemplatesPage />} />
+            <Route path="/configuration/record-actions" element={<RecordActionsPage />} />
             <Route path="/configuration/presentation" element={<PresentationPage />} />
             <Route path="/configuration/integrations" element={<IntegrationsPage />} />
             <Route path="/configuration/ai" element={<AiPage />} />

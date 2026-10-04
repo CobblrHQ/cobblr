@@ -142,11 +142,12 @@ export default defineModule({
     ],
     actions: [
       {
+        group: "lifecycle",
         id: "assets:lend",
         examples: ["lend the ladder to Sam", "Sam borrowed the drill until Friday", "check the projector out to Robin"],
         label: "Lend it",
         description:
-          "Record that someone has this thing now: `to` is a person from the workspace's People, `due_back` (YYYY-MM-DD, optional) when it should come back. Sets Who has it and Due back; an overdue loan shows in Needs you.",
+          "Record who has it and when it is due back.",
         face: "lendable",
         appliesTo: { kinds: ["assets:asset"] },
         invokeHandler: "assets.lend",
@@ -157,6 +158,7 @@ export default defineModule({
         },
       },
       {
+        group: "lifecycle",
         id: "assets:got-back",
         examples: ["I got the ladder back", "Sam returned the drill", "check it back in"],
         label: "Got it back",
@@ -168,20 +170,22 @@ export default defineModule({
         argsSchema: {},
       },
       {
+        group: "lifecycle",
         id: "assets:archive",
         examples: ["put the old laptop away", "archive the lawnmower, we sold it"],
-        label: "Put away",
+        label: "Archive this asset",
         description:
-          "Archive this thing: it leaves the register, views, search and Needs you, and keeps its history, cost and links. Restore brings it back. Not a delete.",
+          "Removes it from the register, search and Needs you; you can restore it.",
         appliesTo: { kinds: ["assets:asset"] },
         invokeHandler: "assets.archive",
         undoable: true,
         argsSchema: {},
       },
       {
+        group: "lifecycle",
         id: "assets:restore",
         examples: ["bring the laptop back", "restore the lawnmower"],
-        label: "Restore",
+        label: "Restore to the register",
         description: "Bring an archived thing back into the register, as it was.",
         appliesTo: { kinds: ["assets:asset"] },
         invokeHandler: "assets.restore",
@@ -190,6 +194,7 @@ export default defineModule({
       },
       {
         // NO-PHRASING: the way back for another action, run only from Undo
+        group: "lifecycle",
         id: "assets:set-custody",
         label: "Put who had it back",
         description: "The undo of Lend it and Got it back: sets Who has it and Due back to what they were.",
@@ -203,6 +208,7 @@ export default defineModule({
         },
       },
       {
+        group: "organise",
         id: "assets:update-fields",
         examples: ["update the mileage on it", "set a field on that asset"],
         label: "Update an asset's fields",
@@ -222,6 +228,7 @@ export default defineModule({
         userInvokable: false,
       },
       {
+        group: "organise",
         id: "assets:field-to-location",
         examples: ["move the Room field into Location", "turn that place field into real locations"],
         label: "Move a place field into Location",

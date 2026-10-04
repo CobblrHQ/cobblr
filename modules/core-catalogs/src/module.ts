@@ -110,6 +110,7 @@ export default defineModule({
     ],
     actions: [
       {
+        group: "service",
         id: "core-catalogs:refresh",
         examples: ["refresh this catalog", "pull the latest from the source"],
         label: "Refresh from source",
@@ -120,6 +121,7 @@ export default defineModule({
         invokeHandler: "core-catalogs.refresh",
       },
       {
+        group: "service",
         id: "core-catalogs:match-to-catalog",
         examples: ["match this to the catalog", "which catalogue entry is this"],
         label: "Match to catalog",

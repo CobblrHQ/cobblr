@@ -25,3 +25,9 @@ export function classify(state: string): DeviceClass {
 export function isAssignable(state: string): boolean {
   return classify(state) === "idle";
 }
+
+export function fleetState(deviceState: string, jobStatus?: string | null): string {
+  if (jobStatus === "printing") return "Running";
+  if (jobStatus === "paused") return "Paused";
+  return deviceState;
+}

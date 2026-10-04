@@ -15,7 +15,7 @@ import { useKindLabels } from "../lib/useKindLabels";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, Search, X } from "lucide-react";
-import { EntityThumb, SnippetText, usePageTitle, SearchInput } from "@cobblr/platform-web";
+import { EntityThumb, SnippetText, usePageTitle, SearchInput, useToast } from "@cobblr/platform-web";
 import { api, ApiError, type SearchHit } from "../lib/api";
 import { QueryError } from "../components/QueryError";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -28,6 +28,11 @@ import { countOf } from "@cobblr/platform-contract/plural";
 const PAGE = 20;
 
 export function SearchPage() {
+  const toast = useToast();
+  const light = async (kind: string, id: string) => {
+    try { toast.success((await api.requestLight(activeSlug, { kind, id })).note); }
+    catch (e) { toast.error(e instanceof Error ? e.message : "The light did not answer."); }
+  };
   usePageTitle("Search");
   const { activeSlug } = useActiveOrg();
   const labels = useKindLabels(activeSlug);
@@ -255,6 +260,7 @@ export function SearchPage() {
                   <span className="font-medium truncate">{c.label}</span>
                   <span className="text-xs text-muted truncate">{c.where}</span>
                 </Link>
+                <button type="button" className="text-xs text-accent py-1" onClick={() => void light(c.entity_kind, c.entity_id)}>Where is it?</button>
               </li>
             ))}
           </ul>
@@ -298,6 +304,7 @@ export function SearchPage() {
                     </span>
                   )}
                 </Link>
+                <button type="button" className="text-xs text-accent py-1" onClick={() => void light(h.kind, h.id)}>Where is it?</button>
               </li>
             ))}
           </ul>
@@ -339,4 +346,3 @@ function Chip({
     </span>
   );
 }
-

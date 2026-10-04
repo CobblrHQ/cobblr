@@ -9,6 +9,8 @@ import { platform } from "@cobblr/platform-contract";
 import { isEdgeManagerUrl, edgeInstanceOf } from "@cobblr/platform-contract/edge-bridge-client";
 import type { Kysely, Selectable } from "kysely";
 import type { DigifabDB } from "./db.js";
+import { submitReviewedJob, ReviewRequired } from "./drivers/job-review.js";
+import type { JobApproval } from "./drivers/types.js";
 import { resolveDriver } from "./drivers/registry.js";
 import { EdgeAdapterDriver, type EdgeRelay } from "./drivers/edge-adapter.js";
 import type { CommandResult, MachineDriver, RemoteDevice, SubmitResult } from "./drivers/types.js";
@@ -792,7 +794,7 @@ export async function recordJobOutcome(
 
 export type SendJobResult =
   | { ok: true; status: string; remoteJobId: string | null; placement: SubmitResult; uploadedBytes: number; shouldPoll: boolean }
-  | { ok: false; code: "not_found" | "already_sent" | "already_sending" | "already_terminal" | "no_connection" | "unknown_device" | "file_missing" }
+  | { ok: false; code: "not_found" | "already_sent" | "already_sending" | "already_terminal" | "no_connection" | "unknown_device" | "file_missing" | "review_required" }
   /** The manager refused or could not be reached: the job is failed with this
    *  sentence on it, and the sentence is what the person sees. */
   | { ok: false; code: "send_failed"; message: string };
@@ -831,6 +833,7 @@ export async function sendJob(
   db: Kysely<DigifabDB>,
   orgId: string,
   jobId: string,
+  approval?: JobApproval,
 ): Promise<SendJobResult> {
   const job = await db.selectFrom("digifab_jobs").selectAll().where("id", "=", jobId).executeTakeFirst();
   if (!job) return { ok: false, code: "not_found" };
@@ -845,7 +848,7 @@ export async function sendJob(
   // runs twice for one job at the same time.
   const token = await claimSend(db, jobId, SENDABLE);
   if (!token) return { ok: false, code: "already_sending" };
-  const r = await sendClaimed(db, orgId, jobId, job, token);
+  const r = await sendClaimed(db, orgId, jobId, job, token, approval);
   if (!r.ok) await releaseSend(db, jobId, token);
   return r;
 }
@@ -856,6 +859,7 @@ async function sendClaimed(
   jobId: string,
   job: Selectable<DigifabDB["digifab_jobs"]>,
   token: string,
+  approval?: JobApproval,
 ): Promise<SendJobResult> {
   const connectionId = job.connection_id!;
   const driver = await buildDriverById(db, orgId, connectionId);
@@ -947,10 +951,10 @@ async function sendClaimed(
   let sub: SubmitResult;
   let doing = "uploading the file";
   try {
-    up = await sendDriver.uploadFile(fileBytes, uploadName);
-    doing = "starting the print";
-    sub = await sendDriver.submitJob({ fileId: up.fileId, deviceId, tag: job.target_tag, idempotencyKey: token });
+    doing = "preparing and starting the job";
+    ({ up, sub } = await submitReviewedJob(sendDriver, fileBytes, uploadName, { deviceId, tag: job.target_tag, idempotencyKey: token, approval }));
   } catch (e) {
+    if (e instanceof ReviewRequired) return { ok: false, code: "review_required" };
     const message = plainDriverError(e, await managerName(orgId, connectionId), doing).slice(0, 300);
     await markJobTerminal(db, job, "failed", { error: message });
     return { ok: false, code: "send_failed", message };

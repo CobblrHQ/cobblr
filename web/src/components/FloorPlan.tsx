@@ -1,3 +1,4 @@
+import { RecordFormModal, Modal, useImageSrc, useToast } from "@cobblr/platform-web";
 // The floor plan — a location's children drawn where they physically stand.
 // Third lens on the same hierarchy the tree and the scanner use; every rect
 // IS a location record. Spec: docs/design-decisions/location-floor-plan.md.
@@ -13,7 +14,6 @@ import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Flame, Grid3x3, Loader2, MapPin, Pencil, Plus, Printer, Redo2, ScanLine, Sparkles, Tag, Undo2, X } from "lucide-react";
 import { diffPlaces, historyKey, planHistoryFor, type PlanChange, type PlanStep } from "../lib/planHistory";
-import { Modal, useImageSrc, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type Location, type TagAttachment, type TagRecord } from "../lib/api";
 import { totalUsage, useLocationUsage } from "../lib/useLocationUsage";
 import {
@@ -1599,14 +1599,13 @@ function PlanFor({
       {/* Peek drill-in: the child's own plan, zoomed, fully interactive —
           without losing where you were. */}
       {peekLoc && (
-        <Modal
+        <RecordFormModal
           open
           onClose={() => {
             setPeekId(null);
             setPeekStart(undefined);
           }}
           title={peekLoc.name}
-          size="lg"
         >
           <div className="space-y-2">
             <PlanFor room={peekLoc} slug={slug} bare headTitle={peekLoc.kind === "container" ? "Layout" : peekLoc.name} startWith={peekStart} />
@@ -1627,7 +1626,7 @@ function PlanFor({
               </Link>
             </div>
           </div>
-        </Modal>
+        </RecordFormModal>
       )}
     </div>
   );
@@ -2175,7 +2174,7 @@ function CreateOnPlanModal({
     },
   });
   return (
-    <Modal open onClose={onClose} title={`Add to ${room.name}`} size="sm">
+    <RecordFormModal open onClose={onClose} title={`Add to ${room.name}`}>
       <form
         className="space-y-3"
         onSubmit={(e) => {
@@ -2219,7 +2218,7 @@ function CreateOnPlanModal({
           </button>
         </div>
       </form>
-    </Modal>
+    </RecordFormModal>
   );
 }
 
@@ -2255,7 +2254,7 @@ function NewFloorModal({
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
   return (
-    <Modal open onClose={onClose} title={`New floor in ${room.name}`} size="sm">
+    <RecordFormModal open onClose={onClose} title={`New floor in ${room.name}`}>
       <div className="space-y-3">
         <input
           value={name}
@@ -2279,7 +2278,7 @@ function NewFloorModal({
           }}
         />
       </div>
-    </Modal>
+    </RecordFormModal>
   );
 }
 
@@ -2371,7 +2370,7 @@ function DrawersModal({
     `flex-1 rounded-md border px-2.5 py-1.5 text-xs font-medium transition ${on ? "border-accent text-accent bg-cobble-50 dark:bg-cobble-900/30" : "border-line dark:border-slate-600 text-muted"}`;
   const num = "w-14 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1.5 py-1 text-sm text-content dark:text-slate-200 text-center";
   return (
-    <Modal open onClose={busy ? () => {} : onClose} title={`Drawers in ${room.name}`} size="sm">
+    <RecordFormModal open onClose={busy ? () => {} : onClose} title={`Drawers in ${room.name}`}>
       <div className="space-y-3" data-testid="drawers-modal">
         {ordered.length > 0 && (
           <div className="flex gap-2">
@@ -2457,7 +2456,7 @@ function DrawersModal({
           </button>
         </div>
       </div>
-    </Modal>
+    </RecordFormModal>
   );
 }
 

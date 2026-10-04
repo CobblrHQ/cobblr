@@ -12,6 +12,8 @@
 // See docs/design-decisions/holdings-and-units.md ("One page for a type and
 // its things").
 
+import { materialTotals } from "./material-ledger.js";
+import { materialNumbers, type MaterialNumbers } from "../material-numbers.js";
 import { Router, type Request } from "express";
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { z } from "zod";
@@ -370,7 +372,27 @@ familiesRouter.get(
     const things = await db.selectFrom("inventory_parts").select([...THING_COLUMNS]).where("instance", "=", fam.child as never).where("archived", "=", false).orderBy("created_at").limit(5000).execute();
     const byType = await childrenOf(orgId, fam, types.map((t) => t.id));
     const places = await placeNames(orgId, PART, things);
-    const thingById = new Map(things.map((t) => [t.id, { ...thing(t as unknown as Record<string, unknown>), location_name: places.get(t.id) ?? null }]));
+    const sumById = await materialTotals(db, things.map((t) => t.id));
+    const factors = new Map<string, number | null>();
+    for (const unit of new Set(things.map((t) => t.unit))) factors.set(unit, await platform().units.convert(orgId, 1, unit, "g"));
+    const rawById = new Map(things.map((t) => [t.id, t]));
+    const numbers = new Map<string, MaterialNumbers & { jobs: number }>();
+    for (const type of types) {
+      for (const id of byType.get(type.id) ?? []) {
+        const t = rawById.get(id);
+        if (!t) continue;
+        const factor = factors.get(t.unit);
+        if (factor == null) continue;
+        const md = { ...coerceMetadata(type.metadata), ...coerceMetadata(t.metadata) };
+        const sum = sumById.get(id);
+        const n = materialNumbers(Number(t.qty) * factor, md.initial_g == null ? null : Number(md.initial_g), Number(md.density) || null, parseFloat(String(md.diameter)) || null,
+          [{ delta: Number(sum?.net ?? 0) * factor, kind: null, at: "" }]);
+        n.first_used = sum?.first_used ? new Date(sum.first_used).toISOString() : null;
+        n.last_used = sum?.last_used ? new Date(sum.last_used).toISOString() : null;
+        numbers.set(id, { ...n, jobs: Number(sum?.jobs ?? 0) });
+      }
+    }
+    const thingById = new Map(things.map((t) => [t.id, { ...thing(t as unknown as Record<string, unknown>), location_name: places.get(t.id) ?? null, material: numbers.get(t.id) ?? null }]));
     const claimed = new Set<string>();
     const cards = types.map((t) => {
       const kids = (byType.get(t.id) ?? []).map((id) => thingById.get(id)).filter((x): x is NonNullable<typeof x> => !!x);

@@ -1,3 +1,4 @@
+import { FieldPack, fieldNeed, RecordFormModal, MoneyInput, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
 // /configuration/maintenance — workspace-wide service log. The
 // core-maintenance module (foundational) attaches polymorphic
 // entries to any entity; the embedded UI on each entity's detail
@@ -11,7 +12,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, Check, History, Pencil, Trash2, Wrench } from "lucide-react";
 import { ApiError, api, type MaintenanceEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, MoneyInput, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
 
 type Kind = "scheduled" | "history" | "all";
@@ -335,7 +335,7 @@ function EditEntryModal({
     name.trim() !== "" && (scheduledAt !== "" || performedAt !== "");
 
   return (
-    <Modal open onClose={onClose} title={`Edit: ${entry.name}`}>
+    <RecordFormModal open onClose={onClose} title={`Edit: ${entry.name}`}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -353,26 +353,36 @@ function EditEntryModal({
             autoFocus
           />
         </label>
-        <div className="grid grid-cols-2 gap-3">
-          <label className="block">
-            <div className="text-xs text-muted mb-1">Scheduled</div>
-            <input
-              type="datetime-local"
-              value={scheduledAt}
-              onChange={(e) => setScheduledAt(e.target.value)}
-              className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-            />
-          </label>
-          <label className="block">
-            <div className="text-xs text-muted mb-1">Performed</div>
-            <input
-              type="datetime-local"
-              value={performedAt}
-              onChange={(e) => setPerformedAt(e.target.value)}
-              className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-            />
-          </label>
-        </div>
+        <FieldPack items={[
+          {
+            need: { ...fieldNeed("scheduledAt", { control: "date", label: "Scheduled" }), minPx: 250 },
+            node: (
+              <label className="block">
+                <div className="text-xs text-muted mb-1">Scheduled</div>
+                <input
+                  type="datetime-local"
+                  value={scheduledAt}
+                  onChange={(e) => setScheduledAt(e.target.value)}
+                  className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+                />
+              </label>
+            ),
+          },
+          {
+            need: { ...fieldNeed("performedAt", { control: "date", label: "Performed" }), minPx: 250 },
+            node: (
+              <label className="block">
+                <div className="text-xs text-muted mb-1">Performed</div>
+                <input
+                  type="datetime-local"
+                  value={performedAt}
+                  onChange={(e) => setPerformedAt(e.target.value)}
+                  className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+                />
+              </label>
+            ),
+          },
+        ]} />
         <p className="text-[11px] text-faint -mt-1">
           One of scheduled / performed is required. Set performed to log it as
           done.
@@ -409,6 +419,6 @@ function EditEntryModal({
           </button>
         </div>
       </form>
-    </Modal>
+    </RecordFormModal>
   );
 }

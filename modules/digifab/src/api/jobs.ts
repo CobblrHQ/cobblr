@@ -15,6 +15,8 @@ import { tenantDb, tenantContext, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { pollJob, sendJob, assignJob, buildDriverById, reverseBuildIfCommitted, TERMINAL, markJobTerminal, managerName } from "../jobs-core.js";
 import { enqueuePoll, reconcilePolls } from "../poll-worker.js";
+import { JobApprovalSchema } from "../drivers/job-review.js";
+import type { JobApproval } from "../drivers/types.js";
 import { plainDriverError } from "../job-truth.js";
 
 export const jobsRouter = Router({ mergeParams: true });
@@ -251,6 +253,24 @@ jobsRouter.patch(
   }),
 );
 
+// UI-REACH: the job review sheet loads the project before an owner approves Start.
+// AI-REACH: exempt owner-only preparation for the interactive Start review; physical sends use digifab:send.
+jobsRouter.post("/:id/prepare", asyncHandler(async (req, res) => {
+  if (!requireRole(req, res, "owner", "admin")) return;
+  const db = tenantDb(req);
+  const orgId = tenantContext(req).org.id;
+  const job = await db.selectFrom("digifab_jobs").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
+  if (!job) return void res.status(404).json({ error: { code: "not_found", message: "No such job." } });
+  if (job.status !== "queued" || job.remote_job_id || job.target_pool || !job.connection_id) return void res.status(409).json({ error: { code: "not_ready", message: "Choose a queued job on one connection to review." } });
+  const driver = await buildDriverById(db, orgId, job.connection_id);
+  if (!driver || !await driver.jobReviewRequired?.()) return void res.json({ review: null });
+  if (!driver.prepareJob || !job.file_id) return void res.status(409).json({ error: { code: "file_required", message: "Choose a stored file to prepare this job." } });
+  const file = await platform().files.read(orgId, job.file_id);
+  if (!file) return void res.status(409).json({ error: { code: "file_missing", message: "The job's stored file no longer exists." } });
+  try { res.json({ review: { ...await driver.prepareJob(new Uint8Array(file.bytes), file.filename), sourceFile: { id: job.file_id, filename: file.filename } } }); }
+  catch (e) { res.status(502).json({ error: { code: "prepare_failed", message: plainDriverError(e, await managerName(orgId, job.connection_id), "preparing the project") } }); }
+}));
+
 // ── SEND — uploads + places the job on the farm. Starts a real print. ──
 // The whole upload/place/persist body lives in sendJob (shared with the
 // assignment worker); this route is auth + result-mapping + the poll hand-off.
@@ -260,7 +280,9 @@ jobsRouter.post(
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin")) return;
     const ctx = tenantContext(req);
-    const r = await sendAndWatch(tenantDb(req), ctx.org.id, req.params.id!);
+    const body = z.object({ approval: JobApprovalSchema.optional() }).safeParse(req.body ?? {});
+    if (!body.success) return void badBody(res, body.error);
+    const r = await sendAndWatch(tenantDb(req), ctx.org.id, req.params.id!, body.data.approval);
     if (!r.ok) {
       if (r.code === "send_failed") return void res.status(502).json({ error: { code: r.code, message: r.message } });
       return void res.status(r.code === "not_found" ? 404 : 409).json({ error: { code: r.code, message: r.message } });
@@ -270,6 +292,7 @@ jobsRouter.post(
 );
 
 const SEND_REFUSALS: Record<string, string> = {
+  review_required: "Review this job in the queue and approve Start first.",
   already_sent: "job already sent",
   already_sending: "This job is already being sent to its printer.",
   already_terminal: "job already finished — use retry",
@@ -283,8 +306,8 @@ const SEND_REFUSALS: Record<string, string> = {
  *  page's button (the route above) and the digifab:send action alike, so the
  *  action's physical effect is the only way a job reaches a machine (Services
  *  §9, §14.3). */
-export async function sendAndWatch(db: Parameters<typeof sendJob>[0], orgId: string, jobId: string) {
-  const r = await sendJob(db, orgId, jobId);
+export async function sendAndWatch(db: Parameters<typeof sendJob>[0], orgId: string, jobId: string, approval?: JobApproval) {
+  const r = await sendJob(db, orgId, jobId, approval);
   if (!r.ok) {
     const message = r.code === "send_failed" ? r.message : (SEND_REFUSALS[r.code] ?? "no such job");
     return { ok: false as const, code: r.code, message };
@@ -302,7 +325,8 @@ export function registerSendAction(): void {
     const jobId = typeof a.job_id === "string" && a.job_id ? a.job_id : ctx.entity?.kind === "digifab:job" ? ctx.entity.id : null;
     if (!jobId) return { ok: false, error: "which job to send is needed (job_id)" };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Parameters<typeof sendJob>[0];
-    const r = await sendAndWatch(db, ctx.orgId, jobId);
+    const approved = JobApprovalSchema.safeParse(a.approval);
+    const r = await sendAndWatch(db, ctx.orgId, jobId, approved.success ? approved.data : undefined);
     if (!r.ok) return { ok: false, error: r.message, code: r.code };
     return { ok: true, job_id: jobId, status: r.status, remote_job_id: r.remoteJobId };
   });

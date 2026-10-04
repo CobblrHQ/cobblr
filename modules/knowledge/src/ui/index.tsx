@@ -1,3 +1,4 @@
+import { RecordFormModal } from "@cobblr/platform-web";
 // knowledge UI — the host mounts <KnowledgeUI /> at /knowledge. A list of
 // entries (bordered cards) with a create/edit MODAL that uses the shared
 // Markdown editor (KB phase 1). Modals for detail/edit, toasts for feedback,
@@ -9,7 +10,6 @@ import {
   ContributedDetailPanels,
   useRecordInPath,
   CustomFieldsPanel,
-  Modal,
   Markdown,
   MarkdownEditor,
   QrCode,
@@ -282,7 +282,7 @@ function EntryEditor({
   });
 
   return (
-    <Modal open onClose={onClose} title={entry ? "Edit entry" : "New entry"} size="lg">
+    <RecordFormModal open onClose={onClose} title={entry ? "Edit entry" : "New entry"}>
       <div className="space-y-3">
         <input
           value={title}
@@ -404,7 +404,7 @@ function EntryEditor({
           </button>
         </div>
       </div>
-    </Modal>
+    </RecordFormModal>
   );
 }
 

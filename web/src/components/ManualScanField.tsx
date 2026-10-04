@@ -14,6 +14,7 @@ export function ManualScanField({
   onCobblrQr,
   onOpenPath,
   className,
+  ownOrigins,
 }: {
   /** A code to look up: the result modal, as a decoded barcode would. */
   onLookup: (code: string) => void;
@@ -22,6 +23,7 @@ export function ManualScanField({
   /** A link to a page of this instance (a record, a pairing link): open it. */
   onOpenPath: (path: string) => void;
   className?: string;
+  ownOrigins?: readonly string[];
 }) {
   const [value, setValue] = useState("");
   const [refusal, setRefusal] = useState<string | null>(null);
@@ -29,7 +31,7 @@ export function ManualScanField({
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        const v = typedVerdict(value);
+        const v = typedVerdict(value, ownOrigins);
         switch (v.action) {
           case "route-qr":
             setValue("");

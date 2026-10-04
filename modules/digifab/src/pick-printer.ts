@@ -43,6 +43,7 @@ export interface LoadedSpool {
   grams_left: number | null;
   /** The filament type the spool is filed under, for its preset hint. */
   type_id: string | null;
+  values?: Record<string, unknown>;
 }
 
 export interface PrinterCandidate {
@@ -61,7 +62,7 @@ export interface PickedPrinter {
   idle: boolean;
   /** Null when the printer has no build volume on its Printing profile. */
   fits: boolean | null;
-  loaded: { spool: LoadedSpool["spool"]; slot: string | null; color_match: boolean; grams_left: number | null } | null;
+  loaded: { spool: LoadedSpool["spool"]; slot: string | null; color_match: boolean; grams_left: number | null; values?: Record<string, unknown> } | null;
   profile: { printer_model: string | null; nozzle_mm: number | null; quality: string | null; preset_hint: string | null } | null;
   /** False when this printer cannot take the job as asked (wrong nozzle). */
   usable: boolean;
@@ -136,7 +137,7 @@ export function rankPrinters(ask: PrintAsk, candidates: readonly PrinterCandidat
       device: c.device,
       idle: c.idle,
       fits,
-      loaded: pick.spool ? { spool: pick.spool.spool, slot: pick.spool.slot, color_match: pick.colorMatch, grams_left: pick.spool.grams_left } : null,
+      loaded: pick.spool ? { spool: pick.spool.spool, slot: pick.spool.slot, color_match: pick.colorMatch, grams_left: pick.spool.grams_left, values: pick.spool.values } : null,
       profile: c.profile
         ? { printer_model: c.profile.printer_model, nozzle_mm: c.profile.nozzle_mm, quality: c.profile.default_quality, preset_hint: hint }
         : null,

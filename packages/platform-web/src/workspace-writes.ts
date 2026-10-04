@@ -48,6 +48,7 @@ export function noteWorkspaceWrite(path: string, response?: Pick<Response, "head
 /** The caches that show how much there is or where things are kept. Every
  *  write marks them stale, and the ones on screen read again. */
 export const STOCK_VIEW_KEYS = [
+  "sales-order",
   "inventory-holdings",
   "inventory-part",
   "inventory-consumption",

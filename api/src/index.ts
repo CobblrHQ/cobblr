@@ -1,3 +1,4 @@
+import { readEnabledPlaceValues } from "./platform/placement-values.js";
 import { registerDeletedRelations } from "./platform/deleted-relations.js";
 import { money, registerExchangeRates } from "./platform/money.js";
 import { roundMoneyAmount } from "@cobblr/platform-contract/money";
@@ -378,10 +379,11 @@ async function boot() {
       get: async (orgId) => {
         const row = await meta
           .selectFrom("orgs")
-          .select(["id", "slug", "app_mode"])
+          .select(["id", "slug", "app_mode", "portal_config"])
           .where("id", "=", orgId)
           .executeTakeFirst();
-        return row ? { id: row.id, slug: row.slug, app_mode: row.app_mode ?? null } : null;
+        const accent = (row?.portal_config as { admin_theme?: { accent?: unknown } } | undefined)?.admin_theme?.accent;
+        return row ? { id: row.id, slug: row.slug, app_mode: row.app_mode ?? null, accent: typeof accent === "string" ? accent : null } : null;
       },
     },
     resolvables: {
@@ -1440,7 +1442,7 @@ async function boot() {
         placeQuantities.set(kind, quantity);
       },
       registerValue: (kind, valueOf, opts) => {
-        placeValues.set(kind, valueOf);
+        placeValues.set(kind, (orgId, ids) => readEnabledPlaceValues(orgId, kind, ids, valueOf, entities.moduleEnabledForOrg));
         if (opts?.readScope) placeValueScopes.set(kind, opts.readScope);
         if (opts?.insuranceDetails) placeInsuranceDetails.set(kind, opts.insuranceDetails);
       },

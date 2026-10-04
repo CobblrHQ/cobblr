@@ -20,7 +20,8 @@ import { z } from "zod";
 import { env } from "../env.js";
 import { meta } from "../db/meta.js";
 import { requireAuth } from "../auth/middleware.js";
-import { captchaEnabled, captchaSiteKey, verifyCaptcha } from "../platform/captcha.js";
+import { captchaEnabled, captchaSiteKey, captchaVerdict } from "../platform/captcha.js";
+import { tryFailure } from "./try-error-page.js";
 import { provisionOrgForUser } from "./auth.js";
 import { enableDefaultModulesForOrg } from "../modules/enable.js";
 import { hashPassword } from "../auth/password.js";
@@ -134,10 +135,14 @@ tryRouter.get(
       // deploy runbook requires it before this goes on the homepage.
       if (captchaEnabled()) {
         const token = typeof req.query.captcha === "string" ? req.query.captcha : undefined;
-        if (!(await verifyCaptcha(token, req))) {
-          res
-            .status(400)
-            .json({ error: { code: "captcha_failed", message: "Could not verify you are human." } });
+        const verdict = await captchaVerdict(token, req);
+        if (verdict !== "pass") {
+          // The challenge page navigates the browser here, so a browser gets a
+          // page; anything else (a script, a test) still gets the JSON.
+          const unavailable = verdict === "unavailable";
+          tryFailure(req, res, unavailable ? 503 : 400, unavailable ? "captcha_unavailable" : "captcha_failed", unavailable
+            ? "Signups are briefly unavailable. Try again in a minute."
+            : "Could not verify you are human.");
           return;
         }
       }
@@ -148,12 +153,7 @@ tryRouter.get(
       const cap = await sandboxCapacity();
       if (!cap.ok) {
         console.warn(`[try-sandbox] at capacity: ${cap.live}/${cap.max} live`);
-        res.status(503).json({
-          error: {
-            code: "sandbox_busy",
-            message: "A lot of people are trying Cobblr right now. Try again in a few minutes.",
-          },
-        });
+        tryFailure(req, res, 503, "sandbox_busy", "A lot of people are trying Cobblr right now. Try again in a few minutes.");
         return;
       }
 

@@ -42,7 +42,7 @@ libraryRouter.post(
     const file = uploadedFile(req);
     if (!file) return void res.status(400).json({ error: { code: "missing_file", message: "Multipart field 'file' is required." } });
     if (!isLibraryFile(file.originalname)) {
-      return void res.status(400).json({ error: { code: "bad_type", message: "Upload a .3mf or .gcode file." } });
+      return void res.status(400).json({ error: { code: "bad_type", message: "Upload a .3mf, .gcode, SVG, DXF, AI, PDF or .lbrn2 file." } });
     }
     const stored = await platform().files.write(orgId, { path: file.path, size: file.size, sha256: file.sha256 }, { filename: file.originalname, mimeType: file.mimetype || "application/octet-stream" });
     if (!stored) return void res.status(500).json({ error: { code: "store_failed", message: "File storage is unavailable." } });
@@ -64,7 +64,8 @@ libraryRouter.post(
     }
 
     const name = (typeof req.body?.name === "string" && req.body.name.trim()) || file.originalname;
-    const kind = /\.3mf$/i.test(file.originalname) ? "3mf" : "gcode";
+    const extension = file.originalname.split(".").pop()!.toLowerCase();
+    const kind = ["gco", "g"].includes(extension) ? "gcode" : extension;
     // Slicer metadata (est time / material / layer / grams / parts-per-plate):
     // comment headers first, the `Nx …_PLA_…_5h11m` filename convention as
     // fallback. Best-effort — a parse failure must never block an upload.

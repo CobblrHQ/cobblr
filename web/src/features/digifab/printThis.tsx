@@ -21,7 +21,7 @@ const MATERIALS = ["PLA", "PETG", "ABS", "ASA", "TPU", "PA", "PC"];
 
 /** A file Print this can take: a model to slice, or G-code already sliced. */
 export function isPrintable(filename: string): boolean {
-  return /\.(stl|3mf|gcode|bgcode)$/i.test(filename);
+  return /\.(stl|step|stp|3mf|gcode|bgcode)$/i.test(filename);
 }
 
 const message = (err: unknown) => (err instanceof ApiError ? err.message : (err as Error).message);
@@ -119,12 +119,12 @@ export function PrintConfirmCard({ makeId, row }: { makeId: string; row: MakeSte
   const qc = useQueryClient();
   const toast = useToast();
   const [error, setError] = useState<string | null>(null);
-  const d = row.data as { printer?: string | null; spool?: string | null; slot?: string | null; grams?: number | null; time_s?: number | null; preview_file_id?: string | null };
+  const d = row.data as { printer?: string | null; spool?: string | null; slot?: string | null; grams?: number | null; time_s?: number | null; preview_file_id?: string | null; confirm_hash?: string };
   const canStart = roleSatisfies(activeOrg?.role, ["owner", "admin"]);
   // A second press before the first answers is the same yes, not another one.
   const pressed = useRef(false);
   const start = useMutation({
-    mutationFn: () => api.startMakePrint(activeSlug, makeId),
+    mutationFn: () => api.startMakePrint(activeSlug, makeId, d.confirm_hash ?? ""),
     onSuccess: () => {
       toast.success(`Started on ${d.printer ?? "the printer"}`);
       void qc.invalidateQueries({ queryKey: ["makes", activeSlug] });

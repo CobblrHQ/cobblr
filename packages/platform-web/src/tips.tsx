@@ -103,7 +103,7 @@ export function TipLine({ state, onShown, onDismiss, tips, now }: TipStripProps)
       <button type="button" onClick={() => setOpen(true)} className="shrink-0 text-accent hover:underline font-medium">
         {tip.actionLabel}
       </button>
-      <button type="button" onClick={dismiss} className="shrink-0 text-faint hover:text-content" aria-label="Dismiss this tip">
+      <button type="button" onClick={dismiss} className="shrink-0 text-faint hover:text-content" title="Dismiss this tip" aria-label="Dismiss this tip">
         <X size={13} />
       </button>
       {open && (

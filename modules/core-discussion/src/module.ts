@@ -57,6 +57,7 @@ export default defineModule({
     ],
     actions: [
       {
+        group: "more",
         id: "core-discussion:post-comment",
         examples: ["leave a note on this", "tell the others it needs a new nozzle"],
         label: "Comment",
@@ -86,6 +87,7 @@ export default defineModule({
         userInvokable: false,
       },
       {
+        group: "more",
         id: "core-discussion:resolve-conversation",
         examples: ["mark this settled", "we've decided, close the discussion"],
         label: "Resolve the discussion",

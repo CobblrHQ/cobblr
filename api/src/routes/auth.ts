@@ -26,7 +26,7 @@ import { provisionWholeOrRemove, WorkspaceNotProvisioned, WORKSPACE_NOT_CREATED_
 import { slugifyBase } from "../lib/slugify.js";
 import { hashPassword, verifyPassword } from "../auth/password.js";
 import { TRIAL_MODE, TRIAL_TTL_DAYS } from "../platform/trial.js";
-import { verifyCaptcha, captchaEnabled } from "../platform/captcha.js";
+import { captchaVerdict, captchaRefusal, captchaEnabled } from "../platform/captcha.js";
 import { blockDisposableEnabled, isDisposableEmail } from "../platform/disposable-emails.js";
 import { confirmEmailChange, revertEmailChange } from "../platform/email-change.js";
 
@@ -412,11 +412,8 @@ authRouter.post("/signup", async (req, res, next) => {
 
     // ── abuse guards ── both no-op unless configured (the trial box turns them
     // on); run before any DB work so a bot never touches the invite/user path.
-    if (!(await verifyCaptcha(body.captcha_token, req))) {
-      return res.status(400).json({
-        error: { code: "captcha_failed", message: "Captcha verification failed. Please try again." },
-      });
-    }
+    const captcha = await captchaVerdict(body.captcha_token, req);
+    if (captcha !== "pass") return captchaRefusal(res, captcha);
     if (blockDisposableEnabled() && isDisposableEmail(email)) {
       return res.status(400).json({
         error: { code: "email_not_allowed", message: "Please sign up with a permanent email address." },
@@ -1116,11 +1113,8 @@ authRouter.post("/identity/signup", async (req, res, next) => {
     if (overLimit(signupLimiter, req)) return rateLimited(res);
     const body = IdentitySignupBody.parse(req.body);
     const email = body.email.toLowerCase().trim();
-    if (!(await verifyCaptcha(body.captcha_token, req))) {
-      return res.status(400).json({
-        error: { code: "captcha_failed", message: "Captcha verification failed. Please try again." },
-      });
-    }
+    const captcha = await captchaVerdict(body.captcha_token, req);
+    if (captcha !== "pass") return captchaRefusal(res, captcha);
     if (blockDisposableEnabled() && isDisposableEmail(email)) {
       return res.status(400).json({
         error: { code: "email_not_allowed", message: "Please sign up with a permanent email address." },

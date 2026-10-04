@@ -120,6 +120,7 @@ export default defineModule({
     ],
     actions: [
       {
+        group: "plan",
         id: "projects:blocked-by",
         examples: ["this is waiting on that", "cannot start until the part arrives"],
         undoable: true,
@@ -136,6 +137,7 @@ export default defineModule({
         },
       },
       {
+        group: "plan",
         id: "projects:unblock",
         examples: ["it is not waiting on that any more", "remove that dependency"],
         undoable: true,
@@ -148,6 +150,7 @@ export default defineModule({
         argsSchema: { dependency_id: { label: "Id of the dependency to remove", type: "text", required: true } },
       },
       {
+        group: "plan",
         id: "projects:move-task",
         examples: ["put this task first", "move that one down", "do this one last"],
         undoable: true,
@@ -174,6 +177,7 @@ export default defineModule({
       },
       {
         // NO-PHRASING: flips flags for whatever entity triggered it, so without an event there is nothing to act on
+        group: "plan",
         id: "projects:set-dep-satisfied",
         label: "Mark task dependencies satisfied",
         description:
@@ -190,6 +194,7 @@ export default defineModule({
       },
       {
         // NO-PHRASING: the way back for another action, run only from Undo
+        group: "plan",
         id: "projects:reopen-task",
         internal: true,
         label: "Put a task back",
@@ -206,6 +211,7 @@ export default defineModule({
       },
       {
         // NO-PHRASING: acts on the task named by the event; asked without one there is no task to mark
+        group: "plan",
         id: "projects:mark-task-done",
         undoable: true,
         wireOnly: true,

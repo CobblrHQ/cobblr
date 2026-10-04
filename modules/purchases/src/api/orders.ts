@@ -155,6 +155,14 @@ function filteredOrders(req: import("express").Request) {
   return { db, q };
 }
 
+// AI-REACH: exempt — dashboard-only aggregate; Cobb reads orders.
+ordersRouter.get("/dashboard", asyncHandler(async (req, res) => {
+  const counts = await tenantDb(req).selectFrom("purchases_orders")
+    .select([sql<number>`count(*)::int`.as("total"), sql<number>`count(*) filter (where status not in ('arrived', 'cancelled'))::int`.as("open")])
+    .where("instance", "=", instanceOf(req)).executeTakeFirstOrThrow();
+  res.json(counts);
+}));
+
 ordersRouter.get(
   "/",
   asyncHandler(async (req, res) => {

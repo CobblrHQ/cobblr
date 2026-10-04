@@ -555,6 +555,8 @@ function rowToActionRecord(row: {
   scope?: string | null;
   invoke_route: string | null;
   invoke_handler: string | null;
+  action_group?: string | null;
+  is_primary?: boolean;
   user_invokable?: boolean;
   internal?: boolean;
   wire_only?: boolean;
@@ -567,6 +569,8 @@ function rowToActionRecord(row: {
   undoable?: boolean;
 }): EntityActionRecord {
   return {
+    group: row.action_group ?? null,
+    primary: row.is_primary ?? false,
     id: row.id,
     module_name: row.module_name,
     label: row.label,

@@ -2,13 +2,19 @@
 
 import { Router } from "express";
 import { platform } from "@cobblr/platform-contract";
+import { registerESPHomeSweep } from "../esphome-sweep.js";
+import { esphomeRouter } from "./esphome.js";
+import { esphomeDriver, ESPHOME_COMMAND } from "../esphome.js";
 import { linksRouter } from "./links.js";
 import { ingestRouter } from "./ingest.js";
 import { registerActionHandlers } from "./action-handlers.js";
 import { connectionStore } from "../connection-store.js";
 
 registerActionHandlers(); // core-devices:apply-to-linked-entity (the resolution seam)
-platform().devices.registerConnectionStore(connectionStore); // core-devices owns connections
+platform().devices.registerConnectionStore(connectionStore);
+platform().devices.registerDriverProvider(esphomeDriver, ["esphome"]);
+platform().services.registerBuiltIn(ESPHOME_COMMAND);
+registerESPHomeSweep(); // core-devices owns connections
 
 // Live-box capability: `scanner.bridge` — an enabled connection that advertises a
 // scan/barcode source, so scan-driven live controls apply (else they self-hide).
@@ -27,6 +33,7 @@ platform().live.registerCapability("scanner.bridge", async (orgId) => {
 });
 
 const router = Router({ mergeParams: true });
+router.use("/esphome", esphomeRouter);
 router.use("/links", linksRouter); // device → entity links (both surfaces)
 router.use("/ingest", ingestRouter); // inbound device events (chip → Cobblr)
 

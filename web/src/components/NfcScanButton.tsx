@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { createNfcReader, isWebNfcAvailable, nfcFailure, nfcUrl } from "@cobblr/platform-web";
 import { typedVerdict } from "../lib/scanPayload";
 
-export function NfcScanButton({ onCobblrQr, onOpenPath }: {
+export function NfcScanButton({ onCobblrQr, onOpenPath, ownOrigins }: {
+  ownOrigins?: readonly string[];
   onCobblrQr: (token: string) => void;
   onOpenPath: (path: string) => void;
 }) {
@@ -27,7 +28,7 @@ export function NfcScanButton({ onCobblrQr, onOpenPath }: {
       reader.onreading = (event) => {
         if (controller.signal.aborted) return;
         const url = nfcUrl(event.message.records);
-        const verdict = url ? typedVerdict(url) : null;
+        const verdict = url ? typedVerdict(url, ownOrigins) : null;
         if (verdict?.action === "route-qr") { stop(); onCobblrQr(verdict.token); }
         else if (verdict?.action === "open") { stop(); onOpenPath(verdict.path); }
         else setError("This tag has no Cobblr label link. Try another tag.");

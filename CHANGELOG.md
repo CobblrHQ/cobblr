@@ -2,6 +2,46 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-10-04
+
+### Features
+- Libraries from other modules can now show their own webhook setup and match items from their notifications.
+- Added bin lights through WLED or Home Assistant, with grid mapping, Show me, and picking that lights the next bin.
+- Paid, fully fulfilled sales orders can close when delivered, with a notification, Undo and a setting to keep them open.
+- Added ESPHome devices for bin lights, sensor readings and switches without Home Assistant.
+- Filament spools show their use and remaining length, accept scale and firmware measurements, and can send Cobblr counts back to Spoolman.
+- Sales orders gained invoice PDFs saved locally through your browser and CSV export for your accounting tool, both with recorded payment state.
+- Added a native Mac bridge installer with automatic updates, LightBurn pairing, and checks that explain what the laser needs before a job.
+- Added LightBurn file upload and live status through its REST API, with cut settings and material library details to review before approving each laser job.
+- Added NFC tags for record labels, with Android writing, bulk writing from Labels, tap scanning and a tag-link copy option for other phones.
+- Added NFC stations that file scanned things into a place, write or link tags from any phone, and let you review and undo a session.
+- Sales gained automatic order intake from WooCommerce and a free email feed, with SKU mapping, source links, duplicate prevention and failures shown in Settings.
+- Record actions now sit in menus you can arrange, with your own pinned shortcuts and a single Actions sheet on a phone.
+- Sales reads order emails into drafts you can review and confirm, and keeps each order in its own currency.
+- Makes can now design a request, keep its source and preview for review, and resume slicing after a restart while requiring approval of the exact print shown.
+
+### Improvements
+- The scan inbox's session buttons now say where things go ("Add 2 to Sets", "Turn on Sets and add 2"), with a line under the header listing the destinations, and "Install" is gone from the wording.
+- The line under a scan session's header now names the place filing will use ("Spices, in Kitchen › Spice rack (suggested)") before you press the button.
+
+### Fixes
+- A failed human check when starting a sandbox now shows a message with a retry instead of a raw error page, and a check we could not run says it is on our side.
+- A scanned value now keeps every source that contributed to it: the card's headline names the one that decided it, Source data lists them all, and the two can no longer disagree.
+- An installed app that was left on an older build now updates itself instead of showing "Importing a module script failed", and the error page offers "Get the latest version".
+- Feedback from a try sandbox is now marked as having no one to reply to, so the console no longer offers a reply that goes nowhere, and a sandbox visitor can leave an email to be told when it is fixed.
+- "Checking this against your photo…" now shows only while that check is actually running, and never stays beside a finished result.
+- Opening Cobb beside a page no longer repeats the same cloud AI-plan notice.
+- Fixed Home totals and low-stock warnings to include the whole collection instead of stopping at the first page.
+- Added named tooltips to the Home mark and the tip-dismiss icon.
+- When a barcode only names the brand, the name is now completed from the front label in your photo (for example "Zero Carbon Tea Pumpkin Spiced Chai"), including when you add a second photo afterwards.
+- The phone menu now lines up its rows and dividers, with full-width section headings and a plain More apps row.
+- Record actions explain what they do, placement and archiving have clear separate controls, and photo history keeps its picture in the detail card.
+- Record creation and editing forms now use a shared shell that widens for more fields and packs short fields together.
+- Scanning stock you already have now skips zero in the change stepper, offers one-tap use and waste actions with Undo, and keeps adding a separate record secondary.
+- Added named tooltips to the phone menu controls and the side panel Close button.
+- Orders now show stock and production shortfalls before fulfilment, schedules distinguish estimated finishes from completed work, and print jobs explain missing inputs and use the shop's machine names.
+- Recently committed now shows a split photo as a header with its filed pieces under it and counts only what was filed, and sending a session back names any item it could not return, with the reason, on its own row.
+
 ## 2026-10-03
 
 ### Features

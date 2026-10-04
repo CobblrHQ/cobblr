@@ -197,7 +197,7 @@ export function FileEverythingSheet({
       open
       onClose={onClose}
       size="md"
-      title={result ? "Filed" : `File everything in ${scope}`}
+      title={result ? "Filed" : `Choose for each in ${scope}`}
       subtitle={
         result
           ? result.message

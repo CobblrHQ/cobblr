@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Modal, RelationSelect, useToast, type TemplateCreateArgs } from "@cobblr/platform-web";
+import { fieldNeed, FieldPack, RecordFormModal, RelationSelect, useToast, type TemplateCreateArgs } from "@cobblr/platform-web";
 import { api, type EntityTemplate, type PlatformEntityKind } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
@@ -15,7 +15,7 @@ export function NewFromTemplateFlow({ args, onClose }: { args: Record<string, un
   const items = templates.data?.items ?? [];
   const kindLabel = (id: string) => kinds.data?.items.find((k) => k.id === id)?.display_name ?? id.split(":").pop();
   return (
-    <Modal open onClose={onClose} title="New from template" size="md">
+    <RecordFormModal open onClose={onClose} title="New from template">
       {picked ? <TemplateItemForm key={picked.id} template={picked} kind={kinds.data?.items.find((k) => k.id === picked.target_kind)} instance={instance} scanItemId={scanItemId} seed={seed} onClose={onClose} onBack={() => setPicked(null)} /> : (
         <div className="space-y-3">
           {!kind && items.length > 0 && <label className="block text-sm">Kind
@@ -36,7 +36,7 @@ export function NewFromTemplateFlow({ args, onClose }: { args: Record<string, un
           ))}
         </div>
       )}
-    </Modal>
+    </RecordFormModal>
   );
 }
 
@@ -80,7 +80,17 @@ function TemplateItemForm({ template, kind, instance, scanItemId, seed, onClose,
 }
 
 function TemplateFields({ values, onChange, requiredField }: { values: Record<string, unknown>; onChange: (values: Record<string, unknown>) => void; requiredField?: string }) {
-  return <div className="space-y-3">{Object.entries(values).map(([key, value]) => <TemplateValue key={key} label={key.replaceAll("_", " ")} value={value} required={key === requiredField} onChange={(next) => onChange({ ...values, [key]: next })} />)}</div>;
+  return <FieldPack items={Object.entries(values).map(([key, value]) => ({
+    need: {
+      ...fieldNeed(key, {
+        control: typeof value === "boolean" ? "checkbox" : typeof value === "number" ? "number" : key === "project_id" || key === "location_id" ? "picker" : "text",
+        label: key.replaceAll("_", " "),
+        valueLength: typeof value === "string" ? value.length : undefined,
+      }),
+      ...(key === requiredField || value !== null && typeof value === "object" ? { full: true } : {}),
+    },
+    node: <TemplateValue label={key.replaceAll("_", " ")} value={value} required={key === requiredField} onChange={(next) => onChange({ ...values, [key]: next })} />,
+  }))} />;
 }
 
 function TemplateValue({ label, value, required, onChange }: { label: string; value: unknown; required?: boolean; onChange: (value: unknown) => void }) {

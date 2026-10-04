@@ -54,6 +54,7 @@ export default defineModule({
       // userInvokable: the person-facing surface is the Contents panel on the
       // record's detail page.
       {
+        group: "stock",
         id: "core-placement:place",
         examples: ["put this in bin 4", "it lives in the Garage now"],
         undoable: true,
@@ -72,6 +73,7 @@ export default defineModule({
         },
       },
       {
+        group: "stock",
         id: "core-placement:contents-worth",
         examples: ["what's the garage worth?", "what did everything in the toolbox cost?"],
         label: "Contents worth",
@@ -81,6 +83,7 @@ export default defineModule({
         userInvokable: false,
       },
       {
+        group: "stock",
         id: "core-placement:built-from",
         examples: ["what's inside the Gaming PC?", "what is the server worth with its parts?"],
         label: "What it is built from",
@@ -91,6 +94,7 @@ export default defineModule({
         userInvokable: false,
       },
       {
+        group: "stock",
         id: "core-placement:return-home",
         examples: ["take the spool off the printer", "put it back where it was"],
         undoable: true,
@@ -102,6 +106,7 @@ export default defineModule({
         userInvokable: false,
       },
       {
+        group: "stock",
         id: "core-placement:remove",
         examples: ["take it out of the bin", "it is not in there any more"],
         undoable: true,

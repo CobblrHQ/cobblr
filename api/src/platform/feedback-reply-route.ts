@@ -20,6 +20,8 @@ export type ReporterReplyRoute =
   | { via: "discord-dm"; discord_user_id: string }
   /** They have a platform account; notifyAccount picks the channels. */
   | { via: "account" }
+  /** A sandbox visitor who left an address on purpose (#4645). */
+  | { via: "contact-email"; to: string }
   /** Nothing to reply to (no account, and the origin left no way back). */
   | { via: "none" };
 
@@ -27,9 +29,17 @@ export interface FeedbackReplyTarget {
   origin: FeedbackOrigin;
   user_id: string | null;
   origin_ref: { thread_id?: string; user_id?: string } | null;
+  /** feedback.reachable and contact_email (20261004-196). Absent reads as reachable. */
+  reachable?: boolean;
+  contact_email?: string | null;
 }
 
 export function reporterReplyRoute(row: FeedbackReplyTarget): ReporterReplyRoute {
+  // An anonymous sandbox guest has an address nothing can be delivered to: the
+  // reply goes to the address they chose to leave, or nowhere. Never to the
+  // account, which would "send" into a void and report success.
+  if (row.reachable === false) return row.contact_email ? { via: "contact-email", to: row.contact_email } : { via: "none" };
+  if (row.contact_email && row.origin === "in-app") return { via: "contact-email", to: row.contact_email };
   const ref = row.origin_ref ?? {};
   switch (row.origin) {
     case "in-app":

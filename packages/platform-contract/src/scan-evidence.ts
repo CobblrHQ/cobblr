@@ -191,6 +191,11 @@ export function scanAssertedFields(row: ScanEvidenceRow): Array<{ field: string;
     const value = text(v);
     if (!value) continue;
     const s = standings[field];
+    // A field something was READ for (a label, a receipt) is not "said by the
+    // AI" however it was first guessed: both stand in its list of
+    // contributions, and the headline names the decisive one (#4583).
+    // Only a stamp that carries its list says so: a plain stamp reads as before.
+    if (s?.contributions?.some((c) => c.source === "label" || c.source === "receipt" || c.source === "order" || c.source === "decode" || c.source === "person")) continue;
     if (s?.by === "inference") out.push({ field, value, from: s.from ?? "router" });
     else if (!s && listed.has(field)) out.push({ field, value, from: "model" });
     // An identifier nothing on the item carries is a suggestion, whoever

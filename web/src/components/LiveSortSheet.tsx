@@ -1,3 +1,4 @@
+import { useScanOrigins } from "../lib/useScanOrigins";
 // Live Sort — the bench-station rig (docs/product/put-away.md §3.2, §4).
 //
 // A full-screen put-away session: scan a thing (hardware wedge, or type a
@@ -46,6 +47,7 @@ const ENRICH_BUDGET_MS = 3_000;
 const REROUTE_AFTER_MS = 2_500;
 
 export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => void }) {
+  const scanOrigins = useScanOrigins(slug);
   const toast = useToast();
   const [phase, setPhase] = useState<Phase>("starting");
   const [batchId, setBatchId] = useState<string | null>(null);
@@ -145,7 +147,7 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
       if (phaseRef.current === "routing" || phaseRef.current === "ended") return;
       // A directive is pending: a scanned LOCATION label means "this bin
       // instead" — confirm the current item into it (retarget, one gesture).
-      const payload = classifyScanPayload(code);
+      const payload = classifyScanPayload(code, scanOrigins);
       // A link to a page here or to Cobblr itself is not an item to sort.
       if (payload.kind === "own-route" || payload.kind === "own-link" || payload.kind === "empty") {
         toast.info("That code is a Cobblr link, not an item. Scan the item's barcode.");
@@ -181,7 +183,7 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
       })();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [slug, batchId, routeIntaken],
+    [slug, batchId, routeIntaken, scanOrigins],
   );
 
   useBarcodeWedge({ enabled: phase !== "ended", onScan: handleCode });

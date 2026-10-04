@@ -61,6 +61,11 @@ export interface FieldProvenance {
   /** Names a person said this is NOT ("Not right"), on the `name` stamp. A
    *  person's answer like any other: no later read may put one back (#3724). */
   rejected?: string[];
+  /** Every source that contributed to this value (field-contributions.ts):
+   *  the catalog's answer and the label read from a photo are both kept, the
+   *  headline shows the decisive one and Source data lists them all. A stamp
+   *  without a list reads as a one-entry list; nothing needs rewriting. */
+  contributions?: Array<{ source: string; value?: string; photo?: string; at?: string }>;
 }
 
 /** The metadata key the stamps live under, on an inbox row and on the entity

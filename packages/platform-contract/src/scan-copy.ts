@@ -107,7 +107,7 @@ export const NEW_PLACE_BARE_SENTENCE = "You already have this somewhere else. Ad
 
 /** The destination is a table this workspace has not installed. `{table}`
  *  is the destination's label. */
-export const INSTALL_SENTENCE = "{table} is not set up yet. Adding installs it.";
+export const INSTALL_SENTENCE = "{table} is not set up yet. Adding turns it on.";
 
 /** The person may not file here. */
 export const BLOCKED_SENTENCE = "You cannot file here. Ask a workspace admin.";
@@ -138,7 +138,11 @@ export const LOW_CONFIDENCE_SENTENCE = "Identified at {pct}% confidence. Check t
 
 /** The one word on the action for each eligibility. */
 export const ACTION_ADD = "Add";
-export const ACTION_INSTALL_ADD = "Install & add";
+/** A table that is not on yet: the button says what it does, in the words a
+ *  person uses ("Turn on Sets and add"), never "install" (#4577). */
+export function actionInstallAdd(table: string): string {
+  return `Turn on ${table} and add`;
+}
 export const ACTION_MERGE = "+1 more";
 export const ACTION_ADD_PLACE = "Add as another place";
 export const ACTION_REVIEW = "Review";
@@ -172,4 +176,49 @@ export function putawayWalkChip(remaining: number, places: number, resumed: bool
   if (resumed) return `Resume shelving - ${things} still to put away`;
   const where = places > 1 ? `, ${places} places` : places === 1 ? ", 1 place" : "";
   return `Shelve what you filed - ${things}${where}`;
+}
+
+/** The session's primary button: where the items go (#4577). One collection
+ *  names it; several say so, and the session's caption lists them. `n` is how
+ *  many the button covers, `tables` the distinct collections they go to and
+ *  `off` the ones among them not turned on yet. */
+export function sessionAddLabel(n: number, tables: readonly string[], off: readonly string[]): string {
+  if (tables.length === 1) return off.length ? `Turn on ${tables[0]} and add ${n}` : `Add ${n} to ${tables[0]}`;
+  return `Add ${n} to their collections`;
+}
+
+/** The line under the session header that carries what the button cannot:
+ *  every destination, and what turning a collection on means. Null when the
+ *  button already says it all. `place` is the session's place, when one is
+ *  set. */
+export function sessionAddCaption(n: number, tables: readonly string[], off: readonly string[], place: string | null): string | null {
+  const them = n === 1 ? "it" : "them";
+  const parts: string[] = [];
+  if (tables.length > 1) parts.push(tables.join(" · "));
+  if (off.length === 1) parts.push(`${off[0]} isn't on yet; this turns it on, then adds ${them}`);
+  else if (off.length > 1) parts.push(`${off.join(" and ")} aren't on yet; this turns them on, then adds ${them}`);
+  let line = parts.join(". ");
+  if (place) line = line ? `${line}, in ${place}` : tables.length === 1 ? `${tables[0]}, in ${place}` : "";
+  return line || null;
+}
+
+/** The line a row's note carries while its photo check runs. A live STATUS, not
+ *  provenance (#4583): it is shown only while the check is running, and never
+ *  read back from the stored note once the check has finished or died. */
+export const PHOTO_CHECK_NOTE = "Checking this against your photo…";
+
+/** How long a photo check may be pending before the line stops claiming it is
+ *  still running: the job is detached, and one that died leaves its flag. */
+export const PHOTO_CHECK_LIVE_MS = 10 * 60 * 1000;
+
+/** Is the photo check still running? The row says it is pending AND it was
+ *  touched recently enough that the job can plausibly be alive. Pure. */
+export function photoCheckIsLive(
+  row: { suggested_metadata?: unknown; updated_at?: string | Date | null },
+  now: number = Date.now(),
+): boolean {
+  const pending = (row.suggested_metadata as { photo_check_pending?: unknown } | null)?.photo_check_pending === true;
+  if (!pending) return false;
+  const at = row.updated_at == null ? NaN : new Date(row.updated_at).getTime();
+  return Number.isFinite(at) && now - at < PHOTO_CHECK_LIVE_MS;
 }

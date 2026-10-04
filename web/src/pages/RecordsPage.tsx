@@ -1,3 +1,4 @@
+import { RecordFormModal, PresentationGate, useFaces } from "@cobblr/platform-web";
 // /records — list + detail modal for the records module, the neutral
 // generic-record substrate. Same shape as AssetsPage minus the domain
 // columns: a record carries ONLY the universal base (name, image, notes,
@@ -20,7 +21,6 @@ import {
   EntityThumb,
   EntityTile,
   FieldPack,
-  Modal,
   ViewModeToggle,
   editFieldItem,
   fieldNeed,
@@ -36,7 +36,6 @@ import { RecordPhoto } from "../components/RecordPhoto";
 import { pictureStateFor, suggestedSrcFor, usePhotoSuggestions } from "../lib/photoSuggestions";
 import { LocationTreePicker } from "../components/LocationTreePicker";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
-import { PresentationGate, useFaces } from "@cobblr/platform-web";
 
 const ENTITY_KIND = "records:record";
 
@@ -384,7 +383,7 @@ export function RecordDetailModal({
   }
 
   return (
-    <Modal open={!!recordId} onClose={onClose} title={r?.name ?? (record.isError ? "Couldn't load" : "loading…")} size="xl">
+    <RecordFormModal open={!!recordId} onClose={onClose} title={r?.name ?? (record.isError ? "Couldn't load" : "loading…")}>
       {r ? (
         <PresentationGate ready={fp.ready && shape.ready} failed={fp.failed || shape.failed} retry={() => { fp.retry(); shape.retry(); }}>
         <div className="space-y-4">
@@ -481,7 +480,7 @@ export function RecordDetailModal({
       ) : (
         <div className="text-xs text-faint">loading…</div>
       )}
-    </Modal>
+    </RecordFormModal>
   );
 }
 
@@ -528,17 +527,29 @@ function NewRecordModal({
   }
 
   return (
-    <Modal open={open} onClose={onClose} title={`New ${noun}`} size="sm">
+    <RecordFormModal open={open} onClose={onClose} title={`New ${noun}`}>
       <form onSubmit={submit} className="space-y-3">
-        <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Name</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} autoFocus className="input" />
-        </label>
-        <LocationTreePicker
-          label="Location"
-          value={locationId}
-          onChange={setLocationId}
-        />
+        <FieldPack items={[
+          {
+            need: fieldNeed("name", { control: "text", label: "Name" }),
+            node: (
+              <label className="block">
+                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Name</span>
+                <input value={name} onChange={(e) => setName(e.target.value)} autoFocus className="input" />
+              </label>
+            ),
+          },
+          {
+            need: fieldNeed("location", { control: "picker", label: "Location" }),
+            node: (
+              <LocationTreePicker
+                label="Location"
+                value={locationId}
+                onChange={setLocationId}
+              />
+            ),
+          },
+        ]} />
         <div className="flex items-center justify-end gap-2 pt-2 border-t border-line dark:border-slate-700">
           <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition">
             Cancel
@@ -548,7 +559,7 @@ function NewRecordModal({
           </button>
         </div>
       </form>
-    </Modal>
+    </RecordFormModal>
   );
 }
 

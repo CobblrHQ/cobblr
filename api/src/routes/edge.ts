@@ -36,6 +36,7 @@ import { requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
 import { createPairingCode, redeemPairingCode } from "../platform/edge-pairing.js";
+import { WINDOWS_INSTALL_SCRIPT } from "../platform/edge-bridge-install-windows-script.js";
 import { INSTALL_SCRIPT } from "../platform/edge-bridge-install-script.js";
 import { makeIpLimiter, overLimit, rateLimited } from "../platform/ip-limiter.js";
 import { edgeBridgeName, edgeChannelKey, parseBridgeReport, parsePollLanes, parseRelayResponse } from "@cobblr/platform-contract/edge-channel";
@@ -399,6 +400,22 @@ edgePairRouter.get("/install.sh", (req, res) => {
   // Never cached: the script names the address it was asked for.
   res.setHeader("cache-control", "no-store");
   res.type("text/x-shellscript").send(INSTALL_SCRIPT.split("@@COBBLR_URL@@").join(origin));
+});
+
+// AI-REACH: exempt — a shell script run on the Mac.
+edgePairRouter.get("/install-mac.sh", (req, res) => {
+  const origin = publicOrigin(req);
+  if (!origin) return void res.status(400).type("text/plain").send("exit 1\n");
+  res.setHeader("cache-control", "no-store");
+  res.type("text/x-shellscript").send(INSTALL_SCRIPT.replace("NATIVE_DEFAULT=0", "NATIVE_DEFAULT=1").split("@@COBBLR_URL@@").join(origin));
+});
+
+// AI-REACH: exempt — a PowerShell installer run on the bridge computer.
+edgePairRouter.get("/install-windows.ps1", (req, res) => {
+  const origin = publicOrigin(req);
+  if (!origin) return void res.status(400).type("text/plain").send("throw 'Invalid Cobblr address'\n");
+  res.setHeader("cache-control", "no-store");
+  res.type("text/plain").send(WINDOWS_INSTALL_SCRIPT.split("@@COBBLR_URL@@").join(origin));
 });
 
 // AI-REACH: exempt — spoken by the installer on the bridge's box, never by a person or the assistant.

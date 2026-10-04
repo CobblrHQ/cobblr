@@ -27,7 +27,10 @@ import { identifyNeverTried, type IdentifyFailure } from "@cobblr/platform-contr
 import {
   ACTION_ADD,
   ACTION_BLOCKED,
-  ACTION_INSTALL_ADD,
+  actionInstallAdd,
+  PHOTO_CHECK_NOTE,
+  sessionAddLabel,
+  sessionAddCaption,
   ACTION_MERGE,
   ACTION_REVIEW,
   AI_FAILED_SENTENCE,
@@ -393,7 +396,9 @@ const BAKED_DOUBT = /\s*(?:\u26a0\ufe0f?\s*)?Short barcode\s*[\u2014\u2013-]+\s*
  *  written after and needs no data heal. Null when nothing is left. */
 export function scanProvenanceNote(notes: string | null | undefined): string | null {
   if (!notes) return null;
-  const out = notes.replace(BAKED_DOUBT, "").replace(/\s{2,}/g, " ").trim();
+  // The photo check's line is a live status, never provenance: whatever the
+  // stored note says, a finished (or dead) check must not read as running.
+  const out = notes.replace(BAKED_DOUBT, "").split(PHOTO_CHECK_NOTE).join("").replace(/\s{2,}/g, " ").trim();
   return out || null;
 }
 
@@ -1218,7 +1223,7 @@ export function scanRowState(row: ScanTriageRow, ctx: ScanRowStateContext = {}):
     // review: the review step cannot install either, and the ask can.
     if (ctx.canInstall === false) return blocked(fillSentence(INSTALL_BLOCKED_SENTENCE, { table: destination.label }));
     const sentence = fillSentence(INSTALL_SENTENCE, { table: destination.label });
-    return { eligibility: "needs-install", sentence, action: { kind: "install-add", label: ACTION_INSTALL_ADD, title: `${destination.label} is not set up yet; this installs it and files the item` }, destination, merge: null, ask: null };
+    return { eligibility: "needs-install", sentence, action: { kind: "install-add", label: actionInstallAdd(destination.label), title: `${destination.label} is not set up yet; this turns it on and adds the item` }, destination, merge: null, ask: null };
   }
   return add();
 }
@@ -1235,8 +1240,12 @@ export function scanRowState(row: ScanTriageRow, ctx: ScanRowStateContext = {}):
 export function scanSessionAction(
   rows: readonly ScanTriageRow[],
   ctx: ScanRowStateContext,
-): { label: string | null; shortLabel: string | null; ids: string[]; installs: number; reviews: number; merges: number; blocked: number } {
+): { label: string | null; shortLabel: string | null; caption: string | null; ids: string[]; installs: number; reviews: number; merges: number; blocked: number; tables: string[]; off: string[] } {
   const ids: string[] = [];
+  // Where the counted rows go, by the table's name, and which of those are
+  // not turned on yet: the button says it (#4577), never "install".
+  const tables: string[] = [];
+  const off: string[] = [];
   let installs = 0;
   let reviews = 0;
   let merges = 0;
@@ -1250,11 +1259,16 @@ export function scanSessionAction(
       if (typeof id === "string") ids.push(id);
       if (st.eligibility === "needs-install") installs++;
       if (st.action.kind === "merge") merges++;
+      const dest = st.destination?.label;
+      if (dest) {
+        if (!tables.includes(dest)) tables.push(dest);
+        if (st.eligibility === "needs-install" && !off.includes(dest)) off.push(dest);
+      }
     } else if (st.eligibility === "needs-review") reviews++;
     else if (st.eligibility === "blocked") blocked++;
   }
   const n = ids.length;
-  const label = n === 0 ? null : installs > 0 ? `Install & file ${n}` : `File ${n}`;
+  const label = n === 0 ? null : tables.length === 0 ? `Add ${n}` : sessionAddLabel(n, tables, off);
   // The phone spelling: the verb and the count, never the install word.
   //
   // The session row is ONE line at every width (#2982), and at 393px it is
@@ -1269,8 +1283,11 @@ export function scanSessionAction(
   // under the row a session opens by default. A session filing six rows into
   // three tables, one of them new, says "Install & file 6" here and means it
   // of one. The desk keeps the summary because it has the width to spare.
-  const shortLabel = n === 0 ? null : `File ${n}`;
-  return { label, shortLabel, ids, installs, reviews, merges, blocked };
+  const shortLabel = n === 0 ? null : `Add ${n}`;
+  // What the label cannot hold, and the phone never sees a tooltip: the
+  // caption is shown under the header (the place is added by the page).
+  const caption = n === 0 ? null : sessionAddCaption(n, tables, off, null);
+  return { label, shortLabel, caption, ids, installs, reviews, merges, blocked, tables, off };
 }
 
 /** The "More tools" fold, summarised from the same hints the tools come

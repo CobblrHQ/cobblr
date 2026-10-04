@@ -80,6 +80,7 @@ export default defineModule({
     actions: [
       // NO-PHRASING: only ever run as a merge's Undo, never asked for.
       {
+        group: "lifecycle",
         id: "core-tags:restore-tag",
         label: "Put a tag back",
         description: "The way back for a merge: the tag under its own id, on every record it was on.",
@@ -92,6 +93,7 @@ export default defineModule({
         },
       },
       {
+        group: "more",
         id: "core-tags:merge",
         examples: ["merge these two tags", "we have the same tag twice"],
         label: "Merge into another tag",
@@ -110,6 +112,7 @@ export default defineModule({
       // userInvokable: the person-facing surface is the tag picker on the
       // record's detail page, not an every-kind button.
       {
+        group: "organise",
         id: "core-tags:tag-record",
         examples: ["tag this as fragile", "label it urgent"],
         undoable: true,
@@ -127,6 +130,7 @@ export default defineModule({
         },
       },
       {
+        group: "organise",
         id: "core-tags:untag-record",
         examples: ["remove the fragile tag", "untag this one"],
         undoable: true,

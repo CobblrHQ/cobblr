@@ -68,6 +68,7 @@ export default defineModule({
     ],
     actions: [
       {
+        group: "service", primary: true,
         id: "core-maintenance:log",
         examples: ["changed the oil today", "log that I serviced it"],
         undoable: true,
@@ -99,13 +100,14 @@ export default defineModule({
         },
       },
       {
+        group: "service",
         id: "core-maintenance:schedule",
         examples: ["change the oil every 3 months", "service the printer every 200 print hours"],
         undoable: true,
         label: "Set a service schedule",
         face: "maintained",
         description:
-          "Say how often this record wants servicing, by the calendar (`every_n` + `every_unit`: day, week, month, year) or by a usage counter the record keeps (`counter_every` + `counter_field`, e.g. 200 print_hours), or both. Its next service is then always scheduled, logging the service rolls it forward, and it is flagged when due.",
+          "Set when this record needs servicing. Say how often this record wants servicing, by the calendar (`every_n` + `every_unit`: day, week, month, year) or by a usage counter the record keeps (`counter_every` + `counter_field`, e.g. 200 print_hours), or both. Its next service is then always scheduled, logging the service rolls it forward, and it is flagged when due.",
         icon: "calendar-clock",
         appliesTo: { traits: ["physical", "unique"] },
         invokeHandler: "core-maintenance.schedule",
@@ -130,6 +132,7 @@ export default defineModule({
       },
       {
         // NO-PHRASING: the way back for another action, run only from Undo
+        group: "service",
         id: "core-maintenance:remove-schedule",
         internal: true,
         label: "Remove a service schedule",
@@ -144,6 +147,7 @@ export default defineModule({
       },
       {
         // NO-PHRASING: the way back for another action, run only from Undo
+        group: "service",
         id: "core-maintenance:remove-entry",
         internal: true,
         label: "Remove a maintenance entry",
@@ -159,6 +163,7 @@ export default defineModule({
       },
       {
         // NO-PHRASING: the way back for another action, run only from Undo
+        group: "service",
         id: "core-maintenance:reopen-entry",
         internal: true,
         label: "Reopen a maintenance entry",
@@ -175,6 +180,7 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /maintenance
+        group: "service",
         id: "core-maintenance:complete",
         examples: ["that service is done"],
         undoable: true,

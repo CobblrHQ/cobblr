@@ -1,3 +1,4 @@
+import { readListPage, pagedAnswer, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 // Authoring routes — the copy-paste value loop (Phase 1, zero inference).
 //
 //   /context              preview what context will be injected
@@ -739,16 +740,19 @@ draftsRouter.get(
   "/drafts",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const page = readListPage(req.query, 100);
     const db = tenantDb(req);
     const items = await db
       .selectFrom("core_authoring_drafts")
       .select(["id", "task", "intent", "mode", "status", "created_at", "updated_at"])
+      .select(sql<string>`count(*) over()`.as(TOTAL_COLUMN))
       .where(yours(sessionUser(req)?.id ?? null))
       .orderBy("created_at", "desc")
-      // list-cap-ok: not paged yet, #4134
-      .limit(100)
+      .orderBy("id", "desc")
+      .limit(page.limit)
+      .offset(page.offset)
       .execute();
-    res.json({ items });
+    res.json(pagedAnswer(items, page));
   }),
 );
 

@@ -1,20 +1,3 @@
-// What a scan of something you already have does to its count: ONE control,
-// on every surface that shows the match (the inbox card, its open banner, the
-// phone's scan sheet), so the way a person changes a count never depends on
-// where they scanned.
-//
-// Two modes, and the mode is never in doubt:
-//   Change by   (green, the default) what is in your hands. Starts at +1 and
-//               goes below zero to TAKE, which is what scanning an empty box
-//               means. The card does the arithmetic: "You have 3 → 4".
-//   Set total   (amber) the recount. Starts at what the record says; the
-//               ledger files it as a correction, never as use.
-// Both have the steppers AND a number you can type (+200 of something, or a
-// total of 10). A card always opens in Change by; the camera's Count mode
-// opens every scan in Set total.
-//
-// The finer reasons (replaced one that ran out, went bad, thrown out) are an
-// optional chip on the ledger line, never a question to answer first.
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Minus, Plus } from "lucide-react";
@@ -23,11 +6,11 @@ import {
   SCAN_COUNT_REASON_LABEL,
   SHOPPING_LIST_DOOR,
   scanCountBody,
-  scanCountLabel,
   scanCountReasonsFor,
   scanCountResult,
   scanCountStart,
   type ScanCountMode,
+  type ScanCountSessionMode,
   type ScanCountReason,
 } from "@cobblr/platform-contract/scan-count";
 import { api, ApiError, type TrackedMatch } from "../lib/api";
@@ -96,7 +79,7 @@ export function useScanCountSave(itemId: string, match: TrackedMatch, onDone?: (
     }
   };
   const save = useMutation({
-    mutationFn: (v: { mode: ScanCountMode; value: number; reason?: ScanCountReason | null }) => {
+    mutationFn: (v: { mode: ScanCountMode; value: number; reason?: ScanCountReason | null; undo?: boolean }) => {
       const body = scanCountBody(v.mode, v.value, v.reason);
       if (!body) throw new Error("Nothing to change");
       return api.scanAttach(activeSlug, itemId, {
@@ -112,7 +95,22 @@ export function useScanCountSave(itemId: string, match: TrackedMatch, onDone?: (
       const now = r.new_qty != null ? ` (now ${r.new_qty})` : "";
       const said =
         v.mode === "set" ? `Set ${r.entity_title} to ${v.value}` : v.value > 0 ? `Added ${v.value} to ${r.entity_title}` : `Took ${-v.value} from ${r.entity_title}`;
-      if (r.low && listsOn) {
+      if (v.undo) {
+        toast.action(`${said}${now}`, {
+          actionLabel: "Undo",
+          duration: 10_000,
+          onAction: async () => {
+            try {
+              const restored = await api.unconfirmScanItem(activeSlug, itemId);
+              void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
+              void qc.invalidateQueries({ queryKey: ["scan-tracked", activeSlug, itemId] });
+              toast.success(restored.note ?? `Undid the change to ${r.entity_title}`);
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : String(e));
+            }
+          },
+        });
+      } else if (r.low && listsOn) {
         toast.action(`${said}${now}`, { actionLabel: "Add to shopping list", onAction: () => addToList(r.entity_title), duration: 10_000 });
       } else {
         toast.success(`${said}${now}`);
@@ -139,7 +137,7 @@ export function ScanCountBlock({
   match,
   where,
   initialMode = "change",
-  scanned = 1,
+  sessionMode,
   onDone,
 }: {
   itemId: string;
@@ -148,8 +146,7 @@ export function ScanCountBlock({
   where?: string | null;
   /** Count mode on the camera opens in Set total; everywhere else, Change by. */
   initialMode?: ScanCountMode;
-  /** How many the scan itself says (a 6-pack): the starting change. */
-  scanned?: number;
+  sessionMode?: ScanCountSessionMode;
   onDone?: (r: ScanCountDone, match: TrackedMatch) => void;
 }) {
   const worn = useFaces(match.kind);
@@ -157,40 +154,43 @@ export function ScanCountBlock({
   const stock = worn.on.has("stock");
   const have = Math.max(0, match.qty ?? 0);
   const [mode, setMode] = useState<ScanCountMode>(initialMode);
-  const [value, setValue] = useState(() => scanCountStart(initialMode, have, scanned));
-  const [text, setText] = useState(() => shown(initialMode, scanCountStart(initialMode, have, scanned)));
+  const [value, setValue] = useState(() => scanCountStart(initialMode, have, sessionMode));
+  const [text, setText] = useState(() => shown(initialMode, scanCountStart(initialMode, have, sessionMode)));
   const [reason, setReason] = useState<ScanCountReason | null>(null);
   // A new scan is a new card: it starts back in Change by (or Count mode's
   // Set total), whatever the last one was left on.
   useEffect(() => {
-    const start = scanCountStart(initialMode, have, scanned);
+    const start = scanCountStart(initialMode, have, sessionMode);
     setMode(initialMode);
     setValue(start);
     setText(shown(initialMode, start));
     setReason(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [itemId, initialMode]);
+  }, [itemId, initialMode, sessionMode, match.id]);
 
   // Taking can go down to nothing, never past it: the floor would take what
   // is there anyway, and a stepper that lets you ask for more reads as a lie.
   const floor = mode === "set" ? 0 : -have;
   const put = (v: number) => {
-    const next = Math.max(floor, v);
+    let next = Math.max(floor, v);
+    if (mode === "change" && next === 0) next = have > 0 && v < value ? -1 : 1;
     setValue(next);
     setText(shown(mode, next));
     if (mode === "change" && Math.sign(next) !== Math.sign(value)) setReason(null);
   };
   const switchTo = (m: ScanCountMode) => {
     if (m === mode) return;
-    const start = scanCountStart(m, have, scanned);
+    const start = scanCountStart(m, have, sessionMode);
     setMode(m);
     setValue(start);
     setText(shown(m, start));
     setReason(null);
   };
-  const body = scanCountBody(mode, value, reason);
+  const typed = readTyped(text);
+  const body = typed == null || (mode === "change" && typed === 0) ? null : scanCountBody(mode, value, reason);
   const result = scanCountResult(mode, have, value);
-  const reasons = mode === "change" ? scanCountReasonsFor(value, { stock, perishable }) : [];
+  const reasons = mode === "change" && value > 0 ? scanCountReasonsFor(value, { stock, perishable }) : [];
+  const takingReasons = scanCountReasonsFor(-1, { stock, perishable });
   const save = useScanCountSave(itemId, match, onDone);
 
   const tone = MODE_TONE[mode];
@@ -220,12 +220,9 @@ export function ScanCountBlock({
           </button>
         ))}
       </div>
-      <span data-testid="count-label" className="text-[11px] font-mono uppercase tracking-wide text-muted">
-        {scanCountLabel(mode, value)}
-      </span>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" aria-label={mode === "set" ? "One fewer in total" : "One less"} disabled={value <= floor} onClick={() => put(value - 1)} className={step}>
+        <button type="button" aria-label={mode === "set" ? "One fewer in total" : "One less"} disabled={value <= floor || (mode === "change" && have === 0)} onClick={() => put(value - 1)} className={step}>
           <Minus size={15} />
         </button>
         <input
@@ -237,7 +234,7 @@ export function ScanCountBlock({
           onChange={(e) => {
             setText(e.target.value);
             const n = readTyped(e.target.value);
-            if (n == null) return;
+            if (n == null || (mode === "change" && n === 0)) return;
             const next = Math.max(floor, n);
             setValue(next);
             if (mode === "change" && Math.sign(next) !== Math.sign(value)) setReason(null);
@@ -261,6 +258,21 @@ export function ScanCountBlock({
           {where && <span className="text-muted"> · {where}</span>}
         </span>
       </div>
+      {takingReasons.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5" aria-label="Take one">
+          {takingReasons.map((r) => (
+            <button
+              key={r}
+              type="button"
+              disabled={have === 0 || save.isPending}
+              onClick={() => save.mutate({ mode: "change", value: -1, reason: r, undo: true })}
+              className="inline-flex min-h-10 items-center rounded-full border border-line dark:border-slate-600 px-2.5 py-1 text-xs text-content dark:text-mortar-100 hover:bg-surface dark:hover:bg-slate-900 disabled:opacity-40"
+            >
+              {SCAN_COUNT_REASON_LABEL[r]}
+            </button>
+          ))}
+        </div>
+      )}
       {reasons.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5" aria-label="Why (optional)">
           <span className="text-[11px] text-faint">Why?</span>

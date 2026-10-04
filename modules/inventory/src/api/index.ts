@@ -19,7 +19,10 @@ import { familiesRouter } from "./families.js";
 import { stockRouter } from "./stock-views.js";
 import { allocationsRouter } from "./allocations.js";
 import { importRouter } from "./import.js";
-import { spoolmanRouter } from "./spoolman.js";
+import { filamentCatalogRouter } from "./filament-catalog.js";
+import { nativeSpoolRouter } from "./spool-native.js";
+import { materialRouter, materialCostRouter, registerMaterialActions } from "./material.js";
+import { spoolmanRouter, registerSpoolmanWriteBack } from "./spoolman.js";
 import { registerInventoryResolvers } from "./resolvers.js";
 import { registerInventoryActionHandlers } from "./action-handlers.js";
 import { registerInventoryComputedContext } from "./computed-context.js";
@@ -30,6 +33,8 @@ import { registerInstalledParts } from "./installed.js";
 
 registerInventoryResolvers();
 registerInventoryActionHandlers();
+registerMaterialActions();
+registerSpoolmanWriteBack();
 registerHoldingActions();
 // Parts installed in things built from them: 2 of 4 sticks in a computer.
 registerInstalledParts();
@@ -126,12 +131,16 @@ router.use("/low-stock-alerts", lowStockAlertsRouter);
 partsRouter.use(importRouter);
 // One thing kept in several places: its rows ride the same two doors.
 partsRouter.use(holdingsRouter);
+partsRouter.use(materialRouter);
 // A type collection read with its things under each type (Filament).
 partsRouter.use(familiesRouter);
 router.use("/parts", partsRouter);
 router.use("/allocations", allocationsRouter);
 // What one place carries, and what is going off soon, across every collection.
 router.use("/stock", stockRouter);
+router.use("/material-cost", materialCostRouter);
+router.use("/filament-catalog", filamentCatalogRouter);
+router.use("/spoolman/native/:collection", nativeSpoolRouter);
 router.use("/spoolman", spoolmanRouter);
 
 export default router;

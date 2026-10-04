@@ -1,3 +1,4 @@
+import { readListPage, pagedAnswer, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 import { canPurgeDeletedRecord } from "@cobblr/platform-contract";
 // /files — upload, list, get, delete, serve.
 
@@ -299,18 +300,23 @@ filesRouter.get(
 filesRouter.get(
   "/deleted",
   asyncHandler(async (req, res) => {
+    const page = readListPage(req.query);
     const rows = await tenantDb(req)
       .selectFrom("core_files_files")
       .select(["id", "filename", "mime_type", "size_bytes", "kind", "variants", "deleted_at", "created_at"])
+      .select(sql<string>`count(*) over()`.as(TOTAL_COLUMN))
       .where("deleted_at", "is not", null)
       .where("same_as", "is", null)
       .orderBy("deleted_at", "desc")
-      // list-cap-ok: not paged yet, #4134
-      .limit(500)
+      .orderBy("id", "desc")
+      .limit(page.limit)
+      .offset(page.offset)
       .execute();
+    const answer = pagedAnswer(rows, page);
     res.json({
+      ...answer,
       days: RECENTLY_DELETED_DAYS,
-      items: rows.map((r) => ({
+      items: answer.items.map((r) => ({
         ...r,
         size_bytes: Number(r.size_bytes),
         purge_after: purgeAfter(r.deleted_at as Date).toISOString(),

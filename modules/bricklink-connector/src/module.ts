@@ -64,6 +64,7 @@ export default defineModule({
     events: [],
     actions: [
       {
+        group: "make",
         id: "bricklink:disassemble-kit",
         examples: ["break that set into its parts", "part out this kit"],
         label: "Disassemble into parts",

@@ -1,5 +1,4 @@
-import { NewItemMenu } from "@cobblr/platform-web";
-import { CurrencyPicker, MoneyTotalNotice, useMoneyCurrency } from "@cobblr/platform-web";
+import { RecordFormModal, NewItemMenu, CurrencyPicker, MoneyTotalNotice, useMoneyCurrency, BulkActionBar, BulkSetField, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton } from "@cobblr/platform-web";
 // /purchases — list of orders with a detail modal that shows the
 // order's line items. Same overall shape as MachinesPage /
 // AssetsPage. Order items live inside the detail modal (they're a
@@ -20,7 +19,6 @@ import { QueryError } from "../components/QueryError";
 import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
 import { ModulePurposeHint } from "../components/ModulePurposeHint";
 import { usePublishChatContext, useAskCobbAboutSelection } from "../lib/chat-context";
-import { BulkActionBar, BulkSetField, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton } from "@cobblr/platform-web";
 import { ContributedDetailPanels } from "../panels/registry";
 import { receiptGroupSummary } from "./receiptLabel";
 import { ReceiptAddressChip } from "../components/ReceiptAddressChip";
@@ -733,7 +731,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
     {receiptView === "original" && receiptFileId && (
       <ReceiptSourceViewer slug={activeSlug} fileId={receiptFileId} onClose={() => setReceiptView("none")} />
     )}
-    <Modal
+    <RecordFormModal
       open={!!orderId}
       onClose={onClose}
       title={
@@ -762,7 +760,6 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
           </span>
         ) : undefined
       }
-      size="lg"
     >
       {o ? (
         <div className="space-y-4">
@@ -928,7 +925,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
         <div className="text-xs text-faint">loading…</div>
       )}
       <MoneyTotalNotice total={o?.money_total} />
-    </Modal>
+    </RecordFormModal>
     </>
   );
 }
@@ -1054,30 +1051,52 @@ function NewOrderModal({ open, onClose }: { open: boolean; onClose: () => void }
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="New order" size="sm">
+    <RecordFormModal open={open} onClose={onClose} title="New order">
       <form onSubmit={submit} className="space-y-3">
-        <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Vendor</span>
-          <VendorPicker
-            slug={activeSlug}
-            vendorId={vendorId}
-            vendorName={vendorName}
-            onChange={(id, name) => { setVendorId(id); setVendorName(name); }}
-          />
-        </label>
-        <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Order #</span>
-          <input value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} className="input" />
-        </label>
-        <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Status</span>
-          <select value={status} onChange={(e) => setStatus(e.target.value as Order["status"])} className="input">
-            {STATUSES.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
-        </label>
-        <CurrencyPicker value={currency} onChange={setCurrency} label="Order currency" />
+        <FieldPack items={[
+          {
+            need: fieldNeed("vendor", { control: "picker", label: "Vendor" }),
+            node: (
+              <label className="block">
+                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Vendor</span>
+                <VendorPicker
+                  slug={activeSlug}
+                  vendorId={vendorId}
+                  vendorName={vendorName}
+                  onChange={(id, name) => { setVendorId(id); setVendorName(name); }}
+                />
+              </label>
+            ),
+          },
+          {
+            need: fieldNeed("order_number", { control: "text", label: "Order #" }),
+            node: (
+              <label className="block">
+                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Order #</span>
+                <input value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} className="input" />
+              </label>
+            ),
+          },
+          {
+            need: fieldNeed("status", { control: "choice", label: "Status" }),
+            node: (
+              <label className="block">
+                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Status</span>
+                <select value={status} onChange={(e) => setStatus(e.target.value as Order["status"])} className="input">
+                  {STATUSES.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </label>
+            ),
+          },
+          {
+            need: fieldNeed("currency", { control: "picker", label: "Order currency" }),
+            node: (
+              <CurrencyPicker value={currency} onChange={setCurrency} label="Order currency" />
+            ),
+          },
+        ]} />
         {status === "arrived" && <AddToStockChoice checked={addToStock} onChange={setAddToStock} />}
         <div className="flex items-center justify-end gap-2 pt-2 border-t border-line dark:border-slate-700">
           <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition">
@@ -1088,7 +1107,7 @@ function NewOrderModal({ open, onClose }: { open: boolean; onClose: () => void }
           </button>
         </div>
       </form>
-    </Modal>
+    </RecordFormModal>
   );
 }
 
@@ -1179,7 +1198,7 @@ function VendorsModal({ onClose, initialVendorId }: { onClose: () => void; initi
 
   if (viewing) {
     return (
-      <Modal open onClose={onClose} title="Vendor" size="md">
+      <RecordFormModal open onClose={onClose} title="Vendor">
         <VendorDetailPane
           slug={activeSlug}
           vendorId={viewing}
@@ -1187,12 +1206,12 @@ function VendorsModal({ onClose, initialVendorId }: { onClose: () => void; initi
           onOpenOrder={openOrder}
           onChanged={invalidate}
         />
-      </Modal>
+      </RecordFormModal>
     );
   }
 
   return (
-    <Modal open onClose={onClose} title="Vendors" size="md">
+    <RecordFormModal open onClose={onClose} title="Vendors">
       <div className="space-y-3">
         {vendors.isLoading && <div className="text-sm text-muted">Loading…</div>}
         {vendors.data?.items.length === 0 && editing !== "new" && (
@@ -1251,7 +1270,7 @@ function VendorsModal({ onClose, initialVendorId }: { onClose: () => void; initi
           </button>
         )}
       </div>
-    </Modal>
+    </RecordFormModal>
   );
 }
 
@@ -1441,12 +1460,32 @@ function VendorForm({
       onSubmit={(e) => { e.preventDefault(); if (name.trim()) save.mutate(); }}
     >
       <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Vendor name *" className="input" />
-      <div className="grid grid-cols-2 gap-2">
-        <input value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="Website (https://…)" className="input" />
-        <input value={account} onChange={(e) => setAccount(e.target.value)} placeholder="Account #" className="input" />
-        <input value={contact} onChange={(e) => setContact(e.target.value)} placeholder="Contact (email / phone)" className="input" />
-        <input value={lead} onChange={(e) => setLead(e.target.value.replace(/[^0-9]/g, ""))} placeholder="Lead time (days)" inputMode="numeric" className="input" />
-      </div>
+      <FieldPack items={[
+        {
+          need: fieldNeed("website", { control: "text", label: "Website (https://…)" }),
+          node: (
+            <input value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="Website (https://…)" className="input" />
+          ),
+        },
+        {
+          need: fieldNeed("account", { control: "text", label: "Account #" }),
+          node: (
+            <input value={account} onChange={(e) => setAccount(e.target.value)} placeholder="Account #" className="input" />
+          ),
+        },
+        {
+          need: fieldNeed("contact", { control: "text", label: "Contact (email / phone)" }),
+          node: (
+            <input value={contact} onChange={(e) => setContact(e.target.value)} placeholder="Contact (email / phone)" className="input" />
+          ),
+        },
+        {
+          need: fieldNeed("lead", { control: "text", label: "Lead time (days)" }),
+          node: (
+            <input value={lead} onChange={(e) => setLead(e.target.value.replace(/[^0-9]/g, ""))} placeholder="Lead time (days)" inputMode="numeric" className="input" />
+          ),
+        },
+      ]} />
       <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes" className="input" />
       <div className="flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="px-2.5 py-1.5 rounded-md text-xs text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800">Cancel</button>

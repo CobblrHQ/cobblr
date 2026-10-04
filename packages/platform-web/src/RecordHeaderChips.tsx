@@ -21,6 +21,7 @@ import { Printer, QrCode } from "lucide-react";
 import { Link } from "react-router-dom";
 import { usePlatformWeb } from "./context";
 import { useInvokeEntityAction, type RunArgs } from "./use-invoke-action";
+import { ActionDescription } from "./ActionDescription";
 import { ActionOutcome } from "./ActionOutcome";
 import { AskCobbAbout } from "./AskCobbAbout";
 import { isWebNfcAvailable } from "./nfc";
@@ -110,6 +111,7 @@ function PrintChip({
   const { run, flash, failure, asking, dismissFailure, note, pending } = useInvokeEntityAction({ entityKind: kind, entityId: id });
   return (
     <>
+    <ActionDescription description={action.description || action.label}>
     <button
       type="button"
       disabled={pending}
@@ -135,6 +137,7 @@ function PrintChip({
       <Printer size={10} />
       {flash === "ok" ? "queued" : flash === "err" ? "err" : pending ? "…" : action.label}
     </button>
+    </ActionDescription>
     <ActionOutcome note={note} failure={failure} onDismiss={dismissFailure} asking={asking} />
     </>
   );

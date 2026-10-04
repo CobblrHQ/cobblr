@@ -1,0 +1,10 @@
+{
+  "lint": "lint:record-action-copy",
+  "run": "node scripts/lint-record-action-copy.ts",
+  "rows": [
+    "entity-action"
+  ],
+  "ms": 500,
+  "recorded": "2026-10-04",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

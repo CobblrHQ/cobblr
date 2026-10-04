@@ -1,3 +1,4 @@
+import { RecordActionItem } from "./RecordActionContributions";
 // A door to what a record would do if a module that is off were on (#3883).
 //
 // Labels is off in a fresh workspace, and a record simply had no Print label:
@@ -6,6 +7,7 @@
 // module on (an owner or admin), then does the thing that was asked for; or
 // asks the admins to (everyone else). It is never a button that runs while the
 // module is off.
+import { ActionDescription } from "./ActionDescription";
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
@@ -67,8 +69,8 @@ export function DormantActionButton({
   };
 
   return (
-    <span className="relative inline-flex flex-col">
-      <button
+    <>
+      <RecordActionItem id={action.id} group={action.group ?? "more"} primary={action.primary} label={action.label} description={action.description ?? `Turn on ${action.module_label} to use this.`}><ActionDescription description={action.description || action.label}><button
         type="button"
         data-dormant-action={action.id}
         aria-expanded={open}
@@ -78,11 +80,11 @@ export function DormantActionButton({
           setOpen((v) => !v);
         }}
         title={`${action.label} comes with ${action.module_label}, which is off in this workspace`}
-        className="rounded-md border border-dashed border-line dark:border-slate-600 text-[10px] font-mono uppercase tracking-widest px-2 py-1 text-faint hover:text-accent hover:border-accent transition flex items-center gap-1"
+        className="rounded-md border border-dashed border-line dark:border-slate-600 text-xs px-2 py-1.5 text-faint hover:text-accent hover:border-accent transition flex items-center gap-1"
       >
         {action.label}
         <span className="rounded bg-subtle dark:bg-slate-800 px-1 text-[9px] normal-case tracking-normal">off</span>
-      </button>
+      </button></ActionDescription></RecordActionItem>
       {open && (
         <span
           role="dialog"
@@ -104,6 +106,6 @@ export function DormantActionButton({
           )}
         </span>
       )}
-    </span>
+    </>
   );
 }

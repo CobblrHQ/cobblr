@@ -362,7 +362,7 @@ export function readingStatsFor(orgId: string): ReadingStat[] {
   return [...readingStats.entries()].filter(([k]) => k.startsWith(`${orgId}|`)).map(([, v]) => v);
 }
 
-async function runEphemeral(orgId: string, def: BuiltInServiceDef, input: unknown, connectionId: string | null): Promise<ServiceJobRef> {
+async function runEphemeral(orgId: string, def: BuiltInServiceDef, input: unknown, connectionId: string | null, door: { origin: ServiceDoor; userId: string | null }): Promise<ServiceJobRef> {
   const id = `${EPHEMERAL_PREFIX}${crypto.randomUUID()}`;
   const started = new Date().toISOString();
   let status: ServiceJobStatus = "done";
@@ -386,7 +386,7 @@ async function runEphemeral(orgId: string, def: BuiltInServiceDef, input: unknow
   const now = new Date().toISOString();
   const job: ServiceJob = {
     id, capability: def.capability.id, connection_id: connectionId, built_in: def.id, status, progress: 1, message: null, needs: null,
-    input, output, files: [], error, origin: "module", requested_by: null, confirmed_by: null, caused_by_job: null, hop: 0,
+    input, output, files: [], error, origin: door.origin, requested_by: door.userId, confirmed_by: null, caused_by_job: null, hop: 0,
     attach_to: null, service_version: null, created_at: started, updated_at: now,
   };
   readings.set(id, { orgId, at: Date.now(), job });
@@ -501,17 +501,17 @@ export async function invokeAs(
   // the last one for the supervisor. Anything with files, a person, a record
   // to attach to or a job that led here keeps its row.
   if (
-    door.origin === "module" &&
+    (door.origin === "module" || route.decl.effect === "signal") &&
     route.builtIn &&
     route.decl.mode === "sync" &&
-    route.decl.effect === "none" &&
+    (route.decl.effect === "none" || route.decl.effect === "signal") &&
     !(route.decl.files_out ?? []).length &&
     !Object.keys(files).length &&
     !req.attachTo &&
     !req.causedByJob &&
     verdict.status === "queued"
   ) {
-    return runEphemeral(orgId, route.builtIn, req.input ?? null, route.connection?.credentialId ?? null);
+    return runEphemeral(orgId, route.builtIn, req.input ?? null, route.connection?.credentialId ?? null, door);
   }
 
   const target = route.connection ? `c:${route.connection.credentialId}` : `b:${route.builtIn!.id}`;

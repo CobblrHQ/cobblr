@@ -246,8 +246,8 @@ export function orderTops<T extends { name: string; navOrder?: number | null }>(
 /** A nav group made of a type collection and the collection of its things
  *  (a child whose `parent` is the other member) is one entry: the type
  *  collection, relabelled with the group's name, and the child drops out of
- *  the nav. Both leave `groupOf` (mutated), so what is left of the group, if
- *  anything, still collapses as before. Pure apart from that; returns a copy. */
+ *  the nav. A parent stays grouped when another sibling collection remains
+ *  (such as vendors); a family alone becomes a direct entry. Returns a copy. */
 export function foldTypeFamilies(
   rawTops: OrgModuleListItem[],
   groupOf: Map<string, { key: string; label: string }>,
@@ -263,7 +263,11 @@ export function foldTypeFamilies(
     drop.add(child);
     relabel.set(parent, pg.label);
   }
-  for (const n of [...drop, ...relabel.keys()]) groupOf.delete(n);
+  for (const n of drop) groupOf.delete(n);
+  for (const n of relabel.keys()) {
+    const key = groupOf.get(n)!.key;
+    if (![...groupOf].some(([other, g]) => other !== n && present.has(other) && !drop.has(other) && g.key === key)) groupOf.delete(n);
+  }
   return rawTops.filter((t) => !drop.has(t.name)).map((t) => (relabel.has(t.name) ? { ...t, displayName: relabel.get(t.name)! } : t));
 }
 

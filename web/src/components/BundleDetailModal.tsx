@@ -211,7 +211,7 @@ export function BundleDetailModal(props: Props) {
   const updatePreview = useQuery({
     queryKey: ["bundle-update-preview", slug, incomingManifest?.id ?? "", incomingManifest?.version ?? ""],
     queryFn: () => api.validateBundle(slug, incomingManifest!),
-    enabled: open && isUpdate && !!incomingManifest,
+    enabled: open && !!incomingManifest && (isUpdate || !!incomingManifest.record_actions),
     staleTime: 60_000,
   });
   const conflicts = updatePreview.data?.preview?.upgrade_conflicts ?? [];
@@ -768,6 +768,7 @@ export function BundleDetailModal(props: Props) {
   return (
     <Modal open={open} onClose={onClose} title={`${titlePrefix}${name}`} subtitle={subtitle} size="lg">
       <div className="space-y-5">
+        {updatePreview.data?.errors.filter((e) => e.code.includes("action_group")).map((e) => <p key={e.path + e.code} role="alert" className="text-sm text-ember-600 dark:text-ember-400">{e.message}</p>)}
         <RemoveBundleDialog
           slug={slug}
           bundle={removing && uninstallId ? { id: uninstallId, name } : null}
@@ -1228,7 +1229,7 @@ export function BundleDetailModal(props: Props) {
                 onClick={() => void handleInstall()}
                 // Not before the conflicts are known: an Update pressed first
                 // would apply without the person's answers.
-                disabled={!effectiveManifest || install.isPending || updatePreview.isPending}
+                disabled={!effectiveManifest || install.isPending || updatePreview.isPending || updatePreview.data?.valid === false}
                 className="text-xs font-medium px-3 py-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white transition flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Package size={13} />
@@ -1258,7 +1259,7 @@ export function BundleDetailModal(props: Props) {
             <button
               onClick={() => void handleInstall()}
               disabled={
-                !effectiveManifest || install.isPending || props.alreadyInstalled === true
+                !effectiveManifest || install.isPending || props.alreadyInstalled === true || (!!incomingManifest?.record_actions && (updatePreview.isPending || updatePreview.data?.valid === false))
               }
               className="text-xs font-medium px-3 py-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white transition flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
             >

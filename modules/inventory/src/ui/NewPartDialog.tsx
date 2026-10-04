@@ -1,4 +1,4 @@
-import { useMoneyCurrency } from "@cobblr/platform-web";
+import { RecordFormModal, useMoneyCurrency, ColourInput, MoneyInput, fieldInputText, missingRequired } from "@cobblr/platform-web";
 // Modal to create a new part. Minimum fields only — name + qty +
 // optional category/location.
 //
@@ -15,7 +15,6 @@ import {
   CatalogTypeahead,
   FieldPack,
   LabeledField,
-  Modal,
   RelationSelect,
   MarkdownEditor,
   fieldControl,
@@ -31,7 +30,6 @@ import {
   UsedValueInput,
 } from "@cobblr/platform-web";
 import { useInventory } from "./context";
-import { ColourInput, MoneyInput, fieldInputText, missingRequired } from "@cobblr/platform-web";
 import { useFieldPresentation } from "./useFieldPresentation";
 import { ParentPicker, type ParentRef } from "./ParentPicker";
 import { InventoryApiError, type InvFieldDef } from "./api";
@@ -290,7 +288,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
   }
 
   return (
-    <Modal open onClose={() => onClose(false)} title={`new ${itemNoun.toLowerCase()}`} size="lg" dismissOnBackdrop={false}>
+    <RecordFormModal open onClose={() => onClose(false)} title={`new ${itemNoun.toLowerCase()}`} dismissOnBackdrop={false}>
       <form onSubmit={submit} className="space-y-3">
         {/* Catalog matching: always on the base inventory; on a skinned
             instance only when a catalog actually binds to inventory:part (Lego
@@ -505,7 +503,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
           </button>
         </div>
       </form>
-    </Modal>
+    </RecordFormModal>
   );
 }
 

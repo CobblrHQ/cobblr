@@ -1784,6 +1784,9 @@ superAdminRouter.get("/feedback", async (req, res, next) => {
         "f.origin_ref",
         "f.followups",
         "f.reply_delivery",
+        "f.reachable",
+        "f.unreachable_reason",
+        "f.contact_email",
         "f.announce_message_id",
         "f.created_at",
         "f.updated_at",
@@ -2288,6 +2291,8 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
         "origin_ref",
         "announce_message_id",
         "announce_channel_id",
+        "reachable",
+        "contact_email",
         "type",
         "triage_summary",
       ])
@@ -2341,7 +2346,30 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
       origin: row.origin,
       user_id: row.user_id,
       origin_ref: (row.origin_ref ?? null) as { thread_id?: string; user_id?: string } | null,
+      reachable: row.reachable,
+      contact_email: row.contact_email,
     });
+    // A sandbox visitor who left an address on purpose: one email to it, in the
+    // same words as an account's. Never to the account's own .invalid address.
+    if (parsed.data.notify_reporter && replyRoute.via === "contact-email" && hasAuthEmailSender()) {
+      const isResolved = parsed.data.status === "resolved";
+      const reply = parsed.data.reply_message?.trim();
+      if (isResolved || reply) {
+        const mail = feedbackEmail({
+          kind: isResolved ? "resolved" : "reply",
+          greeting: "Hi,",
+          report: row.message ?? "",
+          body: reply || (isResolved ? "The issue you reported has been fixed - it's live now." : ""),
+          feedbackUrl: absoluteAppUrl("/"),
+          replyAddress: null,
+          discord: [],
+        });
+        const ok = await sendAuthEmail({ to: replyRoute.to, subject: mail.subject, text: mail.text, html: mail.html, kind: "notification" });
+        emailed = ok;
+        notified = ok || notified;
+        delivery.email = ok ? "sent" : "send-failed";
+      }
+    }
     if (parsed.data.notify_reporter && replyRoute.via === "discord-thread") {
       {
         const ref = { thread_id: replyRoute.thread_id };

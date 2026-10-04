@@ -1,6 +1,7 @@
 // /projects — CRUD + a task list endpoint scoped to a project.
 
 import { Router } from "express";
+import { sql } from "kysely";
 import { z } from "zod";
 import { PRIORITIES, PROJECT_STATUSES } from "../vocab.js";
 import { platform, textSearchWhere } from "@cobblr/platform-contract";
@@ -46,6 +47,14 @@ const ProjectCreate = z.object({
 
 const PROJECT_NATIVE_KEYS = new Set(Object.keys(ProjectCreate.shape));
 const ProjectUpdate = ProjectCreate.partial();
+
+// AI-REACH: exempt — dashboard-only counts; Cobb reads projects.
+projectsRouter.get("/dashboard", asyncHandler(async (req, res) => {
+  const counts = await tenantDb(req).selectFrom("projects_projects")
+    .select([sql<number>`count(*)::int`.as("total"), sql<number>`count(*) filter (where status = 'active')::int`.as("active")])
+    .where("instance", "=", instanceOf(req)).executeTakeFirstOrThrow();
+  res.json(counts);
+}));
 
 projectsRouter.get(
   "/",

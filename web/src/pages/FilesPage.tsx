@@ -397,6 +397,7 @@ export function FilesPage() {
           </button>
           {showDeleted && (
             <div className="mt-2 space-y-2">
+              {deleted.data!.complete === false && <p className="text-xs text-muted">Showing {deleted.data!.items.length} of {deleted.data!.total} deleted files.</p>}
               <p className="text-xs text-muted">Deleted files stay here for {deleted.data!.days} days, then they are removed for good.</p>
               <div className="border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800">
                 {deleted.data!.items.map((f) => (

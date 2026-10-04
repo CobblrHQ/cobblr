@@ -21,7 +21,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-locations",
-  version: "0.8.1",
+  version: "0.9.0",
   displayName: "Locations",
   description:
     "Where your things live: rooms, shelves and bins, one inside another, and a floor plan to draw them on.",
@@ -46,6 +46,14 @@ export default defineModule({
   },
 
   api: () => import("./api/index.js"),
+  lifecycle: {
+    onBoot: async () => { (await import("./lights.js")).registerLights(); },
+  },
+  contributes: {
+    wires: ["shown", "found", "picked", "put-away", "label-scanned"].map(reason => ({
+      source_kind: "core-locations:location", action_id: "core-locations:indicate", trigger_type: "event" as const, trigger_event: `core-locations.light.${reason}`,
+    })),
+  },
 
   provides: {
     entityKinds: [
@@ -132,6 +140,11 @@ export default defineModule({
       "core-locations.location.created",
       "core-locations.location.updated",
       "core-locations.location.deleted",
+      "core-locations.light.shown",
+      "core-locations.light.found",
+      "core-locations.light.picked",
+      "core-locations.light.put-away",
+      "core-locations.light.label-scanned",
     ],
     // Sentences people say to a locations module on day one, before they have
     // connected any AI at all. Numbering a run of shelves or bins is the single
@@ -167,8 +180,35 @@ export default defineModule({
     ],
     actions: [
       {
+        group: "stock",
+        id: "core-locations:show-me", label: "Where is it?", icon: "lightbulb", effect: "signal",
+        description: "Find this thing's place, including inside containers, and light its bin or nearest lit ancestor. Use this when asked where something is. The light turns off automatically.",
+        examples: ["where are my M3 screws?", "show me this bin", "light up the shelf"],
+        appliesTo: { traits: ["physical"] }, invokeHandler: "core-locations.show-me",
+      },
+      {
+        group: "stock",
+        id: "core-locations:indicate", label: "Light up this place", icon: "lightbulb", effect: "signal",
+        description: "Run place.indicate on this place's mapped connection. Signals need no confirmation and are rate limited. Default color is the workspace accent; another request uses a second color.",
+        appliesTo: { kinds: ["core-locations:location"] }, invokeHandler: "core-locations.indicate", userInvokable: false,
+        argsSchema: { color: { label: "Color (RRGGBB)", type: "text" }, duration: { label: "Seconds (1 to 300)", type: "number" } },
+      },
+      {
+        group: "stock",
+        id: "core-locations:set-light", label: "Set this place's light", description: "Set mapping: {connection_id, driver: wled, pixels: [{segment, led, count}]} or {connection_id, driver: home-assistant, entity: light.name}. Null removes it. Share the connection with this workspace first.",
+        appliesTo: { kinds: ["core-locations:location"] }, invokeHandler: "core-locations.set-light", userInvokable: false,
+        argsSchema: { mapping: { label: "Light mapping", type: "json" } },
+      },
+      {
+        group: "stock",
+        id: "core-locations:map-light-grid", label: "Map this grid's lights", description: "Map every child bin from its floor plan position. grid: {connection_id, mode: strip|xy, segment, start, per_bin, order: row-major|serpentine, column_segment?, column_start?}. All bins must form a complete grid.",
+        appliesTo: { kinds: ["core-locations:location"] }, invokeHandler: "core-locations.map-light-grid", userInvokable: false,
+        argsSchema: { grid: { label: "Grid light settings", type: "json", required: true } },
+      },
+      {
         // Workspace-scoped: it orders a SET of siblings, not one record, so
         // there is no single entity for it to hang off.
+        group: "stock",
         id: "core-locations:reorder",
         examples: ["put the racks in order", "sort the shelves under Den"],
         undoable: true,
@@ -185,6 +225,7 @@ export default defineModule({
       {
         // The person-facing door is "Move everything to…" on the place's own
         // page (a picker for the destination); this is the assistant's.
+        group: "stock",
         id: "core-locations:move-everything",
         examples: ["move everything from Bin 3 to Bin 7", "empty the old shelf into the new one", "merge the two Bin 3s"],
         label: "Move everything to another place",
@@ -203,6 +244,7 @@ export default defineModule({
       {
         // The person-facing door is the swatch row in Edit layout on the
         // floor plan; this is the assistant's.
+        group: "stock",
         id: "core-locations:set-plan-colour",
         examples: ["make the red chest's drawers red", "colour Shelf 3 blue on the plan", "take the colour off Bin 4"],
         undoable: true,
@@ -220,6 +262,7 @@ export default defineModule({
       },
       // NO-PHRASING: only ever run as Move everything's Undo, never asked for.
       {
+        group: "stock",
         id: "core-locations:put-back-everything",
         label: "Put back what was moved",
         description: "The way back for Move everything: puts each thing and place back where the move found it.",

@@ -64,6 +64,7 @@ import { useTheme } from "../theme/ThemeContext";
 import { FloatingChrome, useToast } from "@cobblr/platform-web";
 import { QuickAddSheet } from "./QuickAddSheet";
 import { ShortcutsSheet } from "./ShortcutsSheet";
+import { AiNoticeGiven, useAiStatus } from "./AiStatusNotice";
 import { readOpenOn, readOpenTab, restoresOn, writeOpenOn, writeOpenTab } from "../lib/panel-memory";
 
 export function AppLayout({ activeSlug }: { activeSlug: string }) {
@@ -85,6 +86,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
   // a closed panel has no tab, and writing one would restore a panel nobody
   // left open.
   const railTab = useRailActiveTab();
+  const aiStatus = useAiStatus();
   useEffect(() => {
     if (chatOpen && railTab) writeOpenTab(railTab);
   }, [chatOpen, railTab]);
@@ -592,6 +594,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
               wordmark. */}
           <Link
             to="/"
+            title="Home"
             className="relative flex items-center gap-2 shrink-0 hover:opacity-80 transition"
           >
             <CobblestoneMark size={26} dot={envDot} />
@@ -781,7 +784,9 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           <ErrorBoundary key={location.pathname} scope="page">
             {/* A page for a module that is off offers only turning it on. */}
             <ModuleOffGate>
-              <Outlet />
+              <AiNoticeGiven when={chatOpen && railTab === "cobb" && aiStatus?.reason === "not_entitled"} reason="not_entitled">
+                <Outlet />
+              </AiNoticeGiven>
             </ModuleOffGate>
           </ErrorBoundary>
         </div>

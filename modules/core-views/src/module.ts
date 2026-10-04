@@ -60,6 +60,7 @@ export default defineModule({
     actions: [
       {
         // NO-PHRASING: the way back for another action, run only from Undo
+        group: "organise",
         id: "core-views:delete-view",
         internal: true,
         label: "Delete a saved view",
@@ -77,6 +78,7 @@ export default defineModule({
         // record. Rides invoke_action, so it inherits the confirm gate, the
         // permission check and the change ledger (labels:set-code precedent).
         // UI-SCREEN: /views
+        group: "organise",
         id: "core-views:save-view",
         examples: ["save this as a board", "make me a kanban of tasks"],
         undoable: true,

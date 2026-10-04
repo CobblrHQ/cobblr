@@ -155,6 +155,7 @@ export default defineModule({
     actions: [
       {
         // NO-PHRASING: the way back for another action, run only from Undo
+        group: "buy",
         id: "purchases:remove-line",
         internal: true,
         label: "Remove an order line",
@@ -168,6 +169,7 @@ export default defineModule({
         },
       },
       {
+        group: "buy",
         id: "purchases:add-line",
         examples: ["add another line to that order", "put two more on the order"],
         undoable: true,
@@ -190,6 +192,7 @@ export default defineModule({
       {
         // NO-PHRASING: nobody asks for this; it is what attaching paperwork to a record (core-scan:attach-paperwork) records the purchase with.
         // UI-REACH: plumbing for the paperwork door, which every screen reaches through core-scan's record Files and inbox
+        group: "buy",
         id: "purchases:record-paperwork",
         label: "Record the purchase a document shows",
         description:
@@ -210,6 +213,7 @@ export default defineModule({
         },
       },
       {
+        group: "buy",
         id: "purchases:edit-line",
         examples: ["that line was 5, not 3", "the screws were 12 cents each"],
         undoable: true,
@@ -235,6 +239,7 @@ export default defineModule({
         // the human approves (planned → ordered) and the existing arrival
         // wire restocks. Also user-invokable: a "Draft a purchase order"
         // button on any part.
+        group: "buy",
         id: "purchases:draft-po",
         examples: ["order more of these", "put that on a purchase order"],
         undoable: true,
@@ -261,6 +266,7 @@ export default defineModule({
         // and its per-line received events, so stock bumps), stamps today, and
         // no-ops when the order is already arrived so a stale prompt answered
         // twice cannot double-count.
+        group: "buy",
         id: "purchases:mark-arrived",
         examples: ["that order turned up", "the parcel arrived"],
         label: "Mark arrived",

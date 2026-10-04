@@ -73,6 +73,7 @@ export default defineModule({
       {
         // NO-PHRASING: a record asks it for the words of a shipping notice; nobody asks for it by name
         // UI-REACH: a sales order's Ship dialog names the carrier and the tracking link from it (sales ship preview and notice)
+        group: "more",
         id: "core-shipments:identify",
         label: "Name a tracking number's carrier",
         description:
@@ -93,6 +94,7 @@ export default defineModule({
         //
         // Workspace-scoped: it acts on a NUMBER, not on a record, and
         // core-shipments has no business naming whose record it came from.
+        group: "more",
         id: "core-shipments:track",
         examples: ["where is my parcel", "track this number"],
         label: "Check a tracking number",

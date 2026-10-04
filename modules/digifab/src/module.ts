@@ -49,6 +49,8 @@ export default defineModule({
       // returns a job a stopped send left half way.
       const { registerFarmWatchdog } = await import("./farm-watchdog.js");
       registerFarmWatchdog();
+      const { registerMakeRecovery } = await import("./make-recovery.js");
+      registerMakeRecovery();
       // Background warmer for the printer file cache — a self-perpetuating queue
       // loop that keeps each printer's file list + thumbnails warm in the DB, so
       // the UI reads warm data and the machine is never hit on a modal open.
@@ -223,6 +225,7 @@ export default defineModule({
         // this action run the same send (api/jobs.ts sendAndWatch). It starts
         // a physical machine, so a person's yes stands in front of it from
         // every door, not only the page's dialog (Services §9, §14.3).
+        group: "more",
         id: "digifab:send",
         label: "Send a job to its machine",
         description:
@@ -240,6 +243,7 @@ export default defineModule({
       {
         // UI-SCREEN: /makes, whose New make form starts one; this is the same
         // act for another module (an order line, a work order) and the assistant.
+        group: "more",
         id: "digifab:start-make",
         label: "Start a make",
         description:
@@ -260,6 +264,7 @@ export default defineModule({
         // enough of the filament, then idle, then pool order (pick-printer.ts).
         // Sends nothing; the step before the one confirm card in "Print this".
         // UI-SCREEN: /files/:id, where Print this shows the printer it picked.
+        group: "more",
         id: "digifab:pick-printer",
         label: "Pick a printer for a print",
         description:
@@ -283,10 +288,11 @@ export default defineModule({
         // slices for that printer's Printing profile, and leaves the print
         // waiting for a person's one yes on the Make. Starts no machine.
         // UI-SCREEN: /files/:id, the Print this panel on a model file's page.
+        group: "more",
         id: "digifab:print-this",
         label: "Print this",
         description:
-          "Prints a model: opens a Make for the file (or uses the Make given), picks the printer it fits that is loaded with the material, slices it with the connected slicer for that printer, and leaves the print waiting on the Make for a person to start it. Nothing prints until someone presses Start on the Make.",
+          "Starts from a file, a Make, or a request with a design template or CAD source. For a design, prefer a template; otherwise write build123d (top-level part) or OpenSCAD source and pass it with the prompt. Design outputs wait for model approval on the Make. Then choose Print this to pick a printer and slice. Only Start the print moves a machine.",
         scope: "workspace",
         userInvokable: false,
         undoable: true,
@@ -295,6 +301,12 @@ export default defineModule({
         argsSchema: {
           file_id: { label: "Model file", type: "text" },
           make_id: { label: "Make", type: "text" },
+          prompt: { label: "What to make", type: "text" },
+          source: { label: "CAD source", type: "text" },
+          source_lang: { label: "CAD language", type: "text" },
+          template: { label: "Design template", type: "text" },
+          params: { label: "Template parameters", type: "json" },
+          quantity: { label: "Prints", type: "number" },
           material: { label: "Material", type: "text", required: true },
           color: { label: "Colour", type: "text" },
           bbox_mm: { label: "Part size x, y, z (mm)", type: "list" },
@@ -306,6 +318,7 @@ export default defineModule({
         // core-devices:run-command so wires in ALREADY-INSTALLED bundles keep
         // working; new bundles should use core-devices:run-command.
         // NO-PHRASING: a deprecated alias kept so installed wires keep working; phrasings here would compete with core-devices:run-command
+        group: "more",
         id: "digifab:run-command",
         label: "Run a device command (deprecated → core-devices:run-command)",
         description:

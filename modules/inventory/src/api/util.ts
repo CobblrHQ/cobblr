@@ -2,7 +2,7 @@
 
 import type { Request, Response, NextFunction } from "express";
 import { z } from "zod";
-import { platform } from "@cobblr/platform-contract";
+import { isActionRefusal, platform } from "@cobblr/platform-contract";
 import { tenantContext, sessionUser, type OrgRole } from "../db.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 
@@ -12,7 +12,10 @@ export function asyncHandler<R extends Request = Request>(
   handler: (req: R, res: Response, next: NextFunction) => Promise<void>,
 ) {
   return (req: Request, res: Response, next: NextFunction): void => {
-    void handler(req as R, res, next).catch(next);
+    void handler(req as R, res, next).catch((err: unknown) => {
+      if (isActionRefusal(err)) res.status(422).json({ error: { code: "action_refused", message: err.message } });
+      else next(err);
+    });
   };
 }
 

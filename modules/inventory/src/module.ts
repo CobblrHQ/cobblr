@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.18.10",
+  version: "0.18.12",
   displayName: "Inventory",
   description:
     "Parts and supplies: how many you have, where they are kept, and what is running low.",
@@ -21,7 +21,7 @@ export default defineModule({
   band: "stock",
   instanceability: "multi",
   // A place's page carries inventory's "Stock here" panel.
-  operatesOn: ["core-locations"],
+  operatesOn: ["core-locations", "digifab"],
 
   schema: {
     tablePrefix: "inventory_",
@@ -208,6 +208,7 @@ export default defineModule({
       // fresh lot in or stamps a spare), never by a second button. The
       // wire-only aliases that used to be buttons sit after the visible set.
       {
+        group: "stock", primary: true,
         id: "inventory:use-one",
         examples: ["used one", "I just took one out"],
         undoable: true,
@@ -223,10 +224,11 @@ export default defineModule({
         },
       },
       {
+        group: "stock",
         id: "inventory:mark-opened",
         examples: ["opened it", "cracked open the pesto", "started this one"],
         undoable: true,
-        label: "Opened",
+        label: "Mark one as opened",
         face: "perishable",
         description:
           "Record that you opened one, today. Starts the shorter opened clock on that one only - the unopened ones keep their own dates - and records WHEN, so how long it lasts after opening can be measured the next time one goes off. Args: { partId?, timezone? }.",
@@ -242,6 +244,7 @@ export default defineModule({
         },
       },
       {
+        group: "stock",
         id: "inventory:use-up",
         examples: ["used it up", "that is all gone", "ate the last one"],
         undoable: true,
@@ -259,6 +262,7 @@ export default defineModule({
         userInvokable: true,
       },
       {
+        group: "stock",
         id: "inventory:mark-spoiled",
         examples: ["it went bad", "had to bin it", "this one spoiled before I got to it"],
         undoable: true,
@@ -279,6 +283,7 @@ export default defineModule({
         },
       },
       {
+        group: "stock",
         id: "inventory:still-good",
         examples: ["it's still fine", "checked it, still good", "the milk is ok for a few more days"],
         undoable: true,
@@ -297,6 +302,7 @@ export default defineModule({
         },
       },
       {
+        group: "stock",
         id: "inventory:restock-one",
         examples: ["another one arrived", "got one more", "add one to the fridge"],
         undoable: true,
@@ -317,10 +323,11 @@ export default defineModule({
         },
       },
       {
+        group: "stock",
         id: "inventory:replaced",
         examples: ["replaced the filter", "swapped in a new box", "replaced it with a fresh one"],
         undoable: true,
-        label: "Replaced",
+        label: "Record a replacement",
         face: "stock",
         description:
           "One verb for swapping a thing out. On something that goes off it consumes the oldest lot and adds a fresh one dated today from the item's shelf life - the same bookkeeping swap-fresh does. On plain stock it stamps when it was replaced and consumes a spare if there is one. Args: { partId?, timezone? }.",
@@ -333,6 +340,7 @@ export default defineModule({
         userInvokable: true,
       },
       {
+        group: "stock",
         id: "inventory:set-status",
         examples: ["mark it as built", "set that to missing pieces"],
         undoable: true,
@@ -348,6 +356,7 @@ export default defineModule({
         userInvokable: true,
       },
       {
+        group: "plan",
         id: "inventory:reserve-stock",
         examples: ["set aside four for that project", "reserve some of these"],
         undoable: true,
@@ -368,6 +377,7 @@ export default defineModule({
         },
       },
       {
+        group: "stock",
         id: "inventory:split-lot",
         examples: ["split one off that lot", "I opened one of the pack"],
         label: "Split one off",
@@ -385,6 +395,7 @@ export default defineModule({
       // Each is a panel gesture on the record's detail; these are the same
       // moves for the assistant and a wire.
       {
+        group: "stock",
         id: "inventory:add-holding",
         examples: ["we also keep saline in ambulance 3", "keep 10 of these in the van too"],
         label: "Keep it somewhere else too",
@@ -401,6 +412,7 @@ export default defineModule({
         },
       },
       {
+        group: "stock",
         id: "inventory:combine-holdings",
         examples: ["the gauze in the closet and in ambulance 2 are the same thing", "combine these into one item"],
         label: "Combine into one item",
@@ -415,6 +427,7 @@ export default defineModule({
         },
       },
       {
+        group: "stock",
         id: "inventory:split-holding",
         examples: ["the stock in the van is its own thing", "split this place out"],
         label: "Split into its own",
@@ -426,6 +439,7 @@ export default defineModule({
         userInvokable: false,
       },
       {
+        group: "stock",
         id: "inventory:move-all-stock",
         examples: ["move all the saline to the van", "everything we have of this goes to the garage"],
         label: "Move it all to one place",
@@ -440,6 +454,7 @@ export default defineModule({
         },
       },
       {
+        group: "stock",
         id: "inventory:transfer-stock",
         examples: ["restock ambulance 3 from the closet", "move 5 bags of saline to the van"],
         label: "Restock from another place",
@@ -458,6 +473,7 @@ export default defineModule({
         },
       },
       {
+        group: "stock",
         id: "inventory:receive-lot",
         examples: ["12 bags of saline arrived, expiring 2027-02-25, lot B-220", "we got 20 more, use by March"],
         label: "Stock arrived",
@@ -474,6 +490,7 @@ export default defineModule({
         },
       },
       {
+        group: "stock",
         id: "inventory:mark-finished",
         examples: ["ate the last one", "that's the end of the jar", "all gone"],
         undoable: true,
@@ -494,6 +511,7 @@ export default defineModule({
         },
       },
       {
+        group: "stock",
         id: "inventory:swap-fresh",
         examples: ["swapped in a new box", "finished it and opened the new one", "replaced it with a fresh one"],
         undoable: true,
@@ -514,6 +532,22 @@ export default defineModule({
         },
       },
       {
+        group: "stock",
+        id: "inventory:measure-material",
+        examples: ["this spool weighs 750 grams", "used 1200 millimetres of filament"],
+        label: "Measure filament",
+        description: "Weigh a spool including its empty spool, or record filament used in millimetres. Uses the type's density, diameter and empty spool weight. A weighing is a recount, not consumption.",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "inventory.measure-material",
+        userInvokable: true,
+        argsSchema: {
+          partId: { label: "Item id", type: "text" },
+          gross_g: { label: "Scale reading (g)", type: "number" },
+          used_mm: { label: "Used length (mm)", type: "number" },
+        },
+      },
+      {
+        group: "stock",
         id: "inventory:adjust-stock",
         examples: ["add 5 to the M3 screws", "take 2 off that spool"],
         undoable: true,
@@ -549,6 +583,7 @@ export default defineModule({
         },
       },
       {
+        group: "stock",
         id: "inventory:set-stock",
         examples: ["there are 40 left", "set the count to 12"],
         undoable: true,
@@ -569,6 +604,7 @@ export default defineModule({
       // the undo rail can run them through the same door as everything else.
       {
         // NO-PHRASING: the way back for another action, run only from Undo
+        group: "lifecycle",
         id: "inventory:restore-part",
         internal: true,
         label: "Put a part back",
@@ -589,6 +625,7 @@ export default defineModule({
       },
       {
         // NO-PHRASING: the way back for another action, run only from Undo
+        group: "stock",
         id: "inventory:remove-category",
         internal: true,
         label: "Remove a category",
@@ -603,6 +640,7 @@ export default defineModule({
       },
       {
         // NO-PHRASING: the way back for another action, run only from Undo
+        group: "plan",
         id: "inventory:reopen-allocation",
         internal: true,
         label: "Reopen a reservation",
@@ -617,6 +655,7 @@ export default defineModule({
       },
       {
         // NO-PHRASING: driven by a consumer module's own record, never asked for
+        group: "plan",
         id: "inventory:reserve-for-line",
         internal: true,
         label: "Hold stock for one line of a target",
@@ -636,6 +675,7 @@ export default defineModule({
       },
       {
         // NO-PHRASING: driven by a consumer module's own record, never asked for
+        group: "stock",
         id: "inventory:line-usage",
         internal: true,
         label: "What each line of a target has used",
@@ -651,6 +691,7 @@ export default defineModule({
       },
       {
         // NO-PHRASING: driven by a consumer module's own record, never asked for
+        group: "stock",
         id: "inventory:use-for-line",
         internal: true,
         label: "Use stock for one line of a target",
@@ -671,6 +712,7 @@ export default defineModule({
       },
       {
         // NO-PHRASING: driven by a consumer module's own record, never asked for
+        group: "stock",
         id: "inventory:release-line",
         internal: true,
         label: "Let one line of a target go",
@@ -687,6 +729,7 @@ export default defineModule({
       },
       {
         // NO-PHRASING: driven by a consumer module's own record, never asked for
+        group: "stock",
         id: "inventory:settle-target",
         internal: true,
         label: "Settle a finished target's reservations",
@@ -702,6 +745,7 @@ export default defineModule({
         },
       },
       {
+        group: "plan",
         id: "inventory:settle-allocation",
         examples: ["we used the reserved ones", "release that reservation"],
         undoable: true,
@@ -717,6 +761,7 @@ export default defineModule({
         },
       },
       {
+        group: "stock",
         id: "inventory:add-category",
         examples: ["add a Fasteners category", "we need a new category"],
         undoable: true,
@@ -732,6 +777,7 @@ export default defineModule({
         },
       },
       {
+        group: "stock",
         id: "inventory:create-item",
         examples: ["add a box of screws", "I have got a new spool"],
         undoable: true,
@@ -752,6 +798,7 @@ export default defineModule({
         },
       },
       {
+        group: "stock",
         id: "inventory:create-items",
         examples: ["add these five things", "add a batch of items"],
         label: "Add items (bulk)",
@@ -762,6 +809,7 @@ export default defineModule({
         userInvokable: true,
       },
       {
+        group: "stock",
         id: "inventory:update-item",
         examples: ["rename that part", "change its brand"],
         undoable: true,
@@ -773,6 +821,7 @@ export default defineModule({
         userInvokable: true,
       },
       {
+        group: "stock",
         id: "inventory:lift-to-type",
         examples: ["turn these items into types", "dedupe these into product types"],
         label: "Lift items into types",
@@ -786,6 +835,7 @@ export default defineModule({
         userInvokable: false,
       },
       {
+        group: "organise",
         id: "inventory:field-to-location",
         examples: ["move the Room field into Location", "turn that place field into real locations"],
         label: "Move a place field into Location",
@@ -810,6 +860,7 @@ export default defineModule({
     // What one place carries, on the place's own page (a vehicle: count
     // against the minimum kept there, what is low, what is going off).
     panels: [
+      { id: "inventory:material-cost", surface: "entity-detail-panel" as const, target: "digifab:job", title: "Filament used" },
       {
         id: "inventory:stock-here",
         surface: "entity-detail-panel" as const,

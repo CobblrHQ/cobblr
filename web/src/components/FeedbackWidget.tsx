@@ -58,6 +58,11 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
   const fileInput = useRef<HTMLInputElement>(null);
   const toast = useToast();
   const { orgs, user } = useAuth();
+  // A try-sandbox guest has no account and an undeliverable address, so nobody
+  // can write back unless they leave one (#4645). Optional; leaving it is the
+  // consent to be emailed about this report.
+  const isSandboxGuest = !!user?.email?.toLowerCase().endsWith("@try.invalid");
+  const [contactEmail, setContactEmail] = useState("");
 
   // Screenshots upload to a workspace's core-files + the feedback row stores
   // that same workspace_slug (the super-admin viewer reads the bytes under it),
@@ -225,6 +230,7 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
       await api.submitFeedback({
         type,
         message: text,
+        ...(isSandboxGuest && contactEmail.trim() ? { contact_email: contactEmail.trim() } : {}),
         workspace_slug: slug,
         attachments,
         context: {
@@ -312,6 +318,23 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
             placeholder="What happened, what's confusing, or what you'd love to see…"
             className="w-full rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-2 text-base sm:text-sm text-content dark:text-mortar-100"
           />
+
+          {isSandboxGuest && (
+            <label className="block text-xs text-muted dark:text-slate-400">
+              Email me when this is fixed (optional)
+              <input
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+                data-testid="feedback-contact-email"
+                value={contactEmail}
+                onChange={(e) => setContactEmail(e.target.value)}
+                placeholder="you@example.com"
+                className="mt-1 w-full rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-2 text-base sm:text-sm text-content dark:text-mortar-100"
+              />
+              <span className="text-faint">You are a guest, so without an address we can't write back.</span>
+            </label>
+          )}
 
           {/* Screenshots */}
           {slug ? (

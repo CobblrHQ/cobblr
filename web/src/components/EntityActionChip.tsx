@@ -17,7 +17,7 @@
 import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
-import { ActionOutcome, useInvokeEntityAction, usePlatformWeb } from "@cobblr/platform-web";
+import { ActionDescription, ActionOutcome, useInvokeEntityAction, usePlatformWeb } from "@cobblr/platform-web";
 import { askBeforePress } from "@cobblr/platform-contract/action-args";
 
 export function EntityActionChip({
@@ -67,6 +67,7 @@ export function EntityActionChip({
   return (
     <>
     <ActionOutcome note={null} failure={null} onDismiss={dismissFailure} asking={asking} />
+    <ActionDescription description={binding?.description || action?.description || label}>
     <button
       type="button"
       disabled={pending}
@@ -93,6 +94,7 @@ export function EntityActionChip({
       {pending ? <Loader2 size={12} className="animate-spin" /> : icon}
       {label}
     </button>
+    </ActionDescription>
     </>
   );
 }

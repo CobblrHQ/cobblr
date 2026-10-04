@@ -13,12 +13,14 @@ import { useSearchParams } from "react-router-dom";
 import { usePageTitle } from "@cobblr/platform-web";
 import { EdgeBridgesPage } from "./EdgeBridgesPage";
 import { DigifabPage } from "./DigifabPage";
+import { ESPHomeDevices } from "./ESPHomeDevices";
 import { PrintPage } from "./PrintPage";
 
 const TABS = [
   { id: "bridges", label: "Bridges" },
   { id: "machines", label: "Machine managers" },
   { id: "printers", label: "Printers" },
+  { id: "esphome", label: "ESPHome" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
@@ -39,7 +41,7 @@ export function DevicesPage() {
   return (
     <div className="space-y-4">
       
-      <div className="flex gap-1 border-b border-line dark:border-slate-700">
+      <div className="flex flex-wrap gap-1 border-b border-line dark:border-slate-700">
         {TABS.map((t) => (
           <button
             key={t.id}
@@ -55,6 +57,7 @@ export function DevicesPage() {
       {tab === "bridges" && <EdgeBridgesPage embedded />}
       {tab === "machines" && <DigifabPage setupOnly embedded />}
       {tab === "printers" && <PrintPage embedded />}
+      {tab === "esphome" && <ESPHomeDevices />}
     </div>
   );
 }

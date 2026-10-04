@@ -1,3 +1,4 @@
+import { useScanOrigins } from "../lib/useScanOrigins";
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -69,6 +70,7 @@ interface ResolvedQr {
 }
 
 export function GlobalScanWedge({ activeSlug }: { activeSlug: string }) {
+  const scanOrigins = useScanOrigins(activeSlug);
   const loc = useLocation();
   const navigate = useNavigate();
   const toast = useToast();
@@ -205,7 +207,7 @@ export function GlobalScanWedge({ activeSlug }: { activeSlug: string }) {
       // never disagree about what a payload is. A retail code skips the
       // resolve round-trip: it cannot be a Cobblr label or a declared
       // identifier, so it is staged at once.
-      const v = wedgeVerdict(code);
+      const v = wedgeVerdict(code, scanOrigins);
       switch (v.action) {
         case "route-qr":
           void handleQr(v.token);

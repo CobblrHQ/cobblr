@@ -12,7 +12,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "lists",
-  version: "0.1.20",
+  version: "0.1.21",
   displayName: "Lists",
   description:
     "Simple checklists for shopping, packing or to-dos, which can fill themselves when something runs low.",
@@ -112,6 +112,7 @@ export default defineModule({
     ],
     actions: [
       {
+        group: "buy",
         id: "lists:clear-done",
         examples: ["clear the ticked ones", "tidy up this list"],
         label: "Clear done items",
@@ -122,6 +123,7 @@ export default defineModule({
         invokeHandler: "lists.clear-done",
       },
       {
+        group: "buy",
         id: "lists:add-item",
         examples: ["put milk on the shopping list", "add that to my list"],
         undoable: true,
@@ -148,6 +150,7 @@ export default defineModule({
       },
       {
         // NO-PHRASING: a module taking back a line it put on a list itself
+        group: "buy",
         id: "lists:withdraw-item",
         internal: true,
         label: "Take back a line a module added",

@@ -1,3 +1,4 @@
+import { FieldPack, fieldNeed, RecordFormModal, MutationError, useUnits } from "@cobblr/platform-web";
 // What this pattern needs: each yarn and each hook or needle, read from the
 // pattern PDF and kept on the pattern (pattern-needs.ts on the server).
 //
@@ -9,7 +10,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, RefreshCw, X } from "lucide-react";
-import { Modal, MutationError, useUnits } from "@cobblr/platform-web";
 import { countOf, NOTION_NAMES } from "@cobblr/platform-contract";
 import type { NeedMatch, PatternNeed, PatternNeedInput, PatternNeedKind, PatternNeedsState, ProjectsApi } from "./api";
 
@@ -606,7 +606,7 @@ function NeedEditor({
     </label>
   );
   return (
-    <Modal open onClose={onClose} title={existing ? "Change what the pattern needs" : kind === "yarn" ? "Add a yarn" : kind === "notion" ? "Add a notion" : "Add a hook or needle"} size="sm">
+    <RecordFormModal open onClose={onClose} title={existing ? "Change what the pattern needs" : kind === "yarn" ? "Add a yarn" : kind === "notion" ? "Add a notion" : "Add a hook or needle"}>
       <div className="space-y-2.5">
         {kind === "notion" ? (
           <>
@@ -621,38 +621,100 @@ function NeedEditor({
                 ))}
               </select>
             </label>
-            <div className="grid grid-cols-2 gap-2">
-              {field("How many", "quantity", { type: "number", min: 0, step: "any", inputMode: "decimal" })}
-              {field("Size in mm (eyes, buttons)", "size_mm", { type: "number", min: 0, step: "any", inputMode: "decimal" })}
-            </div>
+            <FieldPack items={[
+              {
+                need: fieldNeed("quantity", { control: "number", label: "How many" }),
+                node: (
+                  field("How many", "quantity", { type: "number", min: 0, step: "any", inputMode: "decimal" })
+                ),
+              },
+              {
+                need: fieldNeed("size_mm", { control: "number", label: "Size in mm (eyes, buttons)" }),
+                node: (
+                  field("Size in mm (eyes, buttons)", "size_mm", { type: "number", min: 0, step: "any", inputMode: "decimal" })
+                ),
+              },
+            ]} />
           </>
         ) : kind === "yarn" ? (
           <>
             {field("Pattern's name for it (MC, A…)", "label")}
-            <div className="grid grid-cols-2 gap-2">
-              {field("Brand", "brand")}
-              {field("Yarn line", "product")}
-              {field("Colour", "color")}
-              {field("Colour number", "color_code")}
-            </div>
-            <label className="block">
-              <span className="block text-xs text-muted mb-0.5">Weight</span>
-              <select value={f.weight} onChange={set("weight")} className="input text-sm">
-                <option value="">Not given</option>
-                {WEIGHTS.map((w) => (
-                  <option key={w} value={w}>
-                    {w}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {field("Fibre", "fiber")}
-            <div className="grid grid-cols-2 gap-2">
-              {field("How many", "quantity", { type: "number", min: 0, step: "any", inputMode: "decimal" })}
-              {field("Of what (ball, skein, hank)", "quantity_unit")}
-              {field("Metres in one", "unit_length_m", { type: "number", min: 0, step: "any", inputMode: "decimal" })}
-              {field("Metres in all", "length_m", { type: "number", min: 0, step: "any", inputMode: "decimal", placeholder: "worked out" })}
-            </div>
+            <FieldPack items={[
+              {
+                need: fieldNeed("brand", { control: "text", label: "Brand" }),
+                node: (
+                  field("Brand", "brand")
+                ),
+              },
+              {
+                need: fieldNeed("product", { control: "text", label: "Yarn line" }),
+                node: (
+                  field("Yarn line", "product")
+                ),
+              },
+              {
+                need: fieldNeed("color", { control: "text", label: "Colour" }),
+                node: (
+                  field("Colour", "color")
+                ),
+              },
+              {
+                need: fieldNeed("color_code", { control: "text", label: "Colour number" }),
+                node: (
+                  field("Colour number", "color_code")
+                ),
+              },
+            ]} />
+            <FieldPack items={[
+              {
+                need: fieldNeed("w", { control: "choice", label: "Weight" }),
+                node: (
+                  <label className="block">
+                    <span className="block text-xs text-muted mb-0.5">Weight</span>
+                    <select value={f.weight} onChange={set("weight")} className="input text-sm">
+                      <option value="">Not given</option>
+                      {WEIGHTS.map((w) => (
+                        <option key={w} value={w}>
+                          {w}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ),
+              },
+              {
+                need: fieldNeed("fiber", { control: "text", label: "Fibre" }),
+                node: (
+                  field("Fibre", "fiber")
+                ),
+              },
+            ]} />
+            <FieldPack items={[
+              {
+                need: fieldNeed("quantity", { control: "number", label: "How many" }),
+                node: (
+                  field("How many", "quantity", { type: "number", min: 0, step: "any", inputMode: "decimal" })
+                ),
+              },
+              {
+                need: fieldNeed("quantity_unit", { control: "text", label: "Of what (ball, skein, hank)" }),
+                node: (
+                  field("Of what (ball, skein, hank)", "quantity_unit")
+                ),
+              },
+              {
+                need: fieldNeed("unit_length_m", { control: "number", label: "Metres in one" }),
+                node: (
+                  field("Metres in one", "unit_length_m", { type: "number", min: 0, step: "any", inputMode: "decimal" })
+                ),
+              },
+              {
+                need: fieldNeed("length_m", { control: "number", label: "Metres in all" }),
+                node: (
+                  field("Metres in all", "length_m", { type: "number", min: 0, step: "any", inputMode: "decimal", placeholder: "worked out" })
+                ),
+              },
+            ]} />
           </>
         ) : (
           <>
@@ -663,10 +725,20 @@ function NeedEditor({
                 <option value="needle">Knitting needle</option>
               </select>
             </label>
-            <div className="grid grid-cols-2 gap-2">
-              {field("Size in mm", "size_mm", { type: "number", min: 0, step: "any", inputMode: "decimal" })}
-              {field("Other name (US H-8)", "size_label")}
-            </div>
+            <FieldPack items={[
+              {
+                need: fieldNeed("size_mm", { control: "number", label: "Size in mm" }),
+                node: (
+                  field("Size in mm", "size_mm", { type: "number", min: 0, step: "any", inputMode: "decimal" })
+                ),
+              },
+              {
+                need: fieldNeed("size_label", { control: "text", label: "Other name (US H-8)" }),
+                node: (
+                  field("Other name (US H-8)", "size_label")
+                ),
+              },
+            ]} />
           </>
         )}
         {save.isError && <p className="text-xs text-ember-600 dark:text-ember-400">Could not save: {(save.error as Error).message}</p>}
@@ -684,6 +756,6 @@ function NeedEditor({
           </button>
         </div>
       </div>
-    </Modal>
+    </RecordFormModal>
   );
 }

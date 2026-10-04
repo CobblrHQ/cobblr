@@ -304,6 +304,15 @@ export function FeedbackCard({
               save note
             </button>
           </div>
+          {f.reachable === false ? (
+            // Nobody to answer: a sandbox guest has no account and no address
+            // (#4645). Saying so beats a reply box that sends into a void.
+            <p data-testid="no-reply-possible" className="border-t border-line/60 dark:border-slate-800 pt-2 text-xs text-muted dark:text-mortar-300">
+              <span className="rounded bg-ember-100 dark:bg-ember-900/40 px-1.5 py-0.5 font-medium text-ember-700 dark:text-ember-200">no reply possible</span>{" "}
+              {f.unreachable_reason ?? "no one to reply to"}: nobody to answer, so replies stay internal.
+            </p>
+          ) : (
+            <>
           {/* Close the loop with the reporter — sends them an in-app notification
               ("we fixed it" / "we're looking into it"). Empty reply = a default
               keyed off the current status. */}
@@ -326,6 +335,8 @@ export function FeedbackCard({
               notify reporter
             </button>
           </div>
+            </>
+          )}
           {deliveryLine && (
             <p
               className={

@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/platform-contract",
-  "version": "0.5.75",
+  "version": "0.5.76",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
@@ -8,11 +8,14 @@
     "./sandbox-lifetime": "./src/sandbox-lifetime.ts",
     ".": "./src/index.ts",
     "./qr-token": "./src/qr-token.ts",
+    "./field-contributions": "./src/field-contributions.ts",
     "./keyset-cursor": "./src/keyset-cursor.ts",
     "./entity-endpoints": "./src/entity-endpoints.ts",
     "./csv": "./src/csv.ts",
     "./record-columns": "./src/record-columns.ts",
     "./services": "./src/services.ts",
+    "./email-body": "./src/email-body.ts",
+    "./order-intake": "./src/order-intake.ts",
     "./service-auth": "./src/service-auth.ts",
     "./filament-draw": "./src/filament-draw.ts",
     "./own-hosts": "./src/own-hosts.ts",
@@ -129,7 +132,9 @@
     "./seller-upgrade": "./src/seller-upgrade.ts",
     "./field-choices": "./src/field-choices.ts",
     "./plan-colours": "./src/plan-colours.ts",
-    "./scan-station": "./src/scan-station.ts"
+    "./scan-station": "./src/scan-station.ts",
+    "./place-indicate": "./src/place-indicate.ts",
+    "./action-groups": "./src/action-groups.ts"
   },
   "types": "src/index.ts",
   "scripts": {

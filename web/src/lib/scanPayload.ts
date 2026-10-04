@@ -73,8 +73,8 @@ export type TypedVerdict =
 export const TYPED_FIELD_HINT = "Barcode number, or paste a Cobblr QR link";
 export const TYPED_FIELD_PLACEHOLDER = "Barcode, or a Cobblr QR link";
 
-export function typedVerdict(raw: string): TypedVerdict {
-  const p = classifyScanPayload(raw);
+export function typedVerdict(raw: string, ownOrigins?: readonly string[]): TypedVerdict {
+  const p = classifyScanPayload(raw, ownOrigins);
   switch (p.kind) {
     case "cobblr-qr":
       return { action: "route-qr", token: p.token };

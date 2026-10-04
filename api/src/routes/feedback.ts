@@ -8,6 +8,7 @@ import { z } from "zod";
 import { requireAuth } from "../auth/middleware.js";
 import { meta } from "../db/meta.js";
 import { postFeedbackCard } from "./feedback-card-post.js";
+import { feedbackReachability } from "../platform/feedback-reachability.js";
 import { reporterCardFields } from "../platform/feedback-card.js";
 import { pokeTriage } from "../platform/triage-trigger.js";
 import { notifyOperators } from "../platform/operator-alert.js";
@@ -98,6 +99,9 @@ feedbackInboundRouter.post("/feedback/append-email", async (req, res, next) => {
 });
 
 const SubmitFeedback = z.object({
+  /** An address a sandbox visitor chose to leave ("Email me when this is
+   *  fixed"). Giving it is the consent; it is recorded with the time. */
+  contact_email: z.string().trim().email().max(254).optional(),
   type: z.enum(["bug", "confusing", "idea", "use_case", "other"]).default("bug"),
   message: z.string().trim().min(1).max(5000),
   // best-effort: the workspace slug the user was in → resolved to org_id
@@ -157,6 +161,11 @@ feedbackRouter.post("/", async (req, res, next) => {
     // Attachments only make sense with a workspace (that's where the files live
     // + where org-scoped read resolves). Drop them only if the user has none.
     const attachments = orgId ? parsed.data.attachments : [];
+    // Whether anyone can be reached about this, decided here (#4645): a
+    // sandbox guest's address is undeliverable, so unless they left one on
+    // purpose the item says so and no reply is promised.
+    const filer = userId ? await meta.selectFrom("users").select("email").where("id", "=", userId).executeTakeFirst() : null;
+    const reach = feedbackReachability({ email: filer?.email, contactEmail: parsed.data.contact_email });
     const row = await meta
       .insertInto("feedback")
       .values({
@@ -166,6 +175,10 @@ feedbackRouter.post("/", async (req, res, next) => {
         message: parsed.data.message,
         context: sql`${JSON.stringify(parsed.data.context)}::jsonb`,
         attachments: sql`${JSON.stringify(attachments)}::jsonb`,
+        reachable: reach.reachable,
+        unreachable_reason: reach.unreachable_reason,
+        contact_email: reach.contact_email,
+        contact_consented_at: reach.contact_email ? new Date() : null,
       })
       .returning(["id", "created_at"])
       .executeTakeFirstOrThrow();

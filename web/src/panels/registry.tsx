@@ -41,6 +41,10 @@ registerDetailPanel(
   lazy(() => import("../features/digifab/printThis").then((m) => ({ default: m.PrintThisFilePanel }))),
 );
 registerDetailPanel(
+  "inventory:material-cost",
+  lazy(() => import("../features/inventory/materialCost").then((m) => ({ default: m.MaterialCostPanel }))),
+);
+registerDetailPanel(
   "inventory:stock-here",
   lazy(() => import("../features/inventory/stockHere").then((m) => ({ default: m.StockHerePanel }))),
 );
@@ -96,6 +100,11 @@ registerDetailPanel(
 registerDetailPanel(
   "core-shipments:shipment",
   lazy(() => import("../features/core-shipments/shipment").then((m) => ({ default: m.ShipmentPanel }))),
+);
+
+registerDetailPanel(
+  "core-devices:readings",
+  lazy(() => import("../features/core-devices/readings").then(m => ({ default: m.ReadingsPanel }))),
 );
 
 export const hasPageTab = (id: string): boolean => !!PAGE_TABS[id];

@@ -115,7 +115,20 @@ export interface ConnectionResult {
 
 /** Args for placing a file. Exactly one of printer/tag is the target;
  *  omit both to let the server route by the file's own fdmm_target. */
+export interface JobReview {
+  fileId: string;
+  contentHash: string;
+  projectHash: string;
+  transport: "rest" | "udp";
+  project: Record<string, unknown>;
+  layers: Record<string, unknown>[];
+  cuts: Record<string, unknown>[];
+  materialLibrary: Record<string, unknown>;
+}
+export type JobApproval = Pick<JobReview, "fileId" | "projectHash">;
+
 export interface SubmitArgs {
+  approval?: JobApproval;
   fileId: string;
   /** Explicit printer id → classic submit (the direct path). */
   deviceId?: string | null;
@@ -128,6 +141,9 @@ export interface SubmitArgs {
 }
 
 export interface MachineDriver {
+  jobReviewRequired?(): Promise<boolean>;
+  prepareJob?(file: Uint8Array, filename: string): Promise<JobReview>;
+  getJobReview?(fileId: string): Promise<JobReview>;
   /** Liveness + capability probe. Read-only. */
   testConnection(): Promise<ConnectionResult>;
   /** Pull the printer list (for the one-time machine↔printer mapping). Read-only. */

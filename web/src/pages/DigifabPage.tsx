@@ -1,10 +1,13 @@
+import { bridgeDisplayName } from "../lib/bridge-choice";
+import { useJobStartReview } from "../features/digifab/startReview";
+import { ContributedDetailPanels, FieldPack, fieldNeed, RecordFormModal, changeWorkspaceShape, DragInput, Lightbox, Modal, useToast, useConfirm, usePageTitle, useImageSrc, SecretInput, EntityPhoto, AddressInput, SearchInput, CustomFieldsPanel } from "@cobblr/platform-web";
 // /configuration/digifab — Digital Fabrication. Manage connections to the
 // software that runs your machines (FDM Monster, OctoPrint, …): add one,
 // test it, list its printers, link printers to machines, and run the job
 // queue. Sending a file to be made is a deliberate action — the Send
 // button is behind an explicit confirm. We send files, never drive hardware.
 
-import { cancelOutcome } from "../lib/digifab-cancel";
+import { cancelOutcome, canCancelJob } from "../lib/digifab-cancel";
 import { useState, useMemo, useEffect, useRef, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
@@ -12,7 +15,6 @@ import { Plus, Trash2, Wifi, Printer, RefreshCw, Send, ListChecks, Boxes, X, Lis
 import { ApiError, api, type DigifabConnection, type DigifabJob, type DigifabFleet, type BambuMode, type DigifabLibraryItem, type DigifabHistory, type DigifabRun, type DigifabFailureConfig, type DigifabDetector, type DigifabDetectorCatalogEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { PrintUpdatesPanel } from "./PrintUpdatesPanel";
-import { changeWorkspaceShape, DragInput, Lightbox, Modal, useToast, useConfirm, usePageTitle, useImageSrc, SecretInput, EntityPhoto, AddressInput, SearchInput, CustomFieldsPanel } from "@cobblr/platform-web";
 import { Combobox } from "../components/Combobox";
 import { CreateConnectionModal, FleetView, PrintDetailModal, LIBRARY_DRAG_MIME, fetchAllMachines } from "../features/digifab/fleet";
 import { useReprint } from "../features/digifab/useReprint";
@@ -98,6 +100,8 @@ export function DigifabPage({
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
+  const bridges = useQuery({ queryKey: ["edge-bridges", activeSlug], queryFn: () => api.listEdgeBridges(activeSlug), enabled: !!activeSlug, refetchInterval: 8000 });
+  const bridgeName = (id: unknown) => bridgeDisplayName(bridges.data?.bridges.find(b => b.bridge === (typeof id === "string" ? id : null)) || { bridge: typeof id === "string" ? id : null, name: null });
   const items = list.data?.items ?? [];
   // Per-mode capability table (cloud/lan/hybrid) so each Bambu connection can show
   // what it can do — monitor vs control — instead of leaving it a mystery.
@@ -258,7 +262,7 @@ export function DigifabPage({
               <div className="flex-1 min-w-0 cursor-pointer" onClick={() => toggleExpanded(c.id)}>
                 <div className="text-sm font-medium text-content dark:text-mortar-100 truncate flex items-center gap-2">
                   {c.label}
-                  <span className="text-[10px] font-mono uppercase tracking-wider text-faint">{c.type === "bambu" ? "bambu" : c.type}</span>
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-faint">{c.type === "edge_adapter" ? "Your bridge" : c.type === "bambu" ? "Bambu" : c.type}</span>
                   {c.capabilities?.routing && (
                     <span className="text-[10px] font-mono text-moss-600 dark:text-moss-400">routing</span>
                   )}
@@ -278,7 +282,8 @@ export function DigifabPage({
                     );
                   })()}
                 </div>
-                <div className="text-[11px] font-mono text-faint truncate">{c.base_url}</div>
+                {c.type === "edge_adapter" ? <div className="text-xs text-muted">{c.config?.driver === "lightburn" ? "Laser" : "Machine"} on {bridgeName(c.config?.bridge)}</div> : <div className="text-[11px] text-faint truncate">{c.base_url}</div>}
+                {c.type === "edge_adapter" && <details className="text-xs text-faint" onClick={event => event.stopPropagation()}><summary>Connection details</summary><p>{c.type} · {c.base_url}</p><p>Bridge id: {typeof c.config?.bridge === "string" ? c.config.bridge : "main"}</p></details>}
                 {c.last_sync_status && (
                   <div className={"text-[11px] " + (c.last_sync_status === "ok" ? "text-moss-600 dark:text-moss-400" : "text-ember-500")}>
                     {c.last_sync_status === "ok" ? "✓ reachable" : c.last_sync_status}
@@ -304,7 +309,7 @@ export function DigifabPage({
                 onClick={async () => {
                   const ok = await confirm({
                     title: `Remove "${c.label}"?`,
-                    message: "Deletes the connection + its stored credentials, and cancels/unlinks any jobs, pool members and links that depended on it. Print history isn't sent anywhere.",
+                    message: "Deletes the connection + its stored credentials, and cancels/unlinks any jobs, pool members and links that depended on it. Job history isn't sent anywhere.",
                     confirmLabel: "Remove",
                     destructive: true,
                   });
@@ -659,7 +664,7 @@ const canSend = (j: DigifabJob) => j.status === "queued" && !j.remote_job_id && 
 const canPoll = (j: DigifabJob) => !!j.remote_job_id && !TERMINAL_JOB(j.status) && !j.external;
 // An external ("on printer") row is an observed print with no Cobblr job behind
 // it — offering Cancel just 404s. Read-only.
-const canCancel = (j: DigifabJob) => !TERMINAL_JOB(j.status) && !j.external;
+const canCancel = canCancelJob;
 // Safe to delete from the queue only when it's not physically on a printer.
 const canDelete = (j: DigifabJob) => j.status !== "sent" && j.status !== "printing" && j.status !== "paused" && !j.external;
 // F-14: a job that matched 0 or many printers can be re-pointed at a specific one.
@@ -1184,7 +1189,7 @@ function PrinterRegister({ slug, detId, fleet, onDone }: { slug: string; detId: 
               )}
               {needsDevice && (
                 <div className="flex items-center gap-1.5">
-                  <span className={detLbl}>Printer</span>
+                  <span className={detLbl}>Machine</span>
                   <select value={deviceId} onChange={(e) => setDeviceId(e.target.value)} className="input !py-1 text-xs flex-1">
                     <option value=""> - which printer (needs stored LAN creds) - </option>
                     {(selectedConn?.devices ?? []).map((dv) => <option key={dv.id} value={dv.id}>{dv.name} ({dv.id})</option>)}
@@ -1216,7 +1221,7 @@ function PrinterRegister({ slug, detId, fleet, onDone }: { slug: string; detId: 
   );
 }
 
-// Print history + at-a-glance stats — a read model over the jobs Cobblr sent +
+// Job history + at-a-glance stats — a read model over the jobs Cobblr sent +
 // tracked to completion. Collapsed by default; loads on open.
 function PrintHistorySection({ slug }: { slug: string }) {
   const [open, setOpen] = useState(false);
@@ -1237,7 +1242,7 @@ function PrintHistorySection({ slug }: { slug: string }) {
   return (
     <div className="pt-2">
       <button type="button" onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 text-sm font-semibold text-content dark:text-mortar-100">
-        <ChevronRight size={15} className={"transition-transform " + (open ? "rotate-90" : "")} /> Print history
+        <ChevronRight size={15} className={"transition-transform " + (open ? "rotate-90" : "")} /> Job history
       </button>
       {open && (
         <div className="mt-2 space-y-3">
@@ -1250,15 +1255,15 @@ function PrintHistorySection({ slug }: { slug: string }) {
           {hist.isLoading ? <div className="text-xs text-muted">Loading…</div> : s && (
             <>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {stat("Prints", String(s.total))}
+                {stat("Jobs", String(s.total))}
                 {stat("Success", rate == null ? "—" : `${rate}%`)}
                 {stat("Filament", s.filament_g ? `${Math.round(s.filament_g)} g` : "—")}
-                {stat("Print time", s.hours ? `${s.hours} h` : "—")}
+                {stat("Run time", s.hours ? `${s.hours} h` : "—")}
               </div>
               {hist.data?.series && hist.data.series.length > 0 && <PrintTrendChart series={hist.data.series} />}
               {(hist.data?.by_device.length ?? 0) > 0 && (
                 <div>
-                  <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">By printer</div>
+                  <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">By machine</div>
                   <ul className="text-xs space-y-0.5">
                     {[...hist.data!.by_device]
                       .sort((a, b) => b.total - a.total)
@@ -1278,9 +1283,9 @@ function PrintHistorySection({ slug }: { slug: string }) {
                 </div>
               )}
               <div>
-                <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Recent prints</div>
+                <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Recent jobs</div>
                 {hist.data!.recent.length === 0 ? (
-                  <div className="text-xs text-muted italic">No finished prints in this window.</div>
+                  <div className="text-xs text-muted italic">No finished jobs in this window.</div>
                 ) : (
                   <ul className="divide-y divide-line dark:divide-slate-800 border border-line dark:border-slate-700 rounded">
                     {hist.data!.recent.map((r) => {
@@ -1315,7 +1320,7 @@ function PrintHistorySection({ slug }: { slug: string }) {
             </>
           )}
           {printOpen && <PrintDetailModal item={printOpen} onClose={() => setPrintOpen(null)} onZoom={setLightbox} onReprint={(r) => { setPrintOpen(null); void askReprint(r); }} />}
-          {lightbox && <Lightbox items={[{ key: lightbox, caption: "Print", src: lightbox }]} index={0} onClose={() => setLightbox(null)} />}
+          {lightbox && <Lightbox items={[{ key: lightbox, caption: "Job", src: lightbox }]} index={0} onClose={() => setLightbox(null)} />}
         </div>
       )}
     </div>
@@ -1356,6 +1361,7 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
     void qc.invalidateQueries({ queryKey: ["digifab-jobs", activeSlug] });
     void qc.invalidateQueries({ queryKey: ["digifab-fleet", activeSlug] }); // F-8: reflect the device's active job too
   };
+  const startReview = useJobStartReview(invalidate);
   const connById = new Map(connections.map((c) => [c.id, c]));
 
   const send = useMutation({
@@ -1401,7 +1407,7 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
-  const askSend = async (j: DigifabJob) => {
+  const askSend = async (j: DigifabJob) => startReview.beforeStart(j.id, async () => {
     const conn = j.connection_id ? connById.get(j.connection_id) : undefined;
     const isMock = conn?.type === "mock";
     const ok = await confirm({
@@ -1413,7 +1419,7 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
       destructive: !isMock,
     });
     if (ok) send.mutate(j.id);
-  };
+  });
   const askCancel = async (j: DigifabJob) => {
     const ok = await confirm({
       title: "Cancel this print?",
@@ -1478,12 +1484,13 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
 
   return (
     <section className="space-y-2 pt-2">
+      {startReview.sheet}
       <div className="flex flex-wrap items-center gap-2 sm:gap-3 border-b border-line dark:border-slate-700 pb-2">
         {items.length > 0 && (
           <input type="checkbox" checked={allChecked} onChange={toggleAll} title="Select all" className="shrink-0" />
         )}
         <ListChecks size={16} className="text-accent" />
-        <h2 className="text-sm font-semibold text-content dark:text-mortar-100">Print queue</h2>
+        <h2 className="text-sm font-semibold text-content dark:text-mortar-100">Job queue</h2>
         <span className="text-[11px] text-faint">
           {items.length}
           {totalForFilter != null && totalForFilter > items.length ? ` of ${totalForFilter}` : ""} job{items.length === 1 ? "" : "s"}
@@ -1525,7 +1532,7 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
           <span className="text-content dark:text-mortar-200 font-medium">{sel.size} selected</span>
           <div className="flex-1" />
           {bulkSendable.length > 0 && (
-            <button onClick={bulkSend} disabled={send.isPending} className="inline-flex items-center gap-1 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2 py-0.5 disabled:opacity-50">
+            <button onClick={bulkSend} disabled={send.isPending || startReview.busy} className="inline-flex items-center gap-1 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2 py-0.5 disabled:opacity-50">
               <Send size={11} /> Send {bulkSendable.length}
             </button>
           )}
@@ -1565,7 +1572,7 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
             jb.target_pool && !jb.target_device
               ? "⟳ pool: waiting for a free printer"
               : jb.target_device
-                ? `printer ${jb.target_device}`
+                ? `machine ${jb.target_device}`
                 : jb.target_tag
                   ? `#${jb.target_tag}`
                   : jb.linked_machine_id
@@ -1586,11 +1593,11 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-[13px] text-content dark:text-mortar-100 truncate group-hover:text-accent transition">{jb.file_ref}</span>
                   <span className={"text-[10px] px-1.5 py-0.5 rounded font-medium " + (JOB_STATUS_STYLE[jb.status] ?? "text-muted bg-subtle")}>
-                    {jb.status}
+                    {jb.status === "printing" ? "Running" : jb.status}
                   </span>
                   {jb.external && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded font-medium text-amber-700 bg-amber-100 dark:text-amber-300 dark:bg-amber-900/40" title="Started on the printer, not sent from Cobblr">
-                      on printer
+                    <span className="text-[10px] px-1.5 py-0.5 rounded font-medium text-amber-700 bg-amber-100 dark:text-amber-300 dark:bg-amber-900/40" title="Started at the machine, outside Cobblr">
+                      on machine
                     </span>
                   )}
                   {jb.linked_build_id && (
@@ -1623,7 +1630,7 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
               {canSend(jb) && (
                 <button
                   onClick={() => askSend(jb)}
-                  disabled={send.isPending}
+                  disabled={send.isPending || startReview.busy}
                   className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2.5 py-1 text-xs transition disabled:opacity-50"
                 >
                   <Send size={12} /> Send
@@ -1645,6 +1652,7 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
                   <Ban size={14} />
                 </button>
               )}
+              {jb.target_device === "lightburn" && jb.remote_job_id && !TERMINAL_JOB(jb.status) && <span className="text-xs text-muted max-w-40">{jb.status === "sent" ? "Start sent, waiting for LightBurn to report running. " : ""}Stop in LightBurn or at the machine</span>}
               {canDelete(jb) && (
                 <button
                   onClick={async () => { if (await confirm({ title: "Remove this job?", message: "Deletes it from the queue.", confirmLabel: "Remove", destructive: true })) del.mutate(jb.id); }}
@@ -1721,6 +1729,7 @@ function JobDetailModal({
   const refresh = () => { void q.refetch(); onChanged(); };
   const act = (fn: () => Promise<unknown>, ok: string) =>
     fn().then(() => { toast.success(ok); refresh(); }).catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)));
+  const startReview = useJobStartReview(refresh);
   const send = useMutation({ mutationFn: () => api.sendDigifabJob(activeSlug, jobId), onSuccess: () => { toast.success("Sent"); refresh(); }, onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)) });
   const setField = useMutation({
     mutationFn: (metadata: Record<string, unknown>) => api.updateDigifabJob(activeSlug, jobId, { metadata }),
@@ -1742,14 +1751,15 @@ function JobDetailModal({
   const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : "—");
 
   return (
-    <Modal open onClose={onClose} title="Job" size="md">
+    <RecordFormModal open onClose={onClose} title="Job">
+      {startReview.sheet}
       {!j ? (
         <div className="text-sm text-muted py-6 text-center">{q.isLoading ? "Loading…" : "Job not found."}</div>
       ) : (
         <div className="space-y-3">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-mono text-sm text-content dark:text-mortar-100 break-all">{j.file_ref}</span>
-            <span className={"text-[10px] px-1.5 py-0.5 rounded font-medium " + (JOB_STATUS_STYLE[j.status] ?? "text-muted bg-subtle")}>{j.status}</span>
+            <span className={"text-[10px] px-1.5 py-0.5 rounded font-medium " + (JOB_STATUS_STYLE[j.status] ?? "text-muted bg-subtle")}>{j.status === "printing" ? "Running" : j.status}</span>
             {j.status === "printing" && j.progress != null && <span className="text-[11px] text-accent">{Math.round(j.progress * 100)}%</span>}
           </div>
           {j.error && (
@@ -1759,7 +1769,7 @@ function JobDetailModal({
           )}
           <div>
             {row("Connection", conn?.label ?? (j.connection_id ? j.connection_id : "—"))}
-            {row("Target", j.target_device ? `printer ${j.target_device}` : j.target_pool ? "pool (auto-assign)" : j.target_tag ? `#${j.target_tag}` : j.linked_machine_id ? "linked machine" : "file routing")}
+            {row("Target", j.target_device ? `machine ${j.target_device}` : j.target_pool ? "pool (auto-assign)" : j.target_tag ? `#${j.target_tag}` : j.linked_machine_id ? "linked machine" : "file routing")}
             {j.linked_build_id ? row("Produces build", <span className={j.build_reversed_at ? "line-through text-faint" : ""}>{`×${j.build_qty}${j.build_reversed_at ? " (reversed)" : j.outcome ? "" : j.build_consumed_at ? " (materials used, counts when judged good)" : " (on send)"}`}</span>) : null}
             {j.outcome ? row("Came out", (
               <span className={j.outcome === "good" ? "text-moss-700 dark:text-moss-300" : "text-ember-700 dark:text-ember-300"}>
@@ -1789,9 +1799,12 @@ function JobDetailModal({
           </div>
           {/* The job's own fields, as a bundle or a person defines them. */}
           <CustomFieldsPanel entityKind="digifab:job" entityId={j.id} values={j.metadata ?? {}} onCommit={(name, value) => setField.mutate({ [name]: value })} />
+          <ContributedDetailPanels target="digifab:job" ctx={{ slug: activeSlug, entityId: j.id, entityTitle: j.file_ref }} />
           <div className="flex justify-end gap-2 pt-1">
             {canSend(j) && (
-              <button onClick={() => send.mutate()} disabled={send.isPending} className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm disabled:opacity-50">
+              <button onClick={() => void startReview.beforeStart(jobId, async () => {
+                if (await confirm({ title: "Start this job?", message: "This physically starts the machine. Check it is ready before continuing.", confirmLabel: "Start job", destructive: true })) send.mutate();
+              })} disabled={send.isPending || startReview.busy} className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm disabled:opacity-50">
                 <Send size={13} /> Send
               </button>
             )}
@@ -1814,7 +1827,7 @@ function JobDetailModal({
           </div>
         </div>
       )}
-    </Modal>
+    </RecordFormModal>
   );
 }
 
@@ -2141,9 +2154,13 @@ function NewJobModal({
     (routeBy === "pool" && !!poolId);
   // A pool job is unassigned, so it needs no connection; every other mode does.
   const connOk = routeBy === "pool" || !!connectionId;
+  const queueReason = !connOk ? "Choose a connection to queue this job."
+    : !fileRef.trim() ? "Add a file or routing reference to queue this job."
+    : !routeValid ? ({ machine: "Choose a linked machine to queue this job.", printer: "Choose a printer to queue this job.", tag: "Enter a printer group tag to queue this job.", pool: "Choose a pool to queue this job.", file: "" })[routeBy]
+    : null;
 
   return (
-    <Modal open onClose={onClose} title="New print job" size="md">
+    <RecordFormModal open onClose={onClose} title="New print job">
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -2153,122 +2170,159 @@ function NewJobModal({
       >
         {/* Route-by first: it decides which target field (and whether a connection)
             you need, so it leads instead of hiding at the bottom. */}
-        <label className="block">
-          <span className={lbl}>Where should it print?</span>
-          <select value={routeBy} onChange={(e) => setRouteBy(e.target.value as typeof routeBy)} className={field}>
-            <option value="printer">A specific printer</option>
-            <option value="pool">A pool (auto-assign to a free printer)</option>
-            <option value="machine">A linked machine</option>
-            <option value="tag">A tag (printer group)</option>
-            <option value="file">By the filename (advanced routing)</option>
-          </select>
-        </label>
-        {routeBy !== "pool" && (
-          <label className="block">
-            <span className={lbl}>Connection</span>
-            <Combobox
-              value={connectionId}
-              onChange={setConnectionId}
-              options={connections.map((c) => ({ value: c.id, label: c.label, hint: c.type }))}
-              placeholder="Search connections…"
-            />
-          </label>
-        )}
-        {routeBy === "pool" && (
-          <label className="block">
-            <span className={lbl}>Pool</span>
-            <Combobox
-              value={poolId}
-              onChange={setPoolId}
-              options={poolList.map((p) => ({ value: p.id, label: p.name, hint: `${p.members.length} machine${p.members.length === 1 ? "" : "s"}` }))}
-              placeholder=" - pick a pool - "
-            />
-            <span className="text-[11px] text-faint">Queues unassigned - Cobblr drips it onto the next free machine in the pool.</span>
-          </label>
-        )}
-        {routeBy === "machine" && (
-          <label className="block">
-            <span className={lbl}>Machine</span>
-            <Combobox
-              value={machineId}
-              onChange={setMachineId}
-              options={machineList.map((m) => ({ value: m.id, label: m.instLabel ? `${m.name} · ${m.instLabel}` : m.name }))}
-              placeholder=" - pick a machine - "
-            />
-            <span className="text-[11px] text-faint">Routes to the farm printer that machine is linked to.</span>
-          </label>
-        )}
-        {routeBy === "printer" && (
-          <label className="block">
-            <span className={lbl}>Printer</span>
-            <Combobox
-              value={printerId}
-              onChange={setPrinterId}
-              options={printerList.map((p) => ({ value: p.id, label: p.name, hint: p.state ?? undefined }))}
-              placeholder=" - pick a printer - "
-            />
-          </label>
-        )}
-        {routeBy === "tag" && (
-          <label className="block">
-            <span className={lbl}>Tag</span>
-            <input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="pla" className={field} />
-          </label>
-        )}
-        <label className="block">
-          <span className={lbl}>File / routing ref</span>
-          <input value={fileRef} onChange={(e) => setFileRef(e.target.value)} placeholder="bracket.gcode" className={field} autoFocus />
-        </label>
-        <label className="block">
-          <span className={lbl}>Printable file (optional)</span>
-          <Combobox
-            value={fileId}
-            onChange={(id) => {
-              setFileId(id);
-              // Convenience: name the routing ref after the file if blank.
-              const f = fileList.find((x) => x.id === id);
-              if (f && !fileRef.trim()) setFileRef(f.filename);
-            }}
-            options={fileList.map((f) => ({ value: f.id, label: f.filename }))}
-            placeholder=" - routing-only (no upload) - "
-            allowClear
-          />
-          <span className="text-[11px] text-faint">
-            Pick a stored file to upload its real bytes on send. Leave blank to send routing only.
-          </span>
-        </label>
-        <label className="block">
-          <span className={lbl}>Filament (optional)</span>
-          <div className="flex gap-2">
-            <Combobox
-              value={materialPartId}
-              onChange={setMaterialPartId}
-              options={[{ value: FROM_LOADED, label: "The spools loaded on the printer" }, ...partList.map((p) => ({ value: p.id, label: p.name }))]}
-              placeholder=" - don't track material - "
-              allowClear
-              className="flex-1"
-            />
-            <input
-              type="number"
-              min="0"
-              step="any"
-              value={materialGrams}
-              onChange={(e) => setMaterialGrams(e.target.value)}
-              placeholder="grams"
-              disabled={!materialPartId}
-              className={field + " w-28 disabled:opacity-50"}
-            />
-          </div>
-          {slicerMeta && (slicerMeta.material || slicerMeta.filament_g != null) ? (
-            <span className="text-[11px] text-moss-600 dark:text-moss-400">
-              ↳ from the file:{" "}
-              {[slicerMeta.material, slicerMeta.filament_g != null ? `${slicerMeta.filament_g} g` : null].filter(Boolean).join(" · ")}
-              {" "} - auto-filled from the slicer, edit if needed.
-            </span>
-          ) : (
-            <span className="text-[11px] text-faint">Pick a file above and Cobblr reads the filament + grams from its slicer metadata. When the print completes, the grams are deducted from that spool's stock.</span>
-          )}
-        </label>
+        <FieldPack items={[
+          {
+            need: fieldNeed("routeBy", { control: "choice", label: "Where should it print?", choices: ["A specific printer", "A pool (auto-assign to a free printer)", "A linked machine", "A tag (printer group)", "By the filename (advanced routing)"] }),
+            node: (
+              <label className="block">
+                <span className={lbl}>Where should it print?</span>
+                <select value={routeBy} onChange={(e) => setRouteBy(e.target.value as typeof routeBy)} className={field}>
+                  <option value="printer">A specific printer</option>
+                  <option value="pool">A pool (auto-assign to a free printer)</option>
+                  <option value="machine">A linked machine</option>
+                  <option value="tag">A tag (printer group)</option>
+                  <option value="file">By the filename (advanced routing)</option>
+                </select>
+              </label>
+            ),
+          },
+          (routeBy !== "pool") ? {
+            need: fieldNeed("connectionId", { control: "picker", label: "Connection" }),
+            node: (
+              <label className="block">
+                <span className={lbl}>Connection</span>
+                <Combobox
+                  value={connectionId}
+                  onChange={setConnectionId}
+                  options={connections.map((c) => ({ value: c.id, label: c.label, hint: c.type }))}
+                  placeholder="Search connections…"
+                />
+              </label>
+            ),
+          } : null,
+          (routeBy === "pool") ? {
+            need: fieldNeed("poolId", { control: "picker", label: "Pool" }),
+            node: (
+              <label className="block">
+                <span className={lbl}>Pool</span>
+                <Combobox
+                  value={poolId}
+                  onChange={setPoolId}
+                  options={poolList.map((p) => ({ value: p.id, label: p.name, hint: `${p.members.length} machine${p.members.length === 1 ? "" : "s"}` }))}
+                  placeholder=" - pick a pool - "
+                />
+                <span className="text-[11px] text-faint">Queues unassigned - Cobblr drips it onto the next free machine in the pool.</span>
+              </label>
+            ),
+          } : null,
+          (routeBy === "machine") ? {
+            need: fieldNeed("machineId", { control: "picker", label: "Machine" }),
+            node: (
+              <label className="block">
+                <span className={lbl}>Machine</span>
+                <Combobox
+                  value={machineId}
+                  onChange={setMachineId}
+                  options={machineList.map((m) => ({ value: m.id, label: m.instLabel ? `${m.name} · ${m.instLabel}` : m.name }))}
+                  placeholder=" - pick a machine - "
+                />
+                <span className="text-[11px] text-faint">Routes to the farm printer that machine is linked to.</span>
+              </label>
+            ),
+          } : null,
+          (routeBy === "printer") ? {
+            need: fieldNeed("printerId", { control: "picker", label: "Printer" }),
+            node: (
+              <label className="block">
+                <span className={lbl}>Machine</span>
+                <Combobox
+                  value={printerId}
+                  onChange={setPrinterId}
+                  options={printerList.map((p) => ({ value: p.id, label: p.name, hint: p.state ?? undefined }))}
+                  placeholder=" - pick a printer - "
+                />
+              </label>
+            ),
+          } : null,
+          (routeBy === "tag") ? {
+            need: fieldNeed("tag", { control: "text", label: "Tag" }),
+            node: (
+              <label className="block">
+                <span className={lbl}>Tag</span>
+                <input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="pla" className={field} />
+              </label>
+            ),
+          } : null,
+          {
+            need: fieldNeed("fileRef", { control: "text", label: "File / routing ref" }),
+            node: (
+              <label className="block">
+                <span className={lbl}>File / routing ref</span>
+                <input value={fileRef} onChange={(e) => setFileRef(e.target.value)} placeholder="bracket.gcode" className={field} autoFocus />
+              </label>
+            ),
+          },
+          {
+            need: fieldNeed("fileId", { control: "picker", label: "Printable file (optional)" }),
+            node: (
+              <label className="block">
+                <span className={lbl}>Printable file (optional)</span>
+                <Combobox
+                  value={fileId}
+                  onChange={(id) => {
+                    setFileId(id);
+                    // Convenience: name the routing ref after the file if blank.
+                    const f = fileList.find((x) => x.id === id);
+                    if (f && !fileRef.trim()) setFileRef(f.filename);
+                  }}
+                  options={fileList.map((f) => ({ value: f.id, label: f.filename }))}
+                  placeholder=" - routing-only (no upload) - "
+                  allowClear
+                />
+                <span className="text-[11px] text-faint">
+                  Pick a stored file to upload its real bytes on send. Leave blank to send routing only.
+                </span>
+              </label>
+            ),
+          },
+          {
+            need: fieldNeed("materialPartId", { control: "number", label: "Filament (optional)" }),
+            node: (
+              <label className="block">
+                <span className={lbl}>Filament (optional)</span>
+                <div className="flex gap-2">
+                  <Combobox
+                    value={materialPartId}
+                    onChange={setMaterialPartId}
+                    options={[{ value: FROM_LOADED, label: "The spools loaded on the printer" }, ...partList.map((p) => ({ value: p.id, label: p.name }))]}
+                    placeholder=" - don't track material - "
+                    allowClear
+                    className="flex-1"
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={materialGrams}
+                    onChange={(e) => setMaterialGrams(e.target.value)}
+                    placeholder="grams"
+                    disabled={!materialPartId}
+                    className={field + " w-28 disabled:opacity-50"}
+                  />
+                </div>
+                {slicerMeta && (slicerMeta.material || slicerMeta.filament_g != null) ? (
+                  <span className="text-[11px] text-moss-600 dark:text-moss-400">
+                    ↳ from the file:{" "}
+                    {[slicerMeta.material, slicerMeta.filament_g != null ? `${slicerMeta.filament_g} g` : null].filter(Boolean).join(" · ")}
+                    {" "} - auto-filled from the slicer, edit if needed.
+                  </span>
+                ) : (
+                  <span className="text-[11px] text-faint">Pick a file above and Cobblr reads the filament + grams from its slicer metadata. When the print completes, the grams are deducted from that spool's stock.</span>
+                )}
+              </label>
+            ),
+          },
+        ]} />
         {buildList.length === 0 && !builds.isLoading && builds.isSuccess && (
           <div className="text-[11px] text-faint italic">Tip: define a build (bill-of-materials) to have this job draw its parts from inventory automatically.</div>
         )}
@@ -2298,35 +2352,46 @@ function NewJobModal({
             <span className="block text-[11px] text-faint mt-1">When this job is sent to the machine, the build's components are drawn from inventory and the finished part is added (× qty). A scrapped, cancelled or failed print puts them back.</span>
           </label>
         )}
-        <div className="grid grid-cols-2 gap-2">
-          <label className="block">
-            <span className={lbl}>Priority</span>
-            <select value={priority} onChange={(e) => setPriority(Number(e.target.value))} className={field}>
-              <option value={0}>Normal</option>
-              <option value={10}>High</option>
-              <option value={20}>Urgent</option>
-            </select>
-            <span className="text-[11px] text-faint">Higher-priority queued jobs assign to a free printer first.</span>
-          </label>
-          <label className="block">
-            <span className={lbl}>Auto-retry on fail</span>
-            <select value={maxAttempts} onChange={(e) => setMaxAttempts(Number(e.target.value))} className={field}>
-              <option value={1}>No retry</option>
-              <option value={2}>1 retry</option>
-              <option value={3}>2 retries</option>
-              <option value={4}>3 retries</option>
-            </select>
-            <span className="text-[11px] text-faint">A failed print re-queues and re-sends up to this many times.</span>
-          </label>
-        </div>
+        <FieldPack items={[
+          {
+            need: fieldNeed("priority", { control: "choice", label: "Priority" }),
+            node: (
+              <label className="block">
+                <span className={lbl}>Priority</span>
+                <select value={priority} onChange={(e) => setPriority(Number(e.target.value))} className={field}>
+                  <option value={0}>Normal</option>
+                  <option value={10}>High</option>
+                  <option value={20}>Urgent</option>
+                </select>
+                <span className="text-[11px] text-faint">Higher-priority queued jobs assign to a free printer first.</span>
+              </label>
+            ),
+          },
+          {
+            need: fieldNeed("maxAttempts", { control: "choice", label: "Auto-retry on fail" }),
+            node: (
+              <label className="block">
+                <span className={lbl}>Auto-retry on fail</span>
+                <select value={maxAttempts} onChange={(e) => setMaxAttempts(Number(e.target.value))} className={field}>
+                  <option value={1}>No retry</option>
+                  <option value={2}>1 retry</option>
+                  <option value={3}>2 retries</option>
+                  <option value={4}>3 retries</option>
+                </select>
+                <span className="text-[11px] text-faint">A failed print re-queues and re-sends up to this many times.</span>
+              </label>
+            ),
+          },
+        ]} />
+        {queueReason && <p id="queue-job-reason" role="status" className="text-xs text-muted">{queueReason}</p>}
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" onClick={onClose} className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800">Cancel</button>
-          <button type="submit" disabled={save.isPending || !connOk || !fileRef.trim() || !routeValid} className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white">
+          <button type="submit" aria-describedby={queueReason ? "queue-job-reason" : undefined} disabled={save.isPending || !!queueReason} className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white">
             {save.isPending ? "Queuing…" : "Queue job"}
           </button>
         </div>
       </form>
-    </Modal>
+    </RecordFormModal>
   );
 }
 
@@ -2453,13 +2518,13 @@ function LibrarySection({ slug }: { slug: string }) {
         <h2 className="text-sm font-semibold text-content dark:text-mortar-100">Library</h2>
         <span className="text-xs text-faint">{itemsL.length} file{itemsL.length === 1 ? "" : "s"}</span>
         <div className="flex-1" />
-        <input ref={fileRef} type="file" accept=".3mf,.gcode,.gco,.g" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload.mutate(f); e.target.value = ""; }} />
+        <input ref={fileRef} type="file" accept=".3mf,.gcode,.gco,.g,.svg,.dxf,.ai,.pdf,.lbrn2" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload.mutate(f); e.target.value = ""; }} />
         <button onClick={() => fileRef.current?.click()} disabled={upload.isPending} className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2.5 py-1 text-xs disabled:opacity-50">
           <Plus size={13} /> {upload.isPending ? "Uploading…" : "Upload file"}
         </button>
       </div>
       {itemsL.length === 0 ? (
-        <div className="text-xs text-muted dark:text-slate-400 italic">No files yet. Upload a .3mf or .gcode - Cobblr pulls out the slicer's plate preview, and you can send it to any machine.</div>
+        <div className="text-xs text-muted dark:text-slate-400 italic">No files yet. For a laser, upload SVG, DXF, AI, PDF or .lbrn2. For a 3D printer, upload .3mf or .gcode.</div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
           {itemsL.map((it) => <LibraryCard key={it.id} item={it} slug={slug} />)}
@@ -2491,7 +2556,7 @@ function LibraryCard({ item, slug }: { item: DigifabLibraryItem; slug: string })
         e.dataTransfer.setData(LIBRARY_DRAG_MIME, JSON.stringify({ name: item.name, file_id: item.file_id }));
         e.dataTransfer.effectAllowed = "copy";
       }}
-      title="Drag onto a fleet machine to print it there"
+      title="Drag onto a fleet machine to send it there"
     >
       <EntityPhoto src={thumb} alt="" aspect="square" fit="contain" placeholder={<Boxes size={26} className="text-faint" />} />
       <div className="p-2 space-y-1 flex-1 flex flex-col">
@@ -2509,7 +2574,7 @@ function LibraryCard({ item, slug }: { item: DigifabLibraryItem; slug: string })
         <div className="flex items-center gap-1.5 pt-1 mt-auto">
           <button onClick={() => setSendOpen(true)} className="flex-1 inline-flex items-center justify-center gap-1 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2 py-1 text-[11px]"><Send size={11} /> Send</button>
           <button
-            onClick={async () => { if (await confirm({ title: `Delete "${item.name}"?`, message: "Removes it from the library (doesn't touch any printer).", confirmLabel: "Delete", destructive: true })) del.mutate(); }}
+            onClick={async () => { if (await confirm({ title: `Delete "${item.name}"?`, message: "Removes it from the library (doesn't touch any machine).", confirmLabel: "Delete", destructive: true })) del.mutate(); }}
             disabled={del.isPending}
             className="text-faint hover:text-ember-500 p-1 disabled:opacity-50"
             title="Delete"
@@ -2521,7 +2586,8 @@ function LibraryCard({ item, slug }: { item: DigifabLibraryItem; slug: string })
   );
 }
 
-function LibrarySendModal({ item, slug, onClose }: { item: DigifabLibraryItem; slug: string; onClose: () => void }) {
+export function LibrarySendModal({ item, slug, onClose }: { item: DigifabLibraryItem; slug: string; onClose: () => void }) {
+  const qc = useQueryClient();
   const toast = useToast();
   const [mode, setMode] = useState<"printer" | "pool">("printer");
   const [connectionId, setConnectionId] = useState("");
@@ -2530,9 +2596,21 @@ function LibrarySendModal({ item, slug, onClose }: { item: DigifabLibraryItem; s
   const conns = useQuery({ queryKey: ["digifab-connections", slug], queryFn: () => api.listDigifabConnections(slug), enabled: !!slug });
   const pools = useQuery({ queryKey: ["digifab-pools", slug], queryFn: () => api.listDigifabPools(slug), enabled: !!slug });
   const devices = useQuery({ queryKey: ["digifab-printers", slug, connectionId], queryFn: () => api.listDigifabDevices(slug, connectionId), enabled: !!connectionId && mode === "printer" });
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: ["digifab-jobs", slug] });
+    void qc.invalidateQueries({ queryKey: ["digifab-fleet", slug] });
+  };
+  const sent = () => { refresh(); onClose(); };
+  const startReview = useJobStartReview(sent);
   const send = useMutation({
-    mutationFn: () => api.sendDigifabLibrary(slug, item.id, mode === "pool" ? { target_pool: poolId } : { connection_id: connectionId, target_device: deviceId || null }),
-    onSuccess: (r) => { toast.success(mode === "pool" ? "Queued to the pool. It auto-assigns to a free printer" : `Sent: ${r.status}`); onClose(); },
+    mutationFn: async () => {
+      if (mode === "pool") return api.sendDigifabLibrary(slug, item.id, { target_pool: poolId });
+      const job = await api.createDigifabJob(slug, { connection_id: connectionId, target_device: deviceId, file_ref: item.name, file_id: item.file_id });
+      refresh();
+      await startReview.beforeStart(job.id, async () => { await api.sendDigifabJob(slug, job.id); sent(); });
+      return { job_id: job.id, status: "queued" };
+    },
+    onSuccess: () => { if (mode === "pool") { toast.success("Queued to the pool. It auto-assigns to a free machine"); sent(); } },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Send failed"),
   });
   const connList = conns.data?.items ?? [];
@@ -2542,10 +2620,11 @@ function LibrarySendModal({ item, slug, onClose }: { item: DigifabLibraryItem; s
   const lbl = "block text-[10px] font-mono uppercase tracking-widest text-faint mb-1";
   const ready = mode === "pool" ? !!poolId : !!connectionId && !!deviceId;
   return (
-    <Modal open onClose={onClose} title={`Send "${item.name}"`} size="sm">
+    <RecordFormModal open onClose={onClose} title={`Send "${item.name}"`}>
+      {startReview.sheet}
       <div className="space-y-3">
         <div className="flex gap-1.5">
-          <button type="button" onClick={() => setMode("printer")} className={"flex-1 text-xs px-2 py-1 rounded border " + (mode === "printer" ? "border-accent text-accent" : "border-line dark:border-slate-600 text-muted")}>A printer</button>
+          <button type="button" onClick={() => setMode("printer")} className={"flex-1 text-xs px-2 py-1 rounded border " + (mode === "printer" ? "border-accent text-accent" : "border-line dark:border-slate-600 text-muted")}>A machine</button>
           <button type="button" onClick={() => setMode("pool")} className={"flex-1 text-xs px-2 py-1 rounded border " + (mode === "pool" ? "border-accent text-accent" : "border-line dark:border-slate-600 text-muted")}>A pool</button>
         </div>
         {mode === "printer" ? (
@@ -2558,7 +2637,7 @@ function LibrarySendModal({ item, slug, onClose }: { item: DigifabLibraryItem; s
               </select>
             </label>
             <label className="block">
-              <span className={lbl}>Printer</span>
+              <span className={lbl}>Machine</span>
               <select value={deviceId} onChange={(e) => setDeviceId(e.target.value)} disabled={!connectionId} className={field + " disabled:opacity-50"}>
                 <option value="">{devices.isLoading ? "Loading…" : "Pick one"}</option>
                 {deviceList.map((d) => <option key={d.id} value={d.id}>{d.name || d.id}</option>)}
@@ -2572,16 +2651,16 @@ function LibrarySendModal({ item, slug, onClose }: { item: DigifabLibraryItem; s
               <option value=""> - pick - </option>
               {poolList.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
-            <span className="text-[11px] text-faint">Drips onto the next free printer in the pool.</span>
+            <span className="text-[11px] text-faint">Goes to the next free machine in the pool.</span>
           </label>
         )}
         <p className="text-[11px] text-faint">Bambu over the cloud can't accept an arbitrary file - send works on FDM Monster / OctoPrint / Klipper / edge-bridge machines (Bambu LAN later).</p>
         <div className="flex justify-end gap-2 pt-1">
           <button onClick={onClose} className="px-3 py-1.5 text-sm rounded border border-line dark:border-slate-600">Cancel</button>
-          <button onClick={() => send.mutate()} disabled={!ready || send.isPending} className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50">{send.isPending ? "Sending…" : "Send"}</button>
+          <button onClick={() => send.mutate()} disabled={!ready || send.isPending || startReview.busy} className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50">{send.isPending ? "Sending…" : "Send"}</button>
         </div>
       </div>
-    </Modal>
+    </RecordFormModal>
   );
 }
 
@@ -3184,63 +3263,92 @@ function ProductionRunsSection({ slug }: { slug: string }) {
         </details>
       )}
 
-      <Modal open={open} onClose={() => setOpen(false)} title="New production run">
+      <RecordFormModal open={open} onClose={() => setOpen(false)} title="New production run">
         <div className="space-y-3 text-sm">
-          <label className="block">
-            <span className="text-xs text-muted dark:text-slate-400">Name</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Bracket run - July"
-              className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5" />
-          </label>
-          <label className="block">
-            <span className="text-xs text-muted dark:text-slate-400">Pool</span>
-            <select value={poolId} onChange={(e) => setPoolId(e.target.value)}
-              className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5">
-              <option value="">Pick a pool…</option>
-              {(pools.data?.items ?? []).map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-          </label>
-          <label className="block">
-            <span className="text-xs text-muted dark:text-slate-400">Plate file (library)</span>
-            <select
-              value={fileId}
-              onChange={(e) => {
-                setFileId(e.target.value);
-                // Prefill parts-per-plate from the file's slicer metadata (the
-                // `Nx …` filename convention) — editable, just a head start.
-                const item = (library.data?.items ?? []).find((f) => f.file_id === e.target.value);
-                if (item?.metadata?.parts_per_plate) setPpp(item.metadata.parts_per_plate);
-              }}
-              className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5">
-              <option value="">Pick a file…</option>
-              {(library.data?.items ?? []).map((f) => (
-                <option key={f.id} value={f.file_id}>{f.name}</option>
-              ))}
-            </select>
-            {(() => {
-              const item = (library.data?.items ?? []).find((f) => f.file_id === fileId);
-              const md = item?.metadata;
-              if (!md || (!md.material && !md.estimated_sec)) return null;
-              const t = md.estimated_sec ? `${Math.floor(md.estimated_sec / 3600)}h ${Math.round((md.estimated_sec % 3600) / 60)}m` : null;
-              return (
-                <span className="mt-1 block text-[11px] text-faint dark:text-slate-500">
-                  {[md.material, t ? `~${t}/plate` : null, md.parts_per_plate ? `${md.parts_per_plate} parts/plate` : null].filter(Boolean).join(" · ")}
-                </span>
-              );
-            })()}
-          </label>
+          <FieldPack items={[
+            {
+              need: fieldNeed("name", { control: "text", label: "Name" }),
+              node: (
+                <label className="block">
+                  <span className="text-xs text-muted dark:text-slate-400">Name</span>
+                  <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Bracket run - July"
+                    className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5" />
+                </label>
+              ),
+            },
+            {
+              need: fieldNeed("poolId", { control: "choice", label: "Pool" }),
+              node: (
+                <label className="block">
+                  <span className="text-xs text-muted dark:text-slate-400">Pool</span>
+                  <select value={poolId} onChange={(e) => setPoolId(e.target.value)}
+                    className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5">
+                    <option value="">Pick a pool…</option>
+                    {(pools.data?.items ?? []).map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </label>
+              ),
+            },
+            {
+              need: fieldNeed("fileId", { control: "choice", label: "Plate file (library)" }),
+              node: (
+                <label className="block">
+                  <span className="text-xs text-muted dark:text-slate-400">Plate file (library)</span>
+                  <select
+                    value={fileId}
+                    onChange={(e) => {
+                      setFileId(e.target.value);
+                      // Prefill parts-per-plate from the file's slicer metadata (the
+                      // `Nx …` filename convention) — editable, just a head start.
+                      const item = (library.data?.items ?? []).find((f) => f.file_id === e.target.value);
+                      if (item?.metadata?.parts_per_plate) setPpp(item.metadata.parts_per_plate);
+                    }}
+                    className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5">
+                    <option value="">Pick a file…</option>
+                    {(library.data?.items ?? []).map((f) => (
+                      <option key={f.id} value={f.file_id}>{f.name}</option>
+                    ))}
+                  </select>
+                  {(() => {
+                    const item = (library.data?.items ?? []).find((f) => f.file_id === fileId);
+                    const md = item?.metadata;
+                    if (!md || (!md.material && !md.estimated_sec)) return null;
+                    const t = md.estimated_sec ? `${Math.floor(md.estimated_sec / 3600)}h ${Math.round((md.estimated_sec % 3600) / 60)}m` : null;
+                    return (
+                      <span className="mt-1 block text-[11px] text-faint dark:text-slate-500">
+                        {[md.material, t ? `~${t}/plate` : null, md.parts_per_plate ? `${md.parts_per_plate} parts/plate` : null].filter(Boolean).join(" · ")}
+                      </span>
+                    );
+                  })()}
+                </label>
+              ),
+            },
+          ]} />
           <div className="flex gap-3">
-            <label className="block flex-1">
-              <span className="text-xs text-muted dark:text-slate-400">Target quantity</span>
-              <input type="number" min={1} value={target} onChange={(e) => setTarget(Math.max(1, Number(e.target.value)))}
-                className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5" />
-            </label>
-            <label className="block flex-1">
-              <span className="text-xs text-muted dark:text-slate-400">Parts per plate</span>
-              <input type="number" min={1} value={ppp} onChange={(e) => setPpp(Math.max(1, Number(e.target.value)))}
-                className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5" />
-            </label>
+            <FieldPack items={[
+              {
+                need: fieldNeed("target", { control: "number", label: "Target quantity" }),
+                node: (
+                  <label className="block flex-1">
+                    <span className="text-xs text-muted dark:text-slate-400">Target quantity</span>
+                    <input type="number" min={1} value={target} onChange={(e) => setTarget(Math.max(1, Number(e.target.value)))}
+                      className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5" />
+                  </label>
+                ),
+              },
+              {
+                need: fieldNeed("ppp", { control: "number", label: "Parts per plate" }),
+                node: (
+                  <label className="block flex-1">
+                    <span className="text-xs text-muted dark:text-slate-400">Parts per plate</span>
+                    <input type="number" min={1} value={ppp} onChange={(e) => setPpp(Math.max(1, Number(e.target.value)))}
+                      className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5" />
+                  </label>
+                ),
+              },
+            ]} />
           </div>
           <p className="text-xs text-faint dark:text-slate-500">
             {Math.ceil(target / Math.max(1, ppp))} plate{Math.ceil(target / Math.max(1, ppp)) === 1 ? "" : "s"} will be
@@ -3258,7 +3366,7 @@ function ProductionRunsSection({ slug }: { slug: string }) {
             </button>
           </div>
         </div>
-      </Modal>
+      </RecordFormModal>
     </section>
   );
 }
@@ -3314,4 +3422,3 @@ function RunRow({
     </li>
   );
 }
-

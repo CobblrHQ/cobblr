@@ -73,19 +73,20 @@ export interface CaptchaRequest {
   get(name: string): string | undefined;
 }
 
-// Returns true if the request may proceed. Fail-CLOSED: a missing token, an
-// unknown provider, or a verify error all return false when captcha is on.
-export async function verifyCaptcha(
-  token: string | undefined,
-  req?: CaptchaRequest,
-): Promise<boolean> {
-  if (!captchaEnabled()) return true;
+/** What the captcha decided, and whose problem a "no" is. `unavailable` is OUR
+ *  side (the provider could not be reached, timed out, or answered with an
+ *  error): it must never be told to a person as "you might be a bot" (#4848). */
+export type CaptchaVerdict = "pass" | "fail" | "unavailable";
+
+export async function captchaVerdict(token: string | undefined, req?: CaptchaRequest): Promise<CaptchaVerdict> {
+  if (!captchaEnabled()) return "pass";
   const ip = req?.ip;
-  if (isCaptchaReviewer(req?.get(CAPTCHA_REVIEW_HEADER), ip)) return true;
-  if (!token) return false;
+  if (isCaptchaReviewer(req?.get(CAPTCHA_REVIEW_HEADER), ip)) return "pass";
+  if (!token) return "fail";
   const provider = (process.env.COBBLR_CAPTCHA_PROVIDER ?? "").trim();
   const url = SITEVERIFY[provider];
-  if (!url) return false;
+  // A provider this box does not know is a misconfiguration: ours.
+  if (!url) return "unavailable";
   try {
     const body = new URLSearchParams({ secret: process.env.COBBLR_CAPTCHA_SECRET!.trim(), response: token });
     if (ip) body.set("remoteip", ip);
@@ -95,10 +96,31 @@ export async function verifyCaptcha(
       body,
       signal: AbortSignal.timeout(8000),
     });
-    if (!r.ok) return false;
+    if (!r.ok) return "unavailable";
     const j = (await r.json()) as { success?: boolean };
-    return j.success === true;
+    return j.success === true ? "pass" : "fail";
   } catch {
-    return false; // network/timeout -> fail closed
+    return "unavailable"; // network/DNS/timeout: still fail-closed, but not the person's fault
   }
+}
+
+// Returns true if the request may proceed. Fail-CLOSED: a missing token, an
+// unknown provider, or a verify error all return false when captcha is on.
+export async function verifyCaptcha(
+  token: string | undefined,
+  req?: CaptchaRequest,
+): Promise<boolean> {
+  return (await captchaVerdict(token, req)) === "pass";
+}
+
+/** The refusal a JSON route sends for a captcha that did not pass: a person who
+ *  failed is told to retry; a provider that could not be reached is OUR problem
+ *  and says so, with 503 (#4848). */
+export function captchaRefusal(
+  res: { status(code: number): { json(body: unknown): unknown } },
+  verdict: Exclude<CaptchaVerdict, "pass">,
+): unknown {
+  return verdict === "unavailable"
+    ? res.status(503).json({ error: { code: "captcha_unavailable", message: "Signups are briefly unavailable on our side. Try again in a minute." } })
+    : res.status(400).json({ error: { code: "captcha_failed", message: "We couldn't check you're human. Try again; if it keeps happening, it's on our side." } });
 }

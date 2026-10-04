@@ -43,5 +43,6 @@ export interface ActionConsent {
 
 export function actionRunsUnconfirmed(action: ActionConsent | null | undefined): boolean {
   if (effectNeedsAPerson(action?.effect)) return false;
+  if (action?.effect === "signal") return true;
   return action?.undoable === true;
 }

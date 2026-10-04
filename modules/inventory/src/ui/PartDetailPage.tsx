@@ -1,5 +1,5 @@
+import { RecordFormModal, useMoneyCurrency, RecordPhoto, PresentationGate, StickyBottomBar, MutationError, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FaceSection, faceShows, useHoldsContents, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, editFieldItem, moneyFieldItem, usedValueFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits, usedInUnit } from "@cobblr/platform-web";
 import { fieldCurrency } from "@cobblr/platform-contract/money";
-import { useMoneyCurrency } from "@cobblr/platform-web";
 // Part detail — fields inline-editable, allocations panel below.
 // Stock adjustments are explicit (a button) so accidental qty edits
 // don't silently rewrite history.
@@ -8,8 +8,8 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, ArrowRightLeft, Copy, Library, Minus, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { consumptionGauge, type ConsumptionGauge as ConsumptionGaugeT } from "@cobblr/platform-contract/consumption-gauge";
-import { RecordPhoto, PresentationGate, StickyBottomBar, MutationError, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FaceSection, faceShows, useHoldsContents, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, editFieldItem, moneyFieldItem, usedValueFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits, usedInUnit } from "@cobblr/platform-web";
 import { useInventory } from "./context";
+import { MaterialPanel } from "./MaterialPanel";
 import { QtyStepper } from "./QtyStepper";
 import { isAssorted } from "./assorted";
 import { NewPartDialog } from "./NewPartDialog";
@@ -402,6 +402,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
     !!u && u.trim().toLowerCase() !== "each" && (!units.all.length || usedInUnit(u, units.all) != null);
   const excludeActionIds = [
     "inventory:update-item",
+    "inventory:measure-material",
     ...(canDisassemble ? [] : ["bricklink:disassemble-kit"]),
     // "Split one off" only makes sense for a lot (qty > 1) — hide it on a
     // single item (splitting would have to leave 0).
@@ -853,6 +854,8 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
         />
       )}
 
+      {(pmeta.density != null || parent) && <MaterialPanel id={p.id} />}
+
       {!hide("allocations") && <AllocationsPanel partId={p.id} />}
 
       {/* Where it is kept: this record's place, any other places the same
@@ -1047,9 +1050,9 @@ export function PartDetailModal({
   // hardcoded "Part". See one-record-substrate.md (vocabulary is per-instance).
   const loadingTitle = itemNoun.charAt(0).toUpperCase() + itemNoun.slice(1);
   return (
-    <Modal open onClose={onClose} title={part.data?.title ?? part.data?.name ?? loadingTitle} size="xl">
+    <RecordFormModal open onClose={onClose} title={part.data?.title ?? part.data?.name ?? loadingTitle}>
       <PartDetailPage id={id} onClose={onClose} />
-    </Modal>
+    </RecordFormModal>
   );
 }
 
@@ -1212,7 +1215,7 @@ function FlatConsumptionPanel({
 
   // Externally tracked (e.g. a Spoolman spool): Spoolman owns the remaining; we
   // mirror it and don't deduct. Show the source, the gauge, no editor/ledger.
-  if (trackedBy) {
+  if (trackedBy && trackedBy !== "firmware") {
     const label = trackedBy.charAt(0).toUpperCase() + trackedBy.slice(1);
     return (
       <section className="rounded-xl border border-line dark:border-slate-700 p-4 space-y-3">

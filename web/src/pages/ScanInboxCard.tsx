@@ -1,4 +1,4 @@
-import { NewFromTemplateButton } from "@cobblr/platform-web";
+import { RecordFormModal, NewFromTemplateButton, useLater, useImageSrc, EntityPhoto, useOverlayOpenFlag, useToast, colorSwatch, wantsSwatch, ColourInput, valueFromInput, PopoverLayer, BackdropLayer, FieldPack, fieldNeed, fieldControl, fieldPackControlClass, type FieldType, relativeTime, SearchInput, ChoiceCombobox, ChoiceField, offersClarifier, noteKey } from "@cobblr/platform-web";
 // The scan inbox's DESKTOP card, and the pieces only it renders: the
 // collapsed strip (photo column, title, facts, filing pair, tool rail), the
 // expanded triage surface (photos beside intel, the confirm form, the AI
@@ -27,8 +27,8 @@ import { Fragment, useContext, useEffect, useId, useMemo, useRef, useState, type
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, CheckCircle, ChevronDown, Download, ExternalLink, Flag, Image as ImageIcon, ImagePlus, Library, Loader2, MapPin, MoreHorizontal, Pencil, RefreshCw, RotateCcw, ScanLine, Scissors, Sparkles, X, Database } from "lucide-react";
-import { Modal, useLater, useImageSrc, EntityPhoto, useOverlayOpenFlag, useToast, colorSwatch, wantsSwatch, ColourInput, valueFromInput, PopoverLayer, BackdropLayer, FieldPack, fieldNeed, fieldControl, fieldPackControlClass, type FieldType, relativeTime, SearchInput, ChoiceCombobox, ChoiceField, offersClarifier, noteKey } from "@cobblr/platform-web";
 import { } from "../components/ScanImportModal";
+import { placeOf } from "../lib/sessionPlaceSuggestion";
 import { } from "../components/ExportInboxModal";
 import { CameraCaptureSheet } from "../components/CameraCaptureSheet";
 import { ContributedDetailPanels } from "../panels/registry";
@@ -95,8 +95,9 @@ import { } from "../lib/scanPayload";
 import { needsScanReview, scanRebuy, scanLooksFineResolves, scanDoubt, scanDoubtWords, scanProvenanceNote, scanReceiptReadFailed, scanReceiptAlreadyIn, scanSplitUncut, scanReviewQuestions, scanReviewReason, scanRowState, scanTrackedMatch, scanDeclinesRecord } from "@cobblr/platform-contract/scan-triage";
 import { SCAN_UNDO_ACTIONS, scanCombinedCount } from "@cobblr/platform-contract/scan-recovery";
 import { ScanReceiptUnread } from "../components/ScanReceiptUnread";
-import { scanAssertedFields } from "@cobblr/platform-contract/scan-evidence";
-import { KEYWORD_ROUTE_SENTENCE, ACTION_ADD, ACTION_INSTALL_ADD } from "@cobblr/platform-contract/scan-copy";
+import { scanAssertedFields, fieldStandingsOf } from "@cobblr/platform-contract/scan-evidence";
+import { provenanceHeadline, provenanceLines } from "@cobblr/platform-contract/field-contributions";
+import { KEYWORD_ROUTE_SENTENCE, ACTION_ADD, actionInstallAdd, PHOTO_CHECK_NOTE, photoCheckIsLive } from "@cobblr/platform-contract/scan-copy";
 import { matchParentType, readField } from "../lib/parent-type-match";
 import { isRerunInFlight } from "./scan-status";
 import { baseKind } from "./scanFileAll";
@@ -327,7 +328,7 @@ function MakeBinSheet({
   });
   const busy = create.isPending;
   return (
-    <Modal open onClose={onClose} title="Turn this into a bin" size="sm">
+    <RecordFormModal open onClose={onClose} title="Turn this into a bin">
       <div className="space-y-3">
         <p className="text-xs text-muted dark:text-slate-400">
           Creates a location from this scan in one step: the product photo, barcode
@@ -373,7 +374,7 @@ function MakeBinSheet({
           </button>
         </div>
       </div>
-    </Modal>
+    </RecordFormModal>
   );
 }
 
@@ -658,6 +659,9 @@ export function InboxCard({
   // The fields the AI supplied rather than read, from their stamps: shown
   // apart from the confirmed ones, never dressed in the confidence number.
   const assertedFields = scanAssertedFields(item);
+  // Fields several sources spoke to: the headline names the decisive one and
+  // the lines under it list every contribution, from one list (#4583).
+  const contributedFields = Object.entries(fieldStandingsOf(item.suggested_metadata)).filter(([, st]) => (st.contributions?.length ?? 0) > 0);
   const rowState = scanRowState(item, {
     ...viewer,
     fieldLabel: (name) => (topCand ? menuFieldLabel(menu, topCand, name) : name),
@@ -1047,7 +1051,7 @@ export function InboxCard({
   const countFiles = !planContext && alreadyTracked && !!restockMatch;
   // The phone row's compact count: the same change and the same save as the
   // full control (useScanCountSave), in the room a list row has.
-  const [rowChange, setRowChange] = useState(() => Math.max(1, Number(item.quantity) || 1));
+  const [rowChange, setRowChange] = useState(1);
   const rowCount = useScanCountSave(item.id, restockMatch ?? NO_COUNTED_MATCH);
   const rowHave = Math.max(0, restockMatch?.qty ?? 0);
   const commitBusy = quickConfirm.isPending || quickMerge.isPending;
@@ -1935,12 +1939,25 @@ export function InboxCard({
               {aiOpen && (<>
               {/* A warning already reads in amber above; repeating it here in
                   muted body text says it twice and says it quieter. */}
+              {photoCheckIsLive(item) && (
+                <p className="text-xs text-accent animate-pulse mt-1" data-testid="photo-check-live">{PHOTO_CHECK_NOTE}</p>
+              )}
               {notesPlacement.sourceBox && (
                 <p className="text-xs text-muted dark:text-slate-400 mt-1" data-testid="source-note">{notesPlacement.boxText}</p>
               )}
               {/* What the AI asserted, apart from what was read off the code,
                   the photo or the receipt: the confidence above is the
                   identification's, and says nothing about these (#3070). */}
+              {contributedFields.map(([field, st]) => (
+                <div key={field} className="text-xs text-muted dark:text-slate-400 mt-1" data-testid="field-contributions">
+                  <p className="text-content dark:text-mortar-100">{provenanceHeadline(humanFieldLabel(field).toLowerCase(), st)}</p>
+                  <ul className="list-disc pl-4">
+                    {provenanceLines(st).map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
               {assertedFields.length > 0 && (
                 <p className="text-xs text-muted dark:text-slate-400 mt-1" data-testid="asserted-fields">
                   Said by the AI, not read off the item:{" "}
@@ -2366,6 +2383,7 @@ export function InboxCard({
     const filedInto = item.target_location_id ? (cardLocs.data?.items ?? []).find((l) => l.id === item.target_location_id) : null;
     if (filedInto) segs.push(`📍 ${filingLabel(filedInto)}`);
     else if (item.scan_area) segs.push(`📍 ${item.scan_area}`);
+    else if (item.suggested_location_id) segs.push(`📍 ${placeOf(item.suggested_location_note) ?? "a suggested place"} · suggested`);
     const ps = (item.suggested_metadata as { pack_size?: number } | null)?.pack_size;
     if (ps) segs.push(`${ps}-pack`);
     if (boxState) segs.push(boxState === "empty-box" ? "📦 empty box" : "📦 in box");
@@ -3342,7 +3360,6 @@ export function InboxCard({
             <TrackedMatchLine
               item={item}
               fallbackTitle={trackedMatch!.title!}
-              quantity={Math.max(1, item.quantity || 1)}
               stamped={restockMatch}
               onCompare={() => (dest ? openForm(dest) : setExpanded(true))}
             />
@@ -3461,9 +3478,10 @@ export function InboxCard({
                       pickDestination.mutate(entryKey(staleHint.entry.module, staleHint.entry.instance));
                     }}
                     className="ml-1.5 max-sm:ml-0 max-sm:mt-1 max-sm:basis-full shrink-0 inline-flex items-center gap-1 rounded-full border border-ember-300 dark:border-ember-700 bg-ember-50 dark:bg-ember-950/30 px-2 py-0.5 text-[11px] text-ember-700 dark:text-ember-300 hover:bg-ember-100 dark:hover:bg-ember-900/40 transition"
-                    title={staleHint.back ? `This scan was first routed to ${staleHint.label}. Tap to file it there after all.` : `${staleHint.label} was set up after this scan was routed. Tap to file it there instead.`}
+                    aria-label={`Could also go in ${staleHint.label}`}
+                    title={staleHint.back ? `Could also go in ${staleHint.label}. This scan was first routed there; tap to switch back.` : `Could also go in ${staleHint.label}, which was set up after this scan was routed. Tap to switch.`}
                   >
-                    {staleHint.label}?
+                    or {staleHint.label}?
                   </button>
                 )}
                     {destOpen && destRect && createPortal(
@@ -5457,7 +5475,7 @@ function ConfirmForm({
               type="submit"
         form={formId}
               disabled={confirmMut.isPending || (!name.trim() && !item.suggested_name)}
-              title={willInstall ? `${entry.label} is not set up yet: this installs it and files the item there` : `Files the item into ${entry.label}`}
+              title={willInstall ? `${entry.label} is not set up yet: this turns it on and files the item there` : `Files the item into ${entry.label}`}
               data-testid="form-submit"
               className={row ? `${SHEET_ACTION_CLASS} bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50` : "px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50 inline-flex items-center gap-1"}
             >
@@ -5470,10 +5488,10 @@ function ConfirmForm({
                   enough to be whole beside Cancel on a phone. */}
               {confirmMut.isPending
                 ? willInstall
-                  ? `Installing ${entry.label}…`
+                  ? `Turning on ${entry.label}…`
                   : "Adding…"
                 : willInstall
-                  ? ACTION_INSTALL_ADD
+                  ? actionInstallAdd(entry.label)
                   : ACTION_ADD}
               </SheetActionLabel>
             </button>
@@ -5790,7 +5808,7 @@ function ConfirmForm({
           <Sparkles size={14} className="text-accent shrink-0 mt-0.5" />
           <span>
             You don't have <span className="font-semibold text-content dark:text-mortar-100">{entry.label}</span> yet - {" "}
-            <strong>{ACTION_INSTALL_ADD}</strong> installs it (its own table + nav entry) and files this in, with the fields below. Want to
+            <strong>{actionInstallAdd(entry.label)}</strong> turns it on (its own table and menu entry) and files this in, with the fields below. Want to
             track it another way? Pick a different table in <em>Add to</em>.
           </span>
         </div>

@@ -232,7 +232,7 @@ function fieldValueRaw(rec: Record<string, unknown>, key: string): unknown {
 async function walkKind(
   api: WorkspaceApi,
   kind: string,
-  opts: { includeRetired?: boolean } = {},
+  opts: { includeRetired?: boolean; maxRecords?: number } = {},
 ): Promise<
   | { ok: true; items: Array<Record<string, unknown>>; total: number; complete: boolean }
   | { ok: false; res: WorkspaceApiResponse }
@@ -245,11 +245,19 @@ async function walkKind(
   let known: number | null = null;
   let ended = false;
   const retired = opts.includeRetired ? "&include_retired=1" : "";
-  for (let offset = 0; offset < COUNT_SCAN_MAX; offset += COUNT_PAGE) {
+  const seenPages = new Set<string>();
+  for (let offset = 0; offset < (opts.maxRecords ?? COUNT_SCAN_MAX); offset += COUNT_PAGE) {
     const res = await api.request("GET", `/entities/${encodeURIComponent(kind)}?limit=${COUNT_PAGE}&offset=${offset}${retired}`);
     if (res.status >= 400) return { ok: false, res };
     const body = res.body as { items?: unknown[]; total?: number };
     const page = Array.isArray(body.items) ? (body.items as Array<Record<string, unknown>>) : [];
+    if (page.length && page.every((r) => typeof r.id === "string")) {
+      const signature = JSON.stringify(page.map((r) => [r.id, r.fields && (r.fields as Record<string, unknown>)._source_workspace_slug]));
+      if (seenPages.has(signature)) {
+        return { ok: false, res: { status: 502, body: { error: { message: "The record list repeated a page, so an exact count is unavailable." } } } };
+      }
+      seenPages.add(signature);
+    }
     items.push(...page);
     if (typeof body.total === "number") known = body.total;
     if (page.length < COUNT_PAGE || (known !== null && items.length >= known)) {
@@ -957,15 +965,35 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       const kind = String(args.kind ?? "");
       const groupBy = typeof args.group_by === "string" ? args.group_by.trim() : "";
       const qText = typeof args.q === "string" ? args.q.trim() : "";
+      const countField = (await fetchKinds(api).catch(() => [])).find((k) => k.id === kind)?.count_field ?? null;
+      // "How many" with nothing to filter or group is the kind's own COUNT,
+      // asked in one call: walking the rows reached a 5000-row cap and said
+      // "5000, incomplete" for a count the database answers exactly (#4789).
+      // The rows are still walked when units are summed, and only reported
+      // when every one of them was read.
+      if (!qText && !groupBy) {
+        const retired = args.include_retired === true ? "&include_retired=1" : "";
+        const one = await api.request("GET", `/entities/${encodeURIComponent(kind)}?limit=1${retired}`);
+        if (one.status >= 400) return toolFail(apiErrorMessage(one, `couldn't count ${kind}`));
+        const counted = (one.body as { total?: unknown }).total;
+        if (typeof counted === "number") {
+          let unitsPart = {};
+          if (countField && counted > 0 && counted <= COUNT_SCAN_MAX) {
+            const walkedUnits = await walkKind(api, kind, { includeRetired: args.include_retired === true });
+            const u = walkedUnits.ok && walkedUnits.complete ? unitsCounted(walkedUnits.items, countField) : null;
+            if (u !== null && u !== counted) unitsPart = { units: u, units_means: `how many things these records stand for (the sum of ${countField}); total is how many records` };
+          }
+          return toolOk({ kind, total: counted, ...unitsPart, scanned: counted, complete: true, counted_by: "the database" });
+        }
+      }
       // The text filter is applied HERE, over every field of every record, not
       // by the kind's own search (which may look at the name only).
-      const walked = await walkKind(api, kind, { includeRetired: args.include_retired === true });
+      const walked = await walkKind(api, kind, { includeRetired: args.include_retired === true, maxRecords: Infinity });
       if (!walked.ok) return toolFail(apiErrorMessage(walked.res, `couldn't count ${kind}`));
       const all = qText ? walked.items.filter((r) => recordMatchesText(r, qText)) : walked.items;
       const total = qText ? all.length : walked.total;
       const scanned = walked.items.length;
       const complete = walked.complete;
-      const countField = (await fetchKinds(api).catch(() => [])).find((k) => k.id === kind)?.count_field ?? null;
       const unitsOf = (recs: Array<Record<string, unknown>>) => (countField ? unitsCounted(recs, countField) : null);
       const units = unitsOf(all);
       const unitsPart = units !== null && units !== total ? { units, units_means: `how many things these records stand for (the sum of ${countField}); total is how many records` } : {};

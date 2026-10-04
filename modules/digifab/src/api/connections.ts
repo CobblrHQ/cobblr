@@ -9,6 +9,7 @@
 // fetch the connection (with creds) from the store and build a driver via digifab's
 // registry. See docs/architecture/core-devices-extraction.md §6.
 
+import { readBridgeConfig, publicBridgeConfig } from "../bridge-identity.js";
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
@@ -103,7 +104,7 @@ connectionsRouter.get(
     const types = await availableDriverKeys(tenantDb(req));
     const driveable = new Set(types);
     const items = (await store().list(ctx.org.id)).filter((c) => driveable.has(c.type));
-    res.json({ items, types });
+    res.json({ items: await Promise.all(items.map(async c => c.type === "edge_adapter" ? { ...c, config: await readBridgeConfig(ctx.org.id, c.id) } : c)), types });
   }),
 );
 
@@ -128,7 +129,7 @@ connectionsRouter.post(
       label: parsed.data.label,
       base_url: parsed.data.base_url,
       creds: { ...credsFrom(parsed.data), ...(isEdge && parsed.data.config ? { edge: parsed.data.config } : {}) },
-      config: isEdge ? undefined : parsed.data.config,
+      config: isEdge ? (parsed.data.config ? publicBridgeConfig(parsed.data.config) : undefined) : parsed.data.config,
     });
     void platform().events.emit("digifab.connection.created", { orgId: ctx.org.id, rowId: row.id });
     res.status(201).json(row);
@@ -170,7 +171,7 @@ connectionsRouter.patch(
       label: parsed.data.label,
       base_url: parsed.data.base_url,
       enabled: parsed.data.enabled,
-      config: isEdge ? undefined : parsed.data.config,
+      config: isEdge ? (parsed.data.config ? publicBridgeConfig(parsed.data.config) : undefined) : parsed.data.config,
       creds: Object.keys(creds).length ? (creds as Record<string, string | null>) : undefined,
     });
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "no such connection" } });

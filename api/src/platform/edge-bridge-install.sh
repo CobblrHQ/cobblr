@@ -22,15 +22,35 @@ NODE_VERSION="${COBBLR_NODE_VERSION:-22.20.0}"
 say() { printf '%s\n' "$*"; }
 die() { printf 'cobblr bridge: %s\n' "$*" >&2; exit 1; }
 
-CODE=""; SYSTEM=0; DOCKER=0
+NATIVE_DEFAULT=0
+CODE=""; SYSTEM=0; DOCKER=0; MAC_NATIVE=${COBBLR_MAC_NATIVE:-$NATIVE_DEFAULT}; DRY_RUN=0
 for a in "$@"; do
   case "$a" in
+    --mac-native) MAC_NATIVE=1 ;;
+    --dry-run) DRY_RUN=1 ;;
     --system) SYSTEM=1 ;;
     --docker) DOCKER=1 ;;
     -*) die "unknown option $a" ;;
     *) CODE="$a" ;;
   esac
 done
+MAC_HOME="$HOME/Library/Application Support/Cobblr/bridge"
+MAC_PLIST="$HOME/Library/LaunchAgents/xyz.cobblr.edge-bridge.plist"
+if [ "$MAC_NATIVE" = 1 ]; then
+  [ "${COBBLR_INSTALL_OS:-$(uname -s)}" = Darwin ] || die "this installer needs macOS"
+  [ "$SYSTEM" = 0 ] && [ "$DOCKER" = 0 ] || die "the Mac bridge runs as your user"
+  case "${COBBLR_INSTALL_ARCH:-$(uname -m)}" in
+    arm64) MAC_ARCH=arm64 ;; x86_64) MAC_ARCH=x64 ;; *) die "unsupported Mac architecture" ;;
+  esac
+  if [ "$CODE" = uninstall ]; then
+    launchctl bootout "gui/$(id -u)" "$MAC_PLIST" 2>/dev/null || true
+    rm -f "$MAC_PLIST"
+    rm -rf "$MAC_HOME"
+    say "Bridge removed. Disconnect it in Cobblr to revoke its key. LightBurn pairing is retained."
+    exit 0
+  fi
+
+fi
 [ -n "$CODE" ] || die "give the pairing code Cobblr shows you, e.g.: sh -s -- ABCD-2345"
 
 fetch() { # fetch URL [BEARER] -> stdout
@@ -46,6 +66,9 @@ json_field() { # json_field NAME < json  (flat string fields only)
 }
 
 # ── 1. The code becomes this bridge's token ─────────────────────────────────
+if [ "$DRY_RUN" = 1 ] && [ "$MAC_NATIVE" = 1 ]; then
+  TOKEN=dry-run-key; RELAY_PATH=/api/v1/orgs/dry-run/edge; NAME="Dry run"; BRIDGE_ID=dry-run
+else
 say "Pairing with $COBBLR_URL ..."
 if command -v curl >/dev/null 2>&1; then
   RESP=$(curl -sS -X POST -H 'content-type: application/json' \
@@ -65,9 +88,51 @@ RELAY_PATH=$(printf '%s' "$BODY" | json_field relay_path)
 NAME=$(printf '%s' "$BODY" | json_field name)
 BRIDGE_ID=$(printf '%s' "$BODY" | json_field bridge)
 [ -n "$TOKEN" ] && [ -n "$RELAY_PATH" ] || die "Cobblr answered, but not with a bridge token"
+fi
 RELAY_URL="$COBBLR_URL$RELAY_PATH"
 HOST_NAME=$(hostname 2>/dev/null || uname -n)
 say "Paired as \"$NAME\"."
+
+if [ "$MAC_NATIVE" = 1 ]; then
+  umask 077
+  mkdir -p "$MAC_HOME/cache" "$(dirname "$MAC_PLIST")"
+  if [ "$DRY_RUN" = 0 ]; then
+  fetch "$COBBLR_URL/api/v1/desktop/bridge/darwin/$MAC_ARCH" > "$MAC_HOME/cobblr-edge-bridge.tmp" || die "the Mac binary is unavailable; ask the operator to publish bridge downloads"
+  [ -s "$MAC_HOME/cobblr-edge-bridge.tmp" ] || die "the Mac binary was empty"
+  chmod 700 "$MAC_HOME/cobblr-edge-bridge.tmp"
+  mv "$MAC_HOME/cobblr-edge-bridge.tmp" "$MAC_HOME/cobblr-edge-bridge"
+  xattr -d com.apple.quarantine "$MAC_HOME/cobblr-edge-bridge" 2>/dev/null || true
+  fi
+  xml() { printf '%s' "$1" | sed 's/\&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g'; }
+  {
+    echo '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict>'
+    echo '<key>Label</key><string>xyz.cobblr.edge-bridge</string>'
+    printf '<key>ProgramArguments</key><array><string>%s/cobblr-edge-bridge</string></array>\n' "$(xml "$MAC_HOME")"
+    echo '<key>EnvironmentVariables</key><dict>'
+    for key in BRIDGE_MODE BRIDGE_RELAY_URL BRIDGE_RELAY_TOKEN BRIDGE_ID BRIDGE_CACHE_DIR BRIDGE_HOST_NAME; do
+      case "$key" in
+        BRIDGE_MODE) value=tunnel ;; BRIDGE_RELAY_URL) value=$RELAY_URL ;; BRIDGE_RELAY_TOKEN) value=$TOKEN ;;
+        BRIDGE_ID) value=$BRIDGE_ID ;; BRIDGE_CACHE_DIR) value=$MAC_HOME/cache ;; BRIDGE_HOST_NAME) value=$HOST_NAME ;;
+      esac
+      printf '<key>%s</key><string>%s</string>\n' "$key" "$(xml "$value")"
+    done
+    echo '</dict><key>RunAtLoad</key><true/><key>KeepAlive</key><true/>'
+    printf '<key>StandardErrorPath</key><string>%s/bridge.log</string>\n' "$(xml "$MAC_HOME")"
+    echo '</dict></plist>'
+  } > "$MAC_PLIST"
+  chmod 600 "$MAC_PLIST"
+  if [ "$DRY_RUN" = 1 ]; then
+    say "cobblr-bridge-darwin-$MAC_ARCH: $MAC_HOME/cobblr-edge-bridge"
+    say "$MAC_PLIST"
+    cat "$MAC_PLIST"
+    exit 0
+  fi
+  launchctl bootout "gui/$(id -u)" "$MAC_PLIST" 2>/dev/null || true
+  launchctl bootstrap "gui/$(id -u)" "$MAC_PLIST" || die "launchd could not start the bridge; check $MAC_HOME/bridge.log"
+  say "Bridge installed. Wait for online in Cobblr. Logs: $MAC_HOME/bridge.log"
+  say "Pair LightBurn: \"$MAC_HOME/cobblr-edge-bridge\" pair-lightburn 127.0.0.1"
+  exit 0
+fi
 
 # ── Docker, when asked for ──────────────────────────────────────────────────
 if [ "$DOCKER" = "1" ]; then

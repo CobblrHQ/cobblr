@@ -49,11 +49,12 @@ export function serviceConsent(
 ): ServiceConsent {
   // An unknown effect reads as the strongest: a service cannot talk its way
   // out of a confirm by misspelling one.
-  const effect: ServiceEffect = (["none", "writes", "spends", "physical"] as const).includes(effectIn as ServiceEffect)
+  const effect: ServiceEffect = (["none", "signal", "writes", "spends", "physical"] as const).includes(effectIn as ServiceEffect)
     ? (effectIn as ServiceEffect)
     : "physical";
   const policy = ctx.policy ?? "default";
   if (policy === "off") return { verdict: "refuse", reason: "This is turned off for this workspace." };
+  if (effect === "signal") return { verdict: "run" };
 
   // A door that cannot show a card may only run what needs no card.
   const confirmOrRefuse = (): ServiceConsent => (door === "mcp" ? { verdict: "refuse", reason: NO_CONFIRM_HERE } : { verdict: "confirm" });

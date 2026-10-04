@@ -1,3 +1,5 @@
+import { ACTION_GROUPS, RecordActionLayout, similarActionGroup } from "@cobblr/platform-contract/action-groups";
+import { bundleFieldReference } from "../platform/bundle-field-reference.js";
 // Bundles — publishable artifacts that bundle multiple wires +
 // field defs into one install. Phase 4 C.2: export current org
 // state, import + apply a bundle, uninstall cleanly.
@@ -151,13 +153,8 @@ const FieldDefEntry = z
     entity_kind: z.string(),
     name: z.string().regex(/^[a-z][a-z0-9_]*$/),
     display_label: z.string(),
-    // Narrower than FieldTypeSchema ON PURPOSE, and now said out loud rather
-    // than by omission. `relation` needs a ref_kind this entry does not carry,
-    //, so until that is plumbed a bundle declaring one would install a field
-    // that cannot resolve.
-    // `richtext` is allowed: it is a text variant, and the manifest schema in
-    // platform-contract already permits it, so the two stop disagreeing.
-    type: FieldTypeSchema.exclude(["relation"]),
+    type: FieldTypeSchema,
+    ref_kind: z.string().trim().min(1).optional(),
     required: z.boolean().optional(),
     position: z.number().int().optional(),
     choices: z.array(z.string()).optional(),
@@ -195,6 +192,7 @@ const FieldDefEntry = z
      *  (lint:field-learns-declared). */
     learns: z.boolean().optional(),
   })
+  .refine((f) => f.type !== "relation" || !!f.ref_kind, { message: "relation field_defs need a target kind", path: ["ref_kind"] })
   .refine((f) => f.type !== "computed" || (f.template && f.template.trim().length > 0), {
     message: "computed field_defs need a template",
     path: ["template"],
@@ -443,6 +441,7 @@ const CatalogEntry = z.object({
 });
 
 export const BundleManifest = z.object({
+  record_actions: z.record(RecordActionLayout).default({}),
   id: z.string().min(1),
   version: z.string().min(1),
   name: z.string().min(1),
@@ -897,6 +896,17 @@ export async function validateBundle(
     provides_instances: selected.provides_instances.map(i => ({ ...i, module: canonicalModuleName(i.module) })),
   };
   const errors: BundleValidationError[] = [];
+  for (const [kind, layout] of Object.entries(m.record_actions)) {
+    const declared = new Set<string>(ACTION_GROUPS.map((g) => g.id));
+    for (const g of layout.groups) {
+      const existing = similarActionGroup(g.id) ?? similarActionGroup(g.label);
+      if (existing && g.id !== existing.id) errors.push({ path: `record_actions.${kind}.groups`, code: "similar_action_group", message: `Looks like ${existing.label}; use ${existing.id} instead of creating ${g.label}.` });
+      else if (!declared.has(g.id) && !g.id.startsWith(`bundle:${m.id}/`)) errors.push({ path: `record_actions.${kind}.groups`, code: "action_group_namespace", message: "New bundle groups use bundle:<bundle id>/<group> ids." });
+      declared.add(g.id);
+    }
+    for (const [id, action] of Object.entries(layout.actions)) if (action.group && !declared.has(action.group)) errors.push({ path: `record_actions.${kind}.actions.${id}`, code: "unknown_action_group", message: "Choose a registered group or declare a group in this bundle." });
+  }
+
 
   // 2. Referential — every referenced kind/action exists + is applicable.
   const knownKinds = await platform().entities.listKinds();
@@ -934,6 +944,10 @@ export async function validateBundle(
     const primary = mod ? primaryByModule.get(mod) : undefined;
     return primary ? primary.id : null;
   };
+
+  for (const f of [...m.field_defs, ...m.provides_instances.flatMap((i) => i.field_defs)]) {
+    if (f.ref_kind && !resolvedKind(f.ref_kind)) errors.push({ path: "field_defs.ref_kind", code: "unknown_entity_kind", message: `Unknown relation target "${f.ref_kind}".` });
+  }
 
   for (const f of m.field_defs) {
     // A trait SCOPE (`@physical`) is not a registered kind, deliberately: it
@@ -1357,7 +1371,7 @@ bundlesRouter.get(
         .execute();
       const fieldDefs = await meta
         .selectFrom("module_field_defs")
-        .select(["entity_kind", "name", "display_label", "type", "required", "position", "unit"])
+        .select(["entity_kind", "name", "display_label", "type", "required", "position", "unit", "ref_kind"])
         .where("org_id", "=", orgId)
         .where("bundle_id", "is", null)
         .where("source_module", "is", null)
@@ -1478,6 +1492,7 @@ bundlesRouter.get(
           name: f.name,
           display_label: f.display_label,
           type: f.type,
+          ref_kind: f.ref_kind ?? undefined,
           required: f.required,
           position: f.position,
         })),
@@ -1716,6 +1731,7 @@ function fieldDefRow(
     name: f.name,
     display_label: f.display_label,
     type: f.type,
+    ref_kind: bundleFieldReference(f.type, f.ref_kind),
     required: f.required ?? false,
     position: f.position ?? 0,
     bundle_id: bundleId,
@@ -2751,7 +2767,8 @@ bundlesRouter.post(
           });
           return;
         }
-        res.status(400).json({ error: { code: "invalid_bundle", message: "Bundle manifest failed validation", details: { errors: v.errors } } });
+        const groupErrors = v.errors.filter((e) => e.code.includes("action_group"));
+        res.status(400).json({ error: { code: "invalid_bundle", message: groupErrors.length ? groupErrors.map((e) => e.message).join(" ") : "Bundle manifest failed validation", details: { errors: v.errors } } });
         return;
       }
       const result = await applyValidatedBundle(

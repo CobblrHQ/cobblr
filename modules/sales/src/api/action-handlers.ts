@@ -1,18 +1,20 @@
+import { readOrderEmail } from "../order-email.js";
+import { mapIntakeOrder, readIntake } from "../intake.js";
 // sales action handlers. `sales.fulfill-order` is the userInvokable + wire
 // target: take each line item's part out of inventory stock + stamp
 // fulfilled, or refuse when stock is short. One implementation with the route
 // (fulfilment.ts).
 
 import { type Kysely } from "kysely";
-import { orderHappened } from "../history.js";
-import { addLine } from "../order-lines.js";
 import { platform, readJsonArg } from "@cobblr/platform-contract";
 import type { SalesDB, SalesOrderStatus } from "../db.js";
 import { fulfilOrder } from "../fulfilment.js";
 import { cancelOrder, reinstateOrder, type Restocked } from "../cancel.js";
-import { nextOrderNumber } from "../order-number.js";
+import { createOrder } from "../create-order.js";
 import { shipOrder } from "../ship.js";
 import { makeLine } from "../make-line.js";
+
+import { undoDeliveryClose } from "../close-delivered.js";
 
 let registered = false;
 
@@ -25,6 +27,12 @@ interface FulfillArgs {
 export function registerSalesActionHandlers(): void {
   if (registered) return;
   registered = true;
+  platform().actions.registerHandler("sales.undo-delivery-close", async (ctx) => {
+    const orderId = ctx.entity?.kind === "sales:order" ? ctx.entity.id : String(ctx.args?.order_id ?? "");
+    if (!orderId) return { ok: false, error: "Choose an order to reopen" };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<SalesDB>;
+    return { ok: true, undone: await undoDeliveryClose(db, ctx.orgId, ctx.userId, orderId) };
+  });
 
   // Cancel, and its way back. A cancel of a shipped order with no answer to
   // "did it come back?" is refused with that question, never guessed.
@@ -100,113 +108,23 @@ export function registerSalesActionHandlers(): void {
     return r.ok ? r : { ok: false, error: r.message, code: r.code };
   });
 
-  // sales.create-order — programmatic create (e.g. importing a Woo/Shopify order).
-  // Optionally upserts the customer (by email), creates the order + line items,
-  // and emits sales.order.created. Mirrors the POST / route's insert shape.
-  platform().actions.registerHandler("sales.create-order", async (ctx) => {
-    // customer / items / metadata are structured args, and a wire's arg field
-    // can only send text — so read them through readJsonArg rather than
-    // trusting they arrived already parsed.
-    const raw = (ctx.args ?? {}) as Record<string, unknown>;
-    const args: CreateOrderArgs = {
-      ...(raw as CreateOrderArgs),
-      customer: readJsonArg<CreateOrderArgs["customer"]>(raw, "customer"),
-      items: readJsonArg<CreateOrderArgs["items"]>(raw, "items"),
-      metadata: readJsonArg<CreateOrderArgs["metadata"]>(raw, "metadata"),
-    };
+  platform().actions.registerHandler("sales.read-order-email", async (ctx) => {
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<SalesDB>;
-    const instance = "sales";
-
-    // An order with nothing on it is not an order: a call with no items used
-    // to create an empty confirmed order and report it made (#3141).
-    if (!Array.isArray(args.items) || args.items.length === 0) return { ok: false, error: "say what is on the order (items)" };
-    let customerId: string | null = null;
-    let customerName: string | null = args.customer?.name?.trim() || null;
-    if (args.customer && (args.customer.email || args.customer.name)) {
-      const email = args.customer.email?.trim() || null;
-      if (email) {
-        const existing = await db
-          .selectFrom("sales_customers")
-          .select(["id", "name"])
-          .where("instance", "=", instance)
-          .where("email", "=", email)
-          .executeTakeFirst();
-        if (existing) {
-          customerId = existing.id;
-          customerName = customerName ?? existing.name;
-        }
-      }
-      if (!customerId) {
-        const c = await db
-          .insertInto("sales_customers")
-          .values({
-            instance,
-            name: args.customer.name?.trim() || email || "Customer",
-            email,
-            phone: args.customer.phone ?? null,
-            address: args.customer.address ?? null,
-            metadata: {},
-          } as never)
-          .returningAll()
-          .executeTakeFirstOrThrow();
-        customerId = (c as { id: string }).id;
-        customerName = customerName ?? (c as { name: string }).name;
-        void platform().events.emit("sales.customer.created", { orgId: ctx.orgId, customerId, userId: ctx.userId });
-        await platform().activity.log({
-          orgId: ctx.orgId,
-          userId: ctx.userId ?? null,
-          action: "customer_created",
-          ref: { module: "sales", entityType: "customer", entityId: customerId },
-          diff: { name: customerName ?? null },
-        });
-      }
-    }
-
-    const order = await db
-      .insertInto("sales_orders")
-      .values({
-        instance,
-        customer_id: customerId,
-        customer_name: customerName,
-        order_number: args.order_number?.trim() || (await nextOrderNumber(db, instance)),
-        status: (args.status as SalesOrderStatus) ?? "confirmed",
-        order_date: args.order_date ?? null,
-        notes: args.notes ?? null,
-        metadata: args.metadata ?? {},
-      } as never)
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    const orderId = (order as { id: string }).id;
-
-    await orderHappened(db, ctx.orgId, orderId, { kind: "status", to_status: (order as { status: string }).status, by_user: ctx.userId ?? null });
-    for (const it of args.items ?? []) {
-      await addLine(db, ctx.orgId, ctx.userId ?? null, orderId, {
-        part_id: it.part_id ?? null,
-        description: it.description ?? null,
-        qty: it.qty ?? 1,
-        unit_price: it.unit_price ?? null,
-        metadata: it.metadata ?? {},
-      });
-    }
-
-    void platform().events.emit("sales.order.created", { orgId: ctx.orgId, orderId });
-    await platform().activity.log({
-      orgId: ctx.orgId,
-      userId: ctx.userId ?? null,
-      action: "order_created",
-      ref: { module: "sales", entityType: "order", entityId: orderId },
-      diff: { name: customerName ?? orderId },
-    });
-    return { ok: true, orderId, customerId };
+    const order = await readOrderEmail(ctx.orgId, ctx.userId ?? null, ctx.args);
+    if (!order) return { ok: true, ignored: true, item_count: 0 };
+    const setting = await readIntake(db, "sales");
+    const result = await createOrder(db, ctx.orgId, ctx.userId ?? null, mapIntakeOrder(order, setting?.mapping ?? {}, await platform().money.currency(ctx.orgId)));
+    return { ...result, item_count: result.ok ? order.items.length : 0 };
   });
-}
 
-interface CreateOrderArgs {
-  order_number?: string;
-  status?: string;
-  order_date?: string;
-  notes?: string;
-  metadata?: Record<string, unknown>;
-  customer?: { name?: string; email?: string; phone?: string; address?: string };
-  items?: Array<{ part_id?: string; description?: string; qty?: number; unit_price?: number; metadata?: Record<string, unknown> }>;
+  platform().actions.registerHandler("sales.create-order", async (ctx) => {
+    const raw = (ctx.args ?? {}) as Record<string, unknown>;
+    return createOrder((await platform().tenants.getDb(ctx.orgId)) as Kysely<SalesDB>, ctx.orgId, ctx.userId ?? null, {
+      ...raw,
+      customer: readJsonArg(raw, "customer"),
+      items: readJsonArg(raw, "items"),
+      metadata: readJsonArg(raw, "metadata"),
+      source: readJsonArg(raw, "source"),
+    });
+  });
 }

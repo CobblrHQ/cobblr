@@ -1,6 +1,7 @@
 // Public exports for the shared web components package.
 export { JsonField, evaluateJson, type JsonFieldProps, type JsonEval } from "./JsonField";
 
+export { PickToLight, type LightPickLine } from "./PickToLight";
 export {
   PlatformWebProvider,
   RecordPhoto,
@@ -176,6 +177,7 @@ export {
   type DetailPanelComponent,
 } from "./panels";
 export { Modal } from "./Modal";
+export { RecordFormModal } from "./RecordFormModal";
 export { SHORTCUTS, isShortcut, keyCap, typingIn, OPEN_SHORTCUTS_EVENT, type Shortcut, type KeyLike } from "./shortcuts";
 export { lockPageScroll, useLockPageScroll } from "./scrollLock";
 export { ContentsPanel, useHoldsContents } from "./ContentsPanel";
@@ -335,3 +337,5 @@ export { MoneyCurrencyProvider, useMoneyCurrency, CurrencyPicker } from "./Money
 export { MoneyTotalNotice } from "./MoneyTotalNotice";
 
 export { NewItemMenu, NewFromTemplateButton, type TemplateCreateArgs } from "./NewItemMenu";
+
+export { ActionDescription, firstActionSentence } from "./ActionDescription";

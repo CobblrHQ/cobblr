@@ -19,7 +19,7 @@
 // relative to the navbar strip and intercept clicks only there.
 
 import { lockPageScroll } from "./scrollLock";
-import { useEffect, useId, useRef, type ReactNode, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Sparkles, X } from "lucide-react";
 import { useOverlayOpenFlag } from "./overlay-open";
@@ -37,6 +37,7 @@ interface Props {
   /** Optional small text below the title (mono, slate). */
   subtitle?: ReactNode;
   children: ReactNode;
+  recordForm?: boolean;
   /** Width preset. md (default) = 32rem; lg = 48rem; xl = 64rem. */
   size?: "sm" | "md" | "lg" | "xl" | "content";
   /** A row pinned under the scrolling body: the verbs that must stay in reach
@@ -109,7 +110,7 @@ const SIZE: Record<NonNullable<Props["size"]>, string> = {
   content: "max-w-4xl",
 };
 
-export function Modal({ open, onClose, title, subtitle, children, size = "md", destructive, dismissOnBackdrop = true, inline = false, chromeless = false, fillHeight = false, cobb, footer, flush = false, stickyFooter = false }: Props) {
+export function Modal({ open, onClose, title, subtitle, children, size = "md", destructive, dismissOnBackdrop = true, inline = false, chromeless = false, fillHeight = false, cobb, footer, flush = false, stickyFooter = false, recordForm = false }: Props) {
   // "Dirty" = the user has entered/changed something inside this modal. Tracked
   // by listening (capture) for input/change events bubbling from any descendant
   // field — so we never have to know in advance whether a modal is a form. Only
@@ -119,6 +120,24 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
   const dirtyRef = useRef(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const titleId = useId();
+  const [recordWidth, setRecordWidth] = useState(1024);
+  useLayoutEffect(() => {
+    if (!open || !recordForm) return;
+    const panel = panelRef.current;
+    if (!panel) return;
+    const read = () => {
+      const fields = new Set<Element>();
+      for (const control of panel.querySelectorAll('input:not([type="hidden"]):not([type="file"]), select, textarea, [role="combobox"]')) {
+        if (control.closest("[data-record-form]") !== panel) continue;
+        fields.add(control.closest("[data-pack-key]") ?? control.closest("label") ?? control);
+      }
+      setRecordWidth(fields.size ? Math.min(1024, Math.max(576, fields.size * 240 + 64)) : 1024);
+    };
+    read();
+    const observer = new MutationObserver(read);
+    observer.observe(panel, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [open, recordForm]);
   useEffect(() => {
     if (open) dirtyRef.current = false; // reset each time it opens
   }, [open]);
@@ -149,6 +168,8 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
   const panel = (
       <div
         ref={panelRef}
+        data-record-form={recordForm ? "" : undefined}
+        style={recordForm ? { "--record-form-width": `${recordWidth}px` } as import("react").CSSProperties : undefined}
         className={
           // Height-constrained + column layout so a tall form scrolls WITHIN the
           // modal (header pinned) instead of running off the page (the bug a beta tester
@@ -161,7 +182,7 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
           // 2026-08-01). From sm up it's the familiar centred card again.
           "bg-surface dark:bg-slate-900 shadow-2xl border w-full flex flex-col " +
           modalPanelLayout(overLive, fillHeight, stickyFooter) +
-          SIZE[size] +
+          (recordForm ? "max-w-full sm:max-w-5xl sm:w-[var(--record-form-width)]" : SIZE[size]) +
           " " +
           (destructive
             ? "border-ember-300 dark:border-ember-700"

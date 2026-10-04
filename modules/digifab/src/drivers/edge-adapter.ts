@@ -28,6 +28,7 @@ import type {
   MachineDriver,
   DeviceTemps,
   DeviceJob,
+  JobReview,
   JobState,
   JobStatus,
   PlacementResolution,
@@ -97,6 +98,7 @@ function coerceJob(raw: unknown): DeviceJob | null {
 }
 
 export class EdgeAdapterDriver implements MachineDriver {
+  private knownReviewRequired: boolean;
   private base: string;
   private token: string | null;
   private relay: EdgeRelay | null;
@@ -107,6 +109,7 @@ export class EdgeAdapterDriver implements MachineDriver {
    *  a bare `cobblr-edge://` (single-instance bridge picks its only one). */
   private tunnelPrefix: string;
   constructor(cfg: ManagerConfig, relay?: EdgeRelay | null) {
+    this.knownReviewRequired = cfg.extra?.creds?.edge != null && (cfg.extra.creds.edge as Record<string, unknown>).driver === "lightburn";
     this.base = cfg.baseUrl.replace(/\/+$/, "");
     // Optional shared-secret: sent as a Bearer if the connection stored an apiKey.
     this.token = cfg.apiKey ?? null;
@@ -259,7 +262,34 @@ export class EdgeAdapterDriver implements MachineDriver {
     // Optional in the contract; no-op keeps state-sync best-effort.
   }
 
+  async jobReviewRequired(): Promise<boolean> {
+    try {
+      const data = await this.req("GET", "/capabilities") as { jobReview?: boolean };
+      return this.knownReviewRequired || data?.jobReview === true;
+    } catch (e) {
+      const unsupported = e instanceof DriverSaid ? [404, 501].includes(e.status) : e instanceof Error && /adapter GET \/capabilities → (?:404|501)(?::|$)/.test(e.message);
+      if (unsupported) {
+        const devices = await this.listDevices();
+        return this.knownReviewRequired || devices.some(device => device.id === "lightburn" || device.name === "LightBurn");
+      }
+      throw e;
+    }
+  }
+
+  async prepareJob(file: Uint8Array, filename: string): Promise<JobReview> {
+    return await this.upload("/prepare", file, filename) as JobReview;
+  }
+
+  async getJobReview(fileId: string): Promise<JobReview> {
+    return await this.req("GET", `/review/${encodeURIComponent(fileId)}`) as JobReview;
+  }
+
   async uploadFile(file: Uint8Array, filename: string): Promise<UploadResult> {
+    const data = await this.upload("/upload", file, filename) as { fileId?: string };
+    return { fileId: data?.fileId ?? filename, filename };
+  }
+
+  private async upload(path: string, file: Uint8Array, filename: string): Promise<unknown> {
     if (this.relay) {
       // Through a bridge the file goes on its blob channel, never inside the
       // relay's JSON (a database row, capped at 20 MB, where a real 3MF did not
@@ -269,7 +299,7 @@ export class EdgeAdapterDriver implements MachineDriver {
         await writeFile(spool, file);
         const r = await this.relay({
           method: "POST",
-          path: this.tunnelPrefix + "/upload",
+          path: this.tunnelPrefix + path,
           body: { filename },
           file: { path: spool, sha256: createHash("sha256").update(file).digest("hex"), size: file.length },
         });
@@ -277,16 +307,14 @@ export class EdgeAdapterDriver implements MachineDriver {
           const said = sentenceIn(r.body);
           throw said ? new DriverSaid(r.status, said) : new Error(`adapter POST ${this.tunnelPrefix}/upload → ${r.status} (tunnel)`);
         }
-        const data = r.body as { fileId?: string } | null;
-        return { fileId: data?.fileId ?? filename, filename };
+        return r.body;
       } catch (e) {
         if (!(e instanceof EdgeUnsupported)) throw e;
       } finally {
         await unlink(spool).catch(() => {});
       }
     }
-    const data = (await this.req("POST", "/upload", { file: { bytes: file, filename } })) as { fileId?: string };
-    return { fileId: data?.fileId ?? filename, filename };
+    return this.req("POST", path, { file: { bytes: file, filename } });
   }
 
   async resolvePlacement(): Promise<PlacementResolution> {
@@ -295,7 +323,7 @@ export class EdgeAdapterDriver implements MachineDriver {
 
   async submitJob(args: SubmitArgs): Promise<SubmitResult> {
     const data = (await this.req("POST", "/submit", {
-      body: { fileId: args.fileId, target: args.deviceId ?? args.tag ?? null, ...(args.idempotencyKey ? { idempotencyKey: args.idempotencyKey } : {}) },
+      body: { ...(args.approval ? { approval: args.approval } : {}), fileId: args.fileId, target: args.deviceId ?? args.tag ?? null, ...(args.idempotencyKey ? { idempotencyKey: args.idempotencyKey } : {}) },
     })) as { jobId?: string; queued?: boolean };
     const jobId = data?.jobId ?? null;
     const queued = data?.queued ?? !!jobId;

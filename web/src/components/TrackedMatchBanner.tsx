@@ -32,7 +32,7 @@ function newPlaceOf(item: Parameters<typeof scanRowState>[0]) {
   const m = scanRowState(item).merge;
   return m?.new_place ? m : null;
 }
-import type { ScanCountMode } from "@cobblr/platform-contract/scan-count";
+import type { ScanCountMode, ScanCountSessionMode } from "@cobblr/platform-contract/scan-count";
 import { EntityThumb } from "@cobblr/platform-web";
 import { useHandheld } from "../lib/useHandheld";
 import { TrackedMatchNudges } from "./TrackedMatchNudges";
@@ -71,13 +71,11 @@ function MatchTitle({ match, where, title, sameOne }: { match: TrackedMatch | nu
 export function TrackedMatchLine({
   item,
   fallbackTitle,
-  quantity,
   stamped,
   onCompare,
 }: {
   item: ScanInboxItem;
   fallbackTitle: string;
-  quantity: number;
   /** The match as the row was stamped with it. The card decides from this
    *  that the count files the scan, so the count must show even while the
    *  live lookup is loading or came back empty: otherwise the card offers
@@ -133,7 +131,7 @@ export function TrackedMatchLine({
         // would add to the place it is kept already.
         null
       ) : (
-        counted && !possible && <ScanCountBlock itemId={item.id} match={counted} where={where} scanned={quantity} />
+        counted && !possible && <ScanCountBlock itemId={item.id} match={counted} where={where} />
       )}
       <div className="flex flex-wrap items-center gap-1.5">
         {possible ? (
@@ -166,6 +164,7 @@ export function TrackedMatchBanner({
   locationName,
   autoMove,
   countMode = "change",
+  sessionMode,
   stamped,
   onAttached,
 }: {
@@ -179,6 +178,7 @@ export function TrackedMatchBanner({
   /** The camera's Count mode opens the count in Set total (a stocktake);
    *  everywhere else a scan starts in Change by. */
   countMode?: ScanCountMode;
+  sessionMode?: ScanCountSessionMode;
   /** The match the row was stamped with, used while the live lookup has
    *  nothing: the card hides its own "+1 more" when the count files the scan,
    *  so the count must be here whatever the lookup answered. */
@@ -448,7 +448,7 @@ export function TrackedMatchBanner({
           match={best}
           where={where}
           initialMode={countMode}
-          scanned={Math.max(1, item.quantity || 1)}
+          sessionMode={sessionMode}
           onDone={(r, m) => onAttached?.(r, m, "count")}
         />
       )}

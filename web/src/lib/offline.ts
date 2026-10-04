@@ -3,7 +3,7 @@
 // and how an offline copy is marked is src/sw/sw-logic.js.
 
 /** The cache the worker keeps API reads in (sw/service-worker.js API). */
-export const KEPT_READS = "cobblr-api-v1";
+export const KEPT_READS = "cobblr-api-v2";
 
 /** Register the worker, in a built app only: a dev server has no dist/sw.js,
  *  and a worker left over from a build would serve stale chunks to it. */

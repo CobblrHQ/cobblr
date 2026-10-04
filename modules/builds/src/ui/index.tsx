@@ -1,3 +1,4 @@
+import { fieldNeed, FieldPack, RecordFormModal, CollectionHeader, ContributedDetailPanels, CustomFieldsPanel, useRecordInPath, headerButton, useToast, useConfirm, usePageTitle, SearchInput } from "@cobblr/platform-web";
 // builds UI — the host mounts <BuildsUI /> at /builds. A grid of builds;
 // clicking one opens a detail MODAL with its bill-of-materials, a live
 // "can I build N right now / limiting component" readout, and a Build button
@@ -7,9 +8,9 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { CollectionHeader, ContributedDetailPanels, CustomFieldsPanel, useRecordInPath, Modal, headerButton, useToast, useConfirm, usePageTitle, SearchInput } from "@cobblr/platform-web";
 import { Hammer, Plus, Trash2, X, Wrench, AlertTriangle, Layers, ListOrdered, Check, Circle, ChevronUp, ChevronDown, Clock, History, GitBranch, Search, CornerDownRight, CalendarClock } from "lucide-react";
 import { BuildsApi, BuildsApiError, type BuildSummary, type PartOption, type OperationRow, type GenealogyNode } from "./api.js";
+import { PickToLight } from "@cobblr/platform-web";
 
 export const navItems = [{ label: "Builds", path: "/builds", icon: Hammer }];
 
@@ -103,7 +104,7 @@ export function BuildsUI({ orgSlug, getToken }: Props) {
       </div>
 
       {creating && (
-        <Modal open onClose={() => setCreating(false)} title="New build">
+        <RecordFormModal open onClose={() => setCreating(false)} title="New build">
           <form
             className="space-y-3"
             onSubmit={(e) => {
@@ -111,31 +112,43 @@ export function BuildsUI({ orgSlug, getToken }: Props) {
               if (newName.trim()) createBuild.mutate({ name: newName.trim(), makes: makesValue.trim() });
             }}
           >
-            <input
-              autoFocus
-              aria-label="Build name"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder="e.g. Sensor board v2"
-              className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm"
-            />
-            <label className="block text-xs text-muted">
-              Makes (the part each build adds to stock)
-              <input
-                aria-label="Part it makes"
-                value={makesValue}
-                onChange={(e) => setMakes(e.target.value)}
-                placeholder="Leave empty if it adds nothing to stock"
-                className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm"
-              />
-              <span className="block mt-1">An existing part with this name is used; otherwise it is added to your inventory with none in stock.</span>
-            </label>
+            <FieldPack maxCols={2} items={[
+              {
+                need: fieldNeed("newName", { control: "text", label: "Build name" }),
+                node: (
+                  <input
+                    autoFocus
+                    aria-label="Build name"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    placeholder="e.g. Sensor board v2"
+                    className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm"
+                  />
+                ),
+              },
+              {
+                need: fieldNeed("makesValue", { control: "text", label: "Makes" }),
+                node: (
+                  <label className="block text-xs text-muted">
+                    Makes (the part each build adds to stock)
+                    <input
+                      aria-label="Part it makes"
+                      value={makesValue}
+                      onChange={(e) => setMakes(e.target.value)}
+                      placeholder="Leave empty if it adds nothing to stock"
+                      className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm"
+                    />
+                    <span className="block mt-1">An existing part with this name is used; otherwise it is added to your inventory with none in stock.</span>
+                  </label>
+                ),
+              },
+            ]} />
             <div className="flex justify-end gap-2">
               <button type="button" onClick={() => setCreating(false)} className="px-3 py-1.5 text-xs rounded bg-subtle dark:bg-slate-800">Cancel</button>
               <button type="submit" disabled={!newName.trim() || createBuild.isPending} className="px-3 py-1.5 text-xs rounded bg-cobble-600 text-white disabled:opacity-50">Create</button>
             </div>
           </form>
-        </Modal>
+        </RecordFormModal>
       )}
 
       {open && <BuildDetailModal orgSlug={orgSlug} buildId={open} api={api} onClose={() => setOpen(null)} />}
@@ -245,7 +258,7 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
   const limitingIds = new Set((d?.buildable.limiting ?? []).map((l) => l.part_id));
 
   return (
-    <Modal open onClose={onClose} title={d?.build.name ?? "Build"} size="lg">
+    <RecordFormModal open onClose={onClose} title={d?.build.name ?? "Build"}>
       <div className="space-y-4">
         {detail.isLoading && <div className="text-sm text-muted">Loading…</div>}
 
@@ -301,6 +314,7 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
             {/* Bill of materials */}
             <div>
               <div className="text-xs uppercase tracking-wide text-muted mb-1.5">Components</div>
+              <PickToLight key={buildId} lines={d.components.flatMap(c => c.part_id ? [{ id: c.id, label: `${c.name} (${c.per_build * qty})`, ref: { kind: "inventory:part", id: c.part_id } }] : [])} />
               {d.components.length === 0 && <div className="text-sm text-muted italic">No components yet. Add the parts this build consumes.</div>}
               <ul className="divide-y divide-slate-100 dark:divide-slate-800 border border-line dark:border-slate-700 rounded">
                 {d.components.map((c) => {
@@ -399,7 +413,7 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
           ctx={{ slug: orgSlug, entityId: buildId, entityTitle: d?.build.name ?? "Build" }}
         />
       </div>
-    </Modal>
+    </RecordFormModal>
   );
 }
 
@@ -917,12 +931,12 @@ function SchedulePanel({ api, builds }: { api: BuildsApi; builds: BuildSummary[]
 
   return (
     <div className="rounded-lg border border-line dark:border-slate-700">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-line dark:border-slate-700">
+      <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-line dark:border-slate-700">
         <button type="button" onClick={() => setCollapsed((c) => !c)} className="flex items-center gap-1.5 text-sm font-medium text-content dark:text-mortar-100">
           <CalendarClock size={15} className="text-cobble-500" /> Production schedule
           {collapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
         </button>
-        <span className="text-[11px] text-muted">EDD heuristic · not a capacity solver</span>
+        <span className="text-[11px] text-muted">Ordered by due date. Machine availability is not included.</span>
         {totalLate > 0 && (
           <span className="inline-flex items-center gap-0.5 rounded bg-red-50 dark:bg-red-900/30 px-1.5 py-0.5 text-[10px] font-medium text-red-700 dark:text-red-300">
             <AlertTriangle size={10} /> {totalLate} at risk
@@ -949,7 +963,7 @@ function SchedulePanel({ api, builds }: { api: BuildsApi; builds: BuildSummary[]
               </div>
               <ul className="divide-y divide-slate-100 dark:divide-slate-800 border border-line dark:border-slate-700 rounded">
                 {lane.items.map((it, i) => (
-                  <li key={it.id} className="flex items-center gap-2 px-3 py-1.5 text-sm group">
+                  <li key={it.id} className="flex flex-wrap items-center gap-2 px-3 py-1.5 text-sm group">
                     <span className="text-xs text-muted tabular-nums w-5">{i + 1}.</span>
                     <span className="flex-1 text-content dark:text-mortar-100">
                       {it.qty}× {it.build_name}
@@ -965,10 +979,10 @@ function SchedulePanel({ api, builds }: { api: BuildsApi; builds: BuildSummary[]
                           <span className="ml-2 text-[11px] text-muted" data-testid="planned-for">for {it.for_title}</span>
                         )
                       )}
-                      {it.due_date && <span className={`ml-2 text-[10px] ${it.late ? "text-red-600 font-medium" : "text-muted"}`}>due {it.due_date}</span>}
+                      {it.due_date && <span className={`ml-2 text-[10px] ${it.late ? "text-red-600 font-medium" : "text-muted"}`}>due {new Date(`${it.due_date.slice(0, 10)}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>}
                     </span>
                     <span className="text-[11px] text-muted tabular-nums">
-                      {it.est_minutes_total > 0 ? `${fmtMins(it.est_minutes_total)} · ` : ""}done {fmtWhen(it.projected_finish)}
+                      {it.est_minutes_total > 0 ? `${fmtMins(it.est_minutes_total)} · Estimated finish ${fmtWhen(it.projected_finish)}` : "Finish time needs step estimates"}
                     </span>
                     {it.late && (
                       <span className="inline-flex items-center gap-0.5 rounded bg-red-50 dark:bg-red-900/30 px-1.5 py-0.5 text-[10px] font-medium text-red-700 dark:text-red-300">

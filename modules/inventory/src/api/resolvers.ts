@@ -73,7 +73,15 @@ export function registerInventoryResolvers(): void {
     const unapplied: FilterPredicate[] = [];
     q = applyPartFilters(q, query, { unapplied });
     const sortedQ = applyPartSort(q, query.sort);
-    const rows = await sortedQ.limit(limit).offset(offset).execute();
+    // The total is a COUNT over the same filters, not a walk: an assistant's
+    // "how many" walked the list a page at a time to a 5000-row cap and said
+    // "5000, incomplete" for a workspace it could have counted in one query
+    // (#4789). "Hide unavailable" is decided per row below, after the query,
+    // so a count would not match it and is left out then.
+    const [rows, counted] = await Promise.all([
+      sortedQ.limit(limit).offset(offset).execute(),
+      hideUnavailable ? Promise.resolve(null) : q.clearSelect().select((eb) => eb.fn.countAll<string>().as("n")).executeTakeFirst(),
+    ]);
     const [names, places, left, held, inst] = await Promise.all([
       categoryNames(db, rows),
       locationNames(orgId, rows),
@@ -91,6 +99,7 @@ export function registerInventoryResolvers(): void {
       .filter((e) => !hideUnavailable || Number((e.fields as { spare_qty?: unknown }).spare_qty ?? 1) > 0);
     return {
       items,
+      ...(counted ? { total: Number(counted.n) } : {}),
       ...(unapplied.length ? { unapplied } : {}),
     };
   };

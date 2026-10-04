@@ -1,4 +1,4 @@
-import { MoneyTotalNotice } from "@cobblr/platform-web";
+import { RecordFormModal, MoneyTotalNotice, CustomFieldsPanel, EntityActionsBar, EntityThumb, FieldPack, LabeledField, fieldNeed, useConfirm, useToast, usePageTitle, downloadBlob } from "@cobblr/platform-web";
 // /locations/:id — full-entity detail view.
 //
 // Locations are now first-class entities (Punch-list #1 from
@@ -15,10 +15,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRightLeft, ChevronRight, MapPin, Plus, Save, Trash2 } from "lucide-react";
 import { MoveEverythingModal, movedSentence, putBackSentence } from "../components/MoveEverythingModal";
 
-import { CustomFieldsPanel, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, fieldNeed, useConfirm, useToast, usePageTitle, downloadBlob } from "@cobblr/platform-web";
 import { ApiError, api, type Location, type PlatformEntityKind } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { RecordPhoto } from "../components/RecordPhoto";
+import { PlaceLights } from "./PlaceLights";
 import { EntityAttachments } from "../components/EntityAttachments";
 import { ContributedDetailPanels } from "../panels/registry";
 import { FloorPlan } from "../components/FloorPlan";
@@ -297,6 +297,7 @@ export function LocationDetailPage() {
             </button>
           </div>
         </div>
+        <PlaceLights key={l.id} slug={activeSlug} place={l} hasBins={children.length > 0} />
         {l.notes && (
           <div className="mt-4 pt-3 border-t border-line dark:border-slate-700">
             <div className="text-[10px] font-mono uppercase tracking-widest text-muted mb-1">
@@ -615,7 +616,7 @@ function EditLocationModal({
   });
 
   return (
-    <Modal open onClose={onClose} title={`Edit ${location.name}`} size="md">
+    <RecordFormModal open onClose={onClose} title={`Edit ${location.name}`}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -749,11 +750,10 @@ function EditLocationModal({
           </button>
         </div>
       </form>
-    </Modal>
+    </RecordFormModal>
   );
 }
 
 /** The caption over a control: the shared one, so this form's labels and a
  *  record page's read the same. */
 const Field = LabeledField;
-

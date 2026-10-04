@@ -46,7 +46,7 @@ export function RecentlyDeletedPage() {
             <p className="text-sm text-muted">{days === 1 ? "1 day left" : `${days} days left`} · Deleted {new Date(row.deleted_at).toLocaleDateString()}</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button type="button" disabled={busy !== null} onClick={() => void change(row, false)} className="rounded-md border border-line px-3 py-2 text-sm">{busy === row.id ? "Working…" : "Restore"}</button>
+            <button type="button" disabled={busy !== null} onClick={() => void change(row, false)} className="rounded-md border border-line px-3 py-2 text-sm">{busy === row.id ? "Working…" : "Restore from Recently deleted"}</button>
             {row.can_delete_forever && <button type="button" disabled={busy !== null} onClick={() => void change(row, true)} className="rounded-md border border-line px-3 py-2 text-sm text-red-600 dark:text-red-400">Delete forever</button>}
           </div>
         </li>;

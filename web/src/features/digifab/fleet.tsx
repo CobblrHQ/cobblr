@@ -1,3 +1,4 @@
+import { LightBurnReadiness } from "./lightburn-readiness";
 // The digifab FLEET feature — the floor's card grid (FleetView), the
 // per-device cockpit (PrinterDetailModal + controls/files/camera panels),
 // connection setup (CreateConnectionModal, EdgeBridgeSetup), and the batch
@@ -10,6 +11,8 @@
 // DigifabPage renders these same components on /digifab (Floor + Setup).
 
 import { cancelOutcome } from "../../lib/digifab-cancel";
+import { LightBurnPairing } from "../../components/LightBurnPairing";
+import { bridgeDisplayName } from "../../lib/bridge-choice";
 import { BridgeInstallMethod } from "../../components/BridgeInstallMethod";
 import { useState, useMemo, useEffect, useRef, Fragment, type ReactNode } from "react";
 import { Link } from "react-router-dom";
@@ -28,6 +31,7 @@ import { Combobox } from "../../components/Combobox";
 import type { ModulePageTabCtx, EntityDetailPanelCtx } from "../../panels/types";
 import { capitalise, machineWords, type MachineWords } from "../../lib/machine-words";
 import { withArticle } from "@cobblr/platform-contract/plural";
+import { useJobStartReview } from "./startReview";
 import { useReprint } from "./useReprint";
 
 export type LinkableMachine = { id: string; name: string; instLabel: string | null; image: string | null };
@@ -121,7 +125,7 @@ export function CreateConnectionModal({
           <span className={lbl}>Type</span>
           <select value={type} onChange={(e) => setType(e.target.value)} className={field}>
             {types.map((t) => (
-              <option key={t} value={t}>{t === "fdm_monster" ? "FDM Monster" : t === "mock" ? "Mock (test)" : t === "bambu" ? "Bambu Lab" : t === "edge_adapter" ? "Edge adapter (your bridge)" : t}</option>
+              <option key={t} value={t}>{t === "fdm_monster" ? "FDM Monster" : t === "mock" ? "Mock (test)" : t === "bambu" ? "Bambu Lab" : t === "edge_adapter" ? "Your bridge" : t}</option>
             ))}
           </select>
         </label>
@@ -230,7 +234,7 @@ const BRIDGE_DRIVERS: { key: string; label: string; fields: { key: string; label
   { key: "prusalink", label: "Prusa (PrusaLink)", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.213" }, { key: "apiKey", label: "PrusaLink API key" }] },
   { key: "duet", label: "Duet (RepRapFirmware)", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.50" }] },
   { key: "bambu", label: "Bambu Lab (LAN)", fields: [{ key: "host", label: "Printer IP" }, { key: "serial", label: "Serial" }, { key: "accessCode", label: "LAN access code" }] },
-  { key: "lightburn", label: "LightBurn laser", fields: [{ key: "host", label: "IP of the PC running LightBurn" }] },
+  { key: "lightburn", label: "LightBurn laser", fields: [{ key: "host", label: "LightBurn host" }] },
 ];
 
 type MachineDraft = { key: string; name: string; driver: string; cfg: Record<string, string> };
@@ -241,24 +245,28 @@ const defOf = (m: MachineDraft) => BRIDGE_DRIVERS.find((d) => d.key === m.driver
 export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName }: { onCreated: (connectionId?: string) => void; onClose: () => void; presetDriver?: string; presetName?: string }) {
   const { activeSlug } = useActiveOrg();
   const toast = useToast();
-  const [label, setLabel] = useState("Edge bridge");
+  const [label, setLabel] = useState("Workshop bridge");
   const [bridgeId, setBridgeId] = useState("");
   const [machines, setMachines] = useState<MachineDraft[]>(() => {
     const m = newMachine(presetDriver && BRIDGE_DRIVERS.some((d) => d.key === presetDriver) ? presetDriver : "mock");
     if (presetName?.trim()) m.name = presetName.trim(); // carry the name from the New-printer form
     return [m];
   });
-  const bid = bridgeId.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
-  // Name the bridge the status box is reporting on — you may run several, so
-  // "your bridge is online" is ambiguous. Blank → the default/main bridge.
-  const bridgeLabel = bid ? `the "${bid}" bridge` : "your main bridge";
-  const status = useQuery({
-    queryKey: ["digifab-edge-status", activeSlug, bid],
-    queryFn: () => api.getDigifabEdgeStatus(activeSlug, bid || undefined),
+  const [installNew, setInstallNew] = useState(false);
+  const [installationId, setInstallationId] = useState<string | null>(null);
+  const bridges = useQuery({
+    queryKey: ["edge-bridges", activeSlug],
+    queryFn: () => api.listEdgeBridges(activeSlug),
     enabled: !!activeSlug,
     refetchInterval: 3000,
   });
-  const connected = !!status.data?.connected;
+  const knownBridges = bridges.data?.bridges || [];
+  const installing = installNew || knownBridges.length === 0;
+  const bid = installing ? installationId || "" : bridgeId;
+  const chosen = knownBridges.find(b => (b.bridge || "") === bid);
+  const connected = !!chosen?.connected;
+  const bridgeLabel = chosen ? bridgeDisplayName(chosen) : label;
+  const lightBurn = machines.some(m => m.driver === "lightburn");
 
   const updateMachine = (key: string, patch: Partial<MachineDraft>) => setMachines((ms) => ms.map((m) => (m.key === key ? { ...m, ...patch } : m)));
   const setField = (key: string, fk: string, v: string) => setMachines((ms) => ms.map((m) => (m.key === key ? { ...m, cfg: { ...m.cfg, [fk]: v } } : m)));
@@ -293,47 +301,35 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName }
   const field = "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
   return (
     <div className="space-y-3">
-      {/* Multi-bridge: a SECOND bridge at another site (or LightBurn, which must
-          run its own bridge on the LightBurn PC) gets a distinct id so it has its
-          own channel instead of colliding with the main bridge. Above the
-          already-connected check so you can add a 2nd bridge even when the main
-          one's online — typing an id flips the view to that bridge's install. */}
-      <label className="block">
-        <span className={lbl}>Bridge <span className="normal-case text-faint/70"> - pick a connected one, or type an id you're about to install</span></span>
-        <BridgePicker slug={activeSlug} value={bridgeId.trim() ? bridgeId : null} onChange={(v) => setBridgeId(v ?? "")} />
-        <span className="text-[11px] text-faint mt-1 block">
-          {bid
-            ? <>Talking to <code>{bid}</code>  - this must match that bridge's <code>BRIDGE_ID</code>. A 2nd+ bridge (another site, or LightBurn's PC) <strong>must</strong> be named so it gets its own channel.</>
-            : <>Blank = your <strong>main</strong> bridge (installed without a <code>BRIDGE_ID</code>). If you gave even your first bridge an id, type it here. Extra bridges always need a name.</>}
-        </span>
-      </label>
-      {/* If THIS bridge is already dialed in, skip the install flow — just add a
-          machine to it. (Keyed to the bridge id above.) */}
+      {!installing && <div className="space-y-2">
+        <span className={lbl}>Your bridge</span>
+        <BridgePicker slug={activeSlug} value={bridgeId || null} onChange={v => setBridgeId(v || "")} />
+        <button type="button" onClick={() => { setInstallationId(null); setInstallNew(true); }} className="text-xs text-accent hover:underline">Set up another bridge</button>
+      </div>}
       {connected ? (
         <div className="flex items-center gap-2 text-sm rounded border border-moss-500/40 bg-moss-50 dark:bg-moss-950/30 p-2">
           <span className="w-2 h-2 rounded-full bg-moss-500 shrink-0" />
-          <span className="text-moss-700 dark:text-moss-300">{bid ? <><code>{bid}</code></> : "Your main bridge"} is online ✓ - add a machine to it below. No reinstall needed.</span>
+          <span className="text-moss-700 dark:text-moss-300">{bridgeLabel} is online. Add a machine below.</span>
         </div>
       ) : (<>
       <p className="text-[13px] text-muted dark:text-slate-400">
-        A hosted Cobblr can't reach a machine on your network directly. Run one tiny <strong>bridge</strong> on
-        any always-on box at your site (Pi, NAS, mini-PC) - it dials out and holds a tunnel open (no inbound
-        firewall hole). Install it once; <strong>add every machine at your site</strong> to it, anytime.
+        {lightBurn ? "Install the bridge on the computer with LightBurn. Pairing happens on that computer. To use a bridge elsewhere, enable LightBurn’s network API first." : "A hosted Cobblr reaches your machines through a bridge on your network. Install it on an always-on computer, then add your machines below."}
       </p>
       {/* STEP 1 — install the bridge (name + token; no machines needed yet). */}
       <label className="block">
         <span className={lbl}>1 · Name this bridge</span>
         <input value={label} onChange={(e) => setLabel(e.target.value)} className={field} autoFocus />
       </label>
-      <BridgeInstallMethod slug={activeSlug} label={label} bridgeId={bid} />
+      <BridgeInstallMethod slug={activeSlug} label={label} bridgeId={installationId || ""} lightBurn={lightBurn} onStarted={id => setInstallationId(id)} />
       <div>
         <span className={lbl}>3 · Cobblr is watching for it</span>
         <div className={"flex items-center gap-2 text-sm rounded border p-2 " + (connected ? "border-moss-500/40 bg-moss-50 dark:bg-moss-950/30" : "border-line dark:border-slate-700")}>
           <span className={"w-2 h-2 rounded-full " + (connected ? "bg-moss-500" : "bg-amber-500 animate-pulse")} />
-          {connected ? <span className="text-moss-700 dark:text-moss-300">{bid ? <><code>{bid}</code> online</> : "Main bridge online"}  - dialed in ✓</span> : <span className="text-muted dark:text-slate-400">Waiting for {bridgeLabel} to dial in…</span>}
+          {connected ? <span className="text-moss-700 dark:text-moss-300">{bridgeLabel} online</span> : <span className="text-muted dark:text-slate-400">Waiting for {bridgeLabel} to dial in…</span>}
         </div>
       </div>
       </>)}
+      {connected && lightBurn && <LightBurnPairing />}
       {/* Add machines to the bridge (the only step once it's online). */}
       <div className="space-y-2 pt-1 border-t border-line dark:border-slate-800">
         <span className={lbl}>{connected ? "Add a machine" : "4 · Machines on this bridge"}</span>
@@ -365,6 +361,7 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName }
                   <label key={f.key} className="block">
                     <span className={lbl}>{f.label}{f.optional ? "" : " *"}</span>
                     <input value={m.cfg[f.key] ?? ""} onChange={(e) => setField(m.key, f.key, e.target.value)} placeholder={f.placeholder} className={field} />
+                    {m.driver === "lightburn" && f.key === "host" && <span className="block text-xs text-muted">127.0.0.1 when LightBurn runs on the bridge’s computer.</span>}
                   </label>
                 ))}
               </div>
@@ -418,9 +415,9 @@ function FleetBatchBar({
   toast: ReturnType<typeof useToast>;
 }) {
   const [busy, setBusy] = useState(false);
-  const pausable = devices.filter((d) => d.active_job?.status === "printing");
-  const resumable = devices.filter((d) => d.active_job?.status === "paused");
-  const stoppable = devices.filter((d) => d.active_job && ["printing", "paused", "sent"].includes(d.active_job.status));
+  const pausable = devices.filter((d) => !d.lightburn_readiness && d.id !== "lightburn" && d.active_job?.status === "printing");
+  const resumable = devices.filter((d) => !d.lightburn_readiness && d.id !== "lightburn" && d.active_job?.status === "paused");
+  const stoppable = devices.filter((d) => !d.lightburn_readiness && d.id !== "lightburn" && d.active_job && ["printing", "paused", "sent"].includes(d.active_job.status));
   const clearable = devices.filter((d) => d.needs_attention);
   const run = async (label: string, items: Array<DigifabFleetDevice & { connId: string }>, fn: (d: DigifabFleetDevice & { connId: string }) => Promise<unknown>, destructive = false) => {
     const ok = await confirm({
@@ -726,6 +723,9 @@ export function FleetView({ slug, machineIds, scopeNoun }: {
   /** The scope's item noun ("3D printer"), for the honesty footer. */
   scopeNoun?: string;
 }) {
+
+  const bridges = useQuery({ queryKey: ["edge-bridges", slug], queryFn: () => api.listEdgeBridges(slug), enabled: !!slug, refetchInterval: 8000 });
+  const bridgeName = (id: string | null | undefined) => bridgeDisplayName(bridges.data?.bridges.find(b => b.bridge === (id || null)) || { bridge: id || null, name: null });
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
@@ -873,7 +873,7 @@ export function FleetView({ slug, machineIds, scopeNoun }: {
         const errored = data.connections.filter((c) => c.error);
         const allUnfiltered: FDev[] = data.connections
           .filter((c) => !c.error)
-          .flatMap((c) => c.devices.map((d) => ({ ...d, connLabel: c.label, connId: c.connection_id, connType: c.type })))
+          .flatMap((c) => c.devices.map((d) => ({ ...d, connLabel: c.type === "edge_adapter" ? `${c.label} on ${bridgeName(c.bridge)}` : c.label, connId: c.connection_id, connType: c.type })))
           .filter(inScope);
         const all: FDev[] = allUnfiltered.filter((d) => bucket === "all" || deviceBucket(d) === bucket);
         const connDeviceCountEarly = new Map<string, number>();
@@ -1167,7 +1167,7 @@ function LanCameraFill({ slug, connId, deviceId, name, live, klass }: { slug: st
   return <img src={url} alt={`${name} camera`} draggable={false} className="w-full h-full object-cover" />;
 }
 
-function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, selected, onToggleSelect }: {
+export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, selected, onToggleSelect }: {
   d: DigifabFleetDevice; connId: string; slug: string; title?: string; subtitle?: string | null;
   /** Compact tile (farm-wall density). */
   dense?: boolean;
@@ -1180,6 +1180,7 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
 }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const laser = !!d.lightburn_readiness || d.id === "lightburn";
   const st = KLASS_STYLE[d.klass];
   // Progress: a Cobblr job's (0–1) wins; otherwise the printer's own live percent
   // (already 0–100, e.g. a Bambu print started from its own slicer).
@@ -1187,6 +1188,7 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
     ? Math.round(d.active_job.progress * 100)
     : d.live?.progress != null ? Math.round(d.live.progress) : null;
   const invalidateFleet = () => void qc.invalidateQueries({ queryKey: ["digifab-fleet", slug] });
+  const startReview = useJobStartReview(() => { invalidateFleet(); void qc.invalidateQueries({ queryKey: ["digifab-jobs", slug] }); });
   const [camOpen, setCamOpen] = useState(false);
   const [camUrl, setCamUrl] = useState(d.camera_url ?? "");
   // The part-by-part verdict ("9 good, 1 scrap") for a plate that makes more
@@ -1201,10 +1203,10 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
     onSuccess: (_r, v) => {
       toast.success(
         typeof v !== "string"
-          ? `${d.name} cleared: ${v.good} good, ${v.scrap} scrap`
+          ? `${title || d.linked_machine?.name || d.name} cleared: ${v.good} good, ${v.scrap} scrap`
           : v === "scrapped"
-            ? `${d.name} cleared. Scrapped: filament and usage restored`
-            : `${d.name} cleared, ready for the next job`,
+            ? `${title || d.linked_machine?.name || d.name} cleared. Scrapped: filament and usage restored`
+            : `${title || d.linked_machine?.name || d.name} cleared, ready for the next job`,
       );
       setSplitOpen(false);
       invalidateFleet();
@@ -1256,6 +1258,13 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
     if (!raw) return;
     let item: { name: string; file_id: string };
     try { item = JSON.parse(raw); } catch { return; }
+    if (laser) {
+      const job = await api.createDigifabJob(slug, { connection_id: connId, target_device: d.id, file_ref: item.name, file_id: item.file_id });
+      await startReview.beforeStart(job.id, async () => {});
+      invalidateFleet();
+      void qc.invalidateQueries({ queryKey: ["digifab-jobs", slug] });
+      return;
+    }
     if (await confirmDrop({ title: `Print "${item.name}" on ${d.name}?`, message: "Uploads the file and starts the print on this machine now.", confirmLabel: "Print here", destructive: true })) {
       dropSend.mutate(item);
     }
@@ -1286,16 +1295,16 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
   // it clears itself once the printer reports idle again. (Firmware-update-
   // available is NOT a needs reason — it never enters deviceBucket.)
   const needsReason =
-    att?.reason === "print-failed" ? "print failed, check the bed"
-    : att?.reason === "print-cancelled" ? "print cancelled, clear the bed"
-    : att ? "print done, clear the bed"
-    : d.klass === "complete" ? "print finished, clear the bed"
+    att?.reason === "print-failed" ? laser ? "job failed, check the piece" : "print failed, check the bed"
+    : att?.reason === "print-cancelled" ? laser ? "job cancelled, take the piece out" : "print cancelled, clear the bed"
+    : att ? laser ? "job done, take the piece out" : "print done, clear the bed"
+    : d.klass === "complete" ? laser ? "job finished, take the piece out" : "print finished, clear the bed"
     : d.klass === "error" ? "error, see the manager"
     : null;
   const needsShort =
     att?.reason === "print-failed" ? "failed"
     : att?.reason === "print-cancelled" ? "cancelled"
-    : (att || d.klass === "complete") ? "clear bed"
+    : (att || d.klass === "complete") ? (laser ? "take piece out" : "clear bed")
     : d.klass === "error" ? "error"
     : null;
   const dragProps = {
@@ -1311,6 +1320,7 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
   if (cams) {
     return (
       <div className={rootCls} {...dragProps} onClick={selecting ? onToggleSelect : undefined}>
+        {startReview.sheet}
         <div className={`h-1 ${att ? "bg-amber-500" : st.dot} ${d.klass === "printing" ? "animate-pulse" : ""}`} />
         <button type="button" onClick={selecting ? undefined : () => setDetailOpen(true)} className="block w-full text-left">
           <div className="relative aspect-video bg-black/40 flex items-center justify-center overflow-hidden">
@@ -1367,6 +1377,7 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
   if (dense) {
     return (
       <div className={rootCls} {...dragProps} onClick={selecting ? onToggleSelect : undefined}>
+        {startReview.sheet}
         <div className={`h-1 ${att ? "bg-amber-500" : st.dot} ${d.klass === "printing" ? "animate-pulse" : ""}`} />
         <div className="p-1.5">
           <div className="flex items-center gap-1">
@@ -1395,7 +1406,8 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
   return (
     <div className={rootCls} {...dragProps} onClick={selecting ? onToggleSelect : undefined}>
       {/* Status band — the farm-floor read: color says state before text does. */}
-      <div className={`h-1 ${att ? "bg-amber-500" : st.dot} ${d.klass === "printing" ? "animate-pulse" : ""}`} />
+      {startReview.sheet}
+        <div className={`h-1 ${att ? "bg-amber-500" : st.dot} ${d.klass === "printing" ? "animate-pulse" : ""}`} />
       <div className="p-2.5">
       {selecting && (
         <div className="flex items-center gap-1.5 mb-1">
@@ -1428,7 +1440,7 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
       ) : null}
       <div className="flex items-center gap-1.5">
         <span className={`w-2 h-2 rounded-full shrink-0 ${st.dot} ${d.klass === "printing" ? "animate-pulse" : ""}`} />
-        <button type="button" onClick={(e) => { if (selecting) { e.stopPropagation(); onToggleSelect?.(); } else setDetailOpen(true); }} className="text-sm font-medium text-content dark:text-mortar-100 truncate hover:text-accent text-left" title={`${title ?? d.name}: open details`}>{title ?? d.name}</button>
+        <button type="button" onClick={(e) => { if (selecting) { e.stopPropagation(); onToggleSelect?.(); } else setDetailOpen(true); }} className="text-sm font-medium text-content dark:text-mortar-100 min-w-0 break-words whitespace-normal leading-snug hover:text-accent text-left" title={`${title ?? d.name}: open details`}>{title ?? d.name}</button>
         <div className="flex-1" />
         <button
           onClick={() => { setCamUrl(d.camera_url ?? ""); setCamOpen((o) => !o); }}
@@ -1480,6 +1492,8 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
           <ShieldCheck size={10} /> AI watch · {Math.round(d.failure.score * 100)}%
         </div>
       ) : null}
+      {d.lightburn_readiness && <div className="mt-2"><LightBurnReadiness readiness={d.lightburn_readiness} /></div>}
+      {laser && job && <p className="mt-2 text-xs text-muted">{job.status === "sent" ? "Start sent, waiting for LightBurn to report running. " : ""}Stop in LightBurn or at the machine</p>}
       {blocked && <div className="mt-1 text-[10px] text-ember-600 dark:text-ember-500">{blocked}</div>}
       {/* A print that finished outside a Cobblr job (no attention row, no verdict
           flow) still owes you a bed-clear — name it so the amber tile isn't
@@ -1519,10 +1533,10 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
         <div className="mt-1.5 rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-1.5 py-1">
           <div className="text-[10px] text-amber-700 dark:text-amber-400 leading-tight">
             {att.reason === "print-failed"
-              ? "Print failed. Check the bed"
+              ? laser ? "Job failed. Check the piece" : "Print failed. Check the bed"
               : att.reason === "print-cancelled"
-                ? "Print cancelled. Clear the bed"
-                : "Print done. Clear the bed. Come out good?"}
+                ? laser ? "Job cancelled. Take the piece out" : "Print cancelled. Clear the bed"
+                : laser ? "Job done. Take the piece out. Come out good?" : "Print done. Clear the bed. Come out good?"}
           </div>
           {/* No verdict for a failed or CANCELLED print: there is no finished
               part to judge, and "came out good" would credit the production run
@@ -1608,17 +1622,17 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
               <span className="text-[9px] text-faint shrink-0" title={`auto-retry on fail (${job.attempts}/${job.max_attempts - 1} used)`}>↻{job.attempts}/{job.max_attempts - 1}</span>
             )}
             {/* Cockpit live-control: pause / resume the running print. */}
-            {job.status === "printing" && (
+            {!laser && job.status === "printing" && (
               <button onClick={() => ctrl.mutate("pause")} disabled={ctrl.isPending} title="Pause print" className="text-faint hover:text-accent transition p-0.5 disabled:opacity-50">
                 <Pause size={13} />
               </button>
             )}
-            {job.status === "paused" && (
+            {!laser && job.status === "paused" && (
               <button onClick={() => ctrl.mutate("resume")} disabled={ctrl.isPending} title="Resume print" className="text-amber-600 hover:text-amber-700 transition p-0.5 disabled:opacity-50">
                 <Play size={13} />
               </button>
             )}
-            {(job.status === "printing" || job.status === "paused" || job.status === "sent") && (
+            {!laser && (job.status === "printing" || job.status === "paused" || job.status === "sent") && (
               <button
                 onClick={async () => {
                   if (await confirmStop({ title: `Stop the print on ${d.name}?`, message: "Cancels the job. Where the manager supports it the printer aborts; otherwise stop it at the machine.", confirmLabel: "Stop print", destructive: true })) stop.mutate();
@@ -2436,6 +2450,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
             operator needs is on one screen — secondary detail (recent prints) is a
             collapsible so the default view fits without scrolling. */}
         <div className="space-y-3">
+          {device.lightburn_readiness && <LightBurnReadiness readiness={device.lightburn_readiness} />}
           {/* Header strip — status pills + machine link + LAN, all on one wrapping row. */}
           <div className="flex flex-wrap items-center gap-2 text-xs pb-2 border-b border-line dark:border-slate-800">
             <span className="px-1.5 py-0.5 rounded bg-subtle dark:bg-slate-800 text-content dark:text-mortar-100">{device.state}</span>
@@ -2528,7 +2543,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
               ) : null}
               {detail.data?.job && (
                 <div>
-                  <div className={lbl + " mb-1"}>Printing</div>
+                  <div className={lbl + " mb-1"}>Running</div>
                   <JobPanel job={detail.data.job} />
                 </div>
               )}
@@ -2557,7 +2572,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
                   )}
                 </div>
               )}
-              {detail.data && detail.data.live === false && <div className="text-[11px] text-faint italic">No live cloud telemetry for this printer.</div>}
+              {detail.data && detail.data.live === false && <div className="text-[11px] text-faint italic">No live cloud telemetry for this machine.</div>}
               {detail.data?.lan?.applicable && (
                 <LanAccessPanel slug={slug} connId={connId} deviceId={device.id} lan={detail.data?.lan} />
               )}
@@ -2580,8 +2595,11 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
               button), plus a tail of prints whose file is no longer on the card
               (view detail; Print-again when a Cobblr job backs it). */}
           <div className="pt-3 border-t border-line dark:border-slate-800">
-            <div className={lbl + " mb-1.5"}>On {device.name}  - files &amp; prints</div>
-            <FilesPanel
+            <div className={lbl + " mb-1.5"}>On {device.name}  - files &amp; jobs</div>
+            {device.lightburn_readiness ? <div className="space-y-2 text-xs text-muted">
+              <p>Upload designs in the Library, then review the cut settings before Start.</p>
+              <details><summary>Job history</summary>{mine.map(item => <button key={item.id} type="button" onClick={() => setPrintOpen(item)} className="block text-accent hover:underline py-1">{item.file_ref} · {item.status}</button>)}</details>
+            </div> : <FilesPanel
               slug={slug}
               connId={connId}
               deviceId={device.id}
@@ -2589,7 +2607,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
               history={mine}
               onOpenPrint={setPrintOpen}
               onReprint={(r) => void askReprint(r)}
-            />
+            />}
           </div>
         </div>
       </Modal>
@@ -2615,9 +2633,9 @@ export function PrintDetailModal({ item, onClose, onZoom, onReprint }: { item: D
         <div>
           {row("Status", <span className={item.status === "completed" ? "text-moss-600" : item.status === "failed" ? "text-ember-600 dark:text-ember-400" : ""}>{item.status}</span>)}
           {row("Profile", item.sub_label)}
-          {row("Printer", item.device)}
+          {row("Machine", item.device)}
           {row("Filament", item.filament_g != null ? `${Math.round(item.filament_g)} g` : null)}
-          {row("Print time", dur)}
+          {row("Job time", dur)}
           {row("When", new Date(item.at).toLocaleString())}
         </div>
         {onReprint && isReprintable(item) && (
@@ -2627,7 +2645,7 @@ export function PrintDetailModal({ item, onClose, onZoom, onReprint }: { item: D
               onClick={() => onReprint(item)}
               className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition"
             >
-              <RefreshCw size={13} /> Print again
+              <RefreshCw size={13} /> Run again
             </button>
           </div>
         )}

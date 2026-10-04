@@ -10,6 +10,7 @@
 // card instead of failing the whole fleet (one dead printer farm can't blank
 // the view of the others).
 
+import { readBridgeConfig } from "../bridge-identity.js";
 import { putBackDrawn } from "../loaded-spools.js";
 import { recordVerdictOnMake } from "../makes-core.js";
 import { Router, raw } from "express";
@@ -24,7 +25,8 @@ import { buildDriverById, bambuLanDriverFor, runControlWithCloudFallback, parseB
 import { recordRunVerdict } from "../runs-core.js";
 import { availableDriverKeys } from "../drivers/registry.js";
 import { ownedDeviceRefs } from "../detectors/owned.js";
-import { classify } from "../state.js";
+import { readLightBurnReadiness } from "../lightburn-readiness.js";
+import { classify, fleetState } from "../state.js";
 import type { MachineDriver, RemoteDevice } from "../drivers/types.js";
 import type { Kysely } from "kysely";
 import type { DigifabDB } from "../db.js";
@@ -276,6 +278,7 @@ fleetRouter.get(
 
     const connections = await mapLimit(conns, MAX_CONCURRENT_LISTS, async (c) => {
         try {
+          const bridge = c.type === "edge_adapter" ? (await readBridgeConfig(orgId, c.id)).bridge : undefined;
           const driver = await buildDriverById(db, orgId, c.id);
           if (!driver) {
             return { connection_id: c.id, label: c.label, type: c.type, error: "driver unavailable", fetched_at: null, devices: [] };
@@ -309,7 +312,7 @@ fleetRouter.get(
             const setting = settings.find((s) => s.connection_id === c.id && s.remote_device_id === d.id) ?? null;
             const fw = failureRows.find((f) => f.connection_id === c.id && f.device_id === d.id) ?? null;
             const live = bambuLive?.get(d.id) ?? null;
-            const state = live?.state ?? d.state ?? "unknown";
+            const state = fleetState(live?.state ?? d.state ?? "unknown", job?.status);
             // Owned by an external detector → the detector handles the camera +
             // detection; Cobblr reports no camera source so nothing here pulls it.
             const managedByDetector = owned.has(`${c.id}:${d.id}`);
@@ -319,6 +322,7 @@ fleetRouter.get(
               state,
               klass: classify(state),
               enabled: d.enabled,
+              lightburn_readiness: readLightBurnReadiness(d.raw?.lightburnReadiness),
               tags: d.tags ?? [],
               linked_machine_id: link?.machine_id ?? null,
               // The linked machine's own identity — lets the tile BE the
@@ -374,7 +378,7 @@ fleetRouter.get(
               next_job: next ? { id: next.id, file_ref: next.file_ref, pooled: !!next.target_pool } : null,
             };
           });
-          return { connection_id: c.id, label: c.label, type: c.type, error: null, fetched_at: new Date(at).toISOString(), stale, devices: mapped };
+          return { connection_id: c.id, label: c.label, type: c.type, bridge, error: null, fetched_at: new Date(at).toISOString(), stale, devices: mapped };
         } catch (err) {
           return {
             connection_id: c.id,

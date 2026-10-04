@@ -1,3 +1,4 @@
+import { useScanOrigins } from "../lib/useScanOrigins";
 // /scan/camera — full-screen immersive scanner, production-grade.
 //
 // The SHELL is a body-portaled `fixed inset-0` overlay: one tap on the
@@ -284,6 +285,9 @@ export function ScanCameraPage() {
   // every item saved this session, barcode and photo alike. Picked via the
   // Assign sheet (LocationChipPicker over core-locations).
   const { activeSlug } = useActiveOrg();
+  const scanOrigins = useScanOrigins(activeSlug);
+  const scanOriginsRef = useRef(scanOrigins);
+  scanOriginsRef.current = scanOrigins;
   const qc = useQueryClient();
   const [areaId, setAreaId] = useState<string | null>(null);
   // Scan-into-container: the active bin can be a container ENTITY (a server
@@ -1101,7 +1105,7 @@ export function ScanCameraPage() {
       if (!raw) return;
       // ONE classification for the value, the same rule the typed field
       // applies (lib/scanPayload.ts): what it is decides where it goes.
-      const payload = classifyScanPayload(raw);
+      const payload = classifyScanPayload(raw, scanOriginsRef.current);
       // A link to Cobblr itself (a booth display's own QR behind the item):
       // never filed, never held, no toast. Scanning simply goes on.
       if (payload.kind === "own-link") return;
@@ -1462,7 +1466,7 @@ export function ScanCameraPage() {
               if (diagRef.current) recordDecode(performance.now() - t0, !!text, didRotate);
               // A link to Cobblr itself never enters the window, so it cannot
               // outvote the item's barcode (lib/scanPayload.ts scannerIgnores).
-              if (text && !scannerIgnores(text)) {
+              if (text && !scannerIgnores(text, scanOriginsRef.current)) {
                 const picked = collect(text, Date.now());
                 if (picked) onDetectRef.current(picked);
               }
@@ -1518,7 +1522,7 @@ export function ScanCameraPage() {
           // candidate, and an order that flips frame-to-frame starves the
           // two-in-a-row agreement gate — books never scanned. Pick ONE
           // deterministically (retail codes first, then longest) instead.
-          const picked = pickDetection(results.map((r) => r.rawValue).filter((v) => !scannerIgnores(v)));
+          const picked = pickDetection(results.map((r) => r.rawValue).filter((v) => !scannerIgnores(v, scanOriginsRef.current)));
           if (picked) onDetectRef.current(picked);
         })
         .catch(() => {
@@ -1960,7 +1964,7 @@ export function ScanCameraPage() {
     try {
       const { canvas } = await frameFromImage(blob);
       const r = decodeCanvasSmart(createBarcodeReader(), canvas, document.createElement("canvas"));
-      return r.text ? doorPlan(typedVerdict(r.text)) : null;
+      return r.text ? doorPlan(typedVerdict(r.text, scanOriginsRef.current)) : null;
     } catch {
       return null;
     }
@@ -2019,7 +2023,7 @@ export function ScanCameraPage() {
       try {
         const { canvas, blob } = await frameFromImage(file);
         const r = decodeCanvasSmart(createBarcodeReader(), canvas, document.createElement("canvas"));
-        const plan = doorPlan(r.text ? typedVerdict(r.text) : null);
+        const plan = doorPlan(r.text ? typedVerdict(r.text, scanOriginsRef.current) : null);
         const areaIdNow = areaIdRef.current;
         const loc = (locsRef.current ?? []).find((l) => l.id === areaIdNow);
         const wasArmed = !!armRef.current;
@@ -2683,6 +2687,7 @@ export function ScanCameraPage() {
             }}
             moveMode={moveMode}
             countMode={countMode}
+            sessionMode={params.get("mode") === "use" ? "use" : params.get("mode") === "kitchen" ? "kitchen" : undefined}
             onAttached={(r, m, mode) => {
               if (mode === "move") {
                 setMoveStack((s) => [
@@ -2734,6 +2739,7 @@ export function ScanCameraPage() {
             }}
             moveMode={moveMode}
             countMode={countMode}
+            sessionMode={params.get("mode") === "use" ? "use" : params.get("mode") === "kitchen" ? "kitchen" : undefined}
             onAttached={(r, m, mode) => {
               if (mode === "move") {
                 setMoveStack((s) => [
@@ -2846,12 +2852,14 @@ export function ScanCameraPage() {
         )}
         {!(sheetOpen || !!reviewItem || (phase === "result" && !!pendingBarcode)) && (
           <NfcScanButton
+            ownOrigins={scanOrigins}
             onCobblrQr={(token) => routeQr(token, { freeze: phaseRef.current === "scanning" })}
             onOpenPath={(path) => navigate(path)}
           />
         )}
         {!(sheetOpen || !!reviewItem || (phase === "result" && !!pendingBarcode)) && (
           <ManualScanField
+            ownOrigins={scanOrigins}
             onLookup={(code) => {
               setPendingBarcode(code);
               setPhase("result");

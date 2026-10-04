@@ -1,0 +1,10 @@
+{
+  "lint": "lint:record-form-shell",
+  "run": "node scripts/lint-record-form-shell.ts",
+  "rows": [
+    "shared-web-primitive"
+  ],
+  "ms": 1980,
+  "recorded": "2026-10-04",
+  "source": "CI typecheck run 36590 (5c04c11c1, status success)"
+}

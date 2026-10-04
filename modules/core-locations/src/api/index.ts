@@ -10,6 +10,7 @@ import { registerLocationsResolvers } from "./resolvers.js";
 import { registerLocationsWriter } from "./sync-writer.js";
 import { registerLocationsHandlers } from "./handlers.js";
 import { registerPlaceParent } from "./place-parent.js";
+import { lightsRouter } from "./lights.js";
 
 const router = Router({ mergeParams: true });
 
@@ -18,6 +19,7 @@ const router = Router({ mergeParams: true });
 router.use("/locations", locationsImportRouter);
 // Floor plan (":id/floorplan/seed") before the generic /:id routes.
 router.use("/locations", floorplanRouter);
+router.use("/locations", lightsRouter);
 router.use("/locations", locationsRouter);
 
 // Side-effect: register the entity-kind resolvers at module-load

@@ -41,7 +41,8 @@ function actionFor(e: HistoryEntry): string | null {
   }
 }
 
-export async function orderHappened(db: Kysely<SalesDB>, orgId: string, orderId: string, e: HistoryEntry): Promise<void> {
+// Transactions defer activity and bus effects until their history row commits.
+export async function orderHappened(db: Kysely<SalesDB>, orgId: string, orderId: string, e: HistoryEntry, afterCommit?: Array<() => Promise<void>>): Promise<void> {
   await db
     .insertInto("sales_order_history")
     .values({
@@ -53,19 +54,23 @@ export async function orderHappened(db: Kysely<SalesDB>, orgId: string, orderId:
       by_user: e.by_user ?? null,
     })
     .execute();
-  const action = actionFor(e);
-  if (action) {
-    await platform().activity.log({
-      orgId,
-      userId: e.by_user ?? null,
-      action,
-      ref: { module: "sales", entityType: "order", entityId: orderId },
-      diff: { ...(e.kind === "status" ? { status: { from: e.from_status ?? null, to: e.to_status ?? null } } : {}), ...(e.detail ?? {}) },
-    });
-  }
-  if (e.kind === "status" && e.from_status && e.to_status && e.from_status !== e.to_status) {
-    await platform().events.emit("sales.order.status_changed", { orgId, orderId, from: e.from_status, to: e.to_status });
-  }
+  const publish = async () => {
+    const action = actionFor(e);
+    if (action) {
+      await platform().activity.log({
+        orgId,
+        userId: e.by_user ?? null,
+        action,
+        ref: { module: "sales", entityType: "order", entityId: orderId },
+        diff: { ...(e.kind === "status" ? { status: { from: e.from_status ?? null, to: e.to_status ?? null } } : {}), ...(e.detail ?? {}) },
+      });
+    }
+    if (e.kind === "status" && e.from_status && e.to_status && e.from_status !== e.to_status) {
+      await platform().events.emit("sales.order.status_changed", { orgId, orderId, from: e.from_status, to: e.to_status });
+    }
+  };
+  if (afterCommit) afterCommit.push(publish);
+  else await publish();
 }
 
 export async function readHistory(db: Kysely<SalesDB>, orderId: string) {

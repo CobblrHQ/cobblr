@@ -355,6 +355,8 @@ export function QueuePage() {
 
   const [codesOpen, setCodesOpen] = useState(false);
   const [newSizeOpen, setNewSizeOpen] = useState(false);
+  const [editingSize, setEditingSize] = useState<CustomLabelSize | null>(null);
+  const openSize = (size: CustomLabelSize | null) => { setEditingSize(size); setNewSizeOpen(true); };
   // Workspace-defined sizes (dimensions in; grid derived server-side).
   const customSizes = useQuery({
     queryKey: ["labels-custom-sizes", orgSlug],
@@ -388,6 +390,7 @@ export function QueuePage() {
     ? { cols: pickedCustom.cols, rows: pickedCustom.rows, label: pickedCustom.name }
     : builtin;
   const sizeKey = pickedCustom ? pickedSize : (builtin?.key ?? "");
+  const selectedCustomSize = customList.find((size) => `custom:${size.id}` === sizeKey);
   const paper = pickedCustom
     ? { width_in: pickedCustom.media_w, height_in: pickedCustom.media_h }
     : builtin
@@ -1115,7 +1118,7 @@ export function QueuePage() {
               <select
                 value={paperKey}
                 onChange={(e) => {
-                  if (e.target.value === "__newsize__") setNewSizeOpen(true);
+                  if (e.target.value === "__newsize__") openSize(null);
                   else setPaperKey(e.target.value);
                 }}
                 className="input !w-auto !py-1 text-xs"
@@ -1172,7 +1175,7 @@ export function QueuePage() {
               <select
                 value={sizeKey}
                 onChange={(e) => {
-                  if (e.target.value === "__new__") setNewSizeOpen(true);
+                  if (e.target.value === "__new__") openSize(null);
                   else setPickedSize(e.target.value);
                 }}
                 className="input !w-72 !py-1 text-xs"
@@ -1200,6 +1203,9 @@ export function QueuePage() {
                 <option value="__new__">＋ New label size…</option>
               </select>
             </label>
+            {selectedCustomSize && (
+              <button type="button" onClick={() => openSize(selectedCustomSize)} className="px-2 py-1 text-xs text-accent hover:underline">Edit size</button>
+            )}
             {canRotate && (
               <label
                 className="flex items-center gap-1.5"
@@ -1383,11 +1389,12 @@ export function QueuePage() {
         <CodesPanel />
       </Modal>
 
-      <NewSizeModal
-        open={newSizeOpen}
+      {newSizeOpen && <NewSizeModal
+        open
+        initialSize={editingSize}
         onClose={() => setNewSizeOpen(false)}
         onCreated={(created) => setPickedSize(`custom:${created.id}`)}
-      />
+      />}
 
       <AutoPrintModal open={autoPrintOpen} onClose={() => setAutoPrintOpen(false)} />
       {defaultPrinter && isBleDefault && (

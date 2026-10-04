@@ -1,3 +1,4 @@
+import { fieldNeed, FieldPack, RecordFormModal, MoneyInput, useConfirm, useToast, MutationError, noteWorkspaceWrite } from "@cobblr/platform-web";
 // Per-part maintenance panel — lists scheduled + history entries
 // from core-maintenance. Add an entry as "done now", "scheduled
 // later", or both (something done with a follow-up).
@@ -10,7 +11,6 @@ import { dayHere } from "@cobblr/platform-contract/day";
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Calendar, CheckCircle, History, Plus, Trash2 } from "lucide-react";
-import { Modal, MoneyInput, useConfirm, useToast, MutationError, noteWorkspaceWrite } from "@cobblr/platform-web";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
 import { useInventory } from "./context";
 
@@ -339,76 +339,106 @@ function AddEntryModal({
   }
 
   return (
-    <Modal open onClose={onClose} title="Add maintenance entry" size="sm" dismissOnBackdrop={false}>
+    <RecordFormModal open onClose={onClose} title="Add maintenance entry" dismissOnBackdrop={false}>
       <form onSubmit={submit} className="space-y-3">
-        <Field label="What">
-          <input
-            autoFocus
-            required
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="input"
-            placeholder="e.g. Belt tension check, oil change, fuse replace"
-          />
-        </Field>
-        <Field label="Details (optional)">
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            rows={2}
-            className="input"
-          />
-        </Field>
-        <Field label="Type">
-          <div className="flex gap-2 text-xs">
-            {(["done", "scheduled", "both"] as const).map((k) => (
-              <label
-                key={k}
-                className={
-                  "px-2 py-1 rounded-md border cursor-pointer " +
-                  (kind === k
-                    ? "border-accent bg-cobble-50 dark:bg-cobble-950/30 text-accent dark:text-cobble-300"
-                    : "border-line dark:border-slate-700 text-muted")
-                }
-              >
+        <FieldPack items={[
+          {
+            need: fieldNeed("name", { control: "text", label: "What" }),
+            node: (
+              <Field label="What">
                 <input
-                  type="radio"
-                  name="kind"
-                  value={k}
-                  checked={kind === k}
-                  onChange={() => setKind(k)}
-                  className="sr-only"
+                  autoFocus
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="input"
+                  placeholder="e.g. Belt tension check, oil change, fuse replace"
                 />
-                {k === "done" ? "did it" : k === "scheduled" ? "upcoming" : "did it + schedule next"}
-              </label>
-            ))}
-          </div>
-        </Field>
-        {(kind === "done" || kind === "both") && (
-          <Field label="Performed at">
-            <input
-              type="date"
-              value={performedAt}
-              onChange={(e) => setPerformedAt(e.target.value)}
-              className="input"
-              required
-            />
-          </Field>
-        )}
-        {(kind === "scheduled" || kind === "both") && (
-          <Field label="Scheduled for">
-            <input
-              type="date"
-              value={scheduledAt}
-              onChange={(e) => setScheduledAt(e.target.value)}
-              className="input"
-              required
-            />
-          </Field>
-        )}
-        <Field label="Cost">
-          <MoneyInput value={cost} storage="cents" live onCommit={setCost} placeholder="—" ariaLabel="Cost" />
-        </Field>
+              </Field>
+            ),
+          },
+          {
+            need: fieldNeed("description", { control: "markdown", label: "Details (optional)" }),
+            node: (
+              <Field label="Details (optional)">
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  rows={2}
+                  className="input"
+                />
+              </Field>
+            ),
+          },
+          {
+            need: { ...fieldNeed("type", { control: "choice", label: "Type" }), full: true },
+            node: (
+              <Field label="Type">
+                <div className="flex gap-2 text-xs">
+                  {(["done", "scheduled", "both"] as const).map((k) => (
+                    <label
+                      key={k}
+                      className={
+                        "px-2 py-1 rounded-md border cursor-pointer " +
+                        (kind === k
+                          ? "border-accent bg-cobble-50 dark:bg-cobble-950/30 text-accent dark:text-cobble-300"
+                          : "border-line dark:border-slate-700 text-muted")
+                      }
+                    >
+                      <input
+                        type="radio"
+                        name="kind"
+                        value={k}
+                        checked={kind === k}
+                        onChange={() => setKind(k)}
+                        className="sr-only"
+                      />
+                      {k === "done" ? "did it" : k === "scheduled" ? "upcoming" : "did it + schedule next"}
+                    </label>
+                  ))}
+                </div>
+              </Field>
+            ),
+          },
+        ]} />
+        <FieldPack items={[
+          ((kind === "done" || kind === "both")) ? {
+            need: fieldNeed("performedAt", { control: "date", label: "Performed at" }),
+            node: (
+              <Field label="Performed at">
+                <input
+                  type="date"
+                  value={performedAt}
+                  onChange={(e) => setPerformedAt(e.target.value)}
+                  className="input"
+                  required
+                />
+              </Field>
+            ),
+          } : null,
+          ((kind === "scheduled" || kind === "both")) ? {
+            need: fieldNeed("scheduledAt", { control: "date", label: "Scheduled for" }),
+            node: (
+              <Field label="Scheduled for">
+                <input
+                  type="date"
+                  value={scheduledAt}
+                  onChange={(e) => setScheduledAt(e.target.value)}
+                  className="input"
+                  required
+                />
+              </Field>
+            ),
+          } : null,
+          {
+            need: fieldNeed("cost", { control: "money", label: "Cost" }),
+            node: (
+              <Field label="Cost">
+                <MoneyInput value={cost} storage="cents" live onCommit={setCost} placeholder="—" ariaLabel="Cost" />
+              </Field>
+            ),
+          },
+        ]} />
         <div className="flex gap-2 pt-2">
           <button
             type="button"
@@ -426,7 +456,7 @@ function AddEntryModal({
           </button>
         </div>
       </form>
-    </Modal>
+    </RecordFormModal>
   );
 }
 

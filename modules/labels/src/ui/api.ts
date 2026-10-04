@@ -241,6 +241,7 @@ export class LabelsApi {
   /** Workspace-defined label sizes (dimensions in; grid + per_sheet derived). */
   listCustomSizes = () => this.request<{ items: CustomLabelSize[] }>("GET", "/sizes");
   createCustomSize = (b: CustomSizeInput) => this.request<CustomLabelSize>("POST", "/sizes", b);
+  updateCustomSize = (id: string, b: CustomSizeInput) => this.request<CustomLabelSize>("PUT", `/sizes/${id}`, b);
   deleteCustomSize = (id: string) => this.request<{ deleted: number }>("DELETE", `/sizes/${id}`);
 
   /** Accumulate-then-print policy (server-side auto-flush, CUPS/edge). */

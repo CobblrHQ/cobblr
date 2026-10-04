@@ -38,6 +38,12 @@ export interface FeedbackSourceItem {
    *  item nobody has replied to (or one replied to before we recorded it). */
   reply_delivery?: Partial<Record<"in_app" | "email" | "discord_dm", string>> | null;
   attachments: Array<{ file_id: string; name?: string; content_type?: string }>;
+  /** Can anyone be reached about this item? False for an anonymous sandbox
+   *  guest with no contact address; absent (an older host) reads as reachable. */
+  reachable?: boolean;
+  unreachable_reason?: string | null;
+  /** An address the reporter left on purpose. */
+  contact_email?: string | null;
   /** The item's card in the team's Discord channel, or null when it has none
    *  (filed while Discord was off, or its post failed). */
   announce_message_id?: string | null;

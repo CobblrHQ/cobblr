@@ -71,6 +71,14 @@ const DependencyCreate = z.object({
   note: z.string().max(500).optional(),
 });
 
+// AI-REACH: exempt — dashboard-only count; Cobb reads tasks and dependencies.
+tasksRouter.get("/dashboard", asyncHandler(async (req, res) => {
+  const counts = await tenantDb(req).selectFrom("projects_tasks as t")
+    .select(sql<number>`count(*) filter (where ${openBlockerCount("t.id")} > 0)::int`.as("blocked"))
+    .executeTakeFirstOrThrow();
+  res.json(counts);
+}));
+
 tasksRouter.get(
   "/",
   asyncHandler(async (req, res) => {

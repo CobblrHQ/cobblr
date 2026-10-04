@@ -1,3 +1,4 @@
+import { RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FieldPack, MutationError, fieldNeed, useConfirm, useFieldDraft } from "@cobblr/platform-web";
 // One task, whole: everything a task has, settable in one place. The row on a
 // project shows a line of it; this sheet is where the due date, the details,
 // the priority, the status and what it waits on are read and changed, and
@@ -8,7 +9,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, X } from "lucide-react";
-import { ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FieldPack, Modal, MutationError, fieldNeed, useConfirm, useFieldDraft } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import type { ChecklistItem, Energy, Priority, Task, TaskDependency, TaskStatus } from "./api";
 
@@ -132,7 +132,7 @@ export function TaskSheet({ taskId, onClose }: { taskId: string; onClose: () => 
   });
 
   return (
-    <Modal open onClose={onClose} title={t?.title ?? "Task"} subtitle={t?.project_name ?? undefined} size="md">
+    <RecordFormModal open onClose={onClose} title={t?.title ?? "Task"} subtitle={t?.project_name ?? undefined}>
       {task.isLoading && <div className="text-xs text-faint dark:text-slate-500">loading…</div>}
       {task.isError && <div className="text-sm text-ember-600 dark:text-ember-400">This task could not be opened. It may have been deleted.</div>}
       {t && (
@@ -231,7 +231,7 @@ export function TaskSheet({ taskId, onClose }: { taskId: string; onClose: () => 
           <ContributedDetailPanels target="projects:task" ctx={{ slug: orgSlug, entityId: t.id, entityTitle: t.title }} />
         </div>
       )}
-    </Modal>
+    </RecordFormModal>
   );
 }
 

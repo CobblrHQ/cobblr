@@ -31,6 +31,7 @@ export default defineModule({
     actions: [
     {
       // NO-PHRASING: the way back for another action, run only from Undo
+      group: "more",
       id: "core-presentation:remove-heading",
       internal: true,
       label: "Remove an empty heading",
@@ -45,6 +46,7 @@ export default defineModule({
     },
     {
       // UI-SCREEN: /configuration/presentation
+      group: "organise",
       id: "core-presentation:group-nav",
       label: "Group nav sections",
       description:
@@ -67,6 +69,7 @@ export default defineModule({
     },
     {
       // UI-SCREEN: /configuration/presentation
+      group: "organise",
       id: "core-presentation:ungroup-nav",
       label: "Ungroup nav sections",
       description:

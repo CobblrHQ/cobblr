@@ -13,6 +13,7 @@
 
 import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { LightBurnPairing } from "./LightBurnPairing";
 import { Laptop, Bluetooth, Loader2 } from "lucide-react";
 
 /** The desktop app's local surface.
@@ -232,6 +233,7 @@ export function DesktopAppCard() {
           </button>
         )}
       </div>
+      <LightBurnPairing method="desktop" />
 
       {(printers.data ?? []).length > 0 && (
         <ul className="space-y-1 pl-6">

@@ -276,12 +276,18 @@ const PrintThisBody = z
   .object({
     file_id: z.string().uuid().optional(),
     make_id: z.string().uuid().optional(),
+    prompt: z.string().trim().min(1).max(8000).optional(),
+    source: z.string().trim().min(1).max(200000).optional(),
+    source_lang: z.enum(["build123d", "openscad"]).optional(),
+    template: z.string().trim().min(1).max(200).optional(),
+    params: z.record(z.unknown()).optional(),
+    quantity: z.number().int().positive().optional(),
     material: z.string().trim().min(1).max(60),
     color: z.string().trim().max(60).optional(),
     name: z.string().trim().min(1).max(200).optional(),
     bbox_mm: z.tuple([z.number().positive(), z.number().positive(), z.number().positive()]).optional(),
   })
-  .refine((b) => !!b.file_id !== !!b.make_id, { message: "print a file or a Make, one of the two", path: ["file_id"] });
+  .refine((b) => [!!b.file_id, !!b.make_id, !b.make_id && (!!b.prompt || !!b.source || !!b.template)].filter(Boolean).length === 1, { message: "choose a file, a Make, or a new design", path: ["file_id"] });
 
 // AI-REACH: exempt — the page's own button; Cobb and MCP reach the same flow as the digifab:print-this action
 makesRouter.post(
@@ -304,7 +310,9 @@ makesRouter.post(
   "/:id/print/start",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin")) return;
-    const r = await startPrint(tenantContext(req).org.id, sessionUser(req)?.id ?? null, String(req.params.id));
+    const body = z.object({ confirm_hash: z.string().regex(/^[a-f0-9]{64}$/) }).safeParse(req.body);
+    if (!body.success) return badBody(res, body.error);
+    const r = await startPrint(tenantContext(req).org.id, sessionUser(req)?.id ?? null, String(req.params.id), body.data.confirm_hash);
     if (!r.ok) {
       res.status(r.code === "not_found" ? 404 : r.code === "send_failed" ? 502 : 409).json({ error: { code: r.code, message: r.error } });
       return;

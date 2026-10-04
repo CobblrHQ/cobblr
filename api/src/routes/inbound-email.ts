@@ -17,6 +17,7 @@
 // sends an email once, and reprocessing our failures is our job, not theirs
 // (see inbound-archive.ts + the reprocess routes below).
 
+import { ingestOrderEmail, orderEmailToken } from "../platform/order-email.js";
 import { Router } from "express";
 import { z } from "zod";
 import { inboundSecretOk } from "../platform/inbound-secret.js";
@@ -87,6 +88,11 @@ async function dispatchInbound(payload: InboundPayload): Promise<DispatchResult>
     // original here (the Worker no longer strips, so the receipt path keeps it).
     const out = await appendFeedbackReply({ token: replyToken, from_email: from_email ?? "", text: stripQuoted(text) });
     return { status: out.status, body: { handled: "feedback", ...out.body }, record: { handler: "feedback", outcome: out.body } };
+  }
+  const orderToken = orderEmailToken(to);
+  if (orderToken) {
+    const out = await ingestOrderEmail(payload, orderToken);
+    return { status: out.status, body: { handled: "order", ...out.body }, record: { handler: "order", org_id: out.orgId ?? null, user_id: out.userId ?? null, outcome: out.body } };
   }
   const out = await ingestReceiptEmail({ to, from_email, text, html, subject, message_id, attachments: attachments ?? [] });
   return {

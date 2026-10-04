@@ -15,3 +15,7 @@ export function cancelOutcome(r: CancelResult): { tone: "success" | "info"; text
   if (r.remote_cancelled) return { tone: "success", text: "Cancelled. The printer stopped." };
   return { tone: "success", text: "Cancelled. It hadn't reached a printer yet." };
 }
+
+export function canCancelJob(job: { status: string; external?: boolean; target_device: string | null; remote_job_id: string | null }): boolean {
+  return !["completed", "failed", "cancelled"].includes(job.status) && !job.external && !(job.target_device === "lightburn" && !!job.remote_job_id);
+}

@@ -16,7 +16,7 @@ export function useAppsNotInSidebar(): number {
   return apps.filter((a) => a.state !== "on").length;
 }
 
-export function MoreAppsDoor({ onNavigate, className = "" }: { onNavigate?: () => void; className?: string }) {
+export function MoreAppsDoor({ onNavigate, className = "", plain = false }: { onNavigate?: () => void; className?: string; plain?: boolean }) {
   const n = useAppsNotInSidebar();
   return (
     <NavLink
@@ -26,7 +26,7 @@ export function MoreAppsDoor({ onNavigate, className = "" }: { onNavigate?: () =
       onClick={onNavigate}
       aria-label={n > 0 ? `More apps, ${n} not in your sidebar` : "More apps"}
       title="Every app this workspace can do, including the ones not in your sidebar"
-      className={`inline-flex w-full items-center gap-2 rounded-md border border-dashed border-line dark:border-slate-600 px-3 py-1.5 text-[13px] font-medium text-muted dark:text-slate-400 hover:border-accent hover:text-accent transition ${className}`}
+      className={`${plain ? "flex w-full items-center gap-2 text-sm text-muted dark:text-slate-400 hover:text-accent transition" : "inline-flex w-full items-center gap-2 rounded-md border border-dashed border-line dark:border-slate-600 px-3 py-1.5 text-[13px] font-medium text-muted dark:text-slate-400 hover:border-accent hover:text-accent transition"} ${className}`}
     >
       <LayoutGrid size={14} className="shrink-0" />
       <span className="truncate">More apps</span>

@@ -25,6 +25,7 @@
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { SalesDB } from "./db.js";
+import { closeDeliveredOrder } from "./close-delivered.js";
 import { orderHappened } from "./history.js";
 
 export const FOLLOW_PASS = "sales.follow-sent-parcels";
@@ -174,6 +175,7 @@ export async function followRound(
       });
       await platform().events.emit("sales.order.delivered", { orgId, orderId: o.id, deliveredAt: deliveredAt?.toISOString() ?? null });
     }
+    await closeDeliveredOrder(db, orgId, o.id);
   }
   // A clean round lifts an old pause.
   if (setting.paused_reason) await writeFollowSetting(db, { ...setting, paused_until: null, paused_reason: null });

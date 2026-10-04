@@ -1,18 +1,5 @@
-// Spoolman integration — the "Spoolman is the tracker" half of consumption.
-//
-// When you run Spoolman (the filament-spool manager), it owns each spool's
-// measured remaining weight. Cobblr links a part to a Spoolman spool
-// (metadata.spoolman_id) and PULLS that number in on sync; the part is marked
-// metadata.tracked_by = "spoolman", which makes inventory.adjust-stock skip it
-// (so a print's deduction doesn't double-count what Moonraker already reported
-// to Spoolman). Parts NOT linked to Spoolman stay Cobblr-tracked (the internal
-// consumption ledger). Coordinate-not-control: we read/mirror over HTTP.
-//
-// The Spoolman connection (base_url + optional api key) reuses the platform
-// device-connection store with type="spoolman" — free credential encryption,
-// one connections home. digifab type-filters its own views so this never leaks
-// into the farm.
-
+import { serializeSpoolWrite } from "../spoolman-write-queue.js";
+import { sameSpoolLink } from "../spoolman-link.js";
 import { Router } from "express";
 import { z } from "zod";
 import { sql, type Kysely } from "kysely";
@@ -30,10 +17,14 @@ interface SpoolmanSpool {
   id: number;
   archived?: boolean;
   remaining_weight?: number;
+  location?: string;
   filament?: {
     name?: string;
     vendor?: { name?: string };
     material?: string;
+    density?: number;
+    diameter?: number;
+    spool_weight?: number;
     weight?: number; // full filament weight (capacity), grams
     color_hex?: string;
   };
@@ -41,7 +32,7 @@ interface SpoolmanSpool {
 
 /** Block the cloud-metadata address; everything else (incl. LAN) is allowed —
  *  Spoolman is a self-hosted LAN service by design. */
-function assertSafeUrl(raw: string): URL {
+export function assertSafeUrl(raw: string): URL {
   const u = new URL(raw);
   if (u.hostname === "169.254.169.254" || u.hostname === "metadata.google.internal") {
     throw new Error("blocked host");
@@ -101,7 +92,7 @@ spoolmanRouter.delete(
 );
 
 // ── sync: pull Spoolman spools → upsert parts (qty = remaining) ──
-const SyncBody = z.object({ connection_id: z.string().uuid(), instance: z.string().max(120).optional() });
+const SyncBody = z.object({ connection_id: z.string().uuid(), instance: z.string().max(120).optional(), authority: z.enum(["spoolman", "cobblr"]).optional() });
 // AI-REACH: drives an external connector with its own credentials and rate limits; a person owns that
 spoolmanRouter.post(
   "/sync",
@@ -129,6 +120,9 @@ spoolmanRouter.post(
       return void res.status(502).json({ error: { code: "spoolman_unreachable", message: (err as Error).message } });
     }
 
+    const saved = await store().get(ctx.org.id, conn.id);
+    const authority = parsed.data.authority ?? (saved?.config.authority === "cobblr" ? "cobblr" : "spoolman");
+    const onlyConnection = (await store().list(ctx.org.id)).filter((c) => c.type === SPOOLMAN_TYPE).length === 1;
     const db = tenantDb(req) as Kysely<InventoryDB>;
     const instance = parsed.data.instance || "inventory";
     let created = 0;
@@ -140,26 +134,35 @@ spoolmanRouter.post(
       const remaining = typeof sp.remaining_weight === "number" ? sp.remaining_weight : 0;
       const meta: Record<string, unknown> = {
         spoolman_id: String(sp.id),
-        tracked_by: SPOOLMAN_TYPE,
+        spoolman_connection_id: conn.id,
+        spoolman_mode: authority,
+        tracked_by: authority === "spoolman" ? SPOOLMAN_TYPE : null,
+        spoolman_location: sp.location ?? null,
       };
-      if (typeof sp.filament?.weight === "number") meta.capacity = sp.filament.weight;
+      if (typeof sp.filament?.weight === "number") { meta.capacity = sp.filament.weight; meta.initial_g = sp.filament.weight; }
+      if (typeof sp.filament?.density === "number") meta.density = sp.filament.density;
+      if (typeof sp.filament?.diameter === "number") meta.diameter = `${sp.filament.diameter} mm`;
+      if (typeof sp.filament?.spool_weight === "number") meta.empty_spool_g = sp.filament.spool_weight;
       if (sp.filament?.color_hex) meta.color = `#${sp.filament.color_hex.replace(/^#/, "")}`;
       if (sp.filament?.material) meta.material = sp.filament.material;
 
-      const existing = await db
+      const candidates = await db
         .selectFrom("inventory_parts")
-        .select(["id", "metadata"])
-        .where("instance", "=", instance)
+        .select(["id", "metadata", "qty", "unit"])
         .where(sql`metadata->>'spoolman_id'`, "=", String(sp.id))
-        .executeTakeFirst();
+        .execute();
+      const legacy = candidates.filter((r) => !r.metadata.spoolman_connection_id);
+      const existing = candidates.find((r) => sameSpoolLink(r.metadata, conn.id, sp.id))
+        ?? (onlyConnection && legacy.length === 1 ? legacy[0] : undefined);
 
       if (existing) {
+        if (authority === "cobblr" && existing.metadata.tracked_by === "firmware") meta.tracked_by = "firmware";
+        const pulling = authority === "spoolman" || (existing.metadata.spoolman_mode !== "cobblr" && existing.metadata.tracked_by === "spoolman");
         await db
           .updateTable("inventory_parts")
           .set({
             name,
-            qty: String(remaining),
-            unit: "g",
+            ...(pulling ? { qty: String(remaining), unit: "g" } : {}),
             // Overlay just the Spoolman-synced keys, DB-side — a part's metadata
             // is multi-writer, and a snapshot rewrite dropped the rest on each sync.
             metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify(meta)}::jsonb` as never,
@@ -167,6 +170,7 @@ spoolmanRouter.post(
           })
           .where("id", "=", existing.id)
           .execute();
+        if (authority === "cobblr") await publishSpool(ctx.org.id, db, existing.id);
         updated++;
       } else {
         await db
@@ -182,7 +186,59 @@ spoolmanRouter.post(
         created++;
       }
     }
+    await store().update(ctx.org.id, conn.id, { config: { authority } });
     await store().setProbe(ctx.org.id, conn.id, { spools: spools.length }, "ok").catch(() => {});
     res.json({ ok: true, synced: spools.length, created, updated });
   }),
 );
+
+
+export async function publishSpool(orgId: string, db: Kysely<InventoryDB>, id: string): Promise<void> {
+  return serializeSpoolWrite(`${orgId}:${id}`, () => publishLatestSpool(orgId, db, id));
+}
+
+async function publishLatestSpool(orgId: string, db: Kysely<InventoryDB>, id: string): Promise<void> {
+  const row = await db.selectFrom("inventory_parts").select(["id", "qty", "unit", "metadata"]).where("id", "=", id).executeTakeFirst();
+  const md = row?.metadata;
+  if (!row || md?.spoolman_mode !== "cobblr" || typeof md.spoolman_connection_id !== "string") return;
+  const publicConnection = await store().get(orgId, md.spoolman_connection_id);
+  if (!publicConnection?.enabled || publicConnection.type !== SPOOLMAN_TYPE) return;
+  const conn = await store().getInternal(orgId, md.spoolman_connection_id);
+  if (!conn || conn.type !== SPOOLMAN_TYPE) return;
+  const creds = conn.credentials_enc ? await platform().integrations.decryptCredentials(orgId, conn.credentials_enc) : {};
+  const remaining = await platform().units.convert(orgId, Number(row.qty), row.unit, "g");
+  if (remaining == null) throw new Error("The linked spool must be kept in a weight unit.");
+  if (!/^\d+$/.test(String(md.spoolman_id))) throw new Error("The linked spool has no valid Spoolman id.");
+  const paths = await platform().placement.pathsOf({ orgId, containees: [{ kind: "inventory:part", id }] });
+  const location = (paths.get(`inventory:part:${id}`) ?? []).map((p) => p.name).join(" / ") || String(md.spoolman_location ?? "");
+  const base = assertSafeUrl(conn.base_url);
+  const url = `${base.origin}${base.pathname.replace(/\/$/, "")}/api/v1/spool/${md.spoolman_id}`;
+  const reply = await fetch(url, {
+    method: "PATCH", headers: { "content-type": "application/json", ...(creds.apiKey ? { authorization: `Bearer ${creds.apiKey}` } : {}) },
+    body: JSON.stringify({ remaining_weight: remaining, location }), signal: AbortSignal.timeout(15000),
+  });
+  if (!reply.ok) throw new Error(`Spoolman write-back responded ${reply.status}`);
+}
+
+export function registerSpoolmanWriteBack() {
+  platform().events.on("inventory.stock.changed", "inventory", async (raw) => {
+    const event = raw as { orgId?: string; partId?: string };
+    if (!event.orgId || !event.partId) return;
+    const db = await platform().tenants.getDb(event.orgId) as Kysely<InventoryDB>;
+    void publishSpool(event.orgId, db, event.partId).catch((err) => console.error("[inventory] Spoolman write-back deferred until sync:", (err as Error).message));
+  });
+  platform().sweeps.register({
+    name: "inventory.spoolman-write-back", module: "inventory", everyMs: 5 * 60 * 1000,
+    visit: async ({ orgId, db: raw }) => {
+      const db = raw as Kysely<InventoryDB>;
+      const rows = await db.selectFrom("inventory_parts").select("id").where(sql`metadata->>'spoolman_mode'`, "=", "cobblr").execute();
+      let published = 0;
+      for (const row of rows) {
+        try { await publishSpool(orgId, db, row.id); published++; } catch (err) {
+          console.error("[inventory] Spoolman write-back deferred:", (err as Error).message);
+        }
+      }
+      return { published };
+    },
+  });
+}

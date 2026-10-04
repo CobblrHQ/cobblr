@@ -11,7 +11,7 @@
 
 import { useState, type PointerEvent, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, History, Loader2 } from "lucide-react";
+import { History, Loader2 } from "lucide-react";
 import { EntityPhoto, relativeTime, useImageSrc } from "@cobblr/platform-web";
 import { api, type ActivityEntry, type ShownPhoto, type ShownValue } from "../../lib/api";
 import { activityVerb, documentWords, partWords, updatedFieldsWords } from "../../lib/activity-words";
@@ -122,9 +122,6 @@ function ChangeLine({ line, name, who, compact }: { line: HistoryLine; name: str
   };
   const body = isPhoto ? (
     <>
-      {line.from?.photo && <Thumb photo={line.from.photo} />}
-      {line.from?.photo && line.to.photo && <ArrowRight size={12} className="shrink-0 text-faint" aria-hidden />}
-      {line.to.photo && <Thumb photo={line.to.photo} />}
       <span className={open ? "whitespace-normal" : "truncate"}>{line.to.text === null ? `Removed the ${name} photo` : photoWords(name, line.to.photo)}</span>
     </>
   ) : (

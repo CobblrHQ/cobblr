@@ -10,6 +10,8 @@
 // plugins. The plain `message` is what in-app / email show.
 
 import { platform } from "@cobblr/platform-contract";
+import type { Kysely } from "kysely";
+import type { DigifabDB } from "./db.js";
 
 export type PrintNotifyKind = "started" | "progress" | "completed" | "failed";
 
@@ -48,7 +50,21 @@ export async function notifyPrint(
     error?: string | null;
   },
 ): Promise<void> {
-  const title = `${VERB[o.kind]} · ${o.fileRef}${o.device ? ` · ${o.device}` : ""}`.slice(0, 256);
+  let machineName = o.device;
+  try {
+    const db = await platform().tenants.getDb(orgId) as Kysely<DigifabDB>;
+    const job = await db.selectFrom("digifab_jobs").select(["linked_machine_id", "connection_id"]).where("id", "=", o.jobId).executeTakeFirst();
+    const link = job?.connection_id && o.device
+      ? await db.selectFrom("digifab_device_links").select(["machine_id", "machine_label"])
+        .where("connection_id", "=", job.connection_id).where("remote_device_id", "=", o.device).executeTakeFirst()
+      : null;
+    const id = job?.linked_machine_id ?? link?.machine_id;
+    const machine = id ? await platform().entities.lookup(orgId, "machines:machine", id) : null;
+    machineName = machine?.title || link?.machine_label || o.device;
+  } catch {
+    // A name lookup must not suppress an update about the print itself.
+  }
+  const title = `${VERB[o.kind]} · ${o.fileRef}${machineName ? ` · ${machineName}` : ""}`.slice(0, 256);
   const fields: Array<{ name: string; value: string; inline?: boolean }> = [];
   if (o.progress != null) fields.push({ name: "Progress", value: `${Math.round(o.progress * 100)}%` });
   const eta = fmtDur(o.etaSec);

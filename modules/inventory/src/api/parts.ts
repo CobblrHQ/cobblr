@@ -406,6 +406,24 @@ const listSelect = (db: ReturnType<typeof tenantDb>) =>
         .as("assigned_qty"),
     ]);
 
+// AI-REACH: exempt — dashboard-only aggregate; Cobb reads the stock records.
+partsRouter.get("/dashboard", asyncHandler(async (req, res) => {
+  const db = tenantDb(req);
+  const instance = instanceOf(req);
+  const total = await db.selectFrom("inventory_parts")
+    .select(sql<number>`count(*)::int`.as("total"))
+    .where("instance", "=", instance).where("archived", "=", false).executeTakeFirstOrThrow();
+  const candidates = await listSelect(db).where("p.instance", "=", instance)
+    .where("p.archived", "=", false).where("p.min_qty", "is not", null)
+    .where("p.approximate_qty", "is", null).execute();
+  const units = await openUnitsFor(db, candidates.map((p) => p.id));
+  const low = candidates.filter((p) => isLowStock({
+    onHand: onHandCount(Number(p.qty), units.get(p.id) ?? []),
+    assigned: Number(p.assigned_qty ?? 0), minQty: Number(p.min_qty),
+  })).length;
+  res.json({ total: total.total, low });
+}));
+
 partsRouter.get(
   "/",
   asyncHandler(async (req, res) => {

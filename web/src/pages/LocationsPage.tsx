@@ -1,4 +1,4 @@
-import { NewItemMenu } from "@cobblr/platform-web";
+import { fieldNeed, FieldPack, RecordFormModal, NewItemMenu, EntityThumb, BulkActionBar, BulkSetField, useTickedRows, useToast, useConfirm, usePageTitle, useAskCobbAboutSelection, RecordRow, useSelectionResolver, buildLocationForest, type LocationNode as SharedLocationNode, usePublishChatContext, SearchInput } from "@cobblr/platform-web";
 // /locations — the workspace-wide tree of physical places.
 // core-locations is foundational, so this page always exists when an
 // org is loaded. The tree below is rendered as boxed nested list
@@ -34,7 +34,6 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { EntityThumb, BulkActionBar, BulkSetField, useTickedRows, Modal, useToast, useConfirm, usePageTitle, useAskCobbAboutSelection, RecordRow, useSelectionResolver, buildLocationForest, type LocationNode as SharedLocationNode, usePublishChatContext, SearchInput } from "@cobblr/platform-web";
 import { ApiError, api, fetchAuthBlobUrl, type Location } from "../lib/api";
 import { deleteDialogMessage, restorePlaces, restoredSentence } from "../lib/placeDelete";
 import { countOf } from "@cobblr/platform-contract/plural";
@@ -1374,7 +1373,7 @@ export function LocationFormModal({
   }
 
   return (
-    <Modal open onClose={onClose} title={editing ? "Edit location" : "New location"}>
+    <RecordFormModal open onClose={onClose} title={editing ? "Edit location" : "New location"}>
       <form
         onSubmit={async (e) => {
           e.preventDefault();
@@ -1384,107 +1383,119 @@ export function LocationFormModal({
         className="space-y-3"
       >
 
-        <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-            Name
-          </span>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => {
-              const next = e.target.value;
-              setName(next);
-              if (!editing && !kindTouched) {
-                const guess = inferKind(next);
-                if (guess) setKind(guess);
-              }
-            }}
-            placeholder="e.g. Garage / Shelf 3 / Bin 17 - or Drawer 1-3 to bulk-create"
-            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-            autoFocus
-          />
-          {expansion && expansion.names.length > 1 && (
-            <div className="text-[11px] text-accent dark:text-cobble-300 mt-1">
-              → will create {expansion.names.length} locations: {expansion.preview}
-            </div>
-          )}
-          {stacked && expansion && (
-            <div className="mt-1.5 rounded-md border border-line dark:border-slate-700 bg-subtle/50 dark:bg-slate-800/40 px-2.5 py-2">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mr-1">
-                  Count from
+        <FieldPack items={[
+          {
+            need: fieldNeed("name", { control: "text", label: "Name" }),
+            node: (
+              <label className="block">
+                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+                  Name
                 </span>
-                {([
-                  { up: true, label: "the bottom", hint: "suggested" },
-                  { up: false, label: "the top", hint: "" },
-                ] as const).map((opt) => {
-                  const on = bottomUp === opt.up;
-                  return (
-                    <button
-                      key={opt.label}
-                      type="button"
-                      onClick={() => setBottomUp(opt.up)}
-                      aria-pressed={on}
-                      className={
-                        "rounded-full border px-2.5 py-0.5 text-[11px] transition " +
-                        (on
-                          ? "border-cobble-500 bg-cobble-50 dark:bg-cobble-900/30 text-content dark:text-mortar-100 ring-1 ring-cobble-400"
-                          : "border-line dark:border-slate-600 text-muted dark:text-slate-400 hover:bg-surface dark:hover:bg-slate-900")
-                      }
-                    >
-                      {opt.label}
-                      {opt.hint && <span className="ml-1 text-faint">· {opt.hint}</span>}
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="mt-1.5 text-[10px] text-muted dark:text-slate-400 leading-snug">
-                {bottomUp ? (
-                  <>
-                    <span className="font-medium text-content dark:text-mortar-200">
-                      {expansion.names[0]}
-                    </span>{" "}
-                    is the bottom one and{" "}
-                    <span className="font-medium text-content dark:text-mortar-200">
-                      {expansion.names[expansion.names.length - 1]}
-                    </span>{" "}
-                    is the top. Counting from the floor means number 1 is at the same height on
-                    every rack, and adding one at the top renames nothing.
-                  </>
-                ) : (
-                  <>
-                    <span className="font-medium text-content dark:text-mortar-200">
-                      {expansion.names[0]}
-                    </span>{" "}
-                    is the top one. Fine if that is how the rack is already labelled - just note
-                    that adding a shelf above it later leaves the numbers out of order.
-                  </>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setName(next);
+                    if (!editing && !kindTouched) {
+                      const guess = inferKind(next);
+                      if (guess) setKind(guess);
+                    }
+                  }}
+                  placeholder="e.g. Garage / Shelf 3 / Bin 17 - or Drawer 1-3 to bulk-create"
+                  className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+                  autoFocus
+                />
+                {expansion && expansion.names.length > 1 && (
+                  <div className="text-[11px] text-accent dark:text-cobble-300 mt-1">
+                    → will create {expansion.names.length} locations: {expansion.preview}
+                  </div>
                 )}
-              </div>
-            </div>
-          )}
-          {!editing && !expansion && (
-            <div className="text-[10px] text-faint dark:text-slate-500 mt-1">
-              Tip: type a range like <code className="font-mono">Drawer 1-3</code> to create
-              three siblings at once.
-            </div>
-          )}
-        </label>
-        <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-            Short name (optional)
-          </span>
-          <input
-            type="text"
-            value={shortName}
-            onChange={(e) => setShortName(e.target.value)}
-            placeholder="Bin 17"
-            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-          />
-          <div className="text-[10px] text-muted mt-1">
-            Shown on labels when the canonical name is too long.
-          </div>
-        </label>
+                {stacked && expansion && (
+                  <div className="mt-1.5 rounded-md border border-line dark:border-slate-700 bg-subtle/50 dark:bg-slate-800/40 px-2.5 py-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mr-1">
+                        Count from
+                      </span>
+                      {([
+                        { up: true, label: "the bottom", hint: "suggested" },
+                        { up: false, label: "the top", hint: "" },
+                      ] as const).map((opt) => {
+                        const on = bottomUp === opt.up;
+                        return (
+                          <button
+                            key={opt.label}
+                            type="button"
+                            onClick={() => setBottomUp(opt.up)}
+                            aria-pressed={on}
+                            className={
+                              "rounded-full border px-2.5 py-0.5 text-[11px] transition " +
+                              (on
+                                ? "border-cobble-500 bg-cobble-50 dark:bg-cobble-900/30 text-content dark:text-mortar-100 ring-1 ring-cobble-400"
+                                : "border-line dark:border-slate-600 text-muted dark:text-slate-400 hover:bg-surface dark:hover:bg-slate-900")
+                            }
+                          >
+                            {opt.label}
+                            {opt.hint && <span className="ml-1 text-faint">· {opt.hint}</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-1.5 text-[10px] text-muted dark:text-slate-400 leading-snug">
+                      {bottomUp ? (
+                        <>
+                          <span className="font-medium text-content dark:text-mortar-200">
+                            {expansion.names[0]}
+                          </span>{" "}
+                          is the bottom one and{" "}
+                          <span className="font-medium text-content dark:text-mortar-200">
+                            {expansion.names[expansion.names.length - 1]}
+                          </span>{" "}
+                          is the top. Counting from the floor means number 1 is at the same height on
+                          every rack, and adding one at the top renames nothing.
+                        </>
+                      ) : (
+                        <>
+                          <span className="font-medium text-content dark:text-mortar-200">
+                            {expansion.names[0]}
+                          </span>{" "}
+                          is the top one. Fine if that is how the rack is already labelled - just note
+                          that adding a shelf above it later leaves the numbers out of order.
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {!editing && !expansion && (
+                  <div className="text-[10px] text-faint dark:text-slate-500 mt-1">
+                    Tip: type a range like <code className="font-mono">Drawer 1-3</code> to create
+                    three siblings at once.
+                  </div>
+                )}
+              </label>
+            ),
+          },
+          {
+            need: fieldNeed("shortName", { control: "text", label: "Short name (optional)" }),
+            node: (
+              <label className="block">
+                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+                  Short name (optional)
+                </span>
+                <input
+                  type="text"
+                  value={shortName}
+                  onChange={(e) => setShortName(e.target.value)}
+                  placeholder="Bin 17"
+                  className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+                />
+                <div className="text-[10px] text-muted mt-1">
+                  Shown on labels when the canonical name is too long.
+                </div>
+              </label>
+            ),
+          },
+        ]} />
         <div className="block">
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Kind
@@ -1567,7 +1578,7 @@ export function LocationFormModal({
           </button>
         </div>
       </form>
-    </Modal>
+    </RecordFormModal>
   );
 }
 

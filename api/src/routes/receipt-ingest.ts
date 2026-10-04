@@ -572,5 +572,6 @@ receiptAddressRouter.get("/:slug/receipt-address", requireAuth, withTenant, (req
     res.status(401).json({ error: { code: "no_auth", message: "Auth required." } });
     return;
   }
-  res.json({ configured: receiptEmailConfigured(), address: mintReceiptAddress(userId, orgId) });
+  const address = mintReceiptAddress(userId, orgId);
+  res.json({ configured: receiptEmailConfigured(), address, order_address: address?.replace(/^receipts\+/, "orders+") ?? null });
 });

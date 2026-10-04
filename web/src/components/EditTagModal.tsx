@@ -1,8 +1,8 @@
+import { fieldNeed, FieldPack, RecordFormModal, DragInput, useConfirm, useToast } from "@cobblr/platform-web";
 // Edit a tag: its name, colour, icon and parent, or merge it into another.
 // Shared by the tags list and a tag's own page.
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { DragInput, Modal, useConfirm, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type TagRecord } from "../lib/api";
 
 function descendantIds(tags: TagRecord[], rootId: string): Set<string> {
@@ -93,7 +93,7 @@ export function EditTagModal({
   });
 
   return (
-    <Modal open onClose={onClose} title={`Edit: ${tag.name}`}>
+    <RecordFormModal open onClose={onClose} title={`Edit: ${tag.name}`}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -122,31 +122,43 @@ export function EditTagModal({
           />
           <span className="font-mono text-xs">{color}</span>
         </label>
-        <label className="flex items-center gap-3 text-sm">
-          <span className="text-xs text-muted">Icon</span>
-          <input
-            type="text"
-            value={icon}
-            onChange={(e) => setIcon(e.target.value)}
-            placeholder="🏷️"
-            maxLength={8}
-            className="w-14 px-2 py-1 text-sm text-center border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-          />
-          <span className="text-[11px] text-faint">an emoji</span>
-        </label>
-        <label className="block">
-          <div className="text-xs text-muted mb-1">Parent tag (optional - for grouping)</div>
-          <select
-            value={parentId}
-            onChange={(e) => setParentId(e.target.value)}
-            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-          >
-            <option value=""> - none (top-level) - </option>
-            {parentOptions.map((t) => (
-              <option key={t.id} value={t.id}>{t.icon ? `${t.icon} ` : ""}{t.name}</option>
-            ))}
-          </select>
-        </label>
+        <FieldPack items={[
+          {
+            need: fieldNeed("icon", { control: "text", label: "Icon" }),
+            node: (
+              <label className="flex items-center gap-3 text-sm">
+                <span className="text-xs text-muted">Icon</span>
+                <input
+                  type="text"
+                  value={icon}
+                  onChange={(e) => setIcon(e.target.value)}
+                  placeholder="🏷️"
+                  maxLength={8}
+                  className="w-14 px-2 py-1 text-sm text-center border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+                />
+                <span className="text-[11px] text-faint">an emoji</span>
+              </label>
+            ),
+          },
+          {
+            need: fieldNeed("parentId", { control: "choice", label: "Parent tag (optional - for grouping)" }),
+            node: (
+              <label className="block">
+                <div className="text-xs text-muted mb-1">Parent tag (optional - for grouping)</div>
+                <select
+                  value={parentId}
+                  onChange={(e) => setParentId(e.target.value)}
+                  className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+                >
+                  <option value=""> - none (top-level) - </option>
+                  {parentOptions.map((t) => (
+                    <option key={t.id} value={t.id}>{t.icon ? `${t.icon} ` : ""}{t.name}</option>
+                  ))}
+                </select>
+              </label>
+            ),
+          },
+        ]} />
         <p className="text-[11px] text-faint">
           Renaming updates the tag everywhere it's attached - it's the same tag,
           not a copy.
@@ -202,6 +214,6 @@ export function EditTagModal({
           </button>
         </div>
       </form>
-    </Modal>
+    </RecordFormModal>
   );
 }

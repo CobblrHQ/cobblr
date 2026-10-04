@@ -12,6 +12,7 @@ const lbl = "block text-[10px] font-mono uppercase tracking-widest text-faint da
 
 export function EdgeBridgeInstall({ slug, bridgeId }: { slug: string; bridgeId?: string }) {
   const [label, setLabel] = useState("Home bridge");
+  const [installedId, setInstalledId] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
   const bid = (bridgeId ?? "").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").slice(0, 40);
 
@@ -23,7 +24,7 @@ export function EdgeBridgeInstall({ slug, bridgeId }: { slug: string; bridgeId?:
     refetchInterval: 3000,
   });
   const connected = (status.data?.agents ?? []).some(
-    (a) => (a.bridge ?? "") === bid && a.last_seen_ms < (status.data?.stale_after_ms ?? 60_000),
+    (a) => (a.bridge ?? "") === installedId && a.last_seen_ms < (status.data?.stale_after_ms ?? 60_000),
   );
 
   return (
@@ -44,7 +45,7 @@ export function EdgeBridgeInstall({ slug, bridgeId }: { slug: string; bridgeId?:
           What you'll see it called everywhere in Cobblr, like "Workshop bridge". You can rename it later.
         </span>
       </label>
-      <BridgeInstallMethod slug={slug} label={label} bridgeId={bid} onStarted={() => setStarted(true)} />
+      <BridgeInstallMethod slug={slug} label={label} bridgeId={bid} onStarted={(id) => { setInstalledId(id); setStarted(true); }} />
       {started && (
         <div>
           <span className={lbl}>3 · Cobblr is watching for it</span>

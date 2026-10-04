@@ -10,6 +10,8 @@
 // nothing auto-commits (every identified photo waits for a one-tap
 // confirm in the triage queue).
 
+import { nameCompletedFromLabel } from "./label-completes-name.js";
+import { withContribution } from "@cobblr/platform-contract/field-contributions";
 import { looksOfRow, picturesThatAgree, statedColoursOf } from "./picture-agrees.js";
 import { applyHintWithoutAi } from "./hint-without-ai.js";
 import { isStockPreviewUrl } from "./stock-preview.js";
@@ -1030,6 +1032,59 @@ export interface CrossCheckOptions {
   flagOnly?: boolean;
 }
 
+/** Complete a brand-level name from the printed title (label-completes-name.ts).
+ *  Adds to the name, never replaces it, and says so on the row. A person's own
+ *  name is never touched. */
+async function completeNameFromLabel(
+  orgId: string,
+  itemId: string,
+  resolvedName: string,
+  printed: { title?: string | null; brand?: string | null } | null | undefined,
+): Promise<void> {
+  const db = (await platform().tenants.getDb(orgId)) as unknown as Kysely<CoreScanDB>;
+  const row = await db
+    .selectFrom("core_scan_inbox_items")
+    .select(["suggested_name", "suggested_manufacturer", "suggested_metadata", "ai_notes"])
+    .where("id", "=", itemId)
+    .executeTakeFirst();
+  const current = (row?.suggested_name as string | null) ?? null;
+  // The name must still be the one the barcode gave: a person's edit, or a
+  // later rename, is not ours to extend.
+  if (!current || current.trim().toLowerCase() !== resolvedName.trim().toLowerCase()) return;
+  const completed = nameCompletedFromLabel({
+    name: current,
+    brand: (row?.suggested_manufacturer as string | null) ?? null,
+    printedTitle: printed?.title,
+    printedBrand: printed?.brand,
+  });
+  if (!completed) return;
+  // Both voices are kept (#4583): the catalog's answer and the label read from
+  // the photo; the card's headline names the decisive one.
+  const provenanceSet = {
+    name_from_label: { was: current },
+    field_provenance: {
+      ...(((row?.suggested_metadata as { field_provenance?: Record<string, unknown> } | null)?.field_provenance) ?? {}),
+      name: withContribution(
+        withContribution({ by: "evidence" as const, from: "label" }, { source: "catalog", value: current }),
+        { source: "label", value: printed?.title?.trim() || completed, photo: "your photo" },
+      ),
+    },
+  };
+  await db
+    .updateTable("core_scan_inbox_items")
+    .set({
+      suggested_name: completed,
+      suggested_metadata: mergeMeta(provenanceSet) as never,
+      ai_notes: `${(row?.ai_notes as string | null) ?? ""} The name was completed from the label on your photo.`.trim(),
+      updated_at: new Date(),
+    })
+    .where("id", "=", itemId)
+    .execute();
+  // The picture search asks the web for the resolved name, so a completed name
+  // is searched, not the brand and a shape (#4583).
+  void refreshCatalogImageByName(orgId, itemId, completed, (row?.suggested_manufacturer as string | null) ?? null).catch(() => {});
+}
+
 export async function crossCheckScanPhoto(
   orgId: string,
   itemId: string,
@@ -1209,6 +1264,13 @@ export async function crossCheckScanPhoto(
     // "yes" / "unsure" → the photo does not contradict the barcode. Release the
     // gate; only a look at the photo itself earns the "matches your photo" note.
     await confirmPending(earnsMatchesYourPhoto(basis, matchVerdict));
+    // A barcode that named only the brand does not beat the label: when the
+    // pixels read a printed title the name lacks, the name is completed from
+    // it (#4583). Only a look at the pixels, and never over a photo of several
+    // things, whose title may be another product's.
+    if (basis === "image" && !photoShowsOtherThings(verdict?.things, meta.photo_distinct)) {
+      await completeNameFromLabel(orgId, itemId, resolvedName, verdict?.printed);
+    }
     return; // flag only a clear mismatch
   }
   if (!mayActOnMismatch(basis)) {

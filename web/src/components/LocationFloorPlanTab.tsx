@@ -1,3 +1,4 @@
+import { RecordFormModal, useToast } from "@cobblr/platform-web";
 // The Locations page "Floor Plan" tab: pick a space up front and see its layout,
 // instead of hunting into each location's detail page. Areas draw as a top-down
 // floor plan; containers draw as a front elevation (drawers/shelves at true
@@ -6,7 +7,6 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Boxes, MapPin, Plus } from "lucide-react";
-import { Modal, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type Location } from "../lib/api";
 import { withBound } from "../lib/floorplanGeometry";
 import { parseLength, type LengthUnit } from "../lib/lengthUnits";
@@ -139,7 +139,7 @@ export function LocationFloorPlanTab({
   return (
     <div className="space-y-3">
       {showRoom && (
-        <Modal open onClose={closeRoom} title="A new room" size="sm">
+        <RecordFormModal open onClose={closeRoom} title="A new room">
           <RoomForm
             slug={slug}
             onMade={(loc) => {
@@ -147,7 +147,7 @@ export function LocationFloorPlanTab({
               closeRoom();
             }}
           />
-        </Modal>
+        </RecordFormModal>
       )}
       {(
         <div className="flex flex-wrap items-center gap-2">

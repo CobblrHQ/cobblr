@@ -1413,6 +1413,8 @@ export const api = {
   submitFeedback: (body: {
     type: "bug" | "confusing" | "idea" | "use_case" | "other";
     message: string;
+    /** A sandbox guest's chosen address: reachable through it (consent recorded). */
+    contact_email?: string;
     workspace_slug?: string;
     context?: Record<string, unknown>;
     attachments?: Array<{ file_id: string; name?: string; content_type?: string }>;
@@ -2247,6 +2249,24 @@ export const api = {
       `/orgs/${slug}/modules/core-placement/worth${within ? `?within_kind=${encodeURIComponent(within.kind)}&within_id=${encodeURIComponent(within.id)}` : ""}`,
     ),
   /** Where a thing is, every step up: "Headphones" → "Backpack, in Desk drawer". */
+  requestLight: (slug: string, ref: { kind: string; id: string }, reason: "shown" | "found" | "picked" | "put-away" | "label-scanned" = "found") =>
+    request<{ requested: boolean; place: string | null; note: string }>("POST", `/orgs/${slug}/modules/core-locations/locations/lights/request`, { ...ref, reason }),
+  esphomeCommand: (slug: string, connection: string, input: Record<string, unknown>) => request<ServiceJob>("POST", `/orgs/${slug}/services/jobs`, { capability: "device.esphome.command", via: { credential_id: connection }, input }),
+  esphomeConnections: (slug: string) => request<{ items: import("@cobblr/platform-contract").DeviceConnectionPublic[] }>("GET", `/orgs/${slug}/modules/core-devices/esphome`),
+  addESPHome: (slug: string, body: { label: string; base_url: string; bridge: string; api_key?: string }) => request<import("@cobblr/platform-contract").DeviceConnectionPublic>("POST", `/orgs/${slug}/modules/core-devices/esphome`, body),
+  removeESPHome: (slug: string, id: string) => request<{ ok: boolean }>("DELETE", `/orgs/${slug}/modules/core-devices/esphome/${id}`),
+  esphomeEntities: (slug: string, id: string) => request<{ items: Array<{ id: string; name: string; state?: string; raw?: { type: string; unit?: string; effects?: string[] } }> }>("GET", `/orgs/${slug}/modules/core-devices/esphome/${id}/entities`),
+  discoverESPHome: (slug: string, id: string) => request<{ items: Array<{ name: string; host: string; port: number }> }>("POST", `/orgs/${slug}/modules/core-devices/esphome/${id}/discover`, {}),
+  chooseESPHome: (slug: string, id: string, host: string) => request<import("@cobblr/platform-contract").DeviceConnectionPublic>("PATCH", `/orgs/${slug}/modules/core-devices/esphome/${id}`, { host }),
+  deviceReadingsForRecord: (slug: string, kind: string, id: string) => request<{ items: Array<{ id: string; device: string; value: number | null; unit: string | null; sampled_at: string | null }> }>("GET", `/orgs/${slug}/modules/core-devices/links?entity_kind=${encodeURIComponent(kind)}&entity_id=${encodeURIComponent(id)}`),
+  deviceLinks: (slug: string, connection: string) => request<{ items: Array<{ id: string; device: string; entity_kind: string; entity_id: string; value: number | null; unit: string | null; sampled_at: string | null }> }>("GET", `/orgs/${slug}/modules/core-devices/links?connection_id=${encodeURIComponent(connection)}`),
+  attachDevice: (slug: string, body: { connection_id: string; device: string; entity_kind: string; entity_id: string; mode: "log" }) => request("POST", `/orgs/${slug}/modules/core-devices/links`, body),
+  unlinkDevice: (slug: string, id: string) => request("DELETE", `/orgs/${slug}/modules/core-devices/links/${id}`),
+  lightConnections: (slug: string) => request<{ items: import("@cobblr/platform-contract/services").ServiceConnectionHolder[] }>("GET", `/orgs/${slug}/modules/core-locations/locations/lights`),
+  setPlaceLight: (slug: string, id: string, mapping: import("@cobblr/platform-contract/place-indicate").PlaceLightMapping | null) =>
+    request<{ saved: boolean }>("PUT", `/orgs/${slug}/modules/core-locations/locations/${id}/light`, { mapping }),
+  setGridLights: (slug: string, id: string, grid: import("@cobblr/platform-contract/place-indicate").LightGridInput) =>
+    request<{ mapped: number }>("POST", `/orgs/${slug}/modules/core-locations/locations/${id}/light-grid`, grid),
   placementPath: (slug: string, containeeKind: string, containeeId: string) =>
     request<{
       path: Array<{ kind: string; id: string; name: string }>;
@@ -2324,10 +2344,12 @@ export const api = {
     ),
   // Pillar B — actions + invocation
   listActions: (slug: string, kind: string) =>
-    request<{ items: PlatformAction[]; bindings: PlatformActionBinding[]; dormant?: PlatformDormantAction[]; lifecycle?: boolean }>(
+    request<{ items: PlatformAction[]; bindings: PlatformActionBinding[]; dormant?: PlatformDormantAction[]; lifecycle?: boolean; layout?: import("@cobblr/platform-contract/action-groups").RecordActionLayout; pins?: Record<string, boolean> }>(
       "GET",
       `/orgs/${slug}/actions?kind=${encodeURIComponent(kind)}`,
     ),
+  setRecordActionPin: (slug: string, kind: string, action: string, pinned: boolean) => request<void>("PUT", `/orgs/${slug}/record-action-pins`, { kind, action, pinned }),
+  recordActionLayout: (slug: string, kind: string) => request<{ layout: import("@cobblr/platform-contract/action-groups").RecordActionLayout; revision: number; pins: Record<string, boolean> }>("GET", `/orgs/${slug}/record-action-layout?kind=${encodeURIComponent(kind)}`),
   tidySuggestions: (slug: string) => request<{ available: boolean; enabled: boolean; items: Array<{ id: string; candidate: import("@cobblr/platform-contract").TidyCandidate }> }>("GET", `/orgs/${slug}/tidy-suggestions`),
   setTidySuggestions: (slug: string, enabled: boolean) => request<{ enabled: boolean }>("PATCH", `/orgs/${slug}/tidy-suggestions`, { enabled }),
   decideTidySuggestion: (slug: string, id: string, decision: "later" | "never" | "done") => request<{ ok: boolean }>("POST", `/orgs/${slug}/tidy-suggestions/${id}/decision`, { decision }),
@@ -3016,6 +3038,7 @@ export const api = {
       `${primaryBase(slug, "inventory/parts", instance === "inventory" ? undefined : instance)}/${id}/stock-adjust`,
       { delta, ...(reason ? { reason } : {}) },
     ),
+  materialCost: (slug: string, kind: string, id: string) => request<{ items: Array<{ id: string; name: string; instance: string; grams: number; cost: { amount: number; currency: string } | null }> }>("GET", `/orgs/${slug}/modules/inventory/material-cost/${encodeURIComponent(kind)}/${id}`),
   stockAt: (slug: string, locationId: string) =>
     request<StockAtPlace>("GET", `/orgs/${slug}/modules/inventory/stock/at/${locationId}?today=${dayHere()}`),
   /** Lots going off within `within` days, wherever they are, grouped by place. */
@@ -3046,11 +3069,17 @@ export const api = {
   deleteFile: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/modules/core-files/files/${id}`),
   /** Recently deleted: files deleted in the last `days`, each with when it goes for good. */
-  listDeletedFiles: (slug: string) =>
-    request<{ days: number; items: Array<FileRecord & { deleted_at: string; purge_after: string }> }>(
-      "GET",
-      `/orgs/${slug}/modules/core-files/files/deleted`,
-    ),
+  listDeletedFiles: async (slug: string) => {
+    let days = 30;
+    const answer = await walkPages(async (offset, limit) => {
+      const page = await request<{ days: number; items: Array<FileRecord & { deleted_at: string; purge_after: string }>; total: number | null; complete: boolean }>(
+        "GET", `/orgs/${slug}/modules/core-files/files/deleted?${new URLSearchParams({ offset: String(offset), limit: String(limit) })}`,
+      );
+      days = page.days;
+      return page;
+    });
+    return { ...answer, days };
+  },
   restoreFile: (slug: string, id: string) =>
     request<{ ok: true }>("POST", `/orgs/${slug}/modules/core-files/files/${id}/restore`),
   deleteFileForever: (slug: string, id: string) =>
@@ -3459,8 +3488,6 @@ export const api = {
   deleteDigifabConnection: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/modules/digifab/connections/${id}`),
   // Edge tunnel: is an on-site bridge currently dialed in for this workspace?
-  getDigifabEdgeStatus: (slug: string, bridge?: string) =>
-    request<{ connected: boolean; last_seen: number | null }>("GET", `/orgs/${slug}/modules/digifab/edge/status${bridge ? `?bridge=${encodeURIComponent(bridge)}` : ""}`),
   // ── Edge-bridge machine sharing (owner side) ──────────────────────────────
   listEdgeShares: (slug: string) =>
     request<{ items: EdgeShare[] }>("GET", `/orgs/${slug}/modules/digifab/edge-shares`),
@@ -3683,10 +3710,10 @@ export const api = {
   listMakes: (slug: string, q?: string) =>
     request<{ items: MakeSummary[] }>("GET", `/orgs/${slug}/modules/digifab/makes${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   /** Print this: a Make for the model, the printer it fits, a slice. Sends nothing. */
-  printThis: (slug: string, body: { file_id?: string; make_id?: string; material: string; color?: string }) =>
+  printThis: (slug: string, body: { file_id?: string; make_id?: string; prompt?: string; source?: string; source_lang?: "build123d" | "openscad"; template?: string; params?: Record<string, unknown>; material: string; color?: string }) =>
     request<PrintThisStarted>("POST", `/orgs/${slug}/modules/digifab/makes/print-this`, body),
   /** The one yes: start a Make's waiting print. */
-  startMakePrint: (slug: string, makeId: string) => request<{ ok: true; status: string }>("POST", `/orgs/${slug}/modules/digifab/makes/${makeId}/print/start`, {}),
+  startMakePrint: (slug: string, makeId: string, confirmHash: string) => request<{ ok: true; status: string }>("POST", `/orgs/${slug}/modules/digifab/makes/${makeId}/print/start`, { confirm_hash: confirmHash }),
   getMake: (slug: string, id: string) => request<MakeDetail>("GET", `/orgs/${slug}/modules/digifab/makes/${id}`),
   createMake: (slug: string, body: MakeCreateBody) => request<MakeSummary>("POST", `/orgs/${slug}/modules/digifab/makes`, body),
   patchMake: (slug: string, id: string, body: { name?: string; outcome?: "pass" | "fail" | null; outcome_notes?: string; metadata?: Record<string, unknown> }) =>
@@ -3755,11 +3782,13 @@ export const api = {
       "GET",
       `/orgs/${slug}/modules/digifab/files/${fileId}/slicer-meta`,
     ),
-  sendDigifabJob: (slug: string, id: string) =>
+  prepareDigifabJob: (slug: string, id: string) =>
+    request<{ review: DigifabJobReview | null }>("POST", `/orgs/${slug}/modules/digifab/jobs/${id}/prepare`, {}),
+  sendDigifabJob: (slug: string, id: string, approval?: Pick<DigifabJobReview, "fileId" | "projectHash">) =>
     request<{ status: string; remote_job_id: string | null; placement: unknown; uploaded_bytes?: number }>(
       "POST",
       `/orgs/${slug}/modules/digifab/jobs/${id}/send`,
-      {},
+      approval ? { approval } : {},
     ),
   // F-14 — re-pick a printer for an awaiting-assignment job (re-submits the
   // already-uploaded file to an explicit device; no re-upload).
@@ -3897,6 +3926,15 @@ export const api = {
       "GET",
       `/orgs/${slug}/modules/labels/qr/tokens`,
     ),
+  downloadQrPng: async (slug: string, id: string): Promise<Blob> => {
+    const token = getToken();
+    const res = await fetch(`/api/v1/orgs/${encodeURIComponent(slug)}/modules/labels/qr/tokens/${encodeURIComponent(id)}/png`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null) as { error?: { code?: string; message?: string } } | null;
+      throw new ApiError(res.status, body?.error?.code ?? "download_failed", body?.error?.message ?? "Couldn't download the QR image. Try again.");
+    }
+    return res.blob();
+  },
   revokeQrToken: (slug: string, id: string) =>
     request<QrToken>(
       "POST",
@@ -6734,7 +6772,7 @@ export interface ServicePreview {
   docs_url: string | null;
   requires: string[];
   manifest_version: string;
-  capabilities: Array<{ id: string; title: string; summary: string; effect: "none" | "writes" | "physical" | "spends"; mode: "async" | "sync" }>;
+  capabilities: Array<{ id: string; title: string; summary: string; effect: import("@cobblr/platform-contract/services").ServiceEffect; mode: "async" | "sync" }>;
 }
 
 export const CONNECTION_KIND_LABELS: Record<string, { title: string; blurb: string }> = {
@@ -8471,6 +8509,7 @@ export type BambuLoginResponse =
   | { status: "ready"; session: string; devices: BambuDiscoveredDevice[] };
 
 export interface DigifabFleetDevice {
+  lightburn_readiness?: { api: { ready: boolean; fix: string }; paired: { ready: boolean; fix: string }; udp: { ready: boolean; fix: string } } | null;
   id: string;
   name: string;
   state: string;
@@ -8520,6 +8559,7 @@ export interface DigifabFleetDevice {
 }
 
 export interface DigifabFleetConnection {
+  bridge?: string | null;
   connection_id: string;
   label: string;
   type: string;
@@ -8639,6 +8679,17 @@ export interface DigifabRule {
   post_actions: DigifabStep[];
   enabled: boolean;
   created_at: string;
+}
+
+export interface DigifabJobReview {
+  sourceFile: { id: string; filename: string };
+  fileId: string;
+  projectHash: string;
+  transport: "rest" | "udp";
+  project: Record<string, unknown>;
+  layers: Record<string, unknown>[];
+  cuts: Record<string, unknown>[];
+  materialLibrary: Record<string, unknown>;
 }
 
 export interface DigifabJob {
@@ -9363,6 +9414,9 @@ export interface CalendarFeed {
 }
 
 export interface PlatformAction {
+  user_invokable?: boolean;
+  group?: string | null;
+  primary?: boolean;
   id: string;
   module_name: string;
   label: string;
@@ -9428,6 +9482,8 @@ export interface RegisteredActionDetail {
 
 /** An action a record would have if a module that is off were on (#3883). */
 export interface PlatformDormantAction {
+  group?: string | null;
+  primary?: boolean;
   id: string;
   label: string;
   description: string | null;
@@ -9437,6 +9493,9 @@ export interface PlatformDormantAction {
 }
 
 export interface PlatformActionBinding {
+  description?: string | null;
+  group?: string | null;
+  primary?: boolean;
   binding_id: string;
   action_id: string;
   template: string | null;
@@ -9625,6 +9684,7 @@ export interface PlatformBundle {
 }
 
 export interface PlatformBundleManifest {
+  record_actions?: Record<string, import("@cobblr/platform-contract/action-groups").RecordActionLayout>;
   /** Why this manifest declares fields on a module's BASE kind rather than on
    *  an instance of its own; lint:bundle-fields-on-own-kinds refuses base-kind
    *  fields without it. */
@@ -9686,6 +9746,7 @@ export interface PlatformBundleManifest {
     // Was a second hand-written copy, and it was missing "relation" - so a
     // relation field read back as a type this client did not believe existed.
     type: FieldDefType;
+    ref_kind?: string;
     required?: boolean;
     position?: number;
     /** When type='text', renders as a dropdown of these choices. */

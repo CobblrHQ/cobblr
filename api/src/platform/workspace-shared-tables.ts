@@ -51,6 +51,8 @@ const CREDENTIAL = "a credential or key; it is issued again where it is used, ne
 const PERSONAL = "one person's own inbox and choices, tied to accounts the target workspace may not have";
 
 export const SHARED_WORKSPACE_TABLES: Record<string, SharedTablePolicy> = {
+  record_action_layouts: { travels: "backup" },
+  record_action_pins: { travels: "never", why: PERSONAL },
   deleted_records: { travels: "never", why: "deleted before-images expire in the workspace where the deletion happened" },
   // ── Restored with the backup (order: parents first) ────────────────────
   workspace_people: { travels: "backup", id: "id", users: ["user_id"] },
