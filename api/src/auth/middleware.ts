@@ -65,6 +65,10 @@ export interface SessionUser {
    *  mutating workspace requests while this is set — the client redirect is
    *  UX, THIS is the enforcement (audit L-MUSTRESET). */
   must_reset_password: boolean;
+  /** When a session/app JWT was issued (seconds); null for an API token. A
+   *  change to how the person signs in, with no password to re-check, asks
+   *  for a sign-in this recent (platform/email-change.ts). */
+  issued_at?: number | null;
   /** The account's title format (the contract's TitleFormat), or null. */
   title_pref?: string | null;
   /** Set when an assistant makes this request through a door with no way to
@@ -155,6 +159,11 @@ const MCP_READ_PATHS: Array<string | RegExp> = [
   // records + the registry that describes them
   "/entity-kinds",
   "/registered-actions",
+  "/modules/digifab/floor",
+  "/modules/digifab/fleet",
+  "/modules/digifab/laser/profiles",
+  "/modules/digifab/laser/plans",
+  /^\/modules\/digifab\/laser\/design\/[A-Za-z0-9-]+$/,
   /^\/entities\//,
   "/pairings",
   // One person's things across every collection ("what does Alex own").
@@ -502,6 +511,7 @@ export async function requireAuth(
       token_access: tokenGrant?.access ?? null,
       token_org_id: tokenGrant?.orgId ?? null,
       must_reset_password: user.must_reset_password,
+      issued_at: tokenIssuedAt,
       // How a titled work's title reads for this person: served rows are
       // composed with it (core-scan's withTitle), so every surface shows the
       // one format without each reading the account (#3061).

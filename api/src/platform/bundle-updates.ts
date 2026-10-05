@@ -33,6 +33,7 @@ import {
 } from "@cobblr/platform-contract/bundle-update-tier";
 import { listFlagshipManifests } from "../lib/flagship-bundles.js";
 import { registerTenantSweep, runTenantSweep } from "./tenant-sweeps.js";
+import { notePassFailure } from "./pass-failures.js";
 
 export interface InstalledBundle {
   org_id: string;
@@ -176,6 +177,7 @@ async function applyPlannedUpdates(orgId: string, updates: PlannedUpdate[]): Pro
       applied++;
       console.log(`[bundle-updates] org ${orgId}: ${u.externalId} ${u.from} → ${u.to} (${u.tier})`);
     } catch (err) {
+      notePassFailure("reconcileBundleUpdates", orgId, err);
       skipped++;
       console.error(`[bundle-updates] org ${orgId}: ${u.externalId} failed:`, (err as Error).message);
     }

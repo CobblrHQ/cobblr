@@ -1,3 +1,4 @@
+import { decodeBarcodeImage } from "./lib/decode-barcode-image";
 import { RecentlyDeletedPage } from "./pages/RecentlyDeletedPage";
 import { DeletedRecordUndo } from "./components/DeletedRecordUndo";
 // Top-level shell. AuthProvider hydrates from /me on mount; while
@@ -44,6 +45,7 @@ import { ActiveOrgProvider, useActiveOrg, pickDefaultOrg, urlHandleFor } from ".
 import { shellForRole } from "@cobblr/platform-contract/org-roles";
 import { deepPathAfterWorkspace } from "./lib/deep-path";
 import { AuthPage, MagicConsumePage, IdentityCallbackPage } from "./pages/AuthPage";
+import { OidcSignInPage } from "./pages/OidcSignInPage";
 import { nextFromQuery } from "./lib/landing-path";
 import { PairPage } from "./pages/PairPage";
 import { SandboxLanding } from "./pages/SandboxLanding";
@@ -79,7 +81,7 @@ import { TagDetailPage } from "./pages/TagDetailPage";
 import { DiscussionInboxPage } from "./pages/DiscussionInboxPage";
 import { FilesPage } from "./pages/FilesPage";
 import { FileDetailPage } from "./pages/FileDetailPage";
-import { ViewsPage } from "./pages/ViewsPage";
+import { ViewsPage, GroupTableFlow } from "./pages/ViewsPage";
 import { SavedViewPage } from "./pages/SavedViewPage";
 import { TidySuggestionsPage } from "./pages/TidySuggestionsPage";
 import { ConfigurationPage } from "./pages/ConfigurationPage";
@@ -123,6 +125,13 @@ const ApiTokensPage = lazy(() => import("./pages/ApiTokensPage").then((m) => ({ 
 const ActivityPage = lazy(() => import("./pages/ActivityPage").then((m) => ({ default: m.ActivityPage })));
 const SurfacesPage = lazy(() => import("./pages/SurfacesPage").then((m) => ({ default: m.SurfacesPage })));
 const DigifabPage = lazy(() => import("./pages/DigifabPage").then((m) => ({ default: m.DigifabPage })));
+const PrinterStationPage = lazy(() => import("./pages/PrinterStationPage").then((m) => ({ default: m.PrinterStationPage })));
+const FloorManagerPage = lazy(() => import("./pages/FloorManagerPage").then(m => ({ default: m.FloorManagerPage })));
+const InspectionStationPage = lazy(() => import("./pages/InspectionStationPage").then(m => ({ default: m.InspectionStationPage })));
+const BoardInspectionPage = lazy(() => import("./pages/BoardInspectionPage").then(m => ({ default: m.BoardInspectionPage })));
+const ReflowStationPage = lazy(() => import("./pages/ReflowStationPage").then(m => ({ default: m.ReflowStationPage })));
+const AssemblyStationPage = lazy(() => import("./pages/AssemblyStationPage").then(m => ({ default: m.AssemblyStationPage })));
+const MachineStationPage = lazy(() => import("./pages/MachineStationPage").then((m) => ({ default: m.MachineStationPage })));
 const MakesPage = lazy(() => import("./pages/MakesPage").then((m) => ({ default: m.MakesPage })));
 const MakePage = lazy(() => import("./pages/MakesPage").then((m) => ({ default: m.MakePage })));
 const MaintenancePage = lazy(() => import("./pages/MaintenancePage").then((m) => ({ default: m.MaintenancePage })));
@@ -208,6 +217,7 @@ import { hydrateNavPref } from "./lib/nav-mode";
 // docs/architecture/invokable-flows-and-lego-redesign.md.
 const WORKSPACE_FLOWS: FlowRegistry = {
   "core-scan:organize": OrganizeFlow,
+  "core-views:group-table": GroupTableFlow,
   "core-templates:create": NewFromTemplateFlow,
 };
 
@@ -377,6 +387,7 @@ function PublicRoutes() {
       <Route path="/auth/magic" element={<MagicConsumePage />} />
       {/* Where account.cobblr.xyz returns a browser with its one-time code. */}
       <Route path="/auth/callback" element={<IdentityCallbackPage />} />
+      <Route path="/sign-in/oidc" element={<OidcSignInPage />} />
       {/* /pair?code=… — phone-side QR pair-login landing. Claims the code the
           desktop minted and signs the phone in to that workspace. Reached
           unauthenticated (the code is the secret). */}
@@ -646,6 +657,7 @@ function ActiveOrgScopedRoutes() {
       appMode={!!appMode}
       flows={WORKSPACE_FLOWS}
       recordPhoto={RecordPhoto}
+      decodeBarcodeImage={decodeBarcodeImage}
       // The app owns what Cobb looks like; the package owns the button that
       // hands him a record.
       cobbIcon={CobbHead}
@@ -754,7 +766,14 @@ function ActiveOrgScopedRoutes() {
       {shouldRedirectToPortal && <Navigate to={`/portal/${activeSlug}`} replace />}
       {shouldRedirectToAppHome && <Navigate to={appMode!.home_path} replace />}
       <Routes>
+        <Route path="/station/floor" element={<FloorManagerPage screen />} />
+        <Route path="/station/inspection/:machineId/:orderId" element={<InspectionStationPage />} />
+        <Route path="/station/reflow/:machineId/:orderId" element={<ReflowStationPage />} />
+        <Route path="/station/assembly/:machineId/:orderId" element={<AssemblyStationPage />} />
+        <Route path="/station/printer/:machineId" element={<PrinterStationPage />} />
+        <Route path="/station/machine/:connectionId/:deviceId" element={<MachineStationPage />} />
         <Route element={<AppLayout activeSlug={activeSlug} />}>
+          <Route path="/builds/inspections/:id" element={<BoardInspectionPage />} />
           <Route index element={<Dashboard />} />
           <Route
             path="/inventory/*"
@@ -986,6 +1005,7 @@ function ActiveOrgScopedRoutes() {
           {/* digifab is a domain (bare module name) → the navbar links to its
               top path `/digifab`. Route it there as well as the Configuration
               deep-link, or the nav entry falls through to the home redirect. */}
+          <Route path="/digifab/manager" element={<FloorManagerPage />} />
           <Route path="/digifab" element={<DigifabPage />} />
           <Route path="/makes" element={<MakesPage />} />
           <Route path="/makes/:id" element={<MakePage />} />

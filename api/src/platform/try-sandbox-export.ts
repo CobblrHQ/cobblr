@@ -71,6 +71,7 @@ export async function createSandboxExport(
   // stacking, so a loop cannot fill the table and the newest link is the one
   // that works.
   await meta.deleteFrom("try_sandbox_exports").where("email", "=", email).execute();
+  // check-then-insert: the key is a random token minted here
   await meta
     .insertInto("try_sandbox_exports")
     .values({

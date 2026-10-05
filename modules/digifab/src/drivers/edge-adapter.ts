@@ -20,6 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EdgeUnsupported } from "@cobblr/platform-contract";
 import { DriverSaid, sentenceIn } from "../job-truth.js";
+import { ReviewRequired } from "./job-review.js";
 import type {
   CommandResult,
   ControlDef,
@@ -135,6 +136,7 @@ export class EdgeAdapterDriver implements MachineDriver {
 
   /** Run a declared control through the bridge. */
   async runControl(_deviceId: string, id: string, params: Record<string, unknown>): Promise<CommandResult> {
+    if (await this.jobReviewRequired()) return { ok: false, detail: "Approve at the laser's station." };
     try {
       const r = (await this.req("POST", "/control", { body: { id, params } })) as { ok?: boolean; ref?: string; detail?: string };
       return r?.ok ? { ok: true, ref: r.ref ?? id } : { ok: false, detail: r?.detail ?? "control not accepted" };
@@ -145,6 +147,7 @@ export class EdgeAdapterDriver implements MachineDriver {
 
   /** Start a file already on the machine's storage (no re-upload), via the bridge. */
   async printFile(_deviceId: string, name: string): Promise<CommandResult> {
+    if (await this.jobReviewRequired()) return { ok: false, detail: "Approve at the laser's station." };
     try {
       const r = (await this.req("POST", "/print", { body: { name } })) as { ok?: boolean; ref?: string; detail?: string };
       return r?.ok ? { ok: true, ref: r.ref } : { ok: false, detail: r?.detail ?? "print not accepted" };
@@ -322,6 +325,7 @@ export class EdgeAdapterDriver implements MachineDriver {
   }
 
   async submitJob(args: SubmitArgs): Promise<SubmitResult> {
+    if (await this.jobReviewRequired() && !args.approval) throw new ReviewRequired("Approve at the laser's station.");
     const data = (await this.req("POST", "/submit", {
       body: { ...(args.approval ? { approval: args.approval } : {}), fileId: args.fileId, target: args.deviceId ?? args.tag ?? null, ...(args.idempotencyKey ? { idempotencyKey: args.idempotencyKey } : {}) },
     })) as { jobId?: string; queued?: boolean };
@@ -349,6 +353,7 @@ export class EdgeAdapterDriver implements MachineDriver {
   // handler, which only reads `ok`). This is what makes an `edge_adapter`
   // connection a valid target of the digifab:run-command action.
   async runCommand(command: string, params: Record<string, unknown>): Promise<CommandResult> {
+    if (await this.jobReviewRequired()) return { ok: false, detail: "Approve at the laser's station." };
     try {
       const data = (await this.req("POST", "/command", {
         body: { command, params },

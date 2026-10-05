@@ -14,6 +14,7 @@
 // an item to the module's default table instead of the chosen instance.
 
 import { isScanReadyToFile, scanRowState, type ScanRowStateContext } from "@cobblr/platform-contract/scan-triage";
+import { suggestedPlace } from "../lib/sessionPlaceSuggestion";
 
 export interface ScanCandidateLike {
   module: string;
@@ -249,7 +250,7 @@ export function confirmBodyFor(
     // would send the frozen peas to the kitchen and then warn about them,
     // which is the whole complaint. What the batch answers for is everything
     // with no better idea.
-    location_id: it.target_location_id ?? it.suggested_location_id ?? agreedLocationId ?? undefined,
+    location_id: it.target_location_id ?? suggestedPlace(it)?.id ?? agreedLocationId ?? undefined,
   };
 }
 
@@ -273,7 +274,7 @@ export function placementPreview(
     // item is not news, and reporting it back as though the system had decided
     // it would be misleading.
     if (it.target_location_id) continue;
-    const name = it.suggested_location_id ? (it.suggested_location_note?.split(" — ")[0] ?? "a suggested spot") : null;
+    const name = suggestedPlace(it)?.place ?? null;
     if (!name) {
       // Covered by the batch location, if one was picked; genuinely homeless
       // otherwise. Either way the system decided nothing, so it says nothing.

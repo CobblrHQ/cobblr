@@ -1,3 +1,4 @@
+import { MaintenanceRefusal } from "../refusal.js";
 import type { Request, Response, NextFunction } from "express";
 import type { z } from "zod";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
@@ -7,7 +8,10 @@ type AsyncHandler = (req: Request, res: Response) => Promise<unknown>;
 
 export function asyncHandler(fn: AsyncHandler) {
   return (req: Request, res: Response, next: NextFunction): void => {
-    Promise.resolve(fn(req, res)).catch(next);
+    Promise.resolve(fn(req, res)).catch((error) => {
+      if (error instanceof MaintenanceRefusal) { res.status(error.status).json({ error: { code: "invalid_input", message: error.message } }); return; }
+      next(error);
+    });
   };
 }
 

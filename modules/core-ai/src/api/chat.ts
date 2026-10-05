@@ -60,7 +60,7 @@ import { withArticle } from "@cobblr/platform-contract/plural";
 import { asksForAChange, proposesSeriousChange } from "./plan-tier.js";
 import type { PlanStepBefore } from "@cobblr/platform-contract";
 import { WHOLE, cardsOf, planTitle, withCards, type Card } from "./one-plan.js";
-import { inPlainWords } from "./says-something.js";
+import { forAPerson } from "./says-something.js";
 
 /** ToolCall → the ledgered write request shape (null = not a known write). */
 /** The writes a tool call MEANS — one for a single write, many for a bulk one.
@@ -274,6 +274,10 @@ interface Ctx {
   /** Says which client is calling: "cobb" on the calls that start service
    *  jobs, so the api stamps them as Cobb's door. */
   client?: "cobb";
+  /** "assistant" on Cobb's READ tools: the api then lets the person's own
+   *  assistant see what the person wrote for themselves (a part's notes,
+   *  #4798). Only ever more of what the person can already read. */
+  reader?: "assistant";
 }
 export function ctxOf(req: Parameters<typeof tenantContext>[0]): Ctx {
   const org = tenantContext(req).org;
@@ -297,11 +301,24 @@ async function callApi(
   path: string,
   body?: unknown,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
-  const r = await fetch(`${c.base}/orgs/${c.slug}${path}`, {
-    method,
-    headers: { "content-type": "application/json", authorization: c.auth, ...(c.client ? { "x-cobblr-client": c.client } : {}) },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  let r: Awaited<ReturnType<typeof fetch>>;
+  try {
+    r = await fetch(`${c.base}/orgs/${c.slug}${path}`, {
+      method,
+      headers: { "content-type": "application/json", authorization: c.auth, ...(c.client ? { "x-cobblr-client": c.client } : {}), ...(c.reader ? { "x-cobblr-reader": c.reader } : {}) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch (err) {
+    // The assistant's call to the api it runs in failed before any answer.
+    // fetch says only "fetch failed"; the reason is in its cause (a closed or
+    // refused connection, a timeout). Said here, in the log and the error, so
+    // an intermittent one names itself (#4901: a plan section's run failed
+    // with a bare "fetch failed" and nothing kept why).
+    const cause = (err as { cause?: { code?: string; message?: string } }).cause;
+    const why = cause?.code ?? cause?.message ?? (err as Error).message;
+    console.error(`[core-ai] the call to the api itself failed: ${method} ${path}: ${why}`);
+    throw new Error(`The assistant could not reach this Cobblr to ${method === "GET" ? "read" : "make the change"} (${why}). Try again.`, { cause: err });
+  }
   const b = (await r.json().catch(() => ({}))) as Record<string, unknown>;
   return { status: r.status, body: b };
 }
@@ -803,6 +820,7 @@ async function answerTurn(
   // Service jobs are started on Cobb's door, not the person's: the header
   // makes the api stamp them as Cobb's, so they follow Cobb's consent.
   const cobbApi = chatWorkspaceApi({ ...c, client: "cobb" });
+  const readApi = chatWorkspaceApi({ ...c, reader: "assistant" });
   const serviceJobs: Array<{ job_id: string; capability?: string; status?: string }> = [];
   // The consent + auto-mode sentences ride in the prompt the caller built
   // (system-prompt.ts consentLine): a prompt assembled in two places is one
@@ -896,7 +914,7 @@ async function answerTurn(
           const bounce = known.size ? escortCoveredByAction(dest, ESCORT_COVERAGE[dest], known) : null;
           if (bounce) return { ok: false, error: bounce };
         }
-        const result = await tool.execute(wsApi, args);
+        const result = await tool.execute(readApi, args);
         // What it read, kept: the reply is named by these and nothing else.
         for (const r of recordsFromToolResult(result)) reads.push(r);
         ambiguity.onRead(name, args, result);
@@ -1057,7 +1075,7 @@ async function answerTurn(
     if (items.length === 0) {
       return {
         type: "reply",
-        text: inPlainWords(problems.join(" "), kinds) || outcome.text || "I couldn't line that up — can you rephrase?",
+        text: (problems.length ? forAPerson(problems.join(" "), kinds) : "") || outcome.text || "I couldn't line that up — can you rephrase?",
         ...(done.length ? { applied: done } : {}),
         ...(escorts.length ? { escorts } : {}), ...(serviceJobs.length ? { service_jobs: serviceJobs } : {}),
       };
@@ -1206,6 +1224,9 @@ async function answerTurn(
  *  there the body was unreadable, here it was readable and in the wrong shape.
  */
 function sendWriteOutcome(res: Response, out: { ok: boolean; message: string }): void {
+  // A failed write's message is what the card says: a person's words, never a
+  // tool's or a route's (#4574).
+  if (!out.ok) out = { ...out, message: forAPerson(out.message) };
   res
     .status(out.ok ? 200 : 400)
     .json(out.ok ? out : { ...(out as object), error: { code: "write_failed", message: out.message } });
@@ -1668,6 +1689,7 @@ chatRouter.get(
     const poll = setInterval(async () => {
       if (closed) return;
       try {
+        // state-flips-last: a stream; readTurn below only heals
         for (const ev of await eventsAfter(db, turnId, last)) {
           send(ev);
           if (ev.kind === "done" || ev.kind === "error") end();
@@ -2100,7 +2122,7 @@ chatRouter.post(
     const sendOutcome = async (r: Response, said: { ok: boolean; message: string; applied?: unknown[] }): Promise<void> => {
       // A refusal is the action's own sentence, written for whoever called
       // it; the person who pressed Confirm reads it in the workspace's words.
-      const out = said.ok ? said : { ...said, message: inPlainWords(said.message, await fetchKinds(chatWorkspaceApi(c)).catch(() => [])) };
+      const out = said.ok ? said : { ...said, message: forAPerson(said.message, await fetchKinds(chatWorkspaceApi(c)).catch(() => [])) };
       if (offerId) await answerOffer(odb, me, offerId, out.ok ? "confirmed" : "failed", out).catch(() => undefined);
       sendWriteOutcome(r, out);
     };

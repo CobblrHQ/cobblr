@@ -70,6 +70,7 @@ export async function ensureNavToken(
     style === "descriptive" ? `${qrShortcode(entityKind)}/${slug()}` : slug();
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
+      // check-then-insert: the key is a random QR token minted here
       const row = await meta
         .insertInto("core_labels_qr_tokens")
         .values({

@@ -493,7 +493,7 @@ export function BundleDetailModal(props: Props) {
         if (match) target = `/${mod}?view=${match.id}`;
       }
     } catch {
-      /* fall back to the plain module page */
+      /* quiet: a read for a nicer landing page; the plain module page is fine */
     }
     onClose();
     navigate(target);

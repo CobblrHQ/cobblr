@@ -319,9 +319,19 @@ export function moneyTotalNote(total: Pick<MoneyTotal, "excluded" | "conversions
   ].join("; ");
 }
 
+/** The legacy currency locations, in their established precedence. SQL
+ *  grouping uses the same paths as the ordinary record reader. */
+export function moneyCurrencyPaths(field: string): string[][] {
+  return [[`money_currency_${field}`], ["money_currencies", field], ["currency"], ["receipt", "currency"], ["receipt_currency"]];
+}
+
 /** Currency on native numeric columns lives beside them in metadata. */
 export function fieldCurrency(metadata: unknown, field: string, fallback = DEFAULT_CURRENCY): string {
-  const m = metadata as { [key: string]: unknown; money_currencies?: Record<string, string>; receipt?: { currency?: string }; receipt_currency?: string; currency?: string } | null;
-  const currency = m?.[`money_currency_${field}`] || m?.money_currencies?.[field] || m?.currency || m?.receipt?.currency || m?.receipt_currency;
+  let currency: unknown;
+  for (const path of moneyCurrencyPaths(field)) {
+    let value: unknown = metadata;
+    for (const key of path) value = value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
+    if (value) { currency = value; break; }
+  }
   return typeof currency === "string" && /^[A-Z]{3}$/.test(currency.toUpperCase()) ? currency.toUpperCase() : fallback;
 }

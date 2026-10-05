@@ -74,7 +74,7 @@ async function tick(): Promise<void> {
     const printedIds = res.printed.map((p) => p.id).filter((id): id is string => !!id);
     if (printedIds.length > 0) await api.recordPrinted(printedIds);
   } catch {
-    // Best-effort: a transient BLE/network error must not wedge the loop. The next
+    // quiet: a transient BLE/network error must not wedge the loop. The next
     // tick retries; a dropped session simply no-ops (heldPrinterName goes null).
   } finally {
     firing = false;

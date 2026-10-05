@@ -29,6 +29,7 @@ import { DownloadMyDataSection } from "../components/DownloadMyDataSection";
 import { DeleteAccountSection } from "../components/DeleteAccountSection";
 import { DeletedWorkspaceBackups } from "../components/DeletedWorkspaceBackups";
 import { ChangeEmailSection } from "../components/ChangeEmailSection";
+import { LinkedSignInsSection } from "../components/LinkedSignInsSection";
 import {
   DEFAULT_TITLE_FORMAT,
   TITLE_FORMATS,
@@ -208,6 +209,7 @@ function DisplayNameSection({
         Identity
       </h2>
       <ChangeEmailSection email={email} />
+      <LinkedSignInsSection />
       <label className="block">
         <div className="text-xs text-muted mb-1">Display name</div>
         <input

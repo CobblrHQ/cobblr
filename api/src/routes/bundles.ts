@@ -24,6 +24,7 @@ import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { describeBlock } from "../platform/approvals.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
+import { withWorkspaceLock } from "../platform/workspace-lock.js";
 import {
   assertActingRoleClearsActionFloor,
   ActionRoleFloorError,
@@ -327,6 +328,9 @@ const InstanceEntry = z.object({
    *  find-or-creates the parent type by those keys and links it, so a scanned
    *  spool lands in the type→spool model instead of as a flat row. Same params
    *  the `inventory:lift-to-type` migration uses. */
+  board_revisions: z.object({ package_kind: z.string().min(3).max(120), blank_kind: z.string().min(3).max(120), stencil_kind: z.string().min(3).max(120), placed_kind: z.string().min(3).max(120).optional() }).optional(),
+  paste_tracking: z.boolean().optional(),
+  package_receiving: z.object({ identity_field: z.string().min(1).max(80), storage_tracking: z.boolean().default(false) }).optional(),
   parent: z
     .object({
       instance: z.string().min(1),
@@ -1819,7 +1823,14 @@ async function resolveUpgradeConflict(
     .execute();
 }
 
-export async function applyValidatedBundle(
+/** Apply a validated bundle: one install per workspace at a time (see
+ *  withWorkspaceLock), so a double press or a retried request is a reinstall,
+ *  never a 500 on a unique key half way through. */
+export async function applyValidatedBundle(...args: Parameters<typeof applyValidatedBundleUnlocked>): ReturnType<typeof applyValidatedBundleUnlocked> {
+  return withWorkspaceLock(args[0], "bundle-apply", () => applyValidatedBundleUnlocked(...args));
+}
+
+async function applyValidatedBundleUnlocked(
   orgId: string,
   sess: { id: string; display_name?: string | null; auth_method: "session" | "api_token" | "system"; api_token_id?: string | null },
   v: BundleValidationResult,
@@ -1831,6 +1842,11 @@ export async function applyValidatedBundle(
     /** The word picked for a table that offers them, by instance name
      *  ("yarn" → "skein"). Absent: the stored choice, else the default. */
     nounChoices?: Record<string, string>;
+    /** Re-applying a bundle that is already installed (a feature save, a
+     *  word change) is not an install: false writes no "installed" row, so
+     *  one install never reads "installed ×2" on the dashboard (#4145). The
+     *  caller logs what it did instead. */
+    logInstall?: boolean;
   } = {},
 ): Promise<{
   bundle: { id: string; external_id: string; name: string; version: string };
@@ -1995,7 +2011,7 @@ export async function applyValidatedBundle(
     // (2026-09-12). The instance's words come first so a table-specific term
     // wins any first-match read.
     const tableWords = bundleTableWords(inst.scan_keywords, m.scan_keywords);
-    const instConfig: Record<string, unknown> = { item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null, parent: inst.parent ?? null, nav_group: inst.nav_group ?? null, scan_keywords: tableWords.length ? tableWords : null, faces: inst.faces ?? null, file_intake: inst.file_intake ?? null, connector_import: (inst as { connector_import?: unknown }).connector_import ?? null, noun: inst.noun ?? null, hint: inst.hint ?? null, links: inst.links ?? null, noun_choice: (inst as { noun_choice?: unknown }).noun_choice ?? null, contents_label_default: inst.contents_label ?? null, service_tasks_default: inst.service_tasks ?? null };
+    const instConfig: Record<string, unknown> = { item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null, parent: inst.parent ?? null, package_receiving: inst.package_receiving ?? null, paste_tracking: inst.paste_tracking ?? false, board_revisions: inst.board_revisions ?? null, nav_group: inst.nav_group ?? null, scan_keywords: tableWords.length ? tableWords : null, faces: inst.faces ?? null, file_intake: inst.file_intake ?? null, connector_import: (inst as { connector_import?: unknown }).connector_import ?? null, noun: inst.noun ?? null, hint: inst.hint ?? null, links: inst.links ?? null, noun_choice: (inst as { noun_choice?: unknown }).noun_choice ?? null, contents_label_default: inst.contents_label ?? null, service_tasks_default: inst.service_tasks ?? null };
     // Creation-time stock signal: a bundle that declares a MEASURED unit (a
     // qty_unit that isn't blank or "each" — filament in kg, yarn in skeins)
     // carries stock character before any data exists, so latch it to stock at
@@ -2145,6 +2161,7 @@ export async function applyValidatedBundle(
       // Plain insert; the unique constraint will surface any
       // unexpected races as a 500 (and the transaction rolls
       // back).
+      // check-then-insert: applyValidatedBundle runs one install per workspace at a time (withWorkspaceLock).
       await trx.insertInto("module_field_defs").values(fieldDefRow(orgId, f.entity_kind, f, bundle.id, baseSections.get(f.entity_kind), keptSections)).execute();
     }
     // Native-field overrides (relabel / show-hide). Upsert so a bundle can
@@ -2216,6 +2233,7 @@ export async function applyValidatedBundle(
       }
       const instSections = await bundleSectionIds(trx, orgId, kind, inst.field_defs);
       for (const f of inst.field_defs) {
+        // check-then-insert: applyValidatedBundle runs one install per workspace at a time (withWorkspaceLock).
         await trx.insertInto("module_field_defs").values(fieldDefRow(orgId, kind, f, bundle.id, instSections, keptSections)).execute();
       }
       for (const fo of inst.field_overrides) {
@@ -2325,6 +2343,8 @@ export async function applyValidatedBundle(
               schema: sql`${JSON.stringify(c.schema)}::jsonb`,
               bundle_external_id: `${m.id}/${c.external_id}`,
             } as never)
+            // Two installs at once both found no catalog by this name: the first stands.
+            .onConflict((oc) => oc.doNothing())
             .execute();
         }
         catalogsInstalled++;
@@ -2457,6 +2477,8 @@ export async function applyValidatedBundle(
             theme: app.theme ? (sql`${JSON.stringify(app.theme)}::jsonb` as never) : null,
             created_by: null,
           } as never)
+          // Two installs at once both found no app: the second keeps the first.
+          .onConflict((oc) => oc.column("slug").doNothing())
           .execute();
       }
     } catch (err) {
@@ -2599,7 +2621,7 @@ export async function applyValidatedBundle(
   // update, an approval applied later) had no actor and read "someone
   // installed Yarn" on the dashboard (#3833). A system install (the automatic
   // update) is the platform's own work: no user, and the feed says "Cobblr".
-  await activity.log({
+  if (opts.logInstall !== false) await activity.log({
     orgId: orgId,
     userId: sess.auth_method === "system" ? null : sess.id,
     authMethod: sess.auth_method,
@@ -2931,8 +2953,14 @@ bundlesRouter.put(
         orgId,
         { id: req.session!.id, display_name: req.session!.display_name ?? null, auth_method: req.session!.auth_method, api_token_id: req.session!.api_token_id ?? null },
         v,
-        { nounChoices: { [body.data.instance]: word.singular } },
+        { nounChoices: { [body.data.instance]: word.singular }, logInstall: false },
       );
+      await activity.log({
+        orgId,
+        action: "bundle_word_changed",
+        ref: { module: null, entityType: "bundle", entityId: result.bundle.id },
+        diff: { name: result.bundle.name, external_id: result.bundle.external_id, instance: body.data.instance, word: word.singular },
+      });
       await bumpWorkspaceShape(orgId);
       res.json({ bundle: result.bundle, instance: body.data.instance, noun: word });
     } catch (err) {
@@ -2983,6 +3011,7 @@ bundlesRouter.patch(
         orgId,
         { id: req.session!.id, display_name: req.session!.display_name ?? null, auth_method: req.session!.auth_method, api_token_id: req.session!.api_token_id ?? null },
         v,
+        { logInstall: false },
       );
 
       // A table only the turned-off feature set up: gone when empty (nothing

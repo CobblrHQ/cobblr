@@ -1,12 +1,17 @@
 {
   "manifest": {
     "id": "cobblr.flagship.home-inventory",
-    "version": "0.6.2",
+    "version": "0.6.3",
     "name": "Home Inventory",
     "description": "Your belongings as their own room-by-room catalog: make/model + condition, filed by room. Scan to add, print labels for boxes, optional insurance valuation.",
     "author": "Cobblr",
     "released_at": "2026-10-02",
     "releases": [
+      {
+        "version": "0.6.3",
+        "released_at": "2026-10-05",
+        "notes": "Bed linen scans stay with household belongings while material stock has its own table."
+      },
       {
         "version": "0.6.2",
         "released_at": "2026-10-02",
@@ -46,7 +51,7 @@
           ]
         },
         "scan_keywords": [
-          "sheets",
+          "bed sheets",
           "bedding",
           "linen",
           "towel",

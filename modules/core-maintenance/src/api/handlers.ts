@@ -1,3 +1,4 @@
+import { z } from "zod";
 // core-maintenance action handlers — the AI-reachable form of the service log.
 //
 // This module had NO entity kind (entries hang off the entity they service, so
@@ -18,8 +19,9 @@
 import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { CoreMaintenanceDB } from "../db.js";
-import { rollForward, rolledFromOf, unroll } from "../schedules-store.js";
-import { createSchedule, ScheduleCreateBody } from "./schedules.js";
+import { completeEntry, rollForward, rolledFromOf, unroll } from "../schedules-store.js";
+import { createSchedule, ScheduleCreateBody, ScheduleUpdateBody, RenewBody, updateSchedule, renewSchedule } from "./schedules.js";
+import { NagBody, CadenceBody, changeNag } from "./reminders.js";
 import { moneyForStorage } from "@cobblr/platform-contract/money";
 
 const str = (v: unknown): string | null =>
@@ -36,6 +38,68 @@ function when(v: unknown): Date | null {
 
 export function registerMaintenanceHandlers(): void {
   registerUndos();
+  platform().actions.registerHandler("core-maintenance.renewal", async (ctx) => {
+    if (!ctx.entity) return { ok: false, error: "Choose the record that expires." };
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const [entity_module, entity_type] = ctx.entity.kind.split(":");
+    const parsed = ScheduleCreateBody.safeParse({ ...args, entity_module, entity_type, entity_id: ctx.entity.id,
+      anchor: args.anchor ?? (typeof args.current_expiry === "string" ? args.current_expiry.slice(5) : null), every_n: args.every_n ?? 1, every_unit: args.every_unit ?? "year" });
+    if (!parsed.success) return { ok: false, error: parsed.error.message };
+    const db = await platform().tenants.getDb(ctx.orgId) as Kysely<CoreMaintenanceDB>;
+    const row = await createSchedule(db, ctx.orgId, parsed.data);
+    return { ok: true, result: { schedule_id: row.id, name: row.name } };
+  });
+  platform().actions.registerUndo("core-maintenance.renewal", (value) => {
+    const r = value as { ok?: boolean; result?: { schedule_id?: string } };
+    return r.ok && r.result?.schedule_id ? { action_id: "core-maintenance:remove-schedule", args: { schedule_id: r.result.schedule_id } } : null;
+  });
+  platform().actions.registerHandler("core-maintenance.reminders", async (ctx) => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const parsed = NagBody.safeParse(args);
+    if (!parsed.success) return { ok: false, error: parsed.error.message };
+    const db = await platform().tenants.getDb(ctx.orgId) as Kysely<CoreMaintenanceDB>;
+    const result = await changeNag(db, String(args.entry_id ?? ""), parsed.data);
+    return { ok: true, result, summary: parsed.data.mode === "stop" ? "Reminders are off for this occurrence." : parsed.data.mode === "resume" ? "Reminders are back on." : "Reminders are snoozed." };
+  });
+  platform().actions.registerHandler("core-maintenance.restore-reminders", async (ctx) => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const db = await platform().tenants.getDb(ctx.orgId) as Kysely<CoreMaintenanceDB>;
+    const dates = z.object({ nag_stopped_at: z.string().datetime().nullable(), nag_snoozed_until: z.string().datetime().nullable() }).safeParse(args);
+    if (!dates.success) return { ok: false, error: dates.error.message };
+    await db.updateTable("core_maintenance_entries").set({ nag_stopped_at: when(dates.data.nag_stopped_at), nag_snoozed_until: when(dates.data.nag_snoozed_until) }).where("id", "=", String(args.entry_id ?? "")).where("performed_at", "is", null).execute();
+    return { ok: true, summary: "Reminder settings restored." };
+  });
+  platform().actions.registerUndo("core-maintenance.reminders", (value) => {
+    const r = value as { ok?: boolean; result?: { entry?: { id: string }; was?: { nag_stopped_at: Date | null; nag_snoozed_until: Date | null } } };
+    if (!r.ok || !r.result?.entry || !r.result.was) return null;
+    return { action_id: "core-maintenance:restore-reminders", args: { entry_id: r.result.entry.id, nag_stopped_at: r.result.was.nag_stopped_at?.toISOString() ?? null, nag_snoozed_until: r.result.was.nag_snoozed_until?.toISOString() ?? null } };
+  });
+  platform().actions.registerHandler("core-maintenance.reminder-default", async (ctx) => {
+    if (!ctx.userId || !await platform().auth.userHasRole({ orgId: ctx.orgId, userId: ctx.userId, minRole: "admin" })) return { ok: false, error: "Only workspace owners and admins can change reminder defaults." };
+    const parsed = CadenceBody.safeParse(ctx.args);
+    if (!parsed.success) return { ok: false, error: parsed.error.message };
+    const db = await platform().tenants.getDb(ctx.orgId) as Kysely<CoreMaintenanceDB>;
+    await db.insertInto("core_maintenance_preferences").values({ id: true, ...parsed.data }).onConflict((c) => c.column("id").doUpdateSet(parsed.data)).execute();
+    return { ok: true, summary: "Overdue reminder cadence saved.", result: parsed.data };
+  });
+  platform().actions.registerHandler("core-maintenance.update-schedule", async (ctx) => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const parsed = ScheduleUpdateBody.safeParse(args);
+    if (!parsed.success) return { ok: false, error: parsed.error.message };
+    const db = await platform().tenants.getDb(ctx.orgId) as Kysely<CoreMaintenanceDB>;
+    const before = await db.selectFrom("core_maintenance_schedules").selectAll().where("id", "=", String(args.schedule_id ?? "")).executeTakeFirst();
+    if (!before) return { ok: false, error: "Schedule not found" };
+    return { ok: true, result: await updateSchedule(db, ctx.orgId, before, parsed.data) };
+  });
+  platform().actions.registerHandler("core-maintenance.renew", async (ctx) => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const parsed = RenewBody.safeParse({ ...args, ...(args.cost != null ? { cost_cents: moneyForStorage(args.cost, "cents") } : {}) });
+    if (!parsed.success) return { ok: false, error: parsed.error.message };
+    const db = await platform().tenants.getDb(ctx.orgId) as Kysely<CoreMaintenanceDB>;
+    const before = await db.selectFrom("core_maintenance_schedules").selectAll().where("id", "=", String(args.schedule_id ?? "")).executeTakeFirst();
+    if (!before) return { ok: false, error: "Schedule not found" };
+    return { ok: true, result: await renewSchedule(db, ctx.orgId, ctx.userId, before, parsed.data) };
+  });
   platform().actions.registerHandler("core-maintenance.log", async (ctx) => {
     const e = ctx.entity;
     if (!e) return { ok: false, error: "this runs on a record: say which thing was serviced" };
@@ -106,11 +170,16 @@ export function registerMaintenanceHandlers(): void {
       entity_type: entityType,
       entity_id: e.id,
       name: str(args.name) ?? "",
-      every_n: numArg(args.every_n) != null ? Math.round(numArg(args.every_n)!) : null,
-      every_unit: str(args.every_unit),
+      every_n: numArg(args.every_n) != null ? Math.round(numArg(args.every_n)!) : args.anchor ? 1 : null,
+      every_unit: str(args.every_unit) ?? (args.anchor ? "year" : null),
       counter_field: str(args.counter_field),
       counter_every: numArg(args.counter_every),
       last_done_at: str(args.last_done_at),
+      overdue_every: args.overdue_every,
+      anchor: args.anchor,
+      remind: args.remind,
+      current_expiry: args.current_expiry,
+      expiry_field: args.expiry_field,
     });
     if (!parsed.success) {
       return {
@@ -147,22 +216,10 @@ export function registerMaintenanceHandlers(): void {
       };
     }
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreMaintenanceDB>;
-    const before = await db
-      .selectFrom("core_maintenance_entries")
-      .select(["performed_at", "performed_by"])
-      .where("id", "=", id)
-      .executeTakeFirst();
-    const row = await db
-      .updateTable("core_maintenance_entries")
-      .set({
-        performed_at: when(args.performed_at) ?? new Date(),
-        performed_by: ctx.userId,
-      } as never)
-      .where("id", "=", id)
-      .returningAll()
-      .executeTakeFirst();
-    if (!row) return { ok: false, error: `no maintenance entry with id ${id}` };
-    const rolled = await rollForward(db, ctx.orgId, row);
+    const completed = await completeEntry(db, ctx.orgId, id, ctx.userId, when(args.performed_at) ?? new Date());
+    if (!completed) return { ok: false, error: "This service is no longer scheduled." };
+    const { row, rolled, before } = completed;
+    if (completed.skipped) return { ok: true, skipped: true, summary: "This service was already done." };
     return {
       ok: true,
       result: {
@@ -190,7 +247,7 @@ function registerUndos(): void {
     return { ok: true, summary: `Removed the ${row.name} entry.`, removed: row.id };
   });
   platform().actions.registerHandler("core-maintenance.reopen-entry", async (ctx) => {
-    const a = (ctx.args as { entry_id?: unknown; performed_at?: unknown; performed_by?: unknown } | null) ?? {};
+    const a = (ctx.args as { entry_id?: unknown; performed_at?: unknown; performed_by?: unknown; schedule_was?: unknown } | null) ?? {};
     const id = String(a.entry_id ?? "").trim();
     if (!id) return { ok: false, error: "missing entry_id" };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreMaintenanceDB>;
@@ -205,6 +262,8 @@ function registerUndos(): void {
       .returning(["id", "name"])
       .executeTakeFirst();
     if (!row) return { ok: false, error: `no maintenance entry with id ${id}` };
+    const was = rolledFromOf(a.schedule_was);
+    if (was) await unroll(db, ctx.orgId, was);
     return {
       ok: true,
       summary: `${row.name} is back to how it was.`,
@@ -221,10 +280,10 @@ function registerUndos(): void {
     };
   });
   const reopen = (result: unknown) => {
-    const r = result as { ok?: unknown; result?: { id?: unknown }; was?: { performed_at?: unknown; performed_by?: unknown } } | null;
+    const r = result as { ok?: unknown; result?: { id?: unknown; schedule_was?: unknown }; was?: { performed_at?: unknown; performed_by?: unknown } } | null;
     if (r?.ok !== true || typeof r.result?.id !== "string" || !r.was) return null;
     const at = r.was.performed_at instanceof Date ? r.was.performed_at.toISOString() : typeof r.was.performed_at === "string" ? r.was.performed_at : null;
-    return { action_id: "core-maintenance:reopen-entry", args: { entry_id: r.result.id, performed_at: at, performed_by: r.was.performed_by ?? null } };
+    return { action_id: "core-maintenance:reopen-entry", args: { entry_id: r.result.id, performed_at: at, performed_by: r.was.performed_by ?? null, ...(r.result.schedule_was ? { schedule_was: r.result.schedule_was } : {}) } };
   };
   platform().actions.registerUndo("core-maintenance.complete", reopen);
   platform().actions.registerUndo("core-maintenance.reopen-entry", reopen);

@@ -7,6 +7,8 @@
 // the whole pipeline testable without touching hardware.
 
 import { sql } from "kysely";
+import { isLayoutFile } from "../laser-plans.js";
+import { verifyLaserOutput } from "../laser-layout.js";
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
@@ -16,6 +18,8 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 import { pollJob, sendJob, assignJob, buildDriverById, reverseBuildIfCommitted, TERMINAL, markJobTerminal, managerName } from "../jobs-core.js";
 import { enqueuePoll, reconcilePolls } from "../poll-worker.js";
 import { JobApprovalSchema } from "../drivers/job-review.js";
+import { requireLaserBedReady, stationTokenHash } from "../laser-station.js";
+import { matchingLibraryMaterial } from "../laser-material.js";
 import type { JobApproval } from "../drivers/types.js";
 import { plainDriverError } from "../job-truth.js";
 
@@ -164,6 +168,7 @@ jobsRouter.post(
     if (!requireRole(req, res, "owner", "admin")) return;
     const parsed = JobCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
+    if (await isLayoutFile(tenantDb(req), parsed.data.file_id)) return void res.status(409).json({ error: { code: "layout_copy", message: "Use this layout's queued sheet job. Make a new plan to cut another batch." } });
     const pool = parsed.data.target_pool ?? null;
     if (!parsed.data.connection_id && !pool) {
       return void res
@@ -261,14 +266,34 @@ jobsRouter.post("/:id/prepare", asyncHandler(async (req, res) => {
   const orgId = tenantContext(req).org.id;
   const job = await db.selectFrom("digifab_jobs").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
   if (!job) return void res.status(404).json({ error: { code: "not_found", message: "No such job." } });
-  if (job.status !== "queued" || job.remote_job_id || job.target_pool || !job.connection_id) return void res.status(409).json({ error: { code: "not_ready", message: "Choose a queued job on one connection to review." } });
+  if (job.status !== "queued" || job.remote_job_id || job.send_token || job.target_pool || !job.connection_id) return void res.status(409).json({ error: { code: "not_ready", message: "Choose a queued job on one connection to review." } });
   const driver = await buildDriverById(db, orgId, job.connection_id);
   if (!driver || !await driver.jobReviewRequired?.()) return void res.json({ review: null });
+  const stationToken = typeof req.body?.stationToken === "string" ? req.body.stationToken : "";
+  const station = stationToken && job.target_device ? await db.selectFrom("digifab_stations").select("id").where("token_hash", "=", stationTokenHash(stationToken)).where("connection_id", "=", job.connection_id).where("remote_device_id", "=", job.target_device).where("revoked_at", "is", null).executeTakeFirst() : null;
+  if (!station) return void res.json({ review: null, stationRequired: { connectionId: job.connection_id, deviceId: job.target_device } });
   if (!driver.prepareJob || !job.file_id) return void res.status(409).json({ error: { code: "file_required", message: "Choose a stored file to prepare this job." } });
   const file = await platform().files.read(orgId, job.file_id);
   if (!file) return void res.status(409).json({ error: { code: "file_missing", message: "The job's stored file no longer exists." } });
-  try { res.json({ review: { ...await driver.prepareJob(new Uint8Array(file.bytes), file.filename), sourceFile: { id: job.file_id, filename: file.filename } } }); }
-  catch (e) { res.status(502).json({ error: { code: "prepare_failed", message: plainDriverError(e, await managerName(orgId, job.connection_id), "preparing the project") } }); }
+  if (!(driver.laserBackend ? /\.laserplan$/i : /\.lbrn2$/i).test(file.filename)) return void res.status(409).json({ error: { code: "prepared_file_required", message: "Choose a prepared laser file for this station." } });
+  try {
+    await requireLaserBedReady(db, job);
+    const devices = await driver.listDevices();
+    const device = devices.find(d => d.id === job.target_device);
+    if (!device || ["running", "printing", "paused", "busy"].includes(device.state ?? "")) throw new Error("This laser is busy. Finish its current job before loading another file.");
+    if (driver.laserBackend) await db.updateTable("digifab_jobs").set({ cancel_requested_at: null }).where("id", "=", job.id).where("send_token", "is", null).execute();
+    const review = await driver.prepareJob(new Uint8Array(file.bytes), file.filename);
+    const layout = job.laser_layout;
+    if (layout) {
+      verifyLaserOutput(layout.expected, review);
+      if (review.contentHash !== layout.content_hash) throw new Error("The queued layout file changed. Make a new plan.");
+    }
+    res.json({ review: { ...review, sourceFile: { id: job.file_id, filename: file.filename }, materialSuggestion: (review.project.units as { distance?: string } | undefined)?.distance === "mm" ? matchingLibraryMaterial(review.cuts, review.materialLibrary) : null } });
+  }
+  catch (e) {
+    const detail = String(e instanceof Error ? e.message : e);
+    res.status(502).json({ error: { code: "prepare_failed", message: /import|timeout|modal|unsaved/i.test(detail) ? "LightBurn needs attention on its screen. Check for a prompt, then try preparing the job again." : plainDriverError(e, await managerName(orgId, job.connection_id), "preparing the project") } });
+  }
 }));
 
 // ── SEND — uploads + places the job on the farm. Starts a real print. ──

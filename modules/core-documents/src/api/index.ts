@@ -7,6 +7,7 @@
 // in the background (../matching.ts). Find, Link and the thumbnail are the
 // only routes that reach a library, each when a person asks.
 
+import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
 import type { Kysely } from "kysely";
@@ -49,7 +50,11 @@ function requireRole(req: Request, res: Response, ...allowed: OrgRoleName[]): bo
 }
 
 const record = (req: Request) => ({ kind: String(req.params.kind ?? ""), id: String(req.params.id ?? "") });
+// The link written back into the outside document points at this instance,
+// so it uses the instance's own public address when it has one.
 const originOf = (req: Request) => {
+  if (publicBaseUrl()) return publicBaseUrl();
+  // HOST-OK: only when no public address is configured (a laptop, a rig).
   const host = req.get("x-forwarded-host") || req.get("host");
   return host ? `${req.get("x-forwarded-proto") || req.protocol}://${host}` : null;
 };

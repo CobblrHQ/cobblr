@@ -24,6 +24,7 @@
 
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
+import { platform } from "@cobblr/platform-contract";
 import { registerHealPass } from "@cobblr/platform-contract/heal-pass";
 import { isStockPreviewUrl } from "./services/stock-preview.js";
 import { STOCK_AGENCY_HOSTS, STOCK_PREVIEW_FILENAME_MARKERS } from "./services/stock-picture-sources.js";
@@ -95,6 +96,7 @@ export async function healStockPicturesIn(orgId: string, db: Kysely<HealDB>, rep
         await pick(orgId, r.id, r.suggested_name, r.suggested_manufacturer);
       }
     } catch (err) {
+      platform().health.notePassFailure("core-scan.heal-stock-pictures", orgId, err);
       console.error(`[core-scan] org ${orgId} row ${r.id}: could not replace its stock-preview picture:`, (err as Error).message);
     }
   }

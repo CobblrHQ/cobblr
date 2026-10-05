@@ -1,3 +1,4 @@
+import { useFlowHost, useViewerRole } from "./context";
 import { Link } from "react-router-dom";
 // The strip at the top of every collection: its name and count, then its
 // filters, then the search and the actions on the right (#4014). One layout,
@@ -67,6 +68,8 @@ export function CollectionHeader({
   below?: ReactNode;
 }) {
   const titleId = useId();
+  const { openFlow } = useFlowHost();
+  const role = useViewerRole();
   return (
     <div className="border-b border-line dark:border-slate-700 pb-3 space-y-1.5" data-collection-header>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -87,9 +90,10 @@ export function CollectionHeader({
             {filters}
           </div>
         )}
-        {(search || actions || (kind && exportCsv)) && (
+        {(search || actions || kind) && (
           <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2 max-sm:w-full" data-header-controls>
             {search}
+            {kind && ["owner", "admin", "member"].includes(role ?? "") && <button type="button" className={headerButton()} onClick={() => openFlow("core-views:group-table", { kind })}>Group by</button>}
             {kind && exportCsv ? <ExportCsvButton kind={kind} q={exportQuery} /> : null}
             {actions}
           </div>

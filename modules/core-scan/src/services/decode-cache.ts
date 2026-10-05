@@ -11,18 +11,17 @@
 // docs/design-decisions/vin-decode.md §6.
 
 import { sql, type Kysely } from "kysely";
-import type { DecodeResult } from "./identifier-registry.js";
+import { findDecoder, type DecodeResult } from "./identifier-registry.js";
 import type { CoreScanDB } from "../db.js";
 
 // A bad identifier decodes to nothing today and (barring a provider backfill)
 // tomorrow too, so re-asking wastes quota. 30 days matches the barcode-cache.
 export const DECODE_MISS_TTL_DAYS = 30;
 
-/** Normalize a code to its cache key: trimmed + uppercased, so "1hg…" and
- *  "1HG…" share one row and a given identifier hits the provider at most once
- *  (VIN decoders uppercase internally; the key stays aligned with matches()). */
+/** VIN casing is immaterial; a package lot's casing belongs to its identity. */
 export function decodeCacheKey(code: string): string {
-  return code.trim().toUpperCase();
+  const trimmed = code.trim();
+  return findDecoder(trimmed)?.preserveCase ? trimmed : trimmed.toUpperCase();
 }
 
 /** Read a non-expired cache row for (decoder, code), or null. A durable miss

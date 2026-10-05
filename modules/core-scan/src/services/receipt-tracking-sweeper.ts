@@ -348,6 +348,7 @@ async function visitWorkspace(
               await notifyArrival(orgId, row, announce);
               notified += 1;
             }
+          // pass-catch: a carrier or bridge being down is not an arrival; the parcel is asked about next tick
           } catch (err) {
             // A carrier or bridge being down is not an arrival. Skip this
             // parcel and let the next tick try again.
@@ -433,6 +434,7 @@ async function notifyArrival(orgId: string, row: TrackedRow, state: string): Pro
         payload: { state, tracking_number: row.tracking_number },
       });
     } catch (err) {
+      platform().health.notePassFailure("core-scan.parcel-notify", orgId, err);
       console.error("[core-scan] parcel notify failed:", (err as Error).message);
     }
   }

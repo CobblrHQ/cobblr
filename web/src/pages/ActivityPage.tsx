@@ -10,8 +10,8 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { usePageTitle } from "@cobblr/platform-web";
 import { QueryError } from "../components/QueryError";
 import { FEED_SCROLL_PAGE } from "../lib/feed";
-import { ACTIVITY_ROW, ActorVia } from "../components/ActorVia";
-import { ActivitySentence, type KindLabels } from "../components/ActivitySentence";
+import { ActorVia } from "../components/ActorVia";
+import { ActivitySentence, ActivityThumbnail, ACTIVITY_FEED_LAYOUT, type KindLabels } from "../components/ActivitySentence";
 import { SaidList } from "../features/core-activity-log/history";
 import { activityKind } from "../lib/activityKind";
 import { useKindLabels } from "../lib/useKindLabels";
@@ -116,9 +116,9 @@ function ActivityRow({ entry, labels }: { entry: ActivityEntry; labels: KindLabe
     : "border-line bg-surface dark:bg-slate-900 dark:border-slate-700";
   return (
     <li className={"rounded-md border p-2.5 text-sm " + tone}>
-      <div className={ACTIVITY_ROW}>
+      <div className={ACTIVITY_FEED_LAYOUT}>
+        <ActivityThumbnail entry={entry} labels={labels} />
         <ActivitySentence entry={entry} labels={labels} />
-        <span className="flex-1" />
         <time dateTime={entry.occurred_at} className="font-mono text-[10px] text-faint shrink-0">
           {new Date(entry.occurred_at).toLocaleString()}
         </time>

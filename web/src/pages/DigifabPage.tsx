@@ -1,6 +1,8 @@
 import { bridgeDisplayName } from "../lib/bridge-choice";
 import { useJobStartReview } from "../features/digifab/startReview";
-import { ContributedDetailPanels, FieldPack, fieldNeed, RecordFormModal, changeWorkspaceShape, DragInput, Lightbox, Modal, useToast, useConfirm, usePageTitle, useImageSrc, SecretInput, EntityPhoto, AddressInput, SearchInput, CustomFieldsPanel } from "@cobblr/platform-web";
+import { LaserLayoutPlanner } from "../features/digifab/LaserLayout";
+import { LaserMaterialForm } from "../features/digifab/laserMaterial";
+import { ContributedDetailPanels, FieldPack, fieldNeed, RecordFormModal, changeWorkspaceShape, DragInput, Lightbox, Modal, useToast, useConfirm, usePageTitle, useImageSrc, SecretInput, EntityPhoto, FilePreview, AddressInput, SearchInput, CustomFieldsPanel } from "@cobblr/platform-web";
 // /configuration/digifab — Digital Fabrication. Manage connections to the
 // software that runs your machines (FDM Monster, OctoPrint, …): add one,
 // test it, list its printers, link printers to machines, and run the job
@@ -173,6 +175,7 @@ export function DigifabPage({
       {/* ── FLOOR — the operate surface: what runs, what's queued, what to print. ── */}
       {!setupOnly && tab === "floor" && (
         <>
+          <Link to="/digifab/manager" className="inline-flex min-h-11 items-center rounded border border-line px-4 py-2">Floor manager</Link>
           {items.length === 0 && !list.isLoading && (
             <div className="max-w-lg rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-6 text-center">
               <Printer size={26} className="mx-auto text-faint mb-3" />
@@ -1327,7 +1330,7 @@ function PrintHistorySection({ slug }: { slug: string }) {
   );
 }
 
-function PrintQueueSection({ connections }: { connections: DigifabConnection[] }) {
+export function PrintQueueSection({ connections }: { connections: DigifabConnection[] }) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
@@ -1363,6 +1366,7 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
   };
   const startReview = useJobStartReview(invalidate);
   const connById = new Map(connections.map((c) => [c.id, c]));
+  const fleet = useQuery({ queryKey: ["digifab-fleet", activeSlug], queryFn: () => api.getDigifabFleet(activeSlug), enabled: !!activeSlug, refetchInterval: 12_000 });
 
   const send = useMutation({
     mutationFn: (id: string) => api.sendDigifabJob(activeSlug, id),
@@ -1568,11 +1572,13 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
       <ul className="border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800">
         {items.map((jb) => {
           const conn = jb.connection_id ? connById.get(jb.connection_id) : undefined;
+          const manager = fleet.data?.connections.find(c => c.connection_id === jb.connection_id);
+          const device = manager?.devices.find(d => d.id === jb.target_device);
           const target =
             jb.target_pool && !jb.target_device
               ? "⟳ pool: waiting for a free printer"
               : jb.target_device
-                ? `machine ${jb.target_device}`
+                ? device?.linked_machine?.name || (manager?.devices.length === 1 ? conn?.label || manager.label : device?.name) || conn?.label || "Assigned machine"
                 : jb.target_tag
                   ? `#${jb.target_tag}`
                   : jb.linked_machine_id
@@ -1613,7 +1619,7 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
                   )}
                 </div>
                 <div className="text-[11px] text-faint truncate">
-                  {conn?.label ?? "—"} · {target}
+                  {jb.target_device ? target : <>{conn?.label ?? "—"} · {target}</>}
                   {jb.error && <span className="text-ember-500"> · {jb.error}</span>}
                 </div>
               </button>
@@ -2505,10 +2511,11 @@ function LibrarySection({ slug }: { slug: string }) {
   const qc = useQueryClient();
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
+  const [materialItem, setMaterialItem] = useState<DigifabLibraryItem | null>(null);
   const lib = useQuery({ queryKey: ["digifab-library", slug], queryFn: () => api.listDigifabLibrary(slug), enabled: !!slug });
   const upload = useMutation({
     mutationFn: (file: File) => api.uploadDigifabLibrary(slug, file),
-    onSuccess: () => { toast.success("Added to library"); void qc.invalidateQueries({ queryKey: ["digifab-library", slug] }); },
+    onSuccess: (item) => { toast.success("Added to library"); if (item.kind === "lbrn2") setMaterialItem(item); void qc.invalidateQueries({ queryKey: ["digifab-library", slug] }); },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Upload failed"),
   });
   const itemsL = lib.data?.items ?? [];
@@ -2524,21 +2531,24 @@ function LibrarySection({ slug }: { slug: string }) {
         </button>
       </div>
       {itemsL.length === 0 ? (
-        <div className="text-xs text-muted dark:text-slate-400 italic">No files yet. For a laser, upload SVG, DXF, AI, PDF or .lbrn2. For a 3D printer, upload .3mf or .gcode.</div>
+        <div className="text-xs text-muted dark:text-slate-400 italic">No files yet. Upload a drawing or prepared machine file: SVG, DXF, AI, PDF, .lbrn2, .3mf or .gcode.</div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
           {itemsL.map((it) => <LibraryCard key={it.id} item={it} slug={slug} />)}
         </div>
       )}
+      {materialItem && <Modal open title="What material does this file need?" onClose={() => setMaterialItem(null)}><p className="mb-4">Save the thickness and minimum sheet size once for this prepared file. You can edit it later.</p><LaserMaterialForm onSave={async tag => { try { await api.renameDigifabLibrary(slug, materialItem.id, { laser_material: tag }); setMaterialItem(null); void qc.invalidateQueries({ queryKey: ["digifab-library", slug] }); } catch (e) { toast.error(e instanceof ApiError ? e.message : "Material could not be saved"); } }} /></Modal>}
     </section>
   );
 }
 
-function LibraryCard({ item, slug }: { item: DigifabLibraryItem; slug: string }) {
+export function LibraryCard({ item, slug }: { item: DigifabLibraryItem; slug: string }) {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
   const [sendOpen, setSendOpen] = useState(false);
+  const [layoutOpen, setLayoutOpen] = useState(false);
+  const [materialOpen, setMaterialOpen] = useState(false);
   const thumb = useImageSrc(item.thumbnail_file_id ? api.fileRawUrl(slug, item.thumbnail_file_id) : null);
   const del = useMutation({
     mutationFn: () => api.deleteDigifabLibrary(slug, item.id),
@@ -2551,14 +2561,14 @@ function LibraryCard({ item, slug }: { item: DigifabLibraryItem; slug: string })
     // the FDMM drag-a-gcode-onto-a-printer interaction.
     <div
       className="rounded-lg border border-line dark:border-slate-700 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing"
-      draggable
+      draggable={!item.metadata?.laser_layout && !["svg", "dxf"].includes(item.kind)}
       onDragStart={(e) => {
         e.dataTransfer.setData(LIBRARY_DRAG_MIME, JSON.stringify({ name: item.name, file_id: item.file_id }));
         e.dataTransfer.effectAllowed = "copy";
       }}
-      title="Drag onto a fleet machine to send it there"
+      title={item.metadata?.laser_layout ? "Use the queued sheet job at its laser station" : "Drag onto a fleet machine to send it there"}
     >
-      <EntityPhoto src={thumb} alt="" aspect="square" fit="contain" placeholder={<Boxes size={26} className="text-faint" />} />
+      {item.kind === "svg" && !item.thumbnail_file_id ? <FilePreview src={api.fileRawUrl(slug, item.file_id, "original")} filename={/\.svg$/i.test(item.name) ? item.name : `${item.name}.svg`} className="aspect-square bg-subtle overflow-hidden" /> : <EntityPhoto src={thumb} alt={item.name} aspect="square" fit="contain" placeholder={<Boxes size={26} className="text-faint" />} />}
       <div className="p-2 space-y-1 flex-1 flex flex-col">
         <div className="text-xs text-content dark:text-mortar-100 truncate" title={item.name}>{item.name}</div>
         <div className="flex items-center gap-1 text-[10px] text-faint flex-wrap">
@@ -2569,19 +2579,24 @@ function LibraryCard({ item, slug }: { item: DigifabLibraryItem; slug: string })
           {item.metadata?.estimated_sec && (
             <span>· ~{Math.floor(item.metadata.estimated_sec / 3600)}h{Math.round((item.metadata.estimated_sec % 3600) / 60)}m</span>
           )}
-          {item.metadata?.parts_per_plate && <span>· {item.metadata.parts_per_plate}×/plate</span>}
+          {item.metadata?.parts_per_plate && <span>· {item.metadata.parts_per_plate}{item.metadata.laser_layout ? " parts/sheet" : "×/plate"}</span>}
         </div>
         <div className="flex items-center gap-1.5 pt-1 mt-auto">
-          <button onClick={() => setSendOpen(true)} className="flex-1 inline-flex items-center justify-center gap-1 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2 py-1 text-[11px]"><Send size={11} /> Send</button>
+          {!item.metadata?.laser_layout && !["svg", "dxf"].includes(item.kind) && <button onClick={() => setSendOpen(true)} className="flex-1 inline-flex items-center justify-center gap-1 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2 py-1 text-[11px]"><Send size={11} /> Send</button>}
+          {item.metadata?.laser_layout && <span className="text-xs text-muted">Use the queued sheet job at its station.</span>}
           <button
             onClick={async () => { if (await confirm({ title: `Delete "${item.name}"?`, message: "Removes it from the library (doesn't touch any machine).", confirmLabel: "Delete", destructive: true })) del.mutate(); }}
-            disabled={del.isPending}
+            disabled={del.isPending || !!item.metadata?.laser_layout}
             className="text-faint hover:text-ember-500 p-1 disabled:opacity-50"
             title="Delete"
           ><Trash2 size={13} /></button>
         </div>
+        {["svg", "dxf"].includes(item.kind) && <button className="min-h-11 text-xs underline" onClick={() => setLayoutOpen(true)}>Prepare laser batch</button>}
+        {item.kind === "lbrn2" && !item.metadata?.laser_layout && <button className="min-h-11 text-xs underline" onClick={() => setMaterialOpen(true)}>{item.metadata?.laser_material ? `${item.metadata.laser_material.thickness_mm} mm ${item.metadata.laser_material.material} · Edit material` : "Set file material"}</button>}
       </div>
+      {layoutOpen && <LaserLayoutPlanner slug={slug} item={item} onClose={() => setLayoutOpen(false)} />}
       {sendOpen && <LibrarySendModal item={item} slug={slug} onClose={() => setSendOpen(false)} />}
+      {materialOpen && <Modal open title="File material" onClose={() => setMaterialOpen(false)}><LaserMaterialForm initial={item.metadata?.laser_material} onSave={async tag => { try { await api.renameDigifabLibrary(slug, item.id, { laser_material: tag }); setMaterialOpen(false); void qc.invalidateQueries({ queryKey: ["digifab-library", slug] }); } catch (e) { toast.error(e instanceof ApiError ? e.message : "Material could not be saved"); } }} /></Modal>}
     </div>
   );
 }
@@ -3162,7 +3177,9 @@ function BulkAddModal({ slug, onClose, onDone }: { slug: string; onClose: () => 
 // ── Production runs — "make N of these, stop when done" on a pool. The run
 // mints ordinary pool jobs to the over-dispatch ceiling; the bed-clear verdict
 // is what counts a plate (good counts, scrapped auto-replaces). ──
-function ProductionRunsSection({ slug }: { slug: string }) {
+export function ProductionRunsSection({ slug }: { slug: string }) {
+  const fleet = useQuery({ queryKey: ["digifab-fleet", slug], queryFn: () => api.getDigifabFleet(slug), enabled: !!slug, refetchInterval: 12_000 });
+  const printingPool = fleet.data?.connections.some(c => c.devices.some(d => d.pool_id && !d.lightburn_readiness && d.id !== "lightburn"));
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
@@ -3223,7 +3240,7 @@ function ProductionRunsSection({ slug }: { slug: string }) {
         <Layers size={16} className="text-accent shrink-0" />
         <div className="flex-1 text-sm text-muted dark:text-slate-400">
           <span className="font-medium text-content dark:text-mortar-100">Production runs</span>  - "make 250 of these,
-          stop when done." Pick a pool, a plate file, and a target; the farm does the rest.
+          stop when done." {printingPool ? "Pick a pool, a plate file, and a target; the farm does the rest." : "Track good parts as jobs finish. Prepare a laser batch from the Library."}
         </div>
         <button onClick={() => setOpen(true)} className="shrink-0 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition">
           New run
@@ -3307,7 +3324,7 @@ function ProductionRunsSection({ slug }: { slug: string }) {
                     }}
                     className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5">
                     <option value="">Pick a file…</option>
-                    {(library.data?.items ?? []).map((f) => (
+                    {(library.data?.items ?? []).filter((f) => !f.metadata?.laser_layout).map((f) => (
                       <option key={f.id} value={f.file_id}>{f.name}</option>
                     ))}
                   </select>
@@ -3395,7 +3412,7 @@ function RunRow({
         <div className="h-full bg-cobble-600 transition-all" style={{ width: `${pct}%` }} />
       </div>
       <div className="mt-1.5 flex items-center gap-3 text-[11px] text-faint dark:text-slate-500">
-        <span>{run.jobs_printing} printing</span>
+        <span>{run.jobs_printing} {run.laser_plan_id ? "running" : "printing"}</span>
         <span>{run.jobs_queued} queued</span>
         {run.jobs_awaiting_verdict > 0 && <span className="text-amber-600 dark:text-amber-400">{run.jobs_awaiting_verdict} awaiting verdict</span>}
         {run.jobs_scrapped > 0 && <span>{run.jobs_scrapped} scrapped</span>}
@@ -3409,7 +3426,7 @@ function RunRow({
           onClick={() => {
             void confirm({
               title: "Cancel this run?",
-              message: `"${run.name}" is at ${run.completed_qty}/${run.target_qty}. Queued plates are cancelled; anything printing finishes normally.`,
+              message: run.laser_plan_id ? `"${run.name}" is at ${run.completed_qty}/${run.target_qty}. Queued sheets are cancelled; anything running finishes normally.` : `"${run.name}" is at ${run.completed_qty}/${run.target_qty}. Queued plates are cancelled; anything printing finishes normally.`,
               confirmLabel: "Cancel run",
               destructive: true,
             }).then((ok) => ok && onPatch({ status: "cancelled" }));

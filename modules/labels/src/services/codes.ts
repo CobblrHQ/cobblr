@@ -314,11 +314,16 @@ async function mintOne(
     // Opted-out groups have a NULL prefix; drop those so they don't poison the set.
     const taken = new Set([...active, ...retired].map((t) => t.prefix).filter((p): p is string => p !== null));
     const prefix = derivePrefix(label, taken);
-    group = await trx
-      .insertInto("labels_code_prefixes")
-      .values({ group_key: groupKey, entity_kind: kind, prefix, label })
-      .returningAll()
-      .executeTakeFirstOrThrow();
+    // Two first codes for one group at once both found no group: the second
+    // uses the one the first made.
+    group =
+      (await trx
+        .insertInto("labels_code_prefixes")
+        .values({ group_key: groupKey, entity_kind: kind, prefix, label })
+        .onConflict((oc) => oc.column("group_key").doNothing())
+        .returningAll()
+        .executeTakeFirst()) ??
+      (await trx.selectFrom("labels_code_prefixes").selectAll().where("group_key", "=", groupKey).executeTakeFirstOrThrow());
   }
 
   // A pre-existing group with a NULL prefix is opted out of a code: mint nothing.
@@ -342,11 +347,17 @@ async function mintOne(
   const seq = Number(claimed.next_seq) - 1;
   const code = `${groupPrefix}${seq}`;
 
-  await trx
+  // Two mints for one record at once both found no code: the record keeps
+  // the first, and the second hands that one back (its number goes unused).
+  const minted = await trx
     .insertInto("labels_codes")
     .values({ entity_kind: kind, entity_id: entityId, group_key: groupKey, prefix: groupPrefix, seq, code })
-    .execute();
-  return code;
+    .onConflict((oc) => oc.columns(["entity_kind", "entity_id"]).doNothing())
+    .returning("code")
+    .executeTakeFirst();
+  if (minted) return code;
+  const kept = await trx.selectFrom("labels_codes").select("code").where("entity_kind", "=", kind).where("entity_id", "=", entityId).executeTakeFirstOrThrow();
+  return kept.code;
 }
 
 /** Result of {@link renameCodeGroup}: a discriminated union so the HTTP route

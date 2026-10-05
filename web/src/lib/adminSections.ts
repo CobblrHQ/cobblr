@@ -38,6 +38,7 @@ export type AdminSectionId =
   | "ai"
   | "barcodes"
   | "tokens"
+  | "sign-in"
   | "scaneval"
   | "scan-resolvers"
   | "impersonation"
@@ -72,6 +73,7 @@ export const ADMIN_SECTIONS: Array<{
   { id: "metrics", label: "Product Metrics", description: "What actually gets used, across the whole instance.", icon: Gauge, group: "ops" },
   { id: "ai", label: "AI", description: "Every AI call the platform made - cost, latency, and what was sent.", icon: Sparkles, group: "ai & scan" },
   { id: "barcodes", label: "Barcodes", description: "The barcode cache and its providers: what resolved, what missed.", icon: Barcode, group: "ai & scan" },
+  { id: "sign-in", label: "Sign-in", description: "Your own sign-in provider (Authentik, Authelia, Keycloak, Pocket ID…) and whether passwords still work.", icon: KeyRound, group: "platform" },
   { id: "tokens", label: "Tokens", description: "Restricted, deny-by-default tokens for daemons and bots.", icon: KeyRound, group: "platform" },
   { id: "scaneval", label: "Scan Eval", description: "Score the scanner's prompts against captured real cases.", icon: FlaskConical, group: "ai & scan" },
   { id: "scan-resolvers", label: "Scan Resolvers", description: "The vendor list the scanner consults: maker URLs matched, fetched and mapped to a product, no code per vendor.", icon: ScanLine, group: "ai & scan" },

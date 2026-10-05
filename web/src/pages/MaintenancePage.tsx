@@ -11,6 +11,7 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, Check, History, Pencil, Trash2, Wrench } from "lucide-react";
 import { ApiError, api, type MaintenanceEntry } from "../lib/api";
+import { ReminderControls } from "../features/core-maintenance/renewals";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
 
@@ -131,6 +132,8 @@ export function MaintenancePage() {
           <MaintenanceCard
             key={e.id}
             entry={e}
+            slug={activeSlug}
+            refresh={() => { invalidate(); }}
             onComplete={() => complete.mutate(e.id)}
             onEdit={() => setEditFor(e)}
             onDelete={async () => {
@@ -163,11 +166,15 @@ export function MaintenancePage() {
 
 function MaintenanceCard({
   entry,
+  slug,
+  refresh,
   onComplete,
   onEdit,
   onDelete,
 }: {
   entry: MaintenanceEntry;
+  slug: string;
+  refresh: () => void;
   onComplete: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -202,6 +209,7 @@ function MaintenanceCard({
               </span>
             )}
           </div>
+          {!done && entry.due?.state === "overdue" && <ReminderControls slug={slug} occurrence={entry} refresh={refresh} />}
           {entry.description && (
             <div className="text-xs text-content dark:text-mortar-200 mt-0.5">
               {entry.description}

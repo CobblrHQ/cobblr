@@ -19,6 +19,7 @@ import { z } from "zod";
 import { randomBytes } from "node:crypto";
 import { requireAuth, requirePlatformAdmin, isPlatformAdmin } from "../auth/middleware.js";
 import { usageStats } from "../platform/usage-stats.js";
+import { linkOrigin } from "../platform/link-origin.js";
 import { inviteExpiresAt } from "../auth/signup-gate.js";
 import { scanResolversRouter } from "./super-admin-scan-resolvers.js";
 import { ImpersonationRefused, startImpersonation, describeSession } from "../platform/impersonation.js";
@@ -1043,7 +1044,7 @@ superAdminRouter.post("/signup-invites", async (req, res, next) => {
     if (row.invited_email && hasAuthEmailSender()) {
       // The surface a NEW person lands on, which is not necessarily the console
       // this request arrived at. See signup-surface.ts.
-      const link = signupSurfaceLink(`join/${row.token}`, `${req.protocol}://${req.get("host") ?? ""}`);
+      const link = signupSurfaceLink(`join/${row.token}`, linkOrigin(req));
       const expiry = row.expires_at ? `This invite expires ${new Date(row.expires_at).toUTCString()}.` : "";
       emailed = await sendAuthEmail({
         to: row.invited_email,
@@ -1163,7 +1164,11 @@ superAdminRouter.post("/waitlist/ingest", async (req, res, next) => {
       res.json({ id: existing.id, status: existing.status, duplicate: true });
       return;
     }
-    const row = await meta
+    // The same address twice at once both found no entry; the later one is
+    // the duplicate the check above answers, not a 500.
+    let row: { id: string; created_at: Date };
+    try {
+      row = await meta
       .insertInto("waitlist")
       .values({
         email,
@@ -1174,6 +1179,12 @@ superAdminRouter.post("/waitlist/ingest", async (req, res, next) => {
       })
       .returning(["id", "created_at"])
       .executeTakeFirstOrThrow();
+    } catch (err) {
+      if ((err as { code?: string }).code !== "23505") throw err;
+      const again = await meta.selectFrom("waitlist").select(["id", "status"]).where(sql`lower(email)`, "=", email).orderBy("created_at", "desc").executeTakeFirstOrThrow();
+      res.json({ id: again.id, status: again.status, duplicate: true });
+      return;
+    }
     // Confirm the thing that is true for BOTH buttons: they are on the list.
     // Nothing was sent on signup before, so somebody who pressed "Just keep me
     // posted" got silence and no way to know it had worked.
@@ -1313,7 +1324,7 @@ superAdminRouter.post("/waitlist/:id/approve", async (req, res, next) => {
     if (hasAuthEmailSender()) {
       // The public signup surface, not this console's host: an operator's
       // private instance is never where a stranger should land.
-      const link = signupSurfaceLink(`join/${invite.token}`, `${req.protocol}://${req.get("host") ?? ""}`);
+      const link = signupSurfaceLink(`join/${invite.token}`, linkOrigin(req));
       const expiry = `This invite expires ${new Date(invite.expires_at!).toUTCString()}.`;
       emailed = await sendAuthEmail({
         to: entry.email,

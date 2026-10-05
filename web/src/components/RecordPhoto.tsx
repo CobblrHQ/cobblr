@@ -273,6 +273,7 @@ export function RecordPhoto({
   brand,
   size = 220,
   fit,
+  suggestions = true,
   onChange,
   onAutoFetch,
   autoBusy,
@@ -288,6 +289,7 @@ export function RecordPhoto({
   brand?: string | null;
   size?: number;
   fit?: "cover" | "contain";
+  suggestions?: boolean;
   /** The page's own write of the record's picture (an upload, a Remove). */
   onChange: (imagePath: string | null) => void;
   onAutoFetch?: () => void;
@@ -299,7 +301,7 @@ export function RecordPhoto({
   const answers = useSuggestionAnswers({ kind, id, onApplied: onSaved });
   // This page shows the offer: the universal panel on it stays quiet.
   useEffect(() => markShownBeside(id), [id]);
-  const s = answers.suggestion;
+  const s = suggestions ? answers.suggestion : null;
   const suggestedSrc = !src && s?.status === "suggested" ? s.image_path : null;
   return (
     <div data-testid="record-photo" className="space-y-2">
@@ -314,7 +316,7 @@ export function RecordPhoto({
         onAutoFetch={onAutoFetch}
         autoBusy={autoBusy}
       />
-      {!src && <SuggestionAnswer answers={answers} />}
+      {suggestions && !src && <SuggestionAnswer answers={answers} />}
       <WebPhotoSearch kind={kind} id={id} instance={instance} brand={brand} onSaved={onSaved} />
     </div>
   );

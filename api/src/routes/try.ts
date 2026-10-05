@@ -15,6 +15,7 @@
 // server provisions and redirects to /t/<token>, the SPA there calls redeem,
 // stores the JWT and lands them on /w/<slug>. They type nothing.
 import { cloudSignupUrl, cloudUrl } from "../platform/cloud.js";
+import { linkOrigin } from "../platform/link-origin.js";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { env } from "../env.js";
@@ -54,7 +55,6 @@ import {
 } from "../platform/trial-carry.js";
 import { platform } from "@cobblr/platform-contract";
 import { lifetimeSentence } from "@cobblr/platform-contract/sandbox-lifetime";
-import { publicBaseUrl } from "../platform/public-url.js";
 import { emptySandboxRecords } from "../platform/try-sandbox-records.js";
 import { takeFromPool } from "../platform/try-sandbox-pool.js";
 import { issueSignInLink } from "../platform/sign-in-link.js";
@@ -293,7 +293,7 @@ tryRouter.post(
 
       const email = parsed.data.email.toLowerCase().trim();
       const days = env.TRY_SANDBOX_TRIAL_DAYS;
-      const absBase = `${req.protocol}://${req.get("host") ?? ""}`;
+      const absBase = linkOrigin(req);
       const r = await keepSandbox(membership.org_id, userId, email, async (to) => {
         const issued = await issueSignInLink({
           email: to,
@@ -412,7 +412,7 @@ tryRouter.post(
       }
       const issued = await issueSignInLink({
         email: kept.email,
-        absBase: `${req.protocol}://${req.get("host") ?? ""}`,
+        absBase: linkOrigin(req),
         ...keepLinkCopy(),
         requestIp: req.ip ?? null,
         requestUa: req.get("user-agent") ?? null,
@@ -522,7 +522,7 @@ tryRouter.post(
         return;
       }
 
-      const base = `${req.protocol}://${req.get("host") ?? ""}`;
+      const base = linkOrigin(req);
       const link = `${base}/api/v1/try/take/${made.token}`;
       const days = env.TRY_SANDBOX_EXPORT_DAYS;
       const mail = takeYourWorkEmail({
@@ -724,7 +724,7 @@ tryRouter.post(
       if (own) await holdSandboxForCarry(own.orgId);
       const token = await mintCarryToken(orgId, req.session!.id);
       // Where the other side reads it back: this box's own public address.
-      const source = (publicBaseUrl() || `${req.protocol}://${req.get("host") ?? ""}`).replace(/\/+$/, "");
+      const source = linkOrigin(req).replace(/\/+$/, "");
       console.log(`[try-carry] org ${orgId}: carry token minted`);
       res.json({ token, source, expires_hours: CARRY_TOKEN_HOURS });
     } catch (err) {

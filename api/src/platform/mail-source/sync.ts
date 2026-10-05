@@ -21,6 +21,7 @@ import { refreshGoogleAccess } from "./google-oauth.js";
 import { grantFor, mailSourceState, mailSourcesRoutedTo, myMailSources, orgsWithMailSources, writeMailSourceState } from "./store.js";
 import { MailSourceGrantError, type MailMessage, type MailSource } from "./types.js";
 import { BACKFILL_DAYS, planStopped, syncMailbox, type SyncResult } from "./walk.js";
+import { notePassFailure } from "../pass-failures.js";
 
 export { BACKFILL_DAYS, MAX_PER_ROUND, OVERLAP_MS, syncMailbox, type SyncDeps, type SyncResult } from "./walk.js";
 
@@ -85,6 +86,7 @@ export async function syncCredential(opts: SyncCredentialOpts): Promise<SyncOutc
   let access: string;
   try {
     access = await (opts.refresh ?? refreshGoogleAccess)(grant.refresh_token);
+  // pass-catch: the failure stops the source and is shown on its connection (stopped)
   } catch (err) {
     return await stopped(opts, state, err as Error, now);
   }
@@ -107,6 +109,7 @@ export async function syncCredential(opts: SyncCredentialOpts): Promise<SyncOutc
       messages_seen_delta: result.delivered,
     });
     return { ran: true, result };
+  // pass-catch: the failure stops the source and is shown on its connection (stopped)
   } catch (err) {
     return await stopped(opts, state, err as Error, now);
   }
@@ -142,6 +145,7 @@ async function stopped(opts: SyncCredentialOpts, state: Awaited<ReturnType<typeo
         payload: { credential_id: opts.credentialId, reason: grantDied ? "grant" : "error" },
       });
     } catch (e) {
+      notePassFailure("mail-source.stopped-card", opts.credentialId, e);
       console.error("[mail-source] stopped card failed:", (e as Error).message);
     }
   }

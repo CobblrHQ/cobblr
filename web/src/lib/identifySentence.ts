@@ -20,7 +20,7 @@ export type NamelessReason =
   /** Nothing here can identify a photo: the setup sentence. */
   | "no-identify"
   /** A shop's own code: nothing to look up. */
-  | "store-code"
+  | "classified-code"
   /** The model looked and saw no one item to name. */
   | "no-item"
   /** A typed or scanned code no catalog knows; the web guess was left blank. */
@@ -32,7 +32,9 @@ export type NamelessReason =
 
 export function namelessReason(
   status: { identify_available?: boolean } | null | undefined,
-  storeCode: boolean,
+  /** A code the server classified as one no catalog looks up (a store's own
+   *  label, an Amazon FNSKU): the contract's classifiedCodeOf. */
+  classifiedCode: boolean,
   failure?: IdentifyFailure | null,
   /** The lookup held an uncorroborated web guess back and left the name
    *  blank (metadata held_reason): nothing found for the code (#2918). */
@@ -44,7 +46,7 @@ export function namelessReason(
   // Only a KNOWN "nothing here can identify a photo" earns the setup sentence;
   // an unknown status is not a reason to send someone to set up what they
   // may already have.
-  if (storeCode) return "store-code";
+  if (classifiedCode) return "classified-code";
   if (unresolvedCode) return "unresolved-code";
   if (status && status.identify_available === false) return "no-identify";
   if (failure?.code === "no_item") return "no-item";
@@ -84,5 +86,5 @@ export function namelessRemedy(why: NamelessReason, failure: IdentifyFailure | n
  *  something the heading does not (the held guess, which AI failed and
  *  how, that the model saw no one item). */
 export function headingSaysItAll(why: NamelessReason): boolean {
-  return why === "no-identify" || why === "store-code" || why === "receipt-unread";
+  return why === "no-identify" || why === "classified-code" || why === "receipt-unread";
 }

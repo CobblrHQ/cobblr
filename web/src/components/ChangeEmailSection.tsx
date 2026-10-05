@@ -15,7 +15,7 @@ export function ChangeEmailSection({ email }: { email: string }) {
   const [next, setNext] = useState("");
   const [password, setPassword] = useState("");
   const ask = useMutation({
-    mutationFn: () => api.requestEmailChange({ new_email: next.trim(), current_password: password }),
+    mutationFn: () => api.requestEmailChange({ new_email: next.trim(), ...(hasPassword ? { current_password: password } : {}) }),
     onSuccess: (r) => {
       setOpen(false);
       setNext("");
@@ -25,6 +25,9 @@ export function ChangeEmailSection({ email }: { email: string }) {
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't ask for the change"),
   });
+  // A magic-link account has no password to ask for; a recent sign-in is
+  // its proof, and the server says so plainly if it is not recent.
+  const hasPassword = state.data?.has_password !== false;
   const pending = state.data?.pending ?? null;
   const managed = state.data?.managed_by_identity === true;
   return (
@@ -73,19 +76,23 @@ export function ChangeEmailSection({ email }: { email: string }) {
             onChange={(e) => setNext(e.target.value)}
             className="w-full px-2 py-1 text-sm border border-line dark:border-slate-700 rounded bg-surface dark:bg-slate-950"
           />
-          <PasswordInput
-            autoComplete="current-password"
-            placeholder="Current password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
+          {hasPassword ? (
+            <PasswordInput
+              autoComplete="current-password"
+              placeholder="Current password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          ) : (
+            <p className="text-[11px] text-faint">Your account has no password, so a sign-in in the last 10 minutes is what proves it is you.</p>
+          )}
           <div className="flex justify-end gap-2">
             <button type="button" onClick={() => setOpen(false)} className="rounded-md border border-line dark:border-slate-600 px-3 py-1 text-sm">
               Cancel
             </button>
             <button
               type="submit"
-              disabled={ask.isPending || !next.trim() || !password}
+              disabled={ask.isPending || !next.trim() || (hasPassword && !password)}
               className="rounded-md bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1 text-sm font-medium disabled:opacity-50"
             >
               {ask.isPending ? "Sending…" : "Send the link"}

@@ -115,6 +115,8 @@ scanResolversRouter.patch("/:id", async (req, res, next) => {
           position: body.data.position ?? 0,
           manifest: JSON.stringify(manifest),
         })
+        // Saved twice at once: the later save's settings, not a 500.
+        .onConflict((oc) => oc.column("resolver_id").doUpdateSet({ label: body.data.label ?? builtin.label, enabled: manifest.enabled, manifest: JSON.stringify(manifest), updated_at: sql`now()` }))
         .execute();
     } else {
       const patch: Record<string, unknown> = { updated_at: sql`now()` };

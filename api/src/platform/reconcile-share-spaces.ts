@@ -15,6 +15,7 @@
 
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
+import { notePassFailure } from "./pass-failures.js";
 /** Bring one share space into shape: idempotent, and the one plan both the
  *  accept path and the boot pass run. */
 export async function shapeShareSpace(orgId: string): Promise<string[]> {
@@ -48,6 +49,7 @@ export async function reconcileShareSpaces(): Promise<number> {
         console.log(`[reconcile] share space ${id}: ${did.join(", ")}`);
       }
     } catch (err) {
+      notePassFailure("reconcileShareSpaces", id, err);
       console.error(`[reconcile] share space ${id}:`, err);
     }
   }

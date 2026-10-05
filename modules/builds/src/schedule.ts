@@ -9,6 +9,7 @@
 
 export interface PlannedItem {
   id: string;
+  assembly_state?: string | null;
   build_id: string;
   build_name: string;
   qty: number;

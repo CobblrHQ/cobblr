@@ -1,4 +1,4 @@
-import { RecordFormModal, NewItemMenu, CurrencyPicker, MoneyTotalNotice, useMoneyCurrency, BulkActionBar, BulkSetField, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton } from "@cobblr/platform-web";
+import { entityInitial, RecordFormModal, NewItemMenu, CurrencyPicker, MoneyTotalNotice, useMoneyCurrency, BulkActionBar, BulkSetField, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton } from "@cobblr/platform-web";
 // /purchases — list of orders with a detail modal that shows the
 // order's line items. Same overall shape as MachinesPage /
 // AssetsPage. Order items live inside the detail modal (they're a
@@ -74,7 +74,7 @@ function orderHasReceipt(o: Order): boolean {
 
 function VendorChip({ name }: { name: string | null }) {
   if (!name) return <span className="text-faint">—</span>;
-  const initial = name.trim().charAt(0).toUpperCase() || "?";
+  const initial = entityInitial(name);
   return (
     <span className="inline-flex items-center gap-2 min-w-0">
       <span className="grid place-items-center w-5 h-5 rounded bg-accent/85 text-[10px] font-bold text-mortar-50 dark:text-slate-900 shrink-0">
@@ -1229,7 +1229,7 @@ function VendorsModal({ onClose, initialVendorId }: { onClose: () => void; initi
                   className="flex items-center gap-3 rounded-lg border border-line dark:border-slate-700 p-3 cursor-pointer hover:border-accent transition"
                 >
                   <span className="grid place-items-center w-7 h-7 rounded bg-accent/85 text-xs font-bold text-mortar-50 dark:text-slate-900 shrink-0">
-                    {v.name.trim().charAt(0).toUpperCase() || "?"}
+                    {entityInitial(v.name)}
                   </span>
                   <div className="flex-1 min-w-0">
                     <div className="font-medium text-content dark:text-mortar-100 truncate">{v.name}</div>
@@ -1334,7 +1334,7 @@ function VendorDetailPane({
         <>
           <div className="flex items-center gap-3">
             <span className="grid place-items-center w-10 h-10 rounded-lg bg-accent/85 text-sm font-bold text-mortar-50 dark:text-slate-900 shrink-0">
-              {v.name.trim().charAt(0).toUpperCase() || "?"}
+              {entityInitial(v.name)}
             </span>
             <div className="min-w-0">
               <div className="text-lg font-bold text-content dark:text-mortar-100 truncate">{v.name}</div>

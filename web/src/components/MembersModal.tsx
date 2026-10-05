@@ -273,7 +273,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
         return;
       }
     } catch {
-      /* no People list to ask: remove the plain way */
+      /* quiet: no People list to ask, so remove the plain way */
     }
     const ok = await confirm({
       title: `Remove ${m.display_name}?`,

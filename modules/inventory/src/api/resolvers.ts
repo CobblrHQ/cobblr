@@ -1,8 +1,11 @@
+import { groupListRows } from "@cobblr/platform-contract/grouped-list";
 // Entity-kind resolvers — the in-process bridge between
 // platform.entities.lookup() and our tenant tables. Other modules
 // (and the platform itself) call platform().entities.lookup(orgId,
 // "inventory:part", id) and the platform routes here.
 
+import { storageView } from "./storage.js";
+import { sheetViews } from "./sheets.js";
 import { placeNames } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import { platform, type EntityListQuery, type FilterPredicate, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
@@ -30,12 +33,16 @@ export function registerInventoryResolvers(): void {
         .where("id", "=", id)
         .executeTakeFirst();
       if (!row) return null;
-      return toResolvedPart(
+      const resolved = toResolvedPart(
         row,
         (await categoryNames(db, [row])).get(row.category_id ?? "") ?? null,
         (await locationNames(orgId, [row])).get(row.id) ?? null,
         (await remainingFor(orgId, db, [row])).get(row.id) ?? null,
       );
+      const readiness = await storageView(db, orgId, row.id);
+      if (readiness) resolved.fields.storage_readiness = readiness;
+      const sheet = (await sheetViews(db, [row])).get(row.id);
+      return sheet ? { ...resolved, fields: { ...resolved.fields, sheet_geometry: sheet } } : resolved;
     },
   );
 
@@ -73,13 +80,19 @@ export function registerInventoryResolvers(): void {
     const unapplied: FilterPredicate[] = [];
     q = applyPartFilters(q, query, { unapplied });
     const sortedQ = applyPartSort(q, query.sort);
+    const assigned = sql<number>`coalesce((select sum(a.qty) from inventory_allocations a where a.part_id = inventory_parts.id and a.status = 'reserved'), 0)`;
+    const groupedQ = query.group_plan ? sortedQ.select([
+      assigned.as("assigned_qty"),
+      sql<number>`inventory_parts.qty - ${assigned}`.as("available_qty"),
+      sql<string>`(select c.name from inventory_categories c where c.id = inventory_parts.category_id)`.as("category_name"),
+    ]) : sortedQ;
     // The total is a COUNT over the same filters, not a walk: an assistant's
     // "how many" walked the list a page at a time to a 5000-row cap and said
     // "5000, incomplete" for a workspace it could have counted in one query
     // (#4789). "Hide unavailable" is decided per row below, after the query,
     // so a count would not match it and is left out then.
     const [rows, counted] = await Promise.all([
-      sortedQ.limit(limit).offset(offset).execute(),
+      (async () => (await groupListRows(db, groupedQ, query)) ?? await sortedQ.limit(limit).offset(offset).execute())(),
       hideUnavailable ? Promise.resolve(null) : q.clearSelect().select((eb) => eb.fn.countAll<string>().as("n")).executeTakeFirst(),
     ]);
     const [names, places, left, held, inst] = await Promise.all([
@@ -89,10 +102,13 @@ export function registerInventoryResolvers(): void {
       reservedFor(db, rows),
       annotateInstalled(orgId, rows.map((r) => ({ id: r.id, qty: Number(r.qty), approximate_qty: r.approximate_qty == null ? null : Number(r.approximate_qty) }))),
     ]);
+    const areas = await sheetViews(db, rows);
     const instOf = new Map(inst.map((i) => [i.id, i]));
     const items = rows
       .map((r) => {
-        const e = withReserved(toResolvedPart(r, names.get(r.category_id ?? "") ?? null, places.get(r.id) ?? null, left.get(r.id) ?? null), r, held);
+        const base = withReserved(toResolvedPart(r, names.get(r.category_id ?? "") ?? null, places.get(r.id) ?? null, left.get(r.id) ?? null), r, held);
+        const sheet = areas.get(r.id);
+        const e = sheet ? { ...base, fields: { ...base.fields, sheet_geometry: sheet } } : base;
         const i = instOf.get(r.id);
         return i ? { ...e, fields: { ...e.fields, installed_qty: i.installed_qty, spare_qty: i.spare_qty, installed_in: i.installed_in } } : e;
       })
@@ -131,12 +147,16 @@ export function registerInventoryResolvers(): void {
       .where("instance", "=", instance as never)
       .executeTakeFirst();
     if (!row) return null;
-    return toResolvedPart(
+    const resolved = toResolvedPart(
       row,
       (await categoryNames(db, [row])).get(row.category_id ?? "") ?? null,
       (await locationNames(orgId, [row])).get(row.id) ?? null,
       (await remainingFor(orgId, db, [row])).get(row.id) ?? null,
     );
+    const readiness = await storageView(db, orgId, row.id);
+    if (readiness) resolved.fields.storage_readiness = readiness;
+    const sheet = (await sheetViews(db, [row])).get(row.id);
+    return sheet ? { ...resolved, fields: { ...resolved.fields, sheet_geometry: sheet } } : resolved;
   });
 }
 

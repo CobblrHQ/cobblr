@@ -22,6 +22,7 @@
 // its CATALOG panel and the person's scan as its thumbnail.
 
 import type { Kysely } from "kysely";
+import { platform } from "@cobblr/platform-contract";
 import { registerHealPass } from "@cobblr/platform-contract/heal-pass";
 import { storeOrClearCatalogUrl } from "./services/catalog-store.js";
 
@@ -60,6 +61,7 @@ export async function healUnsavedCatalogChoicesIn(orgId: string, db: Kysely<Heal
       if (done === "stored") stored++;
       else cleared++;
     } catch (err) {
+      platform().health.notePassFailure("core-scan.heal-unsaved-catalog-choices", orgId, err);
       console.error(`[core-scan] org ${orgId} row ${r.id}: could not store its catalog picture:`, (err as Error).message);
     }
   }

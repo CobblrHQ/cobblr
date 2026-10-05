@@ -164,7 +164,7 @@ export function LiveImportModal({ source, open, onClose }: { source: LiveImportS
     } catch (e) {
       // A brand-new connection that couldn't even connect is noise — drop it so a
       // bad URL doesn't leave an orphan in Live sync. A reused one stays.
-      if (createdId) { try { await api.deleteSyncConnection(slug, createdId); } catch { /* best-effort */ } }
+      if (createdId) { try { await api.deleteSyncConnection(slug, createdId); } catch { /* quiet: cleanup of an orphan; the import's own failure is said below */ } }
       setError(e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
       setPhase("form");
     }

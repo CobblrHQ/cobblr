@@ -1,3 +1,4 @@
+import { EntityPhoto } from "@cobblr/platform-web";
 // One activity entry as a sentence: who, what they did, and the thing, named
 // and linked when it still exists ("Robin restocked BANANAS").
 //
@@ -54,13 +55,19 @@ export function ActivitySentence({ entry: e, labels }: { entry: ActivityEntry; l
   // The record, when it is still there (the server resolved its collection):
   // the row names it AND opens it, the way every other mention of a record does.
   const href = !auto && e.entity_kind && e.entity_id ? routeFor(e.entity_kind, e.entity_id) : null;
+  if (e.summary && e.subject) return (
+    <span className="min-w-0 line-clamp-2 text-content" data-testid="activity-item">
+      <Link to={e.subject.href} className="hover:underline" data-testid="activity-item-link">{e.summary}</Link>
+      {(e.repeats ?? 1) > 1 && <span> ×{e.repeats}</span>}
+    </span>
+  );
   return (
-    <>
+    <span className="min-w-0 line-clamp-2 text-content" data-testid="activity-item">
       <span className={`text-muted dark:text-slate-400 ${ACTOR_CELL}`}>
         <ActorVia entry={e} />
-      </span>
-      {!auto && <span className="text-content dark:text-mortar-200 shrink-0">{activityVerb(e.action)}</span>}
-      <span className={`text-content dark:text-mortar-100 ${ITEM_CELL}`} data-testid="activity-item">
+      </span>{" "}
+      {!auto && <span className="text-content dark:text-mortar-200 shrink-0">{activityVerb(e.action)}</span>}{" "}
+      <span className={`text-content dark:text-mortar-100 ${ITEM_CELL}`}>
         {auto ? (
           auto.hidden ? null : auto.said
         ) : href ? (
@@ -76,6 +83,13 @@ export function ActivitySentence({ entry: e, labels }: { entry: ActivityEntry; l
           Open
         </button>
       )}
-    </>
+    </span>
   );
+}
+
+export const ACTIVITY_FEED_LAYOUT = "grid grid-cols-[2rem_minmax(0,1fr)_max-content] items-start gap-2";
+
+export function ActivityThumbnail({ entry, labels }: { entry: ActivityEntry; labels: KindLabels }) {
+  const title = entry.subject?.title ?? entry.entity_title ?? pickString((entry.diff ?? {}) as Record<string, unknown>, ["name", "title", "label"]) ?? labels.noun(activityKind(entry));
+  return <EntityPhoto src={entry.subject?.thumbnail} alt={title} size={32} className="rounded-md bg-subtle text-muted" />;
 }

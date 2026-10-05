@@ -3,6 +3,7 @@
 import { meta } from "../db/meta.js";
 import { list } from "../modules/registry.js";
 import { bumpWorkspaceShape } from "./workspace-shape.js";
+import { notePassFailure } from "./pass-failures.js";
 
 export async function hideIntegrationNavForOrg(orgId: string, moduleName: string): Promise<void> {
   await meta.insertInto("entity_kind_overrides").values({
@@ -23,7 +24,7 @@ export async function reconcileIntegrationNav(from: readonly { name: string; int
       await hideIntegrationNavForOrg(row.org_id, row.module_name);
       await bumpWorkspaceShape(row.org_id);
       healed++;
-    } catch (error) { console.error(`[reconcile] integration navigation for ${row.org_id}:`, error); }
+    } catch (error) { notePassFailure("reconcileIntegrationNav", row.org_id, error); console.error(`[reconcile] integration navigation for ${row.org_id}:`, error); }
   }
   return healed;
 }

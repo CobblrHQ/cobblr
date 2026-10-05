@@ -259,7 +259,7 @@ async function resolveBackRoute(
     const back = recordHref({ kind, id }, ent?.detail_route);
     if (back) return back;
   } catch {
-    /* fall through */
+    /* quiet: a back link; the configuration page is a fine fallback */
   }
   return "/configuration";
 }

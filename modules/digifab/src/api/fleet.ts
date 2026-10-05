@@ -17,18 +17,20 @@ import { Router, raw } from "express";
 import { isEdgeManagerUrl } from "@cobblr/platform-contract/edge-bridge-client";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
-import { tenantDb, tenantContext } from "../db.js";
+import { tenantDb, tenantContext, sessionUser } from "../db.js";
 import { asyncHandler, requireRole } from "./util.js";
 import { putSnapshot, getSnapshot, freshSnapshotKeys } from "../snapshot-store.js";
 import { getBambuStatusMap } from "../bambu-status-store.js";
 import { buildDriverById, bambuLanDriverFor, runControlWithCloudFallback, parseBambuLan, bambuLanMode, recordJobOutcome, type BambuLan } from "../jobs-core.js";
+import { controlDirectLaser } from "../laser-controls.js";
+import { LaserPlanRefusal, recordFinishedLayout } from "../laser-plans.js";
 import { recordRunVerdict } from "../runs-core.js";
 import { availableDriverKeys } from "../drivers/registry.js";
 import { ownedDeviceRefs } from "../detectors/owned.js";
 import { readLightBurnReadiness } from "../lightburn-readiness.js";
 import { classify, fleetState } from "../state.js";
 import type { MachineDriver, RemoteDevice } from "../drivers/types.js";
-import type { Kysely } from "kysely";
+import { sql, type Kysely } from "kysely";
 import type { DigifabDB } from "../db.js";
 import { readCachedList, readCachedInfo, refreshList, ensureInfo, ensureWarming } from "../printer-file-cache.js";
 
@@ -77,12 +79,12 @@ async function fileDriverFor(
 
 /** Persist one connection's last-good device list (survives process restarts —
  *  the durable half of the stale-while-revalidate below). */
-async function putDeviceCacheRow(db: Kysely<DigifabDB>, connId: string, devices: RemoteDevice[]): Promise<void> {
+async function putDeviceCacheRow(db: Kysely<DigifabDB>, connId: string, devices: RemoteDevice[], at: number): Promise<void> {
   try {
     await db
       .insertInto("digifab_fleet_device_cache")
-      .values({ connection_id: connId, devices: JSON.stringify(devices) as never, fetched_at: new Date() })
-      .onConflict((oc) => oc.column("connection_id").doUpdateSet({ devices: JSON.stringify(devices) as never, fetched_at: new Date() }))
+      .values({ connection_id: connId, devices: JSON.stringify(devices) as never, fetched_at: new Date(at) })
+      .onConflict((oc) => oc.column("connection_id").doUpdateSet({ devices: JSON.stringify(devices) as never, fetched_at: new Date(at) }))
       .execute();
   } catch (err) {
     console.warn(`[digifab] fleet device-cache write failed for ${connId}:`, (err as Error).message);
@@ -106,16 +108,18 @@ async function fetchDevicesCached(
   db: Kysely<DigifabDB>,
   driver: MachineDriver,
   connId: string,
+  finishedAt = 0,
 ): Promise<{ devices: RemoteDevice[]; at: number; stale: boolean }> {
   const now = Date.now();
   const hit = deviceCache.get(connId);
-  if (hit && now - hit.at < DEVICE_CACHE_TTL_MS) return { devices: hit.devices, at: hit.at, stale: false };
+  if (hit && hit.at > finishedAt && now - hit.at < DEVICE_CACHE_TTL_MS) return { devices: hit.devices, at: hit.at, stale: false };
 
   const liveFetch = async (): Promise<{ devices: RemoteDevice[]; at: number }> => {
+    const at = Date.now();
     const devices = await withTimeout(driver.listDevices(), LIST_TIMEOUT_MS, "listDevices timed out");
-    const entry = { at: Date.now(), devices };
-    deviceCache.set(connId, entry);
-    void putDeviceCacheRow(db, connId, devices);
+    const entry = { at, devices };
+    if (!deviceCache.has(connId) || deviceCache.get(connId)!.at <= at) deviceCache.set(connId, entry);
+    void putDeviceCacheRow(db, connId, devices, at);
     return entry;
   };
 
@@ -137,7 +141,7 @@ async function fetchDevicesCached(
       /* unreadable row → treat as no cache */
     }
   }
-  if (stale) {
+  if (stale && stale.at > finishedAt) {
     if (!refreshing.has(connId)) {
       refreshing.add(connId);
       void liveFetch()
@@ -155,7 +159,7 @@ async function fetchDevicesCached(
     return { ...(await liveFetch()), stale: false };
   } catch (err) {
     const fallback = deviceCache.get(connId);
-    if (fallback) return { devices: fallback.devices, at: fallback.at, stale: true };
+    if (fallback && fallback.at > finishedAt) return { devices: fallback.devices, at: fallback.at, stale: true };
     throw err;
   }
 }
@@ -194,6 +198,13 @@ fleetRouter.get(
       .select(["id", "connection_id", "target_device", "target_pool", "file_ref", "status", "progress", "priority", "attempts", "max_attempts", "eta_sec", "created_at"])
       .where("status", "not in", TERMINAL)
       .execute();
+    // A snapshot begun before completion can mistake the finished job for an external run.
+    const finished = conns.length ? await db.selectFrom("digifab_jobs")
+      .select(["connection_id", sql<Date>`max(updated_at)`.as("finished_at")])
+      .where("connection_id", "in", conns.map(c => c.id))
+      .where("status", "in", TERMINAL).groupBy("connection_id").execute() : [];
+    const finishedByConnection = new Map(finished.map(j => [j.connection_id, new Date(j.finished_at).getTime()]));
+
     // Farm view "next up": the highest-priority queued job aimed at a device
     // (directly, or at a pool the device belongs to). Shown on the tile so an
     // operator sees what each machine will do next, not just what it's doing.
@@ -283,7 +294,7 @@ fleetRouter.get(
           if (!driver) {
             return { connection_id: c.id, label: c.label, type: c.type, error: "driver unavailable", fetched_at: null, devices: [] };
           }
-          const { devices, at, stale } = await fetchDevicesCached(db, driver, c.id);
+          const { devices, at, stale } = await fetchDevicesCached(db, driver, c.id, finishedByConnection.get(c.id));
           // For a cloud Bambu, prefer the live MQTT telemetry the pump caches
           // (real-time temps/progress/state) over the slower HTTP list.
           const bambuLive = c.type === "bambu" ? await getBambuStatusMap(db, c.id) : null;
@@ -323,6 +334,7 @@ fleetRouter.get(
               klass: classify(state),
               enabled: d.enabled,
               lightburn_readiness: readLightBurnReadiness(d.raw?.lightburnReadiness),
+              laser_backend: d.raw?.laserBackend ?? null,
               tags: d.tags ?? [],
               linked_machine_id: link?.machine_id ?? null,
               // The linked machine's own identity — lets the tile BE the
@@ -450,6 +462,11 @@ fleetRouter.post(
       .where("connection_id", "=", connectionId)
       .where("remote_device_id", "=", deviceId)
       .executeTakeFirst();
+
+    if (att?.job_id) {
+      try { await recordFinishedLayout(db, orgId, att.job_id, sessionUser(req)?.id ?? null); }
+      catch (e) { if (!(e instanceof LaserPlanRefusal)) throw e; return void res.status(409).json({ error: { code: "sheet_area_not_recorded", message: e.message } }); }
+    }
 
     // Resolve the print's downstream context from its job, for the wires.
     if (att?.reason === "print-completed" && att.job_id) {
@@ -774,7 +791,7 @@ const ControlBody = z.object({ id: z.string().min(1).max(60), params: z.record(z
 fleetRouter.post(
   "/:connectionId/:deviceId/control",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
     const parsed = ControlBody.safeParse(req.body);
     if (!parsed.success) return void res.status(400).json({ error: { code: "bad_body", message: "control id required" } });
     const orgId = tenantContext(req).org.id;
@@ -784,6 +801,12 @@ fleetRouter.post(
     // block a command the cloud broker can also send (light / pause / temps).
     const lan = await bambuLanDriverFor(orgId, req.params.connectionId!, req.params.deviceId!);
     const driver = lan ?? (await buildDriverById(tenantDb(req), orgId, req.params.connectionId!));
+    if (driver?.laserBackend && ["stop", "pause", "resume", "frame"].includes(parsed.data.id)) {
+      const result = await controlDirectLaser(tenantDb(req), orgId, driver, req.params.deviceId!, parsed.data.id, parsed.data.params ?? {}, req.params.connectionId!);
+      if (!result.ok) return void res.status(502).json({ error: { code: "control_failed", message: result.detail } });
+      return void res.json(result);
+    }
+    if (!requireRole(req, res, "owner", "admin")) return;
     if (!driver?.runControl) return void res.status(501).json({ error: { code: "unsupported", message: "this printer can't be controlled here" } });
     const r = await runControlWithCloudFallback({
       primary: driver,

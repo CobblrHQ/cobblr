@@ -1,3 +1,4 @@
+import { groupListRows } from "@cobblr/platform-contract/grouped-list";
 // Entity-kind resolvers — let other modules + core-views read lists
 // entities via platform().entities.lookup()/list() without knowing our tables.
 
@@ -26,7 +27,7 @@ export function registerListResolvers(): void {
     // Workspace search hands every resolver its words. Ignoring them here made
     // every search return the first shopping lists, whatever was typed.
     if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["title", "description"] })!);
-    const rows = await q
+    const rows = (await groupListRows(db, q .orderBy("created_at", "desc"), query)) ?? await q
       .limit(Math.min(query.limit ?? 50, 200))
       .offset(query.offset ?? 0)
       .orderBy("created_at", "desc")
@@ -46,7 +47,7 @@ export function registerListResolvers(): void {
     const listId = query.filter?.list_id;
     if (typeof listId === "string") q = q.where("list_id", "=", listId);
     if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["title", "note"] })!);
-    const rows = await q.limit(Math.min(query.limit ?? 100, 500)).offset(query.offset ?? 0).orderBy("created_at", "asc").execute();
+    const rows = (await groupListRows(db, q.orderBy("created_at", "asc"), query)) ?? await q.limit(Math.min(query.limit ?? 100, 500)).offset(query.offset ?? 0).orderBy("created_at", "asc").execute();
     return { items: rows.map(itemToResolved) };
   });
 }

@@ -16,11 +16,12 @@
 // time-of-day precision later, swap the interval for a daily-at-8am
 // schedule.
 
+import type { NotificationAction, NotificationCardRow } from "@cobblr/platform-contract";
 import { Kysely, sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { CoreMaintenanceDB } from "./db.js";
 import { reconcileSchedules } from "./schedules-store.js";
-import { calendarDue } from "./schedule.js";
+import { calendarDue, shouldNotify, type Reminder } from "./schedule.js";
 
 const TICK_MS = 60 * 60 * 1000; // 1 hour
 export const MAINTENANCE_PASS = "core-maintenance.sweep";
@@ -52,6 +53,12 @@ interface DueRow {
   name: string;
   scheduled_at: Date;
   schedule_id: string | null;
+  remind: Reminder | null;
+  last_notified_at: Date | null;
+  overdue_every: import("./schedule.js").OverdueCadence | null;
+  nag_stopped_at: Date | null;
+  nag_snoozed_until: Date | null;
+  anchor: unknown;
 }
 
 /** Single sweep — exported so tests can fire it deterministically.
@@ -95,20 +102,29 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
       reasons = (await reconcileSchedules(raw as Kysely<CoreMaintenanceDB>, orgId)).reasons;
     } catch (err) {
       const msg = (err as Error).message;
-      if (!msg.includes("does not exist")) console.error("[core-maintenance] schedules not reconciled:", msg);
+      // A workspace whose schedules table is not made yet has nothing to
+      // reconcile; anything else is a failure.
+      if (!msg.includes("does not exist")) {
+        platform().health.notePassFailure("core-maintenance.reconcile-schedules", orgId, err);
+        console.error("[core-maintenance] schedules not reconciled:", msg);
+      }
     }
     let due: DueRow[];
     try {
       const compiled = sql<DueRow>`
-        select id, entity_module, entity_type, entity_id, name, scheduled_at, schedule_id
-        from core_maintenance_entries
-        where scheduled_at is not null
-          and performed_at is null
-          and (last_notified_at is null or last_notified_at < scheduled_at)
-          and scheduled_at <= (now() + ${DUE_SOON_DAYS} * interval '1 day')
+        select e.id, e.entity_module, e.entity_type, e.entity_id, e.name, e.scheduled_at, e.schedule_id, e.last_notified_at, s.remind, s.overdue_every, s.anchor, e.nag_stopped_at, e.nag_snoozed_until
+        from core_maintenance_entries e
+        left join core_maintenance_schedules s on s.id = e.schedule_id
+        where e.scheduled_at is not null
+          and e.performed_at is null
       `.compile(tdb);
       const result = (await tdb.executeQuery(compiled)) as { rows: DueRow[] };
-      due = result.rows;
+      const preferences = await (raw as Kysely<CoreMaintenanceDB>).selectFrom("core_maintenance_preferences").selectAll().executeTakeFirst();
+      due = result.rows.filter((r) => shouldNotify(new Date(r.scheduled_at), r.remind, r.last_notified_at ? new Date(r.last_notified_at) : null, new Date(), {
+        overdue_every: r.overdue_every ?? preferences?.overdue_every ?? "week",
+        nag_stopped_at: r.nag_stopped_at ? new Date(r.nag_stopped_at) : null,
+        nag_snoozed_until: r.nag_snoozed_until ? new Date(r.nag_snoozed_until) : null,
+      }));
     } catch (err) {
       // Migration may not have applied yet on this tenant (the
       // 0002_last_notified column is new). Silently skip — next
@@ -134,6 +150,8 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
     // reads to the end. The per-entry EVENT above stays per-entry - a wire
     // wants each one - but a person gets the list.
     const lines: string[] = [];
+    const actions: NotificationAction[] = [];
+    const cardRows: NotificationCardRow[] = [];
     /** The single entry, when there is exactly one, so the notification can
      *  still deep-link to it. A list of twelve has nowhere to point. */
     let only: (typeof due)[number] | null = null;
@@ -143,7 +161,8 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
       // one zone to read: the day that has arrived everywhere, the same count
       // the schedule's own reason uses.
       const { reason: tone, days: daysUntil } = calendarDue(new Date(row.scheduled_at), new Date(), null);
-      const message = `${row.name} — ${(row.schedule_id && reasons.get(row.schedule_id)) || tone}`;
+      const record = await platform().entities.lookup(org.id, `${row.entity_module}:${row.entity_type}`, row.entity_id);
+      const message = `${row.name}${record?.title ? ` on ${record.title}` : ""}: ${(row.schedule_id && reasons.get(row.schedule_id)) || tone}`;
 
       // Event for user-authored wires.
       void platform().events.emit("core-maintenance.entry.due-soon", {
@@ -156,6 +175,17 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
         daysUntil,
       });
 
+      const rowActions: NotificationAction[] = [{
+        id: `done-${row.id}`, label: row.anchor ? "Renewed" : "Mark done",
+        action: "core-maintenance:complete", args: { entry_id: row.id }, style: "primary",
+      }];
+      if (daysUntil < 0) rowActions.push(
+        { id: `week-${row.id}`, label: "Snooze 1 week", action: "core-maintenance:reminders", args: { entry_id: row.id, mode: "snooze", duration: "week" } },
+        { id: `month-${row.id}`, label: "Snooze 1 month", action: "core-maintenance:reminders", args: { entry_id: row.id, mode: "snooze", duration: "month" } },
+        { id: `stop-${row.id}`, label: "Stop reminding me", action: "core-maintenance:reminders", args: { entry_id: row.id, mode: "stop" } },
+      );
+      actions.push(...rowActions);
+      cardRows.push({ text: message, actions: rowActions.map((a) => a.id) });
       lines.push(message);
       only = lines.length === 1 ? row : null;
 
@@ -163,11 +193,12 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
       try {
         const update = sql`
           update core_maintenance_entries
-          set last_notified_at = ${new Date(row.scheduled_at)}
+          set last_notified_at = ${new Date()}
           where id = ${row.id}
         `.compile(tdb);
         await tdb.executeQuery(update);
       } catch (err) {
+        platform().health.notePassFailure("core-maintenance.mark-notified", orgId, err);
         console.error(
           "[core-maintenance] mark-notified failed:",
           (err as Error).message,
@@ -190,7 +221,7 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
       if (only?.entity_type && only.entity_id) {
         link =
           (await platform()
-            .entities.recordAddressForEntity(org.id, only.entity_type, only.entity_id)
+            .entities.recordAddressForEntity(org.id, `${only.entity_module}:${only.entity_type}`, only.entity_id)
             .catch(() => undefined)) ?? "/maintenance";
       }
       for (const userId of memberIds) {
@@ -210,24 +241,14 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
             // question - did you do it? - and the action to say yes already
             // exists. Declaring it here is all a notification needs to become
             // pressable, in the bell and in a Discord DM alike.
-            ...(only
-              ? {
-                  actions: [
-                    {
-                      id: "done",
-                      label: "Mark done",
-                      action: "core-maintenance:complete",
-                      args: { entry_id: only.id },
-                      style: "primary" as const,
-                    },
-                  ],
-                }
-              : {}),
+            actions,
+            card: { rows: cardRows },
             payload: only
               ? { entryId: only.id, count: 1, scheduledAt: only.scheduled_at }
               : { count: lines.length },
           });
         } catch (err) {
+          platform().health.notePassFailure("core-maintenance.notify", orgId, err);
           console.error(
             "[core-maintenance] notify dispatch failed:",
             (err as Error).message,

@@ -24,6 +24,66 @@ export const STORE_CODE_NOTE = "A store's own code, nothing to look up. Name it 
 export const STORE_CODE_TITLE =
   "A deli, produce or in-store code that only that shop can read: no catalog knows it. Name it and it files like a typed item.";
 
+/** An Amazon fulfilment sticker (FNSKU, X00 plus seven letters and digits):
+ *  the code is Amazon's own and no catalog resolves it, but the sticker
+ *  prints the product's title under it, and the scan frame holds the
+ *  sticker (#4933). Named from that title, the row says where its name came
+ *  from; with no title read, it says so and asks for the name, never for
+ *  another photo of a label it already has. */
+export const FNSKU_READ_NOTE = "Named from the title on its Amazon label.";
+export const FNSKU_NOTE = "An Amazon label, and its title could not be read. Name it to file it.";
+export const FNSKU_TITLE =
+  "An Amazon fulfilment code (FNSKU) identifies a unit only inside Amazon's warehouse, so no catalog looks it up. The product's title is printed under it on the label.";
+
+/** A scanned code the server classified as one no catalog looks up (its
+ *  `code_type` on the row's metadata), with what every surface says about
+ *  it: the card's line, the note, the title beside it. Null for a product
+ *  barcode, which a lookup judges. One reader, so the live sheet and the
+ *  inbox cannot tell two different stories about one sticker (#4933). */
+/** The code kinds the scan's classifier knows that a product lookup does
+ *  not judge. core-scan's ScanCodeType is built from this list, so a kind
+ *  cannot be classified without its words here: the generic "we couldn't
+ *  find this barcode" is for a product barcode, and only for one. */
+export const CLASSIFIED_CODE_TYPES = ["store-code", "fnsku", "isbn", "asin", "url"] as const;
+export type ClassifiedCodeType = (typeof CLASSIFIED_CODE_TYPES)[number];
+
+const CLASSIFIED_WORDS: Record<ClassifiedCodeType, Omit<ClassifiedCode, "type">> = {
+  "store-code": { line: "A store's own code, nothing to look up. Name it:", note: STORE_CODE_NOTE, title: STORE_CODE_TITLE },
+  fnsku: { line: "An Amazon label, and its title could not be read. Name it:", note: FNSKU_NOTE, title: FNSKU_TITLE },
+  isbn: {
+    line: "A book's ISBN no catalog knows yet. Name it:",
+    note: "A book's ISBN that no book catalog knows yet. Name it to file it.",
+    title: "An ISBN identifies a book; the book catalogs did not have this one.",
+  },
+  asin: {
+    line: "An Amazon product code that did not resolve. Name it:",
+    note: "An Amazon product code that did not resolve. Name it to file it.",
+    title: "Amazon's own product number; its page did not name it.",
+  },
+  url: {
+    line: "A link that did not say what it is. Name it:",
+    note: "A link that did not say what it is. Name it to file it.",
+    title: "The code is a web address, and its page did not name a product.",
+  },
+};
+
+export interface ClassifiedCode {
+  type: ClassifiedCodeType;
+  /** The card's lead-in before the name box. */
+  line: string;
+  /** The row's note while it has no name. */
+  note: string;
+  /** The why, for a title or tooltip. */
+  title: string;
+}
+
+export function classifiedCodeOf(meta: unknown): ClassifiedCode | null {
+  const type = (meta as { code_type?: unknown } | null)?.code_type;
+  return typeof type === "string" && (CLASSIFIED_CODE_TYPES as readonly string[]).includes(type)
+    ? { type: type as ClassifiedCodeType, ...CLASSIFIED_WORDS[type as ClassifiedCodeType] }
+    : null;
+}
+
 /** The routing line for a store code that has no name yet: the pill already
  *  names the table, so the sentence does not. */
 export const STORE_CODE_ROUTING = "No name yet. Files as a generic item.";
@@ -70,6 +130,12 @@ export function receiptAlreadyInSentence(label: string | null, lines: number): s
 export const HELD_GUESS_PROMPT = "Is this it?";
 export const HELD_GUESS_SOURCE = "found on the web, not confirmed";
 export const HELD_GUESS_BECAUSE = "One page on the web says so; nothing confirmed it.";
+
+/** Text read off the label in the scan frame that did not make a confident
+ *  name (#4933): offered the same way, one tap, saying where it came from,
+ *  never typed back by hand. */
+export const LABEL_GUESS_SOURCE = "read off its label";
+export const LABEL_GUESS_BECAUSE = "Read off the label in your scan; check it reads right.";
 
 /** A row whose lookup was throttled and has not answered. */
 export const THROTTLED_SENTENCE = "The lookup was throttled. Wait, or name it yourself.";

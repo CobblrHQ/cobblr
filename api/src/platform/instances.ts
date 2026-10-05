@@ -6,8 +6,10 @@
 // See docs/architecture/instances.md for the full design.
 
 import { sql } from "kysely";
+import { perRequest } from "../lib/request-context.js";
 import { applyContributedFieldDefsToCollection } from "./contributed-fields.js";
 import { meta } from "../db/meta.js";
+import { perReadRequest } from "../lib/request-context.js";
 import { canonicalModuleName, getEntry } from "../modules/registry.js";
 import { getTenantDb } from "../db/tenant.js";
 import { deleteOverride, getOverrideConfig, upsertOverride } from "./entity-kind-overrides.js";
@@ -178,13 +180,15 @@ export async function getInstance(
   orgId: string,
   instanceName: string,
 ): Promise<ModuleInstance | null> {
-  const row = await meta
-    .selectFrom("workspace_module_instances")
-    .selectAll()
-    .where("org_id", "=", orgId)
-    .where("instance_name", "=", instanceName)
-    .executeTakeFirst();
-  return (row as ModuleInstance | undefined) ?? null;
+  return perReadRequest(`instance:${orgId}:${instanceName}`, async () => {
+    const row = await meta
+      .selectFrom("workspace_module_instances")
+      .selectAll()
+      .where("org_id", "=", orgId)
+      .where("instance_name", "=", instanceName)
+      .executeTakeFirst();
+    return (row as ModuleInstance | undefined) ?? null;
+  });
 }
 
 /** Delete a non-default instance. Default instances live + die with
@@ -509,8 +513,10 @@ export async function provisionInstance(args: {
  *  module working outside a request (a boot heal) read, so the two cannot
  *  disagree about what an instance is. Null when there is no such instance. */
 export async function instanceConfig(orgId: string, instanceName: string): Promise<{ module_name: string; config: Record<string, unknown> } | null> {
-  const inst = await getInstance(orgId, instanceName);
-  if (!inst) return null;
-  const overrideCfg = await getOverrideConfig(orgId, "instance", `${inst.module_name}:${inst.instance_name}`);
-  return { module_name: inst.module_name, config: { ...((inst.config as Record<string, unknown> | null) ?? {}), ...(overrideCfg ?? {}) } };
+  return perRequest(`instance-config:${orgId}:${instanceName}`, async () => {
+    const inst = await getInstance(orgId, instanceName);
+    if (!inst) return null;
+    const overrideCfg = await getOverrideConfig(orgId, "instance", `${inst.module_name}:${inst.instance_name}`);
+    return { module_name: inst.module_name, config: { ...((inst.config as Record<string, unknown> | null) ?? {}), ...(overrideCfg ?? {}) } };
+  });
 }

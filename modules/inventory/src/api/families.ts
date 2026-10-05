@@ -416,6 +416,7 @@ familiesRouter.get(
       child_noun: fam.childNoun,
       parent_noun: fam.parentNoun,
       child_unit: await collectionUnit(orgId, fam.child),
+      package_receiving: ((await platform().instances.configOf(orgId, fam.child)) ?? {}).package_receiving ?? null,
       types: cards,
       unclaimed,
       counts: { types: cards.length, children: thingById.size, low: cards.filter((c) => c.children.some((k) => k.low)).length },

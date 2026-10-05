@@ -1475,7 +1475,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
         return;
       }
     } catch {
-      /* fall through to the stream, which will 404 if it truly is gone */
+      /* quiet: fall through to the stream, which says it if the turn is truly gone */
     }
 
     const ac = new AbortController();
@@ -1586,7 +1586,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
         try {
           id = (await api.aiChatOpenTurn(activeSlug)).turn?.id ?? null;
         } catch {
-          /* no server-side turn */
+          /* quiet: a background look for an open turn; none to resume is the usual answer */
         }
       }
       if (cancelled || !id) return;
@@ -1603,7 +1603,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
           setMessages(base);
         }
       } catch {
-        /* follow anyway; followTurn handles a vanished turn */
+        /* quiet: follow anyway; followTurn says it if the turn vanished */
       }
       if (cancelled) return;
       await followTurn(id, base);
@@ -1754,7 +1754,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
       const { items } = await api.aiChatOffers(activeSlug, ids);
       setMessages((prev) => applyOfferStates(prev, items));
     } catch {
-      /* offline: the cards stand as this device last saw them */
+      /* quiet: a background redraw; offline, the cards stand as this device last saw them */
     }
   }
 
@@ -1888,7 +1888,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                 onToggle={() => setPrefs.mutate({ ...prefs, read_tools: !prefs.read_tools })}
                 icon={<Eye size={11} />}
                 label="Read my data"
-                title="Let Cobb search and read this workspace's records to answer questions. Record data is sent to the workspace's AI provider."
+                title="Let Cobb search and read this workspace's records, your notes on them included, to answer you. What it reads is sent to the workspace's AI provider."
               />
               {/* Claude-Code-style write mode, cycled by click: Ask → Auto → Off.
                   Auto = record changes apply immediately (every one ledgered +

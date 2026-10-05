@@ -63,7 +63,7 @@ const KIND_ID_OFFENSE =
 // own connection reads photos, because the flag it read was a deployment
 // switch (the 2026-09-13 review, #2845). The one place that may say it is
 // baselined by line and guarded by identify_available; a new one fails here.
-const PHRASE_OFFENSE = /ran a wire|wire failed|INVENTORY:PART|\bVENDING\b|\bGALLERY\b|the one that ran out|still had some|went bad|No AI to read|\(set it up\)/;
+const PHRASE_OFFENSE = /bundle installed|bundle uninstalled|ran a wire|wire failed|INVENTORY:PART|\bVENDING\b|\bGALLERY\b|the one that ran out|still had some|went bad|No AI to read|\(set it up\)/;
 
 // A COUNT SHAPE as a default face: `0w · 9f`, `${wires.length}w · ${fields}f`.
 // The 2026-09-13 blank-account review saw it on the install dialog, ahead of

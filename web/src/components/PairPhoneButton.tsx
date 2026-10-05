@@ -165,7 +165,7 @@ function PairPhoneModal({ onClose }: { onClose: () => void }) {
           clearInterval(tick);
         }
       } catch {
-        /* transient — try again next tick */
+        /* quiet: a poll; transient, it tries again next tick and the countdown shows */
       }
     }, 1500);
     return () => clearInterval(tick);

@@ -6,6 +6,9 @@
 
 import { Kysely, sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { reconcileSchedules } from "./schedules-store.js";
+import { reminderAt, type Reminder } from "./schedule.js";
+import type { CoreMaintenanceDB } from "./db.js";
 import type { CalendarEvent } from "@cobblr/platform-contract";
 
 interface DueRow {
@@ -15,6 +18,10 @@ interface DueRow {
   entity_module: string;
   entity_type: string;
   entity_id: string;
+  remind: Reminder | null;
+  nag_stopped_at: Date | null;
+  nag_snoozed_until: Date | null;
+  schedule_id: string | null;
 }
 
 export function registerMaintenanceCalendarSource(): void {
@@ -26,19 +33,23 @@ export function registerMaintenanceCalendarSource(): void {
       return [];
     }
     try {
+      await reconcileSchedules(tdb as Kysely<CoreMaintenanceDB>, orgId);
       const compiled = sql<DueRow>`
-        select id, name, scheduled_at, entity_module, entity_type, entity_id
-        from core_maintenance_entries
-        where scheduled_at is not null
-          and performed_at is null
-          and scheduled_at::date >= ${fromISO}::date
-          and scheduled_at::date <= ${toISO}::date
-        order by scheduled_at asc
+        select e.id, e.name, e.scheduled_at, e.entity_module, e.entity_type, e.entity_id, e.schedule_id, s.remind, e.nag_stopped_at, e.nag_snoozed_until
+        from core_maintenance_entries e
+        left join core_maintenance_schedules s on s.id = e.schedule_id
+        where e.scheduled_at is not null
+          and e.performed_at is null
+          and e.scheduled_at::date >= ${fromISO}::date
+        order by e.scheduled_at asc
       `.compile(tdb);
       const { rows } = (await tdb.executeQuery(compiled)) as { rows: DueRow[] };
-      return rows.map<CalendarEvent>((r) => ({
+      return rows.flatMap<CalendarEvent>((r) => {
+        const due = new Date(r.scheduled_at).toISOString().slice(0, 10);
+        const reminder = reminderAt(new Date(r.scheduled_at), r.remind).toISOString().slice(0, 10);
+        const event: CalendarEvent = {
         id: `maintenance:${r.id}`,
-        title: r.name,
+        title: r.name + (r.nag_stopped_at ? " (reminders off)" : r.nag_snoozed_until && new Date(r.nag_snoozed_until) > new Date() ? " (reminders snoozed)" : ""),
         date: new Date(r.scheduled_at).toISOString().slice(0, 10),
         allDay: true,
         source: "maintenance",
@@ -46,7 +57,9 @@ export function registerMaintenanceCalendarSource(): void {
         entityModule: r.entity_module,
         entityType: r.entity_type,
         entityId: r.entity_id,
-      }));
+      };
+        return [ ...(due <= toISO ? [event] : []), ...(r.schedule_id && reminder >= fromISO && reminder <= toISO && reminder !== due ? [{ ...event, id: `maintenance-reminder:${r.id}`, title: `Reminder: ${r.name}`, date: reminder }] : []) ];
+      });
     } catch (err) {
       const msg = (err as Error).message;
       if (msg.includes("does not exist")) return [];

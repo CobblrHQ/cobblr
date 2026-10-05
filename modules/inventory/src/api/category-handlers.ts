@@ -33,11 +33,17 @@ export function registerCategoryHandlers(): void {
     // Asking for one that exists is not a failure worth alarming anyone about.
     if (existing) return { ok: true, result: { id: existing.id, name: existing.name, existed: true } };
 
+    // Asked for twice at once, both found none: the second gets the first's.
     const row = await db
       .insertInto("inventory_categories")
       .values({ name, color } as never)
+      .onConflict((oc) => oc.doNothing())
       .returning(["id", "name"])
-      .executeTakeFirstOrThrow();
+      .executeTakeFirst();
+    if (!row) {
+      const first = await db.selectFrom("inventory_categories").select(["id", "name"]).where("name", "=", name).executeTakeFirstOrThrow();
+      return { ok: true, result: { id: first.id, name: first.name, existed: true } };
+    }
     return { ok: true, result: { id: row.id, name: row.name, existed: false } };
   });
 

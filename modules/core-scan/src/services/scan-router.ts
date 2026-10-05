@@ -9,8 +9,11 @@
 
 import { gtinChecksumOk, hasStoreCodePrefix, isStoreCode, type BarcodeHit } from "./barcode-lookup.js";
 import { hitCassette, replayMiss, writeCatalogCassette } from "./catalog-replay.js";
+import type { ClassifiedCodeType } from "@cobblr/platform-contract/scan-copy";
 
-export type ScanCodeType = "upc" | "isbn" | "asin" | "fnsku" | "url" | "store-code" | "unknown";
+/** A product barcode, a code the contract classifies (with the words every
+ *  surface says about it, CLASSIFIED_CODE_TYPES), or nothing known. */
+export type ScanCodeType = "upc" | ClassifiedCodeType | "unknown";
 
 /** Classify a scanned string by what kind of code it is. */
 export function classifyScanCode(raw: string): { type: ScanCodeType; code: string } {

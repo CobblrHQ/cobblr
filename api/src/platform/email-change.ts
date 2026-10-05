@@ -11,6 +11,21 @@
 // An account signed in through the central account service has no address of
 // its own here: it changes there, and this says so.
 //
+// What stops a takeover through this flow (#4184), each held by a test in
+// api/tests/a-sign-in-address-change-cannot-take-an-account.test.ts:
+//   - asking needs the person: their password, or (an account with none) a
+//     sign-in in the last few minutes; never an API token or a shared view.
+//     A few asks an hour at most, so nobody is flooded with confirm emails.
+//   - confirming voids every link the OLD address still holds (a reset, a
+//     magic sign-in, a verify): whoever reads that mailbox later cannot use
+//     one to walk back in.
+//   - undoing it does not trust the password at all, since whoever changed
+//     the address knew it: the password is cleared, every API token and
+//     connected app is revoked, a queued change is dropped, and the person
+//     holding the old mailbox sets the new password from a fresh reset link.
+//   - every link starts with the instance's public address (link-origin.ts),
+//     never the Host header of the request that sent it.
+//
 // Links are single use and stored hashed (sha256), like every auth token here.
 // With no email sender configured, non-production answers carry the link's
 // token so the flow can be exercised (the way verify and reset do).
@@ -23,6 +38,10 @@ import { blockDisposableEnabled, isDisposableEmail } from "./disposable-emails.j
 
 const CONFIRM_HOURS = 24;
 const REVERT_DAYS = 7;
+/** An account with no password proves it is the person by a sign-in this recent. */
+const RECENT_SIGN_IN_SEC = 10 * 60;
+/** Asks per account per hour: enough for a typo or two, not a flood. */
+const ASKS_PER_HOUR = 5;
 
 const hash = (plain: string) => createHash("sha256").update(plain).digest("hex");
 function mint(): { plain: string; hashed: string } {
@@ -43,6 +62,10 @@ const devToken = (emailed: boolean, plain: string) => (!emailed && process.env.N
 
 export type ChangeRefusal =
   | { code: "bad_current_password"; status: 403; message: string }
+  | { code: "needs_you"; status: 403; message: string }
+  | { code: "sign_in_again"; status: 403; message: string }
+  | { code: "too_many"; status: 429; message: string }
+  | { code: "address_moved"; status: 409; message: string }
   | { code: "change_at_identity"; status: 409; message: string }
   | { code: "email_taken"; status: 409; message: string }
   | { code: "same_email"; status: 400; message: string }
@@ -67,12 +90,29 @@ async function addressTaken(email: string, exceptUser: string): Promise<boolean>
 
 /** Ask for the sign-in address to change. Sends the confirm link to the new
  *  address; changes nothing yet. */
+/** Who is asking, as the session says: a person signed in, how recently,
+ *  or something standing in for them. */
+export interface Asker {
+  auth_method: "session" | "api_token";
+  /** The session's issue time in seconds; null for an API token. */
+  issued_at?: number | null;
+  /** Set while the request is a View as through a share. */
+  share_view?: unknown;
+  app_scope?: string | null;
+}
+
 export async function requestEmailChange(
   userId: string,
   newEmailRaw: string,
-  currentPassword: string,
+  currentPassword: string | undefined,
   origin: string,
+  asker: Asker,
 ): Promise<{ refused: ChangeRefusal } | { pending: string; expires_at: string; emailed: boolean; devToken?: string }> {
+  // A token, an app or a borrowed view is not the person: how an account
+  // signs in changes only from the person's own sign-in.
+  if (asker.auth_method !== "session" || asker.share_view || asker.app_scope) {
+    return refuse("needs_you", 403, "Changing the address you sign in with needs you, signed in yourself: not a token, an app or a shared view.");
+  }
   const user = await meta
     .selectFrom("users")
     .select(["email", "password_hash", "identity_id"])
@@ -81,8 +121,23 @@ export async function requestEmailChange(
   if (user.identity_id && user.password_hash.length === 0) {
     return refuse("change_at_identity", 409, "This account signs in through your Cobblr account, so its address changes there.");
   }
-  if (!(await verifyPassword(currentPassword, user.password_hash))) {
+  if (user.password_hash.length === 0) {
+    // No password to re-check (a magic-link account): a sign-in this recent
+    // is the proof, the way a fresh link from their own mailbox is.
+    const fresh = typeof asker.issued_at === "number" && Date.now() / 1000 - asker.issued_at <= RECENT_SIGN_IN_SEC;
+    if (!fresh) return refuse("sign_in_again", 403, "To change your address, sign in again with a link to it first, then change it within 10 minutes.");
+  } else if (!currentPassword || !(await verifyPassword(currentPassword, user.password_hash))) {
     return refuse("bad_current_password", 403, "Current password is incorrect.");
+  }
+  const recent = await meta
+    .selectFrom("auth_email_change_tokens")
+    .select((eb) => eb.fn.countAll<string>().as("n"))
+    .where("user_id", "=", userId)
+    .where("kind", "=", "confirm")
+    .where("created_at", ">", new Date(Date.now() - 3_600_000))
+    .executeTakeFirst();
+  if (Number(recent?.n ?? 0) >= ASKS_PER_HOUR) {
+    return refuse("too_many", 429, "That is several asks in an hour. Wait a while, then ask again.");
   }
   const newEmail = newEmailRaw.toLowerCase().trim();
   if (newEmail === user.email.toLowerCase()) return refuse("same_email", 400, "That is already your address.");
@@ -101,6 +156,7 @@ export async function requestEmailChange(
     .execute();
   const { plain, hashed } = mint();
   const expires = new Date(Date.now() + CONFIRM_HOURS * 3_600_000);
+  // check-then-insert: the key is a random token minted here
   await meta
     .insertInto("auth_email_change_tokens")
     .values({ user_id: userId, kind: "confirm", old_email: user.email, new_email: newEmail, token_hash: hashed, expires_at: expires })
@@ -153,6 +209,12 @@ export async function confirmEmailChange(
   const { row } = got;
   // Taken since it was asked for: refuse rather than collide.
   if (await addressTaken(row.new_email, row.user_id)) return refuse("email_taken", 409, "Another account took that address in the meantime.");
+  // The account's address changed some other way since this was asked for:
+  // this link no longer describes a change from where the account is.
+  const now = await meta.selectFrom("users").select("email").where("id", "=", row.user_id).executeTakeFirst();
+  if (!now || now.email.toLowerCase() !== row.old_email.toLowerCase()) {
+    return refuse("address_moved", 409, "The account's address changed since this was asked for. Ask again from your account.");
+  }
   const at = new Date();
   await meta.transaction().execute(async (trx) => {
     await trx.updateTable("auth_email_change_tokens").set({ consumed_at: at }).where("id", "=", row.id).execute();
@@ -161,6 +223,11 @@ export async function confirmEmailChange(
       .set({ email: row.new_email, email_verified_at: at, tokens_valid_from: revokeFrom(at) })
       .where("id", "=", row.user_id)
       .execute();
+    // The old mailbox keeps no way back in: a reset or verify link for this
+    // account, or a sign-in link to the old address, sent before the change.
+    await trx.updateTable("auth_password_reset_tokens").set({ consumed_at: at }).where("user_id", "=", row.user_id).where("consumed_at", "is", null).execute();
+    await trx.updateTable("auth_email_verify_tokens").set({ consumed_at: at }).where("user_id", "=", row.user_id).where("consumed_at", "is", null).execute();
+    await trx.updateTable("auth_magic_tokens").set({ consumed_at: at }).where("email", "=", row.old_email).where("consumed_at", "is", null).execute();
   });
   await logAccountEvent(row.user_id, "email_changed", { from: row.old_email, to: row.new_email });
   const { plain: revertPlain, hashed } = mint();
@@ -187,22 +254,38 @@ export async function confirmEmailChange(
   return { email: row.new_email, revertDevToken: devToken(emailed, revertPlain) };
 }
 
-/** The old address's link: the account goes back to it, every session ends,
- *  and a new password is required at the next sign-in. */
-export async function revertEmailChange(plain: string): Promise<{ refused: ChangeRefusal } | { email: string }> {
+/** The old address's link: the account goes back to it, and nothing the
+ *  person who changed it holds still works. The password is cleared (they knew
+ *  it), every session, API token and connected app is ended, a queued change
+ *  is dropped, and the old mailbox's holder gets a fresh reset link to choose
+ *  the new password. */
+export async function revertEmailChange(plain: string): Promise<{ refused: ChangeRefusal } | { email: string; resetToken: string }> {
   const got = await takeLink(plain, "revert");
   if ("refused" in got) return got;
   const { row } = got;
   if (await addressTaken(row.old_email, row.user_id)) return refuse("email_taken", 409, "Another account now uses that address; ask whoever runs this instance for help.");
   const at = new Date();
+  const reset = mint();
   await meta.transaction().execute(async (trx) => {
     await trx.updateTable("auth_email_change_tokens").set({ consumed_at: at }).where("id", "=", row.id).execute();
+    // A change queued since (to yet another address) goes too.
+    await trx.updateTable("auth_email_change_tokens").set({ consumed_at: at }).where("user_id", "=", row.user_id).where("kind", "=", "confirm").where("consumed_at", "is", null).execute();
+    // No password survives: must_reset_password alone would let whoever knew
+    // the old one sign in with it and choose the next. An empty hash matches
+    // nothing; the reset link below sets the new one.
     await trx
       .updateTable("users")
-      .set({ email: row.old_email, email_verified_at: at, tokens_valid_from: revokeFrom(at), must_reset_password: true })
+      .set({ email: row.old_email, email_verified_at: at, tokens_valid_from: revokeFrom(at), password_hash: "", must_reset_password: false })
       .where("id", "=", row.user_id)
       .execute();
+    // Credentials that never expire with a session: personal API tokens and
+    // connected apps (their access tokens are API tokens too).
+    await trx.updateTable("api_tokens").set({ revoked_at: at }).where("user_id", "=", row.user_id).where("revoked_at", "is", null).execute();
+    await trx.updateTable("oauth_grants").set({ revoked_at: at }).where("user_id", "=", row.user_id).where("revoked_at", "is", null).execute();
+    await trx.updateTable("auth_password_reset_tokens").set({ consumed_at: at }).where("user_id", "=", row.user_id).where("consumed_at", "is", null).execute();
+    await trx.updateTable("auth_magic_tokens").set({ consumed_at: at }).where("email", "=", row.new_email).where("consumed_at", "is", null).execute();
+    await trx.insertInto("auth_password_reset_tokens").values({ user_id: row.user_id, token_hash: reset.hashed, request_ip: null, request_ua: "email-change-revert" }).execute();
   });
   await logAccountEvent(row.user_id, "email_change_reverted", { back_to: row.old_email, from: row.new_email });
-  return { email: row.old_email };
+  return { email: row.old_email, resetToken: reset.plain };
 }

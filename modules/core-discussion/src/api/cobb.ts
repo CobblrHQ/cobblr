@@ -111,6 +111,7 @@ export async function askCobb(
     .executeTakeFirst();
   if (pending) return null;
 
+  // check-then-insert: the only key is external_ref, which this insert never sets
   const placeholder = await db
     .insertInto("core_discussion_comments")
     .values({

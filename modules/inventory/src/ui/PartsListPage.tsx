@@ -155,7 +155,10 @@ export function PartsListPage() {
   // Leave out rows with nothing on hand. Off by default: an installed part's
   // row still says what you own, what you paid and where it went.
   const [hideUnavailable, setHideUnavailable] = useHideUnavailable(entityKind, activeView?.id ?? null);
-  const groupBy = activeView?.config?.group_by;
+  const groupBy = typeof activeView?.config?.group_by === "string" ? activeView.config.group_by : undefined;
+  useEffect(() => {
+    if (activeView?.view_type === "table" && activeView.config?.group_by) navigate(`/views/${activeView.id}`, { replace: true });
+  }, [activeView, navigate]);
   const viewFields = activeView?.config?.visible_fields;
   // The view's own query (filter / where / sort), read the one way every
   // surface reads it, and sent to the server so it holds across pages.
@@ -400,6 +403,7 @@ export function PartsListPage() {
   async function bulkPrintLabels() {
     setBulkLabelBusy(true);
     let queued = 0;
+    let lastFailure: string | null = null;
     try {
       for (const id of Array.from(selected)) {
         const p = partItems.find((x) => x.id === id);
@@ -424,11 +428,14 @@ export function PartsListPage() {
             qty: 1,
           });
           queued++;
-        } catch {
-          /* skip this one, keep going */
+        } catch (e) {
+          // Keep going with the rest; the summary says how many did not queue.
+          lastFailure = e instanceof Error ? e.message : "";
         }
       }
       toast.success(`Queued ${queued} label${queued === 1 ? "" : "s"}. Open Labels → Queue to print.`);
+      const missed = selected.size - queued;
+      if (missed > 0) toast.error(`${missed} label${missed === 1 ? "" : "s"} did not queue${lastFailure ? `: ${lastFailure}` : ""}.`);
       setSelected(new Set());
     } finally {
       setBulkLabelBusy(false);

@@ -161,15 +161,10 @@ export async function finishTurn(
         resetsAt?: string;
       },
 ): Promise<void> {
-  await db
-    .updateTable("core_ai_chat_turns")
-    .set(
-      outcome.ok
-        ? ({ status: "done", result: JSON.stringify(outcome.result), finished_at: new Date(), updated_at: new Date() } as never)
-        : ({ status: "failed", error: outcome.error, finished_at: new Date(), updated_at: new Date() } as never),
-    )
-    .where("id", "=", turnId)
-    .execute();
+  // The ANSWER before the status (#4890, torn status writes): a JSON poller
+  // reads the status, then the events, so a status flipped first answered
+  // "done" with no done event and no result. Written in this order, "done"
+  // is only ever seen with its answer already there.
   await emitTurnEvent(
     db,
     turnId,
@@ -183,6 +178,15 @@ export async function finishTurn(
           ...(outcome.resetsAt ? { resets_at: outcome.resetsAt } : {}),
         },
   );
+  await db
+    .updateTable("core_ai_chat_turns")
+    .set(
+      outcome.ok
+        ? ({ status: "done", result: JSON.stringify(outcome.result), finished_at: new Date(), updated_at: new Date() } as never)
+        : ({ status: "failed", error: outcome.error, finished_at: new Date(), updated_at: new Date() } as never),
+    )
+    .where("id", "=", turnId)
+    .execute();
 }
 
 /** How long a "running" turn may go untouched before it is certainly dead.
@@ -215,6 +219,7 @@ export function isStranded(t: { status: string; updated_at: Date | string }): bo
  *  spinner they were stuck behind. The person looking at it is exactly the
  *  person who should not have to wait. */
 async function healStranded(db: Kysely<CoreAiDB>, turnId: string): Promise<void> {
+  // state-flips-last: the row carries the failure itself (status + error); the event only wakes an open stream, and the flip is conditional on the turn still running, so it must come first
   await db
     .updateTable("core_ai_chat_turns")
     .set({

@@ -1,3 +1,4 @@
+import { groupListRows } from "@cobblr/platform-contract/grouped-list";
 // Entity-kind resolvers for sales — let other modules + core-views read
 // customers / orders / line items via platform().entities without our tables.
 
@@ -26,7 +27,7 @@ export function registerSalesResolvers(): void {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<SalesDB>;
     let q = db.selectFrom("sales_customers").selectAll();
     if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "email", "phone", "address", "notes"], json: ["metadata"] })!);
-    const rows = await q.orderBy("name").limit(Math.min(query.limit ?? 50, 200)).offset(query.offset ?? 0).execute();
+    const rows = (await groupListRows(db, q.orderBy("name"), query)) ?? await q.orderBy("name").limit(Math.min(query.limit ?? 50, 200)).offset(query.offset ?? 0).execute();
     return { items: rows.map((row) => ({ kind: "sales:customer", id: row.id, title: row.name, detailUrl: `/sales/customers/${row.id}`, fields: { ...row } as Record<string, unknown> })) };
   });
 
@@ -61,7 +62,7 @@ export function registerSalesResolvers(): void {
     const orderId = query.filter?.order_id;
     if (typeof orderId === "string") q = q.where("order_id", "=", orderId);
     if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["description"], json: ["metadata"] })!);
-    const rows = await q.orderBy("created_at", "desc").limit(Math.min(query.limit ?? 50, 200)).offset(query.offset ?? 0).execute();
+    const rows = (await groupListRows(db, q.orderBy("created_at", "desc"), query)) ?? await q.orderBy("created_at", "desc").limit(Math.min(query.limit ?? 50, 200)).offset(query.offset ?? 0).execute();
     return { items: rows.map(itemToResolved) };
   });
 }
@@ -72,7 +73,7 @@ async function listOrders(orgId: string, query: EntityListQuery, instance: strin
   const status = query.filter?.status;
   if (typeof status === "string") q = q.where("status", "=", status as never);
   if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["customer_name", "order_number", "notes", "shipping_address"], json: ["metadata"] })!);
-  const rows = await q.orderBy("order_date", "desc").limit(Math.min(query.limit ?? 50, 200)).offset(query.offset ?? 0).execute();
+  const rows = (await groupListRows(db, q.orderBy("order_date", "desc"), query)) ?? await q.orderBy("order_date", "desc").limit(Math.min(query.limit ?? 50, 200)).offset(query.offset ?? 0).execute();
   return { items: rows.map(orderToResolved) };
 }
 

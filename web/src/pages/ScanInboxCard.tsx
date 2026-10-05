@@ -28,7 +28,7 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, CheckCircle, ChevronDown, Download, ExternalLink, Flag, Image as ImageIcon, ImagePlus, Library, Loader2, MapPin, MoreHorizontal, Pencil, RefreshCw, RotateCcw, ScanLine, Scissors, Sparkles, X, Database } from "lucide-react";
 import { } from "../components/ScanImportModal";
-import { placeOf } from "../lib/sessionPlaceSuggestion";
+import { suggestedPlace } from "../lib/sessionPlaceSuggestion";
 import { } from "../components/ExportInboxModal";
 import { CameraCaptureSheet } from "../components/CameraCaptureSheet";
 import { ContributedDetailPanels } from "../panels/registry";
@@ -48,7 +48,7 @@ import { fieldsStillOnTable, fieldsNoLongerOnTable, isQuietDefault, isImpliedByP
 import { canRerunLookup } from "../lib/scanRerun";
 import { headingSaysItAll, namelessReason, namelessRemedy } from "../lib/identifySentence";
 import { namelessCard } from "../lib/namelessCard";
-import { fallbackChip, type IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
+import { fallbackChip, identifyFailureWords, type IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
 import { TrackedMatchBanner, TrackedMatchLine } from "../components/TrackedMatchBanner";
 import { scanCountVerb, useScanCountSave } from "../components/ScanCountBlock";
 import { addedPlaceSentence } from "../lib/scan-place-words";
@@ -123,7 +123,7 @@ import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { useAuth } from "../auth/AuthContext";
 import { type ScanTarget } from "./scanInboxShared";
 import { ScanNameItInline as NameItInline } from "../components/ScanNameItInline";
-import { LOOKUP_GAVE_UP, RECEIPT_READ_AGAIN, RECEIPT_UNREAD_SENTENCE, STORE_CODE_TITLE, RECEIPT_READ_ANYWAY, receiptAlreadyInSentence } from "@cobblr/platform-contract/scan-copy";
+import { LOOKUP_GAVE_UP, RECEIPT_READ_AGAIN, RECEIPT_UNREAD_SENTENCE, RECEIPT_READ_ANYWAY, classifiedCodeOf, receiptAlreadyInSentence } from "@cobblr/platform-contract/scan-copy";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
@@ -803,8 +803,17 @@ export function InboxCard({
   // retry worker stamps ai_suggested_at when it gives up, which is what
   // needsName reads.
   const cantIdentify = needsName;
-  const storeCode =
-    (item.suggested_metadata as { code_type?: string } | null)?.code_type === "store-code";
+  // A place the system offers, with why; none when no reason is recorded
+  // (lib/sessionPlaceSuggestion, #4933).
+  const suggested = suggestedPlace(item);
+  // A code no catalog looks up, by the server's classification: a store's
+  // own label, an Amazon FNSKU (#4933). One reader for the card and the sheet.
+  const classified = classifiedCodeOf(item.suggested_metadata);
+  const storeCode = !!classified;
+  // Of those, the ones nothing can EVER look up (a shop's own label, an
+  // Amazon label): a retry would only ask again. An ISBN, an ASIN or a link
+  // can answer later (a catalog outage), so they keep their retry.
+  const neverLookedUp = classified?.type === "store-code" || classified?.type === "fnsku";
   // The matchmaker THREW for this item: the backend stamps match_failed (+
   // matched_at, so the pulse stops) — but the row then read as SETTLED with a
   // name, zero candidates, and no error anywhere, while File-all silently
@@ -847,7 +856,7 @@ export function InboxCard({
   // The reason is deterministic: a store's own code, or a web guess held
   // back. No AI was asked and failed, so no line says the AI could not read
   // it and no Retry is offered (#3017).
-  const deterministicMiss = lookupSettledNameless && (storeCode || heldWebGuess);
+  const deterministicMiss = lookupSettledNameless && (neverLookedUp || heldWebGuess);
   const identifyFailed =
     item.status === "pending" && !item.suggested_name && (!!(item.suggested_metadata as { identify_failure?: unknown } | null)?.identify_failure || (lookupSettledNameless && !deterministicMiss));
   // A human who pressed "Looks fine" clears the review flag — and with it the
@@ -2383,7 +2392,7 @@ export function InboxCard({
     const filedInto = item.target_location_id ? (cardLocs.data?.items ?? []).find((l) => l.id === item.target_location_id) : null;
     if (filedInto) segs.push(`📍 ${filingLabel(filedInto)}`);
     else if (item.scan_area) segs.push(`📍 ${item.scan_area}`);
-    else if (item.suggested_location_id) segs.push(`📍 ${placeOf(item.suggested_location_note) ?? "a suggested place"} · suggested`);
+    else if (suggested) segs.push(`📍 ${suggested.place} · ${suggested.why}`);
     const ps = (item.suggested_metadata as { pack_size?: number } | null)?.pack_size;
     if (ps) segs.push(`${ps}-pack`);
     if (boxState) segs.push(boxState === "empty-box" ? "📦 empty box" : "📦 in box");
@@ -2871,11 +2880,21 @@ export function InboxCard({
               </span>
             ) : cantIdentify && namelessWhy === "receipt-unread" && receiptBlock ? (
               <ScanReceiptUnread {...receiptBlock} compact />
-            ) : cantIdentify && namelessWhy === "store-code" ? (
-              // A shop's own label (the server classified it): nothing to
-              // look up, so "couldn't identify" would be the wrong story.
-              <span className="text-muted" title={STORE_CODE_TITLE}>
-                A store's own code, nothing to look up. Name it:
+            ) : cantIdentify && namelessWhy === "classified-code" && classified ? (
+              // A code the server classified (a shop's own label, an Amazon
+              // label): nothing to look up, so "couldn't identify" would be
+              // the wrong story.
+              <span className="text-muted" title={classified.title} data-testid="classified-code">
+                {classified.line}
+                {/* Why the label could not be read, by its class: the AI
+                    could not be reached, or it could not read the text
+                    (#4933). Never "the AI could not read this one" about a
+                    read that did not happen. */}
+                {identifyFailure && (
+                  <span className="block text-[11px] text-faint" data-testid="classified-code-why">
+                    {identifyFailureWords(identifyFailure).sentence}
+                  </span>
+                )}
               </span>
             ) : cantIdentify && namelessWhy === "unresolved-code" ? (
               // No catalog knows the code and the web guess was held back
@@ -3646,7 +3665,7 @@ export function InboxCard({
                           none of them - it lived in the expanded view, and the
                           header said "Location" in amber over twelve items that
                           all had one (2026-09-06). */}
-                      {!formOpen && item.suggested_location_id && !item.target_location_id && (
+                      {!formOpen && suggested && !item.target_location_id && (
                         <button
                           type="button"
                           onClick={(e) => {
@@ -3658,7 +3677,11 @@ export function InboxCard({
                           title={`${item.suggested_location_note ?? "Suggested spot"} - Add and File all put it here; tap to set it now`}
                         >
                           <MapPin size={11} className="shrink-0" />
-                          <span className="truncate">{item.suggested_location_note?.split(" — ")[0] ?? "Suggested spot"}</span>
+                          <span className="truncate">
+                            {suggested.place}
+                            {/* Why, in the card's own words (#4933). */}
+                            <span className="text-moss-700/80 dark:text-moss-400/80"> · {suggested.why}</span>
+                          </span>
                         </button>
                       )}
                       {!formOpen && noPictureFound && !unsaved && (
@@ -5341,9 +5364,10 @@ function ConfirmForm({
   // banner under the source data and "Put it where suggested" under More,
   // and both did exactly this write. The destination and its reason are
   // said here; the same picker above is how to choose otherwise.
-  const suggestedSpot = item.suggested_location_id && !item.target_location_id && !locationId ? item.suggested_location_id : null;
-  const suggestedNote = item.suggested_location_note ?? "";
-  const [suggestedName, suggestedWhy] = suggestedNote.includes(" — ") ? suggestedNote.split(" — ", 2) as [string, string] : [suggestedNote || "the suggested spot", ""];
+  const offered = suggestedPlace(item);
+  const suggestedSpot = offered && !item.target_location_id && !locationId ? offered.id : null;
+  const suggestedName = offered?.place ?? "";
+  const suggestedWhy = offered?.why ?? "";
   const putWhereSuggested = () => {
     if (!suggestedSpot) return;
     setLocTouched(true);

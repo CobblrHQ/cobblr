@@ -1,3 +1,4 @@
+import { groupListRows } from "@cobblr/platform-contract/grouped-list";
 // Entity-kind resolver + list resolver for core-tags:tag.
 
 import type { Kysely } from "kysely";
@@ -35,7 +36,7 @@ export function registerTagResolvers(): void {
       const col = spec.replace(/^-/, "");
       sortedQ = sortedQ.orderBy(col as never, desc ? "desc" : "asc");
     }
-    const rows = await sortedQ.limit(limit).offset(offset).execute();
+    const rows = (await groupListRows(db, sortedQ, query)) ?? await sortedQ.limit(limit).offset(offset).execute();
     return { items: rows.map((r) => toResolvedTag(r)) };
   });
 }

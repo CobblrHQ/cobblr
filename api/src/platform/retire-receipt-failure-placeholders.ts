@@ -27,6 +27,7 @@ import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { getTenantDb, evictTenantPool } from "../db/tenant.js";
 import { noteHealShim } from "./heal-shim-log.js";
+import { notePassFailure } from "./pass-failures.js";
 
 export async function retireReceiptFailurePlaceholders(opts: { onlyOrgId?: string } = {}): Promise<{ orgsTouched: number; rowsRetired: number }> {
   if (process.env.COBBLR_SKIP_HISTORICAL_MIGRATIONS === "1" && !opts.onlyOrgId) return { orgsTouched: 0, rowsRetired: 0 };
@@ -86,6 +87,7 @@ export async function retireReceiptFailurePlaceholders(opts: { onlyOrgId?: strin
         console.log(`[reconcile] org ${org_id}: retired ${res.rows.length} receipt-failure placeholder row(s) into the session's read state`);
       }
     } catch (err) {
+      notePassFailure("retireReceiptFailurePlaceholders", org_id, err);
       // One workspace's failure never blocks the rest.
       failed++;
       console.warn(`[reconcile] org ${org_id}: receipt placeholder retirement failed:`, (err as Error)?.message ?? err);

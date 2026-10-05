@@ -408,8 +408,14 @@ appsRouter.post(
         theme: parsed.data.theme ? (JSON.stringify(parsed.data.theme) as unknown as object) : null,
         created_by: user?.id ?? null,
       })
+      // Two creates of one slug at once: the second is refused like the check above.
+      .onConflict((oc) => oc.column("slug").doNothing())
       .returningAll()
-      .executeTakeFirstOrThrow()) as unknown as AppRow;
+      .executeTakeFirst()) as unknown as AppRow | undefined;
+    if (!created) {
+      res.status(409).json({ error: { code: "slug_taken", message: `An app with slug "${parsed.data.slug}" already exists.` } });
+      return;
+    }
     void platform().events.emit("core-apps.app.created", { orgId: tenantContext(req).org.id, appSlug: created.slug, name: created.name, userId: user?.id ?? null });
     res.status(201).json(toFull(created));
   }),

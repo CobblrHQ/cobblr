@@ -468,8 +468,12 @@ export function registerShareOfferOps(): void {
     const row = await meta
       .insertInto("share_offers")
       .values({ link_id: link.id, direction: "in", peer_offer_id: offerId, batch: String(p.batch ?? offerId), title: thing.name.slice(0, 300) })
+      // The same offer delivered twice at once (an outbox retry racing its
+      // first try): it landed once, and the second has nothing to do.
+      .onConflict((oc) => oc.columns(["link_id", "peer_offer_id"]).where("peer_offer_id", "is not", null).doNothing())
       .returning("id")
-      .executeTakeFirstOrThrow();
+      .executeTakeFirst();
+    if (!row) return;
     const [landed] = await intake().receive(link.org_id, {
       session: { key: `share:${link.id}:${String(p.batch ?? offerId)}`, label: `Offered by ${from}`, from },
       things: [{ offer_id: row.id, thing }],

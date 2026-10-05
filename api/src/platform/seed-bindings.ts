@@ -35,6 +35,7 @@
 
 import { meta } from "../db/meta.js";
 import { listEntries } from "../modules/registry.js";
+import { notePassFailure } from "./pass-failures.js";
 
 function keyOf(orgId: string, sourceKind: string, actionId: string, triggerEvent: string | null, moduleName: string): string {
   return [orgId, sourceKind, actionId, triggerEvent ?? "", moduleName].join("\u0000");
@@ -85,6 +86,7 @@ export async function backfillDefaultBindings(): Promise<number> {
       total += missing.length;
       console.log(`[seed-bindings] org ${r.org_id}: added ${missing.length} default wire(s) for ${r.module_name}`);
     } catch (err) {
+      notePassFailure("backfillDefaultBindings", r.org_id, err);
       console.error(`[seed-bindings] backfill failed for org ${r.org_id} / module ${r.module_name}:`, err);
     }
   }

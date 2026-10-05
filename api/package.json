@@ -33,6 +33,7 @@
     "multer": "^2.0.0",
     "node-pg-migrate": "^7.9.1",
     "nodemailer": "^8.0.9",
+    "openid-client": "^6.8.8",
     "pg": "^8.13.1",
     "pino": "^9.5.0",
     "pino-http": "^10.3.0",

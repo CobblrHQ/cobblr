@@ -22,9 +22,9 @@
 import { useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { changeWorkspaceShape, useToast, SearchInput } from "@cobblr/platform-web";
+import { changeWorkspaceShape, useToast, SearchInput, EntityPhoto } from "@cobblr/platform-web";
 import { FileSpreadsheet, Sparkles, ArrowRight, Loader2, Boxes, Wand2, Plus, ChevronDown, ChevronUp, ScanLine, X, Map as MapIcon } from "lucide-react";
-import { api } from "../lib/api";
+import { api, type ScanInboxItem } from "../lib/api";
 import { useBundleCatalog, type CatalogBundle } from "../lib/useBundleCatalog";
 import { fuzzyMatch } from "../lib/fuzzy";
 import { BundleDetailModal } from "./BundleDetailModal";
@@ -40,6 +40,25 @@ import { itemEnriching } from "../pages/scan-status";
 import { useMaterializeCapture } from "../lib/useMaterializeCapture";
 import { openSheetImport } from "../lib/sheet-import";
 import { withArticle } from "@cobblr/platform-contract/plural";
+
+import { rowPictures, leadYours } from "../lib/rowPictures";
+
+function CaptureThumbnail({ slug, item, name }: { slug: string; item: ScanInboxItem; name: string }) {
+  const pics = rowPictures(slug, item);
+  const picture = leadYours(pics.pictures) ?? pics.pictures.find(p => p.fileId);
+  return <span className="relative h-12 w-12 shrink-0 sm:h-16 sm:w-16">
+    <EntityPhoto src={picture ? pics.src(picture, "thumb") : null} alt={name} fill fit="cover" className="rounded-lg" />
+  </span>;
+}
+
+function captureName(it: ScanInboxItem): string {
+  return it.suggested_candidates?.[0]?.name || it.suggested_name || "Captured item";
+}
+
+function captureTarget(it: ScanInboxItem) {
+  const d = it.resolved_destination;
+  return d ? { target_module: d.module, target_kind: d.kind ?? undefined, ...(d.instance ? { instance: d.instance } : {}) } : {};
+}
 
 function firstSentence(s: string): string {
   const m = s.match(/^.*?[.!?](\s|$)/);
@@ -154,6 +173,7 @@ export function WhatToDoPanel({
   // Capture-first funnel: the building-blocks / all-trackers columns stay
   // hidden until asked for, so the first screen is one question + capture +
   // a short tracker strip (launch-simplification.md §4).
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [moreOpen, setMoreOpen] = useState(false);
 
   // The panel persists once the workspace has content (startCollapsed) so you
@@ -349,6 +369,26 @@ export function WhatToDoPanel({
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't file that"),
   });
+  const batchMut = useMutation({
+    mutationFn: (captures: ScanInboxItem[]) => api.fileScanItems(slug, captures.map(it => it.id), captureTarget(captures[0]!)),
+    onSuccess: (r) => {
+      void qc.invalidateQueries();
+      if (r.failed.length) toast.error(`${r.filed.length} added. ${r.failed.length} could not be added: ${r.failed[0]!.reason}`);
+      else toast.success(`Added ${r.filed.length} items.`);
+    },
+    onError: (e) => { void qc.invalidateQueries(); toast.error(e instanceof Error ? e.message : "Couldn't add those items"); },
+  });
+  const mergeMut = useMutation({
+    mutationFn: (ids: string[]) => api.combineScanItems(slug, ids),
+    onSuccess: () => { void qc.invalidateQueries(); toast.success("Captures merged. You can undo this in the inbox."); },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't merge those captures"),
+  });
+  const addCaptures = (captures: ScanInboxItem[]) => {
+    const d = captures[0]?.resolved_destination;
+    if (d?.bundle_external_id) materialize.start(d.bundle_external_id, captures.map(it => it.id));
+    else if (captures.length > 1) batchMut.mutate(captures);
+    else if (captures[0]) confirmMut.mutate({ id: captures[0].id, body: captureTarget(captures[0]) });
+  };
   // Col 3 for a multi-instance kind: create a new CATEGORY (a named instance) and
   // drop the user in to add items — the kind → category → item model.
   const createInstanceMut = useMutation({
@@ -375,7 +415,7 @@ export function WhatToDoPanel({
         if (heading) {
           await api.addNavHeadingMember(slug, heading.id, { target_kind: "instance", target_id: inst.instance_name });
         }
-      } catch { /* nav grouping is a nicety — never fail the create over it */ }
+      } catch { /* quiet: nav grouping is a nicety; the create succeeded and is what was asked */ }
       return inst;
     }),
     onSuccess: (inst) => {
@@ -568,71 +608,50 @@ export function WhatToDoPanel({
     </Link>
   );
 
-  // One capture card — shared by col 3 (typed) and the scanned queue below.
-  const renderCapture = (it: (typeof items)[number]) => {
-    const c = it.suggested_candidates?.[0];
-    // The table is the row's one destination (#3618); the candidate only
-    // lends the name it read.
-    const d = it.resolved_destination ?? null;
-                  const stale = Date.now() - new Date(it.created_at).getTime() > 45_000;
-                  const done = !!it.ai_suggested_at || stale;
-                  const needsName = done && !c && !it.suggested_name && !!it.ai_suggested_at;
-                  const name = c?.name || it.suggested_name || (needsName ? "Couldn’t identify it" : "Captured item");
-                  // The row's own progress, by the inbox's one rule (#3049): the
-                  // card used to say "looks like Inventory" the moment the match
-                  // landed while the identify and the picture were still running.
-                  const enriching = itemEnriching(it);
-                  const removing = discardMut.isPending && discardMut.variables === it.id;
-                  const filing = confirmMut.isPending && confirmMut.variables?.id === it.id;
-                  const making = !!d?.bundle_external_id && materialize.busy(d.bundle_external_id);
-                  const ctaCls = "shrink-0 inline-flex items-center gap-1 rounded-md text-xs font-medium px-2.5 py-1 transition disabled:opacity-50";
-                  return (
-                    <li key={it.id} data-testid="captured-item" className="rounded-lg border border-line dark:border-slate-800 bg-surface dark:bg-slate-900 px-3 py-2">
-                      <div className="flex items-center gap-2">
-                        {/* The way in: the row itself, on the inbox (the item
-                            screen on a phone, the card on a desk). */}
-                        <Link
-                          to={`/scan?item=${it.id}`}
-                          data-testid="captured-item-link"
-                          className="flex-1 min-w-0 truncate text-sm font-medium text-content dark:text-mortar-100 hover:text-accent transition"
-                        >
-                          {name}
-                        </Link>
-                        <button type="button" disabled={removing} onClick={() => discardMut.mutate(it.id)} title="Remove" className="shrink-0 rounded p-1 text-faint hover:text-content dark:hover:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-50">
-                          {removing ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}
-                        </button>
-                      </div>
-                      {needsName ? (
-                        <NameIt slug={slug} itemId={it.id} />
-                      ) : (
-                        <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                          <span className="flex-1 min-w-0 basis-40 truncate text-xs text-faint dark:text-slate-400">
-                            {enriching ? (
-                              <span className="inline-flex items-center gap-1" data-testid="captured-item-progress">
-                                <Loader2 size={11} className="animate-spin" />
-                                {d ? <>looks like <span className="text-accent">{d.label}</span>, still filling in…</> : it.suggested_name ? "looking it up…" : "finding a home…"}
-                              </span>
-                            ) : d ? <>looks like <span className="text-accent">{d.label}</span></>
-                              : done ? "no match, save it as a general item"
-                              : <span className="inline-flex items-center gap-1"><Loader2 size={11} className="animate-spin" /> finding a home…</span>}
-                          </span>
-                          {d?.bundle_external_id ? (
-                            <button type="button" disabled={making} onClick={() => materialize.start(d.bundle_external_id!)} className={ctaCls + " bg-cobble-600 text-white hover:bg-cobble-700"}>
-                              {making ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />} Create {d.label}
-                            </button>
-                          ) : d ? (
-                            <button type="button" disabled={filing} onClick={() => confirmMut.mutate({ id: it.id, body: { target_module: d.module, target_kind: d.kind ?? undefined, ...(d.instance ? { instance: d.instance } : {}) } })} className={ctaCls + " bg-cobble-600 text-white hover:bg-cobble-700"}>
-                              {filing ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />} Add to {d.label}
-                            </button>
-                          ) : done ? (
-                            <button type="button" disabled={filing} onClick={() => confirmMut.mutate({ id: it.id, body: {} })} className={ctaCls + " border border-cobble-300 dark:border-cobble-700 text-content dark:text-mortar-100 hover:border-cobble-400"}>
-                              {filing ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Save to Inventory
-                            </button>
-                          ) : null}
-                        </div>
-                      )}
-                    </li>
-    );
+  const groups = new Map<string, { label: string; captures: ScanInboxItem[]; rows: Map<string, ScanInboxItem[]> }>();
+  for (const it of typed) {
+    const d = it.resolved_destination;
+    const key = JSON.stringify([d?.module, d?.kind, d?.instance, d?.bundle_external_id]);
+    let group = groups.get(key);
+    if (!group) { group = { label: d?.label || "Inventory", captures: [], rows: new Map() }; groups.set(key, group); }
+    group.captures.push(it);
+    const name = captureName(it);
+    const rowKey = it.suggested_name || it.suggested_candidates?.[0]?.name ? name : it.id;
+    const rows = group.rows.get(rowKey) ?? [];
+    rows.push(it);
+    group.rows.set(rowKey, rows);
+  }
+  const orderedGroups = [...groups.entries()].sort(([aKey, a], [bKey, b]) => b.captures.length - a.captures.length || a.label.localeCompare(b.label) || aKey.localeCompare(bKey));
+  const renderCapture = (captures: ScanInboxItem[], headerLabel: string) => {
+    const it = captures[0]!;
+    const d = it.resolved_destination;
+    const name = captureName(it);
+    const label = d?.label || "Inventory";
+    const title = captures.length > 1 ? `${name} ×${captures.length}` : name;
+    const enriching = itemEnriching(it);
+    const done = !!it.ai_suggested_at || Date.now() - new Date(it.created_at).getTime() > 45_000;
+    const needsName = done && !it.suggested_candidates?.length && !it.suggested_name && !!it.ai_suggested_at;
+    const busy = discardMut.isPending || batchMut.isPending || confirmMut.isPending || mergeMut.isPending || (!!d?.bundle_external_id && materialize.busy(d.bundle_external_id));
+    const open = expanded.has(it.id);
+    return <li key={it.id}>
+      <div data-testid="captured-item" className="flex min-w-0 items-center gap-2 rounded-lg bg-surface px-1 py-2 dark:bg-slate-900">
+        <CaptureThumbnail slug={slug} item={it} name={name} />
+        <div className="min-w-0 flex-1">
+          {captures.length > 1 ? <button type="button" aria-expanded={open} aria-controls={`captures-${it.id}`} aria-label={`${open ? "Collapse" : "Expand"} ${title}`} onClick={() => setExpanded(prev => { const next = new Set(prev); if (open) next.delete(it.id); else next.add(it.id); return next; })} className="flex w-full min-w-0 items-center gap-1 text-left text-sm font-medium text-content hover:text-accent">
+            <span className="line-clamp-2 min-w-0 break-words sm:line-clamp-1">{name}</span><span className="shrink-0"> ×{captures.length}</span>{open ? <ChevronUp size={12} className="shrink-0" /> : <ChevronDown size={12} className="shrink-0" />}
+          </button> : <Link to={`/scan?item=${it.id}`} data-testid="captured-item-link" className="line-clamp-2 break-words sm:line-clamp-1 text-sm font-medium text-content hover:text-accent">{name}</Link>}
+          {label !== headerLabel && <span data-testid="capture-destination" className="mt-1 inline-block max-w-full truncate rounded bg-subtle px-1.5 py-0.5 text-[11px] text-muted dark:bg-slate-800">{label}</span>}
+          {enriching && <span data-testid="captured-item-progress" className="block truncate text-[11px] text-faint">{d ? "still filling in…" : it.suggested_name ? "looking it up…" : "finding a home…"}</span>}
+        </div>
+        {(d || done) && !needsName && <button type="button" disabled={busy} aria-label={`${d?.bundle_external_id ? "Create" : "Add"} ${title} to ${label}`} onClick={() => addCaptures(captures)} className="shrink-0 rounded-md bg-cobble-600 px-2 py-2 text-xs font-medium text-white hover:bg-cobble-700 disabled:opacity-50">{busy ? <Loader2 size={14} className="animate-spin" /> : d?.bundle_external_id ? "Create" : "Add"}</button>}
+        <button type="button" disabled={discardMut.isPending || busy} aria-label={`Dismiss ${captures.length > 1 ? `one ${name} capture` : name}`} title={`Dismiss ${captures.length > 1 ? `one ${name} capture` : name}`} onClick={() => discardMut.mutate(it.id)} className="shrink-0 rounded p-2 text-faint hover:bg-subtle hover:text-content disabled:opacity-50"><X size={14} /></button>
+      </div>
+      {needsName && <NameIt slug={slug} itemId={it.id} />}
+      {captures.length > 1 && open && <div id={`captures-${it.id}`} className="pl-2">
+        <ul>{captures.map(item => renderCapture([item], headerLabel))}</ul>
+        <button type="button" disabled={busy} aria-label={`Same item? Merge ${name}`} onClick={() => mergeMut.mutate(captures.map(item => item.id))} className="px-2 py-2 text-xs text-accent hover:underline disabled:opacity-50">Same item? Merge</button>
+      </div>}
+    </li>;
   };
 
   return (
@@ -852,11 +871,23 @@ export function WhatToDoPanel({
           {/* What you've added — each capture, its match, and a one-tap CTA to
               give it a home. This is the funnel's payoff: col 3 fills in. */}
           {typed.length > 0 && (
-            <div className="mt-3 border-t border-line dark:border-slate-800 pt-3 space-y-1.5">
+            <div data-testid="capture-panel" className="mt-3 min-w-0 space-y-3 rounded-xl border border-line bg-surface/60 p-3 dark:border-slate-700 dark:bg-slate-900/40">
               <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">what you've added ({typed.length})</div>
-              <ul className="space-y-1.5">
-                {typed.map(renderCapture)}
-              </ul>
+              <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+                {orderedGroups.map(([key, group]) => {
+                  const d = group.captures[0]!.resolved_destination;
+                  return <section key={key} aria-label={group.label} data-testid="capture-group" className="min-w-0">
+                    <div className="flex min-w-0 items-center justify-between gap-2 py-1">
+                      <div className="min-w-0">
+                        <h3 className="truncate text-[10px] font-mono uppercase tracking-widest text-accent">{group.label} · {group.captures.length}</h3>
+                        {d?.bundle_external_id && <p className="text-[11px] text-faint">Collection will be created</p>}
+                      </div>
+                      {d && <button type="button" aria-label={`Add all ${group.captures.length} to ${group.label}`} disabled={discardMut.isPending || batchMut.isPending || confirmMut.isPending || mergeMut.isPending || (!!d.bundle_external_id && materialize.busy(d.bundle_external_id))} onClick={() => addCaptures(group.captures)} className="shrink-0 rounded px-2 py-2 text-xs font-medium text-accent hover:bg-subtle disabled:opacity-50">Add all {group.captures.length}</button>}
+                    </div>
+                    <ul>{[...group.rows.values()].map(captures => renderCapture(captures, group.label))}</ul>
+                  </section>;
+                })}
+              </div>
             </div>
           )}
         </div>

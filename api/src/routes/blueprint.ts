@@ -538,10 +538,15 @@ export async function applyBlueprint(
             bundle_id: null,
             source_module: null,
           } as never)
+          // A default view the workspace already has (a second import at once):
+          // kept, and this one is not made twice.
+          .onConflict((oc) => oc.doNothing())
           .returning("id")
           .executeTakeFirst();
-        if (row?.id) viewIdByName.set(key, row.id);
-        result.created_saved_views++;
+        if (row?.id) {
+          viewIdByName.set(key, row.id);
+          result.created_saved_views++;
+        }
       }
       // 7. Public surfaces — resolve the view by name, mint a FRESH token
       //    (public slugs must never be shared across workspaces).

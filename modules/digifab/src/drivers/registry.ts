@@ -9,6 +9,7 @@ import type { DigifabDB } from "../db.js";
 import type { ManagerConfig, MachineDriver } from "./types.js";
 import { fdmMonsterFactory } from "./fdm-monster.js";
 import { MockDriver } from "./mock.js";
+import { DirectLaserDriver } from "./direct-laser.js";
 import { DeclarativeDriver } from "./declarative.js";
 import { EdgeAdapterDriver, type EdgeRelay } from "./edge-adapter.js";
 import { BambuCloudDriver } from "./bambu-cloud-driver.js";
@@ -81,7 +82,7 @@ export async function resolveDriver(
           /* the upgraded copy still drives this request; the write retries next build */
         });
     }
-    return new DeclarativeDriver(manifest, cfg);
+    return manifest.laser ? new DirectLaserDriver(manifest, cfg) : new DeclarativeDriver(manifest, cfg);
   }
   throw new Error(`driver kind "${row.kind}" is not supported yet`);
 }

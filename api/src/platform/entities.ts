@@ -1,3 +1,7 @@
+import { GroupingError, normalizeGrouping } from "@cobblr/platform-contract/grouped-list";
+import { moneyStorageOf } from "@cobblr/platform-contract/money";
+import { resolveFieldDefsForKind } from "./field-defs.js";
+import { currency as workspaceCurrency } from "./money.js";
 // Entity Kind Registry runtime. Two responsibilities:
 //
 //   1. The cobblr_meta.entity_kinds table is the source of truth
@@ -18,6 +22,7 @@ import { deletionWriter } from "./deleted-records.js";
 import { historyWriter } from "./history-writes.js";
 import { noteResolverFailure } from "./resolver-failures.js";
 import { sql } from "kysely";
+import { perRequest } from "../lib/request-context.js";
 import type {
   EntityKindRecord,
   EntityInstanceListResolver,
@@ -30,14 +35,14 @@ import type {
   ResolvedEntity,
 } from "@cobblr/platform-contract";
 import { walkListPages } from "./entity-list-walk.js";
-import { TRAIT_PRESETS, stockDisclosureFromConfig, traitAxisValue, type EntityViewer, type FilterPredicate } from "@cobblr/platform-contract";
+import { platform, TRAIT_PRESETS, stockDisclosureFromConfig, traitAxisValue, type EntityViewer, type FilterPredicate } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { instanceKindName } from "./instance-kind.js";
 import { INSTANCE_ITEM_DETAIL, resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 import { recordAddress } from "@cobblr/platform-contract/record-address";
 import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
 import { IMPLICIT_EXPOSABLE_PROPS } from "@cobblr/platform-contract/entity-metadata";
-import { canonicalModuleName, getEntry } from "../modules/registry.js";
+import { canonicalModuleName, getEntry, list as listManifests } from "../modules/registry.js";
 import { assertModulesMounted } from "../modules/mount-state.js";
 
 // Re-export so callers reaching detail-path logic through `entities` keep working
@@ -100,13 +105,40 @@ export async function baseKindOf(orgId: string, kind: string): Promise<string> {
  *  named instance it lives in (null for a module's own kind, or for an
  *  instance name this workspace does not have). Registry first, because a
  *  genuine module kind can look like an instance one (`lists:item`). */
-export async function resolveKind(orgId: string, kind: string): Promise<{ base: string; instance: string | null }> {
-  const registered = await meta
+/** The registered kinds and each module's primary kind, read once and kept.
+ *  resolveKind runs per record, and it asked the database "is this a
+ *  registered kind?" every time: a list or a batch of a few hundred records
+ *  queued 333 callers on the 80-client meta pool in CI (run 36982, #4876),
+ *  every holder that same one-row lookup. The registry changes only when
+ *  syncManifestRegistries writes it (boot, a module installed), which clears
+ *  this; a minute's age bounds what another api process's sync can leave
+ *  stale here. */
+type KindRegistry = { at: number; ids: Set<string>; primaryByModule: Map<string, string> };
+let kindRegistry: KindRegistry | null = null;
+let kindRegistryLoading: Promise<KindRegistry> | null = null;
+const KIND_REGISTRY_MAX_AGE_MS = 60_000;
+
+async function kindRegistryNow(): Promise<KindRegistry> {
+  if (kindRegistry && Date.now() - kindRegistry.at < KIND_REGISTRY_MAX_AGE_MS) return kindRegistry;
+  kindRegistryLoading ??= meta
     .selectFrom("entity_kinds")
-    .select("id")
-    .where("id", "=", kind)
-    .executeTakeFirst();
-  if (registered) return { base: kind, instance: null };
+    .select(["id", "module_name", "is_primary"])
+    .execute()
+    .then((rows) => {
+      const primaryByModule = new Map<string, string>();
+      for (const r of rows) if (r.is_primary && !primaryByModule.has(r.module_name)) primaryByModule.set(r.module_name, r.id);
+      kindRegistry = { at: Date.now(), ids: new Set(rows.map((r) => r.id)), primaryByModule };
+      return kindRegistry;
+    })
+    .finally(() => {
+      kindRegistryLoading = null;
+    });
+  return kindRegistryLoading;
+}
+
+export async function resolveKind(orgId: string, kind: string): Promise<{ base: string; instance: string | null }> {
+  const registry = await kindRegistryNow();
+  if (registry.ids.has(kind)) return { base: kind, instance: null };
 
   const name = instanceKindName(kind);
   if (!name) return { base: kind, instance: null };
@@ -118,15 +150,9 @@ export async function resolveKind(orgId: string, kind: string): Promise<{ base: 
     .executeTakeFirst();
   if (!inst) return { base: kind, instance: null };
 
-  const primary = await meta
-    .selectFrom("entity_kinds")
-    .select("id")
-    .where("module_name", "=", inst.module_name)
-    .where("is_primary", "=", true)
-    .executeTakeFirst();
   // A module with no primary kind (lists) leaves the kind as-is rather than
   // guessing one of several; the instance is still the instance.
-  return { base: primary?.id ?? kind, instance: name };
+  return { base: registry.primaryByModule.get(inst.module_name) ?? kind, instance: name };
 }
 
 /** For a `<name>:item` kind with no exact single-entity resolver, find the
@@ -248,6 +274,25 @@ export interface ViewerReadScope {
 const SYSTEM_READ_SCOPE: ViewerReadScope = { all: true, caps: new Set() };
 
 
+/** The fields a reader may see on THIS workspace's records: the kind's
+ *  exposable fields, and, for the person's own assistant, the fields the kind
+ *  lets that assistant read too (a part's notes, #4798). Never used for a
+ *  linked workspace's records, which keep the plain whitelist. */
+async function ownWhitelist(orgId: string, kind: string, whitelist: string[] | null, viewer?: EntityViewer): Promise<string[] | null> {
+  if (!viewer?.assistant || whitelist === null) return whitelist;
+  const base = await baseKindOf(orgId, kind).catch(() => kind);
+  const extra = assistantReadableFieldsOf(kind) ?? assistantReadableFieldsOf(base) ?? [];
+  return extra.length ? [...new Set([...whitelist, ...extra])] : whitelist;
+}
+
+function assistantReadableFieldsOf(kind: string): string[] | null {
+  for (const m of listManifests()) {
+    const k = (m.provides?.entityKinds ?? []).find((x) => x.id === kind);
+    if (k) return k.assistantReadableFields ?? null;
+  }
+  return null;
+}
+
 async function getExposableFields(kind: string): Promise<string[] | null> {
   if (exposableFieldsCache.has(kind)) {
     return exposableFieldsCache.get(kind) ?? null;
@@ -288,12 +333,17 @@ async function getFieldReadScopes(
     fieldReadScopesCache.set(kind, manifest);
   }
   if (!orgId) return manifest;
-  const perOrg = await meta
-    .selectFrom("workspace_field_scopes")
-    .select(["field", "capability"])
-    .where("org_id", "=", orgId)
-    .where("kind", "=", kind)
-    .execute();
+  // Once per request, not once per row: this ran for every record of a list
+  // and was half of a meta-pool burst in CI (#4876). Still read fresh on the
+  // next request, so an admin's edit takes effect at once.
+  const perOrg = await perRequest(`field-scopes:${orgId}:${kind}`, () =>
+    meta
+      .selectFrom("workspace_field_scopes")
+      .select(["field", "capability"])
+      .where("org_id", "=", orgId)
+      .where("kind", "=", kind)
+      .execute(),
+  );
   if (perOrg.length === 0) return manifest;
   const merged: Record<string, string> = { ...(manifest ?? {}) };
   for (const r of perOrg) merged[r.field] = r.capability; // per-org wins
@@ -475,6 +525,7 @@ export function clearEnabledModulesCache(orgId?: string): void {
  *  of registry-sync so the next lookup reads the freshly-written
  *  whitelist. */
 export function clearExposableFieldsCache(): void {
+  kindRegistry = null;
   exposableFieldsCache.clear();
   fieldReadScopesCache.clear();
   legacyWarnedKinds.clear();
@@ -604,7 +655,8 @@ export async function lookup(
       // override, computed fields on an instance never resolve. The exposable
       // whitelist above was already computed from the requested kind, so this is
       // consistent.
-      const projected = { ...applyExposableProjection(resolved, whitelist, fieldReadScopes, systemScope, publicRead), kind };
+      const own = await ownWhitelist(orgId, kind, whitelist, viewer);
+      const projected = { ...applyExposableProjection(resolved, own, fieldReadScopes, systemScope, publicRead), kind };
       return applyServedTitle(await applyMemberFields(orgId, await applyRelationFields(orgId, await applyComputedFields(orgId, await applyCustomFieldValues(orgId, projected))), { publicRead }));
     }
   } catch (err) {
@@ -888,6 +940,35 @@ export async function list(
       : { all: false, caps: new Set() };
   }
 
+  const by = normalizeGrouping(query.group_by);
+  if (by.length) {
+    const record = (await listKindsForOrg(orgId)).find((k) => k.id === kind);
+    if (!record) throw new GroupingError("This collection is not available.");
+    const hidden = await hiddenFieldsFor(orgId, kind, viewer ?? {});
+    const own = await ownWhitelist(orgId, kind, whitelist, viewer);
+    const allowed = (name: string) => !hidden.has(name) && (!own || own.includes(name) || own.includes("metadata"));
+    const defs = [...record.fields, ...(await resolveFieldDefsForKind(orgId, kind)), { name: "created_at", type: "datetime" }, { name: "updated_at", type: "datetime" }];
+    for (const group of by) {
+      const def = defs.find((f) => f.name === group.field);
+      if (group.field !== "title" && group.field !== "location" && (!def || !allowed(group.field) || !["text", "select", "boolean", "relation", "date", "datetime", "string", "enum", "entity"].includes(def.type))) throw new GroupingError("Choose a readable text, select, linked record, date or boolean column.");
+      if (group.field === "location" && (!allowed("location_name") || hidden.has("location_id"))) throw new GroupingError("Choose a location field you can read.");
+      if (group.bucket && (!def || !["date", "datetime"].includes(def.type))) throw new GroupingError("Date buckets need a date column.");
+    }
+    if (Object.keys(query.filter ?? {}).some((f) => hidden.has(f)) || query.where?.some((p) => hidden.has(p.col) || (p.ref_col && hidden.has(p.ref_col)))) throw new GroupingError("A grouped view cannot filter by a field you cannot read.");
+    const fields = new Map<string, { name: string; money?: "amount" | "cents" }>();
+    for (const f of defs) {
+      if (!allowed(f.name)) continue;
+      const money = moneyStorageOf(f);
+      if (money || f.type === "number") fields.set(f.name, { name: f.name, ...(money ? { money } : {}) });
+    }
+    const hasStock = record.fields.some((f) => f.name === "spare_qty");
+    const places = hasStock || by.some((g) => g.field === "location") ? await platform().placement.groupValues({ orgId, kind }) : undefined;
+    const stock = hasStock ? places?.numbers : undefined;
+    const hideFlag = query.filter?.hide_unavailable;
+    const hideUnavailable = hideFlag === true || hideFlag === "true" || hideFlag === "1";
+    query = { ...query, q: undefined, group_plan: { by, fields: [...fields.values()], currency: await workspaceCurrency(orgId), ...(stock ? { numbers: stock, ...(hideUnavailable ? { where: sql<boolean>`${stock.spare_qty!} > 0` } : {}) } : {}), ...(by.some((g) => g.field === "location") ? { values: places?.values } : {}), search: query.q, search_fields: [...new Set(["name", ...defs.filter((f) => allowed(f.name)).map((f) => f.name)])] } };
+  }
+
   // Own-workspace results first.
   let items: ResolvedEntity[] = [];
   let total: number | undefined;
@@ -903,7 +984,8 @@ export async function list(
     // A search matches the whole row, hidden fields included, so a row the
     // reader can see only because a field they may not read matched would
     // tell them what that field says. Those rows are left out.
-    const rows = query.q && fieldReadScopes ? result.items.filter((r) => !matchedOnlyWhatIsHidden(r, query.q!, whitelist, fieldReadScopes, readScope, publicRead)) : result.items;
+    const own = await ownWhitelist(orgId, kind, whitelist, viewer);
+    const rows = query.q && fieldReadScopes ? result.items.filter((r) => !matchedOnlyWhatIsHidden(r, query.q!, own, fieldReadScopes, readScope, publicRead)) : result.items;
     items = await Promise.all(
       rows.map(async (r) =>
         applyServedTitle(await applyMemberFields(orgId, await applyRelationFields(
@@ -913,15 +995,18 @@ export async function list(
             // Present each row as the REQUESTED kind so computed defs keyed by an
             // instance kind (`<name>:item`) resolve — same override + reasoning as
             // lookup(). No-op for base kinds (resolver already returns them).
-            await applyCustomFieldValues(orgId, { ...applyExposableProjection(r, whitelist, fieldReadScopes, readScope, publicRead), kind }),
+            await applyCustomFieldValues(orgId, { ...applyExposableProjection(r, own, fieldReadScopes, readScope, publicRead), kind }),
           ),
         ), { publicRead })),
       ),
     );
-    total = result.total;
+    // A search's count cannot be told when rows were left out for matching
+    // only what the reader may not read: the number would say they matched.
+    total = query.q && fieldReadScopes && rows.length < result.items.length ? undefined : result.total;
   } catch (err) {
     console.error(`[entities] list resolver for ${kind} failed:`, err);
     noteResolverFailure(kind, err);
+    if (by.length) throw err;
     failed = true;
   }
 
@@ -934,6 +1019,7 @@ export async function list(
   // M1 v0.5: min_target_role on the link gates whether viewer
   // qualifies for the share.
   const linkedSources = await activeLinkedSources(orgId, kind, viewer?.userId);
+  if (by.length && linkedSources.length) throw new GroupingError("Grouped views of linked workspaces are not available yet.");
   for (const src of linkedSources) {
     try {
       const result = await resolver(src.id, query);
@@ -970,7 +1056,8 @@ export async function list(
   if (total === undefined && typeof query.limit === "number" && items.length < query.limit && (items.length > 0 || !query.offset)) {
     total = (query.offset ?? 0) + items.length;
   }
-  return { items, total, ...(unapplied ? { unapplied } : {}), ...(failed ? { failed: true as const } : {}) };
+  if (by.length && !query.group_plan?.result) throw new GroupingError("This collection does not support database grouping.");
+  return { items, total, ...query.group_plan?.result, ...(unapplied ? { unapplied } : {}), ...(failed ? { failed: true as const } : {}) };
 }
 
 /** Every record a list query answers, walked a page at a time.

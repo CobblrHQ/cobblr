@@ -26,7 +26,7 @@ export function fleetStatusChip(dev: DigifabFleetDevice | undefined): { label: s
   if (!dev) return { label: "linked", dot: "bg-emerald-500" };
   if (dev.needs_attention) return { label: "needs clearing", dot: "bg-amber-500" };
   const state = dev.active_job?.status === "printing" ? "running" : dev.active_job?.status === "paused" ? "paused" : dev.state.toLowerCase();
-  const laser = dev.id === "lightburn" || !!dev.lightburn_readiness;
+  const laser = !!dev.laser_backend || dev.id === "lightburn" || !!dev.lightburn_readiness;
   if (state === "paused") return { label: "paused", dot: "bg-amber-500" };
   if (state === "printing" || state === "running") {
     const p = dev.active_job?.progress;

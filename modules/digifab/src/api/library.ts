@@ -4,6 +4,7 @@
 // and extracts the thumbnail; "send" creates a normal job that uploads those
 // bytes to the chosen printer/pool (the existing send+poll path).
 
+import { isLayoutFile } from "../laser-plans.js";
 import { Router } from "express";
 import { z } from "zod";
 import { platform, uploadOne } from "@cobblr/platform-contract";
@@ -13,6 +14,7 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 import { extractThumbnail, isLibraryFile } from "../library/extract-thumbnail.js";
 import { extractPlateMetadata } from "../library/extract-metadata.js";
 import { plateView } from "../library/plate-view.js";
+import { LaserMaterialSchema } from "../laser-material.js";
 
 export const libraryRouter = Router({ mergeParams: true });
 
@@ -84,7 +86,7 @@ libraryRouter.post(
   }),
 );
 
-const Rename = z.object({ name: z.string().min(1).max(300).optional(), notes: z.string().max(2000).nullable().optional() });
+const Rename = z.object({ name: z.string().min(1).max(300).optional(), notes: z.string().max(2000).nullable().optional(), laser_material: LaserMaterialSchema.optional() });
 // AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 libraryRouter.patch(
   "/:id",
@@ -95,6 +97,11 @@ libraryRouter.patch(
     const patch: Record<string, unknown> = { updated_at: new Date() };
     if (parsed.data.name != null) patch.name = parsed.data.name;
     if (parsed.data.notes !== undefined) patch.notes = parsed.data.notes;
+    if (parsed.data.laser_material) {
+      const before = await tenantDb(req).selectFrom("digifab_library").select("metadata").where("id", "=", req.params.id!).executeTakeFirst();
+      if (before?.metadata.laser_layout) return void res.status(409).json({ error: { code: "generated_material", message: "This layout keeps the material chosen in its plan. Make a new plan to change it." } });
+      patch.metadata = platform().db.mergeJsonb("metadata", { laser_material: parsed.data.laser_material });
+    }
     const row = await tenantDb(req).updateTable("digifab_library").set(patch).where("id", "=", req.params.id!).returning(ROW).executeTakeFirst();
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "no such library item" } });
     res.json(row);
@@ -106,6 +113,10 @@ libraryRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin")) return;
+    const before = await tenantDb(req).selectFrom("digifab_library").select("metadata").where("id", "=", req.params.id!).executeTakeFirst();
+    if (before?.metadata.laser_layout) return void res.status(409).json({ error: { code: "generated_layout", message: "Keep this run's generated project. Cancel the run to discard its queued jobs." } });
+    const plan = await tenantDb(req).selectFrom("digifab_laser_plans").select("id").where("library_id", "=", req.params.id!).executeTakeFirst();
+    if (plan) return void res.status(409).json({ error: { code: "laser_plan_exists", message: "This drawing belongs to a saved laser layout. Discard unqueued layouts before deleting it. Keep a queued run's source drawing." } });
     const row = await tenantDb(req).deleteFrom("digifab_library").where("id", "=", req.params.id!).returning(["id"]).executeTakeFirst();
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "no such library item" } });
     res.json({ ok: true });
@@ -130,6 +141,7 @@ libraryRouter.post(
     const orgId = tenantContext(req).org.id;
     const item = await db.selectFrom("digifab_library").select(["name", "file_id"]).where("id", "=", req.params.id!).executeTakeFirst();
     if (!item) return void res.status(404).json({ error: { code: "not_found", message: "no such library item" } });
+    if (await isLayoutFile(tenantDb(req), item.file_id)) return void res.status(409).json({ error: { code: "layout_copy", message: "Use this layout's queued sheet job. Make a new plan to cut another batch." } });
     const pool = parsed.data.target_pool ?? null;
     if (!parsed.data.connection_id && !pool) {
       return void res.status(400).json({ error: { code: "no_target", message: "a send needs a connection_id or a target_pool" } });

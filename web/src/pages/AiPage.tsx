@@ -135,6 +135,19 @@ export function AiPage() {
 
       <WhoAnswersSection />
 
+      {/* Said where AI is set up, because the text goes to whichever AI
+          answers (#4798, the owner's decision): the person's own assistant
+          reads their notes, and nothing else does. */}
+      <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4" data-testid="what-cobb-reads">
+        <h2 className="text-sm font-semibold text-content dark:text-mortar-100">What Cobb reads</h2>
+        <p className="text-xs text-muted dark:text-slate-400 mt-1">
+          Cobb can read your notes to answer you, along with the rest of the records you can see. So can an assistant you
+          connect over MCP as yourself. What it reads is sent to the AI that answers. Your notes are never shown to other
+          people, to anyone you share with, or to other features. Turn off &quot;Read my data&quot; in Cobb&apos;s chat to keep
+          it from reading anything.
+        </p>
+      </section>
+
       <AutoPickPhotosSection
         slug={activeSlug}
         canEdit={roleSatisfies(activeOrg?.role, ["owner", "admin"])}

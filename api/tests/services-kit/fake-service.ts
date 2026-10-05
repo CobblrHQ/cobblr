@@ -20,6 +20,9 @@
 //                  "done" | "fail" | "retryable" | "needs_input" | "needs_input_preview" | "hang" | "output_bytes"
 //   slice.model  canned slice (grams_per_tool per filament), slice options
 //   design.part  canned design (report + stl/preview), design options
+//   fake.lookup  SYNC (like parts.search): the submit answer is the finished
+//                job — output {items, total} + previews/p1, previews/p2;
+//                q "nothing" → items []; fail: true → failed busy (retryable)
 import { createHash, randomBytes } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -98,6 +101,31 @@ export interface FakeService {
   close(): Promise<void>;
 }
 
+export const MULTIPLE_CAP = 16;
+const LABEL_RE = /^[a-z0-9_-]{1,40}$/;
+
+/** services.md §3: a plain slot is its name; a `multiple` slot takes `<name>/<label>` keys, up to 16. Undeclared keys are refused. */
+function checkFiles(decls: Array<{ name: string; required?: boolean; multiple?: boolean; max?: number }>, files: Record<string, unknown>) {
+  const plain = new Map(decls.filter((d) => !d.multiple).map((d) => [d.name, d]));
+  const multi = new Map(decls.filter((d) => d.multiple).map((d) => [d.name, d]));
+  const counts = new Map([...multi.keys()].map((k) => [k, 0]));
+  for (const key of Object.keys(files)) {
+    if (plain.has(key)) continue;
+    const i = key.indexOf("/");
+    const slot = i > 0 ? key.slice(0, i) : key;
+    const label = i > 0 ? key.slice(i + 1) : "";
+    if (i > 0 && multi.has(slot) && LABEL_RE.test(label)) { counts.set(slot, counts.get(slot)! + 1); continue; }
+    if (multi.has(slot)) throw new HttpError(400, "unsupported_input", `file ${key}: labels in slot ${slot} must match [a-z0-9_-]{1,40}`);
+    throw new HttpError(400, "unsupported_input", `file ${key} is not declared in files_in`);
+  }
+  for (const [n, c] of counts) {
+    const cap = Math.min(multi.get(n)!.max ?? MULTIPLE_CAP, MULTIPLE_CAP);
+    if (c > cap) throw new HttpError(400, "unsupported_input", `slot ${n} takes at most ${cap} files, got ${c}`);
+    if (multi.get(n)!.required && c === 0) throw new HttpError(400, "unsupported_input", `slot ${n} needs at least one file`);
+  }
+  for (const [n, d] of plain) if (d.required && !(n in files)) throw new HttpError(400, "unsupported_input", `file ${n} is required`);
+}
+
 class HttpError extends Error {
   constructor(public status: number, public code: string, message: string, public retryable = false) { super(message); }
 }
@@ -144,9 +172,21 @@ function buildManifest(version: string, basePath: string, maxFileMb: number, max
           },
         },
         output_schema: { type: "object" },
-        files_in: [{ name: "model", types: fileTypes, required: false }],
+        files_in: [{ name: "model", types: fileTypes, required: false },
+          { name: "refs", types: fileTypes, multiple: true }],
         files_out: [{ name: "result", types: ["application/octet-stream"], optional: true }, { name: "echo", types: fileTypes, optional: true },
+          { name: "refs", types: fileTypes, multiple: true, optional: true },
           { name: "preview", types: ["image/png"], optional: true }, { name: "stl", types: ["model/stl"], optional: true }],
+      },
+      {
+        id: "fake.lookup", version: 1, title: "Look something up (fake, sync)",
+        summary: "Test double of a sync capability like parts.search: the submit answer is the finished job, with output and preview files.",
+        effect: "none", mode: "sync", typical_seconds: 0.1,
+        input_schema: { type: "object", required: ["q"], additionalProperties: false,
+          properties: { q: { type: "string" }, fail: { type: "boolean" } } },
+        output_schema: { type: "object", required: ["items", "total"],
+          properties: { items: { type: "array" }, total: { type: "integer" } } },
+        files_out: [{ name: "previews", types: ["image/png"], multiple: true, optional: true }],
       },
       {
         id: "slice.model", version: 1, title: "Slice a model (fake)",
@@ -382,8 +422,10 @@ export async function startFakeService(opts: FakeServiceOptions = {}): Promise<F
       const extra: FakeJob["steps"] = [];
       for (let i = 0; i < n; i++) extra.push((j: FakeJob) => set(j, "running", (i + 1) / (n + 1), `step ${i + 2}`));
       const doneEcho = (j: FakeJob) => {
-        j.output = { scenario: input.scenario, echo: input.echo ?? null, answer: j.answer };
+        j.output = { scenario: input.scenario, echo: input.echo ?? null, answer: j.answer,
+          refs: Object.keys(inFiles).filter((k) => k.startsWith("refs/")).sort() };
         j.files = inFiles.model ? { echo: { ...inFiles.model } } : {};
+        for (const [k, f] of Object.entries(inFiles)) if (k.startsWith("refs/")) j.files[k] = { ...f };
         set(j, "done", 1, "done");
       };
       switch (input.scenario) {
@@ -420,6 +462,18 @@ export async function startFakeService(opts: FakeServiceOptions = {}): Promise<F
           set(j, "done", 1, "done");
         }];
       }
+    }
+    if (cap === "fake.lookup") {
+      return [(j) => {
+        if (input.fail) return fail(j, "busy", "scripted: the catalog could not be reached", true);
+        const q = String(input.q ?? "");
+        if (!q || q === "nothing") { j.output = { items: [], total: 0 }; j.files = {}; return set(j, "done", 1, "done"); }
+        const p1 = storeBytes(PNG_1PX, "image/png", "p1.png");
+        const p2 = storeBytes(Buffer.from(PNG_1PX), "image/png", "p2.png");
+        j.files = { "previews/p1": p1, "previews/p2": p2 };
+        j.output = { items: [{ id: `${q}-1`, title: `${q} one`, preview_file: "previews/p1" }, { id: `${q}-2`, title: `${q} two`, preview_file: "previews/p2" }], total: 2 };
+        set(j, "done", 1, "done");
+      }];
     }
     if (cap === "slice.model") {
       return [toRunning, (j) => {
@@ -508,12 +562,10 @@ export async function startFakeService(opts: FakeServiceOptions = {}): Promise<F
     if (prior && now() - prior.at < RETENTION_MS && jobs.has(prior.jobId)) {
       const pj = jobs.get(prior.jobId)!;
       if (pj.bodyHash !== bodyHash) throw new HttpError(409, "idempotency_conflict", "idempotency_key reused with a different body");
-      sendJson(res, 202, { job_id: pj.job_id, status: pj.status, poll_after_s: 1 });
+      sendJson(res, 202, (cap as any).mode === "sync" ? view(pj) : { job_id: pj.job_id, status: pj.status, poll_after_s: 1 });
       return;
     }
-    for (const fd of (cap as any).files_in ?? []) {
-      if (fd.required && !files[fd.name]) throw new HttpError(400, "unsupported_input", `file ${fd.name} is required`);
-    }
+    checkFiles((cap as any).files_in ?? [], files);
     for (const [name, f] of Object.entries(files)) {
       if (!f || !/^[0-9a-f]{64}$/.test(f.sha256)) throw new HttpError(400, "unsupported_input", `file ${name} needs a sha256`);
       if (!hasBlob(f.sha256)) throw new HttpError(400, "unsupported_input", `file ${name} (${f.sha256}) was not uploaded; PUT /blobs first`);
@@ -534,6 +586,12 @@ export async function startFakeService(opts: FakeServiceOptions = {}): Promise<F
     jobs.set(j.job_id, j);
     byKey.set(body.idempotency_key, { jobId: j.job_id, at: now() });
     stats.jobsCreated++;
+    if ((cap as any).mode === "sync") {
+      // §3: a sync capability's submit answer is the finished job.
+      while (!TERMINAL.has(j.status) && j.steps.length) { const step = j.steps.shift()!; await step(j); }
+      sendJson(res, 202, view(j));
+      return;
+    }
     sendJson(res, 202, { job_id: j.job_id, status: j.status, poll_after_s: 1 });
   }
 

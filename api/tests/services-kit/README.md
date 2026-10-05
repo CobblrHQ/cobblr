@@ -1,7 +1,7 @@
 # Services conformance kit (vendored)
 
 The fake service and the reference signer the Services kernel is tested
-against. Vendored unchanged from the kit's source, commit d107e26
+against. Vendored unchanged from the kit's source, commit 51d3389
 (`conformance/ts/fake-service.ts`, `conformance/ts/hmac.ts`,
 `conformance/vectors.json`). Update by copying the files again from a newer
 commit and noting it here; never edit them in place, so a test that passes

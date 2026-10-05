@@ -367,6 +367,7 @@ export function ProjectDetailPage() {
           the design rather than about "a project". */}
       <ContributedDetailPanels
         target={entityKind}
+        baseTarget="projects:project"
         ctx={{ slug: orgSlug, entityId: project.data.id, entityTitle: project.data.name }}
       />
       {openTaskId && <TaskSheet taskId={openTaskId} onClose={() => openTask(null)} />}

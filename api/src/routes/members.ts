@@ -13,6 +13,7 @@ import { meta } from "../db/meta.js";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import * as activity from "../platform/activity.js";
+import { linkOrigin } from "../platform/link-origin.js";
 import * as notifications from "../platform/notifications.js";
 import { createAccount } from "../platform/accounts.js";
 import { sendAuthEmail, hasAuthEmailSender } from "../platform/hosted-seams.js";
@@ -283,7 +284,7 @@ export async function deliverInvite(opts: {
   expiresAt: Date;
 }): Promise<void> {
   const { req, email, token, role, orgName, inviterId, inviteId, expiresAt } = opts;
-  const inviteUrl = `${req.protocol}://${req.get("host") ?? ""}/invite/${token}`;
+  const inviteUrl = `${linkOrigin(req)}/invite/${token}`;
   const inviter = await meta
     .selectFrom("users")
     .select(["display_name", "email"])

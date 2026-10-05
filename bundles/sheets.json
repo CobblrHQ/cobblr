@@ -1,0 +1,185 @@
+{
+  "manifest": {
+    "id": "cobblr.community.sheets",
+    "catalog": "extended",
+    "version": "0.1.2",
+    "name": "Sheets",
+    "author": "Cobblr",
+    "released_at": "2026-10-05",
+    "description": "Keep sheet material, its size, storage place and cost, and find room in the offcuts before opening new stock.",
+    "changelog": "Track each physical piece, record cuts without losing usable gaps, undo hand edits and find room in offcuts first.",
+    "releases": [
+      {
+        "version": "0.1.2",
+        "released_at": "2026-10-05",
+        "notes": "Track each physical piece, record cuts without losing usable gaps, undo hand edits and find room in offcuts first."
+      }
+    ],
+    "requires": [
+      {
+        "module": "inventory"
+      },
+      {
+        "module": "labels"
+      }
+    ],
+    "provides_instances": [
+      {
+        "module": "inventory",
+        "instance_name": "sheets",
+        "display_name": "Sheets",
+        "item_noun": "sheet",
+        "glyph": "▱",
+        "qty_unit": "each",
+        "faces": {
+          "stock": true
+        },
+        "field_defs": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "material",
+            "display_label": "Material",
+            "type": "text",
+            "position": 1,
+            "required": true,
+            "learns": true,
+            "choices": [
+              "Plywood",
+              "MDF",
+              "Acrylic",
+              "Cardboard",
+              "Aluminium"
+            ],
+            "help": "The material this piece is made from."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "thickness_mm",
+            "display_label": "Thickness",
+            "type": "number",
+            "unit": "mm",
+            "position": 2,
+            "required": true,
+            "help": "Measured thickness in millimetres."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "width_mm",
+            "display_label": "Width",
+            "type": "number",
+            "unit": "mm",
+            "position": 3,
+            "required": true,
+            "help": "Original width in the loaded orientation."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "height_mm",
+            "display_label": "Height",
+            "type": "number",
+            "unit": "mm",
+            "position": 4,
+            "required": true,
+            "help": "Original height in the loaded orientation."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "finish",
+            "display_label": "Colour or finish",
+            "type": "text",
+            "position": 5,
+            "learns": true,
+            "help": "Colour, coating or surface finish."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "minimum_usable_mm",
+            "display_label": "Smallest usable gap",
+            "type": "number",
+            "unit": "mm",
+            "position": 6,
+            "help": "Gaps narrower than this in either direction are left out. Defaults to 20 mm."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "offcut_percent",
+            "display_label": "Offcut below (%)",
+            "type": "number",
+            "position": 7,
+            "help": "Flag a piece as an offcut below this usable percentage. Defaults to 25%."
+          }
+        ],
+        "field_overrides": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "cost",
+            "display_label": "Paid"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "location",
+            "display_label": "Stored at"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "warranty",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "min_qty",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "supplier_url",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "serial_number",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "model_number",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "category",
+            "hidden": true
+          }
+        ],
+        "saved_views": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "By material",
+            "view_type": "table",
+            "pinned": true,
+            "config": {
+              "group_by": "material",
+              "visible_fields": [
+                "title",
+                "material",
+                "thickness_mm",
+                "width_mm",
+                "height_mm",
+                "finish",
+                "location_name"
+              ]
+            }
+          }
+        ],
+        "wires": [
+          {
+            "source_kind": "sheets:item",
+            "action_id": "labels:print",
+            "trigger_type": "user-invoked",
+            "template": "{{name}}\n{{material}} {{thickness_mm}} mm\n{{width_mm}} × {{height_mm}} mm"
+          }
+        ]
+      }
+    ]
+  }
+}

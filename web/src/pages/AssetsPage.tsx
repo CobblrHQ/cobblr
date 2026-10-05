@@ -147,7 +147,10 @@ export function AssetsPage({
   });
   const views = savedViews.data?.items ?? [];
   const activeView = viewId ? views.find((v) => v.id === viewId) ?? null : null;
-  const groupBy = (activeView?.config as { group_by?: string } | undefined)?.group_by;
+  const groupBy = typeof activeView?.config?.group_by === "string" ? activeView.config.group_by : undefined;
+  useEffect(() => {
+    if (activeView?.view_type === "table" && activeView.config?.group_by) navigate(`/views/${activeView.id}`, { replace: true });
+  }, [activeView, navigate]);
   const viewFields = (activeView?.config as { visible_fields?: string[] } | undefined)?.visible_fields;
   function selectView(id: string | null) {
     setSearchParams(
@@ -731,6 +734,11 @@ export function AssetDetailModal({
               RIGHT — so an image-bearing record (a book, a wine, a machine)
               uses the width instead of scrolling tall. Stacks on phones. */}
           <RecordFaces kind={kind} target={instance ? { target_kind: "instance", target_id: `assets:${instance}` } : { target_kind: "entity_kind", target_id: ENTITY_KIND }}>
+          <ContributedDetailPanels
+            target={ENTITY_KIND}
+            placement="summary"
+            ctx={{ slug: activeSlug, entityId: a.id, entityTitle: a.name, hints: { collection: instance ? `${instance}:item` : undefined } }}
+          />
           <div className="grid gap-6 md:grid-cols-[minmax(200px,260px)_1fr]">
             <div className="space-y-3">
               <RecordPhoto
@@ -852,6 +860,7 @@ export function AssetDetailModal({
               pills leave tags and discussion to them rather than show each twice. */}
           <ContributedDetailPanels
             target={ENTITY_KIND}
+            placement="details"
             ctx={{ slug: activeSlug, entityId: a.id, entityTitle: a.name, hints: { collection: instance ? `${instance}:item` : undefined } }}
           />
           <EntityAttachments kind={ENTITY_KIND} entityId={a.id} collection={instance ? `${instance}:item` : undefined} omit={["tags", "discussion", "pairings"]} />

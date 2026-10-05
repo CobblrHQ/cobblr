@@ -981,6 +981,7 @@ backupRouter.post("/destinations/google/connect", requireAuth, withTenant, async
       .setAudience("backup-google-client")
       .setExpirationTime(Math.floor(Date.now() / 1000) + 600)
       .sign(googleSecret());
+    // HOST-OK: the broker returns this caller's own browser here, to the address it came from.
     const base = (req.protocol + "://" + req.get("host")) as string;
     const returnUrl = `${base}/api/v1/backup/google/broker/return`;
     const br = await fetch(`${env.BACKUP_OAUTH_BROKER_URL}/api/v1/backup/google/broker/start`, {

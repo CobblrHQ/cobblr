@@ -7,6 +7,7 @@
 
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
+import { perReadRequest } from "../lib/request-context.js";
 
 export type OverrideTarget = "entity_kind" | "instance" | "bundle";
 
@@ -114,14 +115,16 @@ export async function getOverrideConfig(
   targetKind: OverrideTarget,
   targetId: string,
 ): Promise<Record<string, unknown>> {
-  const row = (await meta
-    .selectFrom("entity_kind_overrides")
-    .select("config")
-    .where("org_id", "=", orgId)
-    .where("target_kind", "=", targetKind)
-    .where("target_id", "=", targetId)
-    .executeTakeFirst()) as { config: Record<string, unknown> | null } | undefined;
-  return row?.config ?? {};
+  return perReadRequest(`override-config:${orgId}:${targetKind}:${targetId}`, async () => {
+    const row = (await meta
+      .selectFrom("entity_kind_overrides")
+      .select("config")
+      .where("org_id", "=", orgId)
+      .where("target_kind", "=", targetKind)
+      .where("target_id", "=", targetId)
+      .executeTakeFirst()) as { config: Record<string, unknown> | null } | undefined;
+    return row?.config ?? {};
+  });
 }
 
 /** List every override row for a workspace. */

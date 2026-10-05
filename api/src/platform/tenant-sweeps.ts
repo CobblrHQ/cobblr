@@ -38,6 +38,7 @@ import type {
   TenantSweepVisitResult,
 } from "@cobblr/platform-contract";
 import { Gate } from "../db/sweep-gate.js";
+import { notePassFailure } from "./pass-failures.js";
 
 /** Workspaces open at once across every pass. Default 4: four pools of at
  *  most five clients each is twenty connections at the very worst, well
@@ -229,8 +230,9 @@ interface Scoped {
 }
 
 /** The first few failures by name; the count on the result stays exact. */
-function noteFailure(result: TenantSweepRunResult, orgId: string, message: string): void {
+function noteFailure(pass: string, result: TenantSweepRunResult, orgId: string, message: string): void {
   if (result.failures.length < FAILURES_KEPT) result.failures.push({ orgId, message: message.slice(0, 300) });
+  notePassFailure(pass, orgId, new Error(message));
 }
 
 /** What a walk needs from the world, so the walk itself is a unit test. */
@@ -357,7 +359,7 @@ export async function walkWith(
         for (const s of here) {
           s.result.failed++;
           s.result.backlog = true;
-          noteFailure(s.result, orgId, `pool: ${(err as Error).message}`);
+          noteFailure(s.pass.name, s.result, orgId, `pool: ${(err as Error).message}`);
         }
         if (poolRefusals === 1) console.warn(`[tenant-sweeps] workspace ${orgId} could not be opened; every due pass will come back for it:`, (err as Error).message);
         return;
@@ -373,7 +375,7 @@ export async function walkWith(
             if (r?.stop) s.result.stopped = true;
           } catch (err) {
             s.result.failed++;
-            noteFailure(s.result, orgId, (err as Error).message);
+            noteFailure(s.pass.name, s.result, orgId, (err as Error).message);
             console.warn(`[tenant-sweeps] ${s.pass.name}: workspace ${orgId} failed:`, (err as Error).message);
           }
         }

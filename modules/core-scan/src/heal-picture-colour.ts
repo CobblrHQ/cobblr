@@ -18,6 +18,7 @@
 
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
+import { platform } from "@cobblr/platform-contract";
 import { registerHealPass } from "@cobblr/platform-contract/heal-pass";
 import { withholdContradictedPicture } from "./services/withhold-picture.js";
 
@@ -45,6 +46,7 @@ export async function healPictureColourIn(orgId: string, db: Kysely<HealDB>): Pr
     try {
       if ((await withholdContradictedPicture(orgId, db as never, r.id)) === "withheld") withheld++;
     } catch (err) {
+      platform().health.notePassFailure("core-scan.heal-picture-colour", orgId, err);
       console.error(`[core-scan] org ${orgId} row ${r.id}: could not measure its picture:`, (err as Error).message);
     }
   }

@@ -82,6 +82,7 @@ calendarOrgRouter.put(
 );
 
 function feedUrl(req: { protocol: string; get(h: string): string | undefined }, token: string): string {
+  // HOST-OK: the feed URL is answered to the person who asked, for their own calendar app.
   const host = req.get("host") ?? "localhost";
   return `${req.protocol}://${host}/api/v1/calendar/${token}.ics`;
 }

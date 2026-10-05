@@ -97,6 +97,11 @@ export interface ExtractedThumb {
 /** Pull the preview PNG (and plate count) out of a 3MF or gcode upload. */
 export function extractThumbnail(filename: string, bytes: Buffer): ExtractedThumb {
   const lower = filename.toLowerCase();
+  if (lower.endsWith(".lbrn2")) {
+    const source = /<Thumbnail\b[^>]*\bSource=["']([A-Za-z0-9+/=\s]+)["']/i.exec(bytes.subarray(0, 512 * 1024).toString("utf8"))?.[1];
+    const png = source ? Buffer.from(source.replace(/\s/g, ""), "base64") : null;
+    return { png: png && png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) ? png : null, plateCount: 1 };
+  }
   if (lower.endsWith(".3mf")) {
     const png =
       readZipEntry(bytes, (n) => /(?:^|\/)metadata\/plate_1\.png$/i.test(n)) ??

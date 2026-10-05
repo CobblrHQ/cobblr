@@ -14,10 +14,11 @@
 // counters through its writer, and any number field marked `usage` from the
 // record, so only the machines module reads machines_machines.
 
+import { MaintenanceRefusal } from "./refusal.js";
 import { platform } from "@cobblr/platform-contract";
-import type { Kysely, Selectable } from "kysely";
+import { sql, type Kysely, type Selectable } from "kysely";
 import type { CoreMaintenanceDB, CoreMaintenanceEntriesTable, CoreMaintenanceSchedulesTable } from "./db.js";
-import { dueState, hasCounter, type Due, type ScheduleState } from "./schedule.js";
+import { dueState, hasCounter, nextRenewalExpiry, reminderAt, addInterval, type Due, type ScheduleState } from "./schedule.js";
 
 export type ScheduleRow = Selectable<CoreMaintenanceSchedulesTable>;
 type EntryRow = Selectable<CoreMaintenanceEntriesTable>;
@@ -35,6 +36,9 @@ export function kindOf(row: { entity_module: string; entity_type: string }): str
 
 export function stateOf(s: ScheduleRow): ScheduleState {
   return {
+    anchor: s.anchor,
+    remind: s.remind,
+    current_expiry: s.current_expiry,
     every_n: s.every_n,
     every_unit: s.every_unit,
     counter_field: s.counter_field,
@@ -62,12 +66,12 @@ export async function counterLabel(orgId: string, kind: string, field: string | 
 }
 
 /** Where a schedule stands now, with its counter read. */
-export async function dueOf(orgId: string, s: ScheduleRow, now = new Date(), timeZone?: string | null): Promise<Due & { counter: number | null; counter_label: string }> {
-  const state = stateOf(s);
+export async function dueOf(orgId: string, s: ScheduleRow, now = new Date(), timeZone?: string | null): Promise<Due & { counter: number | null; counter_label: string; reminder_at: Date | null }> {
+  const state = await renewalState(orgId, s);
   const kind = kindOf(s);
   const counter = hasCounter(state) ? await readCounter(orgId, kind, s.entity_id, state.counter_field) : null;
   const label = await counterLabel(orgId, kind, s.counter_field);
-  return { ...dueState(state, now, counter, label, timeZone), counter, counter_label: label };
+  return { ...dueState(state, now, counter, label, timeZone), counter, counter_label: label, reminder_at: nextDueAtReminder(state) };
 }
 
 async function openOccurrences(db: Db, scheduleId: string): Promise<EntryRow[]> {
@@ -85,6 +89,14 @@ async function openOccurrences(db: Db, scheduleId: string): Promise<EntryRow[]> 
  *  mark. Idempotent; the sweeper calls it every pass. Returns the occurrence,
  *  or null for a counter schedule not yet due. */
 export async function ensureOccurrence(db: Db, orgId: string, s: ScheduleRow, now = new Date()): Promise<EntryRow | null> {
+  const run = async (tx: Db) => {
+    const current = await tx.selectFrom("core_maintenance_schedules").selectAll().where("id", "=", s.id).forUpdate().executeTakeFirst();
+    return current ? ensureOccurrenceLocked(tx, orgId, current, now) : null;
+  };
+  return db.isTransaction ? run(db) : db.transaction().execute(run);
+}
+
+async function ensureOccurrenceLocked(db: Db, orgId: string, s: ScheduleRow, now: Date): Promise<EntryRow | null> {
   const due = await dueOf(orgId, s, now);
   const byCounter = due.counter != null && due.next_due_counter != null && due.counter >= due.next_due_counter;
   const target = byCounter ? now : due.next_due_at;
@@ -93,12 +105,15 @@ export async function ensureOccurrence(db: Db, orgId: string, s: ScheduleRow, no
   // Two open occurrences of one schedule is one too many: a race between a
   // log and a sweep. Keep the earliest.
   for (const e of extra) await db.deleteFrom("core_maintenance_entries").where("id", "=", e.id).execute();
-  if (!target) return first ?? null;
+  if (!target) {
+    if (s.anchor && first) { await db.deleteFrom("core_maintenance_entries").where("id", "=", first.id).execute(); return null; }
+    return first ?? null;
+  }
   if (first) {
-    if (first.scheduled_at && first.scheduled_at.getTime() > target.getTime()) {
+    if (first.scheduled_at && (byCounter ? first.scheduled_at.getTime() > target.getTime() : first.scheduled_at.getTime() !== target.getTime())) {
       return db
         .updateTable("core_maintenance_entries")
-        .set({ scheduled_at: target, updated_at: new Date() })
+        .set({ scheduled_at: target, last_notified_at: null, updated_at: new Date() })
         .where("id", "=", first.id)
         .returningAll()
         .executeTakeFirstOrThrow();
@@ -124,7 +139,7 @@ export async function ensureOccurrence(db: Db, orgId: string, s: ScheduleRow, no
  *  "oil change" schedule). */
 async function scheduleFor(db: Db, entry: EntryRow): Promise<ScheduleRow | null> {
   if (entry.schedule_id) {
-    const byId = await db.selectFrom("core_maintenance_schedules").selectAll().where("id", "=", entry.schedule_id).executeTakeFirst();
+    const byId = await db.selectFrom("core_maintenance_schedules").selectAll().where("id", "=", entry.schedule_id).forUpdate().executeTakeFirst();
     if (byId) return byId;
   }
   const rows = await db
@@ -148,24 +163,34 @@ export interface RolledFrom {
   schedule_id: string;
   last_done_at: string | null;
   last_done_counter: number | null;
+  current_expiry?: string | null;
 }
 
-export async function rollForward(
+async function rollForwardLocked(
   db: Db,
   orgId: string,
   entry: EntryRow,
+  newExpiry?: Date,
 ): Promise<{ schedule_id: string; next: EntryRow | null; was: RolledFrom } | null> {
   if (!entry.performed_at) return null;
   try {
     const s = await scheduleFor(db, entry);
+    if (entry.schedule_id && entry.entity_id !== s?.entity_id) throw new Error("The schedule belongs to another record");
     if (!s) return null;
     // A service logged for a date before the schedule's last one (entering old
     // history) is history only; it must not move the schedule backwards.
-    if (s.last_done_at && entry.performed_at.getTime() < s.last_done_at.getTime()) return null;
+    if (s.last_done_at && entry.performed_at.getTime() < s.last_done_at.getTime()) {
+      if (newExpiry) throw new MaintenanceRefusal("This renewal predates the last renewal. Log it as history instead.");
+      return null;
+    }
+    const renewal = await renewalState(orgId, s);
+    const expiry = newExpiry ?? nextRenewalExpiry(renewal);
+    if (expiry) await writeExpiry(orgId, s, expiry);
     const reading = s.counter_field ? await readCounter(orgId, kindOf(s), s.entity_id, s.counter_field) : null;
     const rolled = await db
       .updateTable("core_maintenance_schedules")
       .set({
+        ...(expiry && !s.expiry_field ? { current_expiry: expiry } : {}),
         last_done_at: entry.performed_at,
         last_done_counter: reading ?? num(s.last_done_counter),
         updated_at: new Date(),
@@ -186,11 +211,13 @@ export async function rollForward(
     const next = await ensureOccurrence(db, orgId, rolled);
     const was: RolledFrom = {
       schedule_id: s.id,
+      current_expiry: renewal.current_expiry?.toISOString() ?? null,
       last_done_at: s.last_done_at ? s.last_done_at.toISOString() : null,
       last_done_counter: num(s.last_done_counter),
     };
     return { schedule_id: s.id, next, was };
   } catch (err) {
+    if (newExpiry) throw err;
     console.warn(`[core-maintenance] roll-forward for entry ${entry.id} failed:`, (err as Error).message);
     return null;
   }
@@ -219,6 +246,7 @@ export async function unroll(db: Db, orgId: string, was: RolledFrom): Promise<vo
   const s = await db
     .updateTable("core_maintenance_schedules")
     .set({
+      ...(was.current_expiry !== undefined ? { current_expiry: sql<Date | null>`case when expiry_field is null then ${was.current_expiry ? new Date(was.current_expiry) : null}::timestamptz else null end` } : {}),
       last_done_at: was.last_done_at ? new Date(was.last_done_at) : null,
       last_done_counter: was.last_done_counter,
       updated_at: new Date(),
@@ -227,6 +255,7 @@ export async function unroll(db: Db, orgId: string, was: RolledFrom): Promise<vo
     .returningAll()
     .executeTakeFirst();
   if (!s) return;
+  if (s.expiry_field && was.current_expiry) await writeExpiry(orgId, s, new Date(was.current_expiry));
   await db.deleteFrom("core_maintenance_entries").where("schedule_id", "=", s.id).where("performed_at", "is", null).execute();
   await ensureOccurrence(db, orgId, s);
 }
@@ -236,7 +265,53 @@ export function rolledFromOf(v: unknown): RolledFrom | null {
   if (!r || typeof r.schedule_id !== "string") return null;
   return {
     schedule_id: r.schedule_id,
+    ...(r.current_expiry !== undefined ? { current_expiry: r.current_expiry } : {}),
     last_done_at: typeof r.last_done_at === "string" ? r.last_done_at : null,
     last_done_counter: typeof r.last_done_counter === "number" ? r.last_done_counter : null,
   };
+}
+
+export async function renewalState(orgId: string, s: ScheduleRow): Promise<ScheduleState> {
+  const state = stateOf(s);
+  if (!s.anchor || !s.expiry_field) return state;
+  const record = await platform().entities.lookup(orgId, kindOf(s), s.entity_id);
+  const fields = record?.fields ?? {};
+  const metadata = (fields.metadata ?? {}) as Record<string, unknown>;
+  const value = metadata[s.expiry_field] ?? fields[s.expiry_field];
+  const date = typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value) ? new Date(value.slice(0, 10) + "T12:00:00Z") : null;
+  state.current_expiry = date && Number.isFinite(date.getTime()) ? date : null;
+  if (state.current_expiry && typeof state.anchor === "string") state.anchor = state.current_expiry.toISOString().slice(5, 10);
+  if (state.current_expiry && typeof state.anchor === "object" && state.anchor) state.anchor = { month: state.current_expiry.getUTCMonth() + 1, last_day: true };
+  return state;
+}
+
+function nextDueAtReminder(s: ScheduleState): Date | null {
+  const due = s.anchor ? s.current_expiry : s.every_n && s.every_unit ? addInterval(s.last_done_at ?? s.created_at, s.every_n, s.every_unit) : null;
+  return due ? reminderAt(due, s.remind) : null;
+}
+
+export async function writeExpiry(orgId: string, s: Pick<ScheduleRow, "expiry_field" | "entity_module" | "entity_type" | "entity_id">, expiry: Date): Promise<void> {
+  if (!s.expiry_field) return;
+  const changed = await platform().entities.mergeMetadata(orgId, kindOf(s), s.entity_id, { [s.expiry_field]: expiry.toISOString().slice(0, 10) });
+  if (!changed) throw new Error("This record cannot store an expiry date");
+}
+
+export async function rollForward(db: Db, orgId: string, entry: EntryRow, newExpiry?: Date) {
+  return db.isTransaction ? rollForwardLocked(db, orgId, entry, newExpiry) : db.transaction().execute((tx) => rollForwardLocked(tx, orgId, entry, newExpiry));
+}
+
+
+export async function completeEntry(db: Db, orgId: string, id: string, userId: string | null, at: Date) {
+  return db.transaction().execute(async (tx) => {
+    const before = await tx.selectFrom("core_maintenance_entries").selectAll().where("id", "=", id).executeTakeFirst();
+    if (!before) return null;
+    if (before.schedule_id) await tx.selectFrom("core_maintenance_schedules").select("id").where("id", "=", before.schedule_id).forUpdate().executeTakeFirst();
+    const row = await tx.updateTable("core_maintenance_entries").set({ performed_at: at, performed_by: userId, updated_at: new Date() }).where("id", "=", id).where("performed_at", "is", null).returningAll().executeTakeFirst();
+    if (!row) {
+      const current = await tx.selectFrom("core_maintenance_entries").selectAll().where("id", "=", id).executeTakeFirstOrThrow();
+      return { row: current, rolled: null, before, skipped: true };
+    }
+    const rolled = await rollForward(tx, orgId, row);
+    return { row, rolled, before, skipped: false };
+  });
 }

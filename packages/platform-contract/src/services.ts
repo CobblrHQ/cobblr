@@ -97,6 +97,54 @@ export interface ServiceFileSpec {
   required?: boolean;
   /** An extra output a service may add (a plain G-code beside a 3MF). */
   optional?: boolean;
+  /** A slot that takes several files, each under `<name>/<label>`
+   *  (`refs/bearing`), up to SERVICE_MULTIPLE_FILES_MAX. On files_out, the
+   *  service's outputs come back the same way (`previews/p1`). */
+  multiple?: boolean;
+  /** A multiple slot's own cap, at most SERVICE_MULTIPLE_FILES_MAX. */
+  max?: number;
+}
+
+/** How many files one `multiple` input slot takes. */
+export const SERVICE_MULTIPLE_FILES_MAX = 16;
+/** The label after the slot name in a `multiple` slot's key. */
+export const SERVICE_FILE_LABEL = /^[a-z0-9_-]{1,40}$/;
+
+/** What is wrong with a submit's `files` against the capability's
+ *  `files_in`: a key it does not declare (a typo the service would never
+ *  see), a required slot left empty, a labelled key on a single slot, or too
+ *  many files in a multiple one. Empty when it fits. */
+export function serviceFilesProblems(capability: string, filesIn: readonly ServiceFileSpec[], files: Readonly<Record<string, string>>): string[] {
+  const problems: string[] = [];
+  const bySlot = new Map(filesIn.map((f) => [f.name, f]));
+  const counts = new Map<string, number>();
+  for (const key of Object.keys(files)) {
+    const cut = key.indexOf("/");
+    const slotName = cut < 0 ? key : key.slice(0, cut);
+    const slot = bySlot.get(slotName);
+    if (!slot) {
+      problems.push(`${capability} takes no file called "${slotName}"${filesIn.length ? ` (it takes ${filesIn.map((f) => `"${f.name}"`).join(", ")})` : ""}`);
+      continue;
+    }
+    if (slot.multiple) {
+      const label = cut < 0 ? "" : key.slice(cut + 1);
+      if (!SERVICE_FILE_LABEL.test(label)) {
+        problems.push(`each "${slot.name}" file goes under "${slot.name}/<label>", a label of lowercase letters, digits, - or _; "${key}" is not one`);
+        continue;
+      }
+    } else if (cut >= 0) {
+      problems.push(`${capability} takes one "${slot.name}" file, under "${slot.name}"`);
+      continue;
+    }
+    counts.set(slot.name, (counts.get(slot.name) ?? 0) + 1);
+  }
+  for (const f of filesIn) {
+    const n = counts.get(f.name) ?? 0;
+    if (f.required && n === 0) problems.push(`${capability} needs a "${f.name}" file`);
+    const cap = Math.min(f.max ?? SERVICE_MULTIPLE_FILES_MAX, SERVICE_MULTIPLE_FILES_MAX);
+    if (f.multiple && n > cap) problems.push(`${capability} takes at most ${cap} "${f.name}" files, not ${n}`);
+  }
+  return problems;
 }
 
 export interface ServiceCapabilityDecl {
@@ -141,6 +189,8 @@ const FileSpec = z.object({
   types: z.array(z.string().min(1).max(120)).min(1),
   required: z.boolean().optional(),
   optional: z.boolean().optional(),
+  multiple: z.boolean().optional(),
+  max: z.number().int().min(1).max(16).optional(),
 });
 const CapabilityDecl = z.object({
   id: z.string().regex(SERVICE_CAPABILITY_ID, "a capability id is dotted: slice.model"),
@@ -213,7 +263,7 @@ export const SERVICE_MANIFEST_JSON_SCHEMA = {
     file: {
       type: "object",
       required: ["name", "types"],
-      properties: { name: { type: "string" }, types: { type: "array", minItems: 1, items: { type: "string" } }, required: { type: "boolean" }, optional: { type: "boolean" } },
+      properties: { name: { type: "string" }, types: { type: "array", minItems: 1, items: { type: "string" } }, required: { type: "boolean" }, optional: { type: "boolean" }, multiple: { type: "boolean" }, max: { type: "integer", minimum: 1, maximum: 16 } },
     },
     capability: {
       type: "object",
@@ -299,7 +349,7 @@ export interface RemoteServiceJob {
 }
 
 /** `POST /jobs` answers 202 with this. */
-export interface ServiceSubmitAnswer {
+export interface ServiceSubmitAnswer extends Partial<Omit<RemoteServiceJob, "job_id" | "status">> {
   job_id: string;
   status: RemoteServiceJobStatus;
   poll_after_s?: number;

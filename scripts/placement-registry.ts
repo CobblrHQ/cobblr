@@ -108,7 +108,7 @@ export const PLACEMENT: PlacementRow[] = [
   {
     id: "generic-web-component",
     what: "a web component that works for ANY module's records",
-    keywords: ["component", "shared component", "generic", "reusable ui", "widget", "panel on every record", "record panel", "every record", "detail page section", "floor plan editor", "floor plan editor placed items"],
+    keywords: ["dashboard capture rows grouped by destination", "component", "shared component", "generic", "reusable ui", "widget", "panel on every record", "record panel", "every record", "detail page section", "floor plan editor", "floor plan editor placed items"],
     dir: "web/src/components/",
     exemplar: "web/src/components/EntityAttachments.tsx",
     why: "This layer is module-agnostic: it may not name a module's entity kind, because doing so silently excludes every module added later.",

@@ -1,3 +1,7 @@
+import { activityPresentation, type ActivitySubject } from "@cobblr/platform-contract/activity-summary";
+import { openRecordPath } from "@cobblr/platform-contract/instance-detail";
+import { activityFileContexts } from "../platform/activity-context.js";
+import { applyServedTitle } from "../platform/served-title.js";
 import { currencyFromLocale, isCurrency } from "@cobblr/platform-contract/money";
 import { getHistoryWriterFor } from "../platform/history-store.js";
 // /api/v1/orgs/* — org-scoped routes. Composes requireAuth +
@@ -33,9 +37,9 @@ import { provisionAppWorkspace, ProvisionAppError, refreshManagedApp, importAppD
 import { checkEntitlement } from "../platform/hosted-seams.js";
 import { disableModuleForOrg, enableModuleForOrg, isDefaultModule, ModuleRetiredError } from "../modules/enable.js";
 import { USER_SOURCE } from "../platform/bundle-claims.js";
-import { baseKindOf, lookup as lookupEntity } from "../platform/entities.js";
+import { baseKindOf, lookupMany } from "../platform/entities.js";
 import { publicHistoryDiff, historyBag } from "../platform/record-history.js";
-import { hiddenHistoryFields, restoreHistoryVersion, HistoryRestoreError } from "../platform/history-restore.js";
+import { historyVisibilityForKind, restoreHistoryVersion, HistoryRestoreError } from "../platform/history-restore.js";
 import { describeChanges } from "../platform/history-describe.js";
 
 /** The kind a resolved record is FILED under: `<instance>:item` for a record
@@ -51,6 +55,7 @@ function collectionKindOf(r: { fields?: Record<string, unknown>; detailUrl?: str
 }
 import { getEntry as getModuleEntry } from "../modules/registry.js";
 import { encodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
+import { markRequestReadOnly } from "../lib/request-context.js";
 
 export const orgsRouter = Router();
 
@@ -849,6 +854,10 @@ orgsRouter.post("/:slug/activity/:entryId/restore", requireAuth, withTenant, asy
 
 orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next) => {
   try {
+    // A feed only reads: what each row's record resolves through (its place,
+    // its instance, an override) is asked once for the request, not once per row
+    // (180 meta statements for 100 rows, main red on run 37212).
+    markRequestReadOnly();
     const limit = Math.min(Number(req.query.limit) || 25, 100);
     const actionsParam = typeof req.query.actions === "string" ? req.query.actions : null;
     const actions = actionsParam
@@ -940,24 +949,63 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
         needsTitle: (toResolve.get(key)?.needsTitle ?? false) || !titled,
       });
     }
-    await Promise.all(
-      [...toResolve.entries()].map(async ([key, ref]) => {
-        try {
-          const r = await lookupEntity(req.tenant!.org.id, ref.kind, ref.entityId);
-          if (!r) return;
-          if (ref.needsTitle && r.title) titleByEntity.set(key, r.title);
-          const k = collectionKindOf(r, ref.kind);
-          if (k) kindByEntity.set(key, k);
-        } catch {
-          /* deleted / unresolvable kind — UI falls back to the entity_type */
-        }
-      }),
-    );
+    const contexts = await activityFileContexts(req.tenant!.db, items);
+    const refs = [...toResolve.values()].map(ref => ({ kind: ref.kind, id: ref.entityId }));
+    for (const i of items) {
+      const ref = historyBag(historyBag(i.diff).subject);
+      if (typeof ref.kind === "string" && typeof ref.id === "string") refs.push({ kind: ref.kind, id: ref.id });
+    }
+    for (const context of contexts.values()) {
+      const ref = context.record ?? (context.scan?.kind && context.scan.recordId ? { kind: context.scan.kind, id: context.scan.recordId } : null);
+      if (ref) refs.push(ref);
+    }
+    const resolved = (await lookupMany(req.tenant!.org.id, refs, { userId: req.session!.id, role: req.tenant!.role })).map(applyServedTitle);
+    const recordByRef = new Map(resolved.map(r => [`${r.kind}:${r.id}`, r]));
+    for (const ref of refs) {
+      if (recordByRef.has(`${ref.kind}:${ref.id}`)) continue;
+      const record = resolved.find(r => r.id === ref.id && collectionKindOf(r, r.kind) === ref.kind);
+      if (record) recordByRef.set(`${ref.kind}:${ref.id}`, record);
+    }
+    const subjectByEntry = new Map<number, ActivitySubject>();
+    const contextDiffByEntry = new Map<number, Record<string, unknown>>();
+    for (const i of items) {
+      const base = i.module_name ? `${i.module_name}:${i.entity_type}` : null;
+      const r = base ? recordByRef.get(`${base}:${i.entity_id}`) : undefined;
+      const key = `${i.entity_type}:${i.entity_id}`;
+      if (r) {
+        if (toResolve.get(key)?.needsTitle && r.title) titleByEntity.set(key, r.title);
+        kindByEntity.set(key, collectionKindOf(r, base!));
+      }
+      const context = contexts.get(`${i.action}:${i.entity_id}`);
+      const declared = historyBag(historyBag(i.diff).subject);
+      const ref = (typeof declared.kind === "string" && typeof declared.id === "string" ? { kind: declared.kind, id: declared.id } : null) ?? context?.record ?? (context?.scan?.kind && context.scan.recordId ? { kind: context.scan.kind, id: context.scan.recordId } : null);
+      const target = ref ? recordByRef.get(`${ref.kind}:${ref.id}`) : r;
+      const targetKind = target ? collectionKindOf(target, target.kind) : context?.scan ? null : base;
+      const thumbnail = context?.photoId
+        ? `/api/v1/orgs/${req.tenant!.org.slug}/modules/core-files/files/${context.photoId}/raw?variant=thumb`
+        : target?.image_path?.startsWith("/files/") ? `/api/v1/orgs/${req.tenant!.org.slug}/modules/core-files${target.image_path}` : target?.image_path ?? null;
+      const slug = encodeURIComponent(req.tenant!.org.slug);
+      const href = target && targetKind ? `/w/${slug}${target.detailUrl ?? openRecordPath(targetKind, target.id)}`
+        : context?.scan ? `/w/${slug}/scan?item=${encodeURIComponent(context.scan.id)}` : null;
+      if (href) subjectByEntry.set(i.id, { href, title: target?.title ?? context?.scan?.name ?? context?.scan?.barcode ?? "a photo", kind: targetKind, id: target?.id ?? context?.scan?.id ?? i.entity_id, thumbnail });
+      else if (r && base) subjectByEntry.set(i.id, { href: `/w/${slug}${r.detailUrl ?? openRecordPath(base, r.id)}`, title: r.title, kind: base, id: r.id, thumbnail });
+      if (context?.scan) contextDiffByEntry.set(i.id, { scan: { ...context.scan, name: target?.title ?? context.scan.name } });
+      else if (context?.record && target) contextDiffByEntry.set(i.id, { record: { ...context.record, name: target.title } });
+    }
 
-    const shown = await Promise.all(items.map(async (i) => {
+    const visibilityByKind = new Map<string, ReturnType<typeof historyVisibilityForKind>>();
+    const writersByKind = new Map<string, ReturnType<typeof getHistoryWriterFor>>();
+    for (const i of items) {
       const kind = kindByEntity.get(`${i.entity_type}:${i.entity_id}`) ?? (i.module_name ? `${i.module_name}:${i.entity_type}` : i.entity_type);
-      const hidden = await hiddenHistoryFields(req.tenant!.org.id, kind, req.session!.id, req.tenant!.role, i.diff);
-      return { ...i, diff: publicHistoryDiff(i.diff, hidden), restorable: roleSatisfies(req.tenant!.role, ["owner", "admin"]) && Object.keys(historyBag(historyBag(i.diff).version_before)).length > 0 && !!await getHistoryWriterFor(req.tenant!.org.id, kind) };
+      if (!visibilityByKind.has(kind)) {
+        visibilityByKind.set(kind, historyVisibilityForKind(req.tenant!.org.id, kind, req.session!.id, req.tenant!.role));
+      }
+      if (roleSatisfies(req.tenant!.role, ["owner", "admin"]) && Object.keys(historyBag(historyBag(i.diff).version_before)).length && !writersByKind.has(kind)) writersByKind.set(kind, getHistoryWriterFor(req.tenant!.org.id, kind));
+    }
+    const shown = await Promise.all(items.map(async i => {
+      const kind = kindByEntity.get(`${i.entity_type}:${i.entity_id}`) ?? (i.module_name ? `${i.module_name}:${i.entity_type}` : i.entity_type);
+      const hidden = (await visibilityByKind.get(kind)!)(i.diff);
+      return { ...i, diff: publicHistoryDiff(i.diff, hidden), restorable: !!Object.keys(historyBag(historyBag(i.diff).version_before)).length && !!await writersByKind.get(kind) };
     }));
 
     // What each edit changed, in words: labels, values by type, a photo as a
@@ -976,7 +1024,8 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
     });
 
     res.json({
-      items: shown.map((i, n) => ({
+      items: shown.map((i, n) => {
+        const entry = {
         ...i,
         said: said[n] ?? [],
         entity_title: titleByEntity.get(`${i.entity_type}:${i.entity_id}`) ?? null,
@@ -989,7 +1038,10 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
             }
           : null,
         token: i.api_token_id ? tokenFor(i.api_token_id) : null,
-      })),
+        };
+        const presentation = activityPresentation({ ...entry, diff: { ...historyBag(entry.diff), ...contextDiffByEntry.get(i.id) } }, req.tenant!.org.slug, req.session!.id, subjectByEntry.get(i.id));
+        return { ...entry, ...presentation };
+      }),
       total,
       // The next page starts below the last id shown; null once this page is short.
       next_before: items.length === limit ? items[items.length - 1]!.id : null,

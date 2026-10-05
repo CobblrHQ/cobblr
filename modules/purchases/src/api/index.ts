@@ -1,3 +1,4 @@
+import { registerPlannedOrderAction } from "./planned-order.js";
 // Default-exported Router for the purchases module. Mounted at
 // /api/v1/orgs/:slug/modules/purchases/ with requireAuth + withTenant.
 
@@ -14,6 +15,7 @@ import { registerPurchasesActionHandlers } from "./action-handlers.js";
 import { registerPurchasesCalendarSource } from "./calendar-source.js";
 import { startArrivalSweeper } from "../arrival-sweeper.js";
 
+registerPlannedOrderAction();
 registerPurchasesResolvers();
 registerPurchasesActionHandlers();
 registerPurchasesCalendarSource();

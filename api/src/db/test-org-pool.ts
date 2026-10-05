@@ -225,6 +225,7 @@ export async function checkoutTestOrg(opts: { reserved?: boolean } = {}): Promis
       .where("event", "=", "signed_up")
       .executeTakeFirst();
     if (!has) {
+      // check-then-insert: the test pool's own setup: one writer per pooled org, inside its own catch
       await meta
         .insertInto("product_events")
         .values({ org_id: row.org_id, user_id: row.owner_user_id, event: "signed_up", detail: sql`${JSON.stringify({ via: "form", source: null })}::jsonb` })

@@ -28,6 +28,7 @@ export function RecordPhoto(props: RecordPhotoProps) {
 interface PlatformWebCtx {
   /** The host photo editor, including the shared web picker. */
   recordPhoto?: ComponentType<RecordPhotoProps>;
+  decodeBarcodeImage?: (file: File) => Promise<string | null>;
   api: PlatformWebApi;
   orgSlug: string;
   /** The viewer's role in the workspace ("owner" | "admin" | "member" | …),
@@ -81,11 +82,13 @@ export function PlatformWebProvider({
   flows,
   cobbIcon,
   recordPhoto,
+  decodeBarcodeImage,
   children,
 }: {
   api: PlatformWebApi;
   orgSlug: string;
   recordPhoto?: ComponentType<RecordPhotoProps>;
+  decodeBarcodeImage?: (file: File) => Promise<string | null>;
   role?: string | null;
   appMode?: boolean;
   cobbIcon?: ComponentType<{ size?: number; title?: string }>;
@@ -104,7 +107,7 @@ export function PlatformWebProvider({
   );
   const Active = active && flows ? flows[active.flow] : null;
   return (
-    <Ctx.Provider value={{ api, orgSlug, role, appMode, cobbIcon, recordPhoto }}>
+    <Ctx.Provider value={{ api, orgSlug, role, appMode, cobbIcon, recordPhoto, decodeBarcodeImage }}>
       <FlowCtx.Provider value={{ openFlow }}>
         {children}
         {active && Active && <Active args={active.args} onClose={() => setActive(null)} />}

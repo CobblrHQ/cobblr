@@ -30,6 +30,20 @@ import { scanTargetsForOrg } from "./scan-target.js";
 import { isJunkName } from "./enrich.js";
 import { satisfiesRequirement, type StorageRequirement } from "./storage-requirement.js";
 
+/** Which evidence a suggestion stands on. Every tier has one; there is no
+ *  suggestion without evidence about the ITEM (#4933: "Top Cabinet 1 —
+ *  where your other Inventory are" stood on nothing but the catch-all table's
+ *  most common place, and read as a guess). */
+export type LocationSuggestionSource =
+  /** Records like it already live there. */
+  | "similar-items"
+  /** The rest of this named collection lives there (3D Printers, Groceries). */
+  | "same-collection"
+  /** It has to be kept cold, and this is the cold place. */
+  | "must-be-cold"
+  /** It keeps at room temperature, and this is the pantry. */
+  | "room-temperature";
+
 export interface LocationSuggestion {
   location_id: string;
   location_name: string;
@@ -37,6 +51,7 @@ export interface LocationSuggestion {
   count: number;
   /** Human one-liner for the note ("3 similar items are stored here"). */
   reason: string;
+  source: LocationSuggestionSource;
 }
 
 /** Every location in the workspace. Best-effort: a workspace whose locations
@@ -181,6 +196,11 @@ export async function suggestLocationForItem(
     /** What the person calls that collection ("3D Printers"), for the reason
      *  the suggestion gives: "where your other 3D Printers are". */
     kindLabel?: string | null;
+    /** The kind is a NAMED collection (an instance: 3D Printers, Groceries),
+     *  whose other records are like this one. A module's own table is the
+     *  catch-all for everything unmatched, so where most of it sits says
+     *  nothing about this item, and that tier stays silent for it (#4933). */
+    kindIsCollection?: boolean;
   },
 ): Promise<LocationSuggestion | null> {
   const name = opts.name && !isJunkName(opts.name) ? opts.name.trim() : null;
@@ -209,9 +229,10 @@ export async function suggestLocationForItem(
         count: 0,
         reason:
           requirement === "frozen" ? "it needs to be kept frozen" : "it needs to be kept refrigerated",
+        source: "must-be-cold",
       };
     }
-    if (opts.kind) {
+    if (opts.kind && opts.kindIsCollection) {
       const home = await kindHome(orgId, opts.kind, locations, opts.excludeId);
       if (home) {
         return {
@@ -219,6 +240,7 @@ export async function suggestLocationForItem(
           location_name: home.title,
           count: home.count,
           reason: opts.kindLabel?.trim() ? `where your other ${opts.kindLabel.trim()} are` : `${home.count} others are kept here`,
+          source: "same-collection",
         };
       }
     }
@@ -229,6 +251,7 @@ export async function suggestLocationForItem(
         location_name: ambient.title,
         count: 0,
         reason: "it keeps at room temperature",
+        source: "room-temperature",
       };
     }
     return null;
@@ -337,5 +360,6 @@ export async function suggestLocationForItem(
       count >= 2
         ? `${count} similar items are stored here`
         : "a matching item is stored here",
+    source: "similar-items",
   };
 }

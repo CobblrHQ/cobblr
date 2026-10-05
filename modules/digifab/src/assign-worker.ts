@@ -8,6 +8,8 @@
 // printer that frees up pulls the next job within a tick; an empty queue stops
 // the loop. `kickAssign` fires an immediate pass on job-create.
 
+import { gatherCandidates } from "./api/printing-profiles.js";
+import { printerMaterialRefusal } from "./material-dispatch.js";
 import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { DigifabDB } from "./db.js";
@@ -129,6 +131,7 @@ export async function assignPoolJobs(db: Kysely<DigifabDB>, orgId: string): Prom
   // (in-flight plates finish normally — the PFM pause semantics).
   const runStates = await runStatuses(db, [...new Set(queued.map((j) => j.run_id).filter((x): x is string => !!x))]);
 
+  const materialCandidates = queued.some(j => printerMaterialRefusal(j, []) !== null) ? await gatherCandidates(orgId, db) : [];
   let stillQueued = 0;
   for (const job of queued) {
     if (!job.target_pool) continue;
@@ -144,11 +147,17 @@ export async function assignPoolJobs(db: Kysely<DigifabDB>, orgId: string): Prom
     // queued and re-ticks. (Pre-F-3 this conflated a swallowed send-failure with
     // a successful assignment.)
     let resolved = false;
+    let materialBlock: string | null = null;
     for (const m of members) {
       const key = `${m.connection_id}:${m.remote_device_id}`;
       if (busy.has(key) || attention.has(key) || owned.has(key)) continue; // F-1: skip occupied/uncleared; single-owner: skip detector-owned
       const dev = (await devicesFor(m.connection_id)).find((d) => d.id === m.remote_device_id);
       if (!dev || !dev.enabled || classify(dev.state ?? "") !== "idle") continue;
+
+      const refusal = printerMaterialRefusal(job, materialCandidates.find(c => c.device.connection_id === m.connection_id && c.device.remote_device_id === m.remote_device_id)?.loaded ?? []);
+      if (refusal) { materialBlock = refusal; continue; }
+      const driver = await buildDriverById(db, orgId, m.connection_id);
+      if (await driver?.jobReviewRequired?.()) continue;
 
       // Assign: stamp the connection + device, then send through the shared path.
       // Status-guarded CLAIM — two overlapping passes (a slow tick overrunning the
@@ -157,7 +166,7 @@ export async function assignPoolJobs(db: Kysely<DigifabDB>, orgId: string): Prom
       // so one job can never be physically sent to two printers.
       const claim = await db
         .updateTable("digifab_jobs")
-        .set({ connection_id: m.connection_id, target_device: m.remote_device_id, status: "assigning", updated_at: new Date() })
+        .set({ connection_id: m.connection_id, target_device: m.remote_device_id, status: "assigning", error: null, updated_at: new Date() })
         .where("id", "=", job.id)
         .where("status", "=", "queued")
         // The DEVICE must still be free at the instant of the claim, checked in
@@ -225,7 +234,10 @@ export async function assignPoolJobs(db: Kysely<DigifabDB>, orgId: string): Prom
       resolved = true;
       break;
     }
-    if (!resolved) stillQueued++;
+    if (!resolved) {
+      stillQueued++;
+      if (materialBlock) await db.updateTable("digifab_jobs").set({ error: materialBlock }).where("id", "=", job.id).where("status", "=", "queued").execute();
+    }
   }
   return stillQueued;
 }

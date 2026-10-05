@@ -1,3 +1,8 @@
+export { AssemblyStation } from "./AssemblyStation.js";
+import { BoardRevisionCard } from "./BoardRevisions.js";
+import type { BoardRevision } from "../api/board-revisions.js";
+export { BuildsApi } from "./api.js";
+export { BoardProjectPanel } from "./BoardRevisions.js";
 import { fieldNeed, FieldPack, RecordFormModal, CollectionHeader, ContributedDetailPanels, CustomFieldsPanel, useRecordInPath, headerButton, useToast, useConfirm, usePageTitle, SearchInput } from "@cobblr/platform-web";
 // builds UI — the host mounts <BuildsUI /> at /builds. A grid of builds;
 // clicking one opens a detail MODAL with its bill-of-materials, a live
@@ -264,6 +269,9 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
 
         {d && (
           <>
+            {d.build.metadata?.assembly
+              ? <BoardRevisionCard slug={orgSlug} id={buildId} spec={d.build.metadata.assembly as BoardRevision} api={api} />
+              : <>
             <OutputLine
               output={d.output ?? null}
               buildName={d.build.name}
@@ -403,6 +411,7 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
             {/* Build history + as-built genealogy (rung 8) */}
             <HistorySection buildId={buildId} api={api} />
             <TraceBox api={api} />
+              </>}
           </>
         )}
 
@@ -928,6 +937,7 @@ function SchedulePanel({ api, builds }: { api: BuildsApi; builds: BuildSummary[]
   const lanes = sched.data?.lanes ?? [];
   const totalItems = lanes.reduce((n, l) => n + l.items.length, 0);
   const totalLate = lanes.reduce((n, l) => n + l.late_count, 0);
+  const ordinaryBuilds = builds.filter(b => !b.metadata?.assembly);
 
   return (
     <div className="rounded-lg border border-line dark:border-slate-700">
@@ -943,14 +953,14 @@ function SchedulePanel({ api, builds }: { api: BuildsApi; builds: BuildSummary[]
           </span>
         )}
         <div className="flex-1" />
-        <button type="button" onClick={() => setAdding((a) => !a)} className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-cobble-600 text-white">
+        {ordinaryBuilds.length > 0 && <button type="button" onClick={() => setAdding((a) => !a)} className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-cobble-600 text-white">
           <Plus size={12} /> Plan a build
-        </button>
+        </button>}
       </div>
 
       {!collapsed && (
         <div className="p-3 space-y-3">
-          {adding && <AddPlannedRow builds={builds} onAdd={(v) => addPlanned.mutate(v)} onCancel={() => setAdding(false)} />}
+          {adding && <AddPlannedRow builds={ordinaryBuilds} onAdd={(v) => addPlanned.mutate(v)} onCancel={() => setAdding(false)} />}
           {sched.isLoading && <div className="text-sm text-muted">Loading…</div>}
           {!sched.isLoading && totalItems === 0 && (
             <div className="text-sm text-muted italic">Nothing planned. Add est-minutes to a build's routing steps, then plan one here to see a projected timeline.</div>
@@ -989,10 +999,10 @@ function SchedulePanel({ api, builds }: { api: BuildsApi; builds: BuildSummary[]
                         <AlertTriangle size={10} /> late
                       </span>
                     )}
-                    <div className="flex items-center hover-reveal">
+                    {it.assembly_state ? <Link className="text-accent underline text-xs" to={`/builds/${it.build_id}`}>Assembly kit · {it.assembly_state}</Link> : <div className="flex items-center hover-reveal">
                       <button type="button" onClick={() => completePlanned.mutate(it.id)} className="text-slate-300 hover:text-green-600" title="Mark done" aria-label="Mark done"><Check size={14} /></button>
                       <button type="button" onClick={() => removePlanned.mutate(it.id)} className="text-slate-300 hover:text-red-500 ml-1" title="Remove" aria-label="Remove"><X size={14} /></button>
-                    </div>
+                    </div>}
                   </li>
                 ))}
               </ul>
@@ -1029,3 +1039,8 @@ function AddPlannedRow({ builds, onAdd, onCancel }: { builds: BuildSummary[]; on
 }
 
 export default BuildsUI;
+
+export { ReflowStation } from "./ReflowStation.js";
+
+export { InspectionStation } from "./InspectionStation.js";
+export { BoardInspection } from "./Inspection.js";

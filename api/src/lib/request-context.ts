@@ -60,3 +60,90 @@ export function runVia<T>(via: Via, fn: () => T): T {
 export function currentVia(): Via | null {
   return viaStorage.getStore() ?? null;
 }
+
+// ONE REQUEST, ITS OWN META QUERIES (#4876). A lookup made per record on a
+// list or batch path took the whole meta pool: resolveKind's registry read and
+// getFieldReadScopes' per-workspace overrides ran once per row, 333 callers
+// queued on 80 clients in CI. Two things live here so that class stays fixed:
+//   memo     a per-request cache: the same question asked for every row of
+//            one response is asked of the database once (perRequest below),
+//            and the next request asks again, so an admin's edit still takes
+//            effect at once;
+//   meta     the meta statements this request ran, counted, so a test can
+//            assert a bound ("listing 300 records uses a bounded number of
+//            meta checkouts") and a regression fails there by name.
+export interface RequestScope {
+  memo: Map<string, Promise<unknown>>;
+  meta: Map<string, number>;
+  /** Set by a handler that only READS (the activity feed): reads wrapped in
+   *  perReadRequest are then asked once per request instead of once per row. */
+  readOnly?: boolean;
+  /** "GET /orgs/:slug/records (a-test-file.test.ts)": which request, and in CI
+   *  which test file sent it, so a pool's holders and waiters name the burst
+   *  that starved it, not only the query each one ran. */
+  label?: string;
+}
+const scopeStorage = new AsyncLocalStorage<RequestScope>();
+
+/** A request as a pool's holders name it: the route with its ids and the
+ *  workspace slug collapsed (so forty calls of one route count as one), and
+ *  the test file that sent it when one says so (the api tests' setup does). */
+export function requestLabel(method: string, path: string, testFile?: string | null): string {
+  const route = path
+    .replace(/^\/orgs\/[^/]+/, "/orgs/:slug")
+    .replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?=\/|$)/gi, "/:id")
+    .replace(/\/\d+(?=\/|$)/g, "/:n")
+    .slice(0, 120);
+  const file = testFile && /^[\w.-]{1,120}$/.test(testFile) ? ` (${testFile})` : "";
+  return `${method} ${route}${file}`;
+}
+
+/** Run fn as one request: its own memo and its own meta statement count. */
+export function runRequestScope<T>(fn: () => T, scope: RequestScope = { memo: new Map(), meta: new Map() }): T {
+  return scopeStorage.run(scope, fn);
+}
+
+/** The current request's scope, or null outside one (a timer, a boot pass). */
+export function currentRequestScope(): RequestScope | null {
+  return scopeStorage.getStore() ?? null;
+}
+
+/** `load()` once per request for `key`; outside a request, every time. A
+ *  failure is not kept: the next asker tries again. */
+export function perRequest<T>(key: string, load: () => Promise<T>): Promise<T> {
+  const scope = scopeStorage.getStore();
+  if (!scope) return load();
+  const hit = scope.memo.get(key) as Promise<T> | undefined;
+  if (hit) return hit;
+  const p = load();
+  scope.memo.set(key, p);
+  p.catch(() => scope.memo.delete(key));
+  return p;
+}
+
+/** Say this request only reads: from here, perReadRequest answers a repeated
+ *  question from memory. A no-op outside a request. Never call it from a handler
+ *  that writes the rows perReadRequest covers (instances, overrides), or the
+ *  rest of that request would read what it had just changed as it was. */
+export function markRequestReadOnly(): void {
+  const scope = scopeStorage.getStore();
+  if (scope) scope.readOnly = true;
+}
+
+/** `perRequest`, but only in a request that said it only reads. Otherwise the
+ *  question is asked every time, as before: a kernel read that many places make,
+ *  and some of them after writing what it reads (a provision, an override), must
+ *  not start answering from memory for writers. The activity feed asked for an
+ *  instance and an override once per row (180 statements for 100 rows, main red
+ *  on run 37212): in a read-only request it asks once. */
+export function perReadRequest<T>(key: string, load: () => Promise<T>): Promise<T> {
+  return scopeStorage.getStore()?.readOnly ? perRequest(key, load) : load();
+}
+
+/** Note one meta statement for the current request (client-error-guard). */
+export function noteMetaStatement(text: string): void {
+  const scope = scopeStorage.getStore();
+  if (!scope) return;
+  const key = text.replace(/\s+/g, " ").trim().slice(0, 160);
+  scope.meta.set(key, (scope.meta.get(key) ?? 0) + 1);
+}

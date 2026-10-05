@@ -200,6 +200,7 @@ discussionRouter.post(
       source_id: parsed.data.source_id,
     });
 
+    // check-then-insert: the only key is external_ref, which this insert never sets
     const comment = await db
       .insertInto("core_discussion_comments")
       .values({

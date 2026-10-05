@@ -11,10 +11,11 @@
 // require platform-level subscription to every module's delete
 // events, which is overkill for Phase 1.
 
+import { assertStorageReady } from "./storage.js";
 import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { ActionRefusal, platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody } from "./util.js";
 import { recordConsumption } from "./stock-ledger.js";
@@ -42,7 +43,7 @@ allocationsRouter.get(
       .selectFrom("inventory_allocations as a")
       .leftJoin("inventory_parts as p", "p.id", "a.part_id")
       .select([
-        "a.id", "a.part_id", "a.qty", "a.status",
+        "a.id", "a.part_id", "a.qty", "a.status", "a.context",
         "a.target_module", "a.target_entity_type", "a.target_entity_id",
         "a.reason", "a.target_line", "a.reserved_at", "a.consumed_at", "a.released_at",
         "p.name as part_name",
@@ -93,32 +94,37 @@ export async function reserveAllocation(
   userId: string,
   d: ReserveRequest,
 ): Promise<{ ok: true; row: Record<string, unknown> } | { ok: false; code: "part_not_found" }> {
-  // The part has to exist before we hand out a reservation on it.
-  // FK would error eventually but we want a clean 404 not a 5xx.
-  const part = await db
-    .selectFrom("inventory_parts")
-    .select("id")
-    .where("id", "=", d.part_id)
-    .executeTakeFirst();
-  if (!part) return { ok: false, code: "part_not_found" };
+  const inserted = await db.transaction().execute(async trx => {
+    // The part has to exist before we hand out a reservation on it.
+    // FK would error eventually but we want a clean 404 not a 5xx.
+    const part = await trx
+      .selectFrom("inventory_parts")
+      .select("id")
+      .where("id", "=", d.part_id)
+      .forUpdate().executeTakeFirst();
+    if (!part) return null;
+    await assertStorageReady(trx, orgId, d.part_id);
 
-  const inserted = await db
-    .insertInto("inventory_allocations")
-    .values({
-      part_id: d.part_id,
-      qty: String(d.qty),
-      target_module: d.target_module,
-      target_entity_type: d.target_entity_type,
-      target_entity_id: d.target_entity_id,
-      reason: d.reason ?? null,
-      target_line: d.target_line ?? null,
-    })
-    .returning([
-      "id", "part_id", "qty", "status",
-      "target_module", "target_entity_type", "target_entity_id",
-      "reason", "target_line", "reserved_at",
-    ])
-    .executeTakeFirstOrThrow();
+    const inserted = await trx
+      .insertInto("inventory_allocations")
+      .values({
+        part_id: d.part_id,
+        qty: String(d.qty),
+        target_module: d.target_module,
+        target_entity_type: d.target_entity_type,
+        target_entity_id: d.target_entity_id,
+        reason: d.reason ?? null,
+        target_line: d.target_line ?? null,
+      })
+      .returning([
+        "id", "part_id", "qty", "status",
+        "target_module", "target_entity_type", "target_entity_id",
+        "reason", "target_line", "reserved_at",
+      ])
+      .executeTakeFirstOrThrow();
+    return inserted;
+  });
+  if (!inserted) return { ok: false, code: "part_not_found" };
   await platform().activity.log({
     orgId,
     userId,
@@ -190,11 +196,12 @@ export async function settleAllocation(
       .selectFrom("inventory_allocations")
       .select([
         "id", "part_id", "qty", "status", "reason",
-        "target_module", "target_entity_type", "target_entity_id",
+        "target_module", "target_entity_type", "target_entity_id", "target_line",
       ])
       .where("id", "=", id)
-      .executeTakeFirst();
+      .forUpdate().executeTakeFirst();
     if (!current) return { error: "not_found" as const };
+    if (current.target_line === "assembly-kit") throw new ActionRefusal("Settle this reservation through its whole assembly work order.");
     if (current.status !== "reserved") {
       return { error: "not_reserved" as const, current };
     }
@@ -208,10 +215,11 @@ export async function settleAllocation(
       .selectFrom("inventory_parts")
       .select(["qty", sql<string | null>`metadata->>'unit_of'`.as("unit_of")])
       .where("id", "=", current.part_id)
-      .executeTakeFirst();
+      .forUpdate().executeTakeFirst();
     const take = status === "consumed" && onPart?.unit_of ? String(Math.max(0, Number(onPart.qty))) : current.qty;
 
     if (status === "consumed") {
+      await assertStorageReady(trx, orgId, current.part_id);
       await trx
         .updateTable("inventory_parts")
         .set({

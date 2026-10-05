@@ -374,6 +374,7 @@ async function visitWorkspace(
                  where id = ${row.id}
               `.compile(tdb),
             );
+          // pass-catch: a carrier or bridge being down is not an arrival; the date-only rules still apply
           } catch (err) {
             // A carrier or bridge being down is not an arrival and not a
             // failure of the sweep: the date-only rules still apply below.
@@ -442,6 +443,7 @@ async function visitWorkspace(
             `.compile(tdb);
             await tdb.executeQuery(up);
           } catch (err) {
+            platform().health.notePassFailure("purchases.arrival-claim", orgId, err);
             // No claim, no send: sending anyway is how the unbounded re-ask
             // happened. This parcel gets asked about next tick instead.
             console.error("[purchases] arrival ledger write failed:", (err as Error).message);
@@ -505,6 +507,7 @@ async function visitWorkspace(
                 ],
               });
             } catch (err) {
+              platform().health.notePassFailure("purchases.arrival-notify", orgId, err);
               console.error("[purchases] arrival notify failed:", (err as Error).message);
             }
           }

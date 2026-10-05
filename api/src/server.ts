@@ -1,3 +1,4 @@
+import { GroupingError } from "@cobblr/platform-contract/grouped-list";
 import { deletedRecordsRouter } from "./routes/deleted-records.js";
 // Express app factory. Two-phase setup so module routers can attach
 // between the platform's static routes and the 404 fallback:
@@ -18,7 +19,10 @@ import { oauthRouter, wellKnownRouter } from "./auth/oauth.js";
 import { pendingMigrationSummary } from "./modules/enable.js";
 import { failingTenantSweeps } from "./platform/tenant-sweeps.js";
 import { healShimRuns } from "./platform/heal-shim-log.js";
+import { passFailures } from "./platform/pass-failures.js";
 import { metaPool } from "./db/meta.js";
+import { currentRequestScope, requestLabel, runRequestScope } from "./lib/request-context.js";
+import { rememberProbe } from "./platform/meta-probe.js";
 import { tenantPoolStats } from "./db/tenant.js";
 import { poolCounts } from "./db/pool-stats.js";
 import { errors5xxRecent, noteResponse } from "./platform/error-rate.js";
@@ -38,6 +42,7 @@ import { publicRouter } from "./routes/public.js";
 import { changelogRouter } from "./routes/changelog.js";
 import { frameDocsRouter } from "./routes/frame-docs.js";
 import { meRouter } from "./routes/me.js";
+import { oidcAdminRouter, oidcAuthRouter, oidcMeRouter } from "./routes/oidc.js";
 import { discordInteractionsRouter } from "./routes/discord-interactions.js";
 import { testSupportRouter } from "./routes/test-support.js";
 import { testDoorsEnabled } from "./platform/test-doors.js";
@@ -220,6 +225,21 @@ export function createApp(): AppHandles {
   // same address, whoever is signed in: a sandbox kept at its ending reloaded
   // into the ending again, from the cache, with the owner's own token (#4217).
   // A route that means to be cached (a file, a picture) sets its own header.
+  // Every request runs in its own scope: a per-request memo, and the meta
+  // statements it ran, which a test reads by sending x-meta-probe (#4876).
+  v1.use((req, res, next) => {
+    const probe = req.header("x-meta-probe");
+    runRequestScope(() => {
+      const scope = currentRequestScope();
+      if (scope) scope.label = requestLabel(req.method, req.path, req.header("x-test-file"));
+      if (probe && /^[\w-]{1,64}$/.test(probe)) {
+        res.on("finish", () => {
+          if (scope) rememberProbe(probe, scope);
+        });
+      }
+      next();
+    });
+  });
   v1.use((_req, res, next) => {
     res.setHeader("Cache-Control", "no-store");
     next();
@@ -293,6 +313,11 @@ export function createApp(): AppHandles {
       // A failing resolver used to be one log line per request that nothing
       // read, for three weeks (#3824).
       resolvers_failing: failingResolvers(),
+      // Every heal, reconcile and sweep pass that caught a failure and carried
+      // on, with the last few named (platform/pass-failures.ts). A caught
+      // failure used to be a log line and nothing else, so "nothing happened"
+      // and "it failed" read the same (#4937). Empty is healthy.
+      pass_failures: passFailures(),
       // Every one-shot heal shim's last pass here: what it still found, how
       // many workspaces it could not read, and since when it has found
       // nothing (#3453). The deletion condition each shim states, readable
@@ -351,6 +376,9 @@ export function createApp(): AppHandles {
       db_ok: dbOk,
       outbound_down: down.map((o) => ({ name: o.name, host: o.host, error: o.error })),
       checked: outbound.map((o) => o.name),
+      // Information, never a 503: a heal that failed one workspace must not
+      // take the api out of service for everyone.
+      pass_failures: passFailures(),
     });
   });
 
@@ -359,6 +387,7 @@ export function createApp(): AppHandles {
   v1.use(requestGuardMiddleware());
 
   v1.use("/auth", authRouter);
+  v1.use("/auth", oidcAuthRouter);
 
   // The no-account sandbox, registered ONLY on a box that opted in
   // (COBBLR_TRY_SANDBOX=true). On prod, staging and every self-host these
@@ -375,6 +404,7 @@ export function createApp(): AppHandles {
   // answering only where COBBLR_CARRY_SOURCES names somewhere to read from.
   v1.use(carryRouter);
   v1.use(meRouter);
+  v1.use(oidcMeRouter);
   // A one-shot URL for a document that must run inline scripts (a custom app
   // block, an installed renderer). The GET is unauthenticated on purpose --
   // an iframe carries no bearer token, so the 32-byte ticket is the
@@ -458,6 +488,7 @@ export function createApp(): AppHandles {
   v1.use("/orgs", liveRouter);
   // Super-admin (platform operator) surface — cross-workspace
   // dashboards. Gated by SUPERADMIN_EMAILS env var.
+  v1.use("/super-admin/sign-in", oidcAdminRouter);
   v1.use("/super-admin", superAdminRouter);
   // User feedback about the platform (submit: any authed user; triage: super-admin).
   v1.use("/feedback", feedbackRouter);
@@ -561,7 +592,7 @@ export function completeApp(app: Application): void {
       }
       // A write naming a field the kind does not have (entity-metadata.ts):
       // the caller's mistake, said with the names they could have meant.
-      if (err instanceof UnknownFieldError || err instanceof InvalidFieldValueError) {
+      if (err instanceof UnknownFieldError || err instanceof InvalidFieldValueError || err instanceof GroupingError) {
         res.status(err.status).json(err.toJSON());
         return;
       }

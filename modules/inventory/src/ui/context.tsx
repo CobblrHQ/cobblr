@@ -39,6 +39,8 @@ interface InventoryCtx {
   parent?: ParentConfig;
   /** The table's "Import from <service>" button, when its bundle declares one. */
   connectorImport?: ConnectorImportDecl;
+  storageTracking?: boolean;
+  pasteTracking?: boolean;
   /** Route base for this UI — `/instances/<instance>` when scoped, else
    *  "/inventory". Row links + detail-close + create-navigate use it so the
    *  detail modal opens within the instance (and shows its fields). */
@@ -66,6 +68,8 @@ export function InventoryProvider({
   countWords,
   parent,
   connectorImport,
+  storageTracking,
+  pasteTracking,
   children,
 }: {
   orgSlug: string;
@@ -77,6 +81,8 @@ export function InventoryProvider({
   countWords?: readonly CountWords[];
   parent?: ParentConfig;
   connectorImport?: ConnectorImportDecl;
+  storageTracking?: boolean;
+  pasteTracking?: boolean;
   children: ReactNode;
 }) {
   const api = useMemo(
@@ -92,7 +98,7 @@ export function InventoryProvider({
   const nounPlural = itemNounPlural ?? pluralise(noun);
   return (
     <Ctx.Provider
-      value={{ orgSlug, getToken, api, instance, entityKind, itemNoun: noun, itemNounPlural: nounPlural, qtyUnit, countWords: countWords ?? [], parent, connectorImport, basePath }}
+      value={{ orgSlug, getToken, api, instance, entityKind, itemNoun: noun, itemNounPlural: nounPlural, qtyUnit, countWords: countWords ?? [], parent, connectorImport, storageTracking, pasteTracking, basePath }}
     >
       {children}
     </Ctx.Provider>

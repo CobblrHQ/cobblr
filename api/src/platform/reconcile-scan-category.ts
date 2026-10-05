@@ -36,6 +36,7 @@ import { planScanCategoryAxes } from "./scan-category-plan.js";
 import { getEntityWriterFor } from "./entities.js";
 import { forgetAxis } from "./category-axis.js";
 import { evictTenantPool } from "../db/tenant.js";
+import { notePassFailure } from "./pass-failures.js";
 
 const CATEGORY_FIELD = "category";
 
@@ -157,6 +158,7 @@ export async function reconcileScanCategoryFields(opts: { onlyOrgId?: string } =
       healed++;
       console.log(`[reconcile] scan category axis: org ${org_id} kind ${kind} (adopted)`);
     } catch (err) {
+      notePassFailure("reconcileScanCategoryFields", org_id, err);
       console.error(`[reconcile] scan category axis failed for ${org_id}::${kind}:`, (err as Error)?.message ?? err);
     }
   }
@@ -187,6 +189,7 @@ export async function reconcileScanCategoryFields(opts: { onlyOrgId?: string } =
       healed++;
       console.log(`[reconcile] scan category axis: org ${org_id} kind ${kind}`);
     } catch (err) {
+      notePassFailure("reconcileScanCategoryFields", org_id, err);
       // One workspace's failure must never block the rest.
       console.error(`[reconcile] scan category axis failed for ${org_id}::${kind}:`, (err as Error)?.message ?? err);
     }
@@ -208,6 +211,7 @@ export async function reconcileScanCategoryFields(opts: { onlyOrgId?: string } =
       withdrawn++;
       console.log(`[reconcile] scan category axis withdrawn: org ${org_id} kind ${kind} (specialised table)`);
     } catch (err) {
+      notePassFailure("reconcileScanCategoryFields", org_id, err);
       console.error(`[reconcile] scan category axis withdraw failed for ${org_id}::${kind}:`, (err as Error)?.message ?? err);
     }
   }
@@ -282,6 +286,7 @@ export async function retireScanCategoryPlaceholders(opts: { onlyOrgId?: string 
       retired++;
       console.log(`[reconcile] scan category axis retired: org ${org_id} kind ${kind}, ${moved} value(s) moved into its own categories`);
     } catch (err) {
+      notePassFailure("retireScanCategoryPlaceholders", org_id, err);
       console.error(`[reconcile] scan category axis retire failed for ${org_id}::${kind}:`, (err as Error)?.message ?? err);
     } finally {
       // The boot sweep opened this workspace's pool through the writer; release

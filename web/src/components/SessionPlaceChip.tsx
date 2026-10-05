@@ -22,6 +22,8 @@ export interface SessionPlaceChipProps {
   suggested: number;
   /** Where the missing ones are suggested to go, by name (distinct). */
   suggestedNames?: readonly string[];
+  /** Why, when every unplaced item shares one suggested place. */
+  suggestedWhy?: string | null;
   /** Set to different places. */
   mixed: boolean;
   /** The one place they are set to, as the user reads it; null when none is. */
@@ -35,7 +37,7 @@ export function sessionPlaceTitle(p: Omit<SessionPlaceChipProps, "onClick">): st
   if (p.placeName) return `${p.total - p.missing} of ${p.total} are in ${p.placeName}; the other ${p.missing} have no location yet - tap to set it`;
   if (p.missing > 0 && p.suggested === p.missing) {
     const names = p.suggestedNames ?? [];
-    if (names.length > 0) return `Suggested: ${names.join(", ")}. File all will use ${names.length === 1 ? "it" : "them"} - tap to set one yourself`;
+    if (names.length > 0) return `${names.length === 1 && p.suggestedWhy ? `${names[0]}, ${p.suggestedWhy}` : `Suggested: ${names.join(", ")}`}. File all will use ${names.length === 1 ? "it" : "them"} - tap to set one yourself`;
     return `${p.suggested} have a suggested location that File all will use - tap to set one yourself`;
   }
   return `None of these ${p.total} have a location yet - tap to set it`;
@@ -70,7 +72,9 @@ export function SessionPlaceChip(props: SessionPlaceChipProps) {
         // Never a bare count (#4582): one place is named, several say how many places.
         <span className={names.length === 1 ? "min-w-0 max-w-[10rem] truncate" : undefined}>
           {names.length === 1 ? names[0] : names.length > 1 ? `${names.length} places` : suggested}
-          <span className="max-lg:hidden"> suggested</span>
+          {/* Why, never a bare "suggested" (#4933): one place says its
+              reason; several say each item has its own. */}
+          <span className="max-lg:hidden"> · {names.length === 1 && props.suggestedWhy ? props.suggestedWhy : "each beside things like it"}</span>
         </span>
       ) : placeName && missing === 0 ? (
         <span className="max-lg:hidden">{placeName}</span>

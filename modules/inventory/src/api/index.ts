@@ -1,3 +1,6 @@
+import { registerAssemblyFinish } from "./assembly-finish.js";
+import { pasteRouter, registerPasteActions } from "./paste.js";
+import { registerKitActions } from "./kits.js";
 // Default-exported Router. The platform mounts this at
 // /api/v1/orgs/:slug/modules/inventory/ with requireAuth +
 // withTenant pre-applied, so handlers can rely on req.session +
@@ -21,6 +24,10 @@ import { allocationsRouter } from "./allocations.js";
 import { importRouter } from "./import.js";
 import { filamentCatalogRouter } from "./filament-catalog.js";
 import { nativeSpoolRouter } from "./spool-native.js";
+import { storageRouter, registerStorageActions } from "./storage.js";
+import { packageReceivingRouter, registerPackageReceiving } from "./package-receiving.js";
+import { registerPlacementConsumption } from "./placement-consumption.js";
+import { sheetRouter, sheetSearchRouter, registerSheetActions } from "./sheets.js";
 import { materialRouter, materialCostRouter, registerMaterialActions } from "./material.js";
 import { spoolmanRouter, registerSpoolmanWriteBack } from "./spoolman.js";
 import { registerInventoryResolvers } from "./resolvers.js";
@@ -34,6 +41,13 @@ import { registerInstalledParts } from "./installed.js";
 registerInventoryResolvers();
 registerInventoryActionHandlers();
 registerMaterialActions();
+registerSheetActions();
+registerStorageActions();
+registerPasteActions();
+registerKitActions();
+registerAssemblyFinish();
+registerPackageReceiving();
+registerPlacementConsumption();
 registerSpoolmanWriteBack();
 registerHoldingActions();
 // Parts installed in things built from them: 2 of 4 sticks in a computer.
@@ -132,12 +146,17 @@ partsRouter.use(importRouter);
 // One thing kept in several places: its rows ride the same two doors.
 partsRouter.use(holdingsRouter);
 partsRouter.use(materialRouter);
+partsRouter.use(sheetRouter);
+partsRouter.use(storageRouter);
+partsRouter.use(pasteRouter);
+partsRouter.use(packageReceivingRouter);
 // A type collection read with its things under each type (Filament).
 partsRouter.use(familiesRouter);
 router.use("/parts", partsRouter);
 router.use("/allocations", allocationsRouter);
 // What one place carries, and what is going off soon, across every collection.
 router.use("/stock", stockRouter);
+router.use("/sheets", sheetSearchRouter);
 router.use("/material-cost", materialCostRouter);
 router.use("/filament-catalog", filamentCatalogRouter);
 router.use("/spoolman/native/:collection", nativeSpoolRouter);

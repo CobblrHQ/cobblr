@@ -49,6 +49,7 @@ export async function createPairingCode(p: {
     .deleteFrom("edge_pairing_codes")
     .where((eb) => eb.or([eb("expires_at", "<", new Date()), eb("used_at", "is not", null)]))
     .execute();
+  // check-then-insert: the key is a random code minted here; two requests make two codes
   await meta
     .insertInto("edge_pairing_codes")
     .values({

@@ -2,6 +2,49 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-10-05
+
+### Features
+- Recent activity now names what changed in plain sentences, links to your things, shows photos and keeps the time in one place.
+- Track registration and inspection expiry dates, renew without losing time, and snooze or stop overdue reminders.
+- The dashboard groups captures into compact rows with photos, expandable duplicates and an Add all button for each collection.
+- Added a floor manager with all machine queues, material dispatch, stock shortages and a shared monitor screen.
+- Grouped table views now show counts and totals by one or two columns, with separate totals for each currency.
+- Added kiln monitoring, firing logs with linked pieces, saved schedules, shared liquid glaze use and replacement reminders by firing hours.
+- Added direct G-code laser jobs with material profiles, a settings review, laser-off framing and station controls without requiring LightBurn.
+- Added shared USB and TCP laser connections with reviewed jobs and machine station controls.
+- Prepare SVG and DXF laser batches with material profiles, sheet layouts and station approval.
+- Added a laser station that checks the loaded sheet, reviews prepared LightBurn files and approves Start beside the machine.
+- Added outline nesting for laser, CNC and cutter parts around used sheet areas, with rotation choices and a longer search option.
+- Plan a layout for a room before anything moves: drag racks and things into a draft, keep several options and compare them, print one to scale, and apply it as one step you can undo.
+- The floor plan draws things at their real size: a printer with an outer size takes its real footprint on the floor and its real width on a rack's shelf, and a shelf says whether what is on it fits ("3 machines, 1,278 of 1,220 mm: 58 mm too wide").
+- Added sheet stock with cut outlines, undoable free-area edits, offcut search and QR labels for sheets and loaded spools.
+- Cobblr can now sign you in through the identity provider your server already runs, such as Authentik, Authelia, Keycloak or Pocket ID, so one login (and its two-factor) covers Cobblr too. Link it once from your account; after that, Sign in with on the sign-in page takes you straight in.
+- Added component package receiving from distributor labels, moisture exposure tracking, bake timers and placement counts with attrition.
+- Added Snapmaker U1 and legacy HTTP printer setup with touchscreen pairing, four-tool readings and reviewed Start at the machine station.
+- Added touchscreen pairing and reviewed print starts for Snapmaker SACP firmware on 2.0, J1 and Artisan.
+- Added stock shapes for sheets, rolls, spools, liquids, wearing tools and counted supplies, with job use, replacement reminders and QR loading at a browser station.
+- Your own assistant reads your notes. Ask Cobb, or an assistant you connect over MCP, how many parts mention something you only wrote in a part's notes, and it counts that part instead of saying none. Nobody else's assistant reads them: a friend you share with sees a note only if you turned Private notes on for that share, and a field you limited to some people stays limited. Configuration, AI now says this under What Cobb reads.
+
+### Improvements
+- A connected service that answers straight away, like a parts catalog search, now shows its results as soon as it answers. Cobblr used to ask it a second time before showing anything, which added a request and at least a second to every search.
+- A connected service can take several files in one input, so a design service can be handed the exact parts to fit (a bearing, a screw) and build around their real shapes. A file sent under a name the service does not take is now refused with the names it does take, instead of being quietly left behind.
+- Every − and + counter now has a number you can tap and type with the phone's number keypad (the inbox row's quantity, stock counts, copies to print), instead of only flashing the buttons.
+- The app downloads about a quarter of what it used to before the first page appears: each section, dialog and heavy tool (the barcode reader, QR codes, Markdown, PDFs) now loads when you open it, and the section you point at starts loading before you click, so it still opens at once. On a slow phone connection the dashboard appears about two seconds sooner and the scan inbox about four.
+
+### Fixes
+- A scan card says only what actually went wrong. A scan with no name used to say "The AI could not read this one" even when no AI had been asked, which looked like an outage. Now a card names a failure only when one was recorded: the AI could not be reached, its allowance ran out, or its answer could not be read. Otherwise it says "Not named yet" and offers to identify it or name it.
+- More failures now say so instead of leaving the screen as it was: resending the verification email, a photo that could not be made the cover, refreshing a printer's files, the backup destinations list, labels that did not queue (one at a time or in bulk), a catalog match or a parent link that did not save on a new item, and items that did not move or could not be removed in a bulk action on the scan inbox. A scanned location that could not be nested no longer says it was. Saving a bundle's features or a table's word no longer adds another "bundle installed" to the activity feed.
+- Scanning something kept in several places never guesses the place. When Cobblr could not read where an item is kept, a scan could add to whichever place it found first, and picking the right place could be refused. It now says it could not check and asks you to try again.
+- A suggested place says why. A scanned item could show a place with only the word "suggested" beside it, and some of those places came from nothing but where most of your general inventory sits. A place is now suggested only when something about the item backs it (similar things are kept there, or it needs to stay cold), and it always says why: "3 similar items are stored here". An area you set on one scanning session no longer carries into the next one.
+- An Amazon sticker is read off its label. Scanning the barcode on an Amazon fulfilment sticker used to say "We couldn't find this barcode. Take a photo" although the scan already had the label. It now names the item from the product title printed under the barcode, read off the scan itself, and searches its picture. When the title cannot be read, the card says it is an Amazon label and offers any text it did read as a one-tap name. Other codes no catalog looks up (a store's own label, a book's ISBN, a link) say what they are too.
+- Cobb never shows you an error meant for a program. When something goes wrong behind a request, Cobb says so in a plain sentence and tells you nothing was changed, instead of showing a code error, a technical message or a block of data.
+- Finished jobs stopped appearing as running outside Cobblr on the floor after their results were recorded.
+- Laser Library cards now show SVG previews, bridge pairing waits until Desktop is online, and the floor shows clearer machine names and production guidance.
+- Laser jobs kept their nested layout and sheet name in the final review, with clearer station guidance and machine names.
+- Laser dispatch now starts with one part and readable layer names, while stations show clearer sheet previews, running progress and job facts with a primary good-result action.
+- Sheets added through the Sheets bundle appeared on the floor manager with their remaining area and became available for material dispatch.
+
 ## 2026-10-04
 
 ### Features

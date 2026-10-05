@@ -53,6 +53,7 @@ export interface ContributedPanelSpec {
   /** Disclosure: the face this panel belongs to. A face a person hid takes
    *  its panels off the record; eligibility above is untouched. */
   face?: string | null;
+  placement?: "summary" | "details";
 }
 
 export type DetailPanelComponent = ComponentType<{ ctx: EntityDetailPanelCtx }>;
@@ -118,6 +119,7 @@ export function useContributedDetailPanels(
    *  side-cars. Pass false from a slot that is NOT a record's detail view —
    *  notably a row in a list of things that do not exist yet. */
   universal = true,
+  baseTarget?: string,
 ): ContributedPanelSpec[] {
   const { api, orgSlug } = usePlatformWeb();
   const registered = useRegisteredIds();
@@ -134,7 +136,7 @@ export function useContributedDetailPanels(
       // `*` means EVERY kind. Some side-cars are not about one module's
       // entities at all — a conversation, a tag — and enumerating every kind
       // that should have one is a list that is wrong the day a module ships.
-      (p.target === target || (universal && p.target === UNIVERSAL)) &&
+      (p.target === target || p.target === baseTarget || (universal && p.target === UNIVERSAL)) &&
       registered.includes(p.id),
   );
 }
@@ -150,14 +152,18 @@ export function ContributedDetailPanels({
   target,
   ctx,
   universal = true,
+  baseTarget,
+  placement,
 }: {
   target: string;
   ctx: EntityDetailPanelCtx;
   /** See useContributedDetailPanels. Set false where the slot is a row in a
    *  list rather than a record's own detail view. */
   universal?: boolean;
+  baseTarget?: string;
+  placement?: "summary" | "details";
 }) {
-  const all = useContributedDetailPanels(target, universal);
+  const all = useContributedDetailPanels(target, universal, baseTarget);
   const { worn, on } = useFaces(ctx.kind ?? target);
   // A panel that belongs to traits the collection does not wear stays off
   // the record; "Price history" is `traits: ["fungible"]` and has nothing to
@@ -168,7 +174,7 @@ export function ContributedDetailPanels({
     const eligible = !traits?.length || worn.has("*") || traits.every((t) => worn.has(t));
     // Then the person's choice: a hidden face hides its panels.
     const shown = !p.face || on.has(p.face as never);
-    return eligible && shown;
+    return eligible && shown && (!placement || (p.placement ?? "details") === placement);
   });
   if (panels.length === 0) return null;
   return (

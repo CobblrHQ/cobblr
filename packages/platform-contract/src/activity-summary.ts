@@ -1,0 +1,311 @@
+import { openRecordPath } from "@cobblr/platform-contract/instance-detail";
+
+export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
+  "action_predicate_overridden": "changed when you can use",
+  "action_predicate_reverted": "reset when you can use",
+  "add": "added",
+  "added_from_scan": "scanned in",
+  "allocation_consumed": "used reserved stock for",
+  "allocation_released": "released reserved stock for",
+  "allocation_reserved": "reserved",
+  "api_token_created": "created",
+  "api_token_revoked": "revoked",
+  "app_mode_cleared": "cleared the setup of",
+  "app_mode_set": "set up",
+  "approval_approved": "approved",
+  "approval_denied": "declined",
+  "approval_requested": "requested",
+  "asset_created": "created",
+  "asset_deleted": "deleted",
+  "asset_fields_updated": "updated",
+  "asset_updated": "updated",
+  "backup_restored": "restored",
+  "blueprint_installed": "added",
+  "build_created": "created",
+  "build_updated": "updated",
+  "bundle_features_changed": "changed the features of",
+  "bundle_installed": "added",
+  "bundle_reverted": "restored",
+  "bundle_uninstalled": "removed",
+  "bundle_word_changed": "renamed",
+  "capability_granted": "granted",
+  "capability_revoked": "revoked",
+  "carry_replayed": "brought in their trial:",
+  "catalog_created": "created",
+  "catalog_updated": "updated",
+  "category_created": "created",
+  "created": "created",
+  "custom_role_created": "created",
+  "custom_role_deleted": "deleted",
+  "customer_created": "created",
+  "customer_deleted": "deleted",
+  "customer_updated": "updated",
+  "dashboard_layout_updated": "updated",
+  "deleted": "deleted",
+  "delivery_close_setting_changed": "changed delivery settings for",
+  "document_linked": "linked a document:",
+  "document_unlinked": "unlinked a document:",
+  "email_change_reverted": "restored the email address for",
+  "email_changed": "changed the email address for",
+  "entry_created": "created",
+  "entry_deleted": "deleted",
+  "entry_updated": "updated",
+  "field_def_created": "created",
+  "field_def_deleted": "deleted",
+  "field_def_updated": "updated",
+  "file_created": "added",
+  "file_deleted": "deleted",
+  "file_purged": "permanently removed",
+  "file_restored": "restored",
+  "file_updated": "updated",
+  "focused_disabled": "turned focus off for",
+  "focused_enabled": "turned focus on for",
+  "folder_created": "created",
+  "folder_deleted": "deleted",
+  "holding_added": "added",
+  "holding_split": "split",
+  "holdings_combined": "combined",
+  "instance_created": "created",
+  "invite_created": "created",
+  "invite_redeemed_noop": "opened an existing invitation to",
+  "invite_revoked": "revoked",
+  "item_created": "created",
+  "item_deleted": "deleted",
+  "job_created": "created",
+  "join_link_paused": "paused joining for",
+  "join_link_resumed": "reopened joining for",
+  "join_link_rotated": "replaced the join link for",
+  "library_item_copied": "copied into Cobblr",
+  "library_item_linked": "linked",
+  "library_item_unlinked": "unlinked",
+  "list_created": "created",
+  "list_deleted": "deleted",
+  "list_item_updated": "updated",
+  "list_updated": "updated",
+  "location_created": "created",
+  "location_grid_lights_updated": "updated",
+  "location_light_updated": "updated",
+  "location_updated": "updated",
+  "locations_imported": "imported places into",
+  "login": "signed in",
+  "machine_created": "created",
+  "machine_deleted": "deleted",
+  "machine_updated": "updated",
+  "make_created": "created",
+  "make_deleted": "deleted",
+  "measurement_created": "created",
+  "member_joined": "joined",
+  "member_left": "left",
+  "member_removed": "removed a member from",
+  "member_role_changed": "changed a member\u2019s role in",
+  "metric_created": "created",
+  "metric_deleted": "deleted",
+  "metric_updated": "updated",
+  "module_disabled": "disabled",
+  "module_enabled": "enabled",
+  "moved": "moved",
+  "moved_by_upgrade": "moved into its own table by the upgrade:",
+  "order_created": "created",
+  "order_deleted": "deleted",
+  "order_delivered": "received",
+  "order_emailed": "emailed the customer about",
+  "order_item_added": "added",
+  "order_item_claimed": "claimed an item on",
+  "order_item_released": "released an item on",
+  "order_item_removed": "removed",
+  "order_item_updated": "updated",
+  "order_line_added": "added a line to",
+  "order_line_changed": "changed a line on",
+  "order_line_removed": "removed a line from",
+  "order_make_started": "started making for",
+  "order_return_recorded": "recorded a return for",
+  "order_shipped": "shipped",
+  "order_status_changed": "moved the status of",
+  "order_stock_taken": "took stock for",
+  "order_updated": "updated",
+  "org_created": "created",
+  "org_renamed": "renamed",
+  "pairing_created": "linked",
+  "pairing_deleted": "unlinked",
+  "parcel_following_off": "stopped following",
+  "parcel_following_on": "started following",
+  "part_created": "created",
+  "part_deleted": "deleted",
+  "part_installed": "installed a part in",
+  "part_removed": "took a part out of",
+  "part_restocked": "restocked",
+  "part_storage_changed": "changed storage for",
+  "stock_consumed": "used components from",
+  "part_updated": "updated",
+  "part_used": "took one of",
+  "parts_imported": "imported stock into",
+  "password_changed": "changed the password for",
+  "password_reset": "reset the password for",
+  "password_reset_by_admin": "reset the password for",
+  "person_added": "added",
+  "personal_export_requested": "requested a copy of",
+  "portal_config_updated": "updated",
+  "project_created": "created",
+  "project_updated": "updated",
+  "receipt_added_to_stock": "added stock from",
+  "receipt_already_counted": "checked stock from",
+  "record_brought_back": "got back",
+  "record_converted": "converted",
+  "record_created": "created",
+  "record_deleted": "deleted",
+  "record_given_away": "gave away",
+  "record_handed_over": "gave you",
+  "record_lost": "lost",
+  "record_parted_out": "parted out",
+  "record_restored": "restored",
+  "record_scrapped": "disposed of",
+  "record_sold": "sold",
+  "record_traded": "traded",
+  "record_updated": "updated",
+  "repositioned": "repositioned",
+  "sandbox_carried": "brought into a real account",
+  "sandbox_handed_over": "started a trial in",
+  "scan_committed": "scanned in",
+  "sessions_revoked": "signed out all sessions for",
+  "sheet_import_partly_undone": "partly undid the import of",
+  "sheet_import_undone": "undid the import of",
+  "sheet_imported": "imported",
+  "sheet_material_updated": "updated",
+  "station_created": "created",
+  "station_revoked": "revoked",
+  "stock_adjusted": "adjusted stock for",
+  "stock_moved": "moved stock for",
+  "stock_moved_all": "moved all stock for",
+  "tag_attached": "tagged",
+  "tag_created": "created",
+  "tag_deleted": "deleted",
+  "tag_detached": "took a tag off",
+  "tag_merged": "merged a tag into",
+  "tag_restored": "restored",
+  "tag_updated": "updated",
+  "task_completed": "finished",
+  "task_created": "created",
+  "task_updated": "updated",
+  "tenant_provisioned": "set up",
+  "things_handed_off": "handed over",
+  "unit_added": "added",
+  "updated": "updated",
+  "user_created": "joined",
+  "user_minted": "created an account for",
+  "vendor_created": "created",
+  "vendor_deleted": "deleted",
+  "vendor_updated": "updated",
+  "wire_created": "created",
+  "wire_deleted": "deleted",
+  "wire_depth_exceeded": "stopped a repeating automation in",
+  "wire_disabled": "disabled",
+  "wire_enabled": "enabled",
+  "wire_failed": "automation failed",
+  "wire_fired": "ran an automation",
+  "wire_updated": "updated",
+  "workspace_deletion_cancelled": "cancelled removal of",
+  "workspace_deletion_scheduled": "scheduled removal of"
+};
+
+export interface ActivitySubject {
+  href: string;
+  title: string;
+  kind: string | null;
+  id: string;
+  thumbnail: string | null;
+}
+export interface SummaryEntry {
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  module_name: string | null;
+  user_id?: string | null;
+  actor?: { id?: string; display_name: string | null; email?: string | null } | null;
+  via_kind?: string | null;
+  via_label?: string | null;
+  diff: unknown;
+  entity_title?: string | null;
+  entity_kind?: string | null;
+  said?: readonly { label: string }[];
+}
+export interface ActivityPresentation {
+  summary: string;
+  template: string;
+  verb: string;
+  subject: ActivitySubject;
+  hidden: boolean;
+}
+const bag = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {};
+const text = (v: unknown): string | null => typeof v === "string" && v.trim() ? v.trim() : null;
+const named = (d: Record<string, unknown>): string | null => text(d.name) ?? text(d.title) ?? text(d.label) ?? text(d.display_name) ?? text(d.document) ?? text(d.item);
+export function activityActor(e: SummaryEntry, viewerId?: string): string {
+  if (viewerId && (e.user_id === viewerId || e.actor?.id === viewerId)) return "You";
+  if (e.actor) return text(e.actor.display_name) ?? text(e.actor.email) ?? "A former member";
+  if (e.user_id) return "A former member";
+  if (e.via_kind === "share") return text(e.via_label) ?? "Someone you share with";
+  if (e.via_kind === "automation") return text(e.via_label) ?? "An automation";
+  return "Cobblr";
+}
+
+export function activityPresentation(e: SummaryEntry, slug: string, viewerId?: string, resolved?: ActivitySubject): ActivityPresentation {
+  const d = bag(e.diff);
+  const actor = activityActor(e, viewerId);
+  let title = named(d) ?? e.entity_title ?? e.entity_type.replaceAll("_", " ");
+  const kind = e.entity_kind ?? (e.module_name ? `${e.module_name}:${e.entity_type}` : null);
+  let subject: ActivitySubject = resolved ?? { title, kind, id: e.entity_id, thumbnail: null,
+    href: `/w/${encodeURIComponent(slug)}${kind ? openRecordPath(kind, e.entity_id) : "/activity"}` };
+  let summary: string;
+  let template = e.action;
+  let verb = ACTIVITY_VERBS[e.action] ?? "changed";
+  let hidden = false;
+  if (e.action === "wire_fired" || e.action === "wire_failed") {
+    const said = text(d.said);
+    const label = text(d.action_label) ?? "An automation";
+    hidden = e.action === "wire_fired" && (d.declined === true || d.changed === 0 || !said);
+    summary = e.action === "wire_failed" ? `${label} failed${text(d.error) ? `: ${text(d.error)}` : ""}` : said ? `${label}: ${said}` : `${label} changed nothing`;
+    if (!resolved) subject = { ...subject, title: label, href: `/w/${encodeURIComponent(slug)}/wires` };
+  } else if (e.action.startsWith("bundle_")) {
+    summary = e.action === "bundle_installed" ? e.user_id || e.actor ? `${actor} added the ${title} collection` : `Set up for you: ${title}` : `${actor} ${ACTIVITY_VERBS[e.action] ?? "changed"} ${title}`;
+    subject = { ...subject, href: `/w/${encodeURIComponent(slug)}/bundles` };
+  } else if (e.action === "file_created") {
+    const scan = bag(d.scan);
+    const record = bag(d.record);
+    if (text(scan.id)) {
+      title = text(scan.name) ?? text(scan.barcode) ?? "a photo";
+      template = "file_created:scan"; verb = "scanned";
+      summary = `${actor} scanned ${title}`;
+    } else if (text(record.name)) {
+      title = text(record.name)!;
+      const noun = text(d.kind) && d.kind !== "image" ? "file" : "photo";
+      template = `file_created:${noun}`; verb = `added a ${noun} to`;
+      summary = `${actor} ${verb} ${title}`;
+    } else {
+      const code = /^scan-(\d+)\.[a-z0-9]+$/i.exec(title)?.[1];
+      if (code) { template = "file_created:scan"; verb = "scanned"; title = code; summary = `${actor} scanned ${code}`; }
+      else summary = `${actor} added ${d.kind === "image" ? "a photo" : title}`;
+    }
+    if (!resolved) subject = { ...subject, title, href: `/w/${encodeURIComponent(slug)}/files/${encodeURIComponent(e.entity_id)}` };
+  } else if (e.action === "scan_committed" || e.action === "added_from_scan") {
+    title = named(d) ?? text(d.barcode) ?? e.entity_title ?? "a thing";
+    summary = `${actor} scanned in ${title}`;
+    if (!resolved) subject = { ...subject, title, href: `/w/${encodeURIComponent(slug)}/scan` };
+  } else if (e.action === "updated" || e.action.endsWith("_updated")) {
+    const fields = [...new Set((e.said ?? []).map(c => c.label.toLowerCase()))];
+    const labels = fields.slice(0, 2).join(" and ") + (fields.length > 2 ? ` +${fields.length - 2} more` : "");
+    summary = `${actor} updated ${labels ? `${labels} on ` : ""}${title}`;
+  } else {
+    summary = `${actor} ${ACTIVITY_VERBS[e.action] ?? "changed"} ${title}`;
+  }
+  return { summary, template, verb, subject: { ...subject, title: e.action === "wire_fired" || e.action === "wire_failed" ? subject.title : title }, hidden };
+}
+
+export function dedupeActivity<T extends { action: string; entity_id: string; module_name: string | null; user_id: string | null; occurred_at: string; summary?: string; diff: unknown; repeats?: number }>(rows: readonly T[]): T[] {
+  const out: T[] = [];
+  for (const row of rows) {
+    const last = out[out.length - 1];
+    const same = last && last.action === row.action && last.module_name === row.module_name && last.entity_id === row.entity_id && last.user_id === row.user_id && last.summary === row.summary && JSON.stringify(last.diff) === JSON.stringify(row.diff) && Math.abs(Date.parse(last.occurred_at) - Date.parse(row.occurred_at)) <= 120_000;
+    if (same) last.repeats = (last.repeats ?? 1) + 1;
+    else out.push({ ...row });
+  }
+  return out;
+}

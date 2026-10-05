@@ -8,6 +8,8 @@
 // other. (The barcode fast path stays inline in POST /scan — it needs
 // the request's ~12s budget for responsiveness.)
 
+import { decodeIdentifier } from "../services/identifier-registry.js";
+import { registerBuiltinDecoders } from "../services/vin-decode.js";
 import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { CoreScanDB } from "../db.js";
@@ -24,6 +26,13 @@ let registered = false;
 export function registerScanHandlers(): void {
   if (registered) return;
   registered = true;
+  registerBuiltinDecoders();
+  platform().actions.registerHandler("core-scan.decode-identifier", async ctx => {
+    const code = ctx.args?.code;
+    if (typeof code !== "string" || !code.trim() || code.length > 4096) return { ok: false, error: "Give a scanned identifier up to 4096 characters." };
+    const decoded = await decodeIdentifier(code);
+    return { ok: true, data: decoded ?? { outcome: "miss", fields: {}, provenance: null } };
+  });
 
   platform().actions.registerHandler("core-scan.confirm-receipt-arrival", async (ctx) => {
     const args = (ctx.args as { batch_id?: string } | null) ?? {};

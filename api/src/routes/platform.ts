@@ -1,3 +1,4 @@
+import { readGroupKeys } from "@cobblr/platform-contract/grouped-list";
 import { readRecordActionLayout, setRecordActionPin } from "../platform/record-action-layout.js";
 import { commonBulkFields } from "../platform/bulk-set-field.js";
 // Platform-level routes for the registries + wires.
@@ -65,6 +66,15 @@ import { FIELD_PRESETS, presetState } from "../platform/field-presets.js";
 import { presetFieldStates, turnPresetOff, turnPresetOn } from "../platform/field-preset-switch.js";
 import { listPeople } from "../platform/people.js";
 import { fieldValuesUsed } from "../platform/field-values-used.js";
+
+/** The person's own assistant reading for them: an MCP client or the relay
+ *  (the session's ai_door), or Cobb's read tools (x-cobblr-reader). It may
+ *  see what the person wrote for themselves on their own records (#4798); a
+ *  person sending the header themselves sees only what they can already read
+ *  in the app. */
+function readsAsAssistant(req: { session?: { ai_door?: string | null }; headers: Record<string, unknown> }): boolean {
+  return !!req.session?.ai_door || String(req.headers["x-cobblr-reader"] ?? "").toLowerCase() === "assistant";
+}
 
 export const platformOrgRouter = Router({ mergeParams: true });
 
@@ -237,6 +247,7 @@ platformOrgRouter.get(
       }
       const found = await platform().entities.lookup(req.tenant!.org.id, kind, id, {
         userId: req.session?.id,
+        ...(readsAsAssistant(req) ? { assistant: true } : {}),
       });
       if (!found) {
         res.status(404).json({ error: { code: "not_found", message: "entity not found" } });
@@ -312,13 +323,17 @@ platformOrgRouter.get(
         req.tenant!.org.id,
         kind,
         {
+          group_by: typeof req.query.group_by === "string" ? req.query.group_by : undefined,
+          group_offset: Math.max(Number(req.query.group_offset) || 0, 0),
+          group_limit: Math.min(Math.max(Number(req.query.group_limit) || 20, 1), 20),
+          group_keys: typeof req.query.group_keys === "string" ? readGroupKeys(req.query.group_keys) : undefined,
           q: typeof req.query.q === "string" ? req.query.q : undefined,
           limit: Math.min(Number(req.query.limit) || 50, 200),
           offset: Number(req.query.offset) || 0,
           filter: Object.keys(filter).length ? filter : undefined,
           ...(req.query.include_retired === "1" || req.query.include_retired === "true" ? { include_retired: true } : {}),
         },
-        { userId: req.session?.id, role: req.tenant!.role },
+        { userId: req.session?.id, role: req.tenant!.role, ...(readsAsAssistant(req) ? { assistant: true } : {}) },
       );
       res.json(result);
     } catch (err) {
@@ -718,6 +733,7 @@ platformOrgRouter.post(
 function requestOrigin(req: Request): string {
   const header = req.headers["x-cobblr-base-url"];
   if (typeof header === "string" && header.trim()) return header.trim().replace(/\/+$/, "");
+  // HOST-OK: an action's result links go back in this caller's own answer.
   return `${req.protocol}://${req.headers.host ?? "localhost"}`;
 }
 

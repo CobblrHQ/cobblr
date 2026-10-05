@@ -26,6 +26,11 @@ const KEEP = /(?:\.png$|(?:^|\/)metadata\/slice_info\.config$)/i;
 
 export async function plateView(path: string, filename: string): Promise<Buffer> {
   if (/\.3mf$/i.test(filename)) return threeMfView(path);
+  if (/\.lbrn2$/i.test(filename)) {
+    const file = await open(path, "r");
+    try { const head = Buffer.alloc(SCAN_BYTES); const { bytesRead } = await file.read(head, 0, head.length, 0); return head.subarray(0, bytesRead); }
+    finally { await file.close(); }
+  }
   if (/\.(gcode|gco|g)$/i.test(filename)) return gcodeView(path);
   return Buffer.alloc(0);
 }

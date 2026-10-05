@@ -1,3 +1,4 @@
+import { normalizeGrouping } from "@cobblr/platform-contract/grouped-list";
 // Any collection as a spreadsheet: one export every kind offers.
 //
 // Before this, three collections could be exported (inventory parts,
@@ -17,9 +18,9 @@ import { toCsv } from "@cobblr/platform-contract/csv";
 import { columnLabel, isWritableCustomField, isWritableNativeField } from "@cobblr/platform-contract/record-columns";
 import { quantityWithUnit, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
-import { hiddenFieldsFor, listAll, listKindsForOrg } from "./entities.js";
+import { hiddenFieldsFor, list, listAll, listKindsForOrg } from "./entities.js";
 import { resolveFieldDefsForKind } from "./field-defs.js";
-import { readMoney, fieldCurrency, formatMoneyPlain, moneyStorageOf, storedCents, type MoneyStorage } from "@cobblr/platform-contract/money";
+import { formatMoney, centsFromAmount, readMoney, fieldCurrency, formatMoneyPlain, moneyStorageOf, storedCents, type MoneyStorage } from "@cobblr/platform-contract/money";
 
 export interface ExportColumn {
   /** The header a person reads. */
@@ -132,8 +133,61 @@ export async function exportEntitiesCsv(
   const columns = await exportColumns(orgId, kind, viewer, only);
   if (!columns) return null;
   const record = (await listKindsForOrg(orgId)).find((k) => k.id === kind)!;
-  const got = await listAll(orgId, kind, query, viewer);
-  const rows = got.items.map((row) => columns.map((c) => c.cell(row)));
+  const rows: unknown[][] = [];
+  let complete = true;
+  if (query.group_by && query.group_subtotals) {
+    const cap = 5000;
+    let groupOffset = 0;
+    let rowCount = 0;
+    const by = normalizeGrouping(query.group_by);
+    let parent: import("@cobblr/platform-contract").EntityGroup | undefined;
+    let parentLabel = "";
+    let grand: import("@cobblr/platform-contract").GroupedResult["totals"] = {};
+    const subtotal = (label: string, totals: typeof grand) => columns.map((c) => c.field === "title" ? label : (totals[c.field] ?? []).map((a) => a.currency ? formatMoney(centsFromAmount(a.value), { currency: a.currency }) : String(a.value)).join(" · "));
+    while (rowCount < cap) {
+      const page = await list(orgId, kind, { ...query, group_offset: groupOffset, limit: 50 }, viewer);
+      grand = page.totals ?? {};
+      const depth = Math.max(0, ...(page.groups ?? []).map((g) => g.keys.length));
+      const leaves = (page.groups ?? []).filter((g) => g.keys.length === depth);
+      if (!leaves.length) break;
+      for (const group of leaves) {
+        if (parent && parent.keys[0] !== group.keys[0]) {
+          rows.push(subtotal(`Subtotal: ${parentLabel} (${parent.count})`, parent.totals));
+          parent = undefined;
+        }
+        let items = page.items.filter((r) => group.item_ids.includes(r.id));
+        const labels = group.keys.map((v, i) => {
+          const label = items[0]?.fields[`${by[i]?.field}_label`];
+          return label ? String(label) : v === "true" ? "Yes" : v === "false" ? "No" : v ?? "Not set";
+        });
+        const header = (page.groups ?? []).find((g) => g.keys.length === 1 && g.keys[0] === group.keys[0]);
+        if (depth === 2 && header) { parent = header; parentLabel = labels[0]!; }
+        let offset = 0;
+        while (items.length && rowCount < cap) {
+          for (const item of items) {
+            if (rowCount >= cap) break;
+            rows.push(columns.map((c) => c.cell(item)));
+            rowCount++;
+          }
+          offset += items.length;
+          if (offset >= group.count || rowCount >= cap) break;
+          const next = await list(orgId, kind, { ...query, group_keys: group.keys, offset, limit: 50 }, viewer);
+          items = next.items;
+        }
+        rows.push(subtotal(`Subtotal: ${labels.join(" / ")} (${group.count})`, group.totals));
+        if (rowCount >= cap && offset < group.count) complete = false;
+      }
+      groupOffset += leaves.length;
+      if (groupOffset >= (page.group_total ?? 0)) break;
+      if (rowCount >= cap) complete = false;
+    }
+    if (parent) rows.push(subtotal(`Subtotal: ${parentLabel} (${parent.count})`, parent.totals));
+    rows.push(subtotal("Grand total", grand));
+  } else {
+    const got = await listAll(orgId, kind, query, viewer);
+    rows.push(...got.items.map((row) => columns.map((c) => c.cell(row))));
+    complete = got.complete;
+  }
   const noun = (record.display_name_plural || record.display_name || kind).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   return {
     csv: toCsv(
@@ -143,6 +197,6 @@ export async function exportEntitiesCsv(
     // UTC-DAY OK: the download's filename stamp, not a claim about anybody's calendar.
     filename: `${noun || "export"}-${new Date().toISOString().slice(0, 10)}.csv`,
     rows: rows.length,
-    complete: got.complete,
+    complete,
   };
 }

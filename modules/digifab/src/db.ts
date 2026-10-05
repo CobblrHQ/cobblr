@@ -1,5 +1,6 @@
 // Tenant-side DB types + request helpers for digifab.
 
+import type { JobLayout } from "./laser-plans.js";
 import type { ColumnType, Generated, Kysely } from "kysely";
 import type { Request } from "express";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
@@ -23,6 +24,7 @@ export interface DigifabConnectionsTable {
 }
 
 export interface DigifabJobsTable {
+  laser_layout: Generated<JobLayout | null>;
   id: Generated<string>;
   /** Null for an unassigned pool job — the assignment worker sets it. */
   connection_id: string | null;
@@ -110,6 +112,7 @@ export interface DigifabJobsTable {
 }
 
 export interface DigifabProductionRunsTable {
+  laser_plan_id: Generated<string | null>;
   id: Generated<string>;
   name: string;
   pool_id: string;
@@ -306,7 +309,38 @@ export interface DigifabPrintingProfilesTable {
   updated_at: Generated<Date>;
 }
 
+export interface DigifabLaserProfilesTable {
+  id: Generated<string>; connection_id: string; remote_device_id: string;
+  profile: import("./laser-layout.js").Profile; source: Generated<Record<string, unknown>>;
+  created_at: Generated<Date>; updated_at: Generated<Date>;
+}
+export interface DigifabLaserPlansTable {
+  id: Generated<string>; connection_id: string; remote_device_id: string; library_id: string;
+  plan: import("./laser-plans.js").LaserPlan; run_id: string | null; created_at: Generated<Date>;
+}
+export interface DigifabReflowProfilesTable {
+  id: Generated<string>; paste_kind: string; paste_id: string; fingerprint: string;
+  profile: import("@cobblr/platform-contract/reflow-profile").ReflowProfile;
+  created_by: string | null; created_at: Generated<Date>;
+}
 export interface DigifabDB {
+  digifab_reflow_profiles: DigifabReflowProfilesTable;
+  digifab_material_dispatches: { id: Generated<string>; library_id: string; request: import("./floor-manager.js").DispatchRequest; status: Generated<string>; error: string | null; shortage: Generated<boolean>; plan_ids: Generated<string[]>; created_at: Generated<Date>; updated_at: Generated<Date> };
+  digifab_laser_profiles: DigifabLaserProfilesTable;
+  digifab_laser_plans: DigifabLaserPlansTable;
+  digifab_laser_sheet_claims: { part_id: string; plan_id: string };
+  digifab_stations: {
+    id: Generated<string>;
+    connection_id: string | null;
+    remote_device_id: string;
+    label: string;
+    purpose: Generated<string>;
+    machine_kind: string | null;
+    machine_id: string | null;
+    token_hash: string;
+    revoked_at: Date | null;
+    created_at: Generated<Date>;
+  };
   digifab_printing_profiles: DigifabPrintingProfilesTable;
   digifab_channels: DigifabChannelsTable;
   digifab_print_rules: DigifabPrintRulesTable;

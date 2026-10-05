@@ -91,7 +91,11 @@ export async function resolveSessionBatch(
     return s.batchId;
   }
   const batchId = await mint();
-  writeScanSession(slug, { batchId, areaId: s?.areaId ?? null, count: 1, at: now }, origin);
+  // A NEW session starts with no area. Carrying the last one over put a place
+  // set on an earlier walk on scans made in a later one, where it was not
+  // where those things were (#4933). Resume is the one way back into a session
+  // and its area, and only while the session is fresh.
+  writeScanSession(slug, { batchId, areaId: null, count: 1, at: now }, origin);
   return batchId;
 }
 

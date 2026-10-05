@@ -79,6 +79,7 @@ import { recordDecode, recordOrientation, recordStreamRecovery, recordTorchEvent
 import { BinAdjustModal } from "../components/BinAdjustModal";
 import { ScanAmbiguityModal } from "../components/ScanAmbiguityModal";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
+import { clearScanSession, isSessionFresh, readScanSession, writeScanSession, type ScanSession } from "../lib/scanSession";
 
 // BarcodeDetector type — not in lib.dom.d.ts as of TS 5.7. Local shim.
 interface BarcodeDetectorCtor {
@@ -114,30 +115,9 @@ const REPEAT_GAP_MS = 1300;
 // code seen during the hold fires immediately and cancels it (the operator, 2026-07-24).
 const LINK_HOLD_MS = 700;
 
-// Scan-session persistence — localStorage (NOT sessionStorage: phones kill
-// background tabs, and resuming the same shelf-walk is the whole point).
-interface ScanSession {
-  batchId: string | null;
-  areaId: string | null;
-  count: number;
-  at: number;
-}
-const sessionKey = (slug: string) => `cobblr.scan-session.${slug}`;
-function readScanSession(slug: string): ScanSession | null {
-  try {
-    const raw = localStorage.getItem(sessionKey(slug));
-    return raw ? (JSON.parse(raw) as ScanSession) : null;
-  } catch {
-    return null;
-  }
-}
-function writeScanSession(slug: string, s: ScanSession) {
-  try {
-    localStorage.setItem(sessionKey(slug), JSON.stringify(s));
-  } catch {
-    // Storage full / private mode — resume just won't be offered.
-  }
-}
+// Scan-session persistence lives in lib/scanSession.ts (one rule for the
+// camera and the wedge): a session ends on Done, or after SESSION_GAP_MS idle
+// or a new day, and a new one starts with no area (#4933).
 
 export function ScanCameraPage() {
   const later = useLater();
@@ -908,7 +888,7 @@ export function ScanCameraPage() {
             return; // stay in "resolving" — the modal owns the screen, the stream stays warm
           }
         } catch {
-          /* contents unavailable → normal filing flow */
+          /* quiet: contents unavailable, so the normal filing flow */
         }
         const items = locsRef.current ?? [];
         const byId = new Map(
@@ -926,14 +906,18 @@ export function ScanCameraPage() {
           setPhase("scanning");
           return;
         }
+        // Nesting it is the scanner's idea, not a must: when it cannot (a
+        // cycle, no permission) filing still goes on, and the note says the
+        // nesting did not happen instead of claiming it did.
+        let nestFailed: string | null = null;
         if (decision.reparent) {
           try {
             await api.updateLocation(activeSlug, decision.reparent.child, {
               parent_id: decision.reparent.parent,
             });
             await locations.refetch();
-          } catch {
-            /* cycle / permission — fall back to a plain adopt */
+          } catch (e) {
+            nestFailed = e instanceof Error ? e.message : "";
           }
         }
         setAreaId(decision.bin);
@@ -943,7 +927,9 @@ export function ScanCameraPage() {
         const nm = b ? filingLabel(b) : "location";
         const p = decision.reparent ? byId.get(decision.reparent.parent) : null;
         showFilingNote(
-          p ? `Filed ${nm} in ${filingLabel(p)}. Filing into ${nm}` : `Filing into ${nm}`,
+          p && nestFailed !== null
+            ? `Could not put ${nm} in ${filingLabel(p)}${nestFailed ? `: ${nestFailed}` : ""}. Filing into ${nm}`
+            : p ? `Filed ${nm} in ${filingLabel(p)}. Filing into ${nm}` : `Filing into ${nm}`,
         );
         setPhase("scanning");
         return;
@@ -987,12 +973,11 @@ export function ScanCameraPage() {
   }, [activeSlug, sortLast, noteError]);
 
 
-  // Offer to resume a recent session (same workspace, < 4h old, has saves).
+  // Offer to resume a session that has not ended (lib/scanSession.ts: Done,
+  // or SESSION_GAP_MS idle, or a new day ends it). A new one has no area.
   useEffect(() => {
     const s = readScanSession(activeSlug);
-    if (s?.batchId && s.count > 0 && Date.now() - s.at < 4 * 60 * 60 * 1000) {
-      setResumable(s);
-    }
+    if (s && s.count > 0 && isSessionFresh(s)) setResumable(s);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSlug]);
   const resume = useCallback(() => {
@@ -2447,7 +2432,7 @@ export function ScanCameraPage() {
               onClick={() => {
                 setResumable(null);
                 try {
-                  localStorage.removeItem(sessionKey(activeSlug));
+                  clearScanSession(activeSlug);
                 } catch {
                   /* ignore */
                 }
@@ -2944,6 +2929,9 @@ export function ScanCameraPage() {
               // Done → the FULL grouped inbox (all sessions as sections),
               // scrolled to the one just scanned — not scoped to it, which hid
               // earlier sessions (the author). Nothing saved → just close.
+              // Done ends the session: the next scan is a new one, with
+              // no area carried over (#4933).
+              clearScanSession(activeSlug);
               if (savedCount > 0 && batchIdRef.current) {
                 navigate(`/scan#s-${batchIdRef.current}`);
               } else {

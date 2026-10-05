@@ -40,6 +40,7 @@ export interface PlacementBackfillResult {
 }
 
 import { LOCATED_TABLES } from "./located-tables.js";
+import { notePassFailure } from "./pass-failures.js";
 
 // The transitional sync: one plpgsql function that mirrors a row's location_id
 // into core_placement_placements (a Location is one KIND of container). The
@@ -263,6 +264,7 @@ export async function backfillPlacements(): Promise<PlacementBackfillResult> {
       if (r.rowsInserted > 0) orgsTouched++;
       rowsInserted += r.rowsInserted;
     } catch (err) {
+      notePassFailure("backfillPlacements", o.org_id, err);
       console.error(
         `[backfill-placements] org ${o.org_id} failed:`,
         (err as Error).message,

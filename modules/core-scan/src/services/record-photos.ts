@@ -363,6 +363,7 @@ export async function suggestRound(orgId: string, orgSlug: string, store: Sugges
       if (applied) tally.applied++;
       else tally.suggested++;
     } catch (err) {
+      platform().health.notePassFailure("core-scan.record-photos", orgId, err);
       console.error(`[core-scan] org ${orgId}: suggesting a picture for ${q.entity_kind}/${q.entity_id} failed:`, (err as Error).message);
       await store.settle(q.entity_kind, q.entity_id, { attempts: tried, status: giveUp ? "none" : "queued" }).catch(() => undefined);
     }

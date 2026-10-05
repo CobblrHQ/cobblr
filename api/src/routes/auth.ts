@@ -29,6 +29,7 @@ import { TRIAL_MODE, TRIAL_TTL_DAYS } from "../platform/trial.js";
 import { captchaVerdict, captchaRefusal, captchaEnabled } from "../platform/captcha.js";
 import { blockDisposableEnabled, isDisposableEmail } from "../platform/disposable-emails.js";
 import { confirmEmailChange, revertEmailChange } from "../platform/email-change.js";
+import { linkOrigin } from "../platform/link-origin.js";
 
 // A throwaway hash, computed once, so the "no such user / inactive" login
 // path spends the same ~bcrypt time as a real password check — otherwise the
@@ -57,6 +58,7 @@ import {
   currentAccountTerms,
 } from "../auth/identity-client.js";
 import { hardDeleteUser } from "../platform/delete-user.js";
+import { passwordSignInOn } from "../platform/oidc.js";
 import { isPlatformAdmin, requireAuth } from "../auth/middleware.js";
 import { publicSignupEnabled, managedAppSignupEnabled, selfServeInvitesEnabled } from "../auth/signup-gate.js";
 import { dispatch } from "../platform/notifications.js";
@@ -407,6 +409,9 @@ authRouter.get("/config", (req, res) => {
 authRouter.post("/signup", async (req, res, next) => {
   try {
     if (overLimit(signupLimiter, req)) return rateLimited(res);
+    // The operator turned password and email-link sign-in off: the
+    // instance's own provider is the only way in (platform/oidc.ts).
+    if (!(await passwordSignInOn())) return res.status(403).json(PASSWORD_SIGN_IN_OFF);
     const body = SignupBody.parse(req.body);
     const email = body.email.toLowerCase().trim();
 
@@ -733,6 +738,9 @@ async function clearLoginAttempts(email: string): Promise<void> {
 authRouter.post("/login", async (req, res, next) => {
   try {
     if (overLimit(loginLimiter, req)) return rateLimited(res);
+    // The operator turned password and email-link sign-in off: the
+    // instance's own provider is the only way in (platform/oidc.ts).
+    if (!(await passwordSignInOn())) return res.status(403).json(PASSWORD_SIGN_IN_OFF);
     const body = LoginBody.parse(req.body);
     const email = body.email.toLowerCase().trim();
     const now = new Date();
@@ -1270,6 +1278,9 @@ const MagicRequest = z.object({
 authRouter.post("/magic/request", async (req, res, next) => {
   try {
     if (overLimit(magicRequestLimiter, req)) return rateLimited(res);
+    // The operator turned password and email-link sign-in off: the
+    // instance's own provider is the only way in (platform/oidc.ts).
+    if (!(await passwordSignInOn())) return res.status(403).json(PASSWORD_SIGN_IN_OFF);
     const parsed = MagicRequest.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
@@ -1332,7 +1343,7 @@ authRouter.post("/magic/request", async (req, res, next) => {
     // requester won't see the link in the response.
     const issued = await issueSignInLink({
       email,
-      absBase: `${req.protocol}://${req.get("host") ?? ""}`,
+      absBase: linkOrigin(req),
       requestIp: req.ip ?? null,
       requestUa: req.get("user-agent") ?? null,
       ...(viaInvite
@@ -1553,6 +1564,7 @@ const PasswordForgot = z.object({ email: z.string().email().max(255) });
 
 authRouter.post("/password/forgot", async (req, res, next) => {
   try {
+    if (!(await passwordSignInOn())) return void res.status(403).json(PASSWORD_SIGN_IN_OFF);
     if (overLimit(passwordForgotLimiter, req)) {
       rateLimited(res);
       return;
@@ -1590,7 +1602,7 @@ authRouter.post("/password/forgot", async (req, res, next) => {
           request_ua: (req.get("user-agent") ?? null) as string | null,
         })
         .execute();
-      const absLink = `${req.protocol}://${req.get("host") ?? ""}/reset/${plain}`;
+      const absLink = `${linkOrigin(req)}/reset/${plain}`;
       const emailed = await sendAuthEmail({
         to: email,
         subject: "Reset your Cobblr password",
@@ -1711,7 +1723,7 @@ export async function issueAndSendVerifyEmail(
       request_ua: (req.get("user-agent") ?? null) as string | null,
     })
     .execute();
-  const absLink = `${req.protocol}://${req.get("host") ?? ""}/verify/${plain}`;
+  const absLink = `${linkOrigin(req)}/verify/${plain}`;
   const emailed = await sendAuthEmail({
     to: normalized,
     subject: "Verify your Cobblr email",
@@ -1745,14 +1757,17 @@ for (const [path, act] of [
         res.status(400).json({ error: { code: "invalid_body", message: "The link is incomplete." } });
         return;
       }
-      const origin = `${req.protocol}://${req.get("host") ?? ""}`;
+      const origin = linkOrigin(req);
       const out = act === "confirm" ? await confirmEmailChange(parsed.data.token, origin) : await revertEmailChange(parsed.data.token);
       if ("refused" in out) {
         res.status(out.refused.status).json({ error: { code: out.refused.code, message: out.refused.message } });
         return;
       }
       const dev = "revertDevToken" in out && out.revertDevToken ? { dev_revert_token: out.revertDevToken } : {};
-      res.json({ email: out.email, ...dev });
+      // Undo hands the old mailbox's holder the reset that sets the new
+      // password: the page takes them straight to it.
+      const reset = "resetToken" in out ? { reset_token: out.resetToken } : {};
+      res.json({ email: out.email, ...dev, ...reset });
     } catch (err) {
       next(err);
     }
@@ -1898,6 +1913,10 @@ const identityExchangeLimiter = makeIpLimiter(60_000, 30); // 30 exchanges / min
 // email floods (magic-request, password-forgot), and token probing. Generous enough that a
 // real human (even behind NAT) never trips them.
 const loginLimiter = makeIpLimiter(60_000, 30);
+/** Password and email-link sign-in are off on this instance. */
+const PASSWORD_SIGN_IN_OFF = {
+  error: { code: "password_sign_in_off", message: "This Cobblr signs in through its own sign-in provider. Use the Sign in with button." },
+} as const;
 const signupLimiter = makeIpLimiter(60_000, 15);
 const magicRequestLimiter = makeIpLimiter(60_000, 10);
 const magicConsumeLimiter = makeIpLimiter(60_000, 30);
@@ -1950,6 +1969,7 @@ authRouter.post("/pair/start", requireAuth, async (req, res, next) => {
     // out in this response (→ QR → phone).
     const code = randomBytes(16).toString("base64url");
     const expiresAt = new Date(Date.now() + PAIR_CODE_TTL_MS);
+    // check-then-insert: the key is a random pairing code minted here
     await meta
       .insertInto("auth_pair_codes")
       .values({
@@ -1968,6 +1988,7 @@ authRouter.post("/pair/start", requireAuth, async (req, res, next) => {
     // expose a separate LAN/Tailscale address. localhost bases are dropped when
     // a real one exists (a phone can't resolve the desktop's localhost).
     const proto = (req.headers["x-forwarded-proto"] as string | undefined) ?? req.protocol;
+    // HOST-OK: the claim URL is shown on this same caller's screen, and a self-hoster's LAN address is the one the phone can reach.
     const host = (req.headers["x-forwarded-host"] as string | undefined) ?? req.get("host");
     const reqBase = host ? `${proto}://${host}`.replace(/\/+$/, "") : null;
     const pubBase = publicBaseUrl() || null;

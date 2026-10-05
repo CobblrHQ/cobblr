@@ -8,6 +8,9 @@ import type {
   DeviceDriver,
   DeviceDriverProvider,
   DeviceConnectionStore,
+  MachineStationVerifier,
+  MachineStationRequest,
+  MachineRecordsProvider,
 } from "@cobblr/platform-contract";
 
 let provider: DeviceDriverProvider | null = null;
@@ -36,4 +39,22 @@ export function registerConnectionStore(s: DeviceConnectionStore): void {
 export function connections(): DeviceConnectionStore {
   if (!store) throw new Error("device connection store not registered — core-devices must load");
   return store;
+}
+
+let stationVerifier: MachineStationVerifier | null = null;
+export function registerStationVerifier(verifier: MachineStationVerifier): void { stationVerifier = verifier; }
+export async function authorizeAtStation(orgId: string, request: MachineStationRequest) {
+  if (!stationVerifier) throw new Error("Install machine station support before Start.");
+  return stationVerifier(orgId, request);
+}
+
+let machineProvider: MachineRecordsProvider | null = null;
+export function registerMachineRecords(p: MachineRecordsProvider): void { machineProvider = p; }
+export async function machineRecords(orgId: string, userId?: string | null) {
+  if (!machineProvider) throw new Error("Install Machines before preparing a manufacturing job.");
+  return machineProvider.list(orgId, userId);
+}
+export async function machineRecord(orgId: string, kind: string, id: string, userId?: string | null) {
+  if (!machineProvider) throw new Error("Install Machines before authorizing this station.");
+  return machineProvider.get(orgId, kind, id, userId);
 }

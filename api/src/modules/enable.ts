@@ -68,6 +68,7 @@ function isFoundational(entry: { manifest: { name: string; band: string } }): bo
 import { getSandboxedModuleInfo } from "../sandbox/sandboxed-module-info.js";
 import { bumpWorkspaceShape } from "../platform/workspace-shape.js";
 import { ensureModuleRole, moduleRolesEnabled } from "../sandbox/module-role.js";
+import { notePassFailure } from "../platform/pass-failures.js";
 
 /** Provision the per-module Postgres role for a sandboxed module (no-op
  *  for in-process modules / when superuser DB access is unavailable).
@@ -84,6 +85,7 @@ async function ensureSandboxRole(orgId: string, moduleName: string): Promise<voi
       readsTables: info.readsTables,
     });
   } catch (err) {
+    notePassFailure("enable.sandbox-role", `${orgId}:${moduleName}`, err);
     console.error(`[enable] sandbox role setup failed for ${moduleName}:`, (err as Error).message);
   }
 }
@@ -130,6 +132,7 @@ async function ensurePlacementSyncIfLocated(orgId: string, moduleName: string): 
     );
     await ensurePlacementSyncForOrg(orgId);
   } catch (err) {
+    notePassFailure("enable.placement-sync", `${orgId}:${moduleName}`, err);
     console.warn(`[enable] placement sync install for ${moduleName} skipped:`, err);
   }
 }
@@ -219,7 +222,11 @@ export async function enableModuleForOrg(
     newestBreaking = result.breaking.reduce<string | null>((a, b) => newerName(a, b), null);
   }
 
-  await meta
+  // Two enables of one module at once (a double press, a retried request)
+  // both pass the `existing` check above; the second used to fail its insert
+  // on the primary key with a 500 although the module was on (#4922). The one
+  // that lands second finds it enabled, which is what it asked for.
+  const inserted = await meta
     .insertInto("org_modules")
     .values({
       org_id: orgId,
@@ -229,8 +236,11 @@ export async function enableModuleForOrg(
       migration_count: migrationCount,
       newest_breaking_migration: newestBreaking,
     })
-    .execute();
+    .onConflict((oc) => oc.columns(["org_id", "module_name"]).doNothing())
+    .returning("module_name")
+    .executeTakeFirst();
   clearEnabledModulesCache(orgId);
+  if (!inserted) return { alreadyEnabled: true, migrationsApplied: migrationsApplied.length, lastMigration };
 
   // Provision/refresh the DB-level isolation role(s). Re-ensures ALL of
   // the org's sandboxed modules so cross-module `reads` grants land
@@ -304,6 +314,7 @@ export async function enableModuleForOrg(
       },
     });
   } catch (err) {
+    notePassFailure("enable.activity-log", `${orgId}:${moduleName}`, err);
     console.error(`[enable] activity logging failed for ${moduleName}:`, err);
   }
 
@@ -712,6 +723,7 @@ export async function enableDefaultModulesForOrg(
       const result = await enableModuleForOrg(orgId, entry.manifest.name, { userId });
       if (!result.alreadyEnabled) enabled.push(entry.manifest.name);
     } catch (err) {
+      notePassFailure("enable.defaults", `${orgId}:${entry.manifest.name}`, err);
       console.error(`[enable] failed for ${entry.manifest.name} on org ${orgId}:`, err);
     }
   }
@@ -772,6 +784,7 @@ export async function reconcileDefaultModules(): Promise<{ orgsHealed: number; m
         console.log(`[reconcile] org ${org.id}: enabled ${added.join(", ")}`);
       }
     } catch (err) {
+      notePassFailure("reconcileDefaultModules", org.id, err);
       console.error(`[reconcile] default-module heal failed for org ${org.id}:`, err);
     } finally {
       await evictTenantPool(org.id).catch(() => {});

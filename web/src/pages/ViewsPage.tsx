@@ -1,3 +1,5 @@
+import { normalizeGrouping, type GroupBy } from "@cobblr/platform-contract/grouped-list";
+import { centsFromAmount, formatMoney, formatStoredMoney, fieldCurrency, type MoneyStorage } from "@cobblr/platform-contract/money";
 // /views — list every saved view, open one to render its data
 // through the list resolver. Lets users see what their workspace
 // looks like through each lens without leaving the platform UI.
@@ -42,7 +44,7 @@ import {
   type FilterRow,
   type SortRow,
 } from "../components/ViewBuilder";
-import { layoutConfig } from "../lib/view-config";
+import { layoutConfig, tableGroupingValue } from "../lib/view-config";
 
 export function ViewsPage() {
   usePageTitle("Views");
@@ -243,10 +245,13 @@ function ViewDataModal({
 
 /** The view as a spreadsheet: its filter, its sort and (a table) its columns,
  *  written by the server as this person reads the collection. */
-function ViewExportButton({ slug, viewId }: { slug: string; viewId: string }) {
+function ViewExportButton({ slug, viewId, grouped }: { slug: string; viewId: string; grouped?: boolean }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
+  const [subtotals, setSubtotals] = useState(false);
   return (
+    <span className="ml-auto inline-flex flex-wrap items-center gap-2">
+    {grouped && <label className="inline-flex items-center gap-1"><input type="checkbox" checked={subtotals} onChange={(e) => setSubtotals(e.target.checked)} /> Include subtotals</label>}
     <button
       type="button"
       disabled={busy}
@@ -256,7 +261,7 @@ function ViewExportButton({ slug, viewId }: { slug: string; viewId: string }) {
       onClick={async () => {
         setBusy(true);
         try {
-          const got = await api.exportViewCsv(slug, viewId);
+          const got = await api.exportViewCsv(slug, viewId, subtotals);
           downloadBlob(got.blob, got.filename);
           if (got.complete) toast.success("Spreadsheet downloaded.");
           else toast.info("Downloaded the first 5,000. Narrow the view to get the rest.");
@@ -269,6 +274,7 @@ function ViewExportButton({ slug, viewId }: { slug: string; viewId: string }) {
     >
       <FileDown size={12} /> {busy ? "Exporting…" : "Export"}
     </button>
+    </span>
   );
 }
 
@@ -317,7 +323,7 @@ export function SavedViewBody({
       {/* The collection's name and a plain view word. The kind id and the
           renderer id used to print here as chips; they are routing keys, not
           words a person uses (2026-09-12). */}
-      <div className="text-xs text-muted dark:text-slate-400 flex items-center gap-2">
+      <div className="text-xs text-muted dark:text-slate-400 flex flex-wrap items-center gap-2">
         <span>{labels.collection(view.entity_kind)}</span>
         <span className="px-1.5 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300 text-[10px]">
           {labels.viewType(view.view_type)}
@@ -325,7 +331,7 @@ export function SavedViewBody({
         <span data-testid="view-count">
           {total === null ? `${items.length}+` : total} {(total ?? items.length) === 1 ? noun : plural}
         </span>
-        {items.length > 0 && <ViewExportButton slug={activeSlug} viewId={view.id} />}
+        {items.length > 0 && <ViewExportButton slug={activeSlug} viewId={view.id} grouped={!!data.groups} />}
       </div>
       {/* A filter the collection could not run used to vanish, so the rows
           below read as the filtered set when they were everything. */}
@@ -335,6 +341,7 @@ export function SavedViewBody({
           {unapplied.map((p) => `${p.col} ${p.op} ${p.ref_col ?? String(p.value ?? "")}`).join(", ")}.
         </p>
       )}
+      {data.isError && <p role="alert" className="text-sm text-ember-600 dark:text-ember-400">This view could not load. <button onClick={data.refetch}>Try again</button></p>}
       {isLoading && <div className="text-sm text-muted">Loading…</div>}
       {/* Before the renderer switch, so no renderer can ship without it. */}
       {items.length === 0 && !isLoading && (
@@ -353,13 +360,12 @@ export function SavedViewBody({
       {items.length > 0 && view.view_type === "kanban" && (
         <KanbanRenderer slug={activeSlug} kind={view.entity_kind} items={items} groupBy={cfg.group_by ?? "subtitle"} />
       )}
-      {items.length > 0 && view.view_type === "table" && (
+      {items.length > 0 && view.view_type === "table" && (data.groups ? <GroupedTableRenderer view={view} data={data} slug={activeSlug} selection={{ selected, toggle }} /> :
         <TableRenderer
           slug={activeSlug}
           kind={view.entity_kind}
           items={items}
           columns={cfg.visible_fields}
-          groupBy={cfg.group_by}
           selection={{ selected, toggle }}
         />
       )}
@@ -415,6 +421,91 @@ export function SavedViewBody({
       <ViewMore data={data} />
     </div>
   );
+}
+
+export function GroupTableFlow({ args, onClose }: { args: Record<string, unknown>; onClose: () => void }) {
+  const { activeSlug } = useActiveOrg();
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  return <CreateViewModal slug={activeSlug} initialKind={String(args.kind)} initialTable onClose={onClose} onCreated={(id) => {
+    void qc.invalidateQueries({ queryKey: ["saved-views", activeSlug] });
+    void qc.invalidateQueries({ queryKey: ["inv-saved-views", activeSlug] });
+    onClose();
+    navigate(`/views/${id}`);
+  }} />;
+}
+
+function TableGrouping({ fields, value, onChange }: { fields: import("../components/ViewBuilder").KindField[]; value: GroupBy[]; onChange: (groups: GroupBy[]) => void }) {
+  const usable = [...fields, ...(fields.some((f) => f.name === "location_name") ? [{ name: "location", label: "Room", type: "text" }] : [])].filter((f) => ["text", "select", "relation", "boolean", "date", "datetime", "string", "enum", "entity"].includes(f.type));
+  return <div className="space-y-2">
+    {[0, 1].map((i) => <div key={i} className="flex flex-wrap items-end gap-2">
+      <label className="min-w-0 flex-1"><span className="block text-xs text-muted mb-1">{i === 0 ? "Group by" : "Then by"}</span>
+        <FieldSelect fields={usable.filter((f) => f.name !== value[1 - i]?.field)} value={value[i]?.field ?? ""} allowBlank blankLabel="No grouping" onChange={(field) => {
+          const next = [...value];
+          if (!field) next.splice(i);
+          else next[i] = { field, ...(["date", "datetime"].includes(fields.find((f) => f.name === field)?.type ?? "") ? { bucket: "month" as const } : {}) };
+          onChange(next.filter(Boolean));
+        }} />
+      </label>
+      {value[i] && ["date", "datetime"].includes(fields.find((f) => f.name === value[i]!.field)?.type ?? "") && <label>
+        <span className="block text-xs text-muted mb-1">Date bucket</span>
+        <select aria-label={`${i === 0 ? "First" : "Second"} date bucket`} className="rounded border border-line bg-surface px-2 py-1 text-sm" value={value[i]?.bucket ?? "month"} onChange={(e) => onChange(value.map((g, n) => n === i ? { ...g, bucket: e.target.value as GroupBy["bucket"] } : g))}>
+          <option value="month">Month</option><option value="quarter">Quarter</option><option value="year">Year</option>
+        </select>
+      </label>}
+    </div>)}
+  </div>;
+}
+
+function GroupTotals({ totals, fields }: { totals: NonNullable<ViewData["totals"]>; fields: import("../components/ViewBuilder").KindField[] }) {
+  return <span className="flex flex-wrap gap-x-3 gap-y-1 text-xs font-normal text-muted">
+    {Object.entries(totals).map(([name, amounts]) => <span key={name}>{fields.find((f) => f.name === name)?.label ?? humanize(name)}: {amounts.map((a) => a.currency ? formatMoney(centsFromAmount(a.value), { currency: a.currency }) : a.value.toLocaleString()).join(" · ")}</span>)}
+  </span>;
+}
+
+function GroupedTableRenderer({ view, data, slug, selection }: { view: SavedView; data: ViewData; slug: string; selection: { selected: Set<string>; toggle: (id: string) => void } }) {
+  const fields = useKindFields(slug, view.entity_kind);
+  const by = normalizeGrouping(view.config?.group_by);
+  const columns = (view.config?.visible_fields as string[] | undefined) ?? ["title", "subtitle"];
+  const groups = data.groups ?? [];
+  const rowsById = new Map(data.items.map((r) => [r.id, r]));
+  const title = (g: (typeof groups)[number]) => {
+    const key = g.keys[g.keys.length - 1];
+    if (key === null) return "Not set";
+    const field = by[g.keys.length - 1]?.field ?? "";
+    const row = data.items.find((r) => g.item_ids.includes(r.id) || String(r.fields[field] ?? (r.fields.metadata as Record<string, unknown> | undefined)?.[field]) === key);
+    const label = row ? fieldVal(row.fields, `${field}_label`) : undefined;
+    if (label) return String(label);
+    return key === "true" ? "Yes" : key === "false" ? "No" : key;
+  };
+  const render = (g: (typeof groups)[number]): ReactNode => {
+    const key = JSON.stringify(g.keys);
+    const leaf = g.keys.length === by.length;
+    const rows = g.item_ids.map((id) => rowsById.get(id)).filter((r): r is (typeof data.items)[number] => !!r);
+    const children = groups.filter((c) => c.keys.length === g.keys.length + 1 && g.keys.every((v, i) => c.keys[i] === v));
+    return <details key={key} open className="min-w-0 rounded border border-line dark:border-slate-700" data-testid="table-group">
+      <summary className="cursor-pointer rounded bg-subtle px-3 py-2">
+        <span className="font-medium">{title(g)}</span> <span className="text-xs text-muted">· {g.count}</span>
+        <GroupTotals totals={g.totals} fields={fields} />
+      </summary>
+      <div className="min-w-0 space-y-2 p-2">
+        {!leaf && children.map(render)}
+        {leaf && <>
+          <div className="hidden sm:block"><TableRenderer slug={slug} kind={view.entity_kind} items={rows} columns={columns} selection={selection} /></div>
+          <div className="divide-y divide-line sm:hidden">{rows.map((r) => <div key={r.id} className="min-w-0 py-2">
+            <div className="flex items-start gap-2"><input type="checkbox" className="mt-1" checked={selection.selected.has(r.id)} onChange={() => selection.toggle(r.id)} aria-label={`Select ${r.title}`} /><RecordLink row={r} className="min-w-0 break-words font-medium">{r.title}</RecordLink></div>
+            {columns.includes("subtitle") && r.subtitle && <p className="ml-6 break-words text-xs text-muted">{r.subtitle}</p>}
+            <dl className="ml-6 space-y-1 text-xs">{columns.filter((c) => c !== "title" && c !== "subtitle").map((c) => <div key={c} className="flex min-w-0 flex-wrap gap-x-2"><dt className="text-muted">{fields.find((f) => f.name === c)?.label ?? humanize(c)}</dt><dd className="min-w-0 break-words">{formatCell(c, r, fields.find((f) => f.name === c)?.money)}</dd></div>)}</dl>
+          </div>)}</div>
+          {g.item_ids.length < g.count && <button className="rounded border border-line px-3 py-1 text-sm" disabled={!!data.loadingGroup} onClick={() => data.loadGroup?.(g.keys, g.item_ids.length)}>{data.loadingGroup === key ? "Loading…" : `Show more (${g.item_ids.length} of ${g.count})`}</button>}
+        </>}
+      </div>
+    </details>;
+  };
+  return <div className="min-w-0 space-y-2">
+    {groups.filter((g) => g.keys.length === 1).map(render)}
+    <div className="rounded border border-line p-3" data-testid="table-grand-total"><strong className="text-sm">Grand total · {data.total}</strong><GroupTotals totals={data.totals ?? {}} fields={fields} /></div>
+  </div>;
 }
 
 interface ViewConfig {
@@ -1387,11 +1478,11 @@ export function TableRenderer({
       {cols.map((c) => (
         <td key={c} className="px-3 py-1.5 align-top truncate max-w-[260px]">
           {c === linkCol ? (
-            <RecordLink row={r} className="hover:text-accent hover:underline">{formatCell(c, r)}</RecordLink>
+            <RecordLink row={r} className="hover:text-accent hover:underline">{formatCell(c, r, fields.find((f) => f.name === c)?.money)}</RecordLink>
           ) : c === "qty" && stock.on ? (
-            stock.stepper(r) ?? formatCell(c, r)
+            stock.stepper(r) ?? formatCell(c, r, fields.find((f) => f.name === c)?.money)
           ) : (
-            formatCell(c, r)
+            formatCell(c, r, fields.find((f) => f.name === c)?.money)
           )}
         </td>
       ))}
@@ -1441,14 +1532,20 @@ export function TableRenderer({
  *  `fields.metadata.mileage`, not `fields.mileage`. Try the top level first
  *  (native columns + computed fields), then fall back to metadata, so a
  *  saved view's `visible_fields`/`group_by` reaches custom fields too. */
-function formatCell(col: string, row: ViewRow): string {
+function formatCell(col: string, row: ViewRow, money?: MoneyStorage): string {
   if (col === "title") return row.title;
   if (col === "subtitle") return row.subtitle ?? "";
   const v = fieldVal(row.fields, col);
   if (v === null || v === undefined) return "";
+  if (money) return formatStoredMoney(v, money, { currency: fieldCurrency(row.fields?.metadata, col) }) ?? "";
+  const linked = fieldVal(row.fields, `${col}_label`);
+  if (linked) return String(linked);
   if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
     return String(v);
   }
+  if (v && typeof v === "object" && "amount" in v && "currency" in v) return formatMoney(centsFromAmount(Number(v.amount)), { currency: String(v.currency) });
+  const label = fieldVal(row.fields, `${col}_label`);
+  if (label) return String(label);
   return JSON.stringify(v);
 }
 
@@ -1672,15 +1769,20 @@ function CreateViewModal({
   slug,
   onClose,
   onCreated,
+  initialKind = "inventory:part",
+  initialTable = false,
 }: {
   slug: string;
   onClose: () => void;
-  onCreated: () => void;
+  onCreated: (id: string) => void;
+  initialKind?: string;
+  initialTable?: boolean;
 }) {
-  const [entityKind, setEntityKind] = useState("inventory:part");
+  const [entityKind, setEntityKind] = useState(initialKind);
   const [name, setName] = useState("");
-  const [viewType, setViewType] = useState<"list" | "table" | "kanban" | "trend" | "calendar" | "gantt" | "gallery" | "heatmap" | "vending">("list");
+  const [viewType, setViewType] = useState<"list" | "table" | "kanban" | "trend" | "calendar" | "gantt" | "gallery" | "heatmap" | "vending">(initialTable ? "table" : "list");
   const [groupBy, setGroupBy] = useState("");
+  const [tableGroups, setTableGroups] = useState<GroupBy[]>([]);
   const [columns, setColumns] = useState<string[]>(["title", "subtitle"]);
   const [dateField, setDateField] = useState("due_date");
   const [startField, setStartField] = useState("start_date");
@@ -1696,6 +1798,11 @@ function CreateViewModal({
   const [sortRows, setSortRows] = useState<SortRow[]>([]);
   const [shared, setShared] = useState(true);
   const toast = useToast();
+  const create = useMutation({
+    mutationFn: (input: Parameters<typeof api.createSavedView>[1]) => api.createSavedView(slug, input),
+    onSuccess: (saved) => { toast.success("View saved"); onCreated(saved.id); },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : String(err)),
+  });
 
   // The kind's fields (native + custom) drive every picker below.
   const fields = useKindFields(slug, entityKind);
@@ -1736,11 +1843,11 @@ function CreateViewModal({
   return (
     <Modal open onClose={onClose} title="New saved view">
       <form
-        onSubmit={async (e) => {
+        onSubmit={(e) => {
           e.preventDefault();
           if (!name.trim()) return;
           const config = layoutConfig(viewType, {}, {
-            group_by: groupBy,
+            group_by: viewType === "table" ? tableGroupingValue(tableGroups) : groupBy,
             visible_fields: columns,
             date_field: dateField,
             expect_rrule: expectRrule,
@@ -1757,20 +1864,13 @@ function CreateViewModal({
           Object.assign(config, filterRowsToConfig(filterRows));
           const sort = rowsToSort(sortRows);
           if (sort.length) config.sort = sort;
-          try {
-            await api.createSavedView(slug, {
+          create.mutate({
               entity_kind: entityKind,
               name: name.trim(),
               view_type: viewType,
               config,
               shared,
-            });
-            toast.success("View saved");
-            onCreated();
-          } catch (err) {
-            const msg = err instanceof ApiError ? err.message : String(err);
-            toast.error(msg);
-          }
+          });
         }}
         className="space-y-3"
       >
@@ -1802,7 +1902,7 @@ function CreateViewModal({
         </label>
         <label className="block">
           <div className="text-xs text-muted mb-1">Layout</div>
-          <div className="flex gap-1">
+          <div className="flex flex-wrap gap-1">
             {(["list", "table", "kanban", "trend", "calendar", "gantt", "gallery", "heatmap", "vending"] as const).map((t) => (
               <button
                 key={t}
@@ -1925,10 +2025,7 @@ function CreateViewModal({
               <div className="text-xs text-muted mb-1">Columns</div>
               <ColumnPicker fields={fields} value={columns} onChange={setColumns} />
             </div>
-            <label className="block">
-              <div className="text-xs text-muted mb-1">Group rows by</div>
-              <FieldSelect fields={fields} value={groupBy} onChange={setGroupBy} allowBlank blankLabel="No grouping" />
-            </label>
+            <TableGrouping fields={fields} value={tableGroups} onChange={setTableGroups} />
           </>
         )}
         <div>
@@ -1957,10 +2054,10 @@ function CreateViewModal({
           </button>
           <button
             type="submit"
-            disabled={!name.trim()}
+            disabled={!name.trim() || create.isPending}
             className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
           >
-            Save view
+            {create.isPending ? "Saving…" : "Save view"}
           </button>
         </div>
       </form>
@@ -1991,7 +2088,8 @@ export function EditViewModal({
   );
   const cfg = (view.config ?? {}) as ViewConfig;
   const fields = useKindFields(slug, view.entity_kind);
-  const [groupBy, setGroupBy] = useState((cfg.group_by as string) ?? "");
+  const [groupBy, setGroupBy] = useState(typeof cfg.group_by === "string" ? cfg.group_by : "");
+  const [tableGroups, setTableGroups] = useState<GroupBy[]>(() => normalizeGrouping(cfg.group_by));
   const [columns, setColumns] = useState<string[]>((cfg.visible_fields as string[]) ?? ["title", "subtitle"]);
   const [dateField, setDateField] = useState((cfg.date_field as string) ?? "due_date");
   const [startField, setStartField] = useState((cfg.start_field as string) ?? "start_date");
@@ -2017,7 +2115,7 @@ export function EditViewModal({
           if (!name.trim()) return;
           setBusy(true);
           const config = layoutConfig(viewType, cfg, {
-            group_by: groupBy,
+            group_by: viewType === "table" ? tableGroupingValue(tableGroups) : groupBy,
             visible_fields: columns,
             date_field: dateField,
             expect_rrule: expectRrule,
@@ -2081,7 +2179,7 @@ export function EditViewModal({
         </div>
         <label className="block">
           <div className="text-xs text-muted mb-1">Layout</div>
-          <div className="flex gap-1">
+          <div className="flex flex-wrap gap-1">
             {(["list", "table", "kanban", "trend", "calendar", "gantt", "gallery", "heatmap", "vending"] as const).map((t) => (
               <button
                 key={t}
@@ -2195,10 +2293,7 @@ export function EditViewModal({
               <div className="text-xs text-muted mb-1">Columns</div>
               <ColumnPicker fields={fields} value={columns} onChange={setColumns} />
             </div>
-            <label className="block">
-              <div className="text-xs text-muted mb-1">Group rows by</div>
-              <FieldSelect fields={fields} value={groupBy} onChange={setGroupBy} allowBlank blankLabel="No grouping" />
-            </label>
+            <TableGrouping fields={fields} value={tableGroups} onChange={setTableGroups} />
           </>
         )}
         <div>

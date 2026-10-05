@@ -47,7 +47,7 @@ export class DeclarativeDriver implements MachineDriver {
   pauseJob?: (jobId: string) => Promise<void>;
   resumeJob?: (jobId: string) => Promise<void>;
   cancelJob?: (jobId: string) => Promise<void>;
-  constructor(private manifest: DriverManifest, private cfg: ManagerConfig) {
+  constructor(protected manifest: DriverManifest, protected cfg: ManagerConfig) {
     this.base = cfg.baseUrl.replace(/\/+$/, "");
     const cmds = this.manifest.commands ?? {};
     if (cmds.pause) this.pauseJob = (jobId) => this.runJobCommand("pause", jobId);
@@ -73,7 +73,7 @@ export class DeclarativeDriver implements MachineDriver {
   }
 
   /** Substitute {fileId}/{jobId}/… in a path from the call vars. */
-  private path(template: string, vars: Record<string, string> = {}): string {
+  protected path(template: string, vars: Record<string, string> = {}): string {
     return this.base + template.replace(/\{(\w+)\}/g, (_, k) => encodeURIComponent(vars[k] ?? ""));
   }
 
@@ -106,7 +106,7 @@ export class DeclarativeDriver implements MachineDriver {
     return expr;
   }
 
-  private async req(method: string, path: string, init: RequestInit = {}): Promise<Response> {
+  protected async req(method: string, path: string, init: RequestInit = {}): Promise<Response> {
     await assertSafeMachineUrl(path);
     return fetch(path, {
       ...init,

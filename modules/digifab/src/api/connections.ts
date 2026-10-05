@@ -188,6 +188,8 @@ connectionsRouter.delete(
     const ctx = tenantContext(req);
     const id = req.params.id!;
     const db = tenantDb(req);
+    const layout = await db.selectFrom("digifab_laser_plans").select("id").where("connection_id", "=", id).where("run_id", "is not", null).executeTakeFirst();
+    if (layout) return void res.status(409).json({ error: { code: "laser_run_exists", message: "Keep the connection used by a saved laser production run. Disable it instead of deleting it." } });
     // Clean up everything hanging off the connection (the FKs were deliberately
     // dropped in 0008). Orphans weren't cosmetic: a live job kept a dead poll
     // loop, and a pool member pointing at a dead connection made every assign
@@ -205,6 +207,8 @@ connectionsRouter.delete(
       await markJobTerminal(db, j, "cancelled", { error: "connection removed" });
       await reverseBuildIfCommitted(db, ctx.org.id, j.id, "connection removed");
     }
+    await db.deleteFrom("digifab_laser_profiles").where("connection_id", "=", id).execute();
+    await db.deleteFrom("digifab_laser_plans").where("connection_id", "=", id).where("run_id", "is", null).execute();
     await db.deleteFrom("digifab_device_links").where("connection_id", "=", id).execute();
     await db.deleteFrom("digifab_pool_members").where("connection_id", "=", id).execute();
     await db.deleteFrom("digifab_device_attention").where("connection_id", "=", id).execute();

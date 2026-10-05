@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "digifab",
-  version: "0.29.5",
+  version: "0.30.2",
   displayName: "Digital Fabrication",
   description:
     "Send a design to the software that runs your machine (FDM Monster, OctoPrint and others) and follow the job until it is done.",
@@ -220,6 +220,50 @@ export default defineModule({
       { eventType: "digifab.make.ready", label: "A print is ready to start", description: "Print this has sliced a model for a printer; the print waits on its Make for someone to start it." },
     ],
     actions: [
+      // UI-SCREEN: /builds/<revision> saves paste profiles and downloads the oven bridge package.
+      {id: "digifab:reflow-profiles", group: "make", label: "Read paste profiles", description: "List saved immutable reflow profiles for this paste jar.", scope: "workspace", invokeHandler: "digifab.reflow-profiles", userInvokable: true, argsSchema: {paste_kind: {label: "Paste collection kind", type: "text", required: true}, paste_id: {label: "Paste jar id", type: "text", required: true}}},
+      // UI-SCREEN: /builds/<revision> saves paste profiles and downloads the oven bridge package.
+      {id: "digifab:reflow-profile", group: "make", label: "Read a paste profile", description: "Read one saved paste profile and its manufacturer limits.", scope: "workspace", invokeHandler: "digifab.reflow-profile", userInvokable: true, argsSchema: {profile_id: {label: "Paste profile id", type: "text", required: true}}},
+      // UI-SCREEN: /builds/<revision> saves paste profiles and downloads the oven bridge package.
+      {id: "digifab:save-reflow-profile", group: "make", label: "Save a paste reflow profile", description: "Save the four phases and manufacturer limits as a new immutable version for a liquid paste jar.", scope: "workspace", invokeHandler: "digifab.save-reflow-profile", userInvokable: true, argsSchema: {paste_kind: {label: "Paste collection kind", type: "text", required: true}, paste_id: {label: "Paste jar id", type: "text", required: true}, profile: {label: "Four phases and manufacturer limits", type: "json", required: true}}},
+      // UI-SCREEN: /builds/<revision> saves paste profiles and downloads the oven bridge package.
+      {id: "digifab:reflow-bridge-package", group: "make", label: "Download the reflow bridge driver", description: "Read the installable bridge driver package for T-962 open firmware and YARC controllers.", scope: "workspace", invokeHandler: "digifab.reflow-bridge-package", userInvokable: true, argsSchema: {}},
+      {
+        // UI-SCREEN: /digifab/manager
+        id: "digifab:dispatch-material", label: "Dispatch a laser batch by material", scope: "workspace", group: "more", userInvokable: false,
+        description: "Spread an SVG/DXF quantity across idle lasers with matching profiles and available sheet area. Plan previews layouts; queue verifies saved layouts and queues sheet jobs without Start; cancel withdraws an unqueued batch. Returns a saved blocked batch when stock is short; plan again by id after restocking. Requires an admin. Request fields: library_id, quantity, material, thickness_mm, operations (drawing layer to cut/score/engrave), spacing_mm, kerf_mm, rotate, dxf_units.",
+        examples: ["spread 200 stars across the plywood lasers", "retry this batch after restocking"], invokeHandler: "digifab.dispatch-material", effect: "writes", undoable: false,
+        argsSchema: {
+          operation: { label: "Operation", type: "text", required: true, choices: ["plan", "queue", "cancel"].map(value => ({ value, label: value })) },
+          request: { label: "Batch request", type: "json", oneOf: "batch" },
+          id: { label: "Saved batch id", type: "text", oneOf: "batch" },
+        },
+      },
+      {
+        // UI-SCREEN: /station/machine/:connectionId/:deviceId
+        id: "digifab:laser-control", label: "Control a direct laser", scope: "workspace", group: "more", userInvokable: false,
+        description: "Stop, pause or resume a direct laser, or frame its reviewed file with the cutting laser off. Workspace members may stop a laser. This action cannot start a new cutting job.",
+        invokeHandler: "digifab.laser-control", effect: "writes", undoable: false,
+        argsSchema: {
+          connection_id: { label: "Connection", type: "text", required: true },
+          device_id: { label: "Device", type: "text", required: true },
+          operation: { label: "Control", type: "text", required: true, choices: ["stop", "pause", "resume", "frame"].map(value => ({ value, label: value })) },
+          file_id: { label: "Reviewed file for Frame", type: "text" },
+          job_id: { label: "Queued job for Frame", type: "text" },
+        },
+      },
+      {
+        // UI-SCREEN: /digifab
+        id: "digifab:laser-batch", label: "Prepare a laser batch", group: "more", scope: "workspace", userInvokable: false,
+        description: "Create, import or update material profiles, plan SVG/DXF batches on chosen sheets, queue reviewed plans or discard unqueued plans. Requires an admin. Never starts the laser. Create fields: connection_id, device_id, profile. Import fields: connection_id, device_id. Update fields: profile from read_laser_batch. Plan fields: connection_id, device_id, library_id, quantity, sheet_ids, mapping (layer to profile id), spacing_mm, kerf_mm, rotate, dxf_units. Queue/discard: saved plan id.",
+        examples: ["prepare 200 parts from this drawing", "import the laser material profiles"],
+        invokeHandler: "digifab.laser-batch", effect: "writes", undoable: false,
+        argsSchema: {
+          operation: { label: "Operation", type: "text", required: true, choices: ["create_profile", "import_profiles", "update_profile", "plan", "queue", "discard"].map(value => ({ value, label: value.replaceAll("_", " ") })) },
+          id: { label: "Profile or plan id", type: "text" },
+          fields: { label: "Profile or plan fields", type: "json" },
+        },
+      },
       {
         // The one door a job reaches a machine by: the page's Send button and
         // this action run the same send (api/jobs.ts sendAndWatch). It starts

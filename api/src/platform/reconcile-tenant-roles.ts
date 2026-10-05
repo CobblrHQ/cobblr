@@ -28,6 +28,7 @@
 import { createClient } from "../db/client-error-guard.js";
 import { env } from "../env.js";
 import { meta } from "../db/meta.js";
+import { notePassFailure } from "./pass-failures.js";
 
 /** Same shape provision.ts creates: `tenant_<short-uuid>_user`. */
 const TENANT_ROLE = /^tenant_[a-z0-9_]+_user$/;
@@ -83,6 +84,7 @@ export async function reconcileOrphanTenantRoles(): Promise<OrphanRoleSweep> {
         await client.query(`DROP ROLE IF EXISTS "${rolname}"`);
         out.dropped++;
       } catch (err) {
+        notePassFailure("reconcileOrphanTenantRoles", rolname, err);
         // A role still owning objects elsewhere, or a permissions gap. One
         // failure must not abort the sweep.
         console.error(
@@ -97,6 +99,7 @@ export async function reconcileOrphanTenantRoles(): Promise<OrphanRoleSweep> {
     }
     return out;
   } catch (err) {
+    notePassFailure("reconcileOrphanTenantRoles", null, err);
     // Never let a cleanup sweep take down boot.
     console.error(`[reconcile-tenant-roles] sweep failed: ${(err as Error).message}`);
     return out;

@@ -127,6 +127,7 @@ export const PART_CI_FILTER_COLS = new Set(["serial_number", "model_number", "as
 export type AllocationStatus = "reserved" | "consumed" | "released";
 
 export interface InventoryAllocationsTable {
+  context: Generated<Record<string, unknown>>;
   id: Generated<string>;
   part_id: string;
   qty: string;
@@ -162,7 +163,26 @@ export interface InventoryConsumptionTable {
   at: Generated<Date>;
 }
 
+export interface InventoryStockStorageTable {
+  part_id: string;
+  state: import("./stock-storage.js").StockStorage;
+  revision: Generated<number>;
+  updated_at: Generated<Date>;
+}
+export interface InventoryPackageReceiptsTable {
+  receipt_key: string;
+  label_hash: string;
+  part_id: string;
+  type_id: string;
+  quantity: number;
+  received_at: Generated<Date>;
+}
+
 export interface InventoryDB {
+  inventory_paste_storage: { part_id: string; state: import("./paste-lifecycle.js").PasteClock; revision: Generated<number>; updated_at: Generated<Date> };
+  inventory_stock_storage: InventoryStockStorageTable;
+  inventory_package_receipts: InventoryPackageReceiptsTable;
+  inventory_sheet_area: { part_id: string; revision: Generated<number>; state: Generated<import("./sheet-area.js").SheetState>; updated_at: Generated<Date> };
   inventory_categories: InventoryCategoriesTable;
   inventory_parts: InventoryPartsTable;
   inventory_allocations: InventoryAllocationsTable;

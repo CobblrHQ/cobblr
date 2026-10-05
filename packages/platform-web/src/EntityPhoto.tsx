@@ -27,6 +27,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { reloadPicture, useImageSrc } from "./useImageSrc";
 import { reportBrokenPicture } from "./brokenPictures";
 import { pickThumb, type SwatchFieldDef } from "./swatch";
+import { entityInitial } from "./entity-initial";
 
 export type PhotoAspect = "square" | "4/3" | "3/4" | "2/3" | "16/9";
 
@@ -148,7 +149,7 @@ export function EntityPhoto({
           aria-label={swatch ? alt : undefined}
           className={`absolute inset-0 flex items-center justify-center font-mono ${swatch ? "text-black/25 dark:text-black/30" : "text-faint dark:text-slate-600"} ${initialSize}`}
         >
-          {placeholder !== undefined ? placeholder : alt.trim().slice(0, 1).toUpperCase() || "?"}
+          {placeholder !== undefined ? placeholder : entityInitial(alt)}
         </span>
       )}
       {children}

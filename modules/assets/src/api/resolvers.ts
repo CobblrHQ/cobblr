@@ -1,3 +1,4 @@
+import { groupListRows } from "@cobblr/platform-contract/grouped-list";
 import { fieldCurrency } from "@cobblr/platform-contract/money";
 import { fieldDay } from "@cobblr/platform-contract/field-day";
 import { columnSet, placeNames as placeNamesOf, platform, parseSort, textSearchWhere, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
@@ -159,7 +160,7 @@ export function registerAssetsResolvers(): void {
     const order = parseSort(query.sort, SORTABLE);
     for (const { col, dir } of order) q = q.orderBy(col as never, dir);
     if (!order.some((o) => o.col === "name")) q = q.orderBy("name", "asc");
-    const rows = await q.limit(limit).offset(offset).execute();
+    const rows = (await groupListRows(db, q, query)) ?? await q.limit(limit).offset(offset).execute();
     const places = await placeNamesOf(orgId, "assets:asset", rows);
     return { items: rows.map((r) => toResolvedAsset(r, places.get(r.id) ?? null)) };
   };

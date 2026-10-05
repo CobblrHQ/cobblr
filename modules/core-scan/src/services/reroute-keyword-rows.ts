@@ -104,6 +104,7 @@ const candidateList = (raw: unknown): Array<Record<string, unknown>> => {
   if (typeof v === "string") {
     try {
       v = JSON.parse(v) as unknown;
+    // pass-catch: an unparseable value has no keywords to reroute
     } catch {
       return [];
     }

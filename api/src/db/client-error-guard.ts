@@ -1,5 +1,6 @@
 import { Client, Pool } from "pg";
 import type { ClientConfig, PoolConfig } from "pg";
+import { currentRequestScope, noteMetaStatement } from "../lib/request-context.js";
 
 /**
  * Every pg client this process opens listens for 'error' from the moment it
@@ -72,7 +73,10 @@ function bornGuarded(label: string, Base: ClientClass): ClientClass {
       const query = (this.query as (...a: unknown[]) => unknown).bind(this);
       (this as unknown as { query: unknown }).query = (...a: unknown[]) => {
         const q = a[0] as string | { text?: string } | undefined;
-        LAST.set(this, { text: typeof q === "string" ? q : (q?.text ?? "?"), at: Date.now() });
+        const text = typeof q === "string" ? q : (q?.text ?? "?");
+        LAST.set(this, { text, at: Date.now() });
+        // Counted against the request that asked, for the per-request bound (#4876).
+        if (label === "meta-pool") noteMetaStatement(text);
         return query(...a);
       };
     }
@@ -89,27 +93,97 @@ function bornGuarded(label: string, Base: ClientClass): ClientClass {
 // held client with both. Capturing a stack is cheap because V8 formats it only
 // when read, which here is only when a pool is already starving.
 const LAST = new WeakMap<object, { text: string; at: number }>();
-const TAKEN = new WeakMap<object, { at: number; site: { stack?: string } }>();
+const TAKEN = new WeakMap<object, { at: number; site: { stack?: string }; by?: string }>();
+// Who is waiting, by request (requestLabel), so the worst moment can count the
+// burst on both sides: the requests holding every client and the requests in
+// the queue behind them (#4876: holders named only queries, "all 0s").
+const WAITING = new WeakMap<Pool, Map<string, number>>();
+
+/** The worst moment a pool has had: the most callers waiting at once, when,
+ *  and who held every client right then. Taken by the checkout that has to
+ *  wait at a new high, so a burst that drains between two samples is still
+ *  named (#4876: CI read "63 waiting, holders: none captured"). */
+export interface PoolPeak {
+  waiting: number;
+  at: string;
+  holders: string[];
+  /** The requests at that moment, most first: "34 × GET /orgs/:slug/x (a.test.ts)",
+   *  holding a client or waiting for one. This is what names a burst. */
+  requests: string[];
+}
+const PEAK = new WeakMap<Pool, PoolPeak>();
+
+/** The pool's worst moment so far, or null if no caller has ever waited. */
+export function poolPeak(pool: Pool): PoolPeak | null {
+  return PEAK.get(pool) ?? null;
+}
+
+function notePeak(pool: Pool): void {
+  const max = pool.options.max ?? 10;
+  if (pool.idleCount > 0 || pool.totalCount < max) return; // this caller gets a client without waiting
+  const waiting = pool.waitingCount + 1;
+  const prev = PEAK.get(pool);
+  if (prev && prev.waiting >= waiting) return;
+  PEAK.set(pool, { waiting, at: new Date().toISOString(), holders: poolHolders(pool).slice(0, 12), requests: poolRequests(pool) });
+}
+
+/** The requests holding the pool's clients or waiting for one, counted, most
+ *  first. A checkout outside a request (a timer, a boot pass) counts as such. */
+export function poolRequests(pool: Pool, top = 8): string[] {
+  const n = new Map<string, number>();
+  const add = (k: string, by = 1) => n.set(k, (n.get(k) ?? 0) + by);
+  const all = (pool as unknown as { _clients?: object[] })._clients ?? [];
+  const idle = new Set(((pool as unknown as { _idle?: Array<{ client: object }> })._idle ?? []).map((i) => i.client));
+  for (const c of all) if (!idle.has(c)) add(`holding: ${TAKEN.get(c)?.by ?? "no request (a timer or a boot pass)"}`);
+  for (const [k, v] of WAITING.get(pool) ?? []) if (v > 0) add(`waiting: ${k}`, v);
+  return [...n.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, top)
+    .map(([k, v]) => `${v} × ${k}`);
+}
 
 function traceCheckouts(pool: Pool): void {
   const connect = pool.connect as (...a: unknown[]) => unknown;
   (pool as unknown as { connect: unknown }).connect = function tracedConnect(this: Pool, ...a: unknown[]) {
     const site: { stack?: string } = {};
     Error.captureStackTrace(site, tracedConnect);
+    const by = currentRequestScope()?.label ?? "no request (a timer or a boot pass)";
+    const max = this.options.max ?? 10;
+    const waits = this.idleCount === 0 && this.totalCount >= max;
+    let queue = WAITING.get(this);
+    if (!queue) WAITING.set(this, (queue = new Map()));
+    if (waits) queue.set(by, (queue.get(by) ?? 0) + 1);
+    notePeak(this);
+    let left = !waits;
+    const leave = () => {
+      if (left) return;
+      left = true;
+      const v = (queue!.get(by) ?? 1) - 1;
+      if (v > 0) queue!.set(by, v);
+      else queue!.delete(by);
+    };
     const note = (client: unknown) => {
-      if (client && typeof client === "object") TAKEN.set(client, { at: Date.now(), site });
+      leave();
+      if (client && typeof client === "object") TAKEN.set(client, { at: Date.now(), site, by });
     };
     const cb = a[0];
     if (typeof cb === "function") {
       return connect.call(this, (err: Error | undefined, client: unknown, done: unknown) => {
         if (!err) note(client);
+        else leave();
         (cb as (...x: unknown[]) => void)(err, client, done);
       });
     }
-    return (connect.call(this) as Promise<unknown>).then((client) => {
-      note(client);
-      return client;
-    });
+    return (connect.call(this) as Promise<unknown>).then(
+      (client) => {
+        note(client);
+        return client;
+      },
+      (err: unknown) => {
+        leave();
+        throw err;
+      },
+    );
   };
 }
 
@@ -144,7 +218,7 @@ export function poolHolders(pool: Pool, now = Date.now()): string[] {
         : last
           ? `nothing in flight; last ran "${oneLine(last.text)}" ${secs(now - last.at)} ago`
           : "nothing run on it";
-      return `held ${taken ? secs(now - taken.at) : "?"}, ${what}; taken by ${callerFrames(taken?.site.stack)}`;
+      return `held ${taken ? secs(now - taken.at) : "?"}, ${what}; for ${taken?.by ?? "?"}; taken by ${callerFrames(taken?.site.stack)}`;
     });
 }
 

@@ -57,6 +57,7 @@ import { upsertOverride } from "./entity-kind-overrides.js";
 import { log as activityLog } from "./activity.js";
 import { bumpWorkspaceShape } from "./workspace-shape.js";
 import { noteHealShim } from "./heal-shim-log.js";
+import { notePassFailure } from "./pass-failures.js";
 
 const SHIM = "api/src/platform/migrate-groceries-twin-to-instance.ts";
 
@@ -84,6 +85,7 @@ function parseManifest(raw: unknown): StoredManifest | null {
   if (!raw) return null;
   try {
     return (typeof raw === "string" ? JSON.parse(raw) : raw) as StoredManifest;
+  // pass-catch: an unreadable stored manifest reads as none, which the caller skips
   } catch {
     return null;
   }
@@ -251,6 +253,7 @@ export async function retireGroceriesBaseKindTwin(opts?: { force?: boolean; only
         `[retire-groceries-twin] org ${inst.org_id}: ${out.rowsMoved} food row(s) moved into Groceries, ${out.defsDropped} base-kind field(s) dropped`,
       );
     } catch (err) {
+      notePassFailure("retireGroceriesBaseKindTwin", inst.org_id, err);
       failed++;
       console.error(`[retire-groceries-twin] org ${inst.org_id} failed:`, (err as Error).message);
     } finally {

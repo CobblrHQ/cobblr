@@ -153,7 +153,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
               );
             }
           } catch {
-            /* scanning module off, or nothing to fill - the preset is still on */
+            /* quiet: scanning is off or there is nothing to fill; the preset is on, which is what was asked */
           }
         }
       }

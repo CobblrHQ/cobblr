@@ -18,6 +18,8 @@ export interface CoreMaintenanceEntriesTable {
   notes: string | null;
   recurrence_rule: string | null;
   last_notified_at: Date | null;
+  nag_snoozed_until: Date | null;
+  nag_stopped_at: Date | null;
   /** The schedule this entry is an occurrence of, or the one it rolled forward. */
   schedule_id: string | null;
   created_at: Generated<Date>;
@@ -25,6 +27,11 @@ export interface CoreMaintenanceEntriesTable {
 }
 
 export interface CoreMaintenanceSchedulesTable {
+  overdue_every: import("./schedule.js").OverdueCadence | null;
+  anchor: import("./schedule.js").RenewalAnchor | null;
+  remind: import("./schedule.js").Reminder | null;
+  expiry_field: string | null;
+  current_expiry: Date | null;
   id: Generated<string>;
   entity_module: string;
   entity_type: string;
@@ -42,6 +49,7 @@ export interface CoreMaintenanceSchedulesTable {
 }
 
 export interface CoreMaintenanceDB {
+  core_maintenance_preferences: { id: boolean; overdue_every: import("./schedule.js").OverdueCadence };
   core_maintenance_entries: CoreMaintenanceEntriesTable;
   core_maintenance_schedules: CoreMaintenanceSchedulesTable;
 }

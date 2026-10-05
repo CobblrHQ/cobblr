@@ -44,7 +44,7 @@ import { pairingResultMetadata } from "@cobblr/platform-contract/pairing-present
 import { sql, type Kysely, type Generated } from "kysely";
 import { env } from "./env.js";
 import { meta, metaPool, pingMeta } from "./db/meta.js";
-import { currentActor, currentVia } from "./lib/request-context.js";
+import { currentActor, currentVia, perRequest } from "./lib/request-context.js";
 import { runMigrations } from "./db/migrate.js";
 import { getTenantDb, releaseIdleTenantPool, withTenantDbForSweep } from "./db/tenant.js";
 import { runExclusive } from "./platform/exclusive.js";
@@ -116,6 +116,7 @@ import * as scanResolvers from "./platform/scan-resolvers.js";
 import * as categoryAxis from "./platform/category-axis.js";
 import * as queue from "./platform/queue.js";
 import * as sharedCache from "./platform/shared-cache.js";
+import { registerDigestContributor, digestContributions } from "./platform/digest-contributions.js";
 import * as notificationsImpl from "./platform/notifications.js";
 import { orgMemberIds } from "./platform/memberships.js";
 import { audienceFor } from "./platform/notification-audience.js";
@@ -130,10 +131,12 @@ import { registerPlatformActionHandlers } from "./platform/platform-action-handl
 import { registerHostedMcp } from "./platform/hosted-mcp.js";
 import { syncInstalledModules } from "./platform/installed-modules.js";
 import { noteHealShim } from "./platform/heal-shim-log.js";
+import { notePassFailure } from "./platform/pass-failures.js";
 import { retireGroceriesBaseKindTwin } from "./platform/migrate-groceries-twin-to-instance.js";
 import { backfillPlacements } from "./platform/migrate-location-to-placement.js";
 import { registerDanglingPlacesHeal } from "./platform/heal-dangling-places.js";
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
+import { seedProviderFromEnv } from "./platform/oidc.js";
 import { reconcileContributedFields } from "./platform/reconcile-contributed-fields.js";
 import { reconcileIntegrationNav } from "./platform/integration-nav.js";
 import { reconcileBundleUpdates, startBundleUpdateSweeper } from "./platform/bundle-updates.js";
@@ -246,6 +249,46 @@ async function valuesOf(orgId: string, refs: ReadonlyArray<{ kind: string; id: s
 /** How far up a path is followed: deeper than any real shelf-in-room nesting,
  *  and a stop for a cycle a bad write could leave. */
 const PLACE_PATH_MAX = 12;
+
+/** Keep the reserved room grouping on the placement primitive's tenant SQL,
+ *  including bins whose room is above them and cycle-safe orphan containers. */
+function locationGroupValue(kind: string) {
+  return sql<string>`(
+    with recursive place_path as (
+      select ${kind}::text as kind, data->>'id' as id, 0 as depth,
+        array[${kind} || ':' || (data->>'id')]::text[] as seen
+      union all
+      select next.kind, next.id, path.depth + 1, path.seen || (next.kind || ':' || next.id)
+      from place_path path cross join lateral (
+        select p.container_kind as kind, p.container_id as id
+        from core_placement_placements p where p.containee_kind = path.kind and p.containee_id = path.id
+        union all
+        select 'core-locations:location', l.parent_id::text
+        from core_locations_locations l where path.kind = 'core-locations:location' and l.id::text = path.id
+          and l.parent_id is not null and not exists (
+            select 1 from core_placement_placements p where p.containee_kind = path.kind and p.containee_id = path.id
+          )
+      ) next
+      where path.depth < 12 and not (next.kind || ':' || next.id) = any(path.seen)
+    )
+    select l.name from place_path path join core_locations_locations l
+      on path.kind = 'core-locations:location' and l.id::text = path.id
+    where path.depth > 0
+    order by (l.kind = 'container'), case when l.kind = 'container' then -path.depth else path.depth end
+    limit 1
+  )`;
+}
+
+function stockGroupValues(kind: string, holders: string[]) {
+  const installed = sql<boolean>`exists (
+    select 1 from core_placement_placements p where p.containee_kind = ${kind}
+      and p.containee_id = data->>'id' and p.container_kind = any(${holders}::text[])
+  )`;
+  const qty = sql<number>`coalesce((data->>'qty')::numeric, 0)`;
+  const spare = sql<number>`case when ${installed} then 0 when ${qty} > 0 then ${qty} else coalesce((data->>'approximate_qty')::numeric, 0) end`;
+  return { installed_qty: sql<number>`case when ${installed} then ${qty} else 0 end`, spare_qty: spare };
+}
+
 
 /** Where each thing is, innermost container first, named (platform().placement.pathsOf). */
 async function placePaths(
@@ -449,7 +492,7 @@ async function boot() {
         return [...native, ...custom];
       },
       fieldsFor: async (orgId, kind) => {
-        const defs = await effectiveFieldDefsForKind(orgId, kind);
+        const defs = await perRequest(`entity-field-defs:${orgId}:${kind}`, () => effectiveFieldDefsForKind(orgId, kind));
         return defs.map((d) => ({
           name: d.name,
           display_label: d.display_label,
@@ -512,6 +555,11 @@ async function boot() {
       applicable: live.applicable,
     },
     devices: {
+      registerMachineRecords: devices.registerMachineRecords,
+      machineRecords: devices.machineRecords,
+      machineRecord: devices.machineRecord,
+      registerStationVerifier: devices.registerStationVerifier,
+      authorizeAtStation: devices.authorizeAtStation,
       registerDriverProvider: devices.registerDriverProvider,
       getDriver: devices.getDriver,
       registerConnectionStore: devices.registerConnectionStore,
@@ -529,6 +577,7 @@ async function boot() {
       registerProbe: health.registerProbe,
       snapshot: health.snapshot,
       noteHealShim: (shim, found, failed) => noteHealShim(shim, found, failed),
+      notePassFailure,
     },
     recurrence: {
       registerScanner: recurrenceRegistry.registerScanner,
@@ -555,6 +604,7 @@ async function boot() {
       del: sharedCache.del,
     },
     notifications: {
+      registerDigestContributor, digestContributions,
       dispatch: notificationsImpl.dispatch,
       orgMemberIds: async (orgId: string) => [...(await orgMemberIds(orgId))],
       audienceFor,
@@ -807,6 +857,11 @@ async function boot() {
       get: hostedSeams.getHostedPanel,
     },
     auth: {
+      userHasRole: async ({ orgId, userId, minRole }) => {
+        const membership = await meta.selectFrom("org_memberships").select("role").where("org_id", "=", orgId).where("user_id", "=", userId).executeTakeFirst();
+        const { roleSatisfies } = await import("@cobblr/platform-contract/org-roles");
+        return roleSatisfies(membership?.role, [minRole]);
+      },
       // Capability check walks three sources in order:
       //   1. Stock role: the admin tier (by rank, so editor too) always passes.
       //   2. Direct per-user grant (workspace_capability_grants).
@@ -1415,6 +1470,11 @@ async function boot() {
           .executeTakeFirst();
         return row ? { kind: row.container_kind, id: row.container_id } : null;
       },
+      groupValues: async ({ orgId, kind: asked }) => {
+        const kind = await entities.baseKindOf(orgId, asked);
+        const holders = (await entities.listKindsForOrg(orgId)).filter((k) => isInstallHolder(k.traits as Record<string, unknown> | null)).map((k) => k.id);
+        return { values: { location: locationGroupValue(kind) }, numbers: stockGroupValues(kind, holders) };
+      },
       pathsOf: async ({ orgId, containees }) => placePaths(orgId, containees),
       holders: async ({ orgId, includePlaces }) => {
         const tdb = (await getTenantDb(orgId)) as unknown as Kysely<PlacementDB>;
@@ -1857,6 +1917,9 @@ async function boot() {
   if (contributed.added > 0) console.log(`[cobblr-api] contributed fields reconciled: ${contributed.added} added (${contributed.modules.join(", ")})`);
   const seeded = await T("backfillDefaultBindings", backfillDefaultBindings());
   console.log(`[cobblr-api] default bindings backfilled: ${seeded} added`);
+  // A first boot with no UI: COBBLR_OIDC_* sets up the instance's sign-in
+  // provider (platform/oidc.ts). One saved in the UI is left alone.
+  await T("seedOidcProviderFromEnv", seedProviderFromEnv());
 
   // Installed bundles catch up to the catalog on their own (patch/minor, with
   // the install route's own gates). Used to happen only when somebody opened

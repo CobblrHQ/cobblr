@@ -20,6 +20,11 @@ import { lazy, Suspense, type ComponentType, type LazyExoticComponent } from "re
 import { ContributedDetailPanels, registerDetailPanel, hasDetailPanel } from "@cobblr/platform-web";
 import type { ModulePageTabCtx } from "./types";
 
+registerDetailPanel(
+  "builds:board-revisions",
+  lazy(() => import("../features/builds/boardRevisions").then(m => ({ default: m.BoardProjectPanel }))),
+);
+
 const PAGE_TABS: Record<string, LazyExoticComponent<ComponentType<{ ctx: ModulePageTabCtx }>>> = {
   "digifab:fleet-tab": lazy(() => import("../features/digifab/fleet").then((m) => ({ default: m.FleetPageTab }))),
 };
@@ -92,6 +97,10 @@ registerDetailPanel(
 registerDetailPanel(
   "core-activity-log:history",
   lazy(() => import("../features/core-activity-log/history").then((m) => ({ default: m.HistoryPanel }))),
+);
+registerDetailPanel(
+  "core-maintenance:renewals",
+  lazy(() => import("../features/core-maintenance/renewals").then((m) => ({ default: m.MaintenanceRenewalsPanel }))),
 );
 registerDetailPanel(
   "core-maintenance:schedules",

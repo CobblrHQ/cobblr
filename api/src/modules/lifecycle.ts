@@ -11,6 +11,7 @@
 // stopping the rest.
 
 import { listEntries } from "./registry.js";
+import { notePassFailure } from "../platform/pass-failures.js";
 
 /** Resolve a module's lifecycle hook to the actual function. Hooks
  *  are declared as dynamic imports (same shape as manifest.api) so
@@ -27,6 +28,7 @@ async function callHook(
   try {
     await hook();
   } catch (err) {
+    notePassFailure(`module.${hookName}`, moduleName, err);
     console.error(
       `[lifecycle] ${moduleName}.${hookName} failed:`,
       (err as Error).message,

@@ -1,3 +1,4 @@
+import { ReceivePackage } from "./ReceivePackage";
 import { FilamentCatalog } from "./FilamentCatalog";
 import { SpoolmanModal } from "./SpoolmanModal";
 // A type collection and its things on one page (Filament: a card per filament
@@ -167,7 +168,7 @@ function TypeCard({
     >
       <header className="px-3 pt-3 pb-2 flex items-center gap-3">
         {/* The hex a scan stores beside the colour's name, else the colour itself. */}
-        <TypeSwatch value={swatchFill(md.color_hex) ? md.color_hex : md.color} />
+        {!data.package_receiving && <TypeSwatch value={swatchFill(md.color_hex) ? md.color_hex : md.color} />}
         <Link to={`${basePath}/parts/${type.id}`} className="flex-1 min-w-0">
           <span className="block font-medium text-content dark:text-mortar-100 truncate">{type.name}</span>
           {facts.length > 0 && <span className="block text-xs text-muted dark:text-slate-400 truncate">{facts.join(" · ")}</span>}
@@ -424,10 +425,11 @@ export function FamilyPage({ childPath, tablePath }: { childPath: string; tableP
       </div>
       <div className="flex flex-wrap gap-1.5" role="group" aria-label="View">
         {chip("all", "All")}
-        {chip("material", "By material")}
-        {chip("colour", "By colour")}
+        {!data.package_receiving && chip("material", "By material")}
+        {!data.package_receiving && chip("colour", "By colour")}
         {chip("low", "Low")}
       </div>
+      {data.package_receiving && <ReceivePackage data={data} />}
       {instance === "filament-types" && <FilamentCatalog />}
       {spoolmanOpen && <SpoolmanModal instance={data.child} onClose={() => setSpoolmanOpen(false)} onSynced={() => { void qc.invalidateQueries({ queryKey: ["inventory-family"] }); }} />}
       {adding && <AddForm data={data} initialType={adding.type} onDone={() => setAdding(null)} />}

@@ -52,6 +52,7 @@ import { meta } from "../db/meta.js";
 import { getTenantDb, evictTenantPool } from "../db/tenant.js";
 import { TRUNCATED_BY_FALLBACK_SQL } from "./replay-truncation-predicate.js";
 import { noteHealShim } from "./heal-shim-log.js";
+import { notePassFailure } from "./pass-failures.js";
 
 export async function repairReplayTruncatedNames(): Promise<{ orgsTouched: number; rowsRepaired: number }> {
   if (process.env.COBBLR_SKIP_HISTORICAL_MIGRATIONS === "1") return { orgsTouched: 0, rowsRepaired: 0 };
@@ -95,6 +96,7 @@ export async function repairReplayTruncatedNames(): Promise<{ orgsTouched: numbe
         console.log(`[reconcile] org ${org_id}: restored ${res.rows.length} scan name(s) a replay had truncated`);
       }
     } catch (err) {
+      notePassFailure("repairReplayTruncatedNames", org_id, err);
       // One workspace's failure never blocks the rest.
       failed++;
       console.warn(`[reconcile] org ${org_id}: replay-name repair failed:`, (err as Error)?.message ?? err);

@@ -1,3 +1,4 @@
+import { groupListRows } from "@cobblr/platform-contract/grouped-list";
 import { columnSet, platform, withPlaceNames, parseSort, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { MachinesDB } from "../db.js";
@@ -124,7 +125,7 @@ export function registerMachinesResolvers(): void {
     const order = parseSort(query.sort, SORTABLE);
     for (const { col, dir } of order) q = q.orderBy(col as never, dir);
     if (!order.some((o) => o.col === "name")) q = q.orderBy("name", "asc");
-    const rows = await q.limit(limit).offset(offset).execute();
+    const rows = (await groupListRows(db, q, query)) ?? await q.limit(limit).offset(offset).execute();
     // A unit is one of its parent's N, not a machine of its own: it leaves the
     // list and rides on its parent, so a count of records never counts it twice.
     // Where each one is, by name, so a search or the assistant can say it.

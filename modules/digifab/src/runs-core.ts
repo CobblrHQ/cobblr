@@ -80,6 +80,7 @@ export async function mintRunJobs(db: Kysely<DigifabDB>, _orgId: string): Promis
     .selectFrom("digifab_production_runs")
     .select("id")
     .where("status", "=", "active")
+    .where("laser_plan_id", "is", null)
     .execute();
   if (!activeRuns.length) return 0;
 
@@ -152,21 +153,24 @@ export async function recordRunVerdict(
 ): Promise<RunVerdictResult> {
   const job = await db
     .selectFrom("digifab_jobs")
-    .select(["id", "run_id", "run_outcome"])
+    .select(["id", "run_id", "run_outcome", "laser_layout"])
     .where("id", "=", jobId)
     .executeTakeFirst();
   if (!job?.run_id) return null;
 
   // null→outcome atomic flip: double-submitting the verdict form (or a retried
   // request) must not double-count a plate.
-  const claim = await db
-    .updateTable("digifab_jobs")
-    .set({ run_outcome: outcome === "good" ? "counted" : "scrapped", updated_at: new Date() })
-    .where("id", "=", jobId)
-    .where("run_outcome", "is", null)
-    .executeTakeFirst();
-  if (Number(claim.numUpdatedRows ?? 0n) === 0) return { counted: false, runCompleted: false };
-  if (outcome === "scrapped") return { counted: false, runCompleted: false };
+  const claimJob = (q: Kysely<DigifabDB>) =>
+    q
+      .updateTable("digifab_jobs")
+      .set({ run_outcome: outcome === "good" ? "counted" : "scrapped", updated_at: new Date() })
+      .where("id", "=", jobId)
+      .where("run_outcome", "is", null)
+      .executeTakeFirst();
+  if (outcome === "scrapped") {
+    await claimJob(db);
+    return { counted: false, runCompleted: false };
+  }
 
   const runId = job.run_id;
   // Count + (maybe) close atomically under a lock on the run row. mintRunJobs
@@ -181,9 +185,15 @@ export async function recordRunVerdict(
       .where("id", "=", runId)
       .forUpdate()
       .executeTakeFirst()) as RunRow | undefined;
-    if (!run) return null;
+    // The plate's verdict and the run's count change in ONE transaction (#4890,
+    // torn status writes): claimed first and counted after, a reader could see
+    // the job no longer awaiting its verdict and the run not yet counting it,
+    // a plate counted nowhere. Claimed even when the run is gone, as before.
+    const claim = await claimJob(trx);
+    if (Number(claim.numUpdatedRows ?? 0n) === 0 || !run) return null;
 
-    const ppp = Math.max(1, run.parts_per_plate);
+    const layout = job.laser_layout;
+    const ppp = Math.max(1, layout?.quantity ?? run.parts_per_plate);
     const newCompleted = run.completed_qty + ppp;
     const done = newCompleted >= run.target_qty && run.status !== "completed";
     await trx

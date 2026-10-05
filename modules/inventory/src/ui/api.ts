@@ -1,3 +1,7 @@
+import type { storageView } from "../api/storage";
+export type StorageView = NonNullable<Awaited<ReturnType<typeof storageView>>>;
+import type { SheetChange, sheetView } from "../api/sheets";
+export type SheetView = NonNullable<ReturnType<typeof sheetView>>;
 import type { MaterialNumbers } from "../material-numbers";
 export interface MaterialView extends MaterialNumbers {
   spool_id: number;
@@ -311,6 +315,8 @@ export interface InventoryApiOptions {
 }
 
 export class InventoryApi {
+  paste(id: string) { return this.partsRequest<import("../api/paste.js").PasteView>("GET", `/${id}/paste`); }
+  storage = (id: string) => this.partsRequest<StorageView | null>("GET", `/${id}/storage`);
   constructor(private readonly slug: string, private readonly opts: InventoryApiOptions) {}
 
   private base(): string {
@@ -609,6 +615,9 @@ export class InventoryApi {
   };
   getPart = (id: string) => this.partsRequest<Part>("GET", `/${id}`);
   /** A consumable's ledger — what drew it down and how much, newest first. */
+  sheet = (id: string) => this.partsRequest<SheetView | null>("GET", `/${id}/sheet`);
+  changeSheet = (id: string, body: SheetChange) => this.partsRequest<SheetView>("POST", `/${id}/sheet`, body);
+  findSheets = (body: { material: string; thickness_mm: number; width_mm: number; height_mm: number; rotate: boolean; offset: number }) => this.request<{ items: SheetView[]; total: number }>("GET", `/sheets/find?${new URLSearchParams(Object.entries(body).map(([k, v]) => [k, String(v)]))}`);
   material = (id: string) => this.partsRequest<MaterialView | null>("GET", `/${id}/material`);
   measureMaterial = (id: string, body: { gross_g?: number; used_mm?: number }) =>
     this.partsRequest<unknown>("POST", `/${id}/material`, body);
@@ -1005,6 +1014,7 @@ export interface FamilyType {
 }
 
 export interface FamilyPayload {
+  package_receiving?: { identity_field: string; storage_tracking: boolean } | null;
   parent: string;
   child: string;
   child_noun: string | null;

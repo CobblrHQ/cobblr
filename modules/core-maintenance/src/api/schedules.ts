@@ -1,3 +1,4 @@
+import { MaintenanceRefusal } from "../refusal.js";
 // /api/v1/orgs/:slug/modules/core-maintenance/schedules (#3876)
 //
 // "Service every 3 months", "every 200 print hours": how often a record wants
@@ -7,17 +8,37 @@
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
-import { tenantContext, tenantDb, type CoreMaintenanceDB } from "../db.js";
+import { tenantContext, tenantDb, sessionUser, type CoreMaintenanceDB } from "../db.js";
 import type { Kysely } from "kysely";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { counterDefs, dueOf, ensureOccurrence, readCounter, type ScheduleRow } from "../schedules-store.js";
-import { INTERVAL_UNITS, describeRule, hasCalendar, hasCounter } from "../schedule.js";
+import { counterDefs, dueOf, ensureOccurrence, readCounter, renewalState, writeExpiry, rollForward, type ScheduleRow } from "../schedules-store.js";
+import { INTERVAL_UNITS, describeRule, hasCalendar, hasCounter, nextRenewalExpiry, nextReminderAt } from "../schedule.js";
 import { sql } from "kysely";
 import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 
 export const schedulesRouter = Router({ mergeParams: true });
 
+const DateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((v) => {
+  const d = new Date(v + "T12:00:00Z");
+  return Number.isFinite(d.getTime()) && d.toISOString().slice(0, 10) === v;
+}, "Enter a valid date");
+const Anchor = z.union([
+  z.string().regex(/^\d{2}-\d{2}$/).refine((v) => DateOnly.safeParse("2000-" + v).success, "Enter a month and day"),
+  z.object({ month: z.number().int().min(1).max(12), last_day: z.literal(true) }),
+]);
+const Remind = z.union([
+  z.object({ before: z.number().int().min(0).max(3650), unit: z.enum(["day", "week", "month"]) }),
+  z.object({ on: z.literal("month_start") }),
+]);
+const RenewalRule = {
+  overdue_every: z.enum(["day", "week", "month", "off"]).nullable().optional(),
+  anchor: Anchor.nullable().optional(),
+  current_expiry: DateOnly.nullable().optional(),
+  expiry_field: z.string().regex(/^[a-z][a-z0-9_]*$/).max(80).nullable().optional(),
+  remind: Remind.nullable().optional(),
+};
 const Rule = {
+  ...RenewalRule,
   name: z.string().trim().min(1).max(200),
   every_n: z.number().int().positive().max(1000).nullable().optional(),
   every_unit: z.enum(INTERVAL_UNITS as unknown as [string, ...string[]]).nullable().optional(),
@@ -34,12 +55,13 @@ const ScheduleCreate = z
     entity_id: z.string().uuid(),
     ...Rule,
   })
-  .refine((d) => (d.every_n && d.every_unit) || (d.counter_field && d.counter_every), {
+  .refine((d) => (d.anchor && d.current_expiry && (!d.every_unit || ["year", "month"].includes(d.every_unit)) && !d.counter_field) || (!d.anchor && !d.expiry_field && ((d.every_n && d.every_unit) || (d.counter_field && d.counter_every))), {
     message: "A schedule needs a calendar interval (every_n + every_unit) or a counter interval (counter_field + counter_every)",
     path: ["every_n"],
   });
 
-const ScheduleUpdate = z.object({
+export const ScheduleUpdateBody = z.object({
+  ...RenewalRule,
   name: Rule.name.optional(),
   every_n: Rule.every_n,
   every_unit: Rule.every_unit,
@@ -50,12 +72,23 @@ const ScheduleUpdate = z.object({
 
 /** A schedule as a record page shows it: the rule in words and where it stands. */
 export async function present(orgId: string, s: ScheduleRow, timeZone?: string | null) {
+  const state = await renewalState(orgId, s);
   const due = await dueOf(orgId, s, new Date(), timeZone);
+  const db = await platform().tenants.getDb(orgId) as Kysely<CoreMaintenanceDB>;
+  const occurrence = await db.selectFrom("core_maintenance_entries").select(["id", "last_notified_at", "nag_snoozed_until", "nag_stopped_at"]).where("schedule_id", "=", s.id).where("performed_at", "is", null).executeTakeFirst();
+  const preferences = await db.selectFrom("core_maintenance_preferences").selectAll().executeTakeFirst();
+  const nextReminder = due.next_due_at ? nextReminderAt(due.next_due_at, s.remind, occurrence?.last_notified_at ?? null, new Date(), { ...occurrence, overdue_every: s.overdue_every ?? preferences?.overdue_every ?? "week" }) : null;
   return {
     ...s,
+    next_reminder_at: nextReminder,
+    occurrence: occurrence ?? null,
     counter_every: s.counter_every == null ? null : Number(s.counter_every),
     last_done_counter: s.last_done_counter == null ? null : Number(s.last_done_counter),
-    rule: describeRule({ every_n: s.every_n, every_unit: s.every_unit, counter_field: s.counter_field, counter_every: s.counter_every == null ? null : Number(s.counter_every) }, due.counter_label),
+    anchor: state.anchor,
+    current_expiry: s.anchor ? due.next_due_at : null,
+    next_expiry: nextRenewalExpiry(state),
+    reminder_at: due.reminder_at,
+    rule: describeRule({ anchor: state.anchor, every_n: s.every_n, every_unit: s.every_unit, counter_field: s.counter_field, counter_every: s.counter_every == null ? null : Number(s.counter_every) }, due.counter_label),
     due: {
       state: due.state,
       reason: due.reason,
@@ -81,6 +114,11 @@ export async function createSchedule(
   d: z.infer<typeof ScheduleCreate>,
 ): Promise<ScheduleRow> {
   const kind = `${d.entity_module}:${d.entity_type}`;
+  if (d.expiry_field) {
+    const fields = await platform().entities.fieldsFor(orgId, kind);
+    if (!fields.some((f) => f.name === d.expiry_field && f.type === "date")) throw new MaintenanceRefusal("Choose a date field on this record");
+    await writeExpiry(orgId, { ...d, expiry_field: d.expiry_field }, new Date(d.current_expiry! + "T12:00:00Z"));
+  }
   const reading = d.counter_field ? await readCounter(orgId, kind, d.entity_id, d.counter_field) : null;
   const row = await db
     .insertInto("core_maintenance_schedules")
@@ -89,8 +127,13 @@ export async function createSchedule(
       entity_type: d.entity_type,
       entity_id: d.entity_id,
       name: d.name,
-      every_n: d.every_n && d.every_unit ? d.every_n : null,
-      every_unit: d.every_n && d.every_unit ? (d.every_unit as ScheduleRow["every_unit"]) : null,
+      overdue_every: d.overdue_every ?? null,
+      anchor: d.anchor ? JSON.stringify(d.anchor) as never : null,
+      remind: d.remind ? JSON.stringify(d.remind) as never : null,
+      expiry_field: d.expiry_field ?? null,
+      current_expiry: d.anchor && !d.expiry_field ? new Date(d.current_expiry! + "T12:00:00Z") : null,
+      every_n: d.anchor ? d.every_n ?? 1 : d.every_n && d.every_unit ? d.every_n : null,
+      every_unit: d.anchor ? (d.every_unit ?? "year") as ScheduleRow["every_unit"] : d.every_n && d.every_unit ? (d.every_unit as ScheduleRow["every_unit"]) : null,
       counter_field: d.counter_field && d.counter_every ? d.counter_field : null,
       counter_every: d.counter_field && d.counter_every ? d.counter_every : null,
       last_done_at: when(d.last_done_at),
@@ -210,12 +253,12 @@ schedulesRouter.post(
   }),
 );
 
-// AI-REACH: exempt editing a schedule's rule is a form edit on the record; the assistant sets a new one through core-maintenance:schedule
+// AI-REACH: action core-maintenance:update-schedule
 schedulesRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
-    const parsed = ScheduleUpdate.safeParse(req.body);
+    const parsed = ScheduleUpdateBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const id = String(req.params.id ?? "");
     const ctx = tenantContext(req);
@@ -225,36 +268,7 @@ schedulesRouter.patch(
       res.status(404).json({ error: { code: "not_found", message: "schedule not found" } });
       return;
     }
-    const d = parsed.data;
-    const next = {
-      name: d.name ?? before.name,
-      every_n: d.every_n !== undefined ? d.every_n : before.every_n,
-      every_unit: (d.every_unit !== undefined ? d.every_unit : before.every_unit) as ScheduleRow["every_unit"],
-      counter_field: d.counter_field !== undefined ? d.counter_field : before.counter_field,
-      counter_every: d.counter_every !== undefined ? d.counter_every : before.counter_every == null ? null : Number(before.counter_every),
-    };
-    if (!hasCalendar(next) && !hasCounter(next)) {
-      res.status(400).json({ error: { code: "invalid_body", message: "A schedule needs a calendar interval or a counter interval" } });
-      return;
-    }
-    const counterChanged = next.counter_field !== before.counter_field;
-    const reading = counterChanged && next.counter_field
-      ? await readCounter(ctx.org.id, `${before.entity_module}:${before.entity_type}`, before.entity_id, next.counter_field)
-      : undefined;
-    const row = await db
-      .updateTable("core_maintenance_schedules")
-      .set({
-        ...next,
-        ...(d.last_done_at !== undefined ? { last_done_at: when(d.last_done_at) } : {}),
-        ...(reading !== undefined ? { last_done_counter: reading } : {}),
-        updated_at: new Date(),
-      })
-      .where("id", "=", id)
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    // The rule moved, so the open occurrence's date may have: make it again.
-    await db.deleteFrom("core_maintenance_entries").where("schedule_id", "=", id).where("performed_at", "is", null).execute();
-    await ensureOccurrence(db, ctx.org.id, row);
+    const row = await updateSchedule(db, ctx.org.id, before, parsed.data);
     res.json(await present(ctx.org.id, row));
   }),
 );
@@ -276,3 +290,106 @@ schedulesRouter.delete(
     res.status(204).end();
   }),
 );
+
+export async function updateSchedule(db: Kysely<CoreMaintenanceDB>, orgId: string, before: ScheduleRow, d: z.infer<typeof ScheduleUpdateBody>): Promise<ScheduleRow> {
+  const id = before.id;
+
+    const next = {
+      overdue_every: d.overdue_every !== undefined ? d.overdue_every : before.overdue_every,
+      anchor: d.anchor !== undefined ? d.anchor : before.anchor,
+      remind: d.remind !== undefined ? d.remind : before.remind,
+      expiry_field: d.expiry_field !== undefined ? d.expiry_field : before.expiry_field,
+      current_expiry: d.current_expiry !== undefined ? when(d.current_expiry ? d.current_expiry + "T12:00:00Z" : null) : before.current_expiry,
+      name: d.name ?? before.name,
+      every_n: d.every_n !== undefined ? d.every_n : before.every_n,
+      every_unit: (d.every_unit !== undefined ? d.every_unit : before.every_unit) as ScheduleRow["every_unit"],
+      counter_field: d.counter_field !== undefined ? d.counter_field : before.counter_field,
+      counter_every: d.counter_every !== undefined ? d.counter_every : before.counter_every == null ? null : Number(before.counter_every),
+    };
+    if (!hasCalendar(next) && !hasCounter(next)) {
+      throw new MaintenanceRefusal("A schedule needs a calendar interval or a counter interval");
+    }
+    if (next.anchor && (!hasCalendar(next) || !["month", "year"].includes(next.every_unit!) || hasCounter(next))) throw new MaintenanceRefusal("Renewals need a month or year interval");
+    if (next.expiry_field && !next.anchor) throw new MaintenanceRefusal("An expiry field needs a renewal anchor");
+    if (next.anchor && !next.expiry_field && !next.current_expiry) throw new MaintenanceRefusal("Enter the current expiry");
+    if (next.expiry_field && next.expiry_field !== before.expiry_field) {
+      const defs = await platform().entities.fieldsFor(orgId, `${before.entity_module}:${before.entity_type}`);
+      if (!defs.some((f) => f.name === next.expiry_field && f.type === "date")) throw new MaintenanceRefusal("Choose a date field on this record");
+      if (!d.current_expiry) throw new MaintenanceRefusal("Enter the expiry for the new date field");
+    }
+    if (next.expiry_field && d.current_expiry) await writeExpiry(orgId, { ...before, expiry_field: next.expiry_field }, new Date(d.current_expiry + "T12:00:00Z"));
+    const counterChanged = next.counter_field !== before.counter_field;
+    const reading = counterChanged && next.counter_field
+      ? await readCounter(orgId, `${before.entity_module}:${before.entity_type}`, before.entity_id, next.counter_field)
+      : undefined;
+    const row = await db
+      .updateTable("core_maintenance_schedules")
+      .set({
+        ...next,
+        anchor: next.anchor ? JSON.stringify(next.anchor) as never : null,
+        remind: next.remind ? JSON.stringify(next.remind) as never : null,
+        current_expiry: next.expiry_field ? null : next.current_expiry,
+        ...(d.last_done_at !== undefined ? { last_done_at: when(d.last_done_at) } : {}),
+        ...(reading !== undefined ? { last_done_counter: reading } : {}),
+        updated_at: new Date(),
+      })
+      .where("id", "=", id)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    // The rule moved, so the open occurrence's date may have: make it again.
+    await ensureOccurrence(db, orgId, row);
+  return row;
+}
+
+export const RenewBody = z.object({
+  file_id: z.string().uuid().optional(),
+  new_expiry: DateOnly.optional(),
+  performed_at: z.string().datetime().optional(),
+  cost_cents: z.number().int().nonnegative().nullable().optional(),
+  notes: z.string().max(4000).nullable().optional(),
+});
+
+export async function renewSchedule(db: Kysely<CoreMaintenanceDB>, orgId: string, userId: string | null, s: ScheduleRow, d: z.infer<typeof RenewBody>) {
+  if (!s.anchor) throw new MaintenanceRefusal("Choose a renewal schedule");
+  if (d.file_id && !(await platform().files.describe(orgId, [d.file_id]))?.length) throw new MaintenanceRefusal("Choose a file in this workspace");
+  const entry = await db.transaction().execute(async (tx) => {
+    const current = await tx.selectFrom("core_maintenance_schedules").selectAll().where("id", "=", s.id).forUpdate().executeTakeFirstOrThrow();
+    const state = await renewalState(orgId, current);
+    const expiry = d.new_expiry ? new Date(d.new_expiry + "T12:00:00Z") : nextRenewalExpiry(state);
+    if (!expiry || !state.current_expiry || expiry <= state.current_expiry) throw new MaintenanceRefusal("The new expiry must be after the current expiry");
+    const entry = await tx.insertInto("core_maintenance_entries").values({
+      entity_module: current.entity_module, entity_type: current.entity_type, entity_id: current.entity_id,
+      name: current.name, schedule_id: current.id, performed_at: d.performed_at ? new Date(d.performed_at) : new Date(),
+      performed_by: userId, cost_cents: d.cost_cents ?? null, notes: d.notes ?? null,
+      scheduled_at: state.current_expiry,
+    } as never).returningAll().executeTakeFirstOrThrow();
+    await rollForward(tx, orgId, entry, expiry);
+    return entry;
+  });
+  if (d.file_id) await platform().files.attach(orgId, { fileId: d.file_id, source_module: "core-maintenance", source_type: "entry", source_id: entry.id, role: "receipt" });
+  const updated = await db.selectFrom("core_maintenance_schedules").selectAll().where("id", "=", s.id).executeTakeFirstOrThrow();
+  return { entry, schedule: await present(orgId, updated) };
+}
+
+// AI-REACH: action core-maintenance:renew
+schedulesRouter.post("/:id/renew", asyncHandler(async (req, res) => {
+  if (!requireRole(req, res, "owner", "admin", "member")) return;
+  const parsed = RenewBody.safeParse(req.body);
+  if (!parsed.success) return badBody(res, parsed.error);
+  const db = tenantDb(req);
+  const row = await db.selectFrom("core_maintenance_schedules").selectAll().where("id", "=", String(req.params.id)).executeTakeFirst();
+  if (!row) { res.status(404).json({ error: { code: "not_found", message: "Schedule not found" } }); return; }
+  res.json(await renewSchedule(db, tenantContext(req).org.id, sessionUser(req).id, row, parsed.data));
+}));
+
+// AI-REACH: exempt form choices; list_maintenance reads the renewal itself
+schedulesRouter.get("/renewal-fields", asyncHandler(async (req, res) => {
+  const q = z.object({ kind: z.string().min(1).max(160), entity_id: z.string().uuid() }).safeParse(req.query);
+  if (!q.success) return badBody(res, q.error);
+  const orgId = tenantContext(req).org.id;
+  const defs = await platform().entities.fieldsFor(orgId, q.data.kind);
+  const rec = await platform().entities.lookup(orgId, q.data.kind, q.data.entity_id);
+  const fields = rec?.fields ?? {};
+  const meta = (fields.metadata ?? {}) as Record<string, unknown>;
+  res.json({ fields: defs.filter((f) => f.type === "date" && f.name.endsWith("_expires")).map((f) => ({ key: f.name, label: f.display_label.replace(/ expires$/i, ""), value: meta[f.name] ?? fields[f.name] ?? null })) });
+}));

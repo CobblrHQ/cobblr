@@ -430,8 +430,10 @@ export function FilesSection({
       if (file.type.startsWith("image/") && !hadImage) {
         try {
           await api.setMainPhoto(activeSlug, { entity_kind: `${sourceModule}:${sourceType}`, entity_id: sourceId, file_id: f.id });
-        } catch {
-          /* gallery attachment already succeeded — the main photo is a bonus */
+        } catch (e) {
+          // The photo is attached; only the cover did not take. Say so, or the
+          // person sees no cover and thinks the upload was lost.
+          toast.error(`The photo is attached, but it could not be made the cover. ${e instanceof Error ? e.message : ""} Use Set as cover on it.`.replace(/\s+/g, " ").trim());
         }
       }
       return f;

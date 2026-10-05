@@ -5,16 +5,23 @@ import { historyBag, restoreImage } from "./record-history.js";
 import { changesIn } from "@cobblr/platform-contract/activity-changes";
 import { IMPLICIT_EXPOSABLE_PROPS } from "@cobblr/platform-contract/entity-metadata";
 
-export async function hiddenHistoryFields(orgId: string, kind: string, userId: string, role: string, diff: unknown): Promise<Set<string>> {
+export async function historyVisibilityForKind(orgId: string, kind: string, userId: string, role: string): Promise<(diff: unknown) => Set<string>> {
   const hidden = await hiddenFieldsFor(orgId, userId, role);
   for (const field of await hiddenKindFields(orgId, kind, { userId, role })) hidden.add(field);
   const rec = await kindRecordForOrg(orgId, kind);
-  if (rec?.exposable_fields) {
-    const allowed = new Set([...rec.exposable_fields, ...rec.fields.map((f) => f.name), ...IMPLICIT_EXPOSABLE_PROPS]);
-    const native = [...Object.keys(historyBag(historyBag(diff).version_before)), ...(changesIn(diff) ?? []).filter((c) => !c.custom).map((c) => c.field)];
-    for (const field of native) if (!allowed.has(field) && field !== "changes" && field !== "version_before") hidden.add(field);
-  }
-  return hidden;
+  const allowed = rec?.exposable_fields ? new Set([...rec.exposable_fields, ...rec.fields.map((f) => f.name), ...IMPLICIT_EXPOSABLE_PROPS]) : null;
+  return diff => {
+    const fields = new Set(hidden);
+    if (allowed) {
+      const native = [...Object.keys(historyBag(historyBag(diff).version_before)), ...(changesIn(diff) ?? []).filter((c) => !c.custom).map((c) => c.field)];
+      for (const field of native) if (!allowed.has(field) && field !== "changes" && field !== "version_before") fields.add(field);
+    }
+    return fields;
+  };
+}
+
+export async function hiddenHistoryFields(orgId: string, kind: string, userId: string, role: string, diff: unknown): Promise<Set<string>> {
+  return (await historyVisibilityForKind(orgId, kind, userId, role))(diff);
 }
 
 export class HistoryRestoreError extends Error {

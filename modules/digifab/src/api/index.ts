@@ -1,3 +1,4 @@
+import { reflowProfilesRouter, registerReflowProfiles } from "./reflow-profiles.js";
 // digifab router. Mounted at
 //   /api/v1/orgs/:slug/modules/digifab/.
 
@@ -21,7 +22,14 @@ import { libraryRouter } from "./library.js";
 import { printRulesRouter } from "./print-rules.js";
 import { failureRouter } from "./failure.js";
 import { loadedRouter } from "./loaded.js";
+import { laserRouter } from "./laser.js";
+import { registerMachineStationVerifier } from "./machine-stations.js";
+import { stationsRouter } from "./stations.js";
 import { registerFarmResolvers } from "./resolvers.js";
+import { registerFloorManager } from "../floor-manager.js";
+import { floorRouter } from "./floor.js";
+import { registerLaserControlAction } from "../laser-controls.js";
+import { registerLaserActions } from "../laser-actions.js";
 import { registerMakeActions } from "../make-actions.js";
 import { registerDeviceSeam } from "./device-provider.js";
 import { registerDetectorServices } from "../detectors/services.js";
@@ -32,8 +40,12 @@ import { asyncHandler } from "./util.js";
 import { tenantContext } from "../db.js";
 import { extractPlateMetadata } from "../library/extract-metadata.js";
 
+registerMachineStationVerifier();
 registerFarmResolvers();
 registerMakeActions();
+registerLaserActions();
+registerLaserControlAction();
+registerFloorManager();
 registerDeviceSeam(); // back platform().devices.getDriver + the digifab:run-command alias
 registerDetectorServices(); // the in-process print checks as inspect.print built-ins
 registerDetectorAdapters(); // PrintGuard, Obico, a LAN box: adapters on a person's connection
@@ -52,12 +64,17 @@ platform().edge.registerConsumer({
   href: "/digifab",
 });
 
+registerReflowProfiles();
 const router = Router({ mergeParams: true });
+router.use("/", reflowProfilesRouter);
 router.use("/connections", connectionsRouter);
+router.use("/stations", stationsRouter);
+router.use("/laser", laserRouter);
 router.use("/jobs", jobsRouter);
 router.use("/links", linksRouter);
 router.use("/drivers", driversRouter);
 router.use("/fleet", fleetRouter);
+router.use("/floor", floorRouter);
 router.use("/pools", poolsRouter);
 router.use("/printing-profiles", printingProfilesRouter); // a machine's Printing profile (Services §14.3)
 router.use("/runs", runsRouter); // quantity-driven production runs (mint-to-ceiling on pools)

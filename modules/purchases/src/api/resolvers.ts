@@ -1,3 +1,4 @@
+import { groupListRows } from "@cobblr/platform-contract/grouped-list";
 // Platform entity-kind resolvers for purchases. Lets other modules /
 // the platform's EntityActionsBar look up an order or order_item by
 // (kind, id) without touching the purchases tables directly.
@@ -147,7 +148,7 @@ export function registerPurchasesResolvers(): void {
     // Oldest-first by default: a line-item list is read as a history, and a
     // trend renderer wants its points in time order.
     if (order.length === 0) q = q.orderBy(purchasedAt, "asc").orderBy("i.created_at", "asc");
-    const rows = await q
+    const rows = (await groupListRows(db, q, query)) ?? await q
       .limit(Math.min(query.limit ?? 50, 200))
       .offset(query.offset ?? 0)
       .execute();
@@ -232,7 +233,7 @@ export function registerPurchasesResolvers(): void {
     const order = parseSort(query.sort, ORDER_SORTABLE);
     for (const { col, dir } of order) q = q.orderBy(col as never, dir);
     if (order.length === 0) q = q.orderBy("ordered_at", "desc");
-    const rows = await q
+    const rows = (await groupListRows(db, q, query)) ?? await q
       .limit(limit)
       .offset(offset)
       .execute();
@@ -294,7 +295,7 @@ export function registerPurchasesResolvers(): void {
     const order = parseSort(query.sort, VENDOR_SORTABLE);
     for (const { col, dir } of order) q = q.orderBy(col as never, dir);
     if (order.length === 0) q = q.orderBy("name");
-    const rows = await q
+    const rows = (await groupListRows(db, q, query)) ?? await q
       .limit(Math.min(query.limit ?? 50, 200))
       .offset(query.offset ?? 0)
       .execute();

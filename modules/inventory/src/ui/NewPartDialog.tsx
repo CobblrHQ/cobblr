@@ -1,4 +1,4 @@
-import { RecordFormModal, useMoneyCurrency, ColourInput, MoneyInput, fieldInputText, missingRequired } from "@cobblr/platform-web";
+import { RecordFormModal, useToast, useMoneyCurrency, ColourInput, MoneyInput, fieldInputText, missingRequired } from "@cobblr/platform-web";
 // Modal to create a new part. Minimum fields only — name + qty +
 // optional category/location.
 //
@@ -69,6 +69,7 @@ const UNIT_SUGGESTIONS = [
 
 export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) {
   const { api, instance, entityKind, itemNoun, qtyUnit, parent, basePath, orgSlug } = useInventory();
+  const toast = useToast();
   // Native-field presentation: a bundle/config relabels + hides natives on the
   // create form too (the Yarn instance hides category/location/etc.). Scoped to
   // the instance kind so each instance's create form shows only its fields.
@@ -203,9 +204,10 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
         description: displayName,
         qty: 1,
       });
-    } catch {
-      // Non-fatal: the part was created. A failed label enqueue
-      // shouldn't block the user from seeing the new part.
+    } catch (e) {
+      // Non-fatal: the part was created, and opens. The label they asked for
+      // did not queue, so say it, or they wait at the printer for nothing.
+      toast.error(`${displayName} was created, but its label did not queue. ${e instanceof Error ? e.message : ""} Print it from the ${itemNoun.toLowerCase()}'s page.`.replace(/\s+/g, " ").trim());
     }
   }
 
@@ -252,6 +254,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
           await api.createMatchPairing(part.id, matched.id);
         } catch (e) {
           console.error("[NewPartDialog] match pairing failed", e);
+          toast.error(`Created, but the catalog match did not save. ${e instanceof Error ? e.message : ""} Use Match to catalog on its page.`.replace(/\s+/g, " ").trim());
         }
       }
       // Link this unit to its parent "type" (the `instance-of` pairing) — same
@@ -261,6 +264,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
           await api.createParentPairing(part.id, parentRef.id);
         } catch (e) {
           console.error("[NewPartDialog] parent pairing failed", e);
+          toast.error(`Created, but it was not linked to ${parentRef.name}. ${e instanceof Error ? e.message : ""}`.replace(/\s+/g, " ").trim());
         }
       }
       if (printLabel) {

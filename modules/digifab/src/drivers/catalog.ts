@@ -14,6 +14,9 @@ import octoprint from "../../drivers-catalog/octoprint.json" with { type: "json"
 import klipper from "../../drivers-catalog/klipper-moonraker.json" with { type: "json" };
 import duet from "../../drivers-catalog/duet-rrf.json" with { type: "json" };
 import prusalink from "../../drivers-catalog/prusalink.json" with { type: "json" };
+import fluidncLaser from "../../drivers-catalog/fluidnc-laser.json" with { type: "json" };
+import grblhalLaser from "../../drivers-catalog/grblhal-laser.json" with { type: "json" };
+import grblLaser from "../../drivers-catalog/grbl-laser.json" with { type: "json" };
 import fluidnc from "../../drivers-catalog/fluidnc.json" with { type: "json" };
 import homeAssistant from "../../drivers-catalog/home-assistant.json" with { type: "json" };
 
@@ -41,6 +44,9 @@ export const DRIVER_CATALOG: CatalogEntry[] = [
   entry(klipper, "Klipper via the Moonraker API — works with Mainsail OR Fluidd (both are UIs over the same Moonraker). Point the URL at Moonraker (usually :7125; the Mainsail/Fluidd host also proxies its API). Upload to the gcodes store + start a print.", "API key (optional; Moonraker [authorization])"),
   entry(duet, "RepRapFirmware (Duet Web Control). Raw gcode upload + M32 print start.", "none (or DWC password)"),
   entry(prusalink, "Prusa printers via PrusaLink. Raw PUT upload + print.", "API key (PrusaLink Settings)"),
+  entry(fluidncLaser, "Compile sheet jobs for a FluidNC laser and upload directly to its SD card.", "none (or device password)"),
+  entry(grblhalLaser, "Compile sheet jobs for grblHAL with a compatible HTTP WebUI and SD storage.", "none (or device password)"),
+  entry(grblLaser, "Compile drawings and start approved sheet jobs directly on a networked GRBL laser. LightBurn is optional.", "none (or device password)"),
   entry(fluidnc, "GRBL lasers/CNC on FluidNC. Upload to SD + $SD/Run; plain-text GRBL status.", "none (or device password)"),
   entry(homeAssistant, "An ACTUATOR (no fabrication): wire an entity's schedule to a Home Assistant service — run an irrigation zone, flip a relay, call any service.call. `run-zone` fires script.water_zone with {zone}/{seconds}.", "long-lived access token (Profile → Security)"),
 ];

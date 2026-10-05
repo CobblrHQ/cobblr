@@ -370,6 +370,10 @@ function nameFromDiff(diff: unknown): string | null {
 /** One activity-log entry, already enriched server-side with the actor's name
  *  and (where the diff doesn't carry one) the record's live title. */
 interface ActivityRow {
+  summary?: string;
+  subject?: import("@cobblr/platform-contract/activity-summary").ActivitySubject;
+  hidden?: boolean;
+  entity_title?: string | null;
   restorable?: boolean;
   said?: unknown;
   /** The log's own sequence (bigserial, so a string over JSON): where the next page starts. */
@@ -727,6 +731,7 @@ export const ESCORT_DESTINATIONS: EscortDestination[] = [
   },
   {
     id: "ai-config",
+    covered_by: ["builds:configure-placement-machine"],
     path: "/configuration/ai",
     label: "AI providers",
     prefill: {},
@@ -806,6 +811,45 @@ const ROLES_SAID = "By role: acquired-from, seller, acquired-on, acquired-for";
 
 export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
+    name: "read_fabrication_floor", description: "Read all active machine queues, material stock, batch layouts and restock needs.", mode: "read",
+    paging: { by: "one-call", why: "Complete current floor state, not job history." }, params: {},
+    execute: async api => {
+      const [floor, fleet] = await Promise.all([api.request("GET", "/modules/digifab/floor"), api.request("GET", "/modules/digifab/fleet")]);
+      for (const response of [floor, fleet]) if (response.status >= 400) return toolFail(apiErrorMessage(response, "Could not read the floor"));
+      return toolOk({ ...floor.body, ...fleet.body });
+    },
+  },
+  {
+    name: "read_laser_batch",
+    description: "Read a drawing, machine profiles or paged saved laser layouts.",
+    mode: "read",
+    paging: { by: "cursor" },
+    params: {
+      operation: z.enum(["design", "plans", "profiles"]),
+      id: z.string().describe("Library id; connection id for profiles"),
+      device_id: z.string().optional().describe("Device id"),
+      units: z.enum(["mm", "in"]).optional().describe("Undeclared DXF units"),
+      cursor: CURSOR_PARAM,
+    },
+    execute: async (api, args) => {
+      const cursor = decodeCursor<{ offset: number; id: string; operation: string }>("read_laser_batch", args.cursor);
+      if (!cursor.ok) return toolFail(cursor.error);
+      if (cursor.state && (cursor.state.id !== args.id || cursor.state.operation !== args.operation)) return toolFail("Use the cursor for this drawing and operation, or omit it to start again.");
+      const id = encodeURIComponent(String(args.id ?? ""));
+      const offset = cursor.state?.offset ?? 0;
+      let path: string;
+      if (args.operation === "design") path = `/modules/digifab/laser/design/${id}?units=${args.units === "in" ? "in" : "mm"}`;
+      else if (args.operation === "plans") path = `/modules/digifab/laser/plans?library_id=${id}&limit=20&offset=${offset}`;
+      else if (args.operation === "profiles") path = `/modules/digifab/laser/profiles?connection_id=${id}&device_id=${encodeURIComponent(String(args.device_id ?? ""))}`;
+      else return toolFail("Choose design, plans or profiles.");
+      const res = await api.request("GET", path);
+      if (res.status >= 400) return toolFail(apiErrorMessage(res, "Could not read the laser batch"));
+      const items = Array.isArray(res.body.items) ? res.body.items : [];
+      const next = args.operation === "plans" && offset + items.length < Number(res.body.total) ? { offset: offset + items.length, id: String(args.id), operation: String(args.operation) } : null;
+      return toolOk({ ...res.body, ...pageEnd("read_laser_batch", next) });
+    },
+  },
+  {
     name: "take_user_to",
     // Why each destination is an escort and not an action lives on the
     // destination (ESCORT_DESTINATIONS.why); lint:escort-claims keeps the
@@ -856,7 +900,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_record_kinds",
     description:
-      "List every kind of record this workspace holds (its modules + user-built apps), with each kind's fields and whether records of it can be created/updated/deleted. Call this before creating or querying records of an unfamiliar kind.",
+      "List all module and user-app record kinds, fields and CRUD permissions. Read before querying or creating an unfamiliar kind.",
     mode: "read",
     paging: { by: "one-call", why: "every kind this workspace has; a workspace has tens, not thousands" },
     params: {},
@@ -879,6 +923,10 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     params: {
       kind: z.string().describe("Entity kind id, e.g. inventory:part (see list_record_kinds)"),
       q: z.string().optional().describe(LIST_Q_MEANS),
+      group_by: z.union([z.string(), z.array(z.object({ field: z.string(), bucket: z.enum(["month", "quarter", "year"]).optional() })).max(2)]).optional().describe("Group in the database by one or two fields. Returns full counts, currency-separated numeric subtotals and grand totals, with a bounded page of records per group."),
+      group_offset: z.number().int().min(0).optional().describe("Skip this many groups, default 0."),
+      group_keys: z.array(z.string().nullable()).optional().describe("Read a page of one exact group using the keys returned by grouping."),
+      offset: z.number().int().min(0).optional().describe("With group_keys, skip this many records within that group."),
       limit: z.number().optional().describe(`Max results (default 20, max ${LIST_LIMIT_MAX})`),
       include_retired: z.boolean().optional().describe("Also list archived/retired records (off by default). Set it when asked about something old or retired: \"where is my old drill\""),
       cursor: CURSOR_PARAM,
@@ -887,6 +935,14 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       // The cursor carries the query it was made for, so the next page is the
       // next page of THAT list even if a later call words its arguments
       // differently. `o` is the position; `s` marks the any-field scan.
+      if (args.group_by) {
+        const qs = new URLSearchParams({ group_by: typeof args.group_by === "string" ? args.group_by : JSON.stringify(args.group_by), limit: String(Math.min(Number(args.limit) || 20, 50)), group_offset: String(args.group_offset ?? 0), offset: String(args.offset ?? 0) });
+        if (args.q) qs.set("q", String(args.q));
+        if (args.group_keys) qs.set("group_keys", JSON.stringify(args.group_keys));
+        if (args.include_retired) qs.set("include_retired", "1");
+        const grouped = await api.request("GET", `/entities/${encodeURIComponent(String(args.kind))}?${qs}`);
+        return grouped.status >= 400 ? toolFail(apiErrorMessage(grouped, "Couldn't group this collection.")) : toolOk(grouped.body);
+      }
       const cur = decodeCursor<{ k: string; o: number; q?: string; r?: boolean; s?: boolean }>("list_records", args.cursor);
       if (!cur.ok) return toolFail(cur.error);
       const st = cur.state;
@@ -952,7 +1008,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "count_records",
     description:
-      "Count records of ONE kind, optionally grouped by a field (e.g. group_by \"model\"). Use for \"how many\", \"which do I have most of\", \"any X?\": it counts EVERY record in code, exact however long the list. `units`, if present, counts things: \"how many printers\" is units.",
+      "Count every record of one kind exactly, optionally group_by a field. Use for totals or existence; units counts represented things, such as printers.",
     mode: "read",
     paging: { by: "one-call", why: "counts in code over every record (walks the kind itself); returns numbers, not rows" },
     params: {
@@ -1108,7 +1164,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_related",
     description:
-      "List the records LINKED to one record: which project a part belongs to, what is inside a location, bin or box (placed_in), what a build consumed. A location's contents include its sub-locations (a garage holds its bins; ask a bin to see inside it). Kind + id alone lists every link.",
+      "List links to a record, including project, build inputs and placed_in contents. Locations include sub-locations; query a bin for its contents. Kind and id list all links.",
     mode: "read",
     paging: { by: "one-call", why: "every link of ONE record, both directions, in one call" },
     params: {
@@ -1233,7 +1289,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_actions",
     description:
-      "Discover the operations (actions) this workspace can run. scope 'entity': runs on one record (matched_kinds says which kinds); scope 'workspace': runs on the whole workspace, invoked WITHOUT a record. Each carries args_schema (pass as invoke_action's args) and undoable. Optionally filter to one kind. Run one with invoke_action.",
+      "List actions, args_schema and undoable. Entity actions use matched_kinds and a record; workspace actions omit the record. Filter by kind. Run with invoke_action.",
     mode: "read",
     paging: { by: "one-call", why: "every action the workspace registers; the registry is small and whole" },
     params: {
@@ -1434,6 +1490,9 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         ? { b: String(last.id), ...(actions ? { a: actions } : {}), ...(entityType ? { e: entityType } : {}), ...(entityKind && entityId ? { k: String(entityKind), i: String(entityId) } : {}), l: limit }
         : null;
       const items = rows.map((a) => ({
+        summary: a.summary,
+        subject: a.subject,
+        hidden: a.hidden ?? false,
         history_entry_id: a.id,
         restorable: a.restorable ?? false,
         ...(a.said ? { changes: a.said } : {}),
@@ -1444,7 +1503,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         // arrives with title null. Reading just `title` therefore reported every
         // creation as its bare type ("created vendor"), which is the exact
         // failure the route's own title-resolution exists to prevent.
-        what: a.title ?? nameFromDiff(a.diff) ?? a.entity_type,
+        what: a.subject?.title ?? a.entity_title ?? a.title ?? nameFromDiff(a.diff) ?? a.entity_type,
         kind: a.module_name ? `${a.module_name}:${a.entity_type}` : a.entity_type,
         id: a.entity_id,
         // "system" and "api_token" are as much a part of the answer as a person:
@@ -1458,7 +1517,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_notifications",
     description:
-      "The user's notifications in this workspace — what the system has been telling them (a job finished, stock ran out, something needs review), newest first. Use for \"what did I miss?\", \"anything new?\", \"what happened while I was away?\".",
+      "Read this user's workspace notifications, newest first: job outcomes, stock alerts and review requests.",
     mode: "read",
     paging: { by: "cursor" },
     params: {
@@ -1501,7 +1560,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_maintenance",
     description:
-      "Scheduled and completed maintenance across the workspace — services, inspections, filter changes, anything logged against a machine, vehicle, asset or tool. Use for \"what is due for service?\", \"when did I last change that?\", \"what is overdue?\".",
+      "Read scheduled and completed maintenance for machines, vehicles, assets and tools. Use for service due dates, overdue tasks and past work.",
     mode: "read",
     paging: { by: "cursor" },
     params: {
@@ -1542,6 +1601,9 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         ...(e.scheduled_at ? { scheduled: e.scheduled_at } : {}),
         ...(e.performed_at ? { done: e.performed_at } : { outstanding: true }),
         ...(e.recurrence_rule ? { repeats: e.recurrence_rule } : {}),
+        ...((e as MaintenanceRow & { schedule?: unknown }).schedule ? { schedule: (e as MaintenanceRow & { schedule?: unknown }).schedule } : {}),
+        ...((e as MaintenanceRow & { nag_stopped_at?: unknown }).nag_stopped_at ? { reminders_off: true } : {}),
+        ...((e as MaintenanceRow & { nag_snoozed_until?: unknown }).nag_snoozed_until ? { snoozed_until: (e as MaintenanceRow & { nag_snoozed_until?: unknown }).nag_snoozed_until } : {}),
         ...(e.notes ? { notes: e.notes } : {}),
       }));
       const { cursor: _c, ...filters } = args;
@@ -1554,7 +1616,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_calendar",
     description:
-      "The workspace calendar in a date window: due dates, maintenance, chores, deadlines, anything on a date. For \"what's on this week?\", \"what's due before Friday?\", \"what did I have last month?\". Dates YYYY-MM-DD; default the next 30 days.",
+      "Read dated tasks, maintenance, chores and deadlines. Dates are YYYY-MM-DD; defaults to the next 30 days.",
     mode: "read",
     paging: { by: "one-call", why: "everything in one date window; to see more, ask for another window" },
     params: {
@@ -1737,7 +1799,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "get_workspace_setup",
     description:
-      "How the workspace is SET UP, not what it holds: instances (separate lists from one module), saved views, automations (wires: when X happens, do Y), the user's apps, entity templates, unit vocabulary. Use before proposing a change to any of them. `part` picks one area; omit it for a summary of all.",
+      "Read instances, saved views, wires, apps, templates and units before changing setup. Choose part or omit it for all.",
     mode: "read",
     paging: { by: "one-call", why: "a description of the setup, one area or a summary of all" },
     params: {
@@ -1973,28 +2035,19 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       if (!ids.length || !said) return toolFail("ids and list are required");
       const target = await listTarget(api, said);
       if ("error" in target) return toolFail(target.error);
-      const filed: Array<{ item_id: string; entity_id: string; entity_kind: string; name: string }> = [];
-      const failed: Array<{ item_id: string; reason: string }> = [];
-      for (const id of ids.slice(0, 200)) {
-        const res = await api.request("POST", `/modules/core-scan/inbox/${encodeURIComponent(id)}/confirm`, {
-          target_module: target.module,
-          target_kind: target.kind,
-          ...(target.instance ? { instance: target.instance } : {}),
-        });
-        if (res.status >= 400) {
-          failed.push({ item_id: id, reason: apiErrorMessage(res, "it could not be filed") });
-          continue;
-        }
-        const created = (res.body as { created?: { id?: string; name?: unknown; title?: unknown } }).created;
-        filed.push({
-          item_id: id,
-          entity_id: String(created?.id ?? ""),
-          entity_kind: target.instance ? `${target.instance}:item` : target.kind,
-          name: String(created?.name ?? created?.title ?? ""),
-        });
-      }
+      const res = await api.request("POST", "/modules/core-scan/inbox/file-selected", {
+        ids,
+        target_module: target.module,
+        target_kind: target.kind,
+        ...(target.instance ? { instance: target.instance } : {}),
+      });
+      if (res.status >= 400) return toolFail(apiErrorMessage(res, "the items could not be filed"));
+      const { filed, failed } = res.body as {
+        filed: Array<{ item_id: string; entity_id: string; entity_kind: string; name: string }>;
+        failed: Array<{ item_id: string; reason: string }>;
+      };
       if (!filed.length) return toolFail(`Nothing was filed into ${target.label}: ${failed[0]?.reason ?? "no items"}`);
-      return toolOk({ list: { name: target.instance ?? target.kind, label: target.label }, filed, failed });
+      return toolOk({ list: { name: target.instance ?? target.kind, label: target.label }, filed: filed.map(({ item_id, entity_id, entity_kind, name }) => ({ item_id, entity_id, entity_kind, name })), failed });
     },
   },
   {
@@ -2022,7 +2075,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "create_records",
     description:
-      "Create MANY records of one kind in ONE call, for a SET (\"shelf 1 to 5 in every rack\", \"bins A through H\") instead of calling create_record for each. Same field names as create_record. Up to 200, each undoable; clashes are reported back, not forced: say so rather than retry.",
+      "Create up to 200 records of one kind as one undoable set instead of calling create_record for each. Use its field names; report clashes instead of retrying.",
     mode: "write",
     params: {
       kind: z.string().describe("Entity kind id with can_create true"),
@@ -2106,7 +2159,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "invoke_action",
     description:
-      "Run a registered action (see list_actions). An ENTITY action runs on a record: pass entity_kind + entity_id (adjust stock, mark done, print a label). A WORKSPACE action (scope 'workspace') changes the workspace's setup: omit both and pass its args.",
+      "Run an action from list_actions. Entity actions need entity_kind and entity_id; workspace actions omit both. Pass its args.",
     mode: "write",
     params: {
       action_id: z.string().describe("Action id, e.g. inventory:adjust-stock or labels:set-code"),
@@ -2175,7 +2228,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         summary?: string;
         effect?: string;
         input_schema?: unknown;
-        files_in?: Array<{ name?: string; types?: string[]; required?: boolean }>;
+        files_in?: Array<{ name?: string; types?: string[]; required?: boolean; multiple?: boolean }>;
         answered_by?: Array<{ label?: string }>;
       }>) ?? [];
       return toolOk(
@@ -2185,7 +2238,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
           summary: c.summary,
           effect: c.effect,
           input_schema: c.input_schema,
-          files: (c.files_in ?? []).map((f) => ({ name: f.name, types: f.types, required: !!f.required })),
+          files: (c.files_in ?? []).map((f) => ({ name: f.name, types: f.types, required: !!f.required, ...(f.multiple ? { multiple: true, key: `${f.name}/<label>` } : {}) })),
           answered_by: c.answered_by?.[0]?.label ?? null,
         })),
       );
@@ -2271,7 +2324,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_label_codes",
     description:
-      "The workspace's label-code groups (one per kind + instance): prefix (the letters in p42), code count, frozen (a label was printed), whether the code shows in the QR, group_key. To change one, invoke labels:set-code with no entity: group_key plus prefix and/or code_in_qr.",
+      "Read label groups by kind and instance: prefix, count, frozen, code_in_qr and group_key. Change through labels:set-code without an entity, passing group_key and prefix/code_in_qr.",
     mode: "read",
     paging: { by: "one-call", why: "one row per label-code group; a workspace has a handful" },
     params: {},

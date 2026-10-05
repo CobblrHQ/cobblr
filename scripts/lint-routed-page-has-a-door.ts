@@ -41,6 +41,7 @@ const APP = "web/src/App.tsx";
 /** Pages reached from outside the app, so no in-app link is expected. */
 const EXEMPT: Record<string, string> = {
   "/auth/callback": "the identity provider redirects here after sign-in",
+  "/sign-in/oidc": "the instance's own sign-in provider sends the browser back here (api/src/routes/oidc.ts)",
   "/join/:token": "an invite link in an email",
   "/join-machines/:ownerOrg/:token": "a machine-sharing invite link sent to the other workspace",
   "/reset/:token": "the password-reset email",

@@ -17,6 +17,7 @@
 import { meta } from "../db/meta.js";
 import { getManagedApp } from "./managed-apps.js";
 import { setScanFallback } from "./instances.js";
+import { notePassFailure } from "./pass-failures.js";
 
 export async function reconcileAppScanFallback(): Promise<{ orgsChecked: number; orgsHealed: number }> {
   const orgs = await meta
@@ -47,6 +48,7 @@ export async function reconcileAppScanFallback(): Promise<{ orgsChecked: number;
       healed += 1;
       console.log(`[reconcile] org ${org.id}: scan fallback -> ${app.instanceName} (${app.id} app)`);
     } catch (err) {
+      notePassFailure("reconcileAppScanFallback", org.id, err);
       console.error(`[reconcile] org ${org.id}: scan fallback for ${app.id} failed:`, (err as Error).message);
     }
   }

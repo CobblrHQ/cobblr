@@ -34,6 +34,7 @@ import { BookDoorUnavailable, classifyScanCode, resolveIsbn, resolveAsin, isbnFi
 import { readScanFrameLot } from "./scan-frame-label.js";
 import { crossCheckScanPhoto, identifyImage, parsePackSize, refreshCatalogImageByName } from "./enrich-photo.js";
 import { identityMeta, mergeMeta, CATALOG_PICTURE_NOT_PERSONS } from "./metadata.js";
+import { nameFromAmazonLabel } from "./fnsku-label.js";
 import { looksNonEnglish } from "./catalog-normalize.js";
 import { trimCatalogMarginsWithVerdict } from "./trim-margins.js";
 import { cropToUnit } from "./unit-crop.js";
@@ -585,22 +586,25 @@ async function enrichCode(ctx: EnrichContext): Promise<void> {
   // waste it — and a throttled budget would then falsely mark them "rate-limited"
   // and loop forever instead of giving up. See scan-router.
   const codeClass = classifyScanCode(ctx.upc);
-  if (codeClass.type === "fnsku") {
-    // An Amazon fulfillment label identifies a unit only inside Amazon's
-    // warehouse — no public database can resolve it. Go straight to manual
-    // naming, and stamp ai_suggested_at so it's FINAL (not stuck in the
-    // rate-limit retry loop) and the matchmaker stops promising a re-route.
+  // Say on the row what KIND of code it is, for every kind a lookup does not
+  // judge as a product barcode: the card reads it (the contract's
+  // classifiedCodeOf) and never answers such a code with "we couldn't find
+  // this barcode" (#4933). The FNSKU and store-code branches stamp their own.
+  if (codeClass.type === "isbn" || codeClass.type === "asin" || codeClass.type === "url") {
     await ctx.db
       .updateTable("core_scan_inbox_items")
-      .set({
-        ai_confidence: "0",
-        ai_notes:
-          "Amazon fulfillment label (FNSKU) — it identifies a unit only inside Amazon's warehouse, so it can't be looked up. Name it manually, or scan the product's own UPC barcode.",
-        ai_suggested_at: new Date(),
-        updated_at: new Date(),
-      })
+      .set({ suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({ code_type: codeClass.type })}::jsonb` as never })
       .where("id", "=", ctx.itemId)
       .execute();
+  }
+  if (codeClass.type === "fnsku") {
+    // An Amazon fulfillment label identifies a unit only inside Amazon's
+    // warehouse: no public database resolves it. But the sticker prints the
+    // product's title under the code, and the scan frame holds the sticker,
+    // so the title is read off it (OCR first, the vision model after) rather
+    // than asking for another photo (#4933). Either way the row is FINAL
+    // (ai_suggested_at), never left in the rate-limit retry loop.
+    await nameFromAmazonLabel({ db: ctx.db, orgId: ctx.orgId, itemId: ctx.itemId, userId: ctx.userId, code: codeClass.code });
     return;
   }
   if (codeClass.type === "store-code") {
@@ -1247,7 +1251,7 @@ export async function enrichViaDecoder(
   // maps to the item's native manufacturer suggestion; its `model` to the native
   // model lift on commit. Everything is provenance-noted, never authoritative.
   const fields = result.fields ?? {};
-  const make = typeof fields.make === "string" ? fields.make : null;
+  const make = typeof fields.make === "string" ? fields.make : typeof fields.manufacturer === "string" ? fields.manufacturer : null;
   const model = typeof fields.model === "string" ? fields.model : null;
   // A decoder may CORRECT the identifier it was handed (the VIN decoder repairs a
   // scanner's stray leading character and proves the repair with the check digit).
@@ -1273,7 +1277,7 @@ export async function enrichViaDecoder(
       // corrected code left the previous VIN's `decoded`/`fields` half-overlaid.
       suggested_metadata: identityMeta({
         source: `decoder:${decoderId}`,
-        entity_type: "asset",
+        entity_type: findDecoder(ctx.upc)?.entityType ?? "asset",
         decoded: { decoder_id: decoderId, fields },
         ...(model ? { model } : {}),
         fields,

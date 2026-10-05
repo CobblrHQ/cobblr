@@ -205,6 +205,9 @@ customRolesRouter.patch(
                   action_id: cap,
                 })),
               )
+              // Saved twice at once: both cleared, both insert; the same
+              // capabilities once, never a 500 on the second.
+              .onConflict((oc) => oc.doNothing())
               .execute();
           }
         }

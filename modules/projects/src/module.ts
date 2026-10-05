@@ -12,7 +12,7 @@ import { ENERGIES, PRIORITIES, PROJECT_STATUSES, TASK_STATUSES } from "./vocab.j
 
 export default defineModule({
   name: "projects",
-  version: "0.3.27",
+  version: "0.3.28",
   displayName: "Projects",
   description:
     "Projects and their tasks, with what each task is waiting for.",

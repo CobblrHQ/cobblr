@@ -46,6 +46,7 @@ import { sql } from "kysely";
 import { tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { servedAll } from "./inbox.js";
+import { SINCE_CURSOR_START, latestSinceCursor, sinceCursorSql } from "@cobblr/platform-contract/keyset-cursor";
 
 export const feedRouter = Router({ mergeParams: true });
 
@@ -77,6 +78,10 @@ const FeedQuery = z.object({
  *  moment behind. (An api test holds it: "the later scan leads".) */
 const ACTIVITY = sql<Date>`greatest(created_at, updated_at)`;
 
+/** The cursor, at the database's precision (keyset-cursor.ts: a since-cursor
+ *  never passes through a Date, #4916). */
+const ACTIVITY_CURSOR = sql<string>`${sql.raw(sinceCursorSql("greatest(created_at, updated_at)"))}`;
+
 feedRouter.get(
   "/feed",
   asyncHandler(async (req, res) => {
@@ -92,11 +97,12 @@ feedRouter.get(
     const CAPTURED = sql<boolean>`status <> 'discarded'
       and suggested_metadata -> 'import_provenance' is null
       and coalesce(suggested_metadata ->> 'intake_shape', '') in ('barcode', 'url', 'photo', 'identifier', 'phrase')`;
-    const since = after ? sql<boolean>`greatest(created_at, updated_at) > ${new Date(after)}` : sql<boolean>`true`;
+    const since = after ? sql<boolean>`${ACTIVITY} > ${after}::timestamptz` : sql<boolean>`true`;
 
     const rows = await db
       .selectFrom("core_scan_inbox_items")
       .selectAll()
+      .select(ACTIVITY_CURSOR.as("activity_at"))
       .where(CAPTURED)
       .where(since)
       .orderBy("created_at", "desc")
@@ -118,21 +124,17 @@ feedRouter.get(
       missed = Math.max(0, Number(total?.n ?? 0) - rows.length);
     }
 
-    const activityOf = (r: { created_at?: Date; updated_at?: Date }): number => {
-      const c = r.created_at ? new Date(r.created_at).getTime() : 0;
-      const u = r.updated_at ? new Date(r.updated_at).getTime() : 0;
-      return Math.max(c, u);
-    };
     // The high-water mark of the PAGE, not of its first row: the page is
     // ordered by capture time, so the newest activity can belong to any row on
     // it, and a cursor taken from the first would re-deliver the others for
     // ever.
-    const high = rows.reduce((m, r) => Math.max(m, activityOf(r as { created_at?: Date; updated_at?: Date })), 0);
+    const high = latestSinceCursor(rows.map((r) => r.activity_at));
+    const served = rows.map(({ activity_at: _activity, ...r }) => r);
     return res.json({
-      scans: await servedAll(req, rows),
+      scans: await servedAll(req, served),
       // Stated rather than inferred: a display must never have to read the
       // cursor out of an empty list.
-      cursor: high ? new Date(high).toISOString() : (after ?? new Date(0).toISOString()),
+      cursor: high ?? after ?? SINCE_CURSOR_START,
       missed,
     });
   }),

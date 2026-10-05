@@ -1118,6 +1118,7 @@ partsRouter.post(
     // yields "ThinkPad X1 · SN-014" rather than an untitled row.
     const name = parsed.data.name?.trim() || (serial ? `${model.name} · ${serial}` : model.name);
 
+    // check-then-insert: the only key is the spoolman link, which this insert never sets
     const unit = await db
       .insertInto("inventory_parts")
       .values({

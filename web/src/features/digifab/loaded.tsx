@@ -13,7 +13,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Modal, SearchInput, useToast } from "@cobblr/platform-web";
+import { Modal, SearchInput, useToast, useRunAction } from "@cobblr/platform-web";
 import { api, ApiError, type DigifabLoaded, type PlatformResolvedEntity } from "../../lib/api";
 import { resolveScannedThing, useScanTarget, type ScannedThing } from "../../lib/scanTarget";
 import { ScanOneSheet } from "../../components/ScanOneSheet";
@@ -32,7 +32,10 @@ export function LoadedSpoolsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
   const { slug, entityId: machineId } = ctx;
   const qc = useQueryClient();
   const toast = useToast();
+  // PRESS-ARGS: The loaded record supplies the QR label target.
+  const runAction = useRunAction();
   const key = ["digifab-loaded", slug, machineId];
+  const stationPath = `/station/printer/${machineId}`;
   const q = useQuery({ queryKey: key, queryFn: () => api.digifabLoaded(slug, machineId) });
   const kinds = useQuery({ queryKey: ["entity-kinds", slug], queryFn: () => api.listEntityKinds(slug), staleTime: 300_000 });
   const [picking, setPicking] = useState<string | null>(null);
@@ -87,10 +90,11 @@ export function LoadedSpoolsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
     <section className="rounded-lg border border-line dark:border-slate-700" data-testid="loaded-spools">
       <header className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-line dark:border-slate-700">
         <h3 className="flex-1 text-sm font-semibold text-content dark:text-mortar-100">Loaded filament</h3>
+        {ctx.hints?.station !== "printer" && <Link className="min-h-11 flex items-center px-2 text-sm text-accent" to={`/w/${slug}${stationPath}`}>Open printer station</Link>}
         <label className="text-xs text-muted dark:text-slate-400">
           Slots{" "}
           <select
-            className="input h-8 py-0 w-16"
+            className="input min-h-11 py-0 w-16"
             value={slots}
             aria-label="Filament slots"
             onChange={async (e) => {
@@ -108,7 +112,7 @@ export function LoadedSpoolsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
             ))}
           </select>
         </label>
-        <button type="button" className="h-8 px-3 rounded-md bg-cobble-600 text-white text-xs" onClick={() => setScanning(firstEmpty)}>
+        <button type="button" className="min-h-11 px-3 rounded-md bg-cobble-600 text-white text-sm" onClick={() => setScanning(firstEmpty)}>
           Scan a spool
         </button>
       </header>
@@ -128,17 +132,18 @@ export function LoadedSpoolsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
                     <span className="flex-1 min-w-0 basis-40 truncate">{t.title}</span>
                   )}
                   {amount(t) && <span className="font-mono text-xs text-muted dark:text-slate-400">{amount(t)}</span>}
-                  <button type="button" className="text-xs text-accent hover:underline" onClick={() => setPicking(slot)}>
+                  <button type="button" className="min-h-11 text-sm text-accent px-2" onClick={() => runAction({ actionId: "labels:print", entityKind: t.kind, entityId: t.id })}>Queue QR label</button>
+                  <button type="button" className="min-h-11 text-sm text-accent px-2" onClick={() => setPicking(slot)}>
                     Swap
                   </button>
-                  <button type="button" className="text-xs text-muted hover:text-content" onClick={() => void unload(slot)}>
+                  <button type="button" className="min-h-11 text-sm text-muted px-2 hover:text-content" onClick={() => void unload(slot)}>
                     Take off
                   </button>
                 </>
               ) : (
                 <>
                   <span className="flex-1 text-faint dark:text-slate-500 italic">Nothing loaded</span>
-                  <button type="button" className="text-xs text-accent hover:underline" onClick={() => setPicking(slot)}>
+                  <button type="button" className="min-h-11 text-sm text-accent px-2" onClick={() => setPicking(slot)}>
                     Load…
                   </button>
                 </>

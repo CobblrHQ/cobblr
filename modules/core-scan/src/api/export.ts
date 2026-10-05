@@ -60,6 +60,7 @@ function baseUrl(req: Request): string {
   const header = req.headers["x-cobblr-base-url"];
   if (typeof header === "string" && header) return header.replace(/\/+$/, "");
   const proto = (req.headers["x-forwarded-proto"] as string | undefined)?.split(",")[0] ?? req.protocol;
+  // HOST-OK: the export's download link is answered to the caller who asked for it.
   return `${proto}://${req.headers.host ?? "localhost"}`;
 }
 

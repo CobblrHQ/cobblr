@@ -10,12 +10,14 @@
 // itself. Each schedule can be changed in place, and the record's service
 // history (what was done, when, what it cost) reads underneath.
 
+import { openAuthedFile } from "../../lib/authed-file";
+import { ReminderControls, ReminderPicker, CadencePicker } from "./renewals";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, Check, History, Loader2, Pencil, Trash2 } from "lucide-react";
 import { ChoiceCombobox, useToast, type ChoiceOption } from "@cobblr/platform-web";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
-import { api, type MaintenanceIntervalUnit, type MaintenanceSchedule } from "../../lib/api";
+import { api, type MaintenanceIntervalUnit, type MaintenanceSchedule, type MaintenanceReminder, type OverdueCadence } from "../../lib/api";
 import type { EntityDetailPanelCtx } from "../../panels/types";
 
 const UNITS: Array<{ value: MaintenanceIntervalUnit; one: string; many: string }> = [
@@ -68,6 +70,8 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
     ...(namesQ.data?.suggested ?? []).map((value) => ({ value })),
   ];
 
+  const [remind, setRemind] = useState<MaintenanceReminder>({ before: 7, unit: "day" });
+  const [cadence, setCadence] = useState<OverdueCadence | null>(null);
   const [name, setName] = useState("");
   const [everyText, setEveryText] = useState("");
   const [unit, setUnit] = useState<string>("month");
@@ -88,6 +92,7 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
         entity_type: entityType ?? kind,
         entity_id: ctx.entityId,
         name: name.trim(),
+        remind, overdue_every: cadence,
         ...(counter ? { counter_field: counter.key, counter_every: n } : { every_n: Math.round(n), every_unit: unit as MaintenanceIntervalUnit }),
         ...(lastText ? { last_done_at: new Date(`${lastText}T12:00:00`).toISOString() } : {}),
       });
@@ -130,10 +135,10 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
   });
   const [editing, setEditing] = useState<string | null>(null);
   const edit = useMutation({
-    mutationFn: (v: { id: string; name: string; n: number; unit: string }) => {
+    mutationFn: (v: { id: string; name: string; n: number; unit: string; remind: MaintenanceReminder; overdue_every: OverdueCadence | null }) => {
       const counter = counters.find((c) => c.key === v.unit);
       return api.updateMaintenanceSchedule(ctx.slug, v.id, {
-        name: v.name,
+        name: v.name, remind: v.remind, overdue_every: v.overdue_every,
         ...(counter
           ? { counter_field: counter.key, counter_every: v.n, every_n: null, every_unit: null }
           : { every_n: Math.round(v.n), every_unit: v.unit as MaintenanceIntervalUnit, counter_field: null, counter_every: null }),
@@ -165,7 +170,7 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
         <p className="text-sm text-muted dark:text-slate-400">Nothing scheduled. Set how often this wants servicing and it will come up on its own.</p>
       ) : (
         <ul className="space-y-2">
-          {schedules.map((s) =>
+          {schedules.filter((s) => !s.anchor).map((s) =>
             editing === s.id ? (
               <li key={s.id}>
                 <EditSchedule
@@ -187,6 +192,7 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
                   {lastDone(s) ? ` · ${lastDone(s)}` : ""}
                 </div>
                 <div className={`text-xs ${STATE_STYLE[s.due.state]}`}>{s.due.reason}</div>
+                {s.occurrence && s.due.state === "overdue" && <ReminderControls slug={ctx.slug} occurrence={s.occurrence} refresh={refresh} />}
               </div>
               <button
                 type="button"
@@ -234,6 +240,7 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
                 <span className="font-medium">{h.name}</span>
                 <span className="text-muted">{h.performed_at ? new Date(h.performed_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : ""}</span>
                 {h.cost_cents != null && <span className="text-muted">{formatStoredMoney(h.cost_cents, "cents")}</span>}
+                {h.attachments?.map((f) => <button type="button" key={f.fileId} className="text-accent underline" onClick={() => { void openAuthedFile(ctx.slug, f.fileId, { filename: f.filename }); }}>{f.filename}</button>)}
                 {h.notes && <span className="text-muted italic truncate">{h.notes}</span>}
               </li>
             ))}
@@ -289,6 +296,7 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
           <span className="text-xs text-muted dark:text-slate-400">Last done (if you know)</span>
           <input type="date" value={lastText} onChange={(e) => setLastText(e.target.value)} className={input} />
         </label>
+        <ReminderPicker value={remind} onChange={setRemind} /><CadencePicker value={cadence} onChange={setCadence} />
         <button
           type="submit"
           disabled={!ready || create.isPending}
@@ -316,8 +324,10 @@ function EditSchedule({
   input: string;
   pending: boolean;
   onCancel: () => void;
-  onSave: (v: { name: string; n: number; unit: string }) => void;
+  onSave: (v: { name: string; n: number; unit: string; remind: MaintenanceReminder; overdue_every: OverdueCadence | null }) => void;
 }) {
+  const [remind, setRemind] = useState<MaintenanceReminder>(schedule.remind ?? { before: 7, unit: "day" });
+  const [cadence, setCadence] = useState<OverdueCadence | null>(schedule.overdue_every ?? null);
   const [name, setName] = useState(schedule.name);
   const [n, setN] = useState(String(schedule.counter_field ? schedule.counter_every ?? "" : schedule.every_n ?? ""));
   const [unit, setUnit] = useState<string>(schedule.counter_field ?? schedule.every_unit ?? "month");
@@ -329,7 +339,7 @@ function EditSchedule({
       className="space-y-2 rounded-lg border border-accent/50 px-3 py-2"
       onSubmit={(e) => {
         e.preventDefault();
-        if (ok && !pending) onSave({ name: name.trim(), n: num, unit });
+        if (ok && !pending) onSave({ name: name.trim(), n: num, unit, remind, overdue_every: cadence });
       }}
     >
       <ChoiceCombobox label="What needs doing" value={name || null} options={jobs} onCommit={(v) => setName(v ?? "")} live />
@@ -345,6 +355,7 @@ function EditSchedule({
           ))}
         </select>
       </div>
+      <ReminderPicker value={remind} onChange={setRemind} /><CadencePicker value={cadence} onChange={setCadence} />
       <div className="flex gap-2">
         <button type="submit" disabled={!ok || pending} className="rounded-md bg-accent px-3 py-1 text-sm text-white disabled:opacity-50">Save</button>
         <button type="button" onClick={onCancel} className="text-sm text-muted">Cancel</button>

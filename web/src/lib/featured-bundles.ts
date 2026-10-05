@@ -199,6 +199,112 @@ function machineBundleRelease(
 
 export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
+    glyph: "🔌",
+    blurb: "Receive components by distributor label, keep their moisture clocks and counts, and import board revisions to check parts and track fabrication orders.",
+    item_example: "a reel of components",
+    next_steps: [{ label: "Receive components", module: "inventory", path: "/instances/component-parts", hint: "Scan a distributor's package label, review its count and queue its reel QR label." }, { label: "Add a board project", module: "projects", path: "/instances/board-projects", hint: "Import a revision’s BOM and centroid, check components and track blank board orders." }],
+    manifest: {
+      id: "cobblr.flagship.electronics-assembly", version: "0.1.10", name: "Electronics assembly", author: "Cobblr",
+      description: "Component packages and board revisions, with stock checks, fabrication purchases, assembly kits, solder paste handling, placement stations and reflow logs.",
+      released_at: "2026-10-06", changelog: "Save paste profiles and record reflow at authorized ovens with temperature limit checks.",
+      releases: [{ version: "0.1.10", released_at: "2026-10-06", notes: "Inspect each board, preserve its evidence and trace tested batches back to their reel lots." }, { version: "0.1.9", released_at: "2026-10-06", notes: "Save paste profiles and record reflow at authorized ovens with temperature limit checks." }, { version: "0.1.8", released_at: "2026-10-06", notes: "Export calibrated placement files, verify feeder reels and record runs at an authorized station." }, { version: "0.1.5", released_at: "2026-10-06", notes: "Reserve assembly kits and track refrigerated paste handling against its label limits." }, { version: "0.1.4", released_at: "2026-10-06", notes: "Import board revisions to check component stock and track fabrication purchases and stencils." }, { version: "0.1.1", released_at: "2026-10-05", notes: "Receive component packages by their distributor labels and track moisture exposure and counts." }],
+      requires: [{ module: "inventory" }, { module: "core-scan" }, { module: "labels" }, { module: "projects" }, { module: "builds" }, { module: "purchases" }, { module: "machines" }, { module: "digifab" }],
+      wires: [], field_defs: [], saved_views: [],
+      provides_instances: [
+        { module: "inventory", instance_name: "tested-boards", scan_keywords: ["tested PCB", "assembled tested board"], display_name: "Tested Boards", glyph: "▱", item_noun: "tested board", qty_unit: "each", faces: { stock: true }, field_defs: [{ entity_kind: "inventory:part", name: "board_revision_id", display_label: "Board revision", type: "text", position: 1 }], saved_views: [] },
+        { module: "inventory", instance_name: "placed-boards", scan_keywords: ["placed PCB", "placed circuit board"], display_name: "Placed Boards", glyph: "▱", item_noun: "placed board", qty_unit: "each", faces: { stock: true }, field_defs: [{ entity_kind: "inventory:part", name: "board_revision_id", display_label: "Board revision", type: "text", position: 1 }], saved_views: [] },
+        { module: "machines", instance_name: "assembly-machines", scan_keywords: ["pick and place", "SMT machine", "reflow oven", "inspection bench"], display_name: "Assembly Machines", glyph: "⚙", item_noun: "assembly machine", field_defs: [{ entity_kind: "machines:machine", name: "calibration_notes", display_label: "Calibration notes", type: "text", position: 1 }], saved_views: [] },
+        {
+          module: "inventory", instance_name: "solder-paste", display_name: "Solder Paste", glyph: "🫙", item_noun: "paste jar", qty_unit: "ml",
+          faces: { stock: true }, paste_tracking: true,
+          field_defs: [{ entity_kind: "inventory:part", name: "lot_code", display_label: "Paste lot", type: "text", position: 1 }, { entity_kind: "inventory:part", name: "alloy", display_label: "Alloy", type: "text", position: 2, learns: true, choices: ["SAC305", "Sn63/Pb37", "Sn42/Bi58"] }], saved_views: [],
+        },
+        {
+          module: "projects", instance_name: "board-projects", display_name: "Board Projects", glyph: "🔌", item_noun: "board project",
+          board_revisions: { package_kind: "component-packages:item", blank_kind: "blank-boards:item", stencil_kind: "board-stencils:item", placed_kind: "placed-boards:item", tested_kind: "tested-boards:item" },
+          scan_keywords: ["PCB project", "board project", "electronics project"],
+          field_defs: [{ entity_kind: "projects:project", name: "board_notes", display_label: "Board notes", type: "text", position: 1 }], saved_views: [],
+        },
+        {
+          module: "inventory", instance_name: "blank-boards", display_name: "Blank Boards", glyph: "▱", item_noun: "blank board", qty_unit: "each",
+          faces: { stock: true }, scan_keywords: ["blank PCB", "bare circuit board", "fabricated PCB"], field_defs: [
+            { entity_kind: "inventory:part", name: "board_revision_id", display_label: "Board revision", type: "text", position: 1 },
+          ], saved_views: [],
+        },
+        {
+          module: "inventory", instance_name: "board-stencils", display_name: "Board Stencils", glyph: "▱", item_noun: "stencil", qty_unit: "each",
+          faces: { stock: true }, field_defs: [
+            { entity_kind: "inventory:part", name: "board_revision_id", display_label: "Board revision", type: "text", position: 1 },
+            { entity_kind: "inventory:part", name: "stencil_style", display_label: "Style", type: "text", position: 2, learns: false, choices: ["framed", "frameless"] },
+          ], saved_views: [],
+        },
+        {
+          module: "inventory", instance_name: "component-parts", display_name: "Component Parts", glyph: "🔌", item_noun: "part", qty_unit: "each",
+          faces: { stock: false }, nav_group: { key: "electronics-assembly", label: "Components" },
+          field_defs: [
+            { entity_kind: "inventory:part", name: "mpn", display_label: "Manufacturer part number", type: "text", field_role: "identifier", position: 1 },
+            { entity_kind: "inventory:part", name: "package", display_label: "Package", type: "text", position: 2, learns: true },
+            { entity_kind: "inventory:part", name: "value", display_label: "Value", type: "text", position: 3 },
+            { entity_kind: "inventory:part", name: "msl", display_label: "Moisture sensitivity level", type: "text", position: 4, learns: false, choices: ["1", "2", "2a", "3", "4", "5", "5a", "6"], help: "Use the manufacturer's level. An unknown level blocks tracked packages from use." },
+          ],
+          field_overrides: [{ entity_kind: "inventory:part", name: "qty", hidden: true }], saved_views: [],
+        },
+        {
+          module: "inventory", instance_name: "component-packages", display_name: "Component Packages", glyph: "📦", item_noun: "package", qty_unit: "each",
+          faces: { stock: true }, nav_group: { key: "electronics-assembly", label: "Components" },
+          parent: { instance: "component-parts", label: "Part", key_fields: ["manufacturer", "mpn"], copy_fields: ["package", "value", "msl"] },
+          package_receiving: { identity_field: "mpn", storage_tracking: true },
+          field_defs: [
+            { entity_kind: "inventory:part", name: "mpn", display_label: "Manufacturer part number", type: "text", field_role: "identifier", position: 1 },
+            { entity_kind: "inventory:part", name: "packaging", display_label: "Packaging", type: "text", position: 2, learns: false, choices: ["reel", "cut tape", "tray", "tube"] },
+            { entity_kind: "inventory:part", name: "lot_code", display_label: "Lot code", type: "text", position: 3 },
+            { entity_kind: "inventory:part", name: "date_code", display_label: "Date code", type: "text", position: 4 },
+            { entity_kind: "inventory:part", name: "attrition_pct", display_label: "Attrition (%)", type: "number", position: 5, help: "Extra components consumed for setup and placement loss, rounded up to whole components." },
+            { entity_kind: "inventory:part", name: "msl_floor_hours", display_label: "MSL 6 label floor life (hours)", type: "number", position: 6, help: "For level 6, the label's deadline after a completed bake. Dry storage does not extend it." },
+            { entity_kind: "inventory:part", name: "distributor", display_label: "Distributor", type: "text", position: 7 },
+            { entity_kind: "inventory:part", name: "distributor_part_number", display_label: "Distributor stock code", type: "text", position: 8 },
+            { entity_kind: "inventory:part", name: "purchase_order", display_label: "Customer purchase order", type: "text", position: 9 },
+            { entity_kind: "inventory:part", name: "package_id", display_label: "Distributor package ID", type: "text", position: 10 },
+          ],
+          field_overrides: [{ entity_kind: "inventory:part", name: "qty", display_label: "Components left" }], saved_views: [],
+        },
+      ],
+    },
+  },
+
+  {
+    glyph: "▱",
+    blurb: "Sheet stock with usable offcuts, cut outlines and QR labels.",
+    next_steps: [{ label: "Add your first piece", module: "inventory", path: "/instances/sheets/items", hint: "Keep one record for each physical piece." }],
+    manifest: {
+      id: "cobblr.community.sheets", catalog: "extended", version: "0.1.2", name: "Sheets", author: "Cobblr", released_at: "2026-10-05",
+      description: "Keep sheet material, its size, storage place and cost, and find room in the offcuts before opening new stock.",
+      changelog: "Track each physical piece, record cuts without losing usable gaps, undo hand edits and find room in offcuts first.",
+      releases: [{ version: "0.1.2", released_at: "2026-10-05", notes: "Track each physical piece, record cuts without losing usable gaps, undo hand edits and find room in offcuts first." }],
+      requires: [{ module: "inventory" }, { module: "labels" }],
+      provides_instances: [{
+        module: "inventory", instance_name: "sheets", display_name: "Sheets", item_noun: "sheet", glyph: "▱", qty_unit: "each", faces: { stock: true },
+        field_defs: [
+          { entity_kind: "inventory:part", name: "material", display_label: "Material", type: "text", position: 1, required: true, learns: true, choices: ["Plywood", "MDF", "Acrylic", "Cardboard", "Aluminium"], help: "The material this piece is made from." },
+          { entity_kind: "inventory:part", name: "thickness_mm", display_label: "Thickness", type: "number", unit: "mm", position: 2, required: true, help: "Measured thickness in millimetres." },
+          { entity_kind: "inventory:part", name: "width_mm", display_label: "Width", type: "number", unit: "mm", position: 3, required: true, help: "Original width in the loaded orientation." },
+          { entity_kind: "inventory:part", name: "height_mm", display_label: "Height", type: "number", unit: "mm", position: 4, required: true, help: "Original height in the loaded orientation." },
+          { entity_kind: "inventory:part", name: "finish", display_label: "Colour or finish", type: "text", position: 5, learns: true, help: "Colour, coating or surface finish." },
+          { entity_kind: "inventory:part", name: "minimum_usable_mm", display_label: "Smallest usable gap", type: "number", unit: "mm", position: 6, help: "Gaps narrower than this in either direction are left out. Defaults to 20 mm." },
+          { entity_kind: "inventory:part", name: "offcut_percent", display_label: "Offcut below (%)", type: "number", position: 7, help: "Flag a piece as an offcut below this usable percentage. Defaults to 25%." },
+        ],
+        field_overrides: [
+          { entity_kind: "inventory:part", name: "cost", display_label: "Paid" },
+          { entity_kind: "inventory:part", name: "location", display_label: "Stored at" },
+          ...["warranty", "min_qty", "supplier_url", "serial_number", "model_number", "category"].map(name => ({ entity_kind: "inventory:part", name, hidden: true })),
+        ],
+        saved_views: [{ entity_kind: "inventory:part", name: "By material", view_type: "table", pinned: true, config: { group_by: "material", visible_fields: ["title", "material", "thickness_mm", "width_mm", "height_mm", "finish", "location_name"] } }],
+        wires: [{ source_kind: "sheets:item", action_id: "labels:print", trigger_type: "user-invoked", template: "{{name}}\n{{material}} {{thickness_mm}} mm\n{{width_mm}} × {{height_mm}} mm" }],
+      }],
+    },
+  },
+
+  {
     glyph: "🧂",
     blurb:
       "Your spice cabinet as its own table. Which jar is open, which are still sealed, and how often you actually re-buy each one.",
@@ -3397,12 +3503,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.home-inventory",
-      version: "0.6.2",
+      version: "0.6.3",
       name: "Home Inventory",
       description: "Your belongings as their own room-by-room catalog: make/model + condition, filed by room. Scan to add, print labels for boxes, optional insurance valuation.",
       author: "Cobblr",
       released_at: "2026-10-02",
       releases: [
+        { version: "0.6.3", released_at: "2026-10-05", notes: "Bed linen scans stay with household belongings while material stock has its own table." },
         { version: "0.6.2", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." },
         {
           version: "0.6.1",
@@ -3424,7 +3531,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           item_noun: "item",
           // Item or belonging: the person's word for one thing they own (#3650).
           noun: { of: "item", singular: "item", plural: "items", alternatives: [{ singular: "belonging", plural: "belongings" }] },
-          scan_keywords: ["sheets", "bedding", "linen", "towel", "pillow", "blanket", "comforter", "duvet", "curtain", "rug", "mattress", "furniture", "dresser", "sofa", "couch", "chair", "bookcase", "desk", "lamp", "mirror", "shelf", "cabinet", "appliance", "vacuum", "fan", "heater", "microwave", "toaster", "blender", "cookware", "utensil", "dishes", "monitor", "television", "speaker", "headphones", "toy", "plush", "stuffed animal", "teddy bear"],
+          scan_keywords: ["bed sheets", "bedding", "linen", "towel", "pillow", "blanket", "comforter", "duvet", "curtain", "rug", "mattress", "furniture", "dresser", "sofa", "couch", "chair", "bookcase", "desk", "lamp", "mirror", "shelf", "cabinet", "appliance", "vacuum", "fan", "heater", "microwave", "toaster", "blender", "cookware", "utensil", "dishes", "monitor", "television", "speaker", "headphones", "toy", "plush", "stuffed animal", "teddy bear"],
           qty_unit: "each",
           field_defs: [
             // "Room" is deliberately NOT a field here — a home item's room is its
@@ -4416,12 +4523,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       "id": "cobblr.flagship.vehicles",
       "name": "Vehicles",
-      "version": "0.4.5",
+      "version": "0.4.8",
       "description": "Your vehicles as their own table - make/model/year, VIN, mileage, plate - with service logs (oil, tires, brakes) and next-due dates on your calendar. Replaces a glovebox folder of receipts and a sticky note on the windshield.",
       "author": "Cobblr",
       "released_at": "2026-07-13",
       "changelog": "Mileage counts as the vehicle's use, so a bill of sale's odometer reading fills it when it is empty, and a service schedule can fall due every so many miles. Earlier changes below.: The licence plate is a vehicle's identity, like its VIN: two scans with different plates are never taken for one car, and a typed plate finds the car you already have. Earlier changes below.: Renamed to Vehicles and given its OWN table (an assets instance), not generic Assets with extra columns - its own nav entry, a “New vehicle” button, and only the fields a vehicle needs (VIN, make, model, year, trim, mileage, fuel, color). Service logs come from core-maintenance; scan a VIN and it fills the whole record.",
       "releases": [
+        { "version": "0.4.8", "released_at": "2026-10-05", "notes": "Track registration and inspection expiry dates, renew without losing time, and choose when reminders arrive." },
         { "version": "0.4.5", "released_at": "2026-10-02", "notes": "A vehicle fills its empty Model, Year and Trim from its VIN and its name (\"Yamaha YZF-R3, Blue\" says the model), never over what you typed, with an Undo. Bought from is who sold it, so the place you found it and the person you bought it from are kept as two things." },
         { "version": "0.4.4", "released_at": "2026-10-02", "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before. Setting a service schedule offers the usual jobs (oil change, tire rotation, brake pads and more) beside the ones you have logged." },
         {
@@ -4537,7 +4645,12 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
               "display_label": "Color",
               "type": "text",
               "position": 6
-            }
+            },
+            {"entity_kind": "assets:asset", "name": "registration_expires", "display_label": "Registration expires", "type": "date", "position": 7},
+            {"entity_kind": "assets:asset", "name": "registration_number", "display_label": "Registration number", "type": "text", "field_role": "identifier", "position": 8},
+            {"entity_kind": "assets:asset", "name": "registration_state", "display_label": "Registration region", "type": "text", "position": 9},
+            {"entity_kind": "assets:asset", "name": "inspection_expires", "display_label": "Inspection expires", "type": "date", "position": 10},
+            {"entity_kind": "assets:asset", "name": "inspection_station", "display_label": "Inspection station", "type": "text", "position": 11}
           ],
           "field_overrides": [
             {

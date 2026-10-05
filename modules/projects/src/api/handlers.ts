@@ -1,3 +1,4 @@
+import { groupListRows } from "@cobblr/platform-contract/grouped-list";
 // Action handlers + entity-kind resolvers. Registered at module
 // load via api/index.ts's side-effect call.
 //
@@ -98,7 +99,7 @@ export function registerProjectsHandlers(): void {
       const col = spec.replace(/^-/, "");
       q = q.orderBy(col as never, desc ? "desc" : "asc");
     }
-    const rows = await q.limit(limit).offset(offset).execute();
+    const rows = (await groupListRows(db, q, query)) ?? await q.limit(limit).offset(offset).execute();
     const snippets = query.q?.trim() ? await snippetsFor(db, rows, query.q) : new Map<string, string>();
     return {
       items: rows.map((r) => {
@@ -190,7 +191,7 @@ export function registerProjectsHandlers(): void {
       const col = spec.replace(/^-/, "");
       q = q.orderBy(col as never, desc ? "desc" : "asc");
     }
-    const rows = await q.limit(limit).offset(offset).execute();
+    const rows = (await groupListRows(db, q, query)) ?? await q.limit(limit).offset(offset).execute();
     return { items: rows.map((r) => toResolvedTask(r)) };
   });
 
@@ -204,7 +205,7 @@ export function registerProjectsHandlers(): void {
     "projects.set-dep-satisfied",
     async (ctx) => {
       if (!ctx.entity) {
-        return { ok: true, flipped: 0, reason: "no entity" };
+        return { ok: false, skipped: true, error: "No thing changed, so there are no dependencies to satisfy." };
       }
       const { kind: sourceKind, id: sourceId } = ctx.entity;
       // entityKind here looks like "inventory:part" (or whatever
@@ -213,7 +214,7 @@ export function registerProjectsHandlers(): void {
       // split the kind for lookup.
       const [module, entityType] = sourceKind.split(":");
       if (!module || !entityType) {
-        return { ok: true, flipped: 0, reason: "bad kind" };
+        return { ok: false, skipped: true, error: "That thing has no recognised kind." };
       }
       const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<ProjectsDB>;
       const updated = await db
@@ -225,9 +226,13 @@ export function registerProjectsHandlers(): void {
         .where("satisfied", "=", false)
         .returning(["id", "task_id"])
         .execute();
+      if (!updated.length) return { ok: false, skipped: true, error: "No task dependencies needed changing." };
       // Announce a task only when this was its last open blocker.
       const freed = await announceUnblocked(ctx.orgId, db, updated.map((d) => d.task_id), { kind: sourceKind, id: sourceId });
-      return { ok: true, flipped: updated.length, unblocked: freed.length };
+      const tasks = freed.length ? await db.selectFrom("projects_tasks").select(["id", "title"]).where("id", "in", freed).execute() : [];
+      const names = tasks.slice(0, 2).map(t => t.title).join(", ") + (tasks.length > 2 ? ", …" : "");
+      const summary = freed.length ? `marked ${freed.length} ${freed.length === 1 ? "task" : "tasks"} ready: ${names}` : `satisfied ${updated.length} ${updated.length === 1 ? "dependency" : "dependencies"}`;
+      return { ok: true, flipped: updated.length, unblocked: freed.length, summary, activity_label: "Task dependencies", subject: { kind: "projects:task", id: freed[0] ?? updated[0]!.task_id } };
     },
   );
 

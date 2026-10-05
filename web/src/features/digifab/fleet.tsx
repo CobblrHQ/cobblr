@@ -1,3 +1,5 @@
+import { laserState } from "../../lib/fabrication-display";
+import { DirectLaserControls } from "./DirectLaserControls";
 import { LightBurnReadiness } from "./lightburn-readiness";
 // The digifab FLEET feature — the floor's card grid (FleetView), the
 // per-device cockpit (PrinterDetailModal + controls/files/camera panels),
@@ -46,7 +48,7 @@ export async function fetchAllMachines(slug: string): Promise<{ items: LinkableM
   try {
     insts = (await api.listInstances(slug, "machines")).items.map((i) => ({ instance_name: i.instance_name, display_name: i.display_name, is_default: i.is_default }));
   } catch {
-    /* module may be single-instance — fall back to the default collection */
+    /* quiet: the module may be single-instance, so fall back to the default collection */
   }
   const sources: { name: string | undefined; label: string | null }[] = insts.length
     ? insts.map((i) => ({ name: i.is_default ? undefined : i.instance_name, label: i.is_default ? null : i.display_name }))
@@ -469,7 +471,7 @@ function FleetBatchBar({
 
 const DEVICE_DRAG_MIME = "application/x-cobblr-fleet-device";
 
-export type FleetDev = DigifabFleetDevice & { connLabel: string; connId: string; connType: string };
+export type FleetDev = DigifabFleetDevice & { connLabel: string; connBridge?: string; connId: string; connType: string };
 const devKey = (d: { connId: string; id: string }) => `${d.connId}:${d.id}`;
 
 /** Free-form fleet layout — the tiles ARE the floor (no cell grid, no arrange
@@ -873,7 +875,7 @@ export function FleetView({ slug, machineIds, scopeNoun }: {
         const errored = data.connections.filter((c) => c.error);
         const allUnfiltered: FDev[] = data.connections
           .filter((c) => !c.error)
-          .flatMap((c) => c.devices.map((d) => ({ ...d, connLabel: c.type === "edge_adapter" ? `${c.label} on ${bridgeName(c.bridge)}` : c.label, connId: c.connection_id, connType: c.type })))
+          .flatMap((c) => c.devices.map((d) => ({ ...d, connLabel: c.label, connBridge: c.type === "edge_adapter" ? bridgeName(c.bridge) : undefined, connId: c.connection_id, connType: c.type })))
           .filter(inScope);
         const all: FDev[] = allUnfiltered.filter((d) => bucket === "all" || deviceBucket(d) === bucket);
         const connDeviceCountEarly = new Map<string, number>();
@@ -917,6 +919,7 @@ export function FleetView({ slug, machineIds, scopeNoun }: {
           // One machine, two lenses: a LINKED machine's own name is the tile
           // title — the tile IS the machine, not a parallel connection-side
           // identity. Connection label / device name demote to the subtitle.
+          if (d.connBridge) return { title: d.linked_machine?.name || d.connLabel || d.name, sub: `On ${d.connBridge}` };
           if (d.linked_machine?.name) {
             if (d.pool_id) return { title: d.linked_machine.name, sub: null };
             const sub = (connDeviceCountEarly.get(d.connId) ?? 0) === 1 && d.connLabel ? d.connLabel : manyConnsEarly && d.connLabel ? d.connLabel : d.name;
@@ -1180,7 +1183,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
 }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const laser = !!d.lightburn_readiness || d.id === "lightburn";
+  const laser = !!d.laser_backend || !!d.lightburn_readiness || d.id === "lightburn";
   const st = KLASS_STYLE[d.klass];
   // Progress: a Cobblr job's (0–1) wins; otherwise the printer's own live percent
   // (already 0–100, e.g. a Bambu print started from its own slicer).
@@ -1452,11 +1455,11 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
       </div>
       {subtitle && <div className="text-[10px] text-faint truncate">{subtitle}</div>}
       <div className="flex items-center gap-2 mt-0.5">
-        <span className={`text-[10px] font-mono uppercase tracking-wider ${st.text}`}>{d.state}</span>
+        <span className={`text-[10px] font-mono uppercase tracking-wider ${st.text}`}>{laser ? laserState(d.state) : d.state}</span>
         {d.stage && (
           <span className="text-[10px] font-medium text-accent truncate" title="current stage">{d.stage}</span>
         )}
-        {(nozzle || bed || chamber) && (
+        {!laser && (nozzle || bed || chamber) && (
           <span className="inline-flex items-center gap-1 text-[10px] font-mono text-faint" title="nozzle / bed / chamber (actual/target °C)">
             <Thermometer size={10} />
             {nozzle && <span>N {nozzle}</span>}
@@ -1493,7 +1496,9 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
         </div>
       ) : null}
       {d.lightburn_readiness && <div className="mt-2"><LightBurnReadiness readiness={d.lightburn_readiness} /></div>}
-      {laser && job && <p className="mt-2 text-xs text-muted">{job.status === "sent" ? "Start sent, waiting for LightBurn to report running. " : ""}Stop in LightBurn or at the machine</p>}
+      {laser && <Link className="inline-flex min-h-11 items-center mt-2 text-sm underline" to={`/station/machine/${connId}/${encodeURIComponent(d.id)}`}>Open machine station</Link>}
+      {d.laser_backend && <DirectLaserControls slug={slug} connectionId={connId} deviceId={d.id} status={job?.status} />}
+      {laser && !d.laser_backend && job && <p className="mt-2 text-xs text-muted">{job.status === "sent" ? "Start sent, waiting for LightBurn to report running. " : ""}Stop in LightBurn or at the machine</p>}
       {blocked && <div className="mt-1 text-[10px] text-ember-600 dark:text-ember-500">{blocked}</div>}
       {/* A print that finished outside a Cobblr job (no attention row, no verdict
           flow) still owes you a bed-clear — name it so the amber tile isn't
@@ -2144,8 +2149,9 @@ function FilesPanel({ slug, connId, deviceId, onZoom, history, onOpenPrint, onRe
     setRefreshing(true);
     try {
       qc.setQueryData(["digifab-files", slug, connId, deviceId], await api.getDigifabFiles(slug, connId, deviceId, true));
-    } catch {
-      /* keep the existing list on a failed refresh */
+    } catch (e) {
+      // Pressed Refresh: the list stays as it was, and says why it did not change.
+      toast.error(`Could not refresh the files. ${e instanceof Error ? e.message : ""}`.trim());
     } finally {
       setRefreshing(false);
     }
@@ -2377,6 +2383,7 @@ function TempStat({ label, actual, target }: { label: string; actual: number | n
 // The full printer modal — identity + image, live telemetry (temps/AMS/light/
 // firmware), controls, link-to-machine, and THIS printer's history, in one place.
 export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: string; connId: string; device: DigifabFleetDevice; onClose: () => void }) {
+  const laser = !!device.laser_backend || device.lightburn_readiness != null || device.id === "lightburn";
   const qc = useQueryClient();
   const toast = useToast();
   const [lightbox, setLightbox] = useState<string | null>(null);
@@ -2392,9 +2399,9 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
     queryKey: ["digifab-failure-status", slug, connId, device.id],
     queryFn: () => api.getDigifabFailureStatus(slug, connId, device.id),
     refetchInterval: 12_000,
-    enabled: !device.managed_by_detector,
+    enabled: !laser && !device.managed_by_detector,
   });
-  const fail = failQ.data ?? null;
+  const fail = laser ? null : failQ.data ?? null;
   const aiCheck = useMutation({
     mutationFn: () => api.checkDigifabFailure(slug, connId, device.id),
     onSuccess: (r) => {
@@ -2444,7 +2451,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
 
   return (
     <>
-      <Modal open onClose={onClose} title={device.name} size="xl">
+      <Modal open onClose={onClose} title={device.linked_machine?.name || device.name} size="xl">
         {/* Cockpit: a wide two-column dashboard. LEFT = watch (camera + progress +
             live temps + filament); RIGHT = do (controls + files). Everything the
             operator needs is on one screen — secondary detail (recent prints) is a
@@ -2453,12 +2460,12 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
           {device.lightburn_readiness && <LightBurnReadiness readiness={device.lightburn_readiness} />}
           {/* Header strip — status pills + machine link + LAN, all on one wrapping row. */}
           <div className="flex flex-wrap items-center gap-2 text-xs pb-2 border-b border-line dark:border-slate-800">
-            <span className="px-1.5 py-0.5 rounded bg-subtle dark:bg-slate-800 text-content dark:text-mortar-100">{device.state}</span>
+            <span className="px-1.5 py-0.5 rounded bg-subtle dark:bg-slate-800 text-content dark:text-mortar-100">{laser ? laserState(device.state) : device.state}</span>
             {device.pool_name && <span className="px-1.5 py-0.5 rounded bg-accent/10 text-accent">{device.pool_name}</span>}
             {!device.enabled && <span className="px-1.5 py-0.5 rounded bg-ember-500/10 text-ember-600 dark:text-ember-400">disabled</span>}
             {t?.firmware_update && <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600">firmware update</span>}
             {t && t.hms_count > 0 && <span className="px-1.5 py-0.5 rounded bg-ember-500/15 text-ember-600 dark:text-ember-400">{t.hms_count} alert{t.hms_count > 1 ? "s" : ""}</span>}
-            {t && (t.nozzle_diameter || t.nozzle_type) && <span className="text-faint">Nozzle {t.nozzle_diameter}mm {t.nozzle_type?.replace(/_/g, " ")}</span>}
+            {!laser && t && (t.nozzle_diameter || t.nozzle_type) && <span className="text-faint">Nozzle {t.nozzle_diameter}mm {t.nozzle_type?.replace(/_/g, " ")}</span>}
             {t?.wifi && <span className="text-faint">Wi-Fi {t.wifi}</span>}
             <div className="flex-1 min-w-[8rem]" />
             <div className="text-muted dark:text-slate-400">
@@ -2517,7 +2524,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
                 </div>
               )}
               {/* The watch, in words: freshness + source + a live one-tap reading. */}
-              {device.managed_by_detector ? (
+              {!laser && device.managed_by_detector ? (
                 <div className="flex items-center gap-1.5 text-[11px] text-faint">
                   👁 An external detector watches this printer and raises its own alerts; Cobblr stands down its camera (single-owner rule).
                 </div>
@@ -2547,7 +2554,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
                   <JobPanel job={detail.data.job} />
                 </div>
               )}
-              {t && (
+              {!laser && t && (
                 <div>
                   <div className={lbl + " mb-1"}>Live</div>
                   <div className="grid grid-cols-3 gap-2 text-xs">
@@ -2572,7 +2579,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
                   )}
                 </div>
               )}
-              {detail.data && detail.data.live === false && <div className="text-[11px] text-faint italic">No live cloud telemetry for this machine.</div>}
+              {!laser && detail.data && detail.data.live === false && <div className="text-[11px] text-faint italic">No live cloud telemetry for this machine.</div>}
               {detail.data?.lan?.applicable && (
                 <LanAccessPanel slug={slug} connId={connId} deviceId={device.id} lan={detail.data?.lan} />
               )}
@@ -2582,7 +2589,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
             <div className="space-y-3 min-w-0">
               <div>
                 <div className={lbl + " mb-1.5"}>Controls</div>
-                <ControlsPanel slug={slug} connId={connId} deviceId={device.id} name={device.name} telemetry={t} lanActive={!!detail.data?.lan?.configured && detail.data?.lan?.mode !== "cloud"} />
+                {device.laser_backend ? <DirectLaserControls slug={slug} connectionId={connId} deviceId={device.id} status={device.active_job?.status} /> : laser ? <div className="space-y-3 text-sm"><p>Start jobs at this laser's station. Stop or pause in LightBurn or at the machine.</p><Link className="inline-flex min-h-11 items-center text-accent underline" to={`/station/machine/${connId}/${encodeURIComponent(device.id)}`} onClick={onClose}>Open laser station</Link></div> : <ControlsPanel slug={slug} connId={connId} deviceId={device.id} name={device.name} telemetry={t} lanActive={!!detail.data?.lan?.configured && detail.data?.lan?.mode !== "cloud"} />}
               </div>
             </div>
           </div>
@@ -2596,9 +2603,9 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
               (view detail; Print-again when a Cobblr job backs it). */}
           <div className="pt-3 border-t border-line dark:border-slate-800">
             <div className={lbl + " mb-1.5"}>On {device.name}  - files &amp; jobs</div>
-            {device.lightburn_readiness ? <div className="space-y-2 text-xs text-muted">
-              <p>Upload designs in the Library, then review the cut settings before Start.</p>
-              <details><summary>Job history</summary>{mine.map(item => <button key={item.id} type="button" onClick={() => setPrintOpen(item)} className="block text-accent hover:underline py-1">{item.file_ref} · {item.status}</button>)}</details>
+            {laser ? <div className="space-y-2 text-xs text-muted">
+              <p>Upload an SVG or DXF in the Library, choose a material profile and sheet, then preview and queue the layout. For a prepared LightBurn file, save its material and sheet size. Confirm the loaded sheet and review settings at the laser station before Start.</p>
+              <details><summary>Job history</summary>{mine.map(item => <button key={item.id} type="button" onClick={() => setPrintOpen(item)} className="block text-accent hover:underline py-1">{item.file_ref} · {laserState(item.status)}</button>)}</details>
             </div> : <FilesPanel
               slug={slug}
               connId={connId}
@@ -2612,13 +2619,13 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
         </div>
       </Modal>
       {lightbox && <Lightbox items={[{ key: lightbox, caption: "Photo", src: lightbox }]} index={0} onClose={() => setLightbox(null)} />}
-      {printOpen && <PrintDetailModal item={printOpen} onClose={() => setPrintOpen(null)} onZoom={setLightbox} onReprint={(r) => { setPrintOpen(null); void askReprint(r); }} />}
+      {printOpen && <PrintDetailModal item={printOpen} onClose={() => setPrintOpen(null)} onZoom={setLightbox} laser={laser} onReprint={laser ? undefined : (r) => { setPrintOpen(null); void askReprint(r); }} />}
     </>
   );
 }
 
 // A single print's detail — large cover (click to zoom) + the metadata.
-export function PrintDetailModal({ item, onClose, onZoom, onReprint }: { item: DigifabHistory["recent"][number]; onClose: () => void; onZoom?: (src: string) => void; onReprint?: (r: DigifabHistory["recent"][number]) => void }) {
+export function PrintDetailModal({ item, onClose, onZoom, onReprint, laser = false }: { laser?: boolean; item: DigifabHistory["recent"][number]; onClose: () => void; onZoom?: (src: string) => void; onReprint?: (r: DigifabHistory["recent"][number]) => void }) {
   const durMin = item.duration_s ? Math.round(item.duration_s / 60) : 0;
   const dur = durMin >= 60 ? `${Math.floor(durMin / 60)}h ${durMin % 60}m` : durMin > 0 ? `${durMin}m` : null;
   const row = (k: string, v: ReactNode) => (v ? <div className="flex justify-between gap-3 text-xs py-1 border-b border-line dark:border-slate-800 last:border-0"><span className="text-faint">{k}</span><span className="text-content dark:text-mortar-100 text-right">{v}</span></div> : null);
@@ -2631,7 +2638,7 @@ export function PrintDetailModal({ item, onClose, onZoom, onReprint }: { item: D
           <img src={item.cover} alt="" className="w-full max-h-72 object-contain rounded bg-subtle dark:bg-slate-800 cursor-zoom-in" onClick={() => onZoom?.(item.cover!)} />
         )}
         <div>
-          {row("Status", <span className={item.status === "completed" ? "text-moss-600" : item.status === "failed" ? "text-ember-600 dark:text-ember-400" : ""}>{item.status}</span>)}
+          {row("Status", <span className={item.status === "completed" ? "text-moss-600" : item.status === "failed" ? "text-ember-600 dark:text-ember-400" : ""}>{laser ? laserState(item.status) : item.status}</span>)}
           {row("Profile", item.sub_label)}
           {row("Machine", item.device)}
           {row("Filament", item.filament_g != null ? `${Math.round(item.filament_g)} g` : null)}

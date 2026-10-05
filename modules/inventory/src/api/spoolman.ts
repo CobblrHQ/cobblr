@@ -182,6 +182,9 @@ spoolmanRouter.post(
             unit: "g",
             metadata: sql`${JSON.stringify(meta)}::jsonb` as never,
           })
+          // Two syncs at once both found no part for this spool: it is made once
+          // (the spoolman link is unique), and the second skips it.
+          .onConflict((oc) => oc.doNothing())
           .execute();
         created++;
       }
@@ -235,6 +238,7 @@ export function registerSpoolmanWriteBack() {
       let published = 0;
       for (const row of rows) {
         try { await publishSpool(orgId, db, row.id); published++; } catch (err) {
+          platform().health.notePassFailure("inventory.spoolman-write-back", orgId, err);
           console.error("[inventory] Spoolman write-back deferred:", (err as Error).message);
         }
       }

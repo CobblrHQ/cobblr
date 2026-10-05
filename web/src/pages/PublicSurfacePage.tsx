@@ -21,7 +21,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useParams, useSearchParams } from "react-router-dom";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { PublicBrand, PublicPageView, type PublicFrame, type PublicRecord } from "./PublicPageView";
-import { EntityTile, EntityThumb, usePageTitle, TILE_GRID } from "@cobblr/platform-web";
+import { entityInitial, EntityTile, EntityThumb, usePageTitle, TILE_GRID } from "@cobblr/platform-web";
 import {
   PublicAppPlayer,
   type PublicAppPayload,
@@ -359,7 +359,7 @@ function EntityCard({ item }: { item: SurfaceItem }) {
           <EntityThumb src={item.image_path} alt={item.title} size={512} className="!w-full !h-full" />
         ) : (
           <span className="text-6xl font-mono text-faint">
-            {item.title.slice(0, 1).toUpperCase()}
+            {entityInitial(item.title)}
           </span>
         )}
       </div>

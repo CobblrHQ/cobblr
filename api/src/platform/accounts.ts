@@ -49,6 +49,8 @@ export type AccountDoor =
   | { via: "magic-link" }
   /** A central identity landing here for the first time. */
   | { via: "identity" }
+  /** The instance's own OIDC provider, when its operator lets it make accounts. */
+  | { via: "oidc"; provider: string }
   /** A sandbox row, made ahead of a visitor: never platform.account.created.
    *  The hand-over says platform.sandbox.started (announceSandboxStarted),
    *  and a door out of it says platform.sandbox.kept. */
@@ -70,6 +72,8 @@ const said = (door: AccountDoor): string => {
       return " via a sign-in link";
     case "identity":
       return " via a central identity";
+    case "oidc":
+      return ` via ${door.provider}`;
     case "admin":
       return ", added by a workspace admin";
     default:
@@ -79,7 +83,7 @@ const said = (door: AccountDoor): string => {
 
 /** Doors whose row IS the arrival. A sandbox has its own, quieter events,
  *  and the CI pool never announces. */
-const ANNOUNCED_AT_BIRTH = new Set<AccountDoor["via"]>(["signup", "invite", "magic-link", "identity", "admin"]);
+const ANNOUNCED_AT_BIRTH = new Set<AccountDoor["via"]>(["signup", "invite", "magic-link", "identity", "oidc", "admin"]);
 
 /** Tell the operator. Never throws. */
 export function announceAccountCreated(p: { email: string; displayName: string; door: AccountDoor; slug?: string }): void {

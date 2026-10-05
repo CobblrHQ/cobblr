@@ -119,15 +119,16 @@ export interface JobReview {
   fileId: string;
   contentHash: string;
   projectHash: string;
-  transport: "rest" | "udp";
+  transport: "rest" | "udp" | "compiled";
   project: Record<string, unknown>;
   layers: Record<string, unknown>[];
   cuts: Record<string, unknown>[];
   materialLibrary: Record<string, unknown>;
 }
-export type JobApproval = Pick<JobReview, "fileId" | "projectHash">;
+export type JobApproval = Pick<JobReview, "fileId" | "projectHash"> & { stationToken?: string; sheetId?: string };
 
 export interface SubmitArgs {
+  checkStartAllowed?: () => Promise<void>;
   approval?: JobApproval;
   fileId: string;
   /** Explicit printer id → classic submit (the direct path). */
@@ -141,6 +142,7 @@ export interface SubmitArgs {
 }
 
 export interface MachineDriver {
+  laserBackend?: "gcode" | "ruida" | "galvo";
   jobReviewRequired?(): Promise<boolean>;
   prepareJob?(file: Uint8Array, filename: string): Promise<JobReview>;
   getJobReview?(fileId: string): Promise<JobReview>;

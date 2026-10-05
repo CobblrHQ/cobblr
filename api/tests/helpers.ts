@@ -11,6 +11,7 @@
 
 import { registerOrgForTeardown } from "./setup-teardown.js";
 import { fetchTransient } from "./fetch-transient.js";
+import { eventually } from "./eventually.js";
 import { arrivedEverywhere, dayIn } from "@cobblr/platform-contract/day";
 
 export { registerOrgForTeardown };
@@ -361,4 +362,59 @@ export async function livesOnAnotherDay(s: TestSession, now: Date = new Date()):
  *  takes as today for a person who said they live there. */
 export function dayInZone(zone: string, daysFromToday = 0, now: Date = new Date()): string {
   return new Date(Date.parse(`${dayIn(now, zone)}T00:00:00Z`) + daysFromToday * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** The fixed platform admin CI configures in SUPERADMIN_EMAILS, signed in
+ *  (made on first use): the one account a /super-admin test can act as.
+ *  Null when this api does not treat it as a platform admin. */
+export const PLATFORM_ADMIN_EMAIL = "cobblr-test-platform-admin@cobblr-test.local";
+const PLATFORM_ADMIN_PASSWORD = "cobblr-test-admin-fixed-pwd-1234";
+export async function platformAdminSession(): Promise<{ token: string; userId: string } | null> {
+  const post = (path: string, body: unknown) =>
+    fetch(`${BASE}/api/v1${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).catch(() => null);
+  const attempts = [
+    () => post("/auth/login", { email: PLATFORM_ADMIN_EMAIL, password: PLATFORM_ADMIN_PASSWORD }),
+    // shared-name: the one platform admin CI lists in SUPERADMIN_EMAILS; made once, signed into after.
+    () => post("/auth/signup", { email: PLATFORM_ADMIN_EMAIL, password: PLATFORM_ADMIN_PASSWORD, display_name: "cobblr test admin", org_name: "cobblr-test-admin" }),
+    () => post("/auth/login", { email: PLATFORM_ADMIN_EMAIL, password: PLATFORM_ADMIN_PASSWORD }),
+  ];
+  for (const attempt of attempts) {
+    const r = await attempt();
+    if (!r?.ok) continue;
+    const j = (await r.json()) as { token: string; user: { id: string } };
+    const health = await fetch(`${BASE}/api/v1/super-admin/health`, { headers: { Authorization: `Bearer ${j.token}` } });
+    return health.ok ? { token: j.token, userId: j.user.id } : null;
+  }
+  return null;
+}
+
+/** A name of this run's own, for something unique across the whole instance
+ *  (a workspace, an account): CI runs every file against one database, so a
+ *  fixed name depends on whether another file made it first (#4892,
+ *  lint:tests-own-their-names). "Second workspace" → "Second workspace k3x9q2". */
+export function uniqueName(prefix: string): string {
+  return `${prefix} ${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** Turn a module on (or off) for a workspace, and come back only once the
+ *  workspace says it is. A setup that swallowed its enable let a test start
+ *  before the module was on, then pass on a retry once it was (#4922);
+ *  lint:setup-states-what-it-sets holds api tests to this. */
+export async function ensureModule(s: { token: string; slug: string }, name: string, on = true): Promise<void> {
+  const res = await fetchTransient(`${BASE}/api/v1/orgs/${s.slug}/modules/${name}/${on ? "enable" : "disable"}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${s.token}`, "Content-Type": "application/json" },
+    body: "{}",
+  });
+  const said = `${res.status} ${(await res.text()).slice(0, 200)}`;
+  const isOn = async (): Promise<boolean> => {
+    const r = await fetchTransient(`${BASE}/api/v1/orgs/${s.slug}/modules`, { headers: { Authorization: `Bearer ${s.token}` } });
+    const j = (await r.json()) as { items: Array<{ name: string; enabled: boolean }> };
+    return j.items.find((m) => m.name === name)?.enabled ?? false;
+  };
+  // A request retried over a dropped connection may still be finishing the
+  // first one: the workspace's own word decides, within a deadline.
+  if ((await eventually(isOn, (v) => v === on, 30_000)) !== on) {
+    throw new Error(`${name} did not turn ${on ? "on" : "off"} in ${s.slug}: the ${on ? "enable" : "disable"} answered ${said}`);
+  }
 }

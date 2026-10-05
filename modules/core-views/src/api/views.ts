@@ -1,3 +1,4 @@
+import { readGroupKeys } from "@cobblr/platform-contract/grouped-list";
 // /views — saved view CRUD + the /data passthrough that delegates
 // to platform.entities.list() for the kind the view targets.
 
@@ -33,6 +34,9 @@ const DataQuery = z.object({
   limit: z.coerce.number().int().min(1).max(500).optional(),
   offset: z.coerce.number().int().min(0).optional(),
   q: z.string().optional(),
+  group_offset: z.coerce.number().int().min(0).optional(),
+  group_limit: z.coerce.number().int().min(1).max(20).optional(),
+  group_keys: z.string().transform(readGroupKeys).optional(),
   /** The reader's calendar day, for a view that compares a date with
    *  "today" (a "Ready to drink" window). */
   today: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -247,6 +251,7 @@ viewsRouter.get(
     // everywhere). Never the server's UTC day.
     const today = await platform().accounts.dayFor(sessionUser(req)?.id ?? null, { said: parsedQuery.data.today });
     const query = {
+      ...(view.view_type === "table" && (view.config as Record<string, unknown>)?.group_by ? { group_by: (view.config as { group_by: string }).group_by, group_offset: parsedQuery.data.group_offset, group_limit: parsedQuery.data.group_limit, group_keys: parsedQuery.data.group_keys } : {}),
       q: parsedQuery.data.q,
       today,
       // The view's own query (filter, where, sort), read the one way every
@@ -264,7 +269,7 @@ viewsRouter.get(
     // preview asks for a limit and gets that page with the true total.
     const { limit, offset } = parsedQuery.data;
     const result =
-      limit === undefined && offset === undefined
+      !query.group_by && limit === undefined && offset === undefined
         ? await platform().entities.listAll(ctx.org.id, view.entity_kind, query, viewer)
         : await (async () => {
             const page = await platform().entities.list(ctx.org.id, view.entity_kind, { ...query, limit, offset }, viewer);
@@ -318,7 +323,7 @@ viewsRouter.get(
     const out = await platform().entities.exportCsv(
       ctx.org.id,
       view.entity_kind,
-      { today, ...viewQuery(config) },
+      { today, ...viewQuery(config), ...(req.query.subtotals === "true" && config.group_by ? { group_by: config.group_by as string, group_subtotals: true } : {}) },
       { userId: sessionUser(req)?.id, role: ctx.role },
       only,
     );

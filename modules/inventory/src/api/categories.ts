@@ -52,16 +52,26 @@ categoriesRouter.post(
       ? `${slug}-${Math.random().toString(36).slice(2, 6)}`
       : slug;
 
-    const inserted = await db
-      .insertInto("inventory_categories")
-      .values({
-        name: parsed.data.name,
-        slug: finalSlug,
-        color: parsed.data.color ?? null,
-        parent_id: parsed.data.parent_id ?? null,
-      })
-      .returning(["id", "name", "slug", "color", "parent_id", "created_at"])
-      .executeTakeFirstOrThrow();
+    // Two creates of one name at once both found the slug free: the second
+    // takes a suffixed one, as the check above would have given it.
+    const insertWith = (slugToUse: string) =>
+      db
+        .insertInto("inventory_categories")
+        .values({
+          name: parsed.data.name,
+          slug: slugToUse,
+          color: parsed.data.color ?? null,
+          parent_id: parsed.data.parent_id ?? null,
+        })
+        .onConflict((oc) => oc.doNothing())
+        .returning(["id", "name", "slug", "color", "parent_id", "created_at"])
+        .executeTakeFirst();
+    const inserted =
+      (await insertWith(finalSlug)) ??
+      (await insertWith(`${slug}-${Math.random().toString(36).slice(2, 6)}`)) ??
+      (() => {
+        throw new Error("could not find a free slug for the category");
+      })();
 
     await platform().activity.log({
       orgId: ctx.org.id,

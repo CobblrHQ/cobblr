@@ -64,6 +64,7 @@ export async function moveDetectorToConnection(orgId: string, db: Db, rowId: str
   if (row.credentials_enc) {
     try {
       apiKey = String((await deps.decrypt(orgId, row.credentials_enc)).apiKey ?? "");
+    // pass-catch: an undecryptable key moves without one, as the watch already used it
     } catch {
       /* undecryptable: moved without a key, as the watch already used it */
     }
@@ -100,6 +101,7 @@ export async function healDetectorsIn(orgId: string, db: Db, deps: MoveDeps = RE
       else if (out === "unknown_detector") unhealable++;
       else if (out === "not_available") return { found: rows.length, settled: false };
     } catch (err) {
+      platform().health.notePassFailure("digifab.heal-detectors-to-connections", orgId, err);
       // No owner to hold the connection, or the Connections half refused:
       // counted, and tried again next round.
       console.warn(`[heal] digifab detector ${r.id} in ${orgId} not moved: ${(err as Error).message}`);

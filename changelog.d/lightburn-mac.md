@@ -18,6 +18,6 @@ command shown in setup and approve LightBurn's dialog. The bridge picks up
 pairing automatically. Add a LightBurn laser with host 127.0.0.1 and open its
 controls to check API access, pairing and UDP readiness.
 
-Send an individual SVG, DXF or LightBurn project job, review its layers and cut
-settings, and approve Start while supervising the laser. The same setup includes
+Send a prepared LightBurn project to one laser, open its machine station,
+confirm the loaded sheet and approve Start there while supervising the laser. The same setup includes
 an uninstall command. Use LightBurn or the physical stop control to stop the laser.

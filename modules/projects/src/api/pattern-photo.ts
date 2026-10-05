@@ -383,6 +383,8 @@ async function record(
             thumb: thumbs[i]!,
           })),
         )
+        // Read twice at once for one file: its candidates once.
+        .onConflict((oc) => oc.doNothing())
         .execute();
     }
   });

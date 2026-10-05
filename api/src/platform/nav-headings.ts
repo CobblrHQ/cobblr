@@ -134,6 +134,9 @@ export async function addNavMember(args: {
       target_id: args.targetId,
       position: (Number(max?.m ?? -1)) + 1,
     })
+    // Moved twice at once: both deleted, both insert; the later one wins
+    // rather than failing on the target's one-heading key.
+    .onConflict((oc) => oc.columns(["org_id", "target_kind", "target_id"]).doUpdateSet((eb) => ({ heading_id: eb.ref("excluded.heading_id"), position: eb.ref("excluded.position") })))
     .execute();
 }
 

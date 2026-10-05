@@ -41,6 +41,7 @@ import { raiseJobCard, settleJobCards, type JobCardAction } from "./service-card
 import { CONFIRM_SERVICE_ACTION, confirmersOf } from "./service-confirm.js";
 import { answererOf, handOn, nudgeStalled, runRows, setServiceSupervisor, skippable, type JobsTable } from "./services.js";
 import { parseWireFilter, passesWireFilter } from "./wire-filter.js";
+import { notePassFailure } from "./pass-failures.js";
 
 export const SUPERVISOR_PASS = "platform.services-supervisor";
 export const RETRY_SERVICE_ACTION = "platform:retry-service-job";
@@ -416,6 +417,7 @@ export async function supervise(orgId: string, now: Date = new Date()): Promise<
       }
       await unwatch(orgId, row.id);
     } catch (err) {
+      notePassFailure("services-supervisor", orgId, err);
       console.warn(`[services-supervisor] org ${orgId} job ${row.id}: ${(err as Error).message}`);
     }
   }

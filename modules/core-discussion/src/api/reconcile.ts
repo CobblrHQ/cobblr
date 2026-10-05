@@ -67,6 +67,8 @@ export async function reconcileMentions(
           target_id: m.kind === "entity" ? m.targetId : null,
         })),
       )
+      // The same comment reconciled twice at once: each mention once.
+      .onConflict((oc) => oc.doNothing())
       .execute();
   }
 

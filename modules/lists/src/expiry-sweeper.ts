@@ -184,6 +184,7 @@ export async function visitWorkspace(orgId: string, raw: unknown, now: Date = ne
           // whoever that field is hidden from.
           const ent = await platform().entities.lookup(org.id, "inventory:part", row.id, SYSTEM_VIEWER);
           graceDays = ent?.fields?.grace_days;
+        // pass-catch: an unreadable grace reads as none, the pre-grace behaviour
         } catch {
           // Unreadable grace reads as none - the pre-grace behaviour, never a
           // silently-extended one.
@@ -276,6 +277,7 @@ export async function visitWorkspace(orgId: string, raw: unknown, now: Date = ne
         });
         delivered += 1;
       } catch (err) {
+        platform().health.notePassFailure("lists.expiry-notify", orgId, err);
         console.error("[lists] expiry notify failed:", (err as Error).message);
       }
     }
@@ -293,6 +295,7 @@ export async function visitWorkspace(orgId: string, raw: unknown, now: Date = ne
         `.compile(tdb);
         await tdb.executeQuery(up);
       } catch (err) {
+        platform().health.notePassFailure("lists.expiry-ledger", orgId, err);
         console.error("[lists] expiry day-of ledger write failed:", (err as Error).message);
       }
       alerted += 1;
@@ -307,6 +310,7 @@ export async function visitWorkspace(orgId: string, raw: unknown, now: Date = ne
         `.compile(tdb);
         await tdb.executeQuery(up);
       } catch (err) {
+        platform().health.notePassFailure("lists.expiry-ledger", orgId, err);
         console.error("[lists] expiry ledger write failed:", (err as Error).message);
       }
       alerted += 1;

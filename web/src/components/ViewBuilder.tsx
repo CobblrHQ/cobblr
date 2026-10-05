@@ -1,3 +1,4 @@
+import { moneyStorageOf, type MoneyStorage } from "@cobblr/platform-contract/money";
 // Shared, field-aware controls for building a saved view's config, used by
 // both the Create and Edit view modals. The point: you shape a view by picking
 // real fields, operators, sort direction, and columns — no typing raw
@@ -19,6 +20,7 @@ export interface KindField {
   name: string;
   label: string;
   type: string;
+  money?: MoneyStorage;
   /** The values the field takes, in order: a kind's declared native choices
    *  (a machine's `state`) or a custom dropdown's. */
   choices?: string[];
@@ -62,7 +64,7 @@ export function useKindFields(slug: string, entityKind: string): KindField[] {
     // Native declared fields for the kind.
     const kind = (kinds.data?.items ?? []).find((k) => k.id === entityKind);
     for (const f of kind?.fields ?? []) {
-      push({ name: f.name, label: presentation.label(f.name, humanize(f.name)), type: f.type, choices: f.choices });
+      push({ name: f.name, label: presentation.label(f.name, humanize(f.name)), type: f.type, choices: f.choices, money: moneyStorageOf(f) ?? undefined });
     }
     // Custom / bundle field-defs (carry display_label + choices).
     for (const f of customs.data?.items ?? []) {
@@ -72,6 +74,7 @@ export function useKindFields(slug: string, entityKind: string): KindField[] {
         name: f.name,
         label: f.display_label || humanize(f.name),
         type: f.type,
+        money: moneyStorageOf(f) ?? undefined,
         choices: f.choices ?? undefined,
       });
     }

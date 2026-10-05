@@ -114,7 +114,7 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
           const d = await api.diagnostics(slug);
           if (live) setDiag(d);
         } catch {
-          // A report without the environment block still beats no report.
+          // quiet: a report without the environment block still beats no report.
         }
       }
     })();

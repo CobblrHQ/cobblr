@@ -43,6 +43,7 @@ import {
   type BuiltInServiceDef,
   type BuiltInServiceContext,
   type RemoteServiceJob,
+  serviceFilesProblems,
   type ServiceCapabilityDecl,
   type ServiceCapabilityView,
   type ServiceChainStep,
@@ -468,9 +469,8 @@ export async function invokeAs(
 
   // Inputs: every required file named, each by content.
   const files = req.files ?? {};
-  for (const f of route.decl.files_in ?? []) {
-    if (f.required && !files[f.name]) throw new ServiceRefusal("missing_file", `${capability} needs a "${f.name}" file`);
-  }
+  const fileProblems = serviceFilesProblems(capability, route.decl.files_in ?? [], files);
+  if (fileProblems.length) throw new ServiceRefusal(fileProblems.some((p) => p.includes(" needs a ")) ? "missing_file" : "invalid_input", fileProblems.join("; "));
   const fileHashes: Record<string, string> = {};
   for (const [name, fileId] of Object.entries(files)) {
     const bytes = await platform().files.read(orgId, fileId);
@@ -782,7 +782,21 @@ async function submitRemote(orgId: string, row: JobsTable, conn: ServiceConnecti
   const next = await update(orgId, row.id, { remote_job_id: ans.job_id, status: ans.status === "queued" ? "queued" : "running", poll_errors: 0 }, { gen: row.attempt, live: true });
   if (!next) return null;
   await emit(orgId, next);
-  return { next: Math.max(1, Math.min(SERVICE_POLL_MAX_S, ans.poll_after_s ?? 2)) };
+  const poll = { next: Math.max(1, Math.min(SERVICE_POLL_MAX_S, ans.poll_after_s ?? 2)) };
+  // A sync capability answers with the finished job: take it from the answer
+  // rather than asking again. If its files cannot be fetched yet, the poll
+  // reads the same finished job; the job is the service's now and never goes
+  // to the next in the order.
+  if (TERMINAL_JOB_STATUSES.has(ans.status) || ans.status === "needs_input") {
+    try {
+      const after = await absorb(orgId, next, conn, ans as RemoteServiceJob, 0);
+      return after === null ? null : { next: after };
+    } catch (err) {
+      if (err instanceof RetryableHop) return poll;
+      throw err;
+    }
+  }
+  return poll;
 }
 
 class RetryableHop extends Error {

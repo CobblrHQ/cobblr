@@ -6,6 +6,7 @@ import { invalidateRateCache } from "../platform/money.js";
 import { Router } from "express";
 import { checkoutTestOrg, poolStatus } from "../db/test-org-pool.js";
 import { workspaceShape } from "../db/workspace-shape.js";
+import { clearPassFailures, passFailures } from "../platform/pass-failures.js";
 import { retireReceiptFailurePlaceholders } from "../platform/retire-receipt-failure-placeholders.js";
 import { retireGroceriesBaseKindTwin } from "../platform/migrate-groceries-twin-to-instance.js";
 import { rehomeAssetsInstanceToRecords } from "../platform/rehome-instance.js";
@@ -17,7 +18,9 @@ import { registerHandler } from "../platform/actions.js";
 import { ActionRefusal, PLATFORM_OWNER } from "@cobblr/platform-contract";
 import { meta, metaPool } from "../db/meta.js";
 import { getTenantDb, tenantPoolStats } from "../db/tenant.js";
-import { holdClients, poolCounts } from "../db/pool-stats.js";
+import { poolCounts } from "../db/pool-stats.js";
+import { readProbe } from "../platform/meta-probe.js";
+import { poolHolders, poolPeak } from "../db/client-error-guard.js";
 import { sql } from "kysely";
 import {
   forgetOutboundHold,
@@ -44,6 +47,17 @@ testSupportRouter.post("/test-support/checkout-org", async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// What the heal, reconcile and sweep passes caught (platform/pass-failures.ts),
+// so a test that ran a pass can tell "found nothing" from "failed". DELETE
+// starts the record over.
+testSupportRouter.get("/test-support/pass-failures", (_req, res) => {
+  res.json({ failures: passFailures() });
+});
+testSupportRouter.delete("/test-support/pass-failures", (_req, res) => {
+  clearPassFailures();
+  res.status(204).end();
 });
 
 // What one workspace carries (db/workspace-shape.ts), for the parity test
@@ -402,44 +416,25 @@ testSupportRouter.post("/test-support/terminate-tenant-backends", async (req, re
 
 // The pools' counts with NO database round trip, so a test can watch a pool
 // starve without joining the queue it is watching (#3033).
-testSupportRouter.get("/test-support/pool-stats", (_req, res) => {
-  res.json({ meta: poolCounts(metaPool), tenants: tenantPoolStats() });
+// The counts, and who holds each meta client that is checked out (which code
+// took it, what it last ran, for how long): the CI sampler reads this the
+// moment it sees a caller waiting, so a starved suite names its holder (#4876).
+// What one probed request asked the meta database: the request sent
+// `x-meta-probe: <id>`, this answers once it has finished (#4876).
+testSupportRouter.get("/test-support/meta-probe/:id", (req, res) => {
+  const p = readProbe(req.params.id!);
+  if (!p) {
+    res.status(404).json({ error: { code: "not_found", message: "no finished request carried that probe" } });
+    return;
+  }
+  res.json(p);
 });
 
-// Check out EVERY meta client and hold them for `ms`, the shape of the dev
-// rig's hang (#3033), so a test can prove what the api does while the meta
-// pool has nothing to give: the counts say so, and a request waits no longer
-// than the pool's connect timeout. Capped at 5 s and answered once the
-// clients are held; they go back on their own. Test-only, mounted under the
-// same flag. The api CI runs is shared by the suite's forks, so the suite's
-// hold (1.5 s) stays shorter than the pool's connect timeout and every other
-// request merely waits; a throwaway api proves the timeout itself with a
-// hold longer than it. Capped at 15 s either way.
-testSupportRouter.post("/test-support/starve-meta", async (req, res, next) => {
-  try {
-    const { ms } = (req.body ?? {}) as { ms?: number };
-    if (typeof ms !== "number" || ms < 0 || ms > 15_000) {
-      res.status(400).json({ error: { code: "bad_body", message: "ms (0..15000) required" } });
-      return;
-    }
-    const max = metaPool.options.max ?? 10;
-    let clients;
-    try {
-      clients = await holdClients(metaPool, max);
-    } catch (err) {
-      // A busy pool could not hand over every client in time. The ones it
-      // did hand over are back already (holdClients), so nothing is stranded.
-      res.status(503).json({ error: { code: "pool_busy", message: `could not hold every meta client: ${(err as Error).message}` } });
-      return;
-    }
-    setTimeout(() => {
-      for (const c of clients) c.release();
-    }, ms).unref();
-    res.json({ held: clients.length, ms });
-  } catch (err) {
-    next(err);
-  }
+testSupportRouter.get("/test-support/pool-stats", (_req, res) => {
+  const meta = poolCounts(metaPool);
+  res.json({ meta, tenants: tenantPoolStats(), meta_holders: meta.waiting > 0 ? poolHolders(metaPool).slice(0, 12) : [], meta_peak: poolPeak(metaPool) });
 });
+
 
 // An action whose handler THROWS, so a test can prove what the invoke route
 // answers for a handler failure: `result.ok:false` with the handler's own

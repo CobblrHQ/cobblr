@@ -225,8 +225,11 @@ export async function derivedQueryFor(
   const meta = (fields.metadata ?? {}) as Record<string, unknown>;
   const merged = { ...meta, ...fields };
   const brand = typeof merged.manufacturer === "string" ? (merged.manufacturer as string) : null;
+  const laser = "bed_size_laser" in merged || "tube_type" in merged;
+  const model = typeof merged.family === "string" ? merged.family.trim() : "";
+  const hardwareName = laser ? model && brand?.trim() ? `${model} laser cutter` : null : e.title;
   return {
-    query: deriveImageQuery({ name: e.title, brand, fields: merged, override: override ?? null, collection: e.instance ?? null }),
+    query: deriveImageQuery({ name: hardwareName, brand, fields: merged, override: override ?? null, collection: e.instance ?? null }),
     brand,
     name: e.title,
     resolved: true,

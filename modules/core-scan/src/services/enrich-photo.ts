@@ -1515,10 +1515,16 @@ export function intakeVerdict(shape: ReceiptShape, outcome: IdentifyOutcome | nu
  *  branched on without matching a sentence; this can. The shape verdict rides
  *  along so a session can say which step decided. */
 async function markReadingReceipt(ctx: PhotoEnrichContext, note: string, decided: "shape" | "model", shape: ReceiptShape): Promise<void> {
-  await patchNote(ctx, note);
+  // ONE statement (#4890, torn status writes): the note and its finish time
+  // used to land first and "reading a receipt" a statement later, so a card
+  // polled in between read "finished, no name, not a receipt" and flashed
+  // "couldn't identify". State and payload change together or not at all.
   await ctx.db
     .updateTable("core_scan_inbox_items")
     .set({
+      ai_notes: note,
+      ai_suggested_at: new Date(),
+      updated_at: new Date(),
       suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({
         reading_receipt: true,
         receipt_decided_by: decided,

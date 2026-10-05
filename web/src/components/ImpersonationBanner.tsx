@@ -71,7 +71,7 @@ export function ImpersonationBanner() {
     try {
       await api.request("PATCH", `/super-admin/impersonations/${imp.session_id}`, { ended: true });
     } catch {
-      /* end is best-effort; the token expires regardless */
+      /* quiet: ending is best-effort; the token expires regardless */
     }
     clearImpersonation();
     window.location.assign("/admin");

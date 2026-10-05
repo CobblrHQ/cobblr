@@ -38,6 +38,7 @@ import {
 } from "../lib/api";
 import { ADMIN_SECTIONS, isAdminSection, type AdminSectionId } from "../lib/adminSections";
 import { TokenManager } from "../components/TokenManager";
+import { SignInSettingsTab } from "../components/SignInSettingsTab";
 import { ScanResolversTab } from "../components/ScanResolversTab";
 import { PayloadView, usageLine } from "../components/PayloadView";
 import { FeedbackCard, FEEDBACK_STATUSES, fbStatusLabel, type FeedbackSourceItem } from "@cobblr/platform-web";
@@ -80,6 +81,7 @@ export function AdminConsole() {
       {active === "ai" && <AiActivityTab />}
       {active === "barcodes" && <BarcodeCacheTab />}
       {active === "tokens" && <TokenManager variant="operator" />}
+      {active === "sign-in" && <SignInSettingsTab />}
       {active === "scaneval" && <ScanEvalTab />}
       {active === "scan-resolvers" && <ScanResolversTab />}
       {active === "impersonation" && <ImpersonationLogTab />}

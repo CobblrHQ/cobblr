@@ -51,6 +51,8 @@ export interface DecodeResult {
 export interface IdentifierDecoder {
   /** Stable id: "upc", "vin", later "isbn", "hin". */
   id: string;
+  preserveCase?: boolean;
+  entityType?: "asset" | "part";
   /** Pure shape test: is this MY kind of code? No I/O, no side effects. */
   matches(code: string): boolean;
   /** Do the external lookup + classify. Pure of persistence — caching is the

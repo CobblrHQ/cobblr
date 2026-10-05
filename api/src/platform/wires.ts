@@ -356,7 +356,7 @@ async function fireBindings(
         // said as such, so a feed can leave it out.
         try {
           const acted = actionActed(result);
-          const r = (result ?? {}) as { summary?: unknown; error?: unknown; skipped?: unknown };
+          const r = (result ?? {}) as { summary?: unknown; error?: unknown; skipped?: unknown; subject?: unknown; activity_label?: unknown };
           const said = acted && typeof r.summary === "string" && r.summary.trim() && !r.summary.trim().startsWith("{") ? r.summary.trim().slice(0, 200) : null;
           await logActivity({
             orgId,
@@ -366,7 +366,8 @@ async function fireBindings(
             diff: {
               event: eventName,
               action: b.action_id,
-              action_label: viaLabel,
+              action_label: typeof r.activity_label === "string" ? r.activity_label : viaLabel,
+              ...(r.subject && typeof r.subject === "object" ? { subject: r.subject } : {}),
               ...(said ? { said } : {}),
               ...(!acted ? { declined: true, ...(typeof r.error === "string" ? { reason: r.error.slice(0, 200) } : {}) } : {}),
               source_kind: b.source_kind,

@@ -1,3 +1,4 @@
+import { groupListRows } from "@cobblr/platform-contract/grouped-list";
 // Entity-kind resolvers — let other modules + core-views read knowledge entries
 // via platform().entities.lookup()/list() without knowing our table.
 
@@ -31,7 +32,7 @@ export function registerKnowledgeResolvers(): void {
     const pinned = query.filter?.pinned;
     if (pinned === true || pinned === "true") q = q.where("pinned", "=", true);
     if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["title", "body", "kind"] })!);
-    const rows = await q
+    const rows = (await groupListRows(db, q .orderBy("updated_at", "desc"), query)) ?? await q
       .limit(Math.min(query.limit ?? 50, 500))
       .offset(query.offset ?? 0)
       .orderBy("updated_at", "desc")

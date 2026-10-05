@@ -5,10 +5,12 @@
 // parts_per_plate; target_qty is immutable after creation (PFM semantics) but
 // completed_qty is operator-editable with reopen/close guardrails.
 
+import { isLayoutFile } from "../laser-plans.js";
 import { Router } from "express";
 import { markJobTerminal } from "../jobs-core.js";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
+import { readSnapshot } from "@cobblr/platform-contract/torn-reads";
 import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { kickAssign } from "../assign-worker.js";
@@ -20,14 +22,20 @@ runsRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     const db = tenantDb(req);
-    const runs = await db.selectFrom("digifab_production_runs").selectAll().orderBy("created_at", "desc").execute();
-    const jobs = runs.length
-      ? await db
-          .selectFrom("digifab_jobs")
-          .select(["run_id", "status", "run_outcome"])
-          .where("run_id", "in", runs.map((r) => r.id))
-          .execute()
-      : [];
+    // One snapshot (#4893, torn reads): a verdict claims the job and counts the
+    // run in one transaction, so two separate reads could see one without the
+    // other, a plate counted twice or nowhere.
+    const { runs, jobs } = await readSnapshot(db, async (snap) => {
+      const runs = await snap.selectFrom("digifab_production_runs").selectAll().orderBy("created_at", "desc").execute();
+      const jobs = runs.length
+        ? await snap
+            .selectFrom("digifab_jobs")
+            .select(["run_id", "status", "run_outcome"])
+            .where("run_id", "in", runs.map((r) => r.id))
+            .execute()
+        : [];
+      return { runs, jobs };
+    });
     res.json({
       items: runs.map((r) => {
         const mine = jobs.filter((j) => j.run_id === r.id);
@@ -35,6 +43,7 @@ runsRouter.get(
           id: r.id,
           name: r.name,
           pool_id: r.pool_id,
+          laser_plan_id: r.laser_plan_id,
           file_id: r.file_id,
           file_ref: r.file_ref,
           parts_per_plate: r.parts_per_plate,
@@ -82,6 +91,7 @@ runsRouter.post(
     const orgId = tenantContext(req).org.id;
     const db = tenantDb(req);
 
+    if (await isLayoutFile(db, b.file_id)) return void res.status(409).json({ error: { code: "layout_copy", message: "Make a new laser plan instead of copying a sheet project into another run." } });
     const pool = await db.selectFrom("digifab_pools").select(["id"]).where("id", "=", b.pool_id).executeTakeFirst();
     if (!pool) {
       res.status(404).json({ error: { code: "pool_not_found", message: "That pool doesn't exist." } });
@@ -144,6 +154,7 @@ runsRouter.patch(
     const b = parsed.data;
     const orgId = tenantContext(req).org.id;
     const db = tenantDb(req);
+    // state-flips-last: a writer reading the run it is about to change, not a status answer
     const run = await db.selectFrom("digifab_production_runs").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
     if (!run) {
       res.status(404).json({ error: { code: "not_found", message: "No such run." } });
@@ -190,6 +201,10 @@ runsRouter.patch(
       }
     }
     if (finalStatus === "active") await kickAssign(orgId);
+    if (["cancelled", "completed"].includes(finalStatus) && run.laser_plan_id) {
+      const neverStarted = await db.selectFrom("digifab_jobs").select("laser_layout").where("run_id", "=", run.id).where("status", "=", "cancelled").where("sent_at", "is", null).where("remote_job_id", "is", null).execute();
+      for (const job of neverStarted) if (job.laser_layout) await db.deleteFrom("digifab_laser_sheet_claims").where("plan_id", "=", job.laser_layout.plan_id).where("part_id", "=", job.laser_layout.sheet_id).execute();
+    }
     res.json({ id: run.id, status: finalStatus, completed_qty: set.completed_qty ?? run.completed_qty });
   }),
 );

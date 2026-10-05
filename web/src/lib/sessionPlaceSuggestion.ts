@@ -25,15 +25,26 @@ export function reasonOf(note: string | null | undefined): string | null {
   return m ? m[1]!.trim() : null;
 }
 
+/** A row's suggested place, with why, or null. A place the system offers
+ *  with no reason recorded is not shown and not used: a person cannot judge
+ *  a bare "suggested", and it reads as a guess or a leftover (#4933). */
+export function suggestedPlace(r: { suggested_location_id?: string | null; suggested_location_note?: string | null }): { id: string; place: string; why: string } | null {
+  if (!r.suggested_location_id) return null;
+  const why = reasonOf(r.suggested_location_note);
+  if (!why) return null;
+  return { id: r.suggested_location_id, place: placeOf(r.suggested_location_note) ?? "", why };
+}
+
 /** The place most of the session's unplaced waiting rows are suggested,
  *  or null when none is. Pure. */
 export function sessionPlaceSuggestion(rows: readonly Row[]): PlaceSuggestion | null {
   const votes = new Map<string, { n: number; reason: string | null }>();
   for (const r of rows) {
-    if (r.status !== "pending" || r.target_location_id || !r.suggested_location_id) continue;
-    const v = votes.get(r.suggested_location_id) ?? { n: 0, reason: reasonOf(r.suggested_location_note) };
+    const s = suggestedPlace(r);
+    if (r.status !== "pending" || r.target_location_id || !s) continue;
+    const v = votes.get(s.id) ?? { n: 0, reason: s.why };
     v.n++;
-    votes.set(r.suggested_location_id, v);
+    votes.set(s.id, v);
   }
   let best: [string, { n: number; reason: string | null }] | null = null;
   for (const e of votes) if (!best || e[1].n > best[1].n) best = e;
@@ -50,20 +61,26 @@ export function placeOf(note: string | null | undefined): string | null {
 /** The distinct places a session's unplaced rows are suggested, as the person
  *  reads them. A count in the header expands to this (#4582). Pure. */
 export function suggestedPlaceNames(rows: readonly Row[]): string[] {
-  const names = new Map<string, string>();
+  return [...new Set(suggestedPlaces(rows).map((p) => p.place))];
+}
+
+/** The distinct places a session's unplaced rows are suggested, each with
+ *  why. Pure. */
+export function suggestedPlaces(rows: readonly Row[]): Array<{ place: string; why: string }> {
+  const out = new Map<string, { place: string; why: string }>();
   for (const r of rows) {
-    if (r.target_location_id || !r.suggested_location_id) continue;
-    if (!names.has(r.suggested_location_id)) names.set(r.suggested_location_id, placeOf(r.suggested_location_note) ?? "a suggested place");
+    const s = r.target_location_id ? null : suggestedPlace(r);
+    if (s && !out.has(s.id)) out.set(s.id, { place: s.place, why: s.why });
   }
-  return [...new Set(names.values())];
+  return [...out.values()];
 }
 
 /** The place the session's filing line names ("Add 1 to Spices, in Kitchen ›
  *  Spice rack"): the one the session is set to, else the suggestion filing will
  *  use, said as a suggestion. Null when there is nothing to name (#4582). */
-export function placeForFilingLine(setPlace: string | null, suggested: readonly string[]): string | null {
+export function placeForFilingLine(setPlace: string | null, suggested: ReadonlyArray<{ place: string; why: string }>): string | null {
   if (setPlace) return setPlace;
-  if (suggested.length === 1) return `${suggested[0]} (suggested)`;
-  if (suggested.length > 1) return `${suggested.length} suggested places`;
+  if (suggested.length === 1) return `${suggested[0]!.place} (${suggested[0]!.why})`;
+  if (suggested.length > 1) return `${suggested.length} places, each item's own`;
   return null;
 }

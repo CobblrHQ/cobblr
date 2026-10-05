@@ -1,3 +1,4 @@
+import { groupListRows } from "@cobblr/platform-contract/grouped-list";
 import { registerDeletedPlacesHeal } from "../heal-deleted-records.js";
 // Entity-kind resolvers for core-locations. Lets every module that
 // references a location_id resolve it back to a human-displayable
@@ -63,7 +64,7 @@ export function registerLocationsResolvers(): void {
           q = q.where(sql<boolean>`metadata ->> ${key} = ${String(val)}`);
         }
       }
-      const rows = await q
+      const rows = (await groupListRows(db, q.orderBy("depth").orderBy("position").orderBy("name"), query)) ?? await q
         // Match the /locations list endpoint's order EXACTLY so the user's
         // manual sibling order (set by drag → `position`) is honoured
         // EVERYWHERE locations surface through the generic layer — pickers,

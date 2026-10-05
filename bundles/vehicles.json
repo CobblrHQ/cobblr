@@ -2,12 +2,17 @@
   "manifest": {
     "id": "cobblr.flagship.vehicles",
     "name": "Vehicles",
-    "version": "0.4.5",
+    "version": "0.4.8",
     "description": "Your vehicles as their own table - make/model/year, VIN, mileage, plate - with service logs (oil, tires, brakes) and next-due dates on your calendar. Replaces a glovebox folder of receipts and a sticky note on the windshield.",
     "author": "Cobblr",
     "released_at": "2026-07-13",
     "changelog": "Mileage counts as the vehicle's use, so a bill of sale's odometer reading fills it when it is empty, and a service schedule can fall due every so many miles. Earlier changes below.: The licence plate is a vehicle's identity, like its VIN: two scans with different plates are never taken for one car, and a typed plate finds the car you already have. Earlier changes below.: Renamed to Vehicles and given its OWN table (an assets instance), not generic Assets with extra columns - its own nav entry, a “New vehicle” button, and only the fields a vehicle needs (VIN, make, model, year, trim, mileage, fuel, color). Service logs come from core-maintenance; scan a VIN and it fills the whole record.",
     "releases": [
+      {
+        "version": "0.4.8",
+        "released_at": "2026-10-05",
+        "notes": "Track registration and inspection expiry dates, renew without losing time, and choose when reminders arrive."
+      },
       {
         "version": "0.4.5",
         "released_at": "2026-10-02",
@@ -148,6 +153,42 @@
             "display_label": "Color",
             "type": "text",
             "position": 6
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "registration_expires",
+            "display_label": "Registration expires",
+            "type": "date",
+            "position": 7
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "registration_number",
+            "display_label": "Registration number",
+            "type": "text",
+            "field_role": "identifier",
+            "position": 8
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "registration_state",
+            "display_label": "Registration region",
+            "type": "text",
+            "position": 9
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "inspection_expires",
+            "display_label": "Inspection expires",
+            "type": "date",
+            "position": 10
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "inspection_station",
+            "display_label": "Inspection station",
+            "type": "text",
+            "position": 11
           }
         ],
         "field_overrides": [

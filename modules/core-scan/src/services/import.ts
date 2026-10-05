@@ -109,69 +109,8 @@ export interface ParsedImport {
 
 // ── RFC 4180 CSV ─────────────────────────────────────────────────────────────
 
-/** Parse CSV text into rows of cells. Handles quoted cells with embedded
- *  commas, doubled quotes, and newlines (LF or CRLF). */
-export function parseCsv(text: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let cell = "";
-  let inQuotes = false;
-  let i = 0;
-  const push = () => {
-    row.push(cell);
-    cell = "";
-  };
-  const endRow = () => {
-    push();
-    rows.push(row);
-    row = [];
-  };
-  while (i < text.length) {
-    const c = text[i]!;
-    if (inQuotes) {
-      if (c === '"') {
-        if (text[i + 1] === '"') {
-          cell += '"';
-          i += 2;
-          continue;
-        }
-        inQuotes = false;
-        i++;
-        continue;
-      }
-      cell += c;
-      i++;
-      continue;
-    }
-    if (c === '"') {
-      inQuotes = true;
-      i++;
-      continue;
-    }
-    if (c === ",") {
-      push();
-      i++;
-      continue;
-    }
-    if (c === "\r" && text[i + 1] === "\n") {
-      endRow();
-      i += 2;
-      continue;
-    }
-    if (c === "\n") {
-      endRow();
-      i++;
-      continue;
-    }
-    cell += c;
-    i++;
-  }
-  // Trailing cell/row (no final newline).
-  if (cell.length > 0 || row.length > 0) endRow();
-  // Drop a fully-empty trailing row (file ended with a newline).
-  if (rows.length && rows[rows.length - 1]!.every((c) => c === "")) rows.pop();
-  return rows;
-}
+import { parseCsv } from "@cobblr/platform-contract/csv";
+export { parseCsv } from "@cobblr/platform-contract/csv";
 
 // ── Header → canonical field resolution ──────────────────────────────────────
 

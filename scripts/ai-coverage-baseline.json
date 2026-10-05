@@ -520,11 +520,6 @@
     "path": "/tick"
   },
   {
-    "file": "modules/core-scan/src/api/decode.ts",
-    "method": "post",
-    "path": "/decode"
-  },
-  {
     "file": "modules/core-scan/src/api/entity-image.ts",
     "method": "post",
     "path": "/entity-image"

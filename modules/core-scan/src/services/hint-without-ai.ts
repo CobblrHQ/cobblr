@@ -165,6 +165,7 @@ export function registerAiRerunSweep(): void {
             ...(q.hints ? { hints: q.hints } : {}),
           });
         } catch (err) {
+          platform().health.notePassFailure("core-scan.hint-without-ai", orgId, err);
           console.error(`[core-scan] org ${orgId} row ${r.id}: queued AI re-run failed:`, (err as Error).message);
         }
       }

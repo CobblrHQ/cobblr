@@ -28,8 +28,10 @@ export function registerESPHomeSweep(): void {
               const reading = await driver?.readSensor?.(entity.id);
               if (!reading) continue;
               await applyToLinkedEntity(orgId, { connection: device.id, device: entity.id, ...reading });
+            // pass-catch: a sensor that has not sampled yet is read again next round
             } catch { /* A sensor may not have sampled yet; the next round reads it again. */ }
           }
+        // pass-catch: a bridge being offline is the device's state, shown on the device, not a failure of the sweep
         } catch { /* A bridge being offline must not stop another device's readings. */ }
       }
     },

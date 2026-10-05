@@ -150,8 +150,11 @@ export async function bringBack(
   const done: GoneOutcome[] = [];
   for (const ent of found) {
     const before = readRecordDisposition(((ent.fields ?? {}) as Record<string, unknown>).metadata);
-    await writer.unretire(orgId, ent.id);
+    // The mark first, then back in the lists: a reader in between then sees a
+    // record not listed yet, never one listed and still "given away" (CI
+    // caught a Send back read in that window, run 36927).
     await platform().entities.mergeMetadata(orgId, kind, ent.id, { [DISPOSITION_KEY]: null });
+    await writer.unretire(orgId, ent.id);
     await activity.log({
       orgId,
       userId,

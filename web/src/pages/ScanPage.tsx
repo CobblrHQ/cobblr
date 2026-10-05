@@ -35,7 +35,7 @@ import { } from "../panels/registry";
 import { LocationChipPicker } from "../components/LocationChipPicker";
 import { SessionLocationModal } from "../components/SessionLocationModal";
 import { committedGroupsOf, sendBackIdsOf } from "../lib/committedGroups";
-import { placeForFilingLine, sessionPlaceSuggestion, suggestedPlaceNames } from "../lib/sessionPlaceSuggestion";
+import { placeForFilingLine, sessionPlaceSuggestion, suggestedPlaceNames, suggestedPlaces } from "../lib/sessionPlaceSuggestion";
 import { OrganizePlanSheet, SortingPlanView } from "../components/OrganizePlanSheet";
 import { OrganizeWalkSheet } from "../components/OrganizeWalkSheet";
 import { LiveSortSheet } from "../components/LiveSortSheet";
@@ -1379,7 +1379,7 @@ export function ScanPage() {
           const fullIds = sendBackIdsOf(full.items ?? []);
           if (fullIds.length) ids = Array.from(new Set([...ids, ...fullIds]));
         } catch {
-          /* fall back to the visible ids */
+          /* quiet: fall back to the visible ids, which Send back names */
         }
       }
       const result = await revertIds(ids);
@@ -1491,7 +1491,7 @@ export function ScanPage() {
               return;
             }
           } catch {
-            /* contents unavailable → normal filing flow */
+            /* quiet: contents unavailable, so the normal filing flow */
           }
           const items = locsQ.data?.items ?? [];
           const byId = new Map(
@@ -1501,21 +1501,25 @@ export function ScanPage() {
             ]),
           );
           const decision = decideLocationScan(locId, fileBin || null, byId);
+          // Nesting is the scanner's idea: when it cannot (a cycle, no
+          // permission) filing goes on, and the toast says it did not nest.
+          let nestFailed: string | null = null;
           if (decision.reparent) {
             try {
               await api.updateLocation(activeSlug, decision.reparent.child, {
                 parent_id: decision.reparent.parent,
               });
               await locsQ.refetch();
-            } catch {
-              /* cycle / permission — fall back to a plain adopt */
+            } catch (e) {
+              nestFailed = e instanceof Error ? e.message : "";
             }
           }
           setFileBin(decision.bin);
           const b = byId.get(decision.bin);
           const nm = b ? filingLabel(b) : "location";
           const p = decision.reparent ? byId.get(decision.reparent.parent) : null;
-          toast.success(p ? `Filed ${nm} in ${filingLabel(p)}. Filing into ${nm}` : `Filing into ${nm}`);
+          if (p && nestFailed !== null) toast.error(`Could not put ${nm} in ${filingLabel(p)}${nestFailed ? `: ${nestFailed}` : ""}. Filing into ${nm}`);
+          else toast.success(p ? `Filed ${nm} in ${filingLabel(p)}. Filing into ${nm}` : `Filing into ${nm}`);
           return;
         }
         wedgeScan.mutate(code);
@@ -1850,12 +1854,14 @@ export function ScanPage() {
     setBulkLocOpen(false);
     const ids = explicitIds ?? [...selected];
     let ok = 0;
+    let lastFailure: string | null = null;
     for (const id of ids) {
       try {
         await api.updateScanItem(activeSlug, id, { target_location_id: locId });
         ok++;
-      } catch {
-        /* skip failures */
+      } catch (e) {
+        // Keep going with the rest; the summary says how many did not move.
+        lastFailure = e instanceof Error ? e.message : "";
       }
     }
     setBulkBusy(false);
@@ -1863,18 +1869,22 @@ export function ScanPage() {
     void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
     const name = (locsQ.data?.items ?? []).find((l) => l.id === locId);
     toast.success(`Filed ${ok} item${ok === 1 ? "" : "s"} into ${name ? filingLabel(name) : "the location"}.`);
+    if (ok < ids.length) toast.error(`${ids.length - ok} item${ids.length - ok === 1 ? "" : "s"} did not move${lastFailure ? `: ${lastFailure}` : ""}.`);
   };
   const bulkDiscard = async () => {
     setBulkBusy(true);
     const done: string[] = [];
+    let lastFailure: string | null = null;
     for (const id of selected) {
       try {
         await api.discardScanItem(activeSlug, id);
         done.push(id);
-      } catch {
-        /* skip failures; summary reflects what landed */
+      } catch (e) {
+        // Keep going; the summary says how many stayed.
+        lastFailure = e instanceof Error ? e.message : "";
       }
     }
+    if (done.length < selected.size) toast.error(`${selected.size - done.length} item${selected.size - done.length === 1 ? "" : "s"} could not be removed${lastFailure ? `: ${lastFailure}` : ""}.`);
     setBulkBusy(false);
     const tickAgain = clearTicks();
     void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
@@ -2208,6 +2218,7 @@ export function ScanPage() {
           // The match is stamped at scan time and the entity can be gone by
           // now. A stale match must not cost the item its filing: fall through
           // and create it, which is what would have happened anyway.
+          // quiet: filing it as new is what would have happened anyway.
           console.warn("[scan] merge into existing failed, filing as new:", e);
         }
       }
@@ -4244,6 +4255,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       missing={sessionLoc.missing}
                       suggested={sessionLoc.suggested}
                       suggestedNames={suggestedPlaceNames(placeItems)}
+                      suggestedWhy={suggestedPlaces(placeItems).length === 1 ? suggestedPlaces(placeItems)[0]!.why : null}
                       mixed={sessionLoc.mixed}
                       placeName={sessionLocName ? filingLabel(sessionLocName) : null}
                       onClick={(e) => {
@@ -4460,7 +4472,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                     // What the button cannot hold, and a phone has no tooltip:
                     // every destination, what turning a collection on means,
                     // and the session's place (#4577).
-                    const caption = sessionAddCaption(readyIds.length, sessionAction.tables, sessionAction.off, placeForFilingLine(sessionLocName ? filingLabel(sessionLocName) : null, suggestedPlaceNames(placeItems)));
+                    const caption = sessionAddCaption(readyIds.length, sessionAction.tables, sessionAction.off, placeForFilingLine(sessionLocName ? filingLabel(sessionLocName) : null, suggestedPlaces(placeItems)));
                     return caption ? (
                       <div data-testid="session-add-caption" className="px-2.5 text-[11px] text-muted dark:text-slate-400">
                         {caption}

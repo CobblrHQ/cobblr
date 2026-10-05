@@ -8,7 +8,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "purchases",
-  version: "0.12.1",
+  version: "0.12.2",
   displayName: "Purchases",
   description:
     "Orders you placed and what they cost, with each line tied to the parts it bought and what they went into.",
@@ -153,6 +153,18 @@ export default defineModule({
       "purchases.vendor.created",
     ],
     actions: [
+      {
+        id: "purchases:plan-order", group: "buy", label: "Plan an order", examples: ["plan an order for these parts", "track this fabrication order"],
+        description: "Create a planned purchase with lines, expected arrival, tracking and an optional source file. request_key makes retries safe. add_to_stock is false for scanned component receiving and true for blank board stock. No supplier order is submitted.",
+        scope: "workspace" as const, invokeHandler: "purchases.plan-order", userInvokable: true,
+        argsSchema: {
+          request_key: { label: "Stable request key", type: "text", required: true }, vendor: { label: "Vendor", type: "text", required: true },
+          lines: { label: "Order lines with description, qty and optional part_id", type: "json", required: true },
+          add_to_stock: { label: "Add stock on arrival", type: "boolean", required: true },
+          expected_arrival: { label: "Expected date", type: "text" }, tracking_number: { label: "Tracking number", type: "text" },
+          source_file_id: { label: "Uploaded source file", type: "text" }, notes: { label: "Notes", type: "text" },
+        },
+      },
       {
         // NO-PHRASING: the way back for another action, run only from Undo
         group: "buy",

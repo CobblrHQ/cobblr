@@ -1,3 +1,4 @@
+import { dedupeActivity, activityActor, ACTIVITY_VERBS } from "@cobblr/platform-contract/activity-summary";
 // Dashboard — landing page once authed. Shows what's actually IN
 // this workspace, not what could be in any workspace. Three bands:
 //
@@ -22,10 +23,9 @@ import { isSandboxSession } from "../lib/sandbox-session";
 import { BringInBackup } from "../components/BringInBackup";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { activityKind } from "../lib/activityKind";
-import { AUTOMATION_ACTIONS, activityVerb, actorWords, automationWords, foldOneThingsRows, hiddenFromDashboard } from "../lib/activity-words";
-import { ACTIVITY_ROW, ACTOR_CELL, GroupActorVia, ITEM_CELL } from "../components/ActorVia";
+import { AUTOMATION_ACTIONS, activityVerb, actorWords, automationWords, hiddenFromDashboard } from "../lib/activity-words";
 import { useKindLabels } from "../lib/useKindLabels";
-import { ActivitySentence, activityTitle, pickString, type KindLabels } from "../components/ActivitySentence";
+import { ActivitySentence, ActivityThumbnail, ACTIVITY_FEED_LAYOUT, pickString, type KindLabels } from "../components/ActivitySentence";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, CheckCircle2, ChevronDown, Compass, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Pin, Sliders, X } from "lucide-react";
@@ -67,7 +67,6 @@ import { PendingAiShareCallout } from "../components/PendingAiShareCallout";
 import { useNavModules, topDoor } from "../components/useNavModules";
 import { HeatmapRenderer } from "./ViewsPage";
 import { liveNextStepLabel } from "../lib/featured-bundles";
-import { FEED_SCROLL } from "../lib/feed";
 import {
   api,
   getToken,
@@ -2076,6 +2075,7 @@ function PinnedView({
 const ACTIVITY_NOISE = new Set(["org_module", "org", "user", "tenant"]);
 
 function RecentActivity({ slug, editing = false }: { slug: string; editing?: boolean }) {
+  const [visibleCount, setVisibleCount] = useState(5);
   const { ready, hasContent } = useWorkspaceContentProbe(slug);
   const labels = useKindLabels(slug);
   const q = useQuery({
@@ -2087,9 +2087,9 @@ function RecentActivity({ slug, editing = false }: { slug: string; editing?: boo
   // only ids, an action that found nothing to do) is not shown here; the
   // full /activity log keeps it (#3299).
   const items = (q.data?.items ?? []).filter(
-    (e) => !ACTIVITY_NOISE.has(e.entity_type ?? "") && !hiddenFromDashboard(e),
+    (e) => !ACTIVITY_NOISE.has(e.entity_type ?? "") && !e.hidden && !hiddenFromDashboard(e),
   );
-  const groups = groupActivity(foldOneThingsRows(items));
+  const groups = groupActivity(dedupeActivity(items));
   // A workspace with no content has no activity by definition: hide the whole
   // section rather than open the first dashboard with "no activity yet"
   // (new-user-flow.md F3). Arrange mode still shows it so it stays orderable.
@@ -2102,12 +2102,8 @@ function RecentActivity({ slug, editing = false }: { slug: string; editing?: boo
         <div className="text-xs text-faint italic">no activity yet</div>
       )}
       {groups.length > 0 && (
-        // Capped + scrollable: recent activity was the single longest element on
-        // the page (it renders every group), so it's bounded to a fixed height and
-        // scrolls internally — glanceable without dominating the page (reported
-        // 2026-07-26).
-        <ul className={"rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 divide-y divide-line dark:divide-slate-800 " + FEED_SCROLL}>
-          {groups.map((g) => {
+        <ul className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 divide-y divide-line dark:divide-slate-800" data-testid="activity-feed">
+          {groups.slice(0, visibleCount).map((g) => {
             const first = g.items[0];
             if (!first) return null;
             return g.items.length === 1 ? (
@@ -2116,6 +2112,13 @@ function RecentActivity({ slug, editing = false }: { slug: string; editing?: boo
               <ActivityGroupRow key={first.id} group={g} labels={labels} />
             );
           })}
+          {visibleCount < groups.length && (
+            <li>
+              <button type="button" className="w-full px-3 py-2 text-sm text-accent hover:bg-subtle dark:hover:bg-slate-800/40" onClick={() => setVisibleCount(count => count + 5)}>
+                Show more
+              </button>
+            </li>
+          )}
         </ul>
       )}
     </section>
@@ -2135,9 +2138,9 @@ interface ActivityGroup {
 function groupActivity(items: ActivityEntry[]): ActivityGroup[] {
   const out: ActivityGroup[] = [];
   for (const e of items) {
-    const sig = `${actorWords(e)}|${e.action}|${e.entity_type ?? ""}`;
+    const sig = `${e.user_id ?? actorWords(e)}|${e.template ?? e.action}|${e.subject?.kind ?? e.entity_kind ?? e.entity_type ?? ""}${AUTOMATION_ACTIONS.has(e.action) ? `|${e.id}` : ""}`;
     const last = out[out.length - 1];
-    if (last && last.signature === sig) {
+    if (last && last.signature === sig && Math.abs(Date.parse(last.items[0]!.occurred_at) - Date.parse(e.occurred_at)) <= 120_000) {
       last.items.push(e);
     } else {
       out.push({ signature: sig, items: [e] });
@@ -2149,12 +2152,12 @@ function groupActivity(items: ActivityEntry[]): ActivityGroup[] {
 
 function ActivityRow({ entry: e, labels }: { entry: ActivityEntry; labels: KindLabels }) {
   return (
-    <li className={`px-3 py-2 text-sm ${ACTIVITY_ROW}`}>
+    <li className={`px-3 py-2 text-sm ${ACTIVITY_FEED_LAYOUT}`} data-testid="activity-row">
+      <ActivityThumbnail entry={e} labels={labels} />
       <ActivitySentence entry={e} labels={labels} />
-      <span className="flex-1" />
-      <span className="font-mono text-[10px] text-faint shrink-0">
+      <time dateTime={e.occurred_at} className="font-mono text-[10px] text-faint whitespace-nowrap" data-testid="activity-time">
         {relativeTime(e.occurred_at)}
-      </span>
+      </time>
     </li>
   );
 }
@@ -2171,75 +2174,33 @@ function ActivityGroupRow({ group, labels }: { group: ActivityGroup; labels: Kin
   // group is recorded; and the caller only renders this for groups
   // with length > 1.
   const first = group.items[0]!;
-  const last = group.items[group.items.length - 1]!;
-  const auto = AUTOMATION_ACTIONS.has(first.action) ? automationWords(first) : null;
-  const action = auto ? "" : activityVerb(first.action);
-  // The summary must not LIE: "created K1 Max ×2" for two different machines
-  // read as two copies of K1 Max. Distinct identities → summarize by entity kind
-  // ("2 machines"); identical → keep the identity (a true ×N of one thing).
-  // Wires carry no title/name/label — their identity is the "<event> → <action>"
-  // path, so a burst of identical wire-fires collapses to that path instead of a
-  // bare "N bindings —" with nothing after the dash (feedback 6c87c6e2).
-  const ids = group.items.map(activityIdentity);
-  const allSame = ids.every((t) => t === ids[0] && t !== "");
-  // The collection's own noun ("3 books"), not the module's type ("3 parts"
-  // about a shelf of books, 2026-09-12).
-  const noun = labels.noun(activityKind(first));
+  const ids = group.items.map(e => e.subject?.title ?? activityIdentity(e));
   const distinct = [...new Set(ids.filter(Boolean))];
-  const summary = auto ? (
-    // A burst of one automation: its label once, the count beside it, never
-    // six sentences or one event id ("Looked up photos" for 6 items).
-    <>{auto.hidden ? null : (auto.label ?? auto.said)}</>
-  ) : allSame ? (
-    <>{activityTitle(first, labels)}</>
-  ) : (
-    <>
-      <strong>{group.items.length}</strong> {group.items.length === 1 ? noun : labels.plural(activityKind(first))}
-      {distinct.length > 0 && (
-        <span className="text-faint dark:text-slate-400"> — {distinct.slice(0, 2).join(", ")}{distinct.length > 2 ? ", …" : ""}</span>
-      )}
-    </>
-  );
-  const spanStart = relativeTime(last.occurred_at);
-  const spanEnd = relativeTime(first.occurred_at);
+  const actor = activityActor(first, first.summary?.startsWith("You ") ? first.user_id ?? undefined : undefined);
+  const noun = first.action.startsWith("bundle_") ? "collections" : first.template === "file_created:scan" && !first.subject?.kind ? "items" : labels.plural(first.subject?.kind ?? activityKind(first));
+  const same = group.items.every(e => e.summary === first.summary && e.subject?.id === first.subject?.id);
+  const summary = same ? `${first.summary ?? `${actor} ${activityVerb(first.action)} ${ids[0]}`} ×${group.items.reduce((n, e) => n + (e.repeats ?? 1), 0)}`
+    : first.action === "bundle_installed" && !first.user_id ? `Set up for you: ${distinct.join(", ")}`
+    : `${actor} ${first.verb ?? ACTIVITY_VERBS[first.action] ?? "changed"} ${group.items.length} ${noun}${distinct.length ? `: ${distinct.slice(0, 2).join(", ")}${distinct.length > 2 ? ", …" : ""}` : ""}`;
   const rowContent = (
-    <div className={`text-sm w-full min-w-0 ${ACTIVITY_ROW}`}>
-      <span className={`text-muted dark:text-slate-400 ${ACTOR_CELL}`}>
-        <GroupActorVia entries={group.items} />
+    <div className={`text-sm w-full min-w-0 ${ACTIVITY_FEED_LAYOUT}`} data-testid="activity-row">
+      <ActivityThumbnail entry={first} labels={labels} />
+      <span className="min-w-0 line-clamp-2 text-content" data-testid="activity-item">
+        <Link to={first.subject?.href ?? "/activity"} className="hover:underline" data-testid="activity-item-link">{summary}</Link>
       </span>
-      {action && (
-        <span className="text-content dark:text-mortar-200 shrink-0">
-          {action}
-        </span>
-      )}
-      <span className={`text-content dark:text-mortar-100 ${ITEM_CELL}`} data-testid="activity-item">
-        {summary}
-        {(allSame || auto) && (
-          <span className="ml-1.5 inline-flex items-center text-[10px] font-mono uppercase tracking-widest text-accent dark:text-cobble-400 bg-cobble-50 dark:bg-cobble-900/40 rounded px-1.5 py-0.5">
-            ×{group.items.length}
-          </span>
-        )}
-      </span>
-      <span className="flex-1" />
-      <span className="font-mono text-[10px] text-faint shrink-0">
-        {spanStart === spanEnd ? spanStart : (
-          <>
-            {spanStart}
-            <span className="text-faint dark:text-slate-600"> → </span>
-            {spanEnd}
-          </>
-        )}
+      <span className="flex items-start gap-2">
+        <span aria-hidden="true" data-testid="activity-caret" className="text-faint dark:text-slate-600 text-[10px] shrink-0 group-open:rotate-90 transition-transform">▸</span>
+        <time dateTime={first.occurred_at} className="font-mono text-[10px] text-faint whitespace-nowrap" data-testid="activity-time">{relativeTime(first.occurred_at)}</time>
       </span>
     </div>
   );
   return (
     <li>
       <details className="group">
-        <summary className="list-none cursor-pointer px-3 py-2 hover:bg-subtle dark:hover:bg-slate-800/40 transition flex items-baseline gap-2">
-          <span className="text-faint dark:text-slate-600 text-[10px] shrink-0 group-open:rotate-90 transition-transform">▸</span>
+        <summary className="list-none cursor-pointer px-3 py-2 hover:bg-subtle dark:hover:bg-slate-800/40 transition">
           {rowContent}
         </summary>
-        <ul className="border-t border-line dark:border-slate-800 bg-mortar-25 dark:bg-slate-800/20 divide-y divide-line dark:divide-slate-800/40 pl-6 border-l-2 border-l-line dark:border-l-slate-700">
+        <ul className="border-t border-line dark:border-slate-800 bg-mortar-25 dark:bg-slate-800/20 divide-y divide-line dark:divide-slate-800/40">
           {group.items.map((e) => (
             <ActivityRow key={e.id} entry={e} labels={labels} />
           ))}

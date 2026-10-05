@@ -51,6 +51,7 @@ async function split(args: { orgId: string; id: string; qty: number; userId: str
     const v = (card as Record<string, unknown>)[k];
     if (v !== undefined) identity[k] = v;
   }
+  // check-then-insert: the only key is the spoolman link, which this insert never sets
   const inserted = await c.db
     .insertInto("inventory_parts")
     .values({

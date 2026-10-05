@@ -247,8 +247,8 @@ export const GENERATED_SURFACE: Capability[] = [
     ]
   },
   {
-    "feature": "Who gets told",
-    "does": "For each kind of workspace notification (things to use up, maintenance due, an order that should have arrived), choose everyone, the owners only, or specific people.",
+    "feature": "Notifications",
+    "does": "For each kind of workspace notification (things to use up, maintenance due, an order that should have arrived), choose everyone, the owners only, or specific people, and set how often overdue maintenance reminds you.",
     "where": "/configuration/notification-audiences",
     "also": [
       "notifications",

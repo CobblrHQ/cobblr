@@ -371,13 +371,23 @@ export async function recordMakeStep(
     copied_from: body.copied_from ?? null,
     updated_at: new Date(),
   };
+  // Files BEFORE a finished status (#4890, torn status writes): the step was
+  // written "done" and its files attached after, so another viewer could see
+  // a done step with nothing in it. With files to attach, the step is written
+  // "running" first (it needs an id to attach to), the files go on, and only
+  // then does it take its final status.
+  const files = body.files ?? [];
+  const finalStatus = values.status;
+  const holding = files.length > 0 && (finalStatus === "done" || finalStatus === "failed");
+  const first = holding ? { ...values, status: "running" as const } : values;
   const row = await db
     .insertInto("digifab_make_steps")
-    .values({ make_id: make.id, step, ...values })
-    .onConflict((oc) => oc.columns(["make_id", "step"]).doUpdateSet(values))
+    .values({ make_id: make.id, step, ...first })
+    .onConflict((oc) => oc.columns(["make_id", "step"]).doUpdateSet(first))
     .returning("id")
     .executeTakeFirstOrThrow();
-  for (const f of body.files ?? []) await attachToStep(db, orgId, make, row.id, f.file_id, f.role);
+  for (const f of files) await attachToStep(db, orgId, make, row.id, f.file_id, f.role);
+  if (holding) await db.updateTable("digifab_make_steps").set({ status: finalStatus, updated_at: new Date() }).where("id", "=", row.id).execute();
 
   // The slicer's grams per tool are what the print deducts, whoever sliced:
   // written onto the job the Print step points at, once there is one.

@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.58.5",
+  version: "0.58.9",
   displayName: "Scan",
   description:
     "Scan a barcode or snap a photo, and get the thing named and ready to file in one tap.",
@@ -67,6 +67,8 @@ export default defineModule({
       registerPictureColourHeal();
       const { registerUnsavedCatalogChoicesHeal } = await import("./heal-unsaved-catalog-choices.js");
       registerUnsavedCatalogChoicesHeal();
+      const { registerUnfoundedPlaceSuggestionsHeal } = await import("./heal-unfounded-place-suggestions.js");
+      registerUnfoundedPlaceSuggestionsHeal();
       // A read the AI could not do for a passing reason (busy, a limit) is
       // asked again when it answers (hint-without-ai.ts).
       const { registerAiRerunSweep } = await import("./services/hint-without-ai.js");
@@ -183,6 +185,17 @@ export default defineModule({
       },
     ],
     actions: [
+      {
+        group: "more",
+        id: "core-scan:decode-identifier",
+        examples: ["decode this package label", "read the fields in this identifier"],
+        label: "Decode identifier",
+        description: "Decode a scanned identifier into its recorded fields. Package labels decode locally; unknown formats return a miss. Args: { code }.",
+        scope: "workspace",
+        invokeHandler: "core-scan.decode-identifier",
+        userInvokable: true,
+        argsSchema: { code: { label: "Scanned identifier", type: "text", required: true } },
+      },
       {
         group: "more",
         id: "core-scan:confirm-receipt-arrival",

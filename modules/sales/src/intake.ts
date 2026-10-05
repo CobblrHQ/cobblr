@@ -94,6 +94,7 @@ export async function intakeRound(db: Kysely<SalesDB>, orgId: string, instance: 
       }, currency);
       s.cursor = page.cursor; s.job = null; s.run = randomUUID(); s.error = null; s.checked_at = new Date().toISOString();
       s.imported += counts.imported; s.duplicates += counts.duplicates;
+    // pass-catch: the error is stored on the source and shown on it
     } catch (err) {
       if (err instanceof z.ZodError) { s.job = null; s.run = randomUUID(); }
       s.error = err instanceof z.ZodError ? `The order has invalid fields: ${err.issues.map((e) => e.path.join(".")).join(", ")}. Correct the source order and check again.` : err instanceof Error ? err.message : "Intake could not finish. Check the connection and try again.";

@@ -23,8 +23,8 @@ import { EntityActionChip } from "../components/EntityActionChip";
 import { useAiStatus } from "./ScanPage";
 import { AiOffMissHint } from "./ScanInboxCard";
 import { Link, useNavigate } from "react-router-dom";
-import { filedIntoOf, needsScanReview, scanReviewReason, scanRowState, scanTrackedMatch, scanDeclinesRecord } from "@cobblr/platform-contract/scan-triage";
-import { NO_MATCH_ASK_FOR_PHOTO, STORE_CODE_TITLE, PHOTO_CHECK_NOTE, photoCheckIsLive } from "@cobblr/platform-contract/scan-copy";
+import { filedIntoOf, needsScanReview, scanReviewQuestions, scanReviewReason, scanRowState, scanTrackedMatch, scanDeclinesRecord } from "@cobblr/platform-contract/scan-triage";
+import { NO_MATCH_ASK_FOR_PHOTO, PHOTO_CHECK_NOTE, classifiedCodeOf, photoCheckIsLive } from "@cobblr/platform-contract/scan-copy";
 import { itemEnriching } from "./scan-status";
 import { ScanNameItInline } from "../components/ScanNameItInline";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
@@ -178,7 +178,19 @@ export function ScanResultModal({
   const inFlight = !!item && itemEnriching(item);
   const flagged = !!item && !inFlight && needsScanReview(item);
   const reviewReason = item && flagged ? scanReviewReason(item) : null;
-  const storeCode = (item?.suggested_metadata as { code_type?: string } | null)?.code_type === "store-code";
+  // A code the server classified as one no catalog looks up (a store's own
+  // label, an Amazon FNSKU): the contract's one reader, so the sheet and the
+  // inbox tell one story about it (#4933). Never "we couldn't find this".
+  const classified = item ? classifiedCodeOf(item.suggested_metadata) : null;
+  const storeCode = !!classified;
+  // What the row offers as a name it would not assert (a held web guess,
+  // text read off its label): the inbox card's one tap, here too.
+  const nameGuess = (() => {
+    if (!item) return null;
+    const q = scanReviewQuestions(item).find((x) => x.names);
+    const c = q?.choices[0];
+    return q && c ? { value: c.value, source: c.source, prompt: q.prompt } : null;
+  })();
   const needsName = !!item && !inFlight && !item.suggested_name;
   // A barcode the catalogs do not know. The scan was fine; the lookup came up
   // empty, so the next step is a photo of the thing, not a "retake" (the
@@ -471,7 +483,7 @@ export function ScanResultModal({
               // this bounds the whole sheet's height by construction, which is
               // what makes "no scroll" a property of the layout instead of a
               // property of whichever product you happened to scan.
-              <div className="font-medium text-content dark:text-mortar-100 line-clamp-3" title={item?.suggested_name ?? (storeCode ? STORE_CODE_TITLE : undefined)}>
+              <div className="font-medium text-content dark:text-mortar-100 line-clamp-3" title={item?.suggested_name ?? classified?.title}>
                 {item?.suggested_name ?? (
                   inFlight ? (
                     <span className="text-faint italic animate-pulse" data-state="in-flight">Identifying…</span>
@@ -517,7 +529,7 @@ export function ScanResultModal({
             inbox. Never a fabricated name, never a filing to clear the state. */}
         {needsName && (
           <div data-testid="sheet-name-it" onClick={(e) => e.stopPropagation()}>
-            <ScanNameItInline slug={activeSlug} itemId={item!.id} onNamed={(row) => setItem(row)} />
+            <ScanNameItInline slug={activeSlug} itemId={item!.id} guess={nameGuess} onNamed={(row) => setItem(row)} />
             <Link
               to={`/w/${activeSlug}/scan${item!.scan_batch_id ? `?batch=${item!.scan_batch_id}` : ""}`}
               className="mt-1 inline-block text-[11px] text-muted underline decoration-dotted underline-offset-2"

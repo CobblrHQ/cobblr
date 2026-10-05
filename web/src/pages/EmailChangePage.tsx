@@ -2,7 +2,7 @@
 // change of sign-in address (api/src/platform/email-change.ts). Public: the
 // token is the proof. Neither signs anybody in; the person signs in again.
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { CheckCircle2, XCircle } from "lucide-react";
 import { usePageTitle } from "@cobblr/platform-web";
 import { ApiError, api } from "../lib/api";
@@ -13,6 +13,8 @@ export function EmailChangePage({ mode }: { mode: "confirm" | "revert" }) {
   const { token = "" } = useParams();
   const [state, setState] = useState<"working" | "ok" | "error">("working");
   const [detail, setDetail] = useState("");
+  const [reset, setReset] = useState<string | null>(null);
+  const navigate = useNavigate();
   const ran = useRef(false);
   useEffect(() => {
     if (ran.current) return;
@@ -22,6 +24,8 @@ export function EmailChangePage({ mode }: { mode: "confirm" | "revert" }) {
       .then((r) => {
         setState("ok");
         setDetail(r.email);
+        const resetToken = (r as { reset_token?: string }).reset_token;
+        if (resetToken) setReset(resetToken);
       })
       .catch((err) => {
         setState("error");
@@ -48,14 +52,26 @@ export function EmailChangePage({ mode }: { mode: "confirm" | "revert" }) {
                   </>
                 ) : (
                   <>
-                    It signs in with <strong className="text-content dark:text-mortar-200">{detail}</strong> again, and every device
-                    was signed out. Choose a new password when you sign in.
+                    It signs in with <strong className="text-content dark:text-mortar-200">{detail}</strong> again. Every device
+                    was signed out, its API tokens and connected apps were cut off, and its old password no longer works,
+                    because whoever changed the address knew it. Choose a new one now.
                   </>
                 )}
               </p>
-              <Link to="/" className="text-sm font-medium text-accent hover:underline">
-                Sign in
-              </Link>
+              {mode === "revert" && reset ? (
+                <button
+                  type="button"
+                  data-testid="email-change-revert-set-password"
+                  onClick={() => navigate(`/reset/${reset}`)}
+                  className="rounded-md bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium"
+                >
+                  Choose a new password
+                </button>
+              ) : (
+                <Link to="/" className="text-sm font-medium text-accent hover:underline">
+                  Sign in
+                </Link>
+              )}
             </>
           )}
           {state === "error" && (

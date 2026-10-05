@@ -162,6 +162,7 @@ async function visitWorkspace(orgId: string, tdb: Kysely<unknown>, now: Date): P
         break;
       }
     } catch (err) {
+      platform().health.notePassFailure("core-scan.pictures", orgId, err);
       console.warn(`[core-scan] pictures sweep retry failed for ${r.id}:`, (err as Error).message);
     }
   }

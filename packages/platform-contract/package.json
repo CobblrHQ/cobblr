@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/platform-contract",
-  "version": "0.5.76",
+  "version": "0.5.78",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
@@ -10,6 +10,7 @@
     "./qr-token": "./src/qr-token.ts",
     "./field-contributions": "./src/field-contributions.ts",
     "./keyset-cursor": "./src/keyset-cursor.ts",
+    "./torn-reads": "./src/torn-reads.ts",
     "./entity-endpoints": "./src/entity-endpoints.ts",
     "./csv": "./src/csv.ts",
     "./record-columns": "./src/record-columns.ts",
@@ -134,7 +135,11 @@
     "./plan-colours": "./src/plan-colours.ts",
     "./scan-station": "./src/scan-station.ts",
     "./place-indicate": "./src/place-indicate.ts",
-    "./action-groups": "./src/action-groups.ts"
+    "./action-groups": "./src/action-groups.ts",
+    "./activity-summary": "./src/activity-summary.ts",
+    "./grouped-list": "./src/grouped-list.ts",
+    "./placement-count": "./src/placement-count.ts",
+    "./reflow-profile": "./src/reflow-profile.ts"
   },
   "types": "src/index.ts",
   "scripts": {
@@ -144,6 +149,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "typescript": "^5.7.2"
   }
 }

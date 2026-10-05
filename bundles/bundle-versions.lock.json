@@ -47,6 +47,10 @@
     "version": "0.5.0",
     "hash": "30df889298fb232c50b7f166b25b565ac24e1fd4416f25f519ae0c2fb91d97cb"
   },
+  "cobblr.community.sheets": {
+    "version": "0.1.2",
+    "hash": "215b08015257d17cd527a1eb2612c749a8ee6194eea17e3fc8c1c7fb84d7a816"
+  },
   "cobblr.community.tool-library": {
     "version": "0.1.0",
     "hash": "fcfa96917331b3fbfcb958abf78df5a053b4b82850271e953e1979be77225643"
@@ -66,6 +70,10 @@
   "cobblr.flagship.documents": {
     "version": "0.2.4",
     "hash": "fbefad65f76fd344c2f93b79f8895d65584825b1a277c54cd3d28417b457aa4e"
+  },
+  "cobblr.flagship.electronics-assembly": {
+    "version": "0.1.10",
+    "hash": "e04dcb015a259522d1b5fd681df38ebba93774a0b880ca1817f416a341c43edd"
   },
   "cobblr.flagship.fasteners": {
     "version": "0.1.4",
@@ -88,8 +96,8 @@
     "hash": "cbf3e315cfabb0f74716241205e63efd015ed79692f46b3d13b4f0145afb4c48"
   },
   "cobblr.flagship.home-inventory": {
-    "version": "0.6.2",
-    "hash": "d355e268db063bc0c9f2d0f769eb6558ca833ecab21eade36cf361a7010b235f"
+    "version": "0.6.3",
+    "hash": "165602eb3d44a6212b5bbcfe12b4b1a36a796d1bbf835659710dcc67d9bad3e0"
   },
   "cobblr.flagship.home-maintenance": {
     "version": "0.3.3",
@@ -132,8 +140,8 @@
     "hash": "850c521d2fb02e25d651de879f4020d7ab651c65396fe70d2841a3131dd338e9"
   },
   "cobblr.flagship.vehicles": {
-    "version": "0.4.5",
-    "hash": "6d2fb23d66ed4ddcc02d88fc94acce38df69949159cf3525779fd595ffcef07e"
+    "version": "0.4.8",
+    "hash": "697c37be439c537061b47d6a14f0d13470396f680d769bdda736fcbe2f839f77"
   },
   "cobblr.flagship.wardrobe": {
     "version": "0.1.6",

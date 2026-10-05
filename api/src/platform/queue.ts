@@ -92,6 +92,7 @@ export async function enqueue(p: EnqueueParams): Promise<string> {
     ...(p.idempotencyKey ? { idempotency_key: p.idempotencyKey } : {}),
   };
   if (!p.idempotencyKey) {
+    // check-then-insert: no idempotency key, so nothing for two jobs to collide on
     const row = await meta.insertInto("core_queue_jobs").values(values as never).returning("id").executeTakeFirstOrThrow();
     return row.id;
   }

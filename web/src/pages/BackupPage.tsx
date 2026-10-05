@@ -349,6 +349,8 @@ export function BackupPage() {
 function DestinationsSection({ base, auth }: { base: string; auth: () => Record<string, string> }) {
   const toast = useToast();
   const [dests, setDests] = useState<Destination[]>([]);
+  // A list that failed to load must not read as "no destinations set up".
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [drivers, setDrivers] = useState<DriverInfo[]>([]);
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -359,12 +361,17 @@ function DestinationsSection({ base, auth }: { base: string; auth: () => Record<
   const load = useCallback(async () => {
     try {
       const res = await fetch(`${base}/backup/destinations`, { headers: auth() });
-      if (!res.ok) return;
+      if (!res.ok) {
+        const j = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+        setLoadError(j?.error?.message || `The backup destinations did not load (${res.status}).`);
+        return;
+      }
       const j = await res.json();
+      setLoadError(null);
       setDests(j.destinations ?? []);
       setDrivers(j.drivers ?? []);
-    } catch {
-      /* leave empty */
+    } catch (e) {
+      setLoadError(`The backup destinations did not load. ${e instanceof Error ? e.message : ""}`.trim());
     }
   }, [base, auth]);
   useEffect(() => {
@@ -507,6 +514,7 @@ function DestinationsSection({ base, auth }: { base: string; auth: () => Record<
         <em> Back up now</em> to send one immediately.
       </p>
 
+      {loadError && <p role="alert" className="text-sm text-ember-600 dark:text-ember-400">{loadError}</p>}
       {dests.length > 0 && (
         <ul className="space-y-2">
           {dests.map((d) => (

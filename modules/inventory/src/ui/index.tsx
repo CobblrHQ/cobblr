@@ -17,6 +17,7 @@ import { InventoryProvider, useInventory, type ParentConfig } from "./context";
 import type { CountWords } from "@cobblr/platform-contract";
 import { PartsListPage } from "./PartsListPage";
 import { FamilyPage } from "./FamilyPage";
+import { SheetSearch } from "./SheetSearch";
 import { SettingsPage } from "./SettingsPage";
 import { ExpiringPage } from "./ExpiringPage";
 import { useQuery } from "@tanstack/react-query";
@@ -55,6 +56,8 @@ interface InventoryUIProps {
   parent?: ParentConfig;
   /** The table's "Import from <service>" button, when its bundle declares one. */
   connectorImport?: ConnectorImportDecl;
+  storageTracking?: boolean;
+  pasteTracking?: boolean;
   /** One line under the title saying what goes in the table. */
   hint?: string | null;
   /** This is a TYPE collection with a collection of things of those types
@@ -64,9 +67,9 @@ interface InventoryUIProps {
   family?: { childPath: string; tablePath: string };
 }
 
-export function InventoryUI({ orgSlug, getToken, instance, displayName, itemNoun, itemNounPlural, qtyUnit, countWords, parent, connectorImport, hint, family }: InventoryUIProps) {
+export function InventoryUI({ orgSlug, getToken, instance, displayName, itemNoun, itemNounPlural, qtyUnit, countWords, parent, connectorImport, storageTracking, pasteTracking, hint, family }: InventoryUIProps) {
   return (
-    <InventoryProvider orgSlug={orgSlug} getToken={getToken} instance={instance} itemNoun={itemNoun} itemNounPlural={itemNounPlural} qtyUnit={qtyUnit} countWords={countWords} parent={parent} connectorImport={connectorImport}>
+    <InventoryProvider orgSlug={orgSlug} getToken={getToken} instance={instance} itemNoun={itemNoun} itemNounPlural={itemNounPlural} qtyUnit={qtyUnit} countWords={countWords} parent={parent} connectorImport={connectorImport} storageTracking={storageTracking} pasteTracking={pasteTracking}>
       <div className="space-y-4">
         <Header title={displayName ?? "inventory"} hint={hint} listLabel={family ? displayName : undefined} />
         <Routes>
@@ -151,6 +154,7 @@ function Header({ title, hint, listLabel: named }: { title: string; hint?: strin
               Going off{goingOff > 0 ? ` (${goingOff})` : ""}
             </NavLink>
           )}
+          <SheetSearch />
           <NavLink to={`${base}/settings`} className={cls}>Settings</NavLink>
         </>
       }

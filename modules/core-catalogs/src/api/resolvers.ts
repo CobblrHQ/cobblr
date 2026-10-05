@@ -1,3 +1,4 @@
+import { groupListRows } from "@cobblr/platform-contract/grouped-list";
 // Entity-kind resolvers for core-catalogs.
 //   core-catalogs:catalog → the imported dataset itself
 //   core-catalogs:entry   → one row inside a catalog
@@ -99,7 +100,7 @@ export function registerCatalogsResolvers(): void {
       const offset = query.offset ?? 0;
       let q = db.selectFrom("core_catalogs_catalogs").selectAll();
       if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "description"] })!);
-      const rows = await q.orderBy("name").limit(limit).offset(offset).execute();
+      const rows = (await groupListRows(db, q.orderBy("name"), query)) ?? await q.orderBy("name").limit(limit).offset(offset).execute();
       return { items: rows.map((r) => toCatalog(r)) };
     },
   );
@@ -180,6 +181,7 @@ export function registerCatalogsResolvers(): void {
           "e.payload",
           "c.name as catalog_name",
           "c.schema as catalog_schema",
+          sql<string>`coalesce(e.payload ->> coalesce(c.schema ->> 'title_column', 'name'), e.external_id)`.as("name"),
         ]);
       const filter = query.filter ?? {};
       if (typeof filter.catalog_id === "string") {
@@ -188,7 +190,7 @@ export function registerCatalogsResolvers(): void {
       // The whole payload as text, so a catalog whose title column is not
       // `name` still matches on it, and so does any other column.
       if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: [], json: ["e.payload"] })!);
-      const rows = await q.limit(limit).offset(offset).execute();
+      const rows = (await groupListRows(db, q, query)) ?? await q.limit(limit).offset(offset).execute();
       return { items: rows.map((r) => toEntry(r)) };
     },
   );

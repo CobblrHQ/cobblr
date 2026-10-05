@@ -31,6 +31,7 @@ export { EntityChip } from "./EntityChip";
 export { EntityThumb } from "./EntityThumb";
 export { Swatch } from "./Swatch";
 export { ColourInput } from "./ColourInput";
+export { entityInitial } from "./entity-initial";
 export { EntityPhoto, type EntityPhotoProps, type PhotoAspect } from "./EntityPhoto";
 export {
   wantsSwatch,
@@ -339,3 +340,5 @@ export { MoneyTotalNotice } from "./MoneyTotalNotice";
 export { NewItemMenu, NewFromTemplateButton, type TemplateCreateArgs } from "./NewItemMenu";
 
 export { ActionDescription, firstActionSentence } from "./ActionDescription";
+
+export { useStationWakeLock } from "./station-wake-lock";

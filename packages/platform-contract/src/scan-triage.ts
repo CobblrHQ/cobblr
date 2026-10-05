@@ -46,6 +46,8 @@ import {
   ACTION_ADD_PLACE,
   HELD_GUESS_BECAUSE,
   HELD_GUESS_PROMPT,
+  LABEL_GUESS_BECAUSE,
+  LABEL_GUESS_SOURCE,
   HELD_GUESS_SOURCE,
   INSTALL_SENTENCE,
   INSTALL_BLOCKED_SENTENCE,
@@ -58,9 +60,9 @@ import {
   SHORT_BARCODE_DOUBT,
   SPLIT_GROUP_DOUBT,
   SPLIT_SIBLINGS_DOUBT,
-  STORE_CODE_NOTE,
   THROTTLED_SENTENCE,
   UNTRUSTED_DOUBT,
+  classifiedCodeOf,
   fillSentence,
 } from "@cobblr/platform-contract/scan-copy";
 import { createCapabilityForModule } from "@cobblr/platform-contract/create-capability";
@@ -167,6 +169,9 @@ interface TriageMeta {
   /** A web-search name held back for want of a second source (#2918): the
    *  row stays nameless and the guess rides here, so the card can ASK. */
   held_name?: string;
+  /** Text read off the label in the scan frame that made no confident name
+   *  (#4933): offered as a one-tap guess. */
+  label_text?: string;
   held_reason?: string;
   reviewed?: boolean;
   photo_wanted?: boolean;
@@ -426,7 +431,7 @@ export function scanReviewReason(
   const meta = metaOf(row);
   // Before "no name": a receipt whose read failed is not an unnamed item.
   if (scanReceiptReadFailed(row)) return RECEIPT_UNREAD_SENTENCE;
-  if (!isNamed(row)) return meta.code_type === "store-code" ? STORE_CODE_NOTE : NO_NAME_SENTENCE;
+  if (!isNamed(row)) return classifiedCodeOf(meta)?.note ?? NO_NAME_SENTENCE;
   if (meta.rate_limited) return THROTTLED_SENTENCE;
   // A row nothing tried to read (no provider here) was not one the AI could
   // not read: the reason it is flagged is the next one down (#3233).
@@ -497,7 +502,10 @@ export function scanReviewQuestions(row: ScanTriageRow): ScanQuestion[] {
     // source never NAMES a thing; it may ASK. A store's own code has no
     // web guess worth asking about (#3017).
     const held = typeof meta.held_name === "string" ? meta.held_name.trim() : "";
-    if (held && meta.code_type !== "store-code") {
+    const label = typeof meta.label_text === "string" ? meta.label_text.trim() : "";
+    if (label) {
+      out.push({ field: null, names: true, prompt: HELD_GUESS_PROMPT, choices: [{ value: label, source: LABEL_GUESS_SOURCE }], because: LABEL_GUESS_BECAUSE });
+    } else if (held && classifiedCodeOf(meta)?.type !== "store-code") {
       out.push({ field: null, names: true, prompt: HELD_GUESS_PROMPT, choices: [{ value: held, source: HELD_GUESS_SOURCE }], because: HELD_GUESS_BECAUSE });
     } else {
       out.push({ field: null, prompt: "Name it", choices: [], because: "nothing could name this" });

@@ -101,6 +101,7 @@ export interface RunInputsTable {
 }
 
 export interface PlannedTable {
+  assembly: Generated<import("./api/assembly-orders.js").AssemblyOrder | null>;
   id: Generated<string>;
   build_id: string;
   qty: Generated<string>;
@@ -116,7 +117,14 @@ export interface PlannedTable {
   updated_at: Generated<Date>;
 }
 
+export interface InspectionsTable {
+  metadata: Generated<Record<string, unknown>>;
+ id: Generated<string>; order_id: string; ordinal: number; revision: Generated<number>; status: "pass" | "fail";
+ front_file_id: string; back_file_id: string; serial_code: string | null; defects: string[]; notes: string;
+ history: Generated<Array<Record<string, unknown>>>; inspected_by: string | null; station_id: string | null; inspected_at: Generated<Date>;
+}
 export interface BuildsDB {
+  builds_inspections: InspectionsTable;
   builds_builds: BuildsTable;
   builds_components: ComponentsTable;
   builds_runs: RunsTable;

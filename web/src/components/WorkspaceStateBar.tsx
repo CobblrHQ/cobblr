@@ -106,7 +106,7 @@ export function WorkspaceStateBar({ slug }: { slug: string }) {
             },
       );
     } catch {
-      // An expired sandbox answers 410 here, which the api client has already
+      // quiet: an expired sandbox answers 410 here, which the api client has already
       // turned into the ending; a deleted one answers 404, and the hint it
       // left behind says when it ended.
     }

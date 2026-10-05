@@ -23,14 +23,19 @@
 import { meta } from "../db/meta.js";
 import { list } from "../modules/registry.js";
 import { applyContributedFieldDefs } from "./contributed-fields.js";
+import { notePassFailure } from "./pass-failures.js";
 
 type ModuleWithFields = { name: string; contributes?: { fieldDefs?: Parameters<typeof applyContributedFieldDefs>[1] } };
 
 /** `from` is every registered module; a test passes its own to add a field a
  *  module did not have when the workspace enabled it. */
-export async function reconcileContributedFields(from: readonly ModuleWithFields[] = list()): Promise<{ added: number; modules: string[] }> {
+export async function reconcileContributedFields(from: readonly ModuleWithFields[] = list()): Promise<{ added: number; modules: string[]; failed: Array<{ module: string; error: string }> }> {
   let added = 0;
   const modules: string[] = [];
+  // One module failing never stops boot (each is caught), but the caller is
+  // told which and why: a test that saw "the field did not arrive" used to
+  // have no way to tell a skipped workspace from a write that failed (#4937).
+  const failed: Array<{ module: string; error: string }> = [];
   for (const m of from) {
     const defs = m.contributes?.fieldDefs ?? [];
     if (defs.length === 0) continue;
@@ -43,8 +48,10 @@ export async function reconcileContributedFields(from: readonly ModuleWithFields
         console.log(`[reconcile] contributed fields: ${m.name} added ${n} field def(s)`);
       }
     } catch (err) {
+      notePassFailure("reconcileContributedFields", m.name, err);
       console.error(`[reconcile] contributed fields: ${m.name} failed`, err);
+      failed.push({ module: m.name, error: (err as Error).message });
     }
   }
-  return { added, modules };
+  return { added, modules, failed };
 }

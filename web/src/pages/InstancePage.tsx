@@ -124,6 +124,8 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
     connector_import?: import("@cobblr/platform-contract").ConnectorImportDecl | null;
     noun?: NounChoiceDecl | null;
     hint?: string | null;
+    package_receiving?: { storage_tracking?: boolean };
+    paste_tracking?: boolean;
   };
   // A type collection with a collection of its things (Filament Types →
   // Spools) opens as one page, titled with their shared nav group ("Filament").
@@ -165,6 +167,8 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
         qtyUnit={cfg.qty_unit}
         countWords={countWords}
         parent={cfg.parent}
+        storageTracking={cfg.package_receiving?.storage_tracking === true}
+        pasteTracking={cfg.paste_tracking === true}
         family={family}
         connectorImport={cfg.connector_import ?? undefined}
         hint={cfg.hint}

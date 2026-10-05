@@ -21,6 +21,29 @@ import { scopeTmpdir } from "../../scripts/lib/test-tmpdir.mjs";
 // (scripts/lib/test-tmpdir.mjs: /tmp ran out of inodes on 2026-09-30).
 scopeTmpdir(afterAll);
 import { fetchTransient } from "./fetch-transient.js";
+import { expect } from "vitest";
+import { basename } from "node:path";
+
+// Every request to the api says which test file sent it (x-test-file), so a
+// starved pool's worst moment names the test behind the burst, not only the
+// route (#4876: a CI api starved by 17 waiters, holders all "0s").
+{
+  const base = globalThis.fetch;
+  globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const file = (() => {
+      try {
+        const p = expect.getState().testPath;
+        return p ? basename(p) : null;
+      } catch {
+        return null;
+      }
+    })();
+    if (!file) return base(input, init);
+    const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+    if (!headers.has("x-test-file")) headers.set("x-test-file", file);
+    return base(input, { ...init, headers });
+  }) as typeof fetch;
+}
 
 const BASE = process.env.COBBLR_TEST_API ?? "http://localhost:4000";
 

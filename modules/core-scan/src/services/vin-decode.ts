@@ -14,6 +14,7 @@
 // miss). The caching itself lives in the endpoint (api/decode.ts) with the
 // tenant db; this file is the pure lookup + classifier, like lookupBarcode.
 
+import { packageLabelDecoder } from "./package-label.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -485,5 +486,6 @@ export const vinDecoder: IdentifierDecoder = {
 /** Register the built-in decoders. Idempotent — safe to call on every router
  *  init. VIN is the first NEW decoder; the barcode retcon is deferred. */
 export function registerBuiltinDecoders(): void {
+  registerDecoder(packageLabelDecoder);
   registerDecoder(vinDecoder);
 }

@@ -10,6 +10,8 @@ import { isEdgeManagerUrl, edgeInstanceOf } from "@cobblr/platform-contract/edge
 import type { Kysely, Selectable } from "kysely";
 import type { DigifabDB } from "./db.js";
 import { submitReviewedJob, ReviewRequired } from "./drivers/job-review.js";
+import { verifyLaserOutput } from "./laser-layout.js";
+import { authorizeLaserStart } from "./laser-station.js";
 import type { JobApproval } from "./drivers/types.js";
 import { resolveDriver } from "./drivers/registry.js";
 import { EdgeAdapterDriver, type EdgeRelay } from "./drivers/edge-adapter.js";
@@ -848,7 +850,12 @@ export async function sendJob(
   // runs twice for one job at the same time.
   const token = await claimSend(db, jobId, SENDABLE);
   if (!token) return { ok: false, code: "already_sending" };
-  const r = await sendClaimed(db, orgId, jobId, job, token, approval);
+  const driver = await buildDriverById(db, orgId, job.connection_id);
+  let r: SendJobResult = { ok: false, code: "already_sending" };
+  if (await driver?.jobReviewRequired?.()) {
+    const run = await platform().exclusive.run(`laser-start:${orgId}:${job.connection_id}:${job.target_device}`, async () => { r = await sendClaimed(db, orgId, jobId, job, token, approval); });
+    if (!run.ran) r = { ok: false, code: "already_sending" };
+  } else r = await sendClaimed(db, orgId, jobId, job, token, approval);
   if (!r.ok) await releaseSend(db, jobId, token);
   return r;
 }
@@ -952,9 +959,18 @@ async function sendClaimed(
   let doing = "uploading the file";
   try {
     doing = "preparing and starting the job";
-    ({ up, sub } = await submitReviewedJob(sendDriver, fileBytes, uploadName, { deviceId, tag: job.target_tag, idempotencyKey: token, approval }));
+    const stationPermit = await sendDriver.jobReviewRequired?.() ? await authorizeLaserStart(db, orgId, job, approval) : undefined;
+    const layout = job.laser_layout;
+    if (layout && approval && sendDriver.getJobReview) {
+      try { const review = await sendDriver.getJobReview(approval.fileId); verifyLaserOutput(layout.expected, review); if (review.contentHash !== layout.content_hash) throw new Error("The queued layout file changed. Make a new plan."); } catch (e) { throw new ReviewRequired(e instanceof Error ? e.message : "The generated settings changed."); }
+    }
+    const checkStartAllowed = sendDriver.laserBackend ? async () => {
+      const current = await db.selectFrom("digifab_jobs").select(["cancel_requested_at", "status"]).where("id", "=", jobId).executeTakeFirst();
+      if (!current || current.cancel_requested_at || TERMINAL.has(current.status)) throw new ReviewRequired("Stop was requested. Review this job again before Start.");
+    } : undefined;
+    ({ up, sub } = await submitReviewedJob(sendDriver, fileBytes, uploadName, { deviceId, tag: job.target_tag, idempotencyKey: token, approval, checkStartAllowed }, stationPermit));
   } catch (e) {
-    if (e instanceof ReviewRequired) return { ok: false, code: "review_required" };
+    if (e instanceof ReviewRequired) return { ok: false, code: "send_failed", message: e.message };
     const message = plainDriverError(e, await managerName(orgId, connectionId), doing).slice(0, 300);
     await markJobTerminal(db, job, "failed", { error: message });
     return { ok: false, code: "send_failed", message };
@@ -974,7 +990,7 @@ async function sendClaimed(
       target_device: sub.deviceId ?? deviceId,
       status,
       sent_at: new Date(),
-      cancel_requested_at: null,
+      ...(sendDriver.laserBackend ? {} : { cancel_requested_at: null }),
       send_token: null,
       send_claimed_at: null,
       // A note from before the send (a stopped send, a retry waiting on the

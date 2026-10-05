@@ -2,6 +2,7 @@
 // module). Token rows live in cobblr_meta so the unauthenticated /qr/:token
 // scan route can resolve them in one query — see api/src/routes/qr-scan.ts.
 
+import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
 import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
@@ -18,13 +19,17 @@ export const qrTokensRouter = Router({ mergeParams: true });
 /** The origin a freshly-minted / rendered QR should encode, in priority order:
  *  1. the workspace's custom label base URL (stable name it forwards to us),
  *  2. the x-cobblr-base-url header (isolated-stack e2e only),
- *  3. the incoming request's own protocol + Host.
+ *  3. this instance's public address (PUBLIC_BASE_URL): a printed QR outlives the request,
+ *  4. the incoming request's own protocol + Host, only when none is configured.
  *  The `/qr/<token>` path is appended by qrScanUrl(). */
 export async function effectiveBase(req: Request): Promise<string> {
   const stored = await getQrLabelBaseUrl(qrTenantDb(req));
   if (stored) return stored;
   const header = req.headers["x-cobblr-base-url"] as string | undefined;
   if (header) return header.replace(/\/+$/, "");
+  // A printed QR outlives the request: the instance's public address first.
+  if (publicBaseUrl()) return publicBaseUrl();
+  // HOST-OK: only when no public address is configured (a laptop, a rig).
   return `${req.protocol}://${req.headers.host ?? "localhost"}`;
 }
 

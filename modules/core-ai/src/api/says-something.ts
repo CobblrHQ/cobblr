@@ -71,9 +71,45 @@ export function saysSomething(result: unknown, kinds: readonly KindWord[] = []):
   const r = result as Result;
   const cards = r.type === "proposal" ? (r.proposal ? 1 : 0) : r.type === "proposals" && Array.isArray(r.items) ? r.items.length : 0;
   const applied = Array.isArray(r.applied) ? r.applied.length : 0;
-  if (typeof r.text === "string") r.text = inPlainWords(r.text, kinds);
+  if (typeof r.text === "string" && r.text.trim()) r.text = forAPerson(r.text, kinds);
   if ((r.type === "reply" || ((r.type === "proposal" || r.type === "proposals") && cards === 0)) && blank(r.text) && applied === 0) {
     return { ...r, type: "reply", text: NOTHING_SAID };
   }
   return r;
+}
+
+/** What a person reads when nothing readable is left once a tool's own words
+ *  are taken out. */
+export const COULD_NOT_SAY =
+  "Something went wrong on my side, so I couldn't do that. Nothing was changed. Try again, or ask in a different way.";
+
+// The shapes of text written for a program, never for a person: an error's
+// name and its sentence, a stack frame, a JSON body, an API path, a status
+// line from a request. A person who saw "TypeError: Cannot read properties of
+// undefined" or `{"error":{"code":"invalid_body"}}` learned nothing but that
+// the app is broken.
+const ERROR_SENTENCE = /\b(?:[A-Z][A-Za-z]*Error|Error|Exception)\s*:\s*[^\n]*/g;
+const STACK_FRAME = /^\s*at\s+[^\n]*(?:\(|\s)[^\s()]+:\d+:\d+\)?\s*$/gm;
+const JSON_BODY = /[{[]\s*"[A-Za-z_]+"\s*:[\s\S]*?[}\]](?=\s*$|\s*\n|[.,;]?\s)/g;
+const API_PATH = /\s*\b(?:GET|POST|PUT|PATCH|DELETE)?\s*\/api\/v\d+\/\S*/g;
+const STATUS_LINE = /\s*(?:→|->)\s*\d{3}\s*:?/g;
+
+/**
+ * Text a person reads, from whatever a tool, an action or the code said.
+ * inPlainWords first (kind ids, argument names); then everything written for
+ * a program is taken out, and when nothing worth reading is left the one
+ * sentence that says something went wrong and nothing changed.
+ */
+export function forAPerson(text: string | null | undefined, kinds: readonly KindWord[] = []): string {
+  const plain = inPlainWords(String(text ?? ""), kinds);
+  const stripped = plain
+    .replace(STACK_FRAME, "")
+    .replace(JSON_BODY, "")
+    .replace(ERROR_SENTENCE, "")
+    .replace(API_PATH, "")
+    .replace(STATUS_LINE, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+  return /[A-Za-z]{3,}.*[A-Za-z]{3,}/s.test(stripped) ? stripped : COULD_NOT_SAY;
 }

@@ -1,3 +1,4 @@
+import { groupListRows } from "@cobblr/platform-contract/grouped-list";
 import { registerDeletedAttachments } from "../deletion-participant.js";
 import { purgeFile, restoreFile } from "../purge.js";
 // Entity-kind resolver for core-files:file. Lets other modules
@@ -64,7 +65,7 @@ export function registerFileResolvers(): void {
     let q = db.selectFrom("core_files_files").selectAll().where("deleted_at", "is", null).where("same_as", "is", null);
     const text = (query.q ?? "").trim();
     if (text) q = q.where("filename", "ilike", `%${likeEscape(text)}%`);
-    const rows = await q
+    const rows = (await groupListRows(db, q .orderBy("created_at", "desc"), query)) ?? await q
       .orderBy("created_at", "desc")
       .limit(Math.min(query.limit ?? 50, 200))
       .offset(query.offset ?? 0)
@@ -193,8 +194,22 @@ export function registerFileResolvers(): void {
         role,
         sort_order: spec.sort_order ?? 0,
       })
+      // Attached twice at once (a double drop): the first one stands.
+      .onConflict((oc) => oc.columns(["file_id", "source_module", "source_type", "source_id", "role"]).doNothing())
       .returningAll()
-      .executeTakeFirstOrThrow();
+      .executeTakeFirst();
+    if (!row) {
+      const first = await db
+        .selectFrom("core_files_attachments")
+        .select("id")
+        .where("file_id", "=", spec.fileId)
+        .where("source_module", "=", spec.source_module)
+        .where("source_type", "=", spec.source_type)
+        .where("source_id", "=", spec.source_id)
+        .where((eb) => (role === null ? eb("role", "is", null) : eb("role", "=", role)))
+        .executeTakeFirstOrThrow();
+      return { attachmentId: first.id, existed: true };
+    }
     await platform().events.emit("core-files.attachment.created", {
       orgId,
       attachmentId: row.id,

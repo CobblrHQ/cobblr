@@ -1,3 +1,6 @@
+import type { GroupBy, GroupPlan, GroupedResult } from "./grouped-list.js";
+export { groupListRows, normalizeGrouping } from "@cobblr/platform-contract/grouped-list";
+export type { GroupBy, GroupPlan, GroupedResult, EntityGroup, GroupTotal } from "./grouped-list.js";
 import { ActionGroupReference } from "@cobblr/platform-contract/action-groups";
 export type { Money, MoneyTotal, MoneyConversion, ExchangeRates } from "@cobblr/platform-contract/money";
 // The platform contract — types and validators that modules import
@@ -1076,6 +1079,13 @@ const EntityKind = z
     // or typed. A kind declares this or `categoryAxis`, never both.
     categoryField: z.string().min(1).optional(),
     exposableFields: z.array(z.string().min(1)).optional(),
+    // Fields the MEMBER'S OWN ASSISTANT may read beyond exposableFields (Cobb,
+    // or an MCP client acting as that member): what a person wrote for
+    // themselves, like a part's notes, that they can already read in the app.
+    // Never to other modules, shares or other workspaces, and still under
+    // fieldReadScopes. The AI settings tell the person their assistant reads
+    // them (#4798).
+    assistantReadableFields: z.array(z.string().min(1)).optional(),
     // Per-field read-scope (H2): map a field name to the capability
     // (action_id) a viewer must hold to read it. Layered ON TOP of
     // exposableFields — a field must be exposable AND (if listed here)
@@ -1933,6 +1943,7 @@ const ModuleManifest = z.object({
             /** The face this panel belongs to, for disclosure (see the same
              *  field on an action). */
             face: FaceSchema.optional(),
+            placement: z.enum(["summary", "details"]).optional(),
           }),
         )
         .default([]),
@@ -2583,6 +2594,10 @@ export interface EntityViewer {
   role?: string;
   publicRead?: boolean;
   system?: true;
+  /** The person's own assistant reading on their behalf (Cobb, MCP as that
+   *  member): it also sees the kind's assistantReadableFields on records of
+   *  the person's own workspace. */
+  assistant?: boolean;
 }
 
 /** The reader for internal logic that must decide from the truth: an undo
@@ -2593,6 +2608,13 @@ export interface EntityViewer {
 export const SYSTEM_VIEWER: EntityViewer = Object.freeze({ system: true as const });
 
 export interface EntityListQuery {
+  group_by?: string | GroupBy[];
+  group_subtotals?: boolean;
+  group_offset?: number;
+  group_limit?: number;
+  group_keys?: Array<string | null>;
+  /** Kernel-prepared, request-local SQL aggregation plan, never accepted from HTTP. */
+  group_plan?: GroupPlan;
   /** Hard cap. Resolvers default to a sensible limit when omitted. */
   limit?: number;
   /** Offset-based pagination. Cursor-based variants can be added
@@ -2710,7 +2732,7 @@ export function parseSort(
   return out;
 }
 
-export interface EntityListResult {
+export interface EntityListResult extends Partial<GroupedResult> {
   items: ResolvedEntity[];
   /** Total matching rows ignoring limit/offset — optional because
    *  count-queries on large tables can be expensive. */
@@ -3771,6 +3793,12 @@ export interface PlatformHealth {
    *  looked, one that found nothing included: silence is not zero. Never
    *  throws. */
   noteHealShim(shim: string, found: number, failed?: number): Promise<void>;
+  /** A heal, reconcile or sweep pass caught a failure for one workspace (or
+   *  module) and carried on. Record it here, never only in a log line: it is
+   *  kept for /healthz, /readyz and tests, so "nothing happened" can never
+   *  hide "it failed" (#4937). `scope` names what failed (an org id, a module).
+   *  Never throws. lint:pass-failures-reported holds a pass's catches to it. */
+  notePassFailure(pass: string, scope: string | null, err: unknown): void;
 }
 
 /** D3 — per-entity recurrence. Modules register a scanner per kind
@@ -3992,7 +4020,12 @@ export type NotificationDestination =
       no_link_reason: string;
     };
 
+export interface DigestContribution { key: string; text: string; link?: string }
+export type DigestContributor = (orgId: string, db: unknown) => Promise<DigestContribution[]>;
 export interface PlatformNotifications {
+  /** Adds a module's current needs to an existing digest, only while that module is enabled. */
+  registerDigestContributor(eventType: string, module: string, read: DigestContributor): void;
+  digestContributions(eventType: string, orgId: string, db: unknown): Promise<DigestContribution[]>;
   /** Fan a notification to one user across their enabled channels.
    *  Writes the row, looks up the user's per-event-type channel
    *  preferences, and delivers via every enabled channel. */
@@ -5311,6 +5344,8 @@ export interface PlatformQueue {
  *  workspace_capability_grants. See
  *  docs/modules/member-portal-and-permissions.md. */
 export interface PlatformAuth {
+  /** Checks workspace membership against the same ranked roles as REST guards. */
+  userHasRole(args: { orgId: string; userId: string; minRole: import("./org-roles.js").OrgRoleName }): Promise<boolean>;
   userHasCapability(args: {
     orgId: string;
     userId: string;
@@ -5414,6 +5449,9 @@ export interface PlacementExpectation {
 }
 
 export interface PlatformPlacement {
+  /** Database expressions for a grouped list's reserved room and stock values.
+   *  Canonicalizes the kind before reading placement; no records leave SQL. */
+  groupValues(args: { orgId: string; kind: string }): Promise<Pick<GroupPlan, "values" | "numbers">>;
   /** Put `containee` inside `container` (moving it if already placed). Throws on
    *  a self-placement, an ineligible kind, or a cycle.
    *
@@ -7068,7 +7106,20 @@ export interface DeviceConnectionStore {
   setProbe(orgId: string, id: string, capabilities: Record<string, unknown>, status: string): Promise<void>;
 }
 
+export interface MachineStationRequest { machine_kind: string; machine_id: string; purpose: "placement" | "reflow" | "inspection"; token: string }
+export type MachineStationVerifier = (orgId: string, request: MachineStationRequest) => Promise<{ id: string; label: string }>;
+
+export interface MachineRecordsProvider {
+  list(orgId: string, userId?: string | null): Promise<Array<{ kind: string; record: ResolvedEntity }>>;
+  get(orgId: string, kind: string, id: string, userId?: string | null): Promise<ResolvedEntity | null>;
+}
+
 export interface PlatformDevices {
+  registerMachineRecords(provider: MachineRecordsProvider): void;
+  machineRecords(orgId: string, userId?: string | null): ReturnType<MachineRecordsProvider["list"]>;
+  machineRecord(orgId: string, kind: string, id: string, userId?: string | null): ReturnType<MachineRecordsProvider["get"]>;
+  registerStationVerifier(verifier: MachineStationVerifier): void;
+  authorizeAtStation(orgId: string, request: MachineStationRequest): Promise<{ id: string; label: string }>;
   /** The connection/driver owner registers this at boot (one provider). */
   registerDriverProvider(provider: DeviceDriverProvider, types?: readonly string[]): void;
   /** Resolve a connection ref to a driver via the registered provider. */

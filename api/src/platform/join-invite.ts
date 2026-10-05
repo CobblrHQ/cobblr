@@ -152,7 +152,9 @@ export async function joinThroughInvite(
     if (!claimed.ok) return { ok: false, code: claimed.why, message: REFUSAL[claimed.why] };
   }
   if (!existing) {
-    await meta.insertInto("org_memberships").values({ user_id: userId, org_id: invite.org_id, role: invite.role }).execute();
+    // Two accepts at once (a double press) both found no membership: the
+    // second is a member already, not a 500.
+    await meta.insertInto("org_memberships").values({ user_id: userId, org_id: invite.org_id, role: invite.role }).onConflict((oc) => oc.columns(["user_id", "org_id"]).doNothing()).execute();
   }
   if (invite.reusable) {
     if (!existing) {

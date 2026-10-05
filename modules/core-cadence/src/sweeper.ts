@@ -141,7 +141,8 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
               const resolved = await platform().entities.lookup(org.id, t.entity_kind, t.entity_id);
               live = !!resolved && resolved.retired !== true;
               title = resolved?.title ?? null;
-            } catch {
+            } catch (err) {
+              platform().health.notePassFailure("core-cadence.resolve", org.id, err);
               // A resolver that throws must not silence a real signal.
               live = true;
             }
@@ -266,6 +267,7 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
                 payload: { count: buyLess.length },
               });
             } catch (err) {
+              platform().health.notePassFailure("core-cadence.notify", orgId, err);
               console.error("[core-cadence] buy-less notify failed:", (err as Error).message);
             }
           }

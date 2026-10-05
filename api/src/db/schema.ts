@@ -1797,6 +1797,11 @@ export interface MetaDB {
   auth_password_reset_tokens: AuthPasswordResetTokensTable;
   auth_email_verify_tokens: AuthEmailVerifyTokensTable;
   auth_email_change_tokens: AuthEmailChangeTokensTable;
+  oidc_providers: OidcProvidersTable;
+  user_oidc_links: UserOidcLinksTable;
+  oidc_logins: OidcLoginsTable;
+  oidc_handoffs: OidcHandoffsTable;
+  instance_sign_in: InstanceSignInTable;
   auth_pair_codes: AuthPairCodesTable;
   login_attempts: LoginAttemptsTable;
   workspace_module_instances: WorkspaceModuleInstancesTable;
@@ -2004,6 +2009,69 @@ export interface AuthPasswordResetTokensTable {
 /** Email-verification tokens — hashed, single-use, 24h default. Carries the
  *  email it was issued for so a stale token can't verify a changed address. */
 /** A pending or used change of sign-in address (platform/email-change.ts). */
+/** An instance's own OpenID Connect provider (#4492, platform/oidc.ts). */
+export interface OidcProvidersTable {
+  id: Generated<string>;
+  slug: string;
+  display_name: string;
+  issuer: string;
+  client_id: string;
+  /** Encrypted with the instance key (db/crypto.ts); never sent anywhere. */
+  client_secret_enc: string | null;
+  scopes: Generated<string>;
+  email_claim: Generated<string>;
+  groups_claim: Generated<string>;
+  allow_signup: Generated<boolean>;
+  signup_groups: Generated<string[]>;
+  /** [{ group, org_slug, role, lower? }]: see platform/oidc-roles.ts. */
+  group_roles: Generated<unknown>;
+  allow_http: Generated<boolean>;
+  enabled: Generated<boolean>;
+  from_env: Generated<boolean>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface UserOidcLinksTable {
+  id: Generated<string>;
+  user_id: string;
+  provider_id: string;
+  subject: string;
+  email_at_link: string | null;
+  created_at: Generated<Date>;
+  last_used_at: Date | null;
+}
+
+export interface OidcLoginsTable {
+  id: Generated<string>;
+  state_hash: string;
+  nonce: string;
+  code_verifier: string;
+  redirect_uri: string;
+  provider_id: string;
+  purpose: "signin" | "link";
+  user_id: string | null;
+  created_at: Generated<Date>;
+  expires_at: Generated<Date>;
+  consumed_at: Date | null;
+}
+
+export interface OidcHandoffsTable {
+  id: Generated<string>;
+  code_hash: string;
+  user_id: string;
+  provider_id: string;
+  created_at: Generated<Date>;
+  expires_at: Generated<Date>;
+  consumed_at: Date | null;
+}
+
+export interface InstanceSignInTable {
+  id: Generated<boolean>;
+  password_signin: Generated<boolean>;
+  updated_at: Generated<Date>;
+}
+
 export interface AuthEmailChangeTokensTable {
   id: Generated<string>;
   user_id: string;

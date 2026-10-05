@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.18.12",
+  version: "0.18.19",
   displayName: "Inventory",
   description:
     "Parts and supplies: how many you have, where they are kept, and what is running low.",
@@ -87,6 +87,8 @@ export default defineModule({
           { name: "installed_qty", type: "number", readOnly: true },
           { name: "spare_qty", type: "number", readOnly: true },
           { name: "installed_in", type: "object", readOnly: true },
+          { name: "sheet_geometry", type: "object", readOnly: true },
+          { name: "storage_readiness", type: "object", readOnly: true },
           // Which of the workspace's tables (instances) it is in: yarn or hooks.
           { name: "instance", type: "text", readOnly: true },
           // Free-form JSON attribute blob. Declared so we can also
@@ -113,6 +115,11 @@ export default defineModule({
         // qty/min_qty for low-stock / dep-satisfied checks, unit for quantity
         // display, image for galleries. Internal-only: cost (commercial),
         // supplier_url (procurement detail), notes (free-text).
+        // What the person wrote for themselves: their own assistant (Cobb, MCP
+        // as that member) may read it to answer them, on their own records
+        // only; it never reaches another module, a share or another person
+        // (#4798, the owner's decision).
+        assistantReadableFields: ["notes"],
         exposableFields: [
           "name",
           "description",
@@ -136,6 +143,7 @@ export default defineModule({
           "installed_qty",
           "spare_qty",
           "installed_in",
+          "sheet_geometry",
           "instance",
           // `metadata` is the per-part free-form attribute blob —
           // already conceptually a cross-module surface (modules
@@ -201,6 +209,62 @@ export default defineModule({
       "inventory.category.created", // emitted by categories.ts — declare so it's bindable (audit 2026-06-26)
     ],
     actions: [
+      // UI-SCREEN: /station/inspection/<machineId>/<orderId> records board evidence and the tested-stock handoff.
+      {
+        id: "inventory:finish-assembly-stock",
+        examples: ["finish the tested board transfer"],
+        group: "plan", label: "Move inspected boards into tested stock", description: "Settle an immutable native work order inspection transfer once. Only accepted boards move from placed to tested stock.", scope: "workspace", invokeHandler: "inventory.finish-assembly-stock", userInvokable: true, argsSchema: {source_id: {label: "Work order id", type: "text", required: true}, source_kind: {label: "Work order kind", type: "text", required: true}, input_kind: {label: "Placed stock kind", type: "text", required: true}, input_id: {label: "Placed stock id", type: "text", required: true}, output_kind: {label: "Tested stock kind", type: "text", required: true}, output_id: {label: "Tested stock id", type: "text", required: true}, accepted: {label: "Accepted board count", type: "number", required: true}}},
+      {
+        group: "stock",
+        id: "inventory:consume-with-loss",
+        examples: ["the run placed these components", "record these placements and setup loss"],
+        label: "Consume placements",
+        scope: "workspace",
+        description: "Consume placements plus each package's attrition percentage atomically. Expired stock and insufficient counts refuse the whole run. Repeating the sourceId leaves counts unchanged. Args: { sourceId, lines: [{ partId, placements }] }.",
+        invokeHandler: "inventory.consume-with-loss", userInvokable: true,
+        argsSchema: { sourceId: { label: "Run identifier", type: "text", required: true }, lines: { label: "Stock records and placement counts", type: "json", required: true } },
+      },
+      {
+        group: "stock",
+        id: "inventory:receive-package",
+        examples: ["this bag just arrived", "receive the components from this label"],
+        label: "Receive a package",
+        description: "Decode a distributor label locally and receive count stock under its part type. Repeating a receipt leaves stock unchanged. Args: { instance, code, receipt_key?, partId?, quantity?, identity?, fields?, packaging?, storage?, exposed_hours?, location_id? }.",
+        scope: "workspace",
+        invokeHandler: "inventory.receive-package",
+        userInvokable: true,
+        argsSchema: {
+          instance: { label: "Package collection", type: "text", required: true },
+          code: { label: "Distributor label", type: "text", required: true },
+          receipt_key: { label: "Distinct receipt identifier", type: "text" },
+          partId: { label: "Existing package to top up", type: "text" },
+          quantity: { label: "Quantity", type: "number" },
+          identity: { label: "Part number", type: "text" },
+          fields: { label: "Confirmed label fields", type: "json" },
+          packaging: { label: "Packaging", type: "text" },
+          storage: { label: "Storage", type: "text" },
+          exposed_hours: { label: "Previous exposure in hours", type: "number" },
+          location_id: { label: "Storage location", type: "text" },
+        },
+      },
+      {
+        group: "stock",
+        id: "inventory:change-storage",
+        examples: ["this is out of dry storage", "back in the dry cabinet", "start this stock's bake timer"],
+        label: "Change storage",
+        description: "Record opening stock, returning it to dry storage, or a timed bake. A bake completes only after its recorded duration. Args: { partId, revision, operation, minutes?, temperature_c?, instruction? }.",
+        scope: "workspace" as const,
+        invokeHandler: "inventory.change-storage",
+        userInvokable: true,
+        argsSchema: {
+          partId: { label: "Stock record", type: "text", required: true },
+          revision: { label: "Current storage revision", type: "number", required: true },
+          operation: { label: "Storage change", type: "text", required: true },
+          minutes: { label: "Bake duration in minutes", type: "number" },
+          temperature_c: { label: "Bake temperature in Celsius", type: "number" },
+          instruction: { label: "Manufacturer bake instruction", type: "text" },
+        },
+      },
       // DECLARED IN THE ORDER A PERSON WANTS THEM. The record's strip shows the
       // first few in the open and folds the rest. One button per gesture: the
       // perishable/durable difference is decided inside the handler from the
@@ -354,6 +418,36 @@ export default defineModule({
           status: { label: "The status to set", type: "text", required: true },
         },
         userInvokable: true,
+      },
+      {
+        // UI-SCREEN: /builds/<revision> reserves, reads and cancels native kits through the assembly work order actions.
+        id: "inventory:assembly-kit", group: "plan", label: "Reserve or check an assembly kit", description: "Atomically reserve count stock for an assembly work order, check fresh storage and quantities, or settle the whole kit once. Individual kit allocations cannot be settled separately.",
+        scope: "workspace" as const, invokeHandler: "inventory.assembly-kit", userInvokable: true,
+        argsSchema: {
+          target_kind: { label: "Work order kind", type: "text", required: true },
+          target_id: { label: "Assembly work order id", type: "text", required: true },
+          operation: { label: "reserve, check, release or consume", type: "text", required: true },
+          lines: { label: "Stock lines with part_id, kind and qty", type: "json" },
+          confirmed_placed: { label: "The physical placement already happened; retain late moisture warnings while recording actual stock movement", type: "boolean" },
+          output: { label: "Placed-board stock with part_id, kind and qty, required for consumption", type: "json" },
+          require_ready: { label: "Refuse an unusable kit", type: "boolean" },
+        },
+      },
+      {
+        id: "inventory:change-paste", group: "stock", label: "Record paste handling", description: "Record a liquid paste jar's immutable lot and label limits, take it out of refrigeration, open it after warming, or return an unopened jar to cold storage. Clocks cannot be reset by repeated handling.",
+        scope: "workspace" as const, invokeHandler: "inventory.change-paste", userInvokable: true,
+        argsSchema: {
+          partId: { label: "Paste jar id", type: "text", required: true },
+          revision: { label: "Current handling revision", type: "number", required: true },
+          operation: { label: "configure, out, cold or open", type: "text", required: true },
+          limits: { label: "Label lot, expires_on, timezone, warmup_hours and work_life_hours", type: "json" },
+        },
+      },
+      {
+        // UI-SCREEN: /instances/solder-paste/parts/<id> reads this readiness through the shared GET paste reader.
+        id: "inventory:paste-readiness", group: "stock", label: "Check paste readiness", description: "Read a jar's handling history, warm-up deadline, remaining work life and shelf expiry. Changes nothing.",
+        scope: "workspace" as const, invokeHandler: "inventory.paste-readiness", userInvokable: true,
+        argsSchema: { partId: { label: "Paste jar id", type: "text", required: true } },
       },
       {
         group: "plan",
@@ -530,6 +624,17 @@ export default defineModule({
           partId: { label: "Which item", type: "text" },
           timezone: { label: "Timezone to date the new one in", type: "text" },
         },
+      },
+      {
+        group: "stock",
+        id: "inventory:change-sheet-area",
+        label: "Record sheet area",
+        description: "Record cut bounding boxes with kerf and spacing, edit the free rectangles, or undo the latest hand edit. Supply the current revision to prevent stale changes.",
+        examples: ["record this sheet cut", "undo the hand edit to this sheet"],
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "inventory.change-sheet-area",
+        userInvokable: false,
+        argsSchema: { partId: { label: "Sheet id", type: "text" }, operation: { label: "Change", type: "text" }, revision: { label: "Current revision", type: "number" }, rectangles: { label: "Rectangles in millimetres", type: "json" }, kerf_mm: { label: "Kerf (mm)", type: "number" }, spacing_mm: { label: "Spacing (mm)", type: "number" }, source: { label: "Cut reference", type: "text" } },
       },
       {
         group: "stock",

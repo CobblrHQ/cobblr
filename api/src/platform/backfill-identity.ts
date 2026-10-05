@@ -12,6 +12,7 @@
 
 import { meta } from "../db/meta.js";
 import { identityEnabled, backfillToIdentity, logIdentityConfig, type BackfillUser } from "../auth/identity-client.js";
+import { notePassFailure } from "./pass-failures.js";
 
 const BATCH = 500;
 
@@ -39,6 +40,7 @@ export async function backfillIdentityLinks(): Promise<{ linked: number }> {
     try {
       links = await backfillToIdentity(users);
     } catch (e) {
+      notePassFailure("backfillIdentityLinks", null, e);
       console.error(`[reconcile] identity backfill batch failed: ${(e as Error).message}`);
       continue; // leave these unlinked; next boot retries
     }
@@ -53,6 +55,7 @@ export async function backfillIdentityLinks(): Promise<{ linked: number }> {
           .executeTakeFirst();
         if (Number(r.numUpdatedRows) > 0) linked++;
       } catch (e) {
+        notePassFailure("backfillIdentityLinks", localId, e);
         console.error(`[reconcile] identity link ${localId} failed: ${(e as Error).message}`);
       }
     }

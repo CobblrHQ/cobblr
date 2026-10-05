@@ -19,6 +19,7 @@ import { usePageTitle, PasswordInput } from "@cobblr/platform-web";
 import { useDeployEnv } from "../lib/deploy-env";
 import { useAuthConfig } from "../lib/useAuthConfig";
 import { AuthConfigUnavailable } from "../components/AuthConfigUnavailable";
+import { SignInWithProviders, useSignInProviders } from "../components/SignInWithProviders";
 
 type Mode = "login" | "signup";
 
@@ -26,6 +27,8 @@ export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carryi
   usePageTitle("Sign in");
   const { login, signup } = useAuth();
   const { badge: envBadge } = useDeployEnv();
+  // The instance's own sign-in providers, and whether password sign-in is on.
+  const providers = useSignInProviders();
   // `/?mode=signup` opens on the signup form. A link that says "Make an
   // account instead" (the sandbox start page, when the captcha turns someone
   // away) must land on the account form, not on a login form with a small
@@ -238,7 +241,12 @@ export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carryi
           </div>
         ) : authCfg.status === "failed" ? (
           <AuthConfigUnavailable failure={authCfg.failure} onRetry={authCfg.retry} />
+        ) : !providers.passwordOn && providers.items.length > 0 ? (
+          // The operator turned password sign-in off: the provider is the way in.
+          <SignInWithProviders items={providers.items} onlyWay next={new URLSearchParams(window.location.search).get("next")} />
         ) : (
+        <>
+        <SignInWithProviders items={providers.items} onlyWay={false} next={new URLSearchParams(window.location.search).get("next")} />
         <form
           onSubmit={submit}
           className="bg-surface dark:bg-slate-900/70 backdrop-blur border border-line dark:border-slate-700 rounded-xl p-5 shadow-sm space-y-3"
@@ -361,6 +369,7 @@ export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carryi
             </button>
           )}
         </form>
+        </>
         )}
 
         {!onPage && mode === "login" && !provisioning && (

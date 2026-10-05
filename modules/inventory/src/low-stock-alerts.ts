@@ -45,15 +45,17 @@ export async function visitLowStock(orgId: string, raw: unknown, now: Date): Pro
     onHand: p.onHand, assigned: Number(p.assigned_qty ?? 0),
     minQty: Number(p.min_qty), approximate: p.approximate_qty == null ? null : Number(p.approximate_qty),
   }));
-  if (!items.length) return { notified: 0 };
-  const message = `Running low: ${items.length} ${items.length === 1 ? "item" : "items"}\n` + items.map((p) =>
-    `${p.name}: ${p.onHand - Number(p.assigned_qty ?? 0)} left (minimum ${Number(p.min_qty)})`).join("\n");
+  const shortages = await platform().notifications.digestContributions(LOW_STOCK_EVENT, orgId, raw);
+  const count = items.length + shortages.length;
+  if (!count) return { notified: 0 };
+  const message = `Running low: ${count} ${count === 1 ? "item" : "items"}\n` + items.map((p) =>
+    `${p.name}: ${p.onHand - Number(p.assigned_qty ?? 0)} left (minimum ${Number(p.min_qty)})`).concat(shortages.map(s => s.text)).join("\n");
   const sent = await sql<{ user_id: string; notified_on: string }>`
     select user_id, notified_on::text from low_stock_alert_deliveries where org_id = ${orgId}
   `.execute(meta);
   const ledger = new Map(sent.rows.map((r) => [r.user_id, r.notified_on]));
-  const only = items.length === 1 ? items[0] : undefined;
-  const link = only ? await platform().entities.recordAddressForEntity(orgId, "inventory:part", only.id) : "/";
+  const only = count === 1 && items.length === 1 ? items[0] : undefined;
+  const link = shortages.length ? (shortages[0]?.link ?? "/") : only ? await platform().entities.recordAddressForEntity(orgId, "inventory:part", only.id) : "/";
   let notified = 0;
   for (const userId of await platform().notifications.audienceFor(orgId, LOW_STOCK_EVENT)) {
     const day = await platform().accounts.dayFor(userId, { now });
@@ -63,7 +65,7 @@ export async function visitLowStock(orgId: string, raw: unknown, now: Date): Pro
       const delivery = await platform().notifications.dispatch({
         orgId, userId, eventType: LOW_STOCK_EVENT, module: "inventory",
         triggeredBy: "schedule", priority: "normal", message,
-        link_url: link ?? "/", payload: { count: items.length },
+        link_url: link ?? "/", payload: { count },
       });
       if (!delivery.notificationId) continue;
       await sql`insert into low_stock_alert_deliveries (org_id, user_id, notified_on)
@@ -71,6 +73,7 @@ export async function visitLowStock(orgId: string, raw: unknown, now: Date): Pro
         on conflict (org_id, user_id) do update set notified_on = excluded.notified_on`.execute(meta);
       notified++;
     } catch (err) {
+      platform().health.notePassFailure("inventory.low-stock", orgId, err);
       console.error("[inventory] low-stock alert failed:", (err as Error).message);
     }
   }

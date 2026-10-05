@@ -1,3 +1,4 @@
+import { assertStorageReady } from "./storage.js";
 import { stockTrackerAllows } from "../stock-tracker.js";
 // Action handlers — the wire-engine-callable + Tier-B-invokable side of
 // inventory. All GENERIC inventory capabilities (a use-case lives in a bundle +
@@ -187,38 +188,47 @@ export async function applyStockDelta(
 ): Promise<Record<string, unknown>> {
   const { partId, delta, reason } = p;
   const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
+  const movement = await db.transaction().execute(async trx => {
 
-  // Externally-tracked stock (e.g. a Spoolman spool, metadata.tracked_by): the
-  // external system counts usage and Cobblr mirrors it on sync — mutating here
-  // too would double-count. Generic — any external tracker opts a part out.
-  const ext = await db
-    .selectFrom("inventory_parts")
-    .select([sql<string | null>`metadata->>'tracked_by'`.as("tracked_by"), "qty"])
-    .where("id", "=", partId)
-    .executeTakeFirst();
-  if (!ext) return { ok: false, error: "part_not_found" };
-  if (!stockTrackerAllows(ext.tracked_by, p.reporter)) {
-    return { ok: true, skipped: true, reason: `externally tracked by ${ext.tracked_by}` };
-  }
+    // Externally-tracked stock (e.g. a Spoolman spool, metadata.tracked_by): the
+    // external system counts usage and Cobblr mirrors it on sync — mutating here
+    // too would double-count. Generic — any external tracker opts a part out.
+    const ext = await trx
+      .selectFrom("inventory_parts")
+      .select([sql<string | null>`metadata->>'tracked_by'`.as("tracked_by"), "qty"])
+      .where("id", "=", partId)
+      .forUpdate().executeTakeFirst();
+    if (!ext) return { ok: false, error: "part_not_found" };
+    if (!stockTrackerAllows(ext.tracked_by, p.reporter)) {
+      return { ok: true, skipped: true, reason: `externally tracked by ${ext.tracked_by}` };
+    }
 
-  // The floor. A decrement on an empty record is refused with the one
-  // sentence every surface shows; one larger than what is on hand takes what
-  // is there and says so. Applied here, at the write, so use-one, use-up,
-  // mark-spoiled and a wire's negative delta all inherit it (stock-floor.ts).
-  const verdict = floorDelta(Number(ext.qty), delta);
-  if (verdict.kind === "refuse") {
-    return { ok: false, error: verdict.error, partId, delta: 0, newQty: Math.max(0, Number(ext.qty)) };
-  }
-  const applied = verdict.applied;
+    if (delta < 0 && !p.correction) await assertStorageReady(trx, orgId, partId);
 
-  const updated = await db
-    .updateTable("inventory_parts")
-    .set({ qty: sql<string>`greatest(0, qty + ${applied}::numeric)`, updated_at: new Date() })
-    .where("id", "=", partId)
-    .where(sql<boolean>`coalesce(metadata->>'tracked_by', '') = ${p.reporter === "firmware" ? "firmware" : ""}`)
-    .returning(["id", "name", "qty", "min_qty"])
-    .executeTakeFirst();
-  if (!updated) return { ok: false, error: "This item is no longer available to this usage tracker." };
+    // The floor. A decrement on an empty record is refused with the one
+    // sentence every surface shows; one larger than what is on hand takes what
+    // is there and says so. Applied here, at the write, so use-one, use-up,
+    // mark-spoiled and a wire's negative delta all inherit it (stock-floor.ts).
+    const verdict = floorDelta(Number(ext.qty), delta);
+    if (verdict.kind === "refuse") {
+      return { ok: false, error: verdict.error, partId, delta: 0, newQty: Math.max(0, Number(ext.qty)) };
+    }
+    const applied = verdict.applied;
+
+    const updated = await trx
+      .updateTable("inventory_parts")
+      .set({ qty: sql<string>`greatest(0, qty + ${applied}::numeric)`, updated_at: new Date() })
+      .where("id", "=", partId)
+      .where(sql<boolean>`coalesce(metadata->>'tracked_by', '') = ${p.reporter === "firmware" ? "firmware" : ""}`)
+      .returning(["id", "name", "qty", "min_qty"])
+      .executeTakeFirst();
+    if (!updated) return { ok: false, error: "This item is no longer available to this usage tracker." };
+
+    await recordConsumption(trx, { partId: updated.id, delta: applied, reason, sourceKind: p.sourceKind ?? null, sourceId: p.sourceId ?? null, kind: p.correction ? "correction" : null });
+    return { updated, applied, verdict };
+  });
+  if (!movement.updated) return movement;
+  const { updated, applied, verdict } = movement;
 
   // The statement line (WHAT drew it down, HOW MUCH: also what the burn-rate
   // predictor reads), stock.changed, and low stock on a decrease, the one
@@ -232,7 +242,7 @@ export async function applyStockDelta(
     newQty,
     minQty,
     reason: reason ?? null,
-    ledger: { sourceKind: p.sourceKind ?? null, sourceId: p.sourceId ?? null, kind: p.correction ? "correction" : null },
+    ledger: false,
   });
   // `delta` is what actually moved (the inverse of this is +delta); a clamp
   // says what was asked and why less happened.
@@ -441,6 +451,7 @@ export async function withBatches(
   opts: { timezone?: string; userId?: string | null; sourceKind?: string | null; sourceId?: string | null; correction?: boolean } = {},
 ): Promise<Record<string, unknown>> {
   const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
+  if (delta < 0 && !opts.correction) await assertStorageReady(db, orgId, partId);
   const row = await db
     .selectFrom("inventory_parts")
     .select(["id", "qty", "metadata"])
@@ -1442,6 +1453,7 @@ export function registerInventoryActionHandlers(): void {
           // (and would be ugly for filament, whose colour is a hex).
           const nameParts = [s.manufacturer, meta.color, meta.material].filter((x) => x && String(x).trim());
           const name = ((s.name && s.name.trim()) || nameParts.join(" ") || "Untitled type").slice(0, 200);
+          // check-then-insert: the only key is the spoolman link, which this insert never sets
           const created = await db
             .insertInto("inventory_parts")
             .values({
@@ -1546,6 +1558,7 @@ export function registerInventoryActionHandlers(): void {
       .execute();
 
     // 2. Create the split-off item — same instance + fields, its own qty.
+    // check-then-insert: the only key is the spoolman link, which this insert never sets
     const created = await db
       .insertInto("inventory_parts")
       .values({

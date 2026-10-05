@@ -99,12 +99,12 @@ export function BridgeInstallMethod({
                 <code data-testid="pairing-code" className="text-lg font-mono tracking-widest text-content dark:text-mortar-100">{pairing.code}</code>
                 <span className="text-[11px] text-faint">works once, until {new Date(pairing.expires_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
               </div>
-              <div className="flex items-center justify-between">
+              {method !== "desktop" && <div className="flex items-center justify-between">
                 <span className="text-[11px] text-muted">Run this on the computer that will be the bridge:</span>
                 <button type="button" onClick={() => { void navigator.clipboard?.writeText(oneLine); toast.success("Copied"); }} className="text-[10px] text-accent hover:underline">
                   Copy
                 </button>
-              </div>
+              </div>}
               {method === "desktop" ? <DesktopConnect code={pairing.code} /> : <pre data-testid="one-line-install" className="text-[11px] leading-relaxed bg-subtle dark:bg-slate-950 border border-line dark:border-slate-700 rounded p-2 overflow-x-auto whitespace-pre text-content dark:text-mortar-200">{oneLine}</pre>}
               <p className="text-[11px] text-faint">
                 {method === "desktop" ? "Connect this Desktop bridge to your workspace, then pair LightBurn below." : method === "windows" ? "It keeps this bridge's key on your computer and installs a startup task for your account. It downloads the native Windows x64 bridge and keeps its code up to date." : method === "mac" ? "It trades the code for this bridge's own key, which stays on your Mac, installs a native service that starts at login, and keeps its code up to date." : <>It trades the code for this bridge's own key, which stays on that box, installs it as a service that starts at boot, and keeps it up to date. Add <code>--system</code> to install it for the whole machine, or <code>--docker</code> to run it in Docker.</>}

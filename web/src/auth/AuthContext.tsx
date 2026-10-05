@@ -3,6 +3,7 @@
 // /me to confirm the server still trusts it (handles "user
 // deactivated" / "secret rotated" cleanly).
 
+import { forgetSignedInWith, signedInWith } from "../lib/oidc-sign-in";
 import { forgetKeptReads } from "../lib/offline";
 import {
   createContext, useCallback, useContext, useEffect, useState,
@@ -139,8 +140,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     void forgetKeptReads();
+    // Signed in through the instance's own provider: end that session too,
+    // when the provider says where (RP-initiated logout, #4492).
+    const via = signedInWith();
+    forgetSignedInWith();
+    const out = via ? api.oidcSignOut(via).then((r) => r.url).catch(() => null) : Promise.resolve(null);
     setToken(null);
     setState({ user: null, orgs: [], loading: false });
+    void out.then((url) => {
+      if (url) window.location.assign(url);
+    });
   }, []);
 
   const setOrgs = useCallback((orgs: OrgMembership[]) => {

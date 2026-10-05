@@ -171,6 +171,8 @@ export function activityVerb(a: string): string {
     // One-tap stock changes (a button, or a scanned action label).
     part_used: "took one of",
     part_restocked: "restocked",
+    stock_consumed: "used components from",
+    part_storage_changed: "changed storage for",
     // A spreadsheet import is one row for the whole run; its title is the file.
     sheet_imported: "imported",
     // A thing that left, and came back (platform:mark-gone / bring-back).

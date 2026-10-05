@@ -214,6 +214,13 @@ const Schema = z.object({
   // Features the operator turns off on this instance, comma-separated
   // (e.g. "suggestions.tidy"), never a hostname written into the product.
   COBBLR_FEATURES_OFF: z.string().default(""),
+  // The instance's own OpenID Connect provider, for a first boot with no UI
+  // (Super admin → Sign-in sets the rest). All three, or none.
+  COBBLR_OIDC_ISSUER: z.string().default(""),
+  COBBLR_OIDC_CLIENT_ID: z.string().default(""),
+  COBBLR_OIDC_CLIENT_SECRET: z.string().default(""),
+  COBBLR_OIDC_NAME: z.string().default(""),
+  COBBLR_OIDC_SLUG: z.string().default(""),
   // Experimental features this site turns on, comma-separated (e.g.
   // "suggestions.tidy"). An experiment is off on every site that does not
   // name it here (platform/features.ts lists them).

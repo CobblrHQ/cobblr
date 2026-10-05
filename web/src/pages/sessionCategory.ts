@@ -15,6 +15,7 @@ import {
 } from "@cobblr/platform-contract/category-reconcile";
 import type { ScanInboxItem, ScanMenuEntry } from "../lib/api";
 import type { CategoryAxisRef } from "./scanFileAll";
+import { suggestedPlace } from "../lib/sessionPlaceSuggestion";
 
 export { categoryDisplay };
 
@@ -187,7 +188,7 @@ export function sessionFilingReadiness(
   // item carrying a suggestion is not what makes the batch stop and ask.
   // Without this the shop that finally knew where its cold things belonged
   // would still interrupt to demand a location for all of them.
-  const homeless = readyItems.filter((i) => !i.target_location_id && !i.suggested_location_id);
+  const homeless = readyItems.filter((i) => !i.target_location_id && !suggestedPlace(i));
   // Location first: an item with no category is still findable in its table,
   // an item with no location is loose in the house. We only need to ASK when
   // something has no answer at all and no standing bin can answer for it.
@@ -229,7 +230,7 @@ export function sessionLocation(readyItems: ScanInboxItem[]): SessionLocation {
     if (it.target_location_id) set.add(it.target_location_id);
     else {
       missing++;
-      if (it.suggested_location_id) suggested++;
+      if (suggestedPlace(it)) suggested++;
     }
   }
   if (set.size === 0) return { id: null, mixed: false, missing, suggested };

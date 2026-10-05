@@ -44,7 +44,7 @@ export async function generateYourApp(slug: string): Promise<GenerateResult> {
         blocks.push({ type: "view", view_id: v.id, title: v.name } as AppBlock);
       }
     } catch {
-      /* no views → form-only page */
+      /* quiet: no views, so a form-only page */
     }
     blocks.push({ type: "form", kind, mode: "create" } as AppBlock);
     pages.push({

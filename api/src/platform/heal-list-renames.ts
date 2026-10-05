@@ -17,6 +17,7 @@
 
 import { meta } from "../db/meta.js";
 import { noteHealShim } from "./heal-shim-log.js";
+import { notePassFailure } from "./pass-failures.js";
 
 export async function healListRenames(): Promise<number> {
   if (process.env.COBBLR_SKIP_HISTORICAL_MIGRATIONS === "1") return 0;
@@ -68,6 +69,7 @@ export async function healListRenames(): Promise<number> {
       healed++;
       console.log(`[heal-list-renames] org ${row.org_id}: ${row.target_id} -> ${id}`);
     } catch (err) {
+      notePassFailure("healListRenames", row.org_id, err);
       failed++;
       console.warn(`[heal-list-renames] org ${row.org_id} ${row.target_id}:`, (err as Error).message);
     }

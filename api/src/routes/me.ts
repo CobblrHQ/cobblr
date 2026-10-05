@@ -18,6 +18,7 @@ import { TOKEN_ACCESS, isTokenAccess, type TokenAccess } from "../auth/token-acc
 import { listScopeChoices, sanitizeScopes } from "../auth/scopes.js";
 import { hashPassword, verifyPassword } from "../auth/password.js";
 import { pendingEmailChange, requestEmailChange } from "../platform/email-change.js";
+import { linkOrigin } from "../platform/link-origin.js";
 import { signSession } from "../auth/jwt.js";
 import * as notifications from "../platform/notifications.js";
 import { notificationKindsFor, notificationLabel } from "../platform/notification-kinds.js";
@@ -392,6 +393,8 @@ meRouter.get("/me/email", requireAuth, async (req, res, next) => {
       email: u.email,
       pending: await pendingEmailChange(req.session!.id),
       managed_by_identity: !!u.identity_id && u.password_hash.length === 0,
+      // No password to ask for: the change is proven by a recent sign-in.
+      has_password: u.password_hash.length > 0,
     });
   } catch (err) {
     next(err);
@@ -401,7 +404,9 @@ meRouter.get("/me/email", requireAuth, async (req, res, next) => {
 // POST /me/email: ask to change the sign-in address (platform/email-change.ts).
 // A link goes to the new address; nothing changes until it is used.
 // AI-REACH: exempt: changing how a person signs in is theirs alone, with their password.
-const EmailChangeBody = z.object({ new_email: z.string().email().max(254), current_password: z.string().min(1) });
+// current_password: required unless the account has none (a magic-link
+// account proves itself by a recent sign-in instead; email-change.ts).
+const EmailChangeBody = z.object({ new_email: z.string().email().max(254), current_password: z.string().min(1).optional() });
 meRouter.post("/me/email", requireAuth, async (req, res, next) => {
   try {
     const parsed = EmailChangeBody.safeParse(req.body);
@@ -409,8 +414,8 @@ meRouter.post("/me/email", requireAuth, async (req, res, next) => {
       res.status(400).json({ error: { code: "invalid_body", message: "Give the new address and your current password.", details: parsed.error.issues } });
       return;
     }
-    const origin = `${req.protocol}://${req.get("host") ?? ""}`;
-    const out = await requestEmailChange(req.session!.id, parsed.data.new_email, parsed.data.current_password, origin);
+    const origin = linkOrigin(req);
+    const out = await requestEmailChange(req.session!.id, parsed.data.new_email, parsed.data.current_password, origin, req.session!);
     if ("refused" in out) {
       res.status(out.refused.status).json({ error: { code: out.refused.code, message: out.refused.message } });
       return;
@@ -467,7 +472,7 @@ meRouter.post("/me/sign-out-everywhere", requireAuth, async (req, res, next) => 
 // AI-REACH: exempt (a person taking their own data; never on behalf of a workspace, never by an agent)
 meRouter.post("/me/export", requireAuth, async (req, res, next) => {
   try {
-    const r = await requestPersonalExport(req.session!.id, { origin: publicBaseUrl() || `${req.protocol}://${req.get("host") ?? ""}` });
+    const r = await requestPersonalExport(req.session!.id, { origin: linkOrigin(req) });
     if (!r.ok) {
       res.status(429).json({
         error: { code: "too_soon", message: "You can take one copy a day. The one you asked for today is below.", details: { retry_at: r.retryAt.toISOString() } },
@@ -1700,6 +1705,7 @@ meRouter.post("/me/api-tokens", requireAuth, async (req, res, next) => {
       terms = child.terms;
       parentTokenId = parent.id;
     }
+    // check-then-insert: the key is a random token's hash minted here
     const inserted = await meta
       .insertInto("api_tokens")
       .values({
@@ -2244,6 +2250,7 @@ meRouter.post("/me/signup-invites", requireAuth, async (req, res, next) => {
     // Default expiry when none given — an invite link is a credential and
     // must not be redeemable forever (audit L-INVITE).
     const expires_at = inviteExpiresAt(parsed.data.expires_in_days);
+    // check-then-insert: the key is a random invite token minted here
     const row = await meta
       .insertInto("signup_invites")
       .values({
@@ -2261,7 +2268,7 @@ meRouter.post("/me/signup-invites", requireAuth, async (req, res, next) => {
     // to the invitee; otherwise the owner copies the link by hand.
     let emailed = false;
     if (row.invited_email && hasAuthEmailSender()) {
-      const link = `${req.protocol}://${req.get("host") ?? ""}/join/${row.token}`;
+      const link = `${linkOrigin(req)}/join/${row.token}`;
       const expiryLine = row.expires_at
         ? `\n\nThis invite expires ${new Date(row.expires_at).toUTCString()}.`
         : "";

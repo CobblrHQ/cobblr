@@ -28,10 +28,10 @@ registerBuiltinDecoders();
 export const decodeRouter = Router({ mergeParams: true });
 
 const DecodeBody = z.object({
-  code: z.string().min(1).max(200),
+  code: z.string().min(1).max(4096),
 });
 
-// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
+// AI-REACH: action core-scan:decode-identifier
 decodeRouter.post(
   "/decode",
   asyncHandler(async (req, res) => {

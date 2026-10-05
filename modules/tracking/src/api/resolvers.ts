@@ -1,3 +1,4 @@
+import { groupListRows } from "@cobblr/platform-contract/grouped-list";
 // Entity resolvers for tracking — lets core-views/search read metrics +
 // measurements. The measurement list resolver (filterable by metric_id) is
 // what the trend-chart view renderer consumes.
@@ -24,7 +25,7 @@ export function registerTrackingResolvers(): void {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<TrackingDB>;
     let q = db.selectFrom("tracking_metrics").selectAll();
     if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "unit"] })!);
-    const rows = await q
+    const rows = (await groupListRows(db, q .orderBy("created_at", "desc"), query)) ?? await q
       .limit(Math.min(query.limit ?? 50, 200))
       .offset(query.offset ?? 0)
       .orderBy("created_at", "desc")
@@ -44,7 +45,7 @@ export function registerTrackingResolvers(): void {
     const metricId = query.filter?.metric_id;
     if (typeof metricId === "string") q = q.where("metric_id", "=", metricId);
     if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["note"] })!);
-    const rows = await q.limit(Math.min(query.limit ?? 500, 2000)).offset(query.offset ?? 0).orderBy("measured_at", "asc").execute();
+    const rows = (await groupListRows(db, q.orderBy("measured_at", "asc"), query)) ?? await q.limit(Math.min(query.limit ?? 500, 2000)).offset(query.offset ?? 0).orderBy("measured_at", "asc").execute();
     return { items: rows.map(measurementToResolved) };
   });
 }

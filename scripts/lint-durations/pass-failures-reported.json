@@ -1,0 +1,10 @@
+{
+  "lint": "lint:pass-failures-reported",
+  "run": "node scripts/lint-pass-failures-reported.ts",
+  "rows": [
+    "background-loop"
+  ],
+  "ms": 4700,
+  "recorded": "2026-10-05",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

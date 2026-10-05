@@ -6,6 +6,7 @@
 // text belongs in the server log and the AI call log (it still goes there);
 // the bubble gets one sentence that says what happened and what to do.
 
+import { forAPerson } from "./says-something.js";
 import { providerSentence, type CredentialDoor, type ProviderReason } from "@cobblr/platform-contract/provider-reason";
 
 /** What the router's refusal carried beside the message, when it did: the
@@ -117,5 +118,7 @@ export function humanizeProviderError(error: string, detail?: ProviderFailureDet
     // server log and the AI call log for whoever debugs it.
     return { code: "unknown", message: providerSentence("unknown", { provider: who, door: detail?.door }) };
   }
-  return { message: error.split(/\n\s*[{[]/)[0]?.trim() || error };
+  // Not a provider's failure: the code's own words (a TypeError, a JSON body)
+  // are for the log above, never the person (#4574).
+  return { message: forAPerson(error) };
 }

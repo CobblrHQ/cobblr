@@ -5,7 +5,7 @@
 // seam, never an inventory import. Works standalone; the picker is just empty
 // when inventory isn't enabled.
 
-import { describeUnreadableBody, noteWorkspaceWrite } from "@cobblr/platform-web";
+import { describeUnreadableBody, noteWorkspaceWrite, uploadJson } from "@cobblr/platform-web";
 
 export interface BuildSummary {
   id: string;
@@ -111,6 +111,7 @@ export interface TraceResult {
 // Scheduling (rung 7)
 export interface ScheduledItem {
   id: string;
+  assembly_state?: string | null;
   build_id: string;
   build_name: string;
   qty: number;
@@ -152,6 +153,28 @@ export class BuildsApiError extends Error {
 }
 
 export class BuildsApi {
+  inspectionResources(orderId: string, ordinal?: number) { return this.req<Awaited<ReturnType<typeof import("../api/inspection.js").inspectionResources>>>("GET", `/assembly-orders/${orderId}/inspection-resources${ordinal ? `?ordinal=${ordinal}` : ""}`); }
+  inspection(id: string) { return this.req<Awaited<ReturnType<typeof import("../api/inspection.js").inspectionView>>>("GET", `/assembly-inspections/${id}`); }
+  assemblyRecall(code: string) { return this.req<Awaited<ReturnType<typeof import("../api/inspection.js").assemblyRecall>>>("GET", `/assembly-recall?code=${encodeURIComponent(code)}`); }
+  reflowResources(orderId: string) {
+    return this.req<import("../api/reflow.js").ReflowResources>("GET", `/assembly-orders/${orderId}/reflow-resources`);
+  }
+  placementResources() { return this.req<Awaited<ReturnType<typeof import("../api/placement.js").placementResources>>>("GET", "/placement-resources"); }
+  placementProgram(id: string) { return this.req<Awaited<ReturnType<typeof import("../api/placement.js").placementProgram>>>("GET", `/assembly-orders/${id}/program`); }
+  async authorizeMachineStation(machineKind: string, machineId: string, purpose: "placement" | "reflow" | "inspection") {
+    const response = await fetch(`/api/v1/orgs/${this.slug}/modules/digifab/stations/machines`, { method: "POST", headers: this.headers(true), body: JSON.stringify({ machine_kind: machineKind, machine_id: machineId, purpose }) });
+    const result = await this.parse<{ id: string; label: string; token: string }>(response);
+    noteWorkspaceWrite(`/api/v1/orgs/${this.slug}/modules/digifab/stations`, response);
+    return result;
+  }
+  async revokeMachineStation(id: string) {
+    const response = await fetch(`/api/v1/orgs/${this.slug}/modules/digifab/stations/${id}`, { method: "DELETE", headers: this.headers() });
+    const result = await this.parse<{ ok: boolean }>(response);
+    noteWorkspaceWrite(`/api/v1/orgs/${this.slug}/modules/digifab/stations`, response);
+    return result;
+  }
+  assemblyOrders(id: string) { return this.req<{ items: Array<{ id: string; qty: string; assembly: import("../api/assembly-orders.js").AssemblyOrder }> }>("GET", `/assembly-orders?${new URLSearchParams({ build_id: id })}`); }
+  assemblyOrder(id: string) { return this.req<import("../api/assembly-orders.js").AssemblyOrderView>("GET", `/assembly-orders/${id}`); }
   constructor(private readonly slug: string, private readonly getToken: () => string | null) {}
 
   private headers(json = false): Record<string, string> {
@@ -190,6 +213,20 @@ export class BuildsApi {
     const out = await this.parse<T>(res);
     if (method.toUpperCase() !== "GET") noteWorkspaceWrite(url, res);
     return out;
+  }
+
+  boardProject(projectId: string, kind: string) {
+    return this.req<{ enabled: boolean; revisions: Array<{ id: string; revision: string; name: string }> }>("GET", `/board-project?${new URLSearchParams({ project_id: projectId, project_kind: kind })}`);
+  }
+
+  boardRevision(id: string) {
+    return this.req<{ files: Array<{ fileId: string; filename: string; role: string | null }> }>("GET", `/board-revisions/${id}`);
+  }
+
+  uploadBoardFile(file: File) {
+    const form = new FormData();
+    form.append("file", file);
+    return uploadJson<{ id: string }>(`/api/v1/orgs/${this.slug}/modules/core-files/files`, form, { token: this.getToken(), file });
   }
 
   listBuilds() {

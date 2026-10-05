@@ -13,6 +13,7 @@
 //   scope 'sole_member' | 'owner' | 'all_mine'  → dynamic vs live membership
 //         'explicit'           → the workspaces in user_credential_orgs
 
+import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { capabilityFitsKind } from "@cobblr/platform-contract/connection-capability";
 import { planRouteRows } from "./credential-routing.js";
@@ -119,72 +120,78 @@ async function setExplicitRoutes(
   credOwnerId: string,
   routes: CredentialRoute[],
 ): Promise<void> {
-  const existing = await meta
-    .selectFrom("user_credential_orgs")
-    .selectAll()
-    .where("credential_id", "=", credentialId)
-    .execute();
-  // A connection has one general row per workspace (its route) and a row per
-  // job it is ordered for there. The route is rebuilt from `routes`; the
-  // per-job orders are kept for every workspace it still reaches, or saving
-  // a connection's routing would silently undo them.
-  const prevByOrg = new Map(existing.filter((e) => e.capability == null).map((e) => [e.org_id, e]));
-  const perJob = existing.filter((e) => e.capability != null);
-  await meta.deleteFrom("user_credential_orgs").where("credential_id", "=", credentialId).execute();
-  if (routes.length === 0) return;
+  // Saved twice at once (two tabs, a double press), the delete-then-insert
+  // below used to interleave and fail the second save on the one-route key.
+  // One credential's routing is rebuilt by one save at a time.
+  await meta.transaction().execute(async (trx) => {
+    await sql`select pg_advisory_xact_lock(hashtextextended(${`credential-routes:${credentialId}`}, 0))`.execute(trx);
+    const existing = await trx
+      .selectFrom("user_credential_orgs")
+      .selectAll()
+      .where("credential_id", "=", credentialId)
+      .execute();
+    // A connection has one general row per workspace (its route) and a row per
+    // job it is ordered for there. The route is rebuilt from `routes`; the
+    // per-job orders are kept for every workspace it still reaches, or saving
+    // a connection's routing would silently undo them.
+    const prevByOrg = new Map(existing.filter((e) => e.capability == null).map((e) => [e.org_id, e]));
+    const perJob = existing.filter((e) => e.capability != null);
+    await trx.deleteFrom("user_credential_orgs").where("credential_id", "=", credentialId).execute();
+    if (routes.length === 0) return;
 
-  // Which of these workspaces does the cred owner actually OWN? (self-share
-  // auto-approves; a non-owner offering to share stays pending.)
-  const ownerRows = await meta
-    .selectFrom("org_memberships")
-    .select("org_id")
-    .where("org_id", "in", routes.map((r) => r.org_id))
-    .where("user_id", "=", credOwnerId)
-    .where("role", "=", "owner")
-    .execute();
-  const ownsOrg = new Set(ownerRows.map((o) => o.org_id));
-  const now = new Date();
+    // Which of these workspaces does the cred owner actually OWN? (self-share
+    // auto-approves; a non-owner offering to share stays pending.)
+    const ownerRows = await trx
+      .selectFrom("org_memberships")
+      .select("org_id")
+      .where("org_id", "in", routes.map((r) => r.org_id))
+      .where("user_id", "=", credOwnerId)
+      .where("role", "=", "owner")
+      .execute();
+    const ownsOrg = new Set(ownerRows.map((o) => o.org_id));
+    const now = new Date();
 
-  // Which of these workspaces already have a LIVE AI, from some other
-  // credential? Its owner picked it, and attaching a second key must never
-  // quietly take that over.
-  const liveElsewhere = new Set(
-    (
-      await meta
-        .selectFrom("user_credential_orgs")
-        .select("org_id")
-        .where("org_id", "in", routes.map((r) => r.org_id))
-        .where("mode", "=", "workspace-default")
-        .where("active", "=", true)
-        .where("credential_id", "!=", credentialId)
-        // Same kind only: a workspace with a live parcel bridge and no AI has
-        // a vacancy for an AI, and used to look occupied.
-        .where("credential_id", "in", credentialIdsOfKind(await kindOfCredential(credentialId)))
-        .execute()
-    ).map((r) => r.org_id),
-  );
+    // Which of these workspaces already have a LIVE AI, from some other
+    // credential? Its owner picked it, and attaching a second key must never
+    // quietly take that over.
+    const liveElsewhere = new Set(
+      (
+        await trx
+          .selectFrom("user_credential_orgs")
+          .select("org_id")
+          .where("org_id", "in", routes.map((r) => r.org_id))
+          .where("mode", "=", "workspace-default")
+          .where("active", "=", true)
+          .where("credential_id", "!=", credentialId)
+          // Same kind only: a workspace with a live parcel bridge and no AI has
+          // a vacancy for an AI, and used to look occupied.
+          .where("credential_id", "in", credentialIdsOfKind(await kindOfCredential(credentialId)))
+          .execute()
+      ).map((r) => r.org_id),
+    );
 
-  const values = planRouteRows({
-    credentialId,
-    credOwnerId,
-    routes,
-    prev: prevByOrg,
-    ownsOrg,
-    liveElsewhere,
-    now,
+    const values = planRouteRows({
+      credentialId,
+      credOwnerId,
+      routes,
+      prev: prevByOrg,
+      ownsOrg,
+      liveElsewhere,
+      now,
+    });
+    await trx
+      .insertInto("user_credential_orgs")
+      .values(values.map((v) => ({ ...v, rank: prevByOrg.get(v.org_id)?.rank ?? null })))
+      .execute();
+    const routeOf = new Map(values.map((v) => [v.org_id, v]));
+    const kept = perJob.flatMap((j) => {
+      const r = routeOf.get(j.org_id);
+      return r
+        ? [{ credential_id: credentialId, org_id: j.org_id, capability: j.capability, rank: j.rank, mode: r.mode, approved_at: r.approved_at ?? null, approved_by: r.approved_by ?? null, active: r.active ?? false }]
+        : [];
+    });
+    if (kept.length) await trx.insertInto("user_credential_orgs").values(kept).execute();
   });
-  await meta
-    .insertInto("user_credential_orgs")
-    .values(values.map((v) => ({ ...v, rank: prevByOrg.get(v.org_id)?.rank ?? null })))
-    .execute();
-  const routeOf = new Map(values.map((v) => [v.org_id, v]));
-  const kept = perJob.flatMap((j) => {
-    const r = routeOf.get(j.org_id);
-    return r
-      ? [{ credential_id: credentialId, org_id: j.org_id, capability: j.capability, rank: j.rank, mode: r.mode, approved_at: r.approved_at ?? null, approved_by: r.approved_by ?? null, active: r.active ?? false }]
-      : [];
-  });
-  if (kept.length) await meta.insertInto("user_credential_orgs").values(kept).execute();
 }
 
 export async function addUserCredential(
@@ -599,60 +606,66 @@ export async function setMyConnectionOrder(
     if (orderedCredentialIds.some((id) => !capabilityFitsKind(capability, kindOf.get(id) ?? ""))) return "wrong_kind";
   }
 
-  if (capability == null) {
-    // Clear the general order for all of MINE here, then write the new one.
-    await meta
-      .updateTable("user_credential_orgs")
-      .set({ rank: null })
-      .where("org_id", "=", orgId)
-      .where("credential_id", "in", Array.from(myIds))
-      .where("capability", "is", null)
-      .execute();
-  } else {
-    await meta
-      .deleteFrom("user_credential_orgs")
-      .where("org_id", "=", orgId)
-      .where("credential_id", "in", Array.from(myIds))
-      .where("capability", "=", capability)
-      .execute();
-  }
-
-  for (const [i, credentialId] of orderedCredentialIds.entries()) {
-    const rank = i + 1;
+  // Ordered twice at once, the delete-then-insert below interleaved and the
+  // second order failed on the per-job key: one workspace's order of a
+  // person's connections is rewritten by one request at a time.
+  await meta.transaction().execute(async (trx) => {
+    await sql`select pg_advisory_xact_lock(hashtextextended(${`connection-order:${userId}:${orgId}`}, 0))`.execute(trx);
     if (capability == null) {
-      await meta
+      // Clear the general order for all of MINE here, then write the new one.
+      await trx
         .updateTable("user_credential_orgs")
-        .set({ rank })
+        .set({ rank: null })
+        .where("org_id", "=", orgId)
+        .where("credential_id", "in", Array.from(myIds))
+        .where("capability", "is", null)
+        .execute();
+    } else {
+      await trx
+        .deleteFrom("user_credential_orgs")
+        .where("org_id", "=", orgId)
+        .where("credential_id", "in", Array.from(myIds))
+        .where("capability", "=", capability)
+        .execute();
+    }
+
+    for (const [i, credentialId] of orderedCredentialIds.entries()) {
+      const rank = i + 1;
+      if (capability == null) {
+        await trx
+          .updateTable("user_credential_orgs")
+          .set({ rank })
+          .where("org_id", "=", orgId)
+          .where("credential_id", "=", credentialId)
+          .where("capability", "is", null)
+          .execute();
+        continue;
+      }
+      // A capability-specific order is its OWN row, so it can exist without
+      // disturbing the route (mode/approval) the general row carries.
+      const general = await trx
+        .selectFrom("user_credential_orgs")
+        .select(["mode", "approved_at", "approved_by", "active"])
         .where("org_id", "=", orgId)
         .where("credential_id", "=", credentialId)
         .where("capability", "is", null)
+        .executeTakeFirst();
+      if (!general) continue; // not routed here at all — nothing to rank
+      await trx
+        .insertInto("user_credential_orgs")
+        .values({
+          credential_id: credentialId,
+          org_id: orgId,
+          mode: general.mode,
+          approved_at: general.approved_at,
+          approved_by: general.approved_by,
+          active: general.active,
+          rank,
+          capability,
+        } as never)
         .execute();
-      continue;
     }
-    // A capability-specific order is its OWN row, so it can exist without
-    // disturbing the route (mode/approval) the general row carries.
-    const general = await meta
-      .selectFrom("user_credential_orgs")
-      .select(["mode", "approved_at", "approved_by", "active"])
-      .where("org_id", "=", orgId)
-      .where("credential_id", "=", credentialId)
-      .where("capability", "is", null)
-      .executeTakeFirst();
-    if (!general) continue; // not routed here at all — nothing to rank
-    await meta
-      .insertInto("user_credential_orgs")
-      .values({
-        credential_id: credentialId,
-        org_id: orgId,
-        mode: general.mode,
-        approved_at: general.approved_at,
-        approved_by: general.approved_by,
-        active: general.active,
-        rank,
-        capability,
-      } as never)
-      .execute();
-  }
+  });
   return true;
 }
 

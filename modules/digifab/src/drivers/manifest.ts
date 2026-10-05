@@ -18,6 +18,13 @@ const Extract = z.string().min(1);
 const Method = z.enum(["GET", "POST", "PATCH", "PUT", "DELETE"]).default("GET");
 
 export const DriverManifest = z.object({
+  laser: z.object({
+    firmware: z.enum(["grbl", "grbl-lpc", "grblhal", "fluidnc", "smoothieware", "marlin", "snapmaker", "forgefirm"]),
+    settings: z.string(),
+    command: z.string(),
+    download: z.string(),
+    homed: z.object({path:z.string(),pattern:z.string()}).optional(),
+  }).optional(),
   /** Driver key — what a connection's `type` references. */
   id: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/),
   name: z.string().min(1).max(120),

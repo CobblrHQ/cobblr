@@ -1,3 +1,4 @@
+import type { GroupBy } from "@cobblr/platform-contract/grouped-list";
 // Which config keys a saved view keeps, in one place.
 //
 // The New view and Edit view forms each wrote their own list of "this layout
@@ -49,4 +50,9 @@ export function layoutConfig(type: ViewType, previous: Record<string, unknown>, 
     else out[k] = typeof v === "string" ? v.trim() : v;
   }
   return out;
+}
+
+/** A simple group retains the saved views' established wire format. */
+export function tableGroupingValue(groups: GroupBy[]): string | GroupBy[] {
+  return groups.length === 1 && !groups[0]!.bucket ? groups[0]!.field : groups;
 }

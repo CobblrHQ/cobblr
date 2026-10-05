@@ -324,6 +324,7 @@ export async function matchRound(orgId: string, db: Db, now = new Date(), holder
       await db.updateTable("core_documents_connections").set({ caught_up_to: now, caught_up_at: now }).where("connection_id", "=", h.credentialId).execute();
       if (made) console.log(`[core-documents] org ${orgId}: ${made} suggestions from items added to ${h.label} since ${since}`);
     } catch (err) {
+      platform().health.notePassFailure("core-documents.catch-up", orgId, err);
       console.warn(`[core-documents] org ${orgId}: catching up with ${h.label} failed: ${(err as Error).message}`);
     }
   }
@@ -343,6 +344,7 @@ export async function matchRound(orgId: string, db: Db, now = new Date(), holder
     for (const h of systems) {
       try {
         await matchRecordOn(orgId, db, { kind: q.record_kind, id: q.record_id, facts }, h);
+      // pass-catch: recorded on the queued match (failed, lastError) and retried
       } catch (err) {
         failed = true;
         lastError = `${h.label} didn't answer`;

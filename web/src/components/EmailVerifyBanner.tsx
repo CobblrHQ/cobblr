@@ -7,6 +7,7 @@ import { useState } from "react";
 import { MailWarning, X } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { api } from "../lib/api";
+import { useToast } from "@cobblr/platform-web";
 import { getShareViewToken } from "../lib/share-view";
 
 export function EmailVerifyBanner({ variant = "bar" }: { variant?: "bar" | "sidebar" } = {}) {
@@ -23,6 +24,7 @@ export function EmailVerifyBanner({ variant = "bar" }: { variant?: "bar" | "side
     setDismissed(true);
     try { localStorage.setItem(dismissKey, "1"); } catch { /* ignore */ }
   };
+  const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
 
@@ -34,8 +36,9 @@ export function EmailVerifyBanner({ variant = "bar" }: { variant?: "bar" | "side
     try {
       await api.resendVerification();
       setSent(true);
-    } catch {
-      // Best-effort — leave the banner as-is on failure.
+    } catch (e) {
+      // Pressed, so it answers: a resend that did not go out says why.
+      toast.error(`The verification email did not go out. ${e instanceof Error ? e.message : ""}`.trim());
     } finally {
       setBusy(false);
     }

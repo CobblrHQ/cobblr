@@ -44,7 +44,7 @@ export function NewVersionNudge() {
           });
         }
       } catch {
-        /* offline/blip — try again next tick */
+        /* quiet: a background poll; offline or a blip, it tries again next tick */
       }
     }
     void check();

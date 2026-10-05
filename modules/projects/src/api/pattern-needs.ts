@@ -380,9 +380,9 @@ export async function readPatternNeedsState(
   userId?: string | null,
 ): Promise<PatternNeedsState> {
   const db = await tenant(orgId);
-  const items = await listNeeds(db, projectId);
   const fileId = await latestPatternFileId(orgId, projectId);
   if (!fileId) {
+    const items = await listNeeds(db, projectId);
     // No PDF, but its text was read (saved from an answer, or pasted): that
     // reading is the pattern's, not a missing file.
     const read = items.find((n) => n.source === "pattern" || n.source === "ai");
@@ -401,6 +401,12 @@ export async function readPatternNeedsState(
     void runPatternRead(orgId, projectId, fileId, { ai: true, userId }).catch((err: unknown) => {
       console.error(`[projects] pattern read failed for ${projectId}:`, (err as Error)?.message ?? err);
     });
+  // The needs are read AFTER the read's status: a read writes its needs and
+  // only then records itself ready (runPatternRead), so a "ready" read here
+  // always finds them. Read the other way round, a read that finished between
+  // the two queries answered "ready" with an empty list (#4888's main, run
+  // 36996, and run 35417 before it).
+  const items = await listNeeds(db, projectId);
   if (inFlight.has(key)) return { read: { status: "pending", method: null, reason: null, pattern_file_id: fileId }, items };
   if (!row || (row.status === "empty" && !row.ai_tried)) {
     start();

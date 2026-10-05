@@ -1,3 +1,4 @@
+import { groupListRows } from "@cobblr/platform-contract/grouped-list";
 import { registerRowHistoryWriter, columnSet, platform, withPlaceNames, parseSort, textSearchWhere, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { RecordsDB } from "../db.js";
@@ -83,7 +84,7 @@ export function registerRecordsResolvers(): void {
     const order = parseSort(query.sort, SORTABLE);
     for (const { col, dir } of order) q = q.orderBy(col as never, dir);
     if (!order.some((o) => o.col === "name")) q = q.orderBy("name", "asc");
-    const rows = await q.limit(limit).offset(offset).execute();
+    const rows = (await groupListRows(db, q, query)) ?? await q.limit(limit).offset(offset).execute();
     // Where each one is, by name, so a search or the assistant can say it.
     return { items: await withPlaceNames(orgId, "records:record", rows.map((r) => toResolvedRecord(r))) };
   };

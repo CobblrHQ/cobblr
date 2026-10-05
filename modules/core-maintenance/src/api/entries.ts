@@ -11,7 +11,8 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { rollForward } from "../schedules-store.js";
+import { completeEntry, rollForward, reconcileSchedules } from "../schedules-store.js";
+import { present } from "./schedules.js";
 import { calendarDue } from "../schedule.js";
 
 export const entriesRouter = Router({ mergeParams: true });
@@ -75,6 +76,7 @@ entriesRouter.get(
     if (!q.success) return badBody(res, q.error);
     const filter = q.data;
     const db = tenantDb(req);
+    await reconcileSchedules(db, tenantContext(req).org.id);
 
     let query = db
       .selectFrom("core_maintenance_entries")
@@ -117,12 +119,16 @@ entriesRouter.get(
         titles.set(key, found?.title ?? null);
       }),
     );
+    const schedules = new Map((await db.selectFrom("core_maintenance_schedules").selectAll().execute()).map((s) => [s.id, s]));
+    const presented = new Map(await Promise.all([...new Set(rows.map((r) => r.schedule_id).filter((id): id is string => !!id))].map(async (id) => [id, schedules.has(id) ? await present(orgId, schedules.get(id)!, filter.tz) : null] as const)));
+    const paperwork = new Map(await Promise.all(rows.filter((r) => r.performed_at).map(async (r) => [r.id, await platform().files.listAttachments(orgId, { source_module: "core-maintenance", source_type: "entry", source_id: r.id }) ?? []] as const)));
     res.json({
       items: rows.map((r) => {
         const entity_title = titles.get(`${r.entity_module}:${r.entity_type}|${r.entity_id}`) ?? null;
+        const schedule = r.schedule_id ? presented.get(r.schedule_id) ?? null : null;
         return r.scheduled_at && !r.performed_at
-          ? { ...r, entity_title, due: calendarDue(new Date(r.scheduled_at), now, filter.tz ?? null) }
-          : { ...r, entity_title };
+          ? { ...r, entity_title, schedule, due: { ...calendarDue(new Date(r.scheduled_at), now, filter.tz ?? null), ...schedule?.due } }
+          : { ...r, entity_title, schedule, attachments: paperwork.get(r.id) ?? [] };
       }),
     });
   }),
@@ -292,21 +298,12 @@ entriesRouter.post(
     const completedAt = typeof req.body?.performed_at === "string"
       ? new Date(req.body.performed_at)
       : new Date();
-    const row = await db
-      .updateTable("core_maintenance_entries")
-      .set({
-        performed_at: completedAt,
-        performed_by: session.id,
-        updated_at: new Date(),
-      })
-      .where("id", "=", id)
-      .returningAll()
-      .executeTakeFirst();
-    if (!row) {
+    const completed = await completeEntry(db, ctx.org.id, id, session.id, completedAt);
+    if (!completed) {
       res.status(404).json({ error: { code: "not_found", message: "entry not found" } });
       return;
     }
-    await rollForward(db, ctx.org.id, row);
+    const row = completed.row;
     res.json(row);
   }),
 );

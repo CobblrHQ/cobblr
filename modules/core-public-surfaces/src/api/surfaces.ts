@@ -124,6 +124,7 @@ surfacesRouter.post(
     const token = mintToken();
     await metaDb().deleteFrom("public_surface_tokens").where("token", "=", old.token).execute();
     const row = await db.updateTable("core_public_surfaces_surfaces").set({ token, updated_at: new Date() }).where("id", "=", old.id).returningAll().executeTakeFirstOrThrow();
+    // check-then-insert: the key is a random public token minted here
     await metaDb()
       .insertInto("public_surface_tokens")
       .values({ token, org_id: ctx.org.id, surface_id: row.id, enabled: row.enabled, expires_at: row.expires_at })

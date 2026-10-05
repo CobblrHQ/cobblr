@@ -8,7 +8,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { ActionRefusal, platform } from "@cobblr/platform-contract";
 import { withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 import { madeByWorkOrder } from "../work-orders.js";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
@@ -79,6 +79,10 @@ buildsRouter.post(
   "/builds",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (req.body?.metadata && Object.prototype.hasOwnProperty.call(req.body.metadata, "assembly")) {
+      res.status(422).json({ error: { code: "use_revision_import", message: "Use the board revision importer to check these files." } });
+      return;
+    }
     const parsed = BuildCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
@@ -231,6 +235,10 @@ buildsRouter.patch(
   "/builds/:id",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (req.body?.metadata && Object.prototype.hasOwnProperty.call(req.body.metadata, "assembly")) {
+      res.status(422).json({ error: { code: "immutable_revision", message: "Import changed board files as a new revision." } });
+      return;
+    }
     const parsed = BuildUpdate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
@@ -279,6 +287,8 @@ buildsRouter.delete(
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const db = tenantDb(req);
+    const order = await db.selectFrom("builds_planned").select("id").where("build_id", "=", req.params.id!).where("assembly", "is not", null).executeTakeFirst();
+    if (order) throw new ActionRefusal("This revision has assembly work order history. Keep it for traceability.");
     await db.deleteFrom("builds_builds").where("id", "=", req.params.id!).execute();
     res.status(204).end();
   }),
@@ -857,11 +867,12 @@ buildsRouter.post(
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
     const ctx = tenantContext(req);
-    const build = await db.selectFrom("builds_builds").select(["id"]).where("id", "=", parsed.data.build_id).executeTakeFirst();
+    const build = await db.selectFrom("builds_builds").select(["id", "metadata"]).where("id", "=", parsed.data.build_id).executeTakeFirst();
     if (!build) {
       res.status(400).json({ error: { code: "not_found", message: "build not found" } });
       return;
     }
+    if ((build.metadata as { assembly?: unknown } | null)?.assembly) throw new ActionRefusal("Use the assembly work order action for a board revision.");
     const row = await db
       .insertInto("builds_planned")
       .values({
@@ -888,12 +899,13 @@ buildsRouter.patch(
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
     const ctx = tenantContext(req);
-    const before = await db.selectFrom("builds_planned").select(["status"]).where("id", "=", req.params.pid!).executeTakeFirst();
+    const before = await db.selectFrom("builds_planned").select(["status", "assembly"]).where("id", "=", req.params.pid!).executeTakeFirst();
     if (!before) {
       res.status(404).json({ error: { code: "not_found", message: "planned item not found" } });
       return;
     }
     const patch: Record<string, unknown> = { updated_at: new Date() };
+    if (before.assembly) throw new ActionRefusal("Change this order through its assembly workflow.");
     if (parsed.data.qty !== undefined) patch.qty = String(parsed.data.qty);
     if (parsed.data.due_date !== undefined) patch.due_date = parsed.data.due_date;
     if (parsed.data.priority !== undefined) patch.priority = parsed.data.priority;
@@ -914,6 +926,8 @@ buildsRouter.delete(
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const db = tenantDb(req);
+    const row = await db.selectFrom("builds_planned").select("assembly").where("id", "=", req.params.pid!).executeTakeFirst();
+    if (row?.assembly) throw new ActionRefusal("Cancel this order through its assembly workflow to release the kit.");
     await db.deleteFrom("builds_planned").where("id", "=", req.params.pid!).execute();
     res.status(204).end();
   }),
@@ -937,6 +951,7 @@ buildsRouter.get(
         "builds_planned.priority as priority",
         "builds_planned.resource_label as resource_label",
         "builds_planned.created_at as created_at",
+        "builds_planned.assembly as assembly",
       ])
       .where("builds_planned.status", "=", "planned")
       .execute();
@@ -992,6 +1007,7 @@ buildsRouter.get(
       id: r.id,
       build_id: r.build_id,
       build_name: r.build_name,
+      assembly_state: r.assembly?.state ?? null,
       qty: Number(r.qty) || 1,
       due_date: r.due_date,
       priority: r.priority,

@@ -386,6 +386,7 @@ const pairLimiter = makeIpLimiter(60_000, 10);
 /** This instance's address as the person's browser reached it, which is the
  *  one the installer must reach too. Refused when the Host is not a hostname. */
 export function publicOrigin(req: Request): string | null {
+  // HOST-OK: the installer is piped into the shell of whoever fetched it, naming the address they reached.
   const host = (req.get("x-forwarded-host") ?? req.get("host") ?? "").split(",")[0]!.trim();
   if (!/^[a-z0-9.-]+(:\d{1,5})?$/i.test(host)) return null;
   return `${req.protocol}://${host}`;

@@ -1,0 +1,10 @@
+{
+  "lint": "lint:state-flips-last",
+  "run": "node scripts/lint-state-flips-last.ts",
+  "rows": [
+    "background-loop"
+  ],
+  "ms": 500,
+  "recorded": "2026-10-05",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

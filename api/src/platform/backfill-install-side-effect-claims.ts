@@ -26,6 +26,7 @@ import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { recordClaim } from "./bundle-claims.js";
 import { noteHealShim } from "./heal-shim-log.js";
+import { notePassFailure } from "./pass-failures.js";
 
 /** How long before an install's row its module enables can sit. An install
  *  enables, migrates and then writes the row; minutes, never hours. */
@@ -65,6 +66,7 @@ export async function backfillInstallSideEffectClaims(): Promise<number> {
       found++;
       console.log(`[heal] org ${r.org_id}: ${r.external_id} claims ${r.module_name} (switched on at install)`);
     } catch (err) {
+      notePassFailure("backfillInstallSideEffectClaims", r.org_id, err);
       failed++;
       console.error(`[heal] org ${r.org_id}: could not claim ${r.module_name} for ${r.external_id}:`, (err as Error).message);
     }

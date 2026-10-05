@@ -62,6 +62,7 @@ import { FiledQuantity, filedQuantityOf } from "../services/filed-quantity.js";
 import { expiryDefaults } from "../services/shelf-life.js";
 import { Router, type Request, type Response } from "express";
 import { sql } from "kysely";
+import { readSnapshot } from "@cobblr/platform-contract/torn-reads";
 import { attachPaperwork, type AttachPaperworkResult } from "../services/attach-paperwork.js";
 import { takePaperworkValue, undoPaperworkFill } from "../services/record-paperwork.js";
 import { amountOf, centsFromAmount } from "@cobblr/platform-contract/money";
@@ -105,7 +106,8 @@ import { liveTablesOf, withResolvedOffers, type LiveTable } from "../services/re
 import { resolveNativeIdentity } from "../native-identity.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { noteScanCaptured } from "../services/activation.js";
-import { downloadCatalogImage, enrichBarcodeItem, guardedImageFetch, isJunkName, isUnusablePictureUrl, STORE_CODE_NOTE } from "../services/enrich.js";
+import { downloadCatalogImage, enrichBarcodeItem, guardedImageFetch, isJunkName, isUnusablePictureUrl } from "../services/enrich.js";
+import { classifiedCodeOf } from "@cobblr/platform-contract/scan-copy";
 import { intakeRow, pictureSearchAfterMatch, registerMatchRunners, rowShape, typedIdentifier, type InsertValues } from "../services/intake.js";
 import { committedImagePath, commitThumbPath, itemPhotos } from "../services/committed-image.js";
 import { clampEntityName } from "../services/item-name.js";
@@ -1907,8 +1909,11 @@ inboxRouter.post(
       vendor: receipt.vendor,
       order_ref: orderRef,
       content_key: contentKey,
-      read_state: "read",
-      read_at: new Date(),
+      // "in_flight" until its lines exist, "read" after (#4890, torn status
+      // writes): written "read" first, a poll between this and the lines saw
+      // a read session with nothing in it, and the inbox dropped it.
+      read_state: "in_flight",
+      read_started_at: new Date(),
       // Which way round the numeric date was read, and by what (#2917).
       date_convention: result.date_reading?.convention ?? null,
       date_decided_by: result.date_reading?.decided_by ?? null,
@@ -1936,7 +1941,13 @@ inboxRouter.post(
     // recorded in full, but nothing is put in the inbox, because nothing needs
     // triaging. See the target_item_id comment on the body above.
     const targetItemId = parsed.data.target_item_id ?? null;
-    const made = targetItemId
+    const markRead = () =>
+      batchId // state-flips-last: defined here, run in the finally below, after the lines are made
+        ? db.updateTable("core_scan_batches").set({ read_state: "read", read_at: new Date() } as never).where("id", "=", batchId).execute()
+        : Promise.resolve();
+    let made: Awaited<ReturnType<typeof materializeReceiptLines>> | { rows: never[]; lineRows: never[] };
+    try {
+      made = targetItemId
       ? { rows: [], lineRows: [] }
       : await materializeReceiptLines({
       db,
@@ -1951,6 +1962,10 @@ inboxRouter.post(
       baseUrl: receiptBaseUrl,
       groupId: receiptGroupId,
         });
+    } finally {
+      // Read once the lines are in (or the attempt to make them is over).
+      await markRead();
+    }
     const rows = made.rows;
 
     // THE ORDER IS BORN HERE, not at confirm. A receipt is a document and
@@ -2122,24 +2137,12 @@ inboxRouter.post(
       .where("status", "=", "pending")
       .where(sql<boolean>`suggested_metadata ? 'receipt_parse_failure'`)
       .execute();
-    await db
-      .updateTable("core_scan_batches")
-      .set({
-        label: receiptSessionLabel(receipt.vendor, receipt.order_ref),
-        vendor: receipt.vendor,
-        order_ref: receipt.order_ref,
-        read_state: "read",
-        read_at: new Date(),
-        date_convention: result.date_reading?.convention ?? null,
-        date_decided_by: result.date_reading?.decided_by ?? null,
-        date_printed: result.date_reading?.printed ?? null,
-        // The failures that were: kept as history on the session, no longer its state.
-        read_failure: (() => { const h = readHistoryAfterSuccess(batch.read_failure); return h ? (JSON.stringify(h) as never) : null; })(),
-      })
-      .where("id", "=", batch.id)
-      .execute();
-
-    const { rows } = await materializeReceiptLines({
+    // The lines before "read" (#4890, torn status writes): the session stays
+    // "in_flight" (set above) while they are made, so a poll never sees a read
+    // session with no lines.
+    let rows: Awaited<ReturnType<typeof materializeReceiptLines>>["rows"] = [];
+    try {
+      ({ rows } = await materializeReceiptLines({
       db,
       orgId: ctx.org.id,
       orgSlug: ctx.org.slug,
@@ -2150,7 +2153,25 @@ inboxRouter.post(
       source: result.source,
       token: bearer(req),
       baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
-    });
+      }));
+    } finally {
+      await db
+        .updateTable("core_scan_batches")
+        .set({
+          label: receiptSessionLabel(receipt.vendor, receipt.order_ref),
+          vendor: receipt.vendor,
+          order_ref: receipt.order_ref,
+          read_state: "read",
+          read_at: new Date(),
+          date_convention: result.date_reading?.convention ?? null,
+          date_decided_by: result.date_reading?.decided_by ?? null,
+          date_printed: result.date_reading?.printed ?? null,
+          // The failures that were: kept as history on the session, no longer its state.
+          read_failure: (() => { const h = readHistoryAfterSuccess(batch.read_failure); return h ? (JSON.stringify(h) as never) : null; })(),
+        })
+        .where("id", "=", batch.id)
+        .execute();
+    }
 
     res.json({
       batch_id: batch.id,
@@ -2508,20 +2529,25 @@ inboxRouter.get(
         .limit(TRIAGE_SCAN_CAP);
       if (source_kind) facetQuery = facetQuery.where("source_kind", "=", source_kind);
       if (batch_id) facetQuery = facetQuery.where("scan_batch_id", "=", batch_id);
-      const scanned = await facetQuery.execute();
       const viewer = await scanViewerFor(req);
-      const matched = scanned.filter((row) => matchesScanFacet(asTheCardReadsIt(row), triage, Date.now(), viewer));
       // A facet pages like the whole queue does, so a filter longer than one
       // page reaches its end (#3638): the cursor is the offset into the match.
       const offset = typeof cursor === "string" && /^facet:\d+$/.test(cursor) ? Number(cursor.slice(6)) : 0;
-      const page = matched.slice(offset, offset + limit);
-      const batchMap = await batchLabelsFor(db, page);
-      // A receipt whose read failed is a session with no rows, and it needs a
-      // person: the review facet carries those sessions as the whole list does.
-      const sessions =
-        offset === 0 && triage === "needs_review" && !source_kind && !batch_id
-          ? await sessionsWithoutRows(db, new Set(page.map((i) => i.scan_batch_id).filter((x): x is string => !!x)))
-          : {};
+      // One snapshot for the rows, their sessions' labels and the sessions with
+      // no rows, as the whole list does (#4893, torn reads).
+      const { scanned, matched, page, batchMap, sessions } = await readSnapshot(db, async (snap) => {
+        const scanned = (await snap.executeQuery(facetQuery.compile())).rows as Awaited<ReturnType<typeof facetQuery.execute>>;
+        const matched = scanned.filter((row) => matchesScanFacet(asTheCardReadsIt(row), triage, Date.now(), viewer));
+        const page = matched.slice(offset, offset + limit);
+        const batchMap = await batchLabelsFor(snap, page);
+        // A receipt whose read failed is a session with no rows, and it needs a
+        // person: the review facet carries those sessions as the whole list does.
+        const sessions =
+          offset === 0 && triage === "needs_review" && !source_kind && !batch_id
+            ? await sessionsWithoutRows(snap, new Set(page.map((i) => i.scan_batch_id).filter((x): x is string => !!x)))
+            : {};
+        return { scanned, matched, page, batchMap, sessions };
+      });
       res.json({
         items: await servedAll(req, page),
         batches: batchMap,
@@ -2536,41 +2562,48 @@ inboxRouter.get(
       return;
     }
 
-    let query = db
-      .selectFrom("core_scan_inbox_items")
-      .selectAll()
-      .orderBy(sql`date_trunc('milliseconds', created_at)`, "desc")
-      .orderBy("id", "desc")
-      .limit(limit);
-    // Default scope: hide discarded items in the standard list.
-    if (status) query = query.where("status", "=", status);
-    else query = query.where("status", "!=", "discarded");
-    if (source_kind) query = query.where("source_kind", "=", source_kind);
-    if (batch_id) query = query.where("scan_batch_id", "=", batch_id);
-    const c = cursor ? decodeCursor(cursor) : null;
-    if (c && /^[0-9a-f-]{36}$/i.test(c.id)) {
-      query = query.where(sql<boolean>`(date_trunc('milliseconds', created_at), id) < (${c.ts}, ${c.id}::uuid)`);
-    }
-    const items = await query.execute();
-    const last = items[items.length - 1];
-    const next_cursor = items.length === limit && last ? encodeCursor(last.created_at, last.id) : null;
+    // ONE SNAPSHOT for the page, its sessions and the count (#4893, torn reads):
+    // read one after the other, a receipt session marked read between the
+    // items query and the sessions query showed up in neither (no lines yet
+    // when the items were read, no longer "in flight" when the sessions were).
+    const { items, next_cursor, batches, sessions, total } = await readSnapshot(db, async (snap) => {
+      let query = snap
+        .selectFrom("core_scan_inbox_items")
+        .selectAll()
+        .orderBy(sql`date_trunc('milliseconds', created_at)`, "desc")
+        .orderBy("id", "desc")
+        .limit(limit);
+      // Default scope: hide discarded items in the standard list.
+      if (status) query = query.where("status", "=", status);
+      else query = query.where("status", "!=", "discarded");
+      if (source_kind) query = query.where("source_kind", "=", source_kind);
+      if (batch_id) query = query.where("scan_batch_id", "=", batch_id);
+      const c = cursor ? decodeCursor(cursor) : null;
+      if (c && /^[0-9a-f-]{36}$/i.test(c.id)) {
+        query = query.where(sql<boolean>`(date_trunc('milliseconds', created_at), id) < (${c.ts}, ${c.id}::uuid)`);
+      }
+      const items = await query.execute();
+      const last = items[items.length - 1];
+      const next_cursor = items.length === limit && last ? encodeCursor(last.created_at, last.id) : null;
 
-    const batches = await batchLabelsFor(db, items);
-    // Sessions with no rows on any page: a failed or in-flight receipt read.
-    // First page only, unscoped, so they are seen once; a batch_id scope
-    // asks for one session and gets its own state through `batches`.
-    const sessions = !cursor && !batch_id && !source_kind && (!status || status === "pending") ? await sessionsWithoutRows(db, new Set(items.map((i) => i.scan_batch_id).filter((x): x is string => !!x))) : {};
-    // Total (for the header) only on the first page — it doesn't change per page.
-    let total: number | undefined;
-    if (!cursor) {
-      let cq = db.selectFrom("core_scan_inbox_items").select((eb) => eb.fn.countAll().as("n"));
-      if (status) cq = cq.where("status", "=", status);
-      else cq = cq.where("status", "!=", "discarded");
-      if (source_kind) cq = cq.where("source_kind", "=", source_kind);
-      if (batch_id) cq = cq.where("scan_batch_id", "=", batch_id);
-      const row = await cq.executeTakeFirst();
-      total = Number(row?.n ?? 0);
-    }
+      const batches = await batchLabelsFor(snap, items);
+      // Sessions with no rows on any page: a failed or in-flight receipt read.
+      // First page only, unscoped, so they are seen once; a batch_id scope
+      // asks for one session and gets its own state through `batches`.
+      const sessions = !cursor && !batch_id && !source_kind && (!status || status === "pending") ? await sessionsWithoutRows(snap, new Set(items.map((i) => i.scan_batch_id).filter((x): x is string => !!x))) : {};
+      // Total (for the header) only on the first page — it doesn't change per page.
+      let total: number | undefined;
+      if (!cursor) {
+        let cq = snap.selectFrom("core_scan_inbox_items").select((eb) => eb.fn.countAll().as("n"));
+        if (status) cq = cq.where("status", "=", status);
+        else cq = cq.where("status", "!=", "discarded");
+        if (source_kind) cq = cq.where("source_kind", "=", source_kind);
+        if (batch_id) cq = cq.where("scan_batch_id", "=", batch_id);
+        const row = await cq.executeTakeFirst();
+        total = Number(row?.n ?? 0);
+      }
+      return { items, next_cursor, batches, sessions, total };
+    });
     res.json({ items: await servedAll(req, items), batches, sessions, next_cursor, ...(total !== undefined ? { total } : {}) });
   }),
 );
@@ -3069,6 +3102,35 @@ export const ConfirmBody = z.object({
   /** Optional note / hard-case label stored on the captured eval case. */
   eval_note: z.string().max(200).optional(),
 });
+
+const FileSelectedBody = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(200),
+  target_module: z.string().min(1).optional(),
+  target_kind: z.string().min(1).optional(),
+  instance: z.string().min(1).optional(),
+});
+
+// AI-TOOL: file_inbox_items
+inboxRouter.post("/inbox/file-selected", asyncHandler(async (req, res) => {
+  if (!requireRole(req, res, "owner", "admin", "member")) return;
+  const parsed = FileSelectedBody.safeParse(req.body);
+  if (!parsed.success) return badBody(res, parsed.error);
+  const token = bearer(req);
+  if (!token) { res.status(401).json({ error: { code: "no_auth", message: "Bearer token required" } }); return; }
+  const ctx = tenantContext(req);
+  const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+  const { ids, ...target } = parsed.data;
+  const { fileSelected } = await import("../services/file-selected.js");
+  const result = await fileSelected(ids, target.instance ? `${target.instance}:item` : target.target_kind ?? "", async (id) => {
+    const response = await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-scan/inbox/${encodeURIComponent(id)}/confirm`, {
+      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(target),
+    });
+    const body = await response.json() as { error?: { message?: string }; item?: { target_kind?: string | null }; created?: { id?: string; name?: unknown; title?: unknown } };
+    if (!response.ok) throw new Error(body.error?.message || "It could not be added");
+    return body;
+  });
+  res.json(result);
+}));
 
 // (The per-kind create endpoint + quantity-field name are now DECLARED by the
 //  owning module via platform().entities.registerScannable and read at commit
@@ -3587,14 +3649,18 @@ inboxRouter.post(
         try {
           const name = (typeof body.name === "string" && body.name) || row.suggested_name || null;
           const category = (matchedCandidate as { category?: string } | undefined)?.category ?? null;
+          // A row's stamped spot is used only with its reason (" — why"): a
+          // place nothing stood behind is not one to file into (#4933).
+          const reasoned = row.suggested_location_id && /\s[–—-]\s\S/.test(row.suggested_location_note ?? "") ? row.suggested_location_id : null;
           const spot =
-            row.suggested_location_id ??
+            reasoned ??
             (
               await suggestLocationForItem(ctx.org.id, {
                 name,
                 category,
                 excludeId: null,
                 kind: instance ? `${instance}:item` : kindKey,
+                kindIsCollection: !!instance,
                 requirement: resolveRequirement(
                   candidateFields.storage_requirement ?? (typedMetadata as Record<string, unknown>).storage_requirement,
                   [
@@ -9214,11 +9280,11 @@ async function batchProposedCategories(
  *  it is only a routing sentence from an earlier match. Null for a row no
  *  lookup ever judged (a typed note, a photo). */
 function lookupVerdictOf(row: { barcode_text: string | null; suggested_name: string | null; ai_notes: string | null; suggested_metadata: unknown }): string | null {
-  const meta = (row.suggested_metadata ?? {}) as { code_type?: unknown };
   // "Name it and it files like a typed item" is the verdict until the person
   // does; a named store item is routed like any typed item, and its card says
-  // where it went.
-  if (meta.code_type === "store-code") return row.suggested_name ? null : STORE_CODE_NOTE;
+  // where it went. An Amazon label (#4933) is the same: one shared reader.
+  const classified = classifiedCodeOf(row.suggested_metadata);
+  if (classified && !row.suggested_name) return classified.note;
   if (!row.barcode_text) return null;
   return withoutRoutingSentences(row.ai_notes) || null;
 }
@@ -9707,6 +9773,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
           kind: candidates[0]?.kind ?? null,
           // The collection's own name, from the workspace's menu for that kind.
           kindLabel: menu.find((e) => e.kind === candidates[0]?.kind)?.label ?? null,
+          kindIsCollection: !!menu.find((e) => e.kind === candidates[0]?.kind)?.instance,
           requirement: resolveRequirement(
             (meta as { storage_requirement?: unknown }).storage_requirement ??
               (candidates[0]?.fields as Record<string, unknown> | undefined)?.storage_requirement,
@@ -9722,6 +9789,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
             .set({
               suggested_location_id: sug.location_id,
               suggested_location_note: `${sug.location_name} — ${sug.reason}`,
+              suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({ location_suggestion: { source: sug.source, reason: sug.reason } })}::jsonb` as never,
               updated_at: new Date(),
             })
             .where("id", "=", opts.itemId)
