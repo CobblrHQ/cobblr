@@ -92,12 +92,20 @@ type SdcpStatus = {
 
 export class ElegooSdcpDriver implements MachineDriver {
   private readonly host: string;
+  private resin: boolean;
   private board: { id: string; mainboardId: string; name: string } | null = null;
 
   constructor(cfg: ManagerConfig) {
     // Accept http(s)://ip, elegoo://ip, or a bare ip/hostname.
     const m = /^(?:[a-z+]+:\/\/)?([^/:]+)/i.exec(cfg.baseUrl.trim());
     this.host = m?.[1] ?? cfg.baseUrl.trim();
+    this.resin = cfg.extra?.config?.profile === "resin";
+  }
+
+  private printState(code: number | undefined): JobStatus["state"] {
+    if (!this.resin) return mapPrintState(code);
+    if ([1, 2, 3, 4, 5, 7, 10].includes(code ?? -1)) return "printing";
+    return code === 6 ? "paused" : code === 8 ? "cancelled" : code === 9 ? "completed" : code === 0 ? "idle" : "unknown";
   }
 
   private async guard(): Promise<void> {
@@ -118,6 +126,7 @@ export class ElegooSdcpDriver implements MachineDriver {
       sock.on("message", (msg) => {
         try {
           const j = JSON.parse(msg.toString()) as { Id?: string; Data?: { MainboardID?: string; Name?: string; MachineName?: string } };
+          this.resin ||= /saturn|mars|jupiter|resin/i.test(j.Data?.MachineName ?? "");
           clearTimeout(timer);
           sock.close();
           resolve({
@@ -219,7 +228,7 @@ export class ElegooSdcpDriver implements MachineDriver {
       return [{ id: board.mainboardId, name: board.name, enabled: true, state: "offline" }];
     }
     const code = st?.PrintInfo?.Status ?? (Array.isArray(st?.CurrentStatus) ? st?.CurrentStatus[0] : st?.CurrentStatus);
-    const printing = mapPrintState(typeof code === "number" ? code : undefined) === "printing";
+    const printing = this.printState(typeof code === "number" ? code : undefined) === "printing";
     return [
       {
         id: board.mainboardId,
@@ -282,6 +291,7 @@ export class ElegooSdcpDriver implements MachineDriver {
 
   async submitJob(args: SubmitArgs): Promise<SubmitResult> {
     const board = await this.discover();
+    if (this.resin) throw new Error("Connect this resin printer through the SDCP LAN bridge and approve Start at its machine station.");
     // Firmware needs a beat between upload-complete and start (per the
     // ElegooSlicer implementation) or Cmd 128 can race the file close.
     await new Promise((r) => setTimeout(r, 1000));
@@ -306,7 +316,7 @@ export class ElegooSdcpDriver implements MachineDriver {
     const { status } = await this.wsCommand(0);
     const pi = status?.PrintInfo;
     const code = pi?.Status ?? (Array.isArray(status?.CurrentStatus) ? status?.CurrentStatus[0] : status?.CurrentStatus);
-    let state = mapPrintState(typeof code === "number" ? code : undefined);
+    let state = this.printState(typeof code === "number" ? code : undefined);
     // The printer names the running file (often prefixed "<n>_"). If it's
     // printing something ELSE, our job isn't running — with no job history to
     // consult, report the safe reading: completed if the bed went idle after

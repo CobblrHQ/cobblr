@@ -46,13 +46,15 @@ export async function resolveApiToken(
   /** The MCP resource an OAuth connector's access token was issued for (its
    *  audience); null for a personal token. */
   audience: string | null;
+  /** The token's own name ("Pantry station"). */
+  name: string;
 } | null> {
   if (!plaintext.startsWith(PREFIX)) return null;
   const hash = hashToken(plaintext);
   const row = await meta
     .selectFrom("api_tokens as t")
     .leftJoin("orgs as o", "o.id", "t.org_id")
-    .select(["t.id as id", "t.user_id as user_id", "t.expires_at as expires_at", "t.revoked_at as revoked_at", "t.scopes as scopes", "t.access as access", "t.org_id as org_id", "o.slug as org_slug", "t.source as source", "t.meta as meta", "t.parent_token_id as parent_token_id"])
+    .select(["t.id as id", "t.name as name", "t.user_id as user_id", "t.expires_at as expires_at", "t.revoked_at as revoked_at", "t.scopes as scopes", "t.access as access", "t.org_id as org_id", "o.slug as org_slug", "t.source as source", "t.meta as meta", "t.parent_token_id as parent_token_id"])
     .where("t.token_hash", "=", hash)
     .executeTakeFirst();
   if (!row) return null;
@@ -81,6 +83,7 @@ export async function resolveApiToken(
   return {
     userId: row.user_id,
     tokenId: row.id,
+    name: row.name,
     scopes,
     access: isTokenAccess(row.access) ? row.access : null,
     orgId: row.org_id ?? null,

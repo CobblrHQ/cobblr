@@ -1,0 +1,10 @@
+{
+  "lint": "lint:runtime-deps-are-declared",
+  "run": "node scripts/lint-runtime-deps-are-declared.ts",
+  "rows": [
+    "kernel-platform-service"
+  ],
+  "ms": 810,
+  "recorded": "2026-10-05",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

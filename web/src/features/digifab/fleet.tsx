@@ -1,3 +1,4 @@
+import { LASER_FIRMWARES } from "@cobblr/platform-contract/laser-setup";
 import { laserState } from "../../lib/fabrication-display";
 import { DirectLaserControls } from "./DirectLaserControls";
 import { LightBurnReadiness } from "./lightburn-readiness";
@@ -16,6 +17,10 @@ import { cancelOutcome } from "../../lib/digifab-cancel";
 import { LightBurnPairing } from "../../components/LightBurnPairing";
 import { bridgeDisplayName } from "../../lib/bridge-choice";
 import { BridgeInstallMethod } from "../../components/BridgeInstallMethod";
+import { ToolTemperatures } from "./ToolTemperatures";
+import { SnapmakerPairing } from "./SnapmakerPairing";
+import { SnapmakerDiscovery } from "./SnapmakerDiscovery";
+import { FormlabsConnection } from "./FormlabsConnection";
 import { useState, useMemo, useEffect, useRef, Fragment, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -127,7 +132,7 @@ export function CreateConnectionModal({
           <span className={lbl}>Type</span>
           <select value={type} onChange={(e) => setType(e.target.value)} className={field}>
             {types.map((t) => (
-              <option key={t} value={t}>{t === "fdm_monster" ? "FDM Monster" : t === "mock" ? "Mock (test)" : t === "bambu" ? "Bambu Lab" : t === "edge_adapter" ? "Your bridge" : t}</option>
+              <option key={t} value={t}>{t === "fdm_monster" ? "FDM Monster" : t === "mock" ? "Mock (test)" : t === "bambu" ? "Bambu Lab" : t === "edge_adapter" ? "Your bridge" : t === "formlabs_dashboard" ? "Formlabs Dashboard (monitor)" : t}</option>
             ))}
           </select>
         </label>
@@ -150,7 +155,7 @@ export function CreateConnectionModal({
               ? <BambuConnectWizard onConnected={() => onCreated()} onCancel={onClose} />
               : <EdgeBridgeSetup presetDriver="bambu" onCreated={onCreated} onClose={onClose} />}
           </div>
-        ) : type === "edge_adapter" ? (
+        ) : type === "formlabs_dashboard" ? <FormlabsConnection onCreated={onCreated} /> : type === "edge_adapter" ? (
           <EdgeBridgeSetup onCreated={onCreated} onClose={onClose} presetName={presetName} presetDriver={presetDriver} />
         ) : (
       <form
@@ -230,19 +235,35 @@ export function CreateConnectionModal({
 // the cobblr-edge:// connection that routes through the tunnel.
 // What the bridge can drive + the fields each needs. Mirrors the bridge's
 // built-in drivers (mock/moonraker/prusalink/duet/bambu/lightburn).
-const BRIDGE_DRIVERS: { key: string; label: string; fields: { key: string; label: string; placeholder?: string; optional?: boolean }[] }[] = [
+const BRIDGE_DRIVERS: { key: string; label: string; driver?: string; config?: Record<string, string>; fields: { key: string; label: string; placeholder?: string; optional?: boolean; secret?: boolean }[] }[] = [
   { key: "mock", label: "Mock (test: no hardware)", fields: [] },
   { key: "moonraker", label: "Klipper (Moonraker)", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.50" }, { key: "apiKey", label: "API key (only if locked down)", optional: true }] },
+  { key: "snapmaker-u1", driver: "moonraker", config: { profile: "snapmaker-u1" }, label: "Snapmaker U1", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.50" }, { key: "apiKey", label: "Moonraker API key", optional: true }] },
+  { key: "snapmaker", label: "Snapmaker (2.0, J1, Artisan)", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.50" }] },
+  { key: "sdcp", label: "Resin printer (Elegoo / SDCP)", fields: [{ key: "host", label: "Printer LAN IPv4 address", placeholder: "192.168.1.50" }] },
   { key: "prusalink", label: "Prusa (PrusaLink)", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.213" }, { key: "apiKey", label: "PrusaLink API key" }] },
   { key: "duet", label: "Duet (RepRapFirmware)", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.50" }] },
   { key: "bambu", label: "Bambu Lab (LAN)", fields: [{ key: "host", label: "Printer IP" }, { key: "serial", label: "Serial" }, { key: "accessCode", label: "LAN access code" }] },
   { key: "lightburn", label: "LightBurn laser", fields: [{ key: "host", label: "LightBurn host" }] },
+  { key: "gcode-laser", label: "G-code laser", fields: [] },
+  {key:"galvo",label:"BJJCZ EZCAD2 galvo",fields:[{key:"usbSerial",label:"USB serial (if present)",optional:true},{key:"boardId",label:"Board ID (16 hex digits)",placeholder:"From this board’s setup report",optional:true}]},
+  { key: "ruida", label: "Ruida DSP laser", fields: [{key:"host",label:"Controller IPv4 address",placeholder:"192.168.1.60"},{key:"magic",label:"Card scramble key (hex)",placeholder:"88, 11 or 10",optional:true}] },
 ];
 
 type MachineDraft = { key: string; name: string; driver: string; cfg: Record<string, string> };
 let machineSeq = 0;
 const newMachine = (driver = "mock"): MachineDraft => ({ key: `m${++machineSeq}`, name: "", driver, cfg: {} });
-const defOf = (m: MachineDraft) => BRIDGE_DRIVERS.find((d) => d.key === m.driver) ?? BRIDGE_DRIVERS[0]!;
+const GCODE_FIRMWARES = Object.entries(LASER_FIRMWARES).map(([key,label])=>({key,label}));
+const gcodeBridgeValues = (m: MachineDraft) => ({firmware:m.cfg.firmware || "grbl",transport:m.cfg.firmware === "forgefirm" ? "tcp" : m.cfg.transport || "serial"});
+const defOf = (m: MachineDraft) => {
+  const def = BRIDGE_DRIVERS.find((d) => d.key === m.driver) ?? BRIDGE_DRIVERS[0]!;
+  if (m.driver !== "gcode-laser") return def;
+  const fields: typeof def.fields = gcodeBridgeValues(m).transport === "tcp"
+    ? [{key:"host",label:"Controller address",placeholder:"laser.local"},{key:"port",label:"TCP port",placeholder:"23",optional:true}]
+    : [{key:"path",label:"Serial port",placeholder:"COM7, /dev/cu.usbserial or /dev/serial/by-id/…"},{key:"baud",label:"Baud rate",placeholder:"115200",optional:true}];
+  if(m.cfg.firmware === "forgefirm")fields.push({key:"panelUrl",label:"HTTPS panel address",placeholder:"https://laser.local"},{key:"panelFingerprint",label:"Certificate SHA-256 fingerprint",placeholder:"From the machine's Setup card"},{key:"panelToken",label:"Panel read token",optional:true,secret:true});
+  return {...def,label:m.cfg.firmware === "forgefirm" ? "Glowforge (ForgeFIRM)" : def.label,fields};
+};
 
 export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName }: { onCreated: (connectionId?: string) => void; onClose: () => void; presetDriver?: string; presetName?: string }) {
   const { activeSlug } = useActiveOrg();
@@ -256,6 +277,7 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName }
   });
   const [installNew, setInstallNew] = useState(false);
   const [installationId, setInstallationId] = useState<string | null>(null);
+  const [created, setCreated] = useState<{ firstId?: string; pairs: { id: string; name: string; paired: boolean }[] } | null>(null);
   const bridges = useQuery({
     queryKey: ["edge-bridges", activeSlug],
     queryFn: () => api.listEdgeBridges(activeSlug),
@@ -289,18 +311,22 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName }
   const create = useMutation({
     mutationFn: async () => {
       let firstId: string | undefined;
+      const pairs: { id: string; name: string; paired: boolean }[] = [];
       for (const { m, id } of withIds) {
-        const config = { driver: m.driver, ...(bid ? { bridge: bid } : {}), ...Object.fromEntries(defOf(m).fields.map((f) => [f.key, m.cfg[f.key]?.trim()]).filter(([, v]) => v)) };
+        const def = defOf(m);
+        const config = { ...(m.driver === "snapmaker" && m.cfg.transport ? { transport: m.cfg.transport } : {}), driver: def.driver || m.driver, ...def.config, ...(bid ? { bridge: bid } : {}), ...(m.driver === "gcode-laser" ? {name:m.name.trim() || def.label,...gcodeBridgeValues(m), ...(gcodeBridgeValues(m).transport === "tcp" ? {port:m.cfg.port || "23"} : {baud:m.cfg.baud || "115200"})} : {}), ...Object.fromEntries(def.fields.map((f) => [f.key, m.cfg[f.key]?.trim()]).filter(([, v]) => v)) };
         const c = await api.createDigifabConnection(activeSlug, { type: "edge_adapter", label: m.name.trim() || defOf(m).label, base_url: `cobblr-edge://${id}`, config });
         if (!firstId) firstId = c.id;
+        if (m.driver === "snapmaker") pairs.push({ id: c.id, name: m.name.trim() || def.label, paired: false });
       }
-      return firstId;
+      return { firstId, pairs };
     },
-    onSuccess: (firstId) => { toast.success(machines.length > 1 ? `${machines.length} machines connected.` : "Machine connected."); onCreated(firstId); },
+    onSuccess: (result) => { if (result.pairs.length) setCreated(result); else { toast.success(machines.length > 1 ? `${machines.length} machines connected.` : "Machine connected."); onCreated(result.firstId); } },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't add the connection(s)."),
   });
   const lbl = "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
   const field = "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
+  if (created) return <div className="space-y-3">{created.pairs.map(pair => <div key={pair.id}><h3>{pair.name}</h3><SnapmakerPairing slug={activeSlug} connectionId={pair.id} onPaired={() => setCreated(previous => previous && ({ ...previous, pairs: previous.pairs.map(p => p.id === pair.id ? { ...p, paired: true } : p) }))} /></div>)}<button type="button" className="min-h-11 rounded border border-line px-3 py-2 disabled:opacity-50" disabled={created.pairs.some(p => !p.paired)} onClick={() => onCreated(created.firstId)}>Finish setup</button></div>;
   return (
     <div className="space-y-3">
       {!installing && <div className="space-y-2">
@@ -359,14 +385,35 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName }
                     {BRIDGE_DRIVERS.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}
                   </select>
                 </label>
+                {m.driver === "gcode-laser" && <>
+                  <label className="block"><span className={lbl}>Firmware</span>
+                    <select value={gcodeBridgeValues(m).firmware} onChange={e => updateMachine(m.key,{cfg:{...m.cfg,firmware:e.target.value,...(e.target.value === "forgefirm" ? {transport:"tcp",port:"23",path:""} : {})}})} className={field}>
+                      {GCODE_FIRMWARES.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+                    </select>
+                  </label>
+                  <label className="block"><span className={lbl}>Connection</span>
+                    <select value={gcodeBridgeValues(m).transport} disabled={m.cfg.firmware === "forgefirm"} onChange={e => setField(m.key,"transport",e.target.value)} className={field}>
+                      <option value="serial">USB serial</option><option value="tcp">Network TCP</option>
+                    </select>
+                  </label>
+                </>}
                 {def.fields.map((f) => (
                   <label key={f.key} className="block">
                     <span className={lbl}>{f.label}{f.optional ? "" : " *"}</span>
-                    <input value={m.cfg[f.key] ?? ""} onChange={(e) => setField(m.key, f.key, e.target.value)} placeholder={f.placeholder} className={field} />
+                    {f.secret || m.driver === "snapmaker-u1" && f.key === "apiKey"
+                      ? <SecretInput secret what={f.secret ? "panel read token" : "API key"} value={m.cfg[f.key] ?? ""} onChange={(e) => setField(m.key, f.key, e.target.value)} placeholder={f.placeholder} className={field} />
+                      : <input value={m.cfg[f.key] ?? ""} onChange={(e) => setField(m.key, f.key, e.target.value)} placeholder={f.placeholder} className={field} />}
                     {m.driver === "lightburn" && f.key === "host" && <span className="block text-xs text-muted">127.0.0.1 when LightBurn runs on the bridge’s computer.</span>}
                   </label>
                 ))}
+                {m.driver === "snapmaker" && connected && <SnapmakerDiscovery slug={activeSlug} bridge={bid || null} onFound={found => updateMachine(m.key, { name: found.name, cfg: { ...m.cfg, host: found.host, transport: found.transport } })} />}
+                {m.driver === "snapmaker-u1" && <p className="col-span-2 text-xs text-muted">Connect to Moonraker on port 7125. Enable local access on the printer if needed. Start is approved at its machine station.</p>}
+                {m.driver === "snapmaker" && <p className="col-span-2 text-xs text-muted">Approve pairing on the touchscreen after adding this machine. Only 3D printing heads are supported. The bridge detects HTTP or SACP firmware automatically.</p>}
+                {m.driver === "sdcp" && <p className="col-span-2 text-xs text-muted">The shared bridge reaches this resin printer over LAN. Upload a sliced GOO file, load its resin and approve Start at an authorized browser station.</p>}
               </div>
+              {m.driver === "gcode-laser" && m.cfg.firmware === "forgefirm" && <p className="mt-2 text-sm text-muted">
+                Stock cloud Glowforges are not supported. <a href="https://github.com/openglow-org/forgefirm" target="_blank" rel="noreferrer" className="text-accent underline">ForgeFIRM</a> is beta, third-party firmware you install at your own risk. Cobblr does not install it. It connects over TCP port 23 and keeps the machine's physical arming button. Copy the HTTPS certificate fingerprint from the machine's Setup card. If panel reads are locked, create a token with machine.read access there.
+              </p>}
             </div>
           );
         })}
@@ -1257,6 +1304,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
   const onDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setDropHover(false);
+    if (d.monitor_only) { toast.error("This is a Dashboard monitor. Start prints at the printer."); return; }
     const raw = e.dataTransfer.getData(LIBRARY_DRAG_MIME);
     if (!raw) return;
     let item: { name: string; file_id: string };
@@ -1288,7 +1336,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
   const doneBy = etaMin != null && etaMin > 0 ? new Date(Date.now() + etaMin * 60_000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null;
   // Blocking reason — say WHY a machine isn't doing anything (SimplyPrint's
   // strongest pattern). Attention has its own richer banner below.
-  const blocked = !d.enabled ? "disabled, not taking jobs" : d.klass === "offline" ? "offline, check the machine" : d.klass === "error" && !att ? "error, see the manager" : null;
+  const blocked = d.monitor_only ? "Dashboard monitoring only" : !d.enabled ? "disabled, not taking jobs" : d.klass === "offline" ? "offline, check the machine" : d.klass === "error" && !att ? "error, see the manager" : null;
   // WHY this machine is in the "Needs you" bucket — always named on the tile,
   // never a bare amber ring. The deviceBucket() rule is: needs_attention (the
   // Cobblr bed-clear gate), OR klass "error", OR klass "complete". The last one
@@ -1315,7 +1363,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
     onDragLeave: () => setDropHover(false),
     onDrop: (e: React.DragEvent) => void onDrop(e),
   };
-  const rootCls = `relative rounded-lg border overflow-hidden ${dropHover ? "border-cobble-500 ring-2 ring-cobble-500/40" : att ? "border-amber-400 dark:border-amber-700" : st.ring} bg-subtle dark:bg-slate-800/50 ${d.enabled ? "" : "opacity-50"} ${selecting ? "cursor-pointer" : ""} ${selected ? "ring-2 ring-cobble-500" : ""}`;
+  const rootCls = `relative rounded-lg border overflow-hidden ${dropHover ? "border-cobble-500 ring-2 ring-cobble-500/40" : att ? "border-amber-400 dark:border-amber-700" : st.ring} bg-subtle dark:bg-slate-800/50 ${d.enabled || d.state === "unpaired" && d.station_kind === "print" ? "" : "opacity-50"} ${selecting ? "cursor-pointer" : ""} ${selected ? "ring-2 ring-cobble-500" : ""}`;
 
   // Camera-wall tile — the feed is the card; status + progress ride as an
   // overlay strip. Streams/snapshots regardless of state (that's the point of
@@ -1454,10 +1502,10 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
         </button>
       </div>
       {subtitle && <div className="text-[10px] text-faint truncate">{subtitle}</div>}
-      <div className="flex items-center gap-2 mt-0.5">
+      <div className="flex flex-wrap items-center gap-2 mt-0.5">
         <span className={`text-[10px] font-mono uppercase tracking-wider ${st.text}`}>{laser ? laserState(d.state) : d.state}</span>
         {d.stage && (
-          <span className="text-[10px] font-medium text-accent truncate" title="current stage">{d.stage}</span>
+          <span className={`text-[10px] font-medium ${d.state === "unpaired" && d.station_kind === "print" ? "text-content break-words whitespace-normal" : "text-accent truncate"}`} title="current stage">{d.stage}</span>
         )}
         {!laser && (nozzle || bed || chamber) && (
           <span className="inline-flex items-center gap-1 text-[10px] font-mono text-faint" title="nozzle / bed / chamber (actual/target °C)">
@@ -1469,6 +1517,8 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
         )}
       </div>
       {/* An external detector (e.g. PrintGuard) owns this printer's detection + camera. */}
+      {!laser && <ToolTemperatures tools={d.temps?.tools} />}
+      {d.state === "unpaired" && d.station_kind === "print" && <SnapmakerPairing slug={slug} connectionId={connId} onPaired={invalidateFleet} />}
       {d.managed_by_detector && (
         <div className="mt-1 inline-flex items-center gap-1 text-[10px] text-faint" title="An external detector owns this printer's detection and camera - Cobblr isn't watching it or pulling its camera">
           👁 watched by detector
@@ -1496,7 +1546,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
         </div>
       ) : null}
       {d.lightburn_readiness && <div className="mt-2"><LightBurnReadiness readiness={d.lightburn_readiness} /></div>}
-      {laser && <Link className="inline-flex min-h-11 items-center mt-2 text-sm underline" to={`/station/machine/${connId}/${encodeURIComponent(d.id)}`}>Open machine station</Link>}
+      {(laser || d.station_kind) && <Link className="inline-flex min-h-11 items-center mt-2 text-sm underline" to={`/station/machine/${connId}/${encodeURIComponent(d.id)}`}>Open machine station</Link>}
       {d.laser_backend && <DirectLaserControls slug={slug} connectionId={connId} deviceId={d.id} status={job?.status} />}
       {laser && !d.laser_backend && job && <p className="mt-2 text-xs text-muted">{job.status === "sent" ? "Start sent, waiting for LightBurn to report running. " : ""}Stop in LightBurn or at the machine</p>}
       {blocked && <div className="mt-1 text-[10px] text-ember-600 dark:text-ember-500">{blocked}</div>}

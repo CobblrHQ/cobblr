@@ -2,6 +2,47 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-10-06
+
+### Features
+- Added bench instrument readings with units, saved results on boards and test runs, scope screenshots, and confirmed power supply output-off.
+- CNC stations now review posted programs, check stock and tools, pause for tool changes and track stock use and bit runtime.
+- Ask Cobb to stop a machine and it stops at once. "Stop the laser", "stop that print" or "pause the resin printer" no longer waits for you to press Confirm, and an assistant connected over MCP can stop a machine too. Stopping is all it can do: starting or resuming a machine still asks you first. An owner can also ask Cobb to take a station's Start away ("kick that tablet off the laser station"); that one asks first.
+- Added vinyl and craft cutter stations with mirrored heat-transfer cuts, tested material profiles and roll usage recorded in Inventory.
+- Bring a whole house into the floor plan from one file: ask any AI with the copied prompt, paste what it gives you, check the preview, and import it as one step you can undo. Export gives the same file back.
+- Added direct BJJCZ galvo jobs with lens and source confirmation, a red-guide Frame and station-only Start.
+- Added direct Ruida laser jobs with station review, laser-off Frame and independent Stop.
+- Tracked licences, subscriptions and warranties with cancellation reminders, paid terms, vendor totals and receipt drafts.
+- Returns now live on the order: start one on any line of an arrived order, follow it from Started to Refunded with one tap per stage, and the store's own return emails move the same return. When the store has it, the count comes off the shelf once, and the refund comes off the order's spend once.
+- Added copy and move between your workspaces, with a field preview and undo.
+- Renewals now keep linked terms with coverage dates, costs and documents, and let you end a renewal without losing its history.
+- Added resin printer stations with shared LAN control, liquid stock and wearing part tracking, wash and cure checklists, and Formlabs monitoring.
+- Added encrypted secret fields with permission checks and a history entry for every reveal or copy.
+- Run several shop machines through one bridge, discover nearby controllers, and use a tablet as each machine station.
+- Added board revision imports, component stock checks with attrition and moisture warnings, shortage carts and tracked fabrication purchases.
+- Added board inspection photos, rework history, QR labels and tested-batch traceability to reel lots.
+- Added assembly work orders with whole-kit reservations and refrigerated solder paste handling against each jar's label limits.
+- Added calibrated pick-and-place exports, feeder QR checks and authorized station recording with placed-board stock.
+- Added paste reflow profiles, oven bridge drivers and authorized station logs with temperature limit checks.
+- A tablet and a barcode scanner can be a station of their own: scan something and it shows what it is, with +1, Used one, Set total and Move to, or the scan inbox's card for something new.
+
+### Improvements
+- Choosing one of a few options is now a row of rectangular buttons with the chosen one filled, instead of round radio buttons, on every screen that had them.
+- A task's Assigned to field is on every task now, ready to fill in, instead of hiding behind "+1 more field" until someone was assigned. Any field a record's own module declares shows the same way; fields other modules add still wait behind "+N more fields".
+- A rack's shelves read on a phone: each shelf's name and how much of it is used ("1,278 of 1,220 mm: 58 mm too wide") sit above the things on it, the rack is drawn the full width of the screen, and a long name is shown whole with one tap.
+
+### Fixes
+- A sandbox that was being set up could occasionally fail to start when the cleanup of orphaned guest accounts ran at that exact moment; it now leaves new guests alone for ten minutes.
+- Number boxes (cutter settings, laser layout, quantities and others) can now be emptied and retyped instead of snapping to 0, and open the phone's number keypad.
+- An assistant's printer lands in 3D Printers. A printer added by an assistant with a bed size could go to Machines or even Inventory and lose the bed size. The values it comes with now choose the list when only one list has a field for them, the same model goes the same way every time, and a name like "Bambu Lab P1P (ex-print farm)" is kept as written.
+- A printer added by its name goes to 3D Printers. A printer added as "Bambu Lab P1P" with nothing else could land in Inventory, especially when the same maker's filament sits in Spools. A known printer model now names 3D Printers on its own, and the same maker's filament and parts still go where they belong.
+- A station keeps the scans it cannot use yet. Scanning stock at the Stock station before naming a slot, or a sheet at a laser station with no job waiting, opened the record and left the station screen. The station now keeps the scan and says what to do first.
+- The activity log names what happened in plain words: a module you turn on is named ("You turned on Lists"), the setup Cobblr does for a new workspace reads "Set up for you", joining names the workspace, and a field is said in full ("quantity", not "qty"). Times read "3 min ago" with the exact moment on hover. Letter tiles for records without a photo are readable in dark mode.
+- Cobb no longer says a step was done when it failed. Asked to create a list and file things into it, Cobb could try the filing before the list existed, see it fail, make the list, and then say both were done. Now the list is made first and the filing runs once it exists, so everything lands. A step that still fails is said as not done, with its reason and a Retry. The steps Cobb took stay under the answer, open on the one that failed. A list Cobb names, like a record, is a chip that opens it.
+- The overdue-reminder default reads properly in dark mode. On Configuration → Notifications, the Maintenance reminders box was a pale card on a dark page. It now sits in the same card as the rest of the page, in either theme.
+- An overdue renewal card keeps Renewed as its one main action: the snooze and stop choices sit behind "Pause reminders…". A renewal or service far off or long overdue is said in weeks, months or years ("due in 4 months", "overdue by 6 years"), not as hundreds of days.
+- Scanning a distributor package now receives the component purchase it was bought on, and the purchase is marked arrived once every line is scanned in. A fab order with a tracking number now reminds only the person who ordered it.
+
 ## 2026-10-05
 
 ### Features

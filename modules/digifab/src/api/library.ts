@@ -44,7 +44,7 @@ libraryRouter.post(
     const file = uploadedFile(req);
     if (!file) return void res.status(400).json({ error: { code: "missing_file", message: "Multipart field 'file' is required." } });
     if (!isLibraryFile(file.originalname)) {
-      return void res.status(400).json({ error: { code: "bad_type", message: "Upload a .3mf, .gcode, SVG, DXF, AI, PDF or .lbrn2 file." } });
+      return void res.status(400).json({ error: { code: "bad_type", message: "Upload a .3mf, .gcode, .goo, SVG, DXF, AI, PDF or .lbrn2 file." } });
     }
     const stored = await platform().files.write(orgId, { path: file.path, size: file.size, sha256: file.sha256 }, { filename: file.originalname, mimeType: file.mimetype || "application/octet-stream" });
     if (!stored) return void res.status(500).json({ error: { code: "store_failed", message: "File storage is unavailable." } });
@@ -99,7 +99,7 @@ libraryRouter.patch(
     if (parsed.data.notes !== undefined) patch.notes = parsed.data.notes;
     if (parsed.data.laser_material) {
       const before = await tenantDb(req).selectFrom("digifab_library").select("metadata").where("id", "=", req.params.id!).executeTakeFirst();
-      if (before?.metadata.laser_layout) return void res.status(409).json({ error: { code: "generated_material", message: "This layout keeps the material chosen in its plan. Make a new plan to change it." } });
+      if ((before?.metadata.laser_layout || before?.metadata.cutter_plan)) return void res.status(409).json({ error: { code: "generated_material", message: "This layout keeps the material chosen in its plan. Make a new plan to change it." } });
       patch.metadata = platform().db.mergeJsonb("metadata", { laser_material: parsed.data.laser_material });
     }
     const row = await tenantDb(req).updateTable("digifab_library").set(patch).where("id", "=", req.params.id!).returning(ROW).executeTakeFirst();
@@ -114,7 +114,7 @@ libraryRouter.delete(
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin")) return;
     const before = await tenantDb(req).selectFrom("digifab_library").select("metadata").where("id", "=", req.params.id!).executeTakeFirst();
-    if (before?.metadata.laser_layout) return void res.status(409).json({ error: { code: "generated_layout", message: "Keep this run's generated project. Cancel the run to discard its queued jobs." } });
+    if ((before?.metadata.laser_layout || before?.metadata.cutter_plan)) return void res.status(409).json({ error: { code: "generated_layout", message: "Keep this run's generated project. Cancel the run to discard its queued jobs." } });
     const plan = await tenantDb(req).selectFrom("digifab_laser_plans").select("id").where("library_id", "=", req.params.id!).executeTakeFirst();
     if (plan) return void res.status(409).json({ error: { code: "laser_plan_exists", message: "This drawing belongs to a saved laser layout. Discard unqueued layouts before deleting it. Keep a queued run's source drawing." } });
     const row = await tenantDb(req).deleteFrom("digifab_library").where("id", "=", req.params.id!).returning(["id"]).executeTakeFirst();

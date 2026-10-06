@@ -1,4 +1,3 @@
-import { PastePanel } from "./PastePanel";
 import { StoragePanel } from "./StoragePanel";
 import { RecordFormModal, useMoneyCurrency, RecordPhoto, PresentationGate, StickyBottomBar, MutationError, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FaceSection, faceShows, useHoldsContents, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, editFieldItem, moneyFieldItem, usedValueFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits, usedInUnit } from "@cobblr/platform-web";
 import { fieldCurrency } from "@cobblr/platform-contract/money";
@@ -11,6 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, ArrowRightLeft, Copy, Library, Minus, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { consumptionGauge, type ConsumptionGauge as ConsumptionGaugeT } from "@cobblr/platform-contract/consumption-gauge";
 import { useInventory } from "./context";
+import { StockPanel } from "./StockPanel";
 import { SheetPanel } from "./SheetPanel";
 import { MaterialPanel } from "./MaterialPanel";
 import { QtyStepper } from "./QtyStepper";
@@ -184,7 +184,7 @@ const FACE_HELD: Record<string, { field: string; fallback: unknown }> = {
 
 export function PartDetailPage({ id, onClose }: { id: string; onClose: () => void }) {
   const mainCurrency = useMoneyCurrency();
-  const { api, orgSlug, getToken, entityKind, instance, itemNoun, parent, countWords, storageTracking, pasteTracking } = useInventory();
+  const { api, orgSlug, getToken, entityKind, instance, itemNoun, parent, countWords, storageTracking } = useInventory();
   const fp = useFieldPresentation(entityKind);
   const disclosure = useDisclosure();
   const units = useUnits();
@@ -519,7 +519,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
       )}
 
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 sm:p-5 space-y-3">
-        <div className="flex flex-col sm:flex-row sm:flex-wrap items-start gap-4">
+        <div className="flex flex-wrap items-start gap-4">
           <RecordPhoto
             kind={entityKind}
             id={p.id}
@@ -535,7 +535,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
               void qc.invalidateQueries({ queryKey: ["part-gallery", orgSlug, p.id] });
             }}
           />
-          <div className="w-full sm:w-auto sm:flex-1 min-w-0">
+          <div className="flex-1 min-w-0">
             <div className="min-w-0">
               <EditableTitle
                 value={p.name}
@@ -588,7 +588,6 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
             here handed every book the base table's Use one, Used up and
             Restock whatever the shelf declared (the 2026-09-12 review). */}
         {storageTracking && <StoragePanel id={p.id} />}
-        {pasteTracking && <PastePanel id={p.id} />}
         <EntityActionsBar
           entityKind={entityKind}
           entityId={p.id}
@@ -644,7 +643,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
                   ),
                 }
               : null,
-            !hide("min_qty") ? editFieldItem("min_qty", { label: fp.label("min_qty", "Min qty"), value: p.min_qty ?? "", placeholder: "—", numeric: true, onCommit: (v) => update.mutate({ min_qty: v === "" ? null : Number(v) }) }) : null,
+            !hide("min_qty") ? editFieldItem("min_qty", { label: fp.label("min_qty", "Min qty"), value: p.min_qty ?? "", placeholder: "—", numeric: true, fractionDigits: 9, onCommit: (v) => update.mutate({ min_qty: v === "" ? null : Number(v) }) }) : null,
             !hide("min_qty") ? {
               need: fieldNeed("low-stock-alerts", { control: "checkbox", label: "Don't tell me when this item runs low" }),
               node: (
@@ -859,6 +858,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
         />
       )}
 
+      {!hide("qty") && <StockPanel id={p.id} hideThreshold={hide("min_qty")} />}
       <SheetPanel id={p.id} metadata={pmeta} />
       {(pmeta.density != null || parent) && <MaterialPanel id={p.id} />}
 
@@ -1316,7 +1316,7 @@ function FlatConsumptionPanel({
                 <li key={r.id} className="py-1.5 flex items-start gap-2 text-[13px]">
                   <span className={"font-medium tabular-nums shrink-0 " + (d < 0 ? "text-ember-600 dark:text-ember-500" : "text-moss-600 dark:text-moss-400")}>
                     {d < 0 ? "" : "+"}
-                    {units.format(d, unit, countWords)}
+                    {units.format(d, r.unit ?? unit, countWords)}
                   </span>
                   {/* Wraps: a line can carry a note typed for that use (a tasting note),
                       and a note cut to one line is a note nobody can read. */}

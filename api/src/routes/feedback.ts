@@ -195,6 +195,7 @@ feedbackRouter.post("/", async (req, res, next) => {
     // same message as the item is worked (🤖 grabbed → 👀 PR up → ✅ shipped).
     // Never blocks or fails the submission; a failed capture just means no
     // lifecycle reactions for this one item.
+    // DETACHED: the Discord card for a filed report; the report is saved, and a boot pass posts cards that are missing
     void (async () => {
       try {
         const posted = await postFeedbackCard(row.id, {

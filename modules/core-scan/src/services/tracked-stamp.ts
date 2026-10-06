@@ -86,7 +86,8 @@ export function trackedMatchStamp(tracked: { barcode_matches: TrackedMatch[]; na
  *  several places is stamped at the place picked on the row or the place
  *  being worked in; with neither it says how many places and that none is
  *  chosen, and the contract asks (scanRebuy). A places lookup that fails
- *  stamps as before, one record. */
+ *  throws: read as one place, "+1 more" went to a place nobody chose and a
+ *  real pick was refused (#4985). */
 export async function trackedMatchStampAt(
   orgId: string,
   tracked: { barcode_matches: TrackedMatch[]; name_matches: TrackedMatch[] } | null,
@@ -96,7 +97,8 @@ export async function trackedMatchStampAt(
   if (!stamp || stamp.of > 1 || !tracked) return stamp;
   const tier = tracked.barcode_matches.length > 0 ? tracked.barcode_matches : tracked.name_matches;
   const card = tier[0]?.card_id ?? stamp.id;
-  const places = await placesOfCard(orgId, stamp.kind, card).catch(() => []);
+  // Not caught: places that could not be read are not "one place" (#4985).
+  const places = await placesOfCard(orgId, stamp.kind, card);
   if (!at.place_choice) {
     const fresh = await newPlaceAmong(orgId, stamp.kind, stamp.instance, places, at.location_id ?? null);
     if (fresh) return { ...stamp, id: card, places: Math.max(places.length, 1), place_chosen: true, new_place: at.location_id ?? null, held: fresh.held };
@@ -151,11 +153,11 @@ export async function newPlaceAt(
   locationId: string | null,
 ): Promise<{ card: string } | null> {
   if (!locationId) return null;
-  const pairs = await platform()
-    .pairings.findBySources({ orgId, sourceKind: kind, sourceIds: [recordId], targetKind: kind, relationshipKind: HOLDING_OF })
-    .catch(() => [] as Array<{ targetId: string }>);
+  // Neither read is caught: a failure read as "kept nowhere else" files a
+  // new place's count into the old place (#4985).
+  const pairs = await platform().pairings.findBySources({ orgId, sourceKind: kind, sourceIds: [recordId], targetKind: kind, relationshipKind: HOLDING_OF });
   const card = pairs[0]?.targetId ?? recordId;
-  const places = await placesOfCard(orgId, kind, card).catch(() => []);
+  const places = await placesOfCard(orgId, kind, card);
   return (await newPlaceAmong(orgId, kind, instance, places, locationId)) ? { card } : null;
 }
 
@@ -194,6 +196,17 @@ export function matchQuery(row: MatchInput, fields: Record<string, unknown> | nu
 /** Re-derive a row's match and store it. Throws when the matcher fails, so
  *  a caller can tell "could not check" from "nothing matched" (the second
  *  creates a duplicate). */
+/** A row's match, derived and not stored: what restampTrackedMatch writes.
+ *  Throws when the matcher or the places read fails. */
+export async function trackedMatchFor(
+  orgId: string,
+  row: MatchInput,
+  fields: Record<string, unknown> | null | undefined,
+  category: string | null | undefined,
+): Promise<TrackedMatchStamp | null> {
+  return trackedMatchStampAt(orgId, await findTracked(orgId, matchQuery(row, fields, category)), scanPlaceOf(row));
+}
+
 export async function restampTrackedMatch(
   orgId: string,
   db: Kysely<never>,
@@ -202,7 +215,7 @@ export async function restampTrackedMatch(
   fields: Record<string, unknown> | null | undefined,
   category: string | null | undefined,
 ): Promise<TrackedMatchStamp | null> {
-  const stamp = await trackedMatchStampAt(orgId, await findTracked(orgId, matchQuery(row, fields, category)), scanPlaceOf(row));
+  const stamp = await trackedMatchFor(orgId, row, fields, category);
   await (db as unknown as Kysely<{ core_scan_inbox_items: { id: string; suggested_metadata: unknown } }>)
     .updateTable("core_scan_inbox_items")
     // jsonb merge: only the key this sets, onto the live row value.

@@ -1191,6 +1191,7 @@ superAdminRouter.post("/waitlist/ingest", async (req, res, next) => {
     if (hasAuthEmailSender()) {
       const cloudLine = "When a spot opens on hosted Cobblr, an invite comes back to you from a person.";
       const selfLine = "Self-hosting is open right now, so there is nothing to wait for.";
+      // DETACHED: a confirmation email; the signup is saved without it
       void sendAuthEmail({
         to: email,
         subject: "You're on the Cobblr list",
@@ -1211,6 +1212,7 @@ superAdminRouter.post("/waitlist/ingest", async (req, res, next) => {
         kind: "invite",
       });
     }
+    // DETACHED: an operator notification; the signup is saved without it
     void announce("waitlist.new", {
       title: kind === "selfhost" ? "📋 New self-host signup" : "📋 New waitlist signup",
       // The card carries an Approve button, and approving a self-hoster would
@@ -1943,6 +1945,7 @@ superAdminRouter.post("/feedback/ingest", async (req, res, next) => {
     // as the item moves. The in-app path has done this since the reaction
     // trail was added; this path posted and forgot, so a Discord-origin ticket
     // got a second, unlinked "resolved" card hours later.
+    // DETACHED: the Discord card for a filed report; the report is saved, and a boot pass posts cards that are missing
     void postFeedbackCard(row.id, {
       title: `${t.emoji} New ${t.label}`,
       body: parsed.data.message.slice(0, 1500),
@@ -2029,6 +2032,7 @@ superAdminRouter.post("/feedback/append", async (req, res, next) => {
     // second-message class the one-card design removed; it survives only for
     // an item that has no card to edit, and goes out as an event, not a card.
     if (fx.announceReopen && resolutionDelivery(fb) === "post") {
+      // DETACHED: an operator notification of a reopen; the reopen is saved without it
       void announce("feedback.resolved", {
         title: "🔄 Ticket reopened (Discord follow-up)",
         body: (parsed.data.text || "(image / attachment)").slice(0, 1500),
@@ -2207,6 +2211,7 @@ superAdminRouter.post("/feedback/append-dm", async (req, res, next) => {
     if (!parsed.data.skip_triage) {
       pokeTriage(row.id);
       const oid = attachOrgId;
+      // DETACHED: the Discord card for a filed report; the report is saved, and a boot pass posts cards that are missing
       void postFeedbackCard(row.id, {
         // no-origin-guild: a DM has no server. There is nowhere to route it
         // back to, so the operator's own sink is the right and only audience.
@@ -2522,7 +2527,7 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
       // post is only for an item that has no card to edit.
       if (resolutionDelivery(row) === "edit") {
         reflectFeedbackCard(row, { fixed: fixed ?? null, fields: cardFields });
-      } else void announce("feedback.resolved", {
+      } else void announce("feedback.resolved", { // DETACHED: the public resolved post; the resolve is saved without it
         title: "✅ Feedback resolved",
         originGuildId: resolvedGuild,
         // When we have a "what we did" line, the post reads as a public changelog
@@ -2623,6 +2628,7 @@ superAdminRouter.post("/feedback/batch-resolve", async (req, res, next) => {
           // The reporter's report is already in the thread, so don't re-quote it.
           const did = (fixNoteById.get(row.id) || summaryById.get(row.id) || reply_message || "").trim();
           const dmsg = feedbackReplyText(isResolved ? "resolved" : "wontfix", did);
+          // DETACHED: a Discord thread reply; the reply is recorded on the ticket below either way
           void pokeDiscordResolved({ thread_id: ref.thread_id, text: dmsg });
         }
       }
@@ -2656,6 +2662,7 @@ superAdminRouter.post("/feedback/batch-resolve", async (req, res, next) => {
         const fixed = (summaryById.get(row.id) || reply_message || "").trim();
         const reported = (row.message ?? "").slice(0, 1200);
         const cardFields = await reporterCardFields({ userId: row.user_id, orgId: row.org_id, route: ctx.route });
+        // DETACHED: the public resolved post; the resolve is saved without it
         void announce("feedback.resolved", {
           title: "✅ Feedback resolved",
           // Same rule as the single resolve: follow the original card's webhook.
@@ -2951,7 +2958,7 @@ superAdminRouter.patch("/announce-settings/:category", async (req, res, next) =>
     await setAnnounceSetting(req.params.category, parsed.data);
     // Turning feedback on is the moment items filed while it was off get their
     // cards (the boot pass does the same for a webhook set in the env).
-    if (req.params.category === "feedback.new") void postCardlessFeedback();
+    if (req.params.category === "feedback.new") void postCardlessFeedback(); // DETACHED: posting cards for reports filed while this was off; the boot pass does the same
     res.json({ ok: true });
   } catch (err) {
     if (err instanceof Error && err.message.startsWith("unknown announce category")) {

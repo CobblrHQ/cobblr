@@ -441,6 +441,7 @@ shareLinksOrgRouter.put("/:slug/share-links/:id/what", requireAuth, withTenant, 
       .execute();
     // What is shared changed: the mirror runs now.
     await meta.updateTable("share_links").set({ mirror_due_at: new Date() }).where("id", "=", l.id).execute();
+    // DETACHED: the mirror run; mirror_due_at is set above, so the sweep runs it if this does not finish
     void mirrorShareNow(l.id).catch((err) => console.error(`[share] mirror of ${l.id} failed:`, err));
     res.json({ scope, visibility, edit_mode, preview: await previewScope(req.tenant!.org.id, scope, (await sharePerson(l.id))?.id ?? null) });
   } catch (err) {

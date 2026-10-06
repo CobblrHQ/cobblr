@@ -7,6 +7,7 @@ export declare function cgroupLimitMib(): number | null;
 export declare function heapFor(kind: "tsc", o?: { limitMib?: number | null; defaultHeapMib?: number }): { ok: true; flag: string } | { ok: false; need: number; limit: number; message: string };
 export declare const CAPPED_SHARE: number;
 export declare function memoryRoom(): { mib: number | null; capped: boolean };
+export declare function roomUnderLimitMib(v: { limit: number; current: number; file?: number }): number;
 export declare function shareOf(env?: Record<string, string | undefined>, capped?: boolean): number;
 export declare function splitShare(n: number, env?: Record<string, string | undefined>, capped?: boolean): Record<string, string>;
 export declare function width(

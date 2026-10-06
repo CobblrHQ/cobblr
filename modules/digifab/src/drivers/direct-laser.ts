@@ -20,15 +20,12 @@ export class DirectLaserDriver extends DeclarativeDriver {
  }
  private async controller():Promise<GcodeController>{
   const l=this.manifest.laser!;
+  if(!["grbl","grbl-lpc","grblhal","fluidnc"].includes(l.firmware))throw new DriverSaid(409,"Connect this firmware through the G-code laser bridge so its setup and controls use the right protocol.");
   const text=await this.text(l.settings);
   let values:Omit<GcodeController,"firmware"|"homed">;
   if(l.firmware==="fluidnc")values=parseGrblSettings(/^\$31=/m.test(text)?text:text+"\n$31=0\n");
   else if(["grbl","grbl-lpc","grblhal","forgefirm"].includes(l.firmware))values=parseGrblSettings(text);
-  else {
-   const c=JSON.parse(text) as Record<string,unknown>;
-   if(typeof c.powerMax!=="number"||typeof c.powerMin!=="number"||typeof c.laserMode!=="boolean"||typeof c.homing!=="boolean")throw new DriverSaid(409,"The controller did not report its laser configuration.");
-   values={powerMax:c.powerMax,powerMin:c.powerMin,laserMode:c.laserMode,homing:c.homing,...(l.firmware==="marlin"?{inlinePower:c.inlinePower===true,coolant:c.coolant===true}:{})};
-  }
+  else values=parseGrblSettings(text);
   const homed=(values.homing||l.firmware==="forgefirm")&&l.homed?new RegExp(l.homed.pattern).test(await this.text(l.homed.path)):false;
   const c={...values,firmware:l.firmware,homed};validateGcodeController(c);return c;
  }

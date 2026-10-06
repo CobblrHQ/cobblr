@@ -6,7 +6,7 @@ export const GCODE_DIALECTS = {
  grblhal:{on:"M4",airOn:"M8",airOff:"M9",status:"grbl",mode:"$32=1",scale:"$30"},
  fluidnc:{on:"M4",airOn:"M8",airOff:"M9",status:"grbl",mode:"laser spindle",scale:"spindle speed map"},
  smoothieware:{on:null,airOn:"M8",airOff:"M9",status:"smoothie",mode:"laser_module_enable=true",scale:"laser_module_maximum_s_value"},
- marlin:{on:"M3 I",off:"M5 I",airOn:"M8",airOff:"M9",status:"marlin",mode:"LASER_FEATURE and LASER_POWER_INLINE",scale:"CUTTER_POWER_UNIT"},
+ marlin:{on:"M3 I",off:"M5 I",airOn:"M8",airOff:"M9",status:"marlin",mode:"LASER_FEATURE and inline M3 I / G1 S",scale:"CUTTER_POWER_UNIT"},
  snapmaker:{on:"M3",powerWord:"P",airOn:null,airOff:null,status:"marlin",mode:"laser toolhead",scale:"100"},
 } as const;
 export type GcodeController = {firmware:keyof typeof GCODE_DIALECTS;powerMax:number;powerMin:number;laserMode:boolean;homing:boolean;homed:boolean;inlinePower?:boolean;coolant?:boolean};
@@ -24,30 +24,47 @@ export function validateGcodeController(c:GcodeController):void {
  if(!Number.isFinite(c.powerMax)||!Number.isFinite(c.powerMin)||c.powerMax<=0||c.powerMin<0||c.powerMin>=c.powerMax)throw new Error("The controller's power scale is invalid.");
  if((c.homing||c.firmware==="forgefirm")&&!c.homed)throw new Error("Home the laser before Frame or Start. Its controller must report a homed position.");
 }
+const cutPieces=(a:{x:number;y:number},b:{x:number;y:number},speed:number,segmented:boolean)=>segmented?Math.max(1,Math.ceil(Math.hypot(b.x-a.x,b.y-a.y)/(speed*0.05))):1;
 const n=(v:number)=>String(Number(v.toFixed(5)));
 const xy=(p:{x:number;y:number})=>`X${n(p.x)} Y${n(p.y)}`;
-const offFor=(firmware:keyof typeof GCODE_DIALECTS)=>firmware==="marlin"?["M5 I"]:firmware==="snapmaker"?["M5"]:["M5","S0"];
+const offFor=(firmware:keyof typeof GCODE_DIALECTS)=>firmware==="smoothieware"?["M400","fire off","M5","S0"]:firmware==="marlin"?["M5 I"]:firmware==="snapmaker"?["M5"]:["M5","S0"];
 const positionFor=(p:{x:number;y:number},plan:LaserMotionPlan,firmware:keyof typeof GCODE_DIALECTS)=>xy(firmware==="forgefirm"?{x:p.x,y:plan.bed.height-p.y}:p);
 export function emitFrame(raw:LaserMotionPlan,firmware:keyof typeof GCODE_DIALECTS="grbl"):string {
  const p=validateLaserPlan(raw),b=p.bounds;
  const at=(point:{x:number;y:number})=>positionFor(point,p,firmware);
- return ["G21","G90",...offFor(firmware),`G0 ${at(b)}`,`G0 ${at({x:b.x+b.width,y:b.y})}`,`G0 ${at({x:b.x+b.width,y:b.y+b.height})}`,`G0 ${at({x:b.x,y:b.y+b.height})}`,`G0 ${at(b)}`,...offFor(firmware),...(firmware!=="marlin"&&GCODE_DIALECTS[firmware].airOff?[GCODE_DIALECTS[firmware].airOff]:[]),""] .join("\n");
+ return ["G21","G90",...offFor(firmware),`G0 ${at(b)}`,`G0 ${at({x:b.x+b.width,y:b.y})}`,`G0 ${at({x:b.x+b.width,y:b.y+b.height})}`,`G0 ${at({x:b.x,y:b.y+b.height})}`,`G0 ${at(b)}`,...offFor(firmware),...(!["marlin","smoothieware"].includes(firmware)&&GCODE_DIALECTS[firmware].airOff?[GCODE_DIALECTS[firmware].airOff]:[]),""] .join("\n");
 }
 export function emitGcode(raw:LaserMotionPlan,c:GcodeController):string {
  const p=validateLaserPlan(raw);validateGcodeController(c);
+ const segmented=["marlin","snapmaker","smoothieware"].includes(c.firmware);
+ let commands=100;
+ for(const layer of p.layers)for(const path of p.paths.filter(path=>path.layer_index===layer.index)){
+  commands+=8*layer.passes;
+  for(let i=1;i<path.points.length;i++){
+   commands+=cutPieces(path.points[i-1]!,path.points[i]!,layer.speed,segmented)*layer.passes;
+   if(commands>500000)throw new Error("Reduce passes or simplify this laser plan. Its compiled motion exceeds 500000 commands.");
+  }
+ }
+
  const at=(point:{x:number;y:number})=>positionFor(point,p,c.firmware);
- const d=GCODE_DIALECTS[c.firmware],off=offFor(c.firmware),airOn=c.firmware==="marlin"&&!c.coolant?null:d.airOn,airOff=c.firmware==="marlin"&&!c.coolant?null:d.airOff,lines=["G21","G90",...(["marlin","snapmaker"].includes(c.firmware)?[]:["G94"]),...off,...(airOff?[airOff]:[])];
+ const d=GCODE_DIALECTS[c.firmware],off=offFor(c.firmware),airOn=["marlin","smoothieware"].includes(c.firmware)&&!c.coolant?null:d.airOn,airOff=["marlin","smoothieware"].includes(c.firmware)&&!c.coolant?null:d.airOff,lines=["G21","G90",...(["marlin","snapmaker"].includes(c.firmware)?[]:["G94"]),...off,...(airOff?[airOff]:[])];
  for(const layer of p.layers) {
   if(layer.focus_offset!==0||layer.min_power!==0)throw new Error("This G-code profile needs zero focus offset and zero minimum power. Set focus at the machine; dynamic power uses the controller's own minimum.");
   if(layer.max_power<layer.min_power)throw new Error("The profile's maximum power must be at least its minimum.");
   const power=layer.max_power===0?0:c.powerMin+(c.powerMax-c.powerMin)*layer.max_power/100;
-  if(layer.air_assist&&c.firmware==="marlin"&&!c.coolant)throw new Error("Marlin must report coolant control before using air assist.");
+  if(layer.air_assist&&["marlin","smoothieware"].includes(c.firmware)&&!c.coolant)throw new Error("Confirm this firmware's M8 and M9 coolant control for air assist before using it.");
   if(layer.air_assist&&!airOn)throw new Error("This firmware cannot control air assist. Use a profile with manual air assist at the machine.");
   const air=layer.air_assist?airOn:airOff;if(air)lines.push(air);
   for(let pass=0;pass<layer.passes;pass++)for(const path of p.paths.filter(p=>p.layer_index===layer.index)) {
    lines.push(...off,`G0 ${at(path.points[0]!)}`);
    if(d.on)lines.push("powerWord" in d?`${d.on} ${d.powerWord}${n(power)}`:`${d.on} S0`);
-   for(const point of path.points.slice(1))lines.push(`G1 ${at(point)} F${n(layer.speed*60)}${"powerWord" in d?"":` S${n(power)}`}`);
+   for(let i=1;i<path.points.length;i++){
+    const previous=path.points[i-1]!,point=path.points[i]!,pieces=cutPieces(previous,point,layer.speed,segmented);
+    for(let piece=1;piece<=pieces;piece++){
+     const next=piece===pieces?point:{x:previous.x+(point.x-previous.x)*piece/pieces,y:previous.y+(point.y-previous.y)*piece/pieces};
+     lines.push(`G1 ${at(next)} F${n(layer.speed*60)}${"powerWord" in d?"":` S${n(power)}`}`);
+    }
+   }
    lines.push(...off);
   }
  }

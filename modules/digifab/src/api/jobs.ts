@@ -1,3 +1,6 @@
+import { prepareResinPrint } from "../resin-prints.js";
+import { extractPlateMetadata } from "../library/extract-metadata.js";
+import { controlResinPrinter } from "../resin-controls.js";
 // /api/v1/orgs/:slug/modules/digifab/jobs —
 // the print queue. Create a job (queued), SEND it to the farm
 // (upload + place), and track it to completion.
@@ -156,6 +159,7 @@ jobsRouter.get(
     // every 5s while jobs are active, so recovery is near-immediate and free
     // when healthy). Detached — never slows the list response.
     const live = base.filter((j) => !TERMINAL.has(j.status) && j.remote_job_id).map((j) => j.id);
+    // DETACHED: re-polling live jobs; the list is answered from the rows, and the poller runs on its own
     void reconcilePolls(tenantContext(req).org.id, live).catch(() => {});
     res.json({ items, next_cursor, total: Number(totalRow?.n ?? items.length) });
   }),
@@ -275,14 +279,23 @@ jobsRouter.post("/:id/prepare", asyncHandler(async (req, res) => {
   if (!driver.prepareJob || !job.file_id) return void res.status(409).json({ error: { code: "file_required", message: "Choose a stored file to prepare this job." } });
   const file = await platform().files.read(orgId, job.file_id);
   if (!file) return void res.status(409).json({ error: { code: "file_missing", message: "The job's stored file no longer exists." } });
-  if (!(driver.laserBackend ? /\.laserplan$/i : /\.lbrn2$/i).test(file.filename)) return void res.status(409).json({ error: { code: "prepared_file_required", message: "Choose a prepared laser file for this station." } });
+  const kind = await driver.jobReviewKind?.();
+  const print = kind === "print", cutter = kind === "cutter";
+  const preparedFile = cutter ? /\.cutterplan$/i : driver.printProcess === "resin" ? /\.goo$/i : print ? /\.(gcode|gco)$/i : driver.laserBackend ? /\.laserplan$/i : /\.lbrn2$/i;
+  if (!preparedFile.test(file.filename)) return void res.status(409).json({ error: { code: "prepared_file_required", message: cutter ? "Choose a prepared cutter file for this station." : driver.printProcess === "resin" ? "Choose a sliced GOO resin print for this station." : print ? "Choose a sliced G-code print for this station." : "Choose a prepared laser file for this station." } });
   try {
     await requireLaserBedReady(db, job);
     const devices = await driver.listDevices();
     const device = devices.find(d => d.id === job.target_device);
-    if (!device || ["running", "printing", "paused", "busy"].includes(device.state ?? "")) throw new Error("This laser is busy. Finish its current job before loading another file.");
-    if (driver.laserBackend) await db.updateTable("digifab_jobs").set({ cancel_requested_at: null }).where("id", "=", job.id).where("send_token", "is", null).execute();
+    if (!device || ["running", "printing", "paused", "busy"].includes(device.state ?? "")) throw new Error("This machine is busy. Finish its current job before loading another file.");
+    if (driver.laserBackend || cutter || driver.printProcess === "resin") await db.updateTable("digifab_jobs").set({ cancel_requested_at: null }).where("id", "=", job.id).where("send_token", "is", null).execute();
     const review = await driver.prepareJob(new Uint8Array(file.bytes), file.filename);
+    if (driver.printProcess === "resin") {
+      if (!job.target_device) throw new Error("Choose this resin printer before reviewing the print.");
+      const seconds = typeof device.raw?.PrintScreen === "number" ? device.raw.PrintScreen : undefined;
+      await prepareResinPrint(db, orgId, job.id, job.connection_id, job.target_device, review.fileId, extractPlateMetadata(file.filename, Buffer.from(file.bytes)), seconds);
+      await db.updateTable("digifab_jobs").set({ resin_print: true }).where("id", "=", job.id).execute();
+    }
     const layout = job.laser_layout;
     if (layout) {
       verifyLaserOutput(layout.expected, review);
@@ -292,7 +305,7 @@ jobsRouter.post("/:id/prepare", asyncHandler(async (req, res) => {
   }
   catch (e) {
     const detail = String(e instanceof Error ? e.message : e);
-    res.status(502).json({ error: { code: "prepare_failed", message: /import|timeout|modal|unsaved/i.test(detail) ? "LightBurn needs attention on its screen. Check for a prompt, then try preparing the job again." : plainDriverError(e, await managerName(orgId, job.connection_id), "preparing the project") } });
+    res.status(print ? 409 : 502).json({ error: { code: "prepare_failed", message: !print && /import|timeout|modal|unsaved/i.test(detail) ? "LightBurn needs attention on its screen. Check for a prompt, then try preparing the job again." : plainDriverError(e, await managerName(orgId, job.connection_id), "preparing the project") } });
   }
 }));
 
@@ -569,6 +582,19 @@ jobsRouter.post(
     const job = await db.selectFrom("digifab_jobs").select(["id", "status", "connection_id", "remote_job_id", "target_device"]).where("id", "=", req.params.id!).executeTakeFirst();
     if (!job) return void res.status(404).json({ error: { code: "not_found", message: "no such job" } });
     if (TERMINAL.has(job.status)) return void res.status(409).json({ error: { code: "already_terminal", message: `job is ${job.status}` } });
+
+    const resinDriver = job.connection_id ? await buildDriverById(db, ctx.org.id, job.connection_id) : null;
+    if (resinDriver?.printProcess === "resin" && job.target_device && job.connection_id) {
+      try {
+        const result = await controlResinPrinter(db, ctx.org.id, resinDriver, job.target_device, "stop", job.connection_id);
+        if (!result.ok) return void res.status(502).json({ error: { code: "cancel_failed", message: result.detail ?? "The printer did not confirm Stop." } });
+      } catch (e) {
+        return void res.status(502).json({ error: { code: "cancel_failed", message: plainDriverError(e, "the resin printer", "stopping the print") } });
+      }
+      const now = await db.selectFrom("digifab_jobs").select("status").where("id", "=", job.id).executeTakeFirst();
+      if (job.remote_job_id && now?.status !== "cancelled") await enqueuePoll(ctx.org.id, job.id);
+      return void res.status(now?.status === "cancelled" ? 200 : 202).json({ status: now?.status ?? job.status, remote_cancelled: now?.status === "cancelled", cancelling: now?.status !== "cancelled", message: "Stop sent. The printer's status confirms when it has stopped." });
+    }
 
     // Not on a printer yet (queued, or sent with no id to track): there is
     // nothing physical to stop, so the cancel is Cobblr's alone.

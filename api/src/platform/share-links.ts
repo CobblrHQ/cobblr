@@ -13,6 +13,7 @@
 // and the keys: names arrive for display only, and what a change may do is
 // decided by the side that applies it.
 
+import { decodeBase64urlExact } from "@cobblr/platform-contract/base64url-exact";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
 import { sql } from "kysely";
@@ -55,7 +56,9 @@ export interface InviteToken {
 export const encodeInvite = (t: InviteToken) => b64url(Buffer.from(JSON.stringify(t)));
 export function decodeInvite(s: string): InviteToken | null {
   try {
-    const t = JSON.parse(Buffer.from(s, "base64url").toString("utf8")) as InviteToken;
+    const bytes = decodeBase64urlExact(s);
+    if (!bytes) return null;
+    const t = JSON.parse(bytes.toString("utf8")) as InviteToken;
     return typeof t.u === "string" && typeof t.c === "string" ? t : null;
   } catch {
     return null;

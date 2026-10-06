@@ -9,7 +9,7 @@ import { createLaserPlan } from "./api/laser-writes.js";
 import { buildDriverById, NOT_OCCUPYING_STATUSES } from "./jobs-core.js";
 import { ownedDeviceRefs } from "./detectors/owned.js";
 import { gatherCandidates } from "./api/printing-profiles.js";
-import { allocateLaserBatch, materialShortages, printerMaterialRefusal, type FloorSheet, type LaserCandidate } from "./material-dispatch.js";
+import { allocateOutlineLaserBatch, materialShortages, printerMaterialRefusal, type FloorSheet, type LaserCandidate } from "./material-dispatch.js";
 export const Dispatch = z.object({ library_id: z.string().uuid(), quantity: z.number().int().min(1).max(10000), material: z.string().trim().min(1).max(120), thickness_mm: z.number().positive().max(1000), operations: z.record(z.enum(["cut", "score", "engrave"])), spacing_mm: z.number().min(0).max(100).default(1), kerf_mm: z.number().min(0).max(100).default(0), rotate: z.boolean().default(true), dxf_units: z.enum(["mm", "in"]).default("mm") });
 export type DispatchRequest = z.infer<typeof Dispatch>;
 // SYSTEM-READ: Internal dispatch and digest checks need the actual stock; screen reads pass their viewer.
@@ -37,7 +37,7 @@ export async function floorStock(orgId: string, viewer: EntityViewer = SYSTEM_VI
   const typeRows = typeIds.length ? await platform().entities.lookupMany(orgId, typeIds.map(id => ({ kind: baseKind, id })), viewer) : [];
   for (const item of physical) {
    const spec = materialFromFields(item.fields);
-   const geometry = item.fields.sheet_geometry as { revision: number; free_rectangles: FloorSheet["free_rectangles"]; percent_left: number; offcut: boolean } | undefined;
+   const geometry = item.fields.sheet_geometry as { revision: number; free_rectangles: FloorSheet["free_rectangles"]; percent_left: number; offcut: boolean; used_outlines?: FloorSheet["used_outlines"]; cut_capacity?: FloorSheet["cut_capacity"] } | undefined;
    const type = typeRows.find(t => t.id === types.find(t => t.sourceId === item.id)?.targetId);
    const metadata = { ...(type?.fields.metadata as Record<string, unknown> ?? {}), ...(item.fields.metadata as Record<string, unknown> ?? {}) };
    const material = spec?.material ?? (typeof metadata.material === "string" ? metadata.material : null);
@@ -50,7 +50,7 @@ export async function floorStock(orgId: string, viewer: EntityViewer = SYSTEM_VI
    if (spec && geometry?.free_rectangles) {
     const free = Number.isFinite(geometry.percent_left) ? spec.width_mm * spec.height_mm * geometry.percent_left / 100 : 0;
     entry.sheets++; entry.offcuts += geometry.offcut ? 1 : 0; entry.free_mm2 += free;
-    sheets.push({ id: item.id, name: item.title, material, thickness_mm: spec.thickness_mm, width: spec.width_mm, height: spec.height_mm, revision: geometry.revision, free_rectangles: geometry.free_rectangles });
+    sheets.push({ id: item.id, name: item.title, material, thickness_mm: spec.thickness_mm, width: spec.width_mm, height: spec.height_mm, revision: geometry.revision, free_rectangles: geometry.free_rectangles, used_outlines: geometry.used_outlines, cut_capacity: geometry.cut_capacity });
    } else { entry.spools++; entry.grams += grams; spools.push({ id: item.id, material, grams }); }
    materials.set(key, entry);
   }
@@ -121,7 +121,7 @@ export async function dispatchLaserBatch(db: Kysely<DigifabDB>, orgId: string, i
     const stock = await floorStock(orgId); if (!stock.complete) throw new LaserPlanRefusal("The stock list is incomplete. Use Prepare laser batch to choose sheets explicitly.");
     const claims = new Set((await db.selectFrom("digifab_laser_sheet_claims").select("part_id").execute()).map(c => c.part_id));
     let allocation;
-    try { allocation = allocateLaserBatch(design, batch.request, await laserCandidates(db, orgId, batch.request), stock.sheets.filter(s => !claims.has(s.id))); } catch (e) { if (e instanceof Error) throw new LaserPlanRefusal(e.message); throw e; }
+    try { allocation = await allocateOutlineLaserBatch(design, batch.request, await laserCandidates(db, orgId, batch.request), stock.sheets.filter(s => !claims.has(s.id))); } catch (e) { if (e instanceof Error) throw new LaserPlanRefusal(e.message); throw e; }
     batch = await db.transaction().execute(async trx => {
      const plans = [];
      for (const group of allocation) {

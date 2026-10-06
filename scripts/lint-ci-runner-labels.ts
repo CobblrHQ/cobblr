@@ -35,7 +35,15 @@ const DIR = join(ROOT, ".forgejo", "workflows");
 // light-main and ci-main are main's own lane (ci-main.yml, generated from
 // ci.yml by scripts/gen-ci-main.mjs): runners that carry ONLY those labels, on
 // two boxes, so main's pushes never wait behind the pull-request queue.
-const KNOWN = new Set(["ubuntu-latest", "light", "ci-test", "ci-test-full", "ci-e2e", "bake-a6", "bake-aurora", "bake-z87", "bake-b550", "docker-build", "light-main", "ci-main"]);
+// release is the nightly publish's own runner (the A6's cobblr-a6-3, label `release`
+// only): on 2026-10-06 the publish waited over four hours behind ~60 per-merge runs for
+// an ubuntu-latest slot and try and app missed the nightly. Only RELEASE_LANE_WORKFLOWS
+// may ask for it, and every job in them must, or that job queues behind pull requests
+// again (checked below).
+// (This list is a copy of RELEASE_LANE_WORKFLOWS in scripts/lib/release-lane.mjs, which the
+// public export does not ship; a test keeps the two equal.)
+const RELEASE_LANE_WORKFLOWS = ["publish-selfhost-images.yml", "release-stable.yml"];
+const KNOWN = new Set(["release", "ubuntu-latest", "light", "ci-test", "ci-test-full", "ci-e2e", "bake-a6", "bake-aurora", "bake-z87", "bake-b550", "docker-build", "light-main", "ci-main"]);
 
 const errors: string[] = [];
 const seen = new Map<string, string[]>();
@@ -77,6 +85,13 @@ for (const f of readdirSync(DIR).filter((n) => n.endsWith(".yml") || n.endsWith(
     }
     if (label.startsWith("$")) return; // some other expression; not ours to judge
     seen.set(label, [...(seen.get(label) ?? []), `${f}:${i + 1}`]);
+    const inLane = RELEASE_LANE_WORKFLOWS.includes(f);
+    if (label === "release" && !inLane) {
+      errors.push(`.forgejo/workflows/${f}:${i + 1} asks for runner label "release", which is the release lane's alone: only ${RELEASE_LANE_WORKFLOWS.join(", ")} may (the runner takes one job at a time, so anything else queues a release behind it).`);
+    }
+    if (inLane && label !== "release") {
+      errors.push(`.forgejo/workflows/${f}:${i + 1} is a release-lane workflow but this job asks for "${label}": it would queue behind every pull request again, the way the nightly publish waited four hours on 2026-10-06. Use \`runs-on: release\`.`);
+    }
     if (!KNOWN.has(label)) {
       errors.push(
         `.forgejo/workflows/${f}:${i + 1} asks for runner label "${label}", which no runner carries. ` +

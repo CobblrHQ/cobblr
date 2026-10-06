@@ -18,7 +18,7 @@
 //   • allocation-consume passes its open TRANSACTION so the qty decrement, the
 //     ledger row, and the allocation status flip commit or roll back together.
 
-import type { Kysely, Transaction } from "kysely";
+import { sql, type Kysely, type Transaction } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { InventoryDB } from "../db.js";
 
@@ -27,6 +27,7 @@ export type LedgerExec = Kysely<InventoryDB> | Transaction<InventoryDB>;
 
 export interface ConsumptionEntry {
   partId: string;
+  unit?: string;
   /** Signed: negative = consumed, positive = restocked/opened. */
   delta: number | string;
   reason?: string | null;
@@ -48,6 +49,7 @@ export async function recordConsumption(exec: LedgerExec, e: ConsumptionEntry): 
     .insertInto("inventory_consumption")
     .values({
       part_id: e.partId,
+      unit: e.unit ?? sql<string>`(select unit from inventory_parts where id = ${e.partId})`,
       delta: String(e.delta),
       reason: e.reason ?? null,
       source_kind: e.sourceKind ?? null,

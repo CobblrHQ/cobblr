@@ -84,6 +84,7 @@ export function QtyStepper({
     // In a table the row navigates to the record; stepping must not open it.
     <span className="inline-flex" onClick={(e) => e.stopPropagation()}>
       <StockStepper
+        fractionDigits={9}
         qty={qty}
         unit={unit}
         label={label}

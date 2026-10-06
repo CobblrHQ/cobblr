@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { DigifabDB } from "./db.js";
 import { acceptLaserPlan, LaserPlanRefusal } from "./laser-plans.js";
 import { ProfileSchema } from "./laser-layout.js";
-import { Machine, Plan, NewProfile, createLaserProfile, createLaserPlan, discardLaserPlan, importLaserProfiles, updateLaserProfile } from "./api/laser-writes.js";
+import { Machine, Plan, NewProfile, createLaserProfile, NestDrawing, nestDrawing, createLaserPlan, discardLaserPlan, importLaserProfiles, updateLaserProfile } from "./api/laser-writes.js";
 let registered = false;
 export function registerLaserActions(): void {
  if (registered) return;
@@ -17,11 +17,12 @@ export function registerLaserActions(): void {
    if (args.operation === "create_profile") return { ok: true, ...await createLaserProfile(db, ctx.orgId, NewProfile.parse(fields)) };
    if (args.operation === "import_profiles") return { ok: true, ...await importLaserProfiles(db, ctx.orgId, Machine.parse(fields)) };
    if (args.operation === "plan") return { ok: true, ...await createLaserPlan(db, ctx.orgId, Plan.parse(fields)) };
+   if (args.operation === "nest") return { ok: true, ...await nestDrawing(db, ctx.orgId, NestDrawing.parse(fields)) };
    const id = z.string().uuid().parse(args.id);
    if (args.operation === "update_profile") return { ok: true, ...await updateLaserProfile(db, id, ProfileSchema.parse(fields)) };
    if (args.operation === "queue") return { ok: true, ...await acceptLaserPlan(db, ctx.orgId, id) };
    if (args.operation === "discard") return await discardLaserPlan(db, id);
-   return { ok: false, error: "Choose create_profile, import_profiles, update_profile, plan, queue or discard." };
+   return { ok: false, error: "Choose create_profile, import_profiles, update_profile, plan, nest, queue or discard." };
   } catch (e) {
    if (e instanceof LaserPlanRefusal || e instanceof z.ZodError) return { ok: false, error: e.message };
    throw e;

@@ -20,11 +20,11 @@
 // body limits sane.
 
 import { withSellersApart } from "../services/seller-split.js";
-import { routeWhereKept, type KeptTable } from "../services/kept-route.js";
+import { onCatchAll, routeByGivenFields, routeByIdentity, routeBySameMaker, routeWhereKept, type KeptTable } from "../services/kept-route.js";
 import { fetchShownImage } from "../services/shown-images.js";
 import { COULDNT_SAVE_WORDS } from "@cobblr/platform-contract/scan-pictures";
 import { storeOrClearCatalogUrl } from "../services/catalog-store.js";
-import { placeAgentFields, sellerInName, type AgentField } from "../services/agent-fields.js";
+import { placeAgentFields, sellerInName, thingInName, type AgentField } from "../services/agent-fields.js";
 import { ARRIVED_BY_KEY } from "../services/photo-observation-gate.js";
 import { applySharedTitle } from "../services/shared-title.js";
 import { canonicalColourFields, type ColourFieldDef } from "../services/colour-fields.js";
@@ -99,7 +99,7 @@ import {
   SCAN_TRIAGE_COLUMNS,
   type ScanTriageFacet,
   splitUncutWords,
-  type ScanTriageRow, type ScanRowStateContext, type ScanResolverTable, DESTINATION_KEY, KEEP_SEPARATE_KEY, scanKeepSeparateStamp, FILED_INTO_KEY, type FiledInto, type StoredDestination, filedIntoOf, isPaperworkRow } from "@cobblr/platform-contract/scan-triage";
+  type ScanTriageRow, type ScanRowStateContext, type ScanResolverTable, DESTINATION_KEY, KEEP_SEPARATE_KEY, scanKeepSeparateStamp, FILED_INTO_KEY, type FiledInto, type StoredDestination, filedIntoOf, isPaperworkRow, scanFitItem } from "@cobblr/platform-contract/scan-triage";
 import { scanToolRelevance, type ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { liveTablesOf, withResolvedOffers, type LiveTable } from "../services/resolve-offers.js";
@@ -141,7 +141,7 @@ import { rechoosePictureForColour, withholdContradictedPicture } from "../servic
 import { themeFromReply, themeScope, type ThemeItem } from "../services/session-theme.js";
 import { scannerQueue } from "../services/scanner-queue.js";
 import { inboxCounts, type CountRow } from "../services/inbox-counts.js";
-import { matchQuery, restampTrackedMatch, scanPlaceOf, trackedMatchStamp, trackedMatchStampAt, type TrackedMatchStamp } from "../services/tracked-stamp.js";
+import { matchQuery, restampTrackedMatch, scanPlaceOf, trackedMatchFor, trackedMatchStampAt, type TrackedMatchStamp } from "../services/tracked-stamp.js";
 import { candidateTableOf, destinationTables, filingDestination, type DestinationRow } from "../services/destination.js";
 import {
   candidateFieldValue,
@@ -678,6 +678,7 @@ inboxRouter.post(
           // stubborn code used to multiply provider calls — 10 quick re-scans
           // was up to 10 forced rounds against a shared quota.
           const lastTry = bumped.ai_suggested_at ? new Date(bumped.ai_suggested_at as unknown as string).getTime() : 0;
+          // DETACHED: identifying the scan; the row shows it is still being read and updates when this lands
           void enrichBarcodeItem({
             db,
             orgId: ctx.org.id,
@@ -698,6 +699,7 @@ inboxRouter.post(
           // the strongest evidence about the object in hand, so an image-basis
           // mismatch with a confident read RENAMES (and votes) rather than
           // merely flagging — the evidence-model treatment for this door.
+          // DETACHED: a cross-check of the re-scan's photo; it can only flag or rename the row later
           void crossCheckScanPhoto(ctx.org.id, bumped.id, bumped.suggested_name).catch((err) =>
             console.error("[core-scan] re-scan cross-check threw:", (err as Error).message),
           );
@@ -996,6 +998,20 @@ inboxRouter.post(
       body.name = said.name;
       if (!body.roles?.seller) body.roles = { ...(body.roles ?? {}), seller: said.seller };
     }
+    // "Bambu Lab P1P #36 (for parts, power issue)": the thing is a Bambu Lab
+    // P1P, matched and routed as one, and the caller's whole name is kept as
+    // theirs for the card, so two units still read apart (#4591).
+    const callersName = body.name;
+    const thing = thingInName(body.name);
+    if (thing) body.name = thing;
+    // The values it came with are evidence about which list it belongs in,
+    // so they ride in BEFORE the match: a field only one list has (a 3D
+    // printer's bed size) routes it there instead of being refused by a list
+    // the model guessed (#4591, kept-route.ts routeByGivenFields), and the
+    // maker it names is read by the same-maker rule. When no list keeps them
+    // all, they are placed after the route, as before.
+    const menu = await assembleScanMenu(baseUrl, ctx.org.slug, token, ctx.org.id).catch(() => [] as ScanMenuEntry[]);
+    const early = (body.fields && Object.keys(body.fields).length) ? await givenValuesTable(ctx.org.id, menu, body.fields, body.roles) : null;
     const admitted = await admitTypedNote(req, {
       text: body.place && !body.location_id ? `${body.name} in ${body.place}` : body.name,
       door: "assistant",
@@ -1003,6 +1019,12 @@ inboxRouter.post(
       metadata: {
         arrived_by: "assistant",
         ...(body.identifier && !asCode ? { identifier: body.identifier } : {}),
+        ...(early
+          ? {
+              user_fields: { kind: early.kind, values: early.values },
+              [FIELD_PROVENANCE_KEY]: Object.fromEntries(Object.keys(early.values).map((k) => [k, { by: "person", from: "assistant", at: new Date().toISOString() }])),
+            }
+          : {}),
       },
       values: {
         ...(asCode && !/^https?:\/\//i.test(asCode) ? { barcode_text: asCode } : {}),
@@ -1013,10 +1035,23 @@ inboxRouter.post(
       settle: true,
     });
     const itemId = admitted.row.id;
+    if (thing) {
+      await db.transaction().execute(async (tx) => {
+        const cur = await tx.selectFrom("core_scan_inbox_items").select(["suggested_metadata"]).where("id", "=", itemId).forUpdate().executeTakeFirst();
+        const meta = applyPersonName((cur?.suggested_metadata ?? {}) as Record<string, unknown>, callersName);
+        const keys = Object.keys(meta).filter((k) => JSON.stringify(meta[k]) !== JSON.stringify(((cur?.suggested_metadata ?? {}) as Record<string, unknown>)[k]));
+        if (keys.length) {
+          await tx
+            .updateTable("core_scan_inbox_items")
+            .set({ suggested_metadata: mergeMeta(Object.fromEntries(keys.map((k) => [k, meta[k]]))) as never, updated_at: new Date() })
+            .where("id", "=", itemId)
+            .execute();
+        }
+      });
+    }
 
     // The list it goes to, when the person (through their agent) said it:
     // their answer, stored as a person's choice, so every door files there.
-    const menu = await assembleScanMenu(baseUrl, ctx.org.slug, token, ctx.org.id).catch(() => [] as ScanMenuEntry[]);
     let goesToRefused: string | null = null;
     if (body.goes_to) {
       const said = body.goes_to.toLowerCase();
@@ -1095,6 +1130,30 @@ inboxRouter.post(
     });
   }),
 );
+
+/** Where an agent's values are stamped before the match, placed on that
+ *  list: the list they name on their own (the only one that keeps them all,
+ *  or the module's catch-all when only one module's lists do), else the
+ *  first that keeps them all. The match then routes by its own rules
+ *  (kept-route.ts) and the values follow. Null when no list keeps them all. */
+async function givenValuesTable(
+  orgId: string,
+  menu: readonly ScanMenuEntry[],
+  fields: Record<string, string | number | boolean>,
+  roles: Record<string, string | number | boolean> | undefined,
+): Promise<{ kind: string; values: Record<string, unknown> } | null> {
+  const placed = await Promise.all(
+    menu.map(async (e) => ({ e, p: placeAgentFields(fields, roles, { label: e.label, fields: await agentFieldsFor(orgId, e.kind, e.fields) }) })),
+  );
+  const fitting = placed.filter(({ p }) => p.refused.length === 0 && Object.keys(p.values).length > 0);
+  if (!fitting.length) return null;
+  const modules = new Set(fitting.map(({ e }) => e.module));
+  // Stamped on the list they name when they name one; else on the first that
+  // keeps them all, so the match still reads them (the maker the same-maker
+  // rule needs, #4591) and moves them with the route it settles on.
+  const pick = (fitting.length === 1 ? fitting[0] : modules.size === 1 ? fitting.find(({ e }) => !e.instance) : undefined) ?? fitting[0]!;
+  return { kind: pick.e.kind, values: pick.p.values };
+}
 
 /** Every field an agent may set on `kind`: the module's own (manufacturer,
  *  notes) and the workspace's, each with its type, choices and role. The scan
@@ -2471,6 +2530,7 @@ function encodeCursor(ts: Date | string, id: string): string {
 }
 function decodeCursor(c: string): { ts: Date; id: string } | null {
   try {
+    // b64-lenient-ok: a list cursor only says where the next page starts; every spelling of it is the same place.
     const k = decodeKeysetCursor(Buffer.from(c, "base64url").toString("utf8"));
     return k?.id ? { ts: k.at, id: k.id } : null;
   } catch {
@@ -2916,6 +2976,7 @@ inboxRouter.patch(
     // confirm-time report; reportBarcodeCorrection guards trivial edits. Inert
     // unless the resolver + a correction token are configured.
     if (prior?.barcode_text && parsed.data.name !== undefined && parsed.data.name.trim()) {
+      // DETACHED: a correction sent to the shared barcode database; this workspace's row is saved without it
       void reportBarcodeCorrection({
         upc: prior.barcode_text,
         field: "title",
@@ -2935,6 +2996,7 @@ inboxRouter.patch(
     if (parsed.data.name !== undefined && parsed.data.name.trim() && token) {
       const ctx = tenantContext(req);
       const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+      // DETACHED: re-matching after a rename; the suggestion refreshes when it lands
       void matchItem({
         orgId: ctx.org.id, userId: sessionUser(req)?.id ?? null,
         orgSlug: ctx.org.slug,
@@ -2946,6 +3008,7 @@ inboxRouter.patch(
       // Name changed → the catalog image likely shows the OLD product; refresh it
       // to match the new name (detached, best-effort).
       if (prior?.suggested_name !== parsed.data.name.trim()) {
+        // DETACHED: a new catalog picture for the new name; the row keeps its picture until then
         void refreshCatalogImageByName(
           ctx.org.id,
           id,
@@ -2980,6 +3043,7 @@ inboxRouter.patch(
         }
         // A colour the person gave the item that its picture does not show
         // is looked for, in the background (the response does not wait).
+        // DETACHED: looking for a picture in the item's colour; the row keeps its picture until then
         void rechoosePictureForColour(tenantContext(req).org.id, db as never, id).catch((err) =>
           console.error("[core-scan] choosing a picture in the item's colour after an edit failed:", (err as Error).message),
         );
@@ -3225,6 +3289,7 @@ inboxRouter.post(
     // create flow alike, so an item can never strand resolved-without-entity.
     res.once("finish", () => {
       if (res.statusCode < 400) return;
+      // DETACHED: runs after a failed answer by design, putting the row back; there is no response left to wait
       void db
         .updateTable("core_scan_inbox_items")
         .set({ status: row.status, updated_at: new Date() })
@@ -3844,14 +3909,16 @@ inboxRouter.post(
     // A receipt line's order line already exists (born at parse). Filing is
     // what CLAIMS it: the part now stands for that line. Best-effort, like
     // every other purchases touch from here - a workspace without purchases
-    // files its receipts all the same.
+    // files its receipts all the same. Awaited: discarding the receipt's last
+    // line deletes the order when no line is claimed, so a claim still on
+    // its way let that delete take a real purchase (#5046).
     {
       const rm = (row.suggested_metadata ?? {}) as { receipt_order_id?: unknown; receipt_order_item_id?: unknown };
       const oid = typeof rm.receipt_order_id === "string" ? rm.receipt_order_id : null;
       const lid = typeof rm.receipt_order_item_id === "string" ? rm.receipt_order_item_id : null;
       const tok = bearer(req);
       if (oid && lid && tok) {
-        void claimOrderLine({
+        await claimOrderLine({
           baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
           slug: ctx.org.slug,
           headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
@@ -3995,6 +4062,7 @@ inboxRouter.post(
             const url = row.catalog_image_url;
             const inboxId = row.id;
             const recordId = created.id;
+            // DETACHED: storing the catalog photo locally; the record shows the catalog address until it lands
             void (async () => {
               try {
                 const ok = await downloadCatalogImage({ db, orgId: ctx.org.id, itemId: inboxId }, url);
@@ -4071,6 +4139,7 @@ inboxRouter.post(
         catalog_image_user_set?: boolean;
       };
       if (meta.catalog_image_user_set) {
+        // DETACHED: remembering a picked picture for next time; this filing is complete without it
         void rememberPickedImage(
           ctx.org.id,
           meta.receipt_vendor ?? null,
@@ -4145,6 +4214,7 @@ inboxRouter.post(
       // else the AI's or the catalogue's, by how the row was named.
       const rowSource = (row.suggested_metadata as { source?: unknown } | null)?.source;
       if (committedName) {
+        // DETACHED: a correction sent to the shared barcode database; this filing is complete without it
         void reportBarcodeCorrection({
           upc: row.barcode_text,
           field: "title",
@@ -4167,6 +4237,7 @@ inboxRouter.post(
       ).trim();
       const brandChanged = meaningfullyChanged(row.suggested_manufacturer, committedBrand);
       if (committedBrand) {
+        // DETACHED: a correction sent to the shared barcode database; this filing is complete without it
         void reportBarcodeCorrection({
           upc: row.barcode_text,
           field: "brand",
@@ -4180,6 +4251,7 @@ inboxRouter.post(
       }
       const committedCategory = (meta as { category?: unknown }).category;
       if (typeof committedCategory === "string" && committedCategory.trim()) {
+        // DETACHED: a correction sent to the shared barcode database; this filing is complete without it
         void reportBarcodeCorrection({
           upc: row.barcode_text,
           field: "category",
@@ -4192,6 +4264,7 @@ inboxRouter.post(
         });
       }
       if (row.catalog_image_url) {
+        // DETACHED: a correction sent to the shared barcode database; this filing is complete without it
         void reportBarcodeCorrection({
           upc: row.barcode_text,
           field: "image_url",
@@ -4215,6 +4288,7 @@ inboxRouter.post(
       const filedCategory = typeof (meta as { category?: unknown }).category === "string" ? String((meta as { category?: unknown }).category) : null;
       const filedColor = typeof (meta as { color?: unknown }).color === "string" ? String((meta as { color?: unknown }).color) : null;
       if (filedName) {
+        // DETACHED: teaching the shared label reader; this filing is complete without it
         void reportLabelConfirm({
           labelWords: labelWords.filter((w): w is string => typeof w === "string"),
           name: filedName,
@@ -4395,6 +4469,7 @@ inboxRouter.post(
       if (!row.catalog_image_file_id && row.catalog_image_url) {
         const url = row.catalog_image_url;
         const itemId = id;
+        // DETACHED: storing the catalog photo locally; the record shows the catalog address until it lands
         void (async () => {
           try {
             const ok = await downloadCatalogImage({ db, orgId: ctx.org.id, itemId }, url);
@@ -4509,8 +4584,11 @@ inboxRouter.post(
     // cancelled ghost beside it is clutter (the operator, 2026-09-06). A line
     // somebody DID claim means the order is real, and this path is never
     // reached for it: a filed line is resolved, not discarded, so it is live.
+    // Done before the discard answers: a discard that said done while the
+    // order was still there let the order outlive the person's own next look,
+    // and a failure here went unseen forever (#5046).
     if (row.scan_batch_id) {
-      void (async () => {
+      await (async () => {
         try {
           const live = await db
             .selectFrom("core_scan_inbox_items")
@@ -5326,6 +5404,7 @@ inboxRouter.post(
           .where("id", "=", id)
           .execute();
       })();
+      // DETACHED: the hint lookup; the row shows it is still being read and updates when this lands
       lookup.catch((err) => console.error("[core-scan] hint lookup failed:", (err as Error)?.message ?? err));
       res.json(await served(req, row));
       return;
@@ -5412,6 +5491,7 @@ inboxRouter.post(
           .execute();
         const uidName = sessionUser(req).id;
         const baseUrlName = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+        // DETACHED: a catalog picture for the name; the row keeps its picture until then
         void (async () => {
           try {
             await refreshCatalogImageByName(ctx.org.id, id, nameQuery, nameBrand);
@@ -5536,6 +5616,7 @@ inboxRouter.post(
       // route the AI through their personal connection (the 'own' path).
       const uid = sessionUser(req).id;
       const replay = !!rerun?.no_ai;
+      // DETACHED: the re-read the person asked for; the row shows it is being read and updates when this lands
       void (async () => {
         const workDb = (await platform().tenants.getDb(ctx.org.id)) as unknown as typeof db;
         // A REPLAY DOES NOT RE-IDENTIFY. The identity — name, manufacturer, sku,
@@ -5905,6 +5986,7 @@ inboxRouter.post(
     const readCtx = readContextFor({ ...meta, glance_answer: answer, ...(hint ? { glance_hint: hint } : {}) });
     // Detached, like the wire's own read: the response is the row with the
     // answer on it, and the elaboration lands when it lands.
+    // DETACHED: the elaboration of a glance; the answer is on the row already
     void (async () => {
       try {
         const outcome = await enrichPhotoItem({
@@ -6411,11 +6493,13 @@ inboxRouter.post(
       const named =
         saved.suggested_name && !isJunkName(saved.suggested_name) ? saved.suggested_name : null;
       if (addedPhotoIntent(!!named) === "offer-correction" && named) {
+        // DETACHED: a cross-check of the added photo; it can only flag the row later
         void crossCheckScanPhoto(ctx.org.id, row.id, named, {
           fileId: parsed.data.file_id,
           flagOnly: true,
         }).catch((e) => console.error("[core-scan] added-photo cross-check threw:", (e as Error).message));
       } else {
+        // DETACHED: reading the added photo; the row updates when this lands
         void enrichPhotoItem({
           db,
           orgId: ctx.org.id,
@@ -6473,6 +6557,7 @@ inboxRouter.post(
     // the next scan of this UPC (any workspace) gets YOUR clean image, beating
     // whatever Open Food Facts / a provider had (or filling a missing image).
     if (row.barcode_text) {
+      // DETACHED: a correction sent to the shared barcode database; the picture is saved without it
       void reportBarcodeCorrection({
         upc: row.barcode_text,
         field: "image_url",
@@ -6488,6 +6573,7 @@ inboxRouter.post(
       // must not become everyone's answer, which is the whole difference
       // between this and the search it is correcting.
       const meta = (row.suggested_metadata ?? {}) as { receipt_vendor?: string };
+      // DETACHED: remembering a picked picture for next time; the pick is saved without it
       void rememberPickedImage(ctx.org.id, meta.receipt_vendor ?? null, row.suggested_name, url).catch(
         (e) => console.warn("[core-scan] picked-image remember failed:", (e as Error).message),
       );
@@ -6622,7 +6708,7 @@ inboxRouter.get(
     let places: Array<{ id: string; location_id: string | null; location_name: string | null; qty: number | null }> = [];
     const best = tier[0];
     if (best && cards.size === 1) {
-      const raw = await placesOfCard(ctx.org.id, best.kind, best.card_id ?? best.id).catch(() => []);
+      const raw = await placesOfCard(ctx.org.id, best.kind, best.card_id ?? best.id);
       if (raw.length > 1) {
         const locs = await platform().entities.lookupMany(
           ctx.org.id,
@@ -6654,23 +6740,36 @@ inboxRouter.post(
     const id = req.params.id ?? "";
     const db = tenantDb(req);
     const ctx = tenantContext(req);
-    await db
-      .updateTable("core_scan_inbox_items")
-      .set({ suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({ place_choice: recordId })}::jsonb` as never })
-      .where("id", "=", id)
-      .execute();
-    const row = await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", id).executeTakeFirst();
-    if (!row) {
+    const stored = await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", id).executeTakeFirst();
+    if (!stored) {
       res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
       return;
     }
+    // Judged with the pick, and the pick kept only when it is one of the
+    // places: a refused pick is not left on the row.
+    const prior = (stored.suggested_metadata ?? {}) as Record<string, unknown>;
+    const row = { ...stored, suggested_metadata: { ...prior, place_choice: recordId } };
     const tables = await destinationTablesFor(req);
     const dest = filingDestination(row, tables);
-    const stamp = await restampTrackedMatch(ctx.org.id, db as never, id, row, (dest?.fields as Record<string, unknown> | undefined) ?? null, topCandidateCategory(row.suggested_candidates));
+    let stamp: TrackedMatchStamp | null;
+    try {
+      stamp = await trackedMatchFor(ctx.org.id, row, (dest?.fields as Record<string, unknown> | undefined) ?? null, topCandidateCategory(row.suggested_candidates));
+    } catch {
+      // Could not read where it is kept: say so, never "not one of the
+      // places" for a place it may well be (#4985).
+      res.status(503).json({ error: { code: "could_not_check", message: "Could not check where this is kept. Try again." } });
+      return;
+    }
     if (!stamp || stamp.id !== recordId) {
       res.status(409).json({ error: { code: "not_a_place", message: "That is not one of the places this is kept." } });
       return;
     }
+    await db
+      .updateTable("core_scan_inbox_items")
+      // The pick and the match it makes, in one write.
+      .set({ suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({ place_choice: recordId, tracked_match: stamp })}::jsonb` as never })
+      .where("id", "=", id)
+      .execute();
     res.json({ ok: true, tracked_match: stamp });
   }),
 );
@@ -7145,6 +7244,7 @@ inboxRouter.post(
     // confirm's.
     res.once("finish", () => {
       if (res.statusCode < 400) return;
+      // DETACHED: runs after a failed answer by design, putting the row back; there is no response left to wait
       void db
         .updateTable("core_scan_inbox_items")
         .set({ status: "pending", updated_at: new Date() })
@@ -7501,7 +7601,8 @@ inboxRouter.post(
         // while every reader queries "part" - orphaned on write, and invisible
         // because the PATCH below sets image_path regardless.
         const { module, type } = splitEntityKind(baseKind);
-        void platform()
+        // Awaited: the record should show the picture when the person opens it.
+        await platform()
           .files.attach(ctx.org.id, {
             fileId: photoId,
             source_module: module,
@@ -7862,6 +7963,7 @@ inboxRouter.post(
     // over the person's own values.
     {
       const readOrg = tenantContext(req).org.id;
+      // DETACHED: reading the label's facts; they fill the row when this lands and never overwrite the person's values
       void (async () => {
         const file = await platform().files.read(readOrg, parsed.data.file_id, "original");
         const text = file ? (await ocrImageText(new Uint8Array(file.bytes)))?.text : null;
@@ -7876,11 +7978,13 @@ inboxRouter.post(
       const named =
         updated.suggested_name && !isJunkName(updated.suggested_name) ? updated.suggested_name : null;
       if (addedPhotoIntent(!!named) === "offer-correction" && named) {
+        // DETACHED: a cross-check of the added photo; it can only flag the row later
         void crossCheckScanPhoto(orgId, updated.id, named, {
           fileId: parsed.data.file_id,
           flagOnly: true,
         }).catch((e) => console.error("[core-scan] added-photo cross-check threw:", (e as Error).message));
       } else {
+        // DETACHED: reading the added photo; the row updates when this lands
         void enrichPhotoItem({
           db,
           orgId,
@@ -8632,6 +8736,7 @@ inboxRouter.post(
       .execute();
     const targets = rows.filter((r) => !isJunkName(r.suggested_name));
     for (const r of targets) {
+      // DETACHED: a backfill of catalog pictures; each row keeps its picture until its own lands
       void refreshCatalogImageByName(ctx.org.id, r.id, r.suggested_name!, r.suggested_manufacturer).catch(
         (err) => console.error("[core-scan] backfill catalog photo failed:", (err as Error).message),
       );
@@ -8654,6 +8759,7 @@ inboxRouter.post(
       // Stored, or let go with "Couldn't save this one": an address is never
       // left standing as the catalog photo (catalog-store.ts, #4580).
       for (const r of urlOnly) {
+        // DETACHED: a backfill storing catalog addresses as files; each row is let go or stored on its own
         void storeOrClearCatalogUrl({ db, orgId: ctx.org.id, itemId: r.id }, r.catalog_image_url!).catch((err) =>
           console.error("[core-scan] backfill localize url failed:", (err as Error).message),
         );
@@ -9592,7 +9698,10 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
         adoptName ? candName : row.suggested_name,
       ),
     ).catch(() => null);
-    const trackedStamp = await trackedMatchStampAt(opts.orgId, tracked, scanPlaceOf(row)).catch(() => trackedMatchStamp(tracked));
+    // A place read that fails leaves no stamp, as a failed match does: the
+    // place-less stamp it fell back to offered "+1 more" into whichever row
+    // matched first, a place nobody chose (#4985).
+    const trackedStamp = await trackedMatchStampAt(opts.orgId, tracked, scanPlaceOf(row)).catch(() => null);
     // What the workspace already knows outranks what the model guessed: the
     // table the record this thing IS lives in, else the table its twins in
     // the inbox are headed to, the most specific of them (kept-route.ts,
@@ -9609,6 +9718,50 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
       ],
     });
     if (keptIn) console.log(`[core-scan] ${opts.itemId}: routed to ${keptIn.label}, where the workspace keeps the same thing`);
+    // The values a person or their agent gave say which list it belongs in
+    // when the route has no field for one of them: a bed size is a 3D
+    // printer's, never refused because the model guessed Machines (#4591).
+    // The record it already is still decides (kept-route.ts).
+    const given = Object.keys(userFieldsOf(row.suggested_metadata)?.values ?? {});
+    if (given.length && !trackedStamp) {
+      const names = new Map(
+        await Promise.all(menu.map(async (e) => [e.kind, new Set((await agentFieldsFor(opts.orgId, e.kind, e.fields)).map((f) => f.name))] as const)),
+      );
+      const byFields = routeByGivenFields(candidates, menu, given, names);
+      if (byFields) console.log(`[core-scan] ${opts.itemId}: routed to ${byFields.label}, the list the given values belong to`);
+    }
+    // A catch-all route yields to the one list that already holds the same
+    // maker's things (kept-route.ts routeBySameMaker): two Bambu printers in
+    // 3D Printers say where a Bambu Lab P1P goes (#4591).
+    const maker = (() => {
+      const v = userFieldsOf(row.suggested_metadata)?.values?.manufacturer ?? row.suggested_manufacturer ?? (candidates[0] as { fields?: Record<string, unknown> } | undefined)?.fields?.manufacturer;
+      return typeof v === "string" && v.trim() ? v.trim() : null;
+    })();
+    // What the thing IS (its category, or what the matchmaker said it is)
+    // names its list before who made it is asked (#5065): the fit rule the
+    // card reads, so the stored route and the card agree.
+    if (!trackedStamp && onCatchAll(candidates)) {
+      const item = scanFitItem({ suggested_name: adoptName ? candName : row.suggested_name, suggested_manufacturer: row.suggested_manufacturer, suggested_metadata: row.suggested_metadata, suggested_candidates: candidates });
+      const byIdentity = routeByIdentity(candidates, menu, item, destinationTables(menu));
+      if (byIdentity) console.log(`[core-scan] ${opts.itemId}: routed to ${byIdentity.label}, the list for what it is`);
+    }
+    if (maker && !trackedStamp && onCatchAll(candidates)) {
+      const holding = new Set<string>();
+      await Promise.all(
+        menu
+          .filter((e) => !!e.instance)
+          .map(async (e) => {
+            const page = await platform()
+              .entities.list(opts.orgId, e.kind, { filter: { manufacturer: maker }, limit: 3 })
+              .catch(() => ({ items: [] as Array<{ fields: Record<string, unknown> }> }));
+            // A resolver that ignored the filter returns other makers: only a
+            // record that really carries this maker counts.
+            if (page.items.some((r) => String(r.fields.manufacturer ?? "").trim().toLowerCase() === maker.toLowerCase())) holding.add(e.kind);
+          }),
+      );
+      const byMaker = routeBySameMaker(candidates, menu, holding);
+      if (byMaker) console.log(`[core-scan] ${opts.itemId}: routed to ${byMaker.label}, where the workspace keeps ${maker}'s things`);
+    }
     // The values a person or their agent gave follow this route, and who it
     // came from is read out of them into an empty seller, on a replay too, so
     // a row kept before the split heals when it is next looked at (#4591).

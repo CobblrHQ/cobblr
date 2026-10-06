@@ -11,6 +11,7 @@ import { registerLocationsWriter } from "./sync-writer.js";
 import { registerLocationsHandlers } from "./handlers.js";
 import { registerPlaceParent } from "./place-parent.js";
 import { lightsRouter } from "./lights.js";
+import { floorplanFileRouter, registerFloorplanFileHandlers } from "./floorplan-file.js";
 
 const router = Router({ mergeParams: true });
 
@@ -19,6 +20,8 @@ const router = Router({ mergeParams: true });
 router.use("/locations", locationsImportRouter);
 // Floor plan (":id/floorplan/seed") before the generic /:id routes.
 router.use("/locations", floorplanRouter);
+// A whole house as one file (cobblr-floorplan/1): /floorplan/import before /:id.
+router.use("/locations", floorplanFileRouter);
 router.use("/locations", lightsRouter);
 router.use("/locations", locationsRouter);
 
@@ -32,6 +35,8 @@ registerLocationsWriter();
 // Side-effect: register the action handlers (core-locations:reorder) so the
 // assistant has a door to the one field the update route refuses.
 registerLocationsHandlers();
+// Side-effect: the assistant's doors to importing and exporting a plan file.
+registerFloorplanFileHandlers();
 // Side-effect: a place's parent place, for "where is this" across placements.
 registerPlaceParent();
 

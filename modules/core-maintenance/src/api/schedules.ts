@@ -15,6 +15,7 @@ import { counterDefs, dueOf, ensureOccurrence, readCounter, renewalState, writeE
 import { INTERVAL_UNITS, describeRule, hasCalendar, hasCounter, nextRenewalExpiry, nextReminderAt } from "../schedule.js";
 import { sql } from "kysely";
 import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
+import { TermFields, termValues } from "../term-fields.js";
 
 export const schedulesRouter = Router({ mergeParams: true });
 
@@ -77,9 +78,12 @@ export async function present(orgId: string, s: ScheduleRow, timeZone?: string |
   const db = await platform().tenants.getDb(orgId) as Kysely<CoreMaintenanceDB>;
   const occurrence = await db.selectFrom("core_maintenance_entries").select(["id", "last_notified_at", "nag_snoozed_until", "nag_stopped_at"]).where("schedule_id", "=", s.id).where("performed_at", "is", null).executeTakeFirst();
   const preferences = await db.selectFrom("core_maintenance_preferences").selectAll().executeTakeFirst();
-  const nextReminder = due.next_due_at ? nextReminderAt(due.next_due_at, s.remind, occurrence?.last_notified_at ?? null, new Date(), { ...occurrence, overdue_every: s.overdue_every ?? preferences?.overdue_every ?? "week" }) : null;
+  const latestTerm = s.anchor ? await db.selectFrom("core_maintenance_entries").select(["id", "term_start", "term_end", "cost_cents", "currency", "quantity"]).where("schedule_id", "=", s.id).where("is_term", "=", true).orderBy(sql`term_end desc nulls last`).orderBy("performed_at", "desc").orderBy("id").executeTakeFirst() : undefined;
+  const nextReminder = !s.ended_at && due.next_due_at ? nextReminderAt(due.next_due_at, s.remind, occurrence?.last_notified_at ?? null, new Date(), { ...occurrence, overdue_every: s.overdue_every ?? preferences?.overdue_every ?? "week" }) : null;
   return {
     ...s,
+    latest_term: latestTerm ?? null,
+    renewal_status: s.ended_at ? "ended" : s.anchor && state.current_expiry && state.current_expiry < new Date() ? "lapsed" : "active",
     next_reminder_at: nextReminder,
     occurrence: occurrence ?? null,
     counter_every: s.counter_every == null ? null : Number(s.counter_every),
@@ -342,10 +346,10 @@ export async function updateSchedule(db: Kysely<CoreMaintenanceDB>, orgId: strin
 }
 
 export const RenewBody = z.object({
+  ...TermFields,
   file_id: z.string().uuid().optional(),
   new_expiry: DateOnly.optional(),
   performed_at: z.string().datetime().optional(),
-  cost_cents: z.number().int().nonnegative().nullable().optional(),
   notes: z.string().max(4000).nullable().optional(),
 });
 
@@ -354,19 +358,24 @@ export async function renewSchedule(db: Kysely<CoreMaintenanceDB>, orgId: string
   if (d.file_id && !(await platform().files.describe(orgId, [d.file_id]))?.length) throw new MaintenanceRefusal("Choose a file in this workspace");
   const entry = await db.transaction().execute(async (tx) => {
     const current = await tx.selectFrom("core_maintenance_schedules").selectAll().where("id", "=", s.id).forUpdate().executeTakeFirstOrThrow();
+    if (current.ended_at) throw new MaintenanceRefusal("This renewal chain has ended. Add a new renewal to start again.");
     const state = await renewalState(orgId, current);
-    const expiry = d.new_expiry ? new Date(d.new_expiry + "T12:00:00Z") : nextRenewalExpiry(state);
+    if (d.new_expiry && d.term_end && d.new_expiry !== d.term_end) throw new MaintenanceRefusal("Choose one term end date");
+    const end = d.term_end ?? d.new_expiry;
+    const expiry = end ? new Date(end + "T12:00:00Z") : nextRenewalExpiry(state);
     if (!expiry || !state.current_expiry || expiry <= state.current_expiry) throw new MaintenanceRefusal("The new expiry must be after the current expiry");
+    const term = await termValues(tx, orgId, current, state.current_expiry, expiry, d);
     const entry = await tx.insertInto("core_maintenance_entries").values({
       entity_module: current.entity_module, entity_type: current.entity_type, entity_id: current.entity_id,
       name: current.name, schedule_id: current.id, performed_at: d.performed_at ? new Date(d.performed_at) : new Date(),
-      performed_by: userId, cost_cents: d.cost_cents ?? null, notes: d.notes ?? null,
+      ...term, performed_by: userId, notes: d.notes ?? null,
       scheduled_at: state.current_expiry,
     } as never).returningAll().executeTakeFirstOrThrow();
     await rollForward(tx, orgId, entry, expiry);
     return entry;
   });
   if (d.file_id) await platform().files.attach(orgId, { fileId: d.file_id, source_module: "core-maintenance", source_type: "entry", source_id: entry.id, role: "receipt" });
+  await platform().activity.log({ orgId, userId, action: "term_created", ref: { module: "core-maintenance", entityType: "term", entityId: entry.id }, diff: { name: entry.name, term_start: entry.term_start, term_end: entry.term_end } });
   const updated = await db.selectFrom("core_maintenance_schedules").selectAll().where("id", "=", s.id).executeTakeFirstOrThrow();
   return { entry, schedule: await present(orgId, updated) };
 }

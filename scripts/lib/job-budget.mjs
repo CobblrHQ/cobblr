@@ -150,6 +150,19 @@ export function availableMib() {
   return memoryRoom().mib;
 }
 
+/**
+ * MiB a capped cgroup can still grow by: its limit minus what is NOT reclaimable. memory.current counts the
+ * page cache, which the kernel gives back under pressure and which therefore never OOMs a job; counting it as
+ * used made a job that had just installed and built its tree see no room under its cap. On 2026-10-06 the
+ * full-suite job under a 6656 MiB cap read ~0.5 GiB of room (the rest was cache from the install), picked ONE
+ * vitest fork, and the config refused to start the suite ("cap too small for the integration suite"), main red.
+ * @param {{ limit: number, current: number, file?: number }} v   bytes; file is memory.stat's page cache
+ */
+export function roomUnderLimitMib({ limit, current, file = 0 }) {
+  const working = Math.max(0, current - Math.max(0, file));
+  return (limit - working) / 1048576;
+}
+
 /** The room (as availableMib) and whether it is this job's own cgroup limit. */
 export function memoryRoom() {
   const meminfo = read("/proc/meminfo");
@@ -164,7 +177,9 @@ export function memoryRoom() {
   };
   const limit = num("memory.max");
   const used = num("memory.current");
-  const room = limit != null && used != null ? (limit - used) / 1048576 : Infinity;
+  const stat = dir ? read(`${dir}/memory.stat`) : undefined;
+  const file = stat ? Number(/^file\s+(\d+)/m.exec(stat)?.[1]) : NaN;
+  const room = limit != null && used != null ? roomUnderLimitMib({ limit, current: used, file: Number.isFinite(file) ? file : 0 }) : Infinity;
   const v = Math.min(Number.isFinite(avail) ? avail : Infinity, room);
   return { mib: Number.isFinite(v) ? v : null, capped: limit != null };
 }

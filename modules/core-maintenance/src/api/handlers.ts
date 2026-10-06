@@ -1,3 +1,4 @@
+import { ensureUsageSchedule } from "../usage-schedule.js";
 import { z } from "zod";
 // core-maintenance action handlers — the AI-reachable form of the service log.
 //
@@ -23,6 +24,8 @@ import { completeEntry, rollForward, rolledFromOf, unroll } from "../schedules-s
 import { createSchedule, ScheduleCreateBody, ScheduleUpdateBody, RenewBody, updateSchedule, renewSchedule } from "./schedules.js";
 import { NagBody, CadenceBody, changeNag } from "./reminders.js";
 import { moneyForStorage } from "@cobblr/platform-contract/money";
+import { TermBody } from "../term-fields.js";
+import { updateTerm, endRenewal } from "../terms-store.js";
 
 const str = (v: unknown): string | null =>
   typeof v === "string" && v.trim() ? v.trim() : null;
@@ -38,6 +41,29 @@ function when(v: unknown): Date | null {
 
 export function registerMaintenanceHandlers(): void {
   registerUndos();
+  platform().actions.registerHandler("core-maintenance.update-term", async (ctx) => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const d = TermBody.safeParse({ ...args, ...(args.cost != null ? { cost_cents: moneyForStorage(args.cost, "cents") } : {}) });
+    if (!d.success) return { ok: false, error: d.error.message };
+    const db = await platform().tenants.getDb(ctx.orgId) as Kysely<CoreMaintenanceDB>;
+    return { ok: true, result: await updateTerm(db, ctx.orgId, String(args.term_id ?? ""), d.data), summary: "Term updated." };
+  });
+  platform().actions.registerHandler("core-maintenance.end-renewal", async (ctx) => {
+    const db = await platform().tenants.getDb(ctx.orgId) as Kysely<CoreMaintenanceDB>;
+    const id = String((ctx.args as { schedule_id?: unknown })?.schedule_id ?? "");
+    return { ok: true, result: await endRenewal(db, id, ctx.userId), summary: "Renewal ended. Past terms are kept." };
+  });
+  platform().actions.registerHandler("core-maintenance.ensure-usage", async ctx => {
+    if (!ctx.entity) return { ok: false, error: "Choose the record that keeps the usage counter." };
+    const parsed = z.object({ name: z.string().trim().min(1).max(200), counter_field: z.string().min(1).max(80), counter_every: z.number().finite().positive().max(10_000_000) }).safeParse(ctx.args);
+    if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Give the usage threshold." };
+    const [entity_module, entity_type] = ctx.entity.kind.split(":");
+    if (!entity_module || !entity_type) return { ok: false, error: "Choose a record kind." };
+    const defs = await platform().entities.countersFor(ctx.orgId, ctx.entity.kind);
+    if (!defs.some(d => d.key === parsed.data.counter_field)) return { ok: false, error: "Choose a counter this record keeps." };
+    const db = await platform().tenants.getDb(ctx.orgId) as Kysely<CoreMaintenanceDB>;
+    return { ok: true, data: await ensureUsageSchedule(db, ctx.orgId, { ...parsed.data, entity_module, entity_type, entity_id: ctx.entity.id }) };
+  });
   platform().actions.registerHandler("core-maintenance.renewal", async (ctx) => {
     if (!ctx.entity) return { ok: false, error: "Choose the record that expires." };
     const args = (ctx.args ?? {}) as Record<string, unknown>;

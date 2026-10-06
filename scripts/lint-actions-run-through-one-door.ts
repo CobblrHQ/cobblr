@@ -52,6 +52,8 @@ const ALLOWED = new Set([
   "packages/platform-web/src/types.ts",
   "web/src/lib/api.ts",
   "web/src/App.tsx",
+  // The workspace's platform context hands the door to the package (#4640).
+  "web/src/WorkspacePlatformWeb.tsx",
 ]);
 
 /** The check. Return every violation in one file; an empty array is a pass. */

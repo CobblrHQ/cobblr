@@ -30,10 +30,6 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-/** Where the rule bites. Keep it narrow: a lint over the whole repo judges
- *  files whose authors never heard of it. */
-const ROOTS = ["modules"];
-
 /** One offending place. `line` is 1-based for a clickable path:line. */
 interface Violation {
   file: string;
@@ -125,7 +121,7 @@ for (const [file, src] of sources) {
     if (m && !allDeclared.has(m[1]!)) violations.push({ file, line: i + 1, what: `a default wire waits for "${m[1]}", which no module declares, so it would never run` });
   });
 }
-for (const root of ROOTS) for (const file of walk(root)) violations.push(...check(file, readFileSync(file, "utf8")));
+for (const [file, src] of sources) violations.push(...check(file, src));
 
 if (violations.length) {
   console.error(`lint:manifest-advertises-what-it-has - ${violations.length} violation(s):`);

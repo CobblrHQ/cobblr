@@ -14,10 +14,11 @@ export function SheetPanel({ id, metadata }: { id: string; metadata: Record<stri
   const [rectangles, setRectangles] = useState<Rect[]>([]);
   const [revision, setRevision] = useState(0);
   const [kerf, setKerf] = useState<number | "">(0.1);
+  const [verdict, setVerdict] = useState<"good" | "scrap">("good");
   const [spacing, setSpacing] = useState<number | "">(2);
   const save = useMutation({
-    mutationFn: (undo: boolean) => api.changeSheet(id, undo ? { operation: "undo", revision: query.data!.revision } : { operation: mode!, revision, rectangles, kerf_mm: mode === "cut" ? Number(kerf) : 0, spacing_mm: mode === "cut" ? Number(spacing) : 0 }),
-    onSuccess: () => { setMode(null); void qc.invalidateQueries({ queryKey: key }); },
+    mutationFn: (undo: boolean) => api.changeSheet(id, undo ? { operation: "undo", revision: query.data!.revision } : { operation: mode!, revision, rectangles, verdict, kerf_mm: mode === "cut" ? Number(kerf) : 0, spacing_mm: mode === "cut" ? Number(spacing) : 0 }),
+    onSuccess: () => { setMode(null); void qc.invalidateQueries({ queryKey: key }); void qc.invalidateQueries({ queryKey: ["stock-shape", orgSlug, id] }); },
     onError: () => { void qc.invalidateQueries({ queryKey: key }); },
   });
   if (!sheetSpec(metadata)) return null;
@@ -47,6 +48,7 @@ export function SheetPanel({ id, metadata }: { id: string; metadata: Record<stri
           <button type="button" className={button} onClick={() => setRectangles(old => old.filter((_, i) => i !== index))}>Remove area {index + 1}</button>
         </div>)}
         <button type="button" className={button} disabled={rectangles.length >= 128} onClick={() => setRectangles(old => [...old, { x: 0, y: 0, width: Math.min(20, view.spec.width_mm), height: Math.min(20, view.spec.height_mm) }])}>Add rectangle</button>
+        {mode === "cut" && <label className="block text-sm">Result<select aria-label="Sheet cut result" className="input min-h-11 w-full" value={verdict} onChange={e => setVerdict(e.target.value as typeof verdict)}><option value="good">Came out good</option><option value="scrap">Scrap</option></select></label>}
         {mode === "cut" && <div className="grid grid-cols-2 gap-2">{([["Kerf (mm)", kerf, setKerf], ["Spacing (mm)", spacing, setSpacing]] as const).map(([label, value, set]) => <label key={label} className="text-sm">{label}<input className="input min-h-11 w-full" aria-label={label} type="number" min="0" max="1000" step="any" required value={value} onChange={e => set(e.target.value === "" ? "" : Number(e.target.value))} /></label>)}</div>}
         <div className="flex flex-wrap gap-2"><button className={button} disabled={save.isPending || mode === "cut" && !rectangles.length}>{mode === "cut" ? "Record cut" : "Save free area"}</button><button type="button" className={button} disabled={save.isPending} onClick={() => setMode(null)}>Cancel</button></div>
       </form>}

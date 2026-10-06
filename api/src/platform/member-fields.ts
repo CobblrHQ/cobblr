@@ -15,6 +15,7 @@
 // member updates every record at once, rather than leaving snapshots behind.
 
 import { meta } from "../db/meta.js";
+import { perReadRequest } from "../lib/request-context.js";
 import type { ResolvedEntity } from "@cobblr/platform-contract";
 import { personNamesFor } from "./people.js";
 import { resolveFieldDefsForKind } from "./field-defs.js";
@@ -36,6 +37,10 @@ export function clearMemberFieldCaches(): void {
 }
 
 async function memberDefsFor(orgId: string, kind: string): Promise<MemberDef[]> {
+  return perReadRequest(`projection:member-defs:${orgId}:${kind}`, () => loadMemberDefs(orgId, kind));
+}
+
+async function loadMemberDefs(orgId: string, kind: string): Promise<MemberDef[]> {
   const key = `${orgId}:${kind}`;
   const hit = defsCache.get(key);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.defs;

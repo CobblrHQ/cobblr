@@ -62,6 +62,16 @@ export interface PlacementRow {
 
 export const PLACEMENT: PlacementRow[] = [
   {
+    id: "renewal-history",
+    what: "renewal terms with dates, costs and documents",
+    keywords: ["maintenance", "renewal", "renewal terms", "term history", "registration"],
+    dir: "modules/core-maintenance/src/",
+    exemplar: "modules/core-maintenance/src/api/schedules.ts",
+    why: "Renewals extend the existing service entries and anchored schedule so reminders, documents and history retain one source.",
+    lints: ["lint:ai-reach", "lint:ui-reach", "lint:migration-additive", "lint:heal-shims"],
+    notes: ["Record panels live in web/src/features/core-maintenance; grouped term lists use the platform grouped-list seam."],
+  },
+  {
     id: "bridge-installer",
     what: "a native edge bridge installer for macOS or Linux",
     keywords: ["native", "macos", "edge", "bridge", "install", "lightburn", "setup", "installer"],

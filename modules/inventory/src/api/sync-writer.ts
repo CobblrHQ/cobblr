@@ -18,18 +18,40 @@
 // reactor + the sync engine's own upsert, so silence is correct. Add an opt-in
 // emit if a future sync TARGET needs the downstream cascade.)
 
-import { findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow, snapshotRowTree, restoreRowTree } from "@cobblr/platform-contract";
+import { stockUnitRefusal } from "../stock-unit.js";
+import { ActionRefusal, findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow, snapshotRowTree, restoreRowTree, rowVersionOf, updateRowAt } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { InventoryDB } from "../db.js";
 import { adoptAxisValuesInto } from "./adopt-axis-values.js";
 
 let registered = false;
 
+/** What `update` and `updateIf` write for these fields. */
+async function patchOf(db: Kysely<InventoryDB>, id: string, fields: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const patch: Record<string, unknown> = { updated_at: new Date(), ...nativeValues(fields) };
+  if (typeof patch.unit === "string") {
+    const refusal = await stockUnitRefusal(db, id, patch.unit);
+    if (refusal) throw new ActionRefusal(refusal);
+  }
+  if (fields.metadata !== undefined) {
+    patch.metadata = sql`${JSON.stringify(fields.metadata ?? {})}::jsonb`;
+  }
+  return patch;
+}
+
 export function registerInventoryWriter(): void {
   if (registered) return;
   registered = true;
 
   platform().entities.registerWriter("inventory:part", {
+    counters: {
+      defs: [{ key: "stock_used", label: "stock use" }],
+      async read(orgId, id) {
+        const db = await platform().tenants.getDb(orgId) as Kysely<InventoryDB>;
+        const row = await db.selectFrom("inventory_stock").select("used").where("part_id", "=", id).executeTakeFirst();
+        return { stock_used: row ? Number(row.used) : null };
+      },
+    },
     snapshotDeletion: async (orgId, id) => snapshotRowTree(await platform().tenants.getDb(orgId), "inventory_parts", id, "inventory_"),
     restoreDeletion: async (orgId, snapshot) => restoreRowTree(await platform().tenants.getDb(orgId), "inventory_parts", snapshot, "inventory_"),
     // A record that already carries the source's key is adopted by a sync, never
@@ -52,12 +74,17 @@ export function registerInventoryWriter(): void {
 
     async update(orgId, id, fields) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
-      const patch: Record<string, unknown> = { updated_at: new Date(), ...nativeValues(fields) };
-      if (fields.metadata !== undefined) {
-        patch.metadata = sql`${JSON.stringify(fields.metadata ?? {})}::jsonb`;
-      }
-      await db.updateTable("inventory_parts").set(patch as never).where("id", "=", id).execute();
+      await db.updateTable("inventory_parts").set((await patchOf(db, id, fields)) as never).where("id", "=", id).execute();
       // No emit — see the file header.
+    },
+
+    version: async (orgId, id) => rowVersionOf(await platform().tenants.getDb(orgId), "inventory_parts", id),
+
+    async updateIf(orgId, id, fields, version) {
+      const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
+      const v = await updateRowAt(db, "inventory_parts", id, await patchOf(db, id, fields), version);
+      // No emit — see the file header.
+      return v;
     },
 
     async delete(orgId, id) {
@@ -87,7 +114,10 @@ export function registerInventoryWriter(): void {
     /** Every column of one row — the state a change ledger keeps so an undo
      *  has something real to put back (EntityWriter.snapshot). */
     async snapshot(orgId, id) {
-      return snapshotRow(await platform().tenants.getDb(orgId), "inventory_parts", id);
+      const image = await snapshotRow(await platform().tenants.getDb(orgId), "inventory_parts", id);
+      // Concurrency bookkeeping advances across undo, without changing user data.
+      if (image) delete image.stock_revision;
+      return image;
     },
 
     /** Scan-category values into inventory's own tree, before the platform

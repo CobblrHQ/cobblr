@@ -12,6 +12,7 @@ import { withBound } from "../lib/floorplanGeometry";
 import { parseLength, type LengthUnit } from "../lib/lengthUnits";
 import { useSelectedSpace } from "./placeItems/useSelectedSpace";
 import { FloorPlan } from "./FloorPlan";
+import { PlanFileButtons } from "./ImportPlanDialog";
 
 /** Spaces worth a chip: every root AREA (a room/region), plus every CONTAINER
  *  that is either standalone (no parent) or has a layout of its own (a tool
@@ -115,6 +116,10 @@ export function LocationFloorPlanTab({
             Or start with a tool chest or a shelf instead
           </button>
         )}
+        <p className="text-xs">Or bring a whole house in from a file another AI made:</p>
+        <div className="flex flex-wrap gap-2">
+          <PlanFileButtons slug={slug} exportId={null} exportName={null} />
+        </div>
       </div>
     );
   }
@@ -170,6 +175,8 @@ export function LocationFloorPlanTab({
           >
             <Plus size={13} /> room
           </button>
+          <span className="flex-1" />
+          <PlanFileButtons slug={slug} exportId={active.kind === "area" ? active.id : null} exportName={active.name} />
         </div>
       )}
       {/* key resets the editor's per-space state when you switch chips. */}

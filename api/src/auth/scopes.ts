@@ -235,6 +235,44 @@ function recordScopeAllows(key: string, method: string, rel: string): boolean {
   return allow.some(([mm, re]) => mm === method && re.test(rel));
 }
 
+// ── A station's device: station:<address> (#4640) ─────────────────────────
+// Minted only by approving a tablet (platform/station-devices.ts), never from
+// the token screen (sanitizeScopes keeps it out). It reaches that one
+// station's own routes, the scan intake and the inbox card the station shows
+// for a new thing (which is the scan inbox's own card, so it needs the same
+// reads: places, files, the menu, the AI's availability), and nothing else:
+// not another station, not the scan rules, not an export, not a collection's
+// own routes. Which records it may count is the station's own rule
+// (core-scan's station routes check its collections).
+const STATION_SCOPE_RE = /^station:([a-z0-9][a-z0-9-]{0,39})$/;
+
+export function isStationScope(key: string): boolean {
+  return STATION_SCOPE_RE.test(key);
+}
+
+const ORG = "/orgs/[^/]+";
+const STATION_SHARED: Array<[string, RegExp]> = [
+  // The scan inbox, as the station's new-thing card uses it.
+  ...["GET", "POST", "PATCH", "DELETE"].map(
+    (m) => [m, new RegExp(`^${ORG}/modules/core-scan/(?!qr-rules|export|stations)[a-z0-9-]+(/.*)?$`)] as [string, RegExp],
+  ),
+  ["GET", new RegExp(`^${ORG}/modules/core-locations/[a-z0-9-]+(/.*)?$`)],
+  ["POST", new RegExp(`^${ORG}/modules/core-locations/locations$`)],
+  ["GET", new RegExp(`^${ORG}/modules/core-files/files(/.*)?$`)],
+  ["POST", new RegExp(`^${ORG}/modules/core-files/files$`)],
+  ["GET", new RegExp(`^${ORG}/(modules|ai-status|ai-chain|entity-kind-overrides|entity-kinds|quickstart/bundle-menu)$`)],
+  ["POST", new RegExp(`^${ORG}/approval-requests/describe$`)],
+  ["GET", /^\/qr\/[^/]+(\/[^/]+)?$/],
+  ["GET", /^\/me$/],
+];
+
+function stationScopeAllows(key: string, method: string, rel: string): boolean {
+  const address = STATION_SCOPE_RE.exec(key)?.[1];
+  if (!address) return false;
+  if (new RegExp(`^${ORG}/modules/core-scan/stations/screens/${address}(/[a-z0-9-]+)*$`).test(rel)) return true;
+  return STATION_SHARED.some(([m, re]) => m === method && re.test(rel));
+}
+
 /** Public, secret-free view for the mint UI. */
 export function listScopeChoices(): Array<{ key: string; label: string; description: string }> {
   return TOKEN_SCOPES.map(({ key, label, description }) => ({ key, label, description }));
@@ -264,6 +302,10 @@ export function tokenScopeAllows(scopes: string[], method: string, originalUrl: 
   for (const key of scopes) {
     if (isRecordScope(key)) {
       if (recordScopeAllows(key, method, rel)) return true;
+      continue;
+    }
+    if (isStationScope(key)) {
+      if (stationScopeAllows(key, method, rel)) return true;
       continue;
     }
     const def = BY_KEY.get(key);

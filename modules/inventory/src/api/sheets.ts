@@ -4,11 +4,11 @@ import { type Kysely, type Selectable, sql } from "kysely";
 import { ActionRefusal, platform } from "@cobblr/platform-contract";
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import { tenantDb, tenantContext, instanceOf, sessionUser, type InventoryDB } from "../db.js";
-import { emptySheetState, sheetSpec, sheetArea, recordCut, editFreeArea, undoFreeEdit, fitsSheet, type SheetState } from "../sheet-area.js";
+import { emptySheetState, sheetSpec, sheetArea, recordCut, recordOutlineCut, editFreeArea, undoFreeEdit, fitsSheet, type SheetState } from "../sheet-area.js";
 import { asyncHandler, badBody, requireCapability } from "./util.js";
 
 const RectSchema = z.object({ x: z.number().finite().nonnegative(), y: z.number().finite().nonnegative(), width: z.number().finite().positive(), height: z.number().finite().positive() });
-const Change = z.object({ operation: z.enum(["cut", "edit", "undo"]), revision: z.number().int().nonnegative(), rectangles: z.array(RectSchema).max(128).optional(), kerf_mm: z.number().finite().nonnegative().max(1000).default(0), spacing_mm: z.number().finite().nonnegative().max(1000).default(0), source: z.string().min(1).max(160).optional(), partId: z.string().uuid().optional() });
+const Change = z.object({ operation: z.enum(["cut", "edit", "undo"]), revision: z.number().int().nonnegative(), rectangles: z.array(RectSchema).max(128).optional(), outlines: z.array(z.array(z.object({ x: z.number().finite(), y: z.number().finite() })).min(3).max(256)).max(128).optional(), kerf_mm: z.number().finite().nonnegative().max(1000).default(0), spacing_mm: z.number().finite().nonnegative().max(1000).default(0), source: z.string().min(1).max(160).optional(), verdict: z.enum(["good", "scrap"]).default("good"), partId: z.string().uuid().optional() });
 export type SheetChange = z.input<typeof Change>;
 type Part = Selectable<InventoryDB["inventory_parts"]>;
 
@@ -19,9 +19,13 @@ export function sheetView(row: Part, state: SheetState, revision: number) {
 export async function sheetViews(db: Kysely<InventoryDB>, rows: Part[]) {
   const sheets = rows.filter(r => sheetSpec(r.metadata ?? {}));
   if (!sheets.length) return new Map<string, NonNullable<ReturnType<typeof sheetView>>>();
-  const states = await db.selectFrom("inventory_sheet_area").selectAll().where("part_id", "in", sheets.map(r => r.id)).execute();
+  const [states, stocks] = await Promise.all([
+    db.selectFrom("inventory_sheet_area").selectAll().where("part_id", "in", sheets.map(r => r.id)).execute(),
+    db.selectFrom("inventory_stock").select(["part_id", "shape"]).where("part_id", "in", sheets.map(r => r.id)).execute(),
+  ]);
+  const notSheets = new Set(stocks.filter(s => s.shape !== "sheet").map(s => s.part_id));
   const byId = new Map(states.map(s => [s.part_id, s]));
-  return new Map(sheets.map(r => { const stored = byId.get(r.id); return [r.id, sheetView(r, stored?.state ?? emptySheetState(), stored?.revision ?? 0)!]; }));
+  return new Map(sheets.filter(r => !notSheets.has(r.id)).map(r => { const stored = byId.get(r.id); return [r.id, sheetView(r, stored?.state ?? emptySheetState(), stored?.revision ?? 0)!]; }));
 }
 
 export const sheetRouter = Router({ mergeParams: true });
@@ -53,13 +57,13 @@ sheetRouter.post("/:id/sheet", asyncHandler(async (req, res) => {
 
 export const sheetSearchRouter = Router({ mergeParams: true });
 sheetSearchRouter.get("/find", asyncHandler(async (req, res) => {
-  const p = z.object({ material: z.string().trim().min(1).max(120), thickness_mm: z.coerce.number().positive().max(1000), width_mm: z.coerce.number().positive().max(100000), height_mm: z.coerce.number().positive().max(100000), rotate: z.enum(["true", "false"]).default("true"), offset: z.coerce.number().int().nonnegative().default(0) }).safeParse(req.query);
+  const p = z.object({ material: z.string().trim().min(1).max(120), thickness_mm: z.coerce.number().positive().max(1000), width_mm: z.coerce.number().positive().max(100000), height_mm: z.coerce.number().positive().max(100000), rotate: z.enum(["true", "false"]).default("true"), outline: z.enum(["true", "false"]).default("false"), offset: z.coerce.number().int().nonnegative().default(0) }).safeParse(req.query);
   if (!p.success) return void badBody(res, p.error);
   const db = tenantDb(req);
   const rows = await db.selectFrom("inventory_parts").selectAll().where("archived", "=", false).where("state", "=", "active").where("qty", ">", "0")
     .where(sql<boolean>`lower(coalesce(metadata->>'material',metadata->'laser_sheet'->>'material')) = ${p.data.material.toLowerCase()}`).execute();
   const views = await sheetViews(db, rows);
-  const matches = [...views.values()].filter(v => Math.abs(v.spec.thickness_mm - p.data.thickness_mm) <= 0.01 && fitsSheet(v, p.data.width_mm, p.data.height_mm, p.data.rotate === "true"))
+  const matches = [...views.values()].filter(v => Math.abs(v.spec.thickness_mm - p.data.thickness_mm) <= 0.01 && (p.data.outline === "true" ? v.percent_left > 0 : fitsSheet(v, p.data.width_mm, p.data.height_mm, p.data.rotate === "true")))
     .sort((a, b) => Number(b.offcut) - Number(a.offcut) || a.percent_left - b.percent_left || a.name.localeCompare(b.name));
   res.json({ items: matches.slice(p.data.offset, p.data.offset + 50), total: matches.length });
 }));
@@ -74,6 +78,8 @@ export function registerSheetActions() {
     return await db.transaction().execute(async trx => {
         const row = await trx.selectFrom("inventory_parts").selectAll().where("id", "=", id).forUpdate().executeTakeFirst();
         if (!row || row.archived || row.state !== "active" || Number(row.qty) <= 0) throw new ActionRefusal("Choose an available sheet.");
+        const stock = await trx.selectFrom("inventory_stock").select("shape").where("part_id", "=", id).executeTakeFirst();
+        if (stock && stock.shape !== "sheet") throw new ActionRefusal("Choose stock with a sheet shape to record sheet area.");
         const spec = sheetSpec(row.metadata ?? {});
         if (!spec) throw new ActionRefusal("Save the material, thickness and size first.");
         const stored = await trx.selectFrom("inventory_sheet_area").selectAll().where("part_id", "=", id).executeTakeFirst();
@@ -82,9 +88,16 @@ export function registerSheetActions() {
         const p = parsed.data;
         if (p.operation === "cut" && p.source && state.sources.includes(p.source)) return { ok: true };
         if (p.revision !== revision) throw new ActionRefusal("This sheet changed. Reload it before saving.");
+        if (p.outlines && (p.operation !== "cut" || p.rectangles?.length || p.kerf_mm || p.spacing_mm)) throw new ActionRefusal("Cut outlines must already include kerf and spacing, without rectangles.");
         let next;
-        try { next = p.operation === "undo" ? undoFreeEdit(state) : p.operation === "edit" ? editFreeArea(spec, state, p.rectangles ?? []) : recordCut(spec, state, p.rectangles ?? [], p.kerf_mm, p.spacing_mm, p.source); }
+        try { next = p.operation === "undo" ? undoFreeEdit(state) : p.operation === "edit" ? editFreeArea(spec, state, p.rectangles ?? []) : p.outlines ? recordOutlineCut(spec, state, p.outlines, p.source) : recordCut(spec, state, p.rectangles ?? [], p.kerf_mm, p.spacing_mm, p.source); }
         catch (e) { if (e instanceof Error) throw new ActionRefusal(e.message); throw e; }
+        if (p.operation === "cut") {
+          const beforeArea = sheetArea(spec, state), afterArea = sheetArea(spec, next);
+          const remaining = afterArea.percent_left * spec.width_mm * spec.height_mm / 100;
+          const amount = (beforeArea.percent_left - afterArea.percent_left) * spec.width_mm * spec.height_mm / 100;
+          await trx.insertInto("inventory_stock_uses").values({ part_id: id, source: p.source ?? `sheet-cut:${revision + 1}`, verdict: p.verdict, amount: String(Math.round(amount * 1e9) / 1e9), unit: "mm²", remaining: String(Math.max(0, Math.round(remaining * 1e9) / 1e9)), by_user: ctx.userId ?? null }).onConflict(oc => oc.columns(["part_id", "source"]).doNothing()).execute();
+        }
         await trx.insertInto("inventory_sheet_area").values({ part_id: id, revision: revision + 1, state: next }).onConflict(oc => oc.column("part_id").doUpdateSet({ revision: revision + 1, state: next, updated_at: new Date() })).execute();
         return { ok: true, changed: true, before: { revision }, data: { revision: revision + 1 } };
     });

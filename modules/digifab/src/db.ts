@@ -5,6 +5,19 @@ import type { ColumnType, Generated, Kysely } from "kysely";
 import type { Request } from "express";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 
+export interface DigifabCutterProfilesTable {
+ id: Generated<string>; connection_id: string; remote_device_id: string;
+ profile: import("@cobblr/platform-contract/cutter-program").CutterProfile;
+ created_at: Generated<Date>; updated_at: Generated<Date>;
+}
+export interface DigifabCutterPlansTable {
+ id: Generated<string>; connection_id: string; remote_device_id: string;
+ library_id: string; job_id: string; plan: import("./cutter-plans.js").CutterPlan;
+ started_at: Generated<Date | null>; report: Generated<import("./cutter-plans.js").CutterReport | null>;
+ consumed_at: Generated<Date | null>; created_at: Generated<Date>;
+}
+export interface DigifabCutterRollClaimsTable { part_id: string; job_id: string }
+
 export interface DigifabConnectionsTable {
   id: Generated<string>;
   /** Driver type: "fdm_monster" | "mock" | … */
@@ -24,6 +37,7 @@ export interface DigifabConnectionsTable {
 }
 
 export interface DigifabJobsTable {
+  resin_print: Generated<boolean>;
   laser_layout: Generated<JobLayout | null>;
   id: Generated<string>;
   /** Null for an unassigned pool job — the assignment worker sets it. */
@@ -318,25 +332,25 @@ export interface DigifabLaserPlansTable {
   id: Generated<string>; connection_id: string; remote_device_id: string; library_id: string;
   plan: import("./laser-plans.js").LaserPlan; run_id: string | null; created_at: Generated<Date>;
 }
-export interface DigifabReflowProfilesTable {
-  id: Generated<string>; paste_kind: string; paste_id: string; fingerprint: string;
-  profile: import("@cobblr/platform-contract/reflow-profile").ReflowProfile;
-  created_by: string | null; created_at: Generated<Date>;
-}
 export interface DigifabDB {
-  digifab_reflow_profiles: DigifabReflowProfilesTable;
+  digifab_resin_prints: {
+    job_id: string; connection_id: string; device_id: string; review_file_id: string;
+    phase: Generated<string>; snapshot: import("./resin-prints.js").ResinSnapshot;
+    stock_error: string | null; wash_done: Generated<boolean>; cure_done: Generated<boolean>;
+    created_at: Generated<Date>; updated_at: Generated<Date>;
+  };
   digifab_material_dispatches: { id: Generated<string>; library_id: string; request: import("./floor-manager.js").DispatchRequest; status: Generated<string>; error: string | null; shortage: Generated<boolean>; plan_ids: Generated<string[]>; created_at: Generated<Date>; updated_at: Generated<Date> };
+  digifab_cutter_profiles: DigifabCutterProfilesTable;
+  digifab_cutter_plans: DigifabCutterPlansTable;
+  digifab_cutter_roll_claims: DigifabCutterRollClaimsTable;
   digifab_laser_profiles: DigifabLaserProfilesTable;
   digifab_laser_plans: DigifabLaserPlansTable;
   digifab_laser_sheet_claims: { part_id: string; plan_id: string };
   digifab_stations: {
     id: Generated<string>;
-    connection_id: string | null;
+    connection_id: string;
     remote_device_id: string;
     label: string;
-    purpose: Generated<string>;
-    machine_kind: string | null;
-    machine_id: string | null;
     token_hash: string;
     revoked_at: Date | null;
     created_at: Generated<Date>;

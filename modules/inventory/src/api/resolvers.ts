@@ -4,6 +4,7 @@ import { groupListRows } from "@cobblr/platform-contract/grouped-list";
 // (and the platform itself) call platform().entities.lookup(orgId,
 // "inventory:part", id) and the platform routes here.
 
+import { stockViews } from "./stock-shapes.js";
 import { storageView } from "./storage.js";
 import { sheetViews } from "./sheets.js";
 import { placeNames } from "@cobblr/platform-contract";
@@ -42,7 +43,8 @@ export function registerInventoryResolvers(): void {
       const readiness = await storageView(db, orgId, row.id);
       if (readiness) resolved.fields.storage_readiness = readiness;
       const sheet = (await sheetViews(db, [row])).get(row.id);
-      return sheet ? { ...resolved, fields: { ...resolved.fields, sheet_geometry: sheet } } : resolved;
+      const stock = (await stockViews(db, [row])).get(row.id);
+      return { ...resolved, fields: { ...resolved.fields, stock, stock_used: stock?.used ?? 0, ...(sheet ? { sheet_geometry: sheet } : {}) } };
     },
   );
 
@@ -103,12 +105,14 @@ export function registerInventoryResolvers(): void {
       annotateInstalled(orgId, rows.map((r) => ({ id: r.id, qty: Number(r.qty), approximate_qty: r.approximate_qty == null ? null : Number(r.approximate_qty) }))),
     ]);
     const areas = await sheetViews(db, rows);
+    const stocks = await stockViews(db, rows);
     const instOf = new Map(inst.map((i) => [i.id, i]));
     const items = rows
       .map((r) => {
         const base = withReserved(toResolvedPart(r, names.get(r.category_id ?? "") ?? null, places.get(r.id) ?? null, left.get(r.id) ?? null), r, held);
         const sheet = areas.get(r.id);
-        const e = sheet ? { ...base, fields: { ...base.fields, sheet_geometry: sheet } } : base;
+        const stock = stocks.get(r.id);
+        const e = { ...base, fields: { ...base.fields, stock, stock_used: stock?.used ?? 0, ...(sheet ? { sheet_geometry: sheet } : {}) } };
         const i = instOf.get(r.id);
         return i ? { ...e, fields: { ...e.fields, installed_qty: i.installed_qty, spare_qty: i.spare_qty, installed_in: i.installed_in } } : e;
       })
@@ -156,7 +160,8 @@ export function registerInventoryResolvers(): void {
     const readiness = await storageView(db, orgId, row.id);
     if (readiness) resolved.fields.storage_readiness = readiness;
     const sheet = (await sheetViews(db, [row])).get(row.id);
-    return sheet ? { ...resolved, fields: { ...resolved.fields, sheet_geometry: sheet } } : resolved;
+    const stock = (await stockViews(db, [row])).get(row.id);
+    return { ...resolved, fields: { ...resolved.fields, stock, stock_used: stock?.used ?? 0, ...(sheet ? { sheet_geometry: sheet } : {}) } };
   });
 }
 

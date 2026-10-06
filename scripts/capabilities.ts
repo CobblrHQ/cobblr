@@ -87,7 +87,8 @@ export const CAPABILITIES: Capability[] = [
     why: "a module photo field cannot reach the shared web picker without the host component",
     component: "PlatformWebProvider",
     required: ["recordPhoto"],
-    scope: ["web/src/App.tsx"],
+    // The one provider, mounted by the shell and by the Station (#4640).
+    scope: ["web/src/WorkspacePlatformWeb.tsx"],
   },
   {
     kind: "owns",

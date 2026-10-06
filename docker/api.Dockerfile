@@ -4,6 +4,17 @@
 # BuildKit is enabled in CI (docker-build.yml) so the pnpm-store cache mount below
 # persists pnpm's content-addressable store across builds — installs don't re-fetch tarballs.
 
+FROM --platform=$BUILDPLATFORM rust:1.90-bookworm AS nesting
+RUN rustup target add wasm32-unknown-unknown \
+ && cargo install wasm-bindgen-cli --version 0.2.105 --locked
+WORKDIR /app
+COPY modules/digifab/nesting ./modules/digifab/nesting
+COPY scripts/build-nesting.sh ./scripts/build-nesting.sh
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/app/modules/digifab/nesting/target \
+    bash scripts/build-nesting.sh
+
 # ─── builder ─────────────────────────────────────────────────────────
 FROM node:22-alpine AS builder
 
@@ -108,6 +119,7 @@ COPY packages/platform-web ./packages/platform-web
 # fine-grained per-module cache layers no longer earn their keep. Registry
 # modules (install-registry-modules.mjs) land after this and are built too.
 COPY modules ./modules
+COPY --from=nesting /app/modules/digifab/nesting/pkg ./modules/digifab/nesting/pkg
 
 # Marketplace v2: fetch/verify registry-sourced modules + record the
 # manifest of every baked-in marketplace module. `source: "vendored"`
@@ -144,6 +156,25 @@ COPY changelog.d ./changelog.d
 # scripts/fast-build.mjs. (Runs from /app so it discovers modules/* + api.)
 RUN node scripts/fast-build.mjs
 
+# ─── prod-deps ───────────────────────────────────────────────────────
+# The runtime's node_modules: the PRODUCTION dependencies of the projects the api
+# ships (the api, the four packages it loads, every module) and nothing else.
+# The builder's node_modules is the whole workspace, dev tools and the web app's
+# libraries included (568 MB, 608 MB as a layer; lucide-react, react-dom, @zxing,
+# the TypeScript compiler); shipping it made the api image 1.18 GB (#4944).
+# `pnpm install --filter` does not narrow a frozen hoisted install (it installs
+# every importer the lockfile lists), so the lockfile and the workspace list are
+# reduced to the shipped projects first (scripts/prod-lockfile.mjs). Browser-only
+# libraries a module's UI bundles (three, occt-import-js) are devDependencies of
+# that module, which is what keeps them out here; lint:runtime-deps-are-declared
+# holds both halves. Source maps and type declarations are build-time files.
+FROM builder AS prod-deps
+RUN rm -rf node_modules \
+ && node scripts/prod-lockfile.mjs --from scripts/ci/api-image-projects.json
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile --prod
+RUN find node_modules \( -name '*.map' -o -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' \) -type f -delete
+
 # ─── runtime ─────────────────────────────────────────────────────────
 FROM node:22-alpine AS runtime
 # Build provenance — the operator console's Health section shows which commit
@@ -171,12 +202,13 @@ RUN apk add --no-cache fontconfig ttf-dejavu && fc-cache -f
 # probes for it once and goes straight to the model without it.
 RUN apk add --no-cache tesseract-ocr tesseract-ocr-data-eng
 
-# Bring over what we need at runtime: built artifacts + the root node_modules.
+# Bring over what we need at runtime: built artifacts + the root node_modules
+# (the production-only install from the prod-deps stage above).
 # pnpm (nodeLinker: hoisted) hoists EXTERNAL deps here — but NOT the workspace
 # packages (@cobblr/*), which it links per-consumer, not at the root. Those are
 # re-symlinked further down (search "@cobblr") from the /app/modules + /app/packages
 # dirs we also copy; without that the api can't resolve its own workspace imports.
-COPY --from=builder /app/node_modules ./node_modules
+COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=builder /app/api/dist ./api/dist
 COPY --from=builder /app/api/migrations ./api/migrations
 COPY --from=builder /app/api/package.json ./api/
@@ -196,6 +228,7 @@ COPY --from=builder /app/installed-modules.manifest.json ./installed-modules.man
 # the live changesets + the frozen history.
 COPY --from=builder /app/CHANGELOG.md ./CHANGELOG.md
 COPY --from=builder /app/changelog.d ./changelog.d
+COPY docs/third-party ./third-party
 # Flagship bundle manifests — read at runtime by the capture-first quickstart
 # (api/src/lib/flagship-bundles.ts) so onboarding works offline + for every
 # self-hoster, independent of the private GitHub registry. Lands at /app/bundles

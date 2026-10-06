@@ -77,3 +77,30 @@ export function appsMatching(q: string, apps: readonly AppEntry[], limit = 6): A
   const lead = (a: AppEntry) => (a.label.toLowerCase().startsWith(words[0]!) ? 0 : 1);
   return hits.sort((a, b) => lead(a) - lead(b) || a.label.localeCompare(b.label)).slice(0, limit);
 }
+
+export const MODULE_ROUTE_OWNERS: ReadonlyArray<{ route: string; module: string }> = [
+  { route: "/station/floor", module: "digifab" },
+  { route: "/station/printer", module: "digifab" },
+  { route: "/station/machine", module: "digifab" },
+];
+
+/** Module ownership also covers pages outside a module's usual address. */
+export function moduleForRoute(pathname: string, modules: readonly { name: string; nav?: { route?: string } | null }[]): string | null {
+  const roots = [
+    ...MODULE_ROUTE_OWNERS,
+    ...modules.flatMap(m => [
+      { route: `/${m.name}`, module: m.name },
+      ...(m.nav?.route ? [{ route: m.nav.route, module: m.name }] : []),
+    ]),
+  ];
+  let owner: string | null = null;
+  let length = 0;
+  for (const entry of roots) {
+    const root = entry.route.replace(/\/\*$/, "").replace(/\/$/, "");
+    if (root.length > length && (pathname === root || pathname.startsWith(`${root}/`))) {
+      owner = entry.module;
+      length = root.length;
+    }
+  }
+  return owner;
+}

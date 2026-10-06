@@ -1,6 +1,3 @@
-import { registerAssemblyFinish } from "./assembly-finish.js";
-import { pasteRouter, registerPasteActions } from "./paste.js";
-import { registerKitActions } from "./kits.js";
 // Default-exported Router. The platform mounts this at
 // /api/v1/orgs/:slug/modules/inventory/ with requireAuth +
 // withTenant pre-applied, so handlers can rely on req.session +
@@ -24,6 +21,7 @@ import { allocationsRouter } from "./allocations.js";
 import { importRouter } from "./import.js";
 import { filamentCatalogRouter } from "./filament-catalog.js";
 import { nativeSpoolRouter } from "./spool-native.js";
+import { shapedStockRouter, registerShapedStockActions } from "./stock-shapes.js";
 import { storageRouter, registerStorageActions } from "./storage.js";
 import { packageReceivingRouter, registerPackageReceiving } from "./package-receiving.js";
 import { registerPlacementConsumption } from "./placement-consumption.js";
@@ -42,10 +40,8 @@ registerInventoryResolvers();
 registerInventoryActionHandlers();
 registerMaterialActions();
 registerSheetActions();
+registerShapedStockActions();
 registerStorageActions();
-registerPasteActions();
-registerKitActions();
-registerAssemblyFinish();
 registerPackageReceiving();
 registerPlacementConsumption();
 registerSpoolmanWriteBack();
@@ -148,13 +144,13 @@ partsRouter.use(holdingsRouter);
 partsRouter.use(materialRouter);
 partsRouter.use(sheetRouter);
 partsRouter.use(storageRouter);
-partsRouter.use(pasteRouter);
 partsRouter.use(packageReceivingRouter);
 // A type collection read with its things under each type (Filament).
 partsRouter.use(familiesRouter);
 router.use("/parts", partsRouter);
 router.use("/allocations", allocationsRouter);
 // What one place carries, and what is going off soon, across every collection.
+router.use("/stock/shapes", shapedStockRouter);
 router.use("/stock", stockRouter);
 router.use("/sheets", sheetSearchRouter);
 router.use("/material-cost", materialCostRouter);

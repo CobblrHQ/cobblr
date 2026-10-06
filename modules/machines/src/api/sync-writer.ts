@@ -7,7 +7,7 @@
 // side stays pure declarative data. Fires the module's own events so views,
 // wires, and the instance counters stay consistent with the HTTP path.
 
-import { adoptAxisValuesIntoField, findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow, snapshotRowTree, restoreRowTree } from "@cobblr/platform-contract";
+import { adoptAxisValuesIntoField, findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow, snapshotRowTree, restoreRowTree, rowVersionOf, updateRowAt } from "@cobblr/platform-contract";
 import { DISPOSITION_LABELS } from "@cobblr/platform-contract/disposition";
 import { sql, type Kysely } from "kysely";
 import type { MachinesDB } from "../db.js";
@@ -17,6 +17,30 @@ const gone = (state: string | null | undefined) => GONE_STATES.has(String(state 
 const PRIOR_STATE = "state_before_it_left";
 
 let registered = false;
+
+/** What `update` and `updateIf` write for these fields. */
+function patchOf(fields: Record<string, unknown>): Record<string, unknown> {
+  const patch: Record<string, unknown> = { updated_at: new Date() };
+  if (fields.name !== undefined) patch.name = String(fields.name);
+  if (fields.short_name !== undefined) patch.short_name = asStr(fields.short_name);
+  if (fields.family !== undefined) patch.family = asStr(fields.family);
+  if (fields.type !== undefined) patch.type = asStr(fields.type);
+  if (fields.manufacturer !== undefined) patch.manufacturer = asStr(fields.manufacturer);
+  if (fields.serial_number !== undefined) patch.serial_number = asStr(fields.serial_number);
+  if (fields.state !== undefined) patch.state = asStr(fields.state) ?? "functional";
+  if (fields.image_path !== undefined) patch.image_path = asStr(fields.image_path);
+  if (fields.notes !== undefined) patch.notes = asStr(fields.notes);
+  if (fields.location_id !== undefined) patch.location_id = asStr(fields.location_id);
+  if (fields.excitement !== undefined && asInt(fields.excitement) !== null) patch.excitement = asInt(fields.excitement);
+  if (fields.quantity !== undefined && asInt(fields.quantity) !== null) patch.quantity = asInt(fields.quantity);
+  if (fields.metadata !== undefined) {
+    patch.metadata = sql`${JSON.stringify(fields.metadata ?? {})}::jsonb`;
+  }
+  // Re-target the instance on update too, so a section that gains a
+  // targetInstance MOVES already-imported machines into it on the next sync.
+  if (asStr(fields.instance)) patch.instance = asStr(fields.instance);
+  return patch;
+}
 
 export function registerMachinesWriter(): void {
   if (registered) return;
@@ -68,27 +92,17 @@ export function registerMachinesWriter(): void {
 
     async update(orgId, id, fields) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<MachinesDB>;
-      const patch: Record<string, unknown> = { updated_at: new Date() };
-      if (fields.name !== undefined) patch.name = String(fields.name);
-      if (fields.short_name !== undefined) patch.short_name = asStr(fields.short_name);
-      if (fields.family !== undefined) patch.family = asStr(fields.family);
-      if (fields.type !== undefined) patch.type = asStr(fields.type);
-      if (fields.manufacturer !== undefined) patch.manufacturer = asStr(fields.manufacturer);
-      if (fields.serial_number !== undefined) patch.serial_number = asStr(fields.serial_number);
-      if (fields.state !== undefined) patch.state = asStr(fields.state) ?? "functional";
-      if (fields.image_path !== undefined) patch.image_path = asStr(fields.image_path);
-      if (fields.notes !== undefined) patch.notes = asStr(fields.notes);
-      if (fields.location_id !== undefined) patch.location_id = asStr(fields.location_id);
-      if (fields.excitement !== undefined && asInt(fields.excitement) !== null) patch.excitement = asInt(fields.excitement);
-      if (fields.quantity !== undefined && asInt(fields.quantity) !== null) patch.quantity = asInt(fields.quantity);
-      if (fields.metadata !== undefined) {
-        patch.metadata = sql`${JSON.stringify(fields.metadata ?? {})}::jsonb`;
-      }
-      // Re-target the instance on update too, so a section that gains a
-      // targetInstance MOVES already-imported machines into it on the next sync.
-      if (asStr(fields.instance)) patch.instance = asStr(fields.instance);
-      await db.updateTable("machines_machines").set(patch as never).where("id", "=", id).execute();
+      await db.updateTable("machines_machines").set(patchOf(fields) as never).where("id", "=", id).execute();
       void platform().events.emit("machines.machine.updated", { orgId, machineId: id });
+    },
+
+    version: async (orgId, id) => rowVersionOf(await platform().tenants.getDb(orgId), "machines_machines", id),
+
+    async updateIf(orgId, id, fields, version) {
+      const db = (await platform().tenants.getDb(orgId)) as Kysely<MachinesDB>;
+      const v = await updateRowAt(db, "machines_machines", id, patchOf(fields), version);
+      if (v) void platform().events.emit("machines.machine.updated", { orgId, machineId: id });
+      return v;
     },
 
     async delete(orgId, id) {

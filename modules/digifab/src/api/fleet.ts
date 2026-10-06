@@ -1,3 +1,4 @@
+import { settleResinPrint } from "../resin-prints.js";
 // /api/v1/orgs/:slug/modules/digifab/fleet — the live floor view.
 //
 // Coordinate-not-control at FLEET scale: for every enabled connection we ask
@@ -22,6 +23,7 @@ import { asyncHandler, requireRole } from "./util.js";
 import { putSnapshot, getSnapshot, freshSnapshotKeys } from "../snapshot-store.js";
 import { getBambuStatusMap } from "../bambu-status-store.js";
 import { buildDriverById, bambuLanDriverFor, runControlWithCloudFallback, parseBambuLan, bambuLanMode, recordJobOutcome, type BambuLan } from "../jobs-core.js";
+import { controlResinPrinter } from "../resin-controls.js";
 import { controlDirectLaser } from "../laser-controls.js";
 import { LaserPlanRefusal, recordFinishedLayout } from "../laser-plans.js";
 import { recordRunVerdict } from "../runs-core.js";
@@ -335,6 +337,7 @@ fleetRouter.get(
               enabled: d.enabled,
               lightburn_readiness: readLightBurnReadiness(d.raw?.lightburnReadiness),
               laser_backend: d.raw?.laserBackend ?? null,
+              laser_setup: d.raw?.laserSetup === true,
               tags: d.tags ?? [],
               linked_machine_id: link?.machine_id ?? null,
               // The linked machine's own identity — lets the tile BE the
@@ -349,6 +352,9 @@ fleetRouter.get(
               // Cockpit: live temps — the Bambu cloud-MQTT pump's reading wins
               // over the slower driver-reported one when fresh. Embed-only.
               temps: live?.temps ?? d.temps ?? null,
+              station_kind: d.station_kind,
+              monitor_only: d.raw?.monitorOnly === true,
+              print_process: d.raw?.resin === true ? "resin" : null,
               // Current job sub-stage (preheating/leveling/…) when reported —
               // answers "why isn't it printing yet". Display-only.
               stage: live?.stage ?? d.stage ?? null,
@@ -356,7 +362,7 @@ fleetRouter.get(
               // MQTT), for a print Cobblr didn't start so there's no active_job.
               live: live
                 ? { progress: live.progress, remaining_min: live.remaining_min, layer_num: live.layer_num, total_layers: live.total_layers }
-                : null,
+                : d.raw?.resin === true && d.job ? { progress: d.job.fractionPrinted != null ? d.job.fractionPrinted * 100 : null, remaining_min: d.job.timeLeftSec != null ? Math.ceil(d.job.timeLeftSec / 60) : null, layer_num: d.job.currentLayer ?? null, total_layers: null } : null,
               // An external detector owns this printer's detection + camera.
               managed_by_detector: managedByDetector,
               // Camera fields are suppressed for a detector-owned printer so
@@ -366,7 +372,7 @@ fleetRouter.get(
               // The bridge can grab frames from this printer's own camera (the
               // cockpit /camera route) — lets the camera wall show it without a
               // manual URL or the snapshot relay.
-              lan_camera: !managedByDetector && !!bambuLan[d.id]?.host && !!bambuLan[d.id]?.access_code && bambuLanMode(bambuLan[d.id]) !== "cloud",
+              lan_camera: !managedByDetector && (d.camera_available === true || !!bambuLan[d.id]?.host && !!bambuLan[d.id]?.access_code && bambuLanMode(bambuLan[d.id]) !== "cloud"),
               // Snapshot relay (opt-in, off by default). When on AND a fresh
               // agent-pushed frame exists, the web auth-fetches it from the
               // /snapshot route (remote-viewable) instead of the LAN camera_url.
@@ -463,9 +469,26 @@ fleetRouter.post(
       .where("remote_device_id", "=", deviceId)
       .executeTakeFirst();
 
+    if (att?.job_id && await db.selectFrom("digifab_cutter_plans").select("id").where("job_id", "=", att.job_id).executeTakeFirst()) return void res.status(409).json({ error: { code: "cutter_outcome_required", message: "Record the measured roll use and cutter outcome at its station." } });
+
     if (att?.job_id) {
       try { await recordFinishedLayout(db, orgId, att.job_id, sessionUser(req)?.id ?? null); }
       catch (e) { if (!(e instanceof LaserPlanRefusal)) throw e; return void res.status(409).json({ error: { code: "sheet_area_not_recorded", message: e.message } }); }
+    }
+
+    if (att?.job_id) {
+      const resin = await db.selectFrom("digifab_jobs").select("resin_print").where("id", "=", att.job_id).executeTakeFirst();
+      if (resin?.resin_print) {
+        let lcdSeconds: number | undefined;
+        try {
+          const driver = await buildDriverById(db, orgId, connectionId);
+          const device = (await driver?.listDevices())?.find(item => item.id === deviceId);
+          if (typeof device?.raw?.PrintScreen === "number") lcdSeconds = device.raw.PrintScreen;
+        } catch { /* The sliced estimate remains available when counters cannot be read. */ }
+        try { await settleResinPrint(db, orgId, att.job_id, outcome === "good" ? "good" : "scrap", sessionUser(req)?.id ?? null, lcdSeconds); }
+        catch (e) { return void res.status(409).json({ error: { code: "resin_use_not_recorded", message: e instanceof Error ? e.message : "Check this print's stock use." } }); }
+        if (att.reason !== "print-completed") await recordJobOutcome(db, orgId, att.job_id, outcome === "good" ? "good" : "scrap", "bed-clear", counts);
+      }
     }
 
     // Resolve the print's downstream context from its job, for the wires.
@@ -480,7 +503,7 @@ fleetRouter.post(
       await recordJobOutcome(db, orgId, att.job_id, outcome === "good" ? "good" : "scrap", "bed-clear", counts);
       const job = await db
         .selectFrom("digifab_jobs")
-        .select(["id", "linked_task_id", "linked_machine_id", "material_part_id", "material_grams", "material_drawn"])
+        .select(["id", "linked_task_id", "linked_machine_id", "material_part_id", "material_grams", "material_drawn", "resin_print"])
         .where("id", "=", att.job_id)
         .executeTakeFirst();
       if (job) {
@@ -505,14 +528,14 @@ fleetRouter.post(
           await platform().events.emit("digifab.print.reversed", {
             orgId,
             jobId: job.id,
-            ...(job.material_part_id && grams && grams > 0
+            ...(!job.resin_print && job.material_part_id && grams && grams > 0
               ? { partId: job.material_part_id, delta: grams, unit: "g", once: true, reason: "Scrapped print", sourceKind: "digifab:job", sourceId: job.id }
               : {}),
             linkedMachineId: job.linked_machine_id,
             prints: -1,
           });
           // And the grams it drew from the spools loaded on the printer.
-          await putBackDrawn(orgId, job);
+          if (!job.resin_print) await putBackDrawn(orgId, job);
         }
       }
     }
@@ -544,6 +567,7 @@ fleetRouter.post(
         /* left queued — visible in the queue with its retry note */
       }
     }
+    // DETACHED: a nudge to the assign worker; its own sweep assigns the same work
     void import("../assign-worker.js").then((m) => m.kickAssign(orgId)).catch(() => {});
     res.json({ ok: true, outcome, resumed: held.length });
   }),
@@ -806,6 +830,11 @@ fleetRouter.post(
       if (!result.ok) return void res.status(502).json({ error: { code: "control_failed", message: result.detail } });
       return void res.json(result);
     }
+    if (driver?.printProcess === "resin") {
+      const result = await controlResinPrinter(tenantDb(req), orgId, driver, req.params.deviceId!, parsed.data.id, req.params.connectionId!);
+      if (!result.ok) return void res.status(502).json({ error: { code: "control_failed", message: result.detail } });
+      return void res.json(result);
+    }
     if (!requireRole(req, res, "owner", "admin")) return;
     if (!driver?.runControl) return void res.status(501).json({ error: { code: "unsupported", message: "this printer can't be controlled here" } });
     const r = await runControlWithCloudFallback({
@@ -896,12 +925,13 @@ fleetRouter.get(
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const orgId = tenantContext(req).org.id;
-    const driver = await bambuLanDriverFor(orgId, req.params.connectionId!, req.params.deviceId!);
+    const driver = await bambuLanDriverFor(orgId, req.params.connectionId!, req.params.deviceId!) ?? await buildDriverById(tenantDb(req), orgId, req.params.connectionId!);
     if (!driver?.getCameraFrame) return void res.status(501).json({ error: { code: "no_camera", message: "no LAN camera for this printer" } });
     const jpeg = await driver.getCameraFrame();
     if (!jpeg || jpeg.length === 0) return void res.status(502).json({ error: { code: "camera_failed", message: "couldn't grab a camera frame" } });
     // Cache the frame so the next modal-open can show it INSTANTLY (via /snapshot)
     // instead of 3s of "connecting" while the live grab runs. Best-effort.
+    // DETACHED: caching the frame for the next open; the frame is served without it
     void putSnapshot(tenantDb(req), req.params.connectionId!, req.params.deviceId!, jpeg).catch(() => {});
     res.set("Content-Type", "image/jpeg").set("Cache-Control", "no-store").send(jpeg);
   }),

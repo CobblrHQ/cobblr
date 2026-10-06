@@ -201,6 +201,7 @@ peopleRouter.post("/:id/invite", requireAuth, withTenant, async (req, res, next)
       diff: { role: "member", email, person: person.id },
     });
     if (email) {
+      // DETACHED: the invite email; the invite exists and its link is shown to whoever made it
       void deliverInvite({
         req,
         email,

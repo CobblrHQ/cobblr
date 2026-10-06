@@ -120,10 +120,6 @@
     "why": "The roles editor lists each permission with its label in words on the first line and the action id small underneath, because two actions can share a label and the id is what the role is checked against."
   },
   {
-    "key": "web/src/pages/ScanInboxCard.tsx::No AI to read this {idNoun} yet (<Link to={`/w/${activeSlug}/ai`} className=\"underline hover:text-content\" onClick={(e) => e.stopPropagation()}>set it up</Link>) - or name it:",
-    "why": "The one place this sentence may appear, guarded by identify_available so it reads only for a person with no way to identify a photo (#2845); the lint exists to stop a second copy that reads the deployment switch instead."
-  },
-  {
     "key": "web/src/pages/ScanRulesPage.tsx::<code className=\"text-faint\">{result.entity_kind}</code>",
     "why": "The scan rules tester shows what a trial scan matched: the entity's label in words as the link, then the rule's name, then the kind in <code> because a person writing rules routes by kind and needs to see which one the rule chose."
   },

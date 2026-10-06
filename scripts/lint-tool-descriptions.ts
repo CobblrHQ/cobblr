@@ -29,14 +29,26 @@ const MAX_TOTAL_SCHEMA_CHARS = 17_300;
 // Station review adds 938 characters only for a person with a station. Its
 // three reads cover setup, paged history and a whole session for Cobb and MCP.
 const MAX_CONDITIONAL_SCHEMA_CHARS = 2_350;
+// A module's own tools (`module`) go out only where that module is on, so they
+// are not the kernel's every-turn cost and do not crowd it: each module's set
+// has a cap of its own instead. Before this, the every-turn set held the laser
+// floor's reads for a workspace with no laser, and sat 51 chars under its
+// budget, so the next module tool anywhere turned an unrelated PR red.
+const MAX_MODULE_SCHEMA_CHARS = 4_000;
 
 let bad = 0;
 let total = 0;
 let conditional = 0;
+const perModule = new Map<string, number>();
+const everyTurn: Array<{ name: string; chars: number }> = [];
 for (const t of WORKSPACE_TOOLS) {
   const schema = JSON.stringify({ name: t.name, description: t.description, parameters: jsonSchemaOf(t.params) });
-  if (t.sentWhen) conditional += schema.length;
-  else total += schema.length;
+  if (t.module) perModule.set(t.module, (perModule.get(t.module) ?? 0) + schema.length);
+  else if (t.sentWhen) conditional += schema.length;
+  else {
+    total += schema.length;
+    everyTurn.push({ name: t.name, chars: schema.length });
+  }
   if (t.description.length > MAX_DESCRIPTION_CHARS) {
     bad += 1;
     console.error(
@@ -47,6 +59,14 @@ for (const t of WORKSPACE_TOOLS) {
 if (total > MAX_TOTAL_SCHEMA_CHARS) {
   bad += 1;
   console.error(`  ✗ the tool schemas sent on every turn total ${total} chars (budget ${MAX_TOTAL_SCHEMA_CHARS}).`);
+  console.error(`    The biggest, where room is to be found (or give a module's tool its module: so it is sent only where the module is on):`);
+  for (const t of [...everyTurn].sort((a, b) => b.chars - a.chars).slice(0, 5)) console.error(`      ${String(t.chars).padStart(6)}  ${t.name}`);
+}
+for (const [mod, chars] of perModule) {
+  if (chars > MAX_MODULE_SCHEMA_CHARS) {
+    bad += 1;
+    console.error(`  ✗ ${mod}'s own tools total ${chars} chars (budget ${MAX_MODULE_SCHEMA_CHARS} per module).`);
+  }
 }
 if (conditional > MAX_CONDITIONAL_SCHEMA_CHARS) {
   bad += 1;
@@ -56,4 +76,4 @@ if (bad) {
   console.error(`lint:tool-descriptions FAILED (${bad})`);
   process.exit(1);
 }
-console.log(`✓ tool-descriptions: ${WORKSPACE_TOOLS.length} tools, ${total} schema chars every turn + ${conditional} when they apply, longest description ${Math.max(...WORKSPACE_TOOLS.map((t) => t.description.length))}`);
+console.log(`✓ tool-descriptions: ${WORKSPACE_TOOLS.length} tools, ${total} schema chars every turn + ${conditional} when they apply + ${[...perModule].map(([m, c]) => `${c} for ${m}`).join(", ")} where on, longest description ${Math.max(...WORKSPACE_TOOLS.map((t) => t.description.length))}`);

@@ -53,3 +53,24 @@ export function materialShortages(jobs: { id: string; file_ref: string; status: 
  const missing = jobs.filter(j => j.status === "queued" && (j.material_type || j.material_part_id || Number(j.material_grams) > 0) && !stock.spools.some(s => (!j.material_type || s.material.toLowerCase() === j.material_type.toLowerCase()) && (!j.material_part_id || s.id === j.material_part_id) && s.grams >= (Number(j.material_grams) || 1)));
  return [...missing.map(j => ({ key: j.id, text: `${j.file_ref}: Restock ${j.material_type || "the chosen spool"}${Number(j.material_grams) > 0 ? `, at least ${j.material_grams} g` : ""}.`, link: "/digifab/manager" })), ...batches.filter(b => b.shortage && b.error).map(b => ({ key: b.id, text: b.error!, link: "/digifab/manager" }))];
 }
+
+export async function allocateOutlineLaserBatch(design: Design, ask: BatchAsk, candidates: LaserCandidate[], stock: FloorSheet[]): Promise<LaserAllocation[]> {
+ const { nestOutlines } = await import("./outline-nesting.js");
+ const machines=candidates.filter(c=>Object.values(c.profiles).length&&Object.values(c.profiles).every(p=>norm(p.profile.material)===norm(ask.material)&&Math.abs(p.profile.thickness_mm-ask.thickness_mm)<0.01));
+ if(!machines.length)throw new Error("No available laser has all the required material profiles.");
+ const available=stock.filter(s=>norm(s.material)===norm(ask.material)&&Math.abs(s.thickness_mm-ask.thickness_mm)<0.01);
+ const used=new Set<string>(), groups:LaserAllocation[]=[];
+ let left=ask.quantity;
+ const started=performance.now();
+ for(const machine of machines) {
+  const sheets=available.filter(s=>!used.has(s.id)&&s.width<=machine.bed.width&&s.height<=machine.bed.height);
+  if(!sheets.length)continue;
+  const budget=Math.max(100,3000-Math.ceil(performance.now()-started));
+  const plan=await nestOutlines(design,left,sheets,ask.spacing_mm,ask.kerf_mm,ask.rotate,{partial:true,budget_ms:budget});
+  const quantity=plan.reduce((n,s)=>n+s.parts.length,0);
+  if(quantity) {groups.push({machine,quantity,sheet_ids:plan.map(s=>s.id)});for(const s of plan)used.add(s.id);left-=quantity;}
+  if(!left)return groups;
+  if(performance.now()-started>=3000)break;
+ }
+ throw new Error(`Restock ${ask.thickness_mm} mm ${ask.material}: room for ${ask.quantity-left} of ${ask.quantity} parts on the available sheets.`);
+}

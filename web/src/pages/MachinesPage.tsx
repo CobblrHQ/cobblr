@@ -33,7 +33,7 @@ import { EdgeBridgeSetup } from "../features/digifab/fleet";
 import { BambuConnectWizard } from "../components/BambuConnectWizard";
 import { BambuPrinterPicker } from "../components/BambuPrinterPicker";
 import { resolvePrinterKind, hiddenPrinterFields } from "../lib/printerKind";
-import { capitalise, machineKindOf, machineKindForRecord, machineWordsFor, type MachineWords } from "../lib/machine-words";
+import { capitalise, machineKindOf, machineWordsFor, type MachineWords } from "../lib/machine-words";
 
 // Printer "kind" options for the detail-modal selector (same ids as the
 // New-3D-printer picker). The kind drives which spec fields are relevant.
@@ -1387,7 +1387,7 @@ export function MachineDetailModal({
               hints: {
                 printer_kind: typeof m.metadata?.printer_kind === "string" ? (m.metadata.printer_kind as string) : undefined,
                 collection: instance ? `${instance}:item` : undefined,
-                machine_kind: machineKindForRecord(instance, m),
+                machine_kind: machineKindOf(instance),
               },
             }}
           />

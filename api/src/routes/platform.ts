@@ -1,3 +1,4 @@
+import { markRequestReadOnly } from "../lib/request-context.js";
 import { readGroupKeys } from "@cobblr/platform-contract/grouped-list";
 import { readRecordActionLayout, setRecordActionPin } from "../platform/record-action-layout.js";
 import { commonBulkFields } from "../platform/bulk-set-field.js";
@@ -306,6 +307,7 @@ platformOrgRouter.get(
   requireAuth,
   withTenant,
   async (req, res, next) => {
+    markRequestReadOnly();
     try {
       const { kind } = req.params;
       if (!kind) {

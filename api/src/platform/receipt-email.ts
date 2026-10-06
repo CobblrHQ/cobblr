@@ -19,6 +19,7 @@
 //   COBBLR_INBOUND_EMAIL_SECRET   HMAC key; SAME value set on the Email Worker.
 
 import crypto from "node:crypto";
+import { decodeBase64urlExact } from "@cobblr/platform-contract/base64url-exact";
 
 const SECRET = process.env.COBBLR_INBOUND_EMAIL_SECRET || "";
 function domain(): string {
@@ -55,13 +56,10 @@ export function verifyReceiptToken(token: string): { userId: string; orgId: stri
   if (!SECRET) return null;
   const dot = token.lastIndexOf(".");
   if (dot < 0) return null;
-  let payload: Buffer;
-  try {
-    payload = Buffer.from(token.slice(0, dot), "base64url");
-  } catch {
-    return null;
-  }
-  if (payload.length !== 32) return null;
+  // Its one spelling only: the decoder ignores the last character's unused
+  // bits, so a byte-level read would open four strings for one address.
+  const payload = decodeBase64urlExact(token.slice(0, dot));
+  if (!payload || payload.length !== 32) return null;
   const got = token.slice(dot + 1);
   const want = mac(payload);
   if (got.length !== want.length || !crypto.timingSafeEqual(Buffer.from(got), Buffer.from(want))) return null;

@@ -102,6 +102,7 @@ export function ScanLivePage() {
           });
         }
       } catch (e) {
+        // failure-copy: the feed request just threw; its own message wins when it has one.
         if (live) setError(e instanceof Error ? e.message : "could not reach the workspace");
       }
     };

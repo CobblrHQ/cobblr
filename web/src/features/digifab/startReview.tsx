@@ -31,6 +31,13 @@ export function LightBurnReview({ review, library, starting, onStart, onClose, o
     <div className="space-y-4 min-w-0">
       {error && <p role="alert" className="rounded border border-red-500 p-3 break-words">{error}</p>}
       <p className="text-sm break-words">{source?.name || text(review.sourceFile.filename)}</p>
+      {review.project.backend === "ruida" && <p className="text-sm">Ruida uses tube 1. Set focus at the machine.</p>}
+      {review.project.backend === "galvo" && <section className="rounded border border-line p-3 space-y-2 text-sm">
+        <p>Galvo source: {text(review.project.source)}. Field: {text(paramsOf(review.project.field).width)} × {text(paramsOf(review.project.field).height)} mm. Set focus at the machine and check placement with the red guide.</p>
+        <p>{text(review.project.frequencyKhz)} kHz{review.project.pulseWidthNs!=null?`, ${text(review.project.pulseWidthNs)} ns pulse`:", fixed pulse width"}. {review.project.airAssist==="manual"?"Air assist is manual. Set it at the machine.":"Air assist uses the confirmed output."}</p>
+        <p>Lens correction: <span className="break-all">{text(review.project.lensHash)}</span></p>
+        {Array.isArray(review.project.effectiveLayers)&&review.project.effectiveLayers.map((raw,index)=>{const layer=paramsOf(raw);return <p key={index}>Compiled layer {text(layer.index)}: {Number(layer.speedMin).toFixed(3)} mm/s to {Number(layer.speedMax).toFixed(3)} mm/s, {Number(layer.powerPercent).toFixed(3)}% power, {Number(layer.frequencyKhz).toFixed(3)} kHz. Native command rounding is included.</p>;})}
+      </section>}
       <div className="rounded border border-line bg-surface overflow-hidden" aria-label="Uploaded design preview">{layout && material ? <LaserDrawing design={layout.design} parts={layout.parts} width={material.width_mm} height={material.height_mm} /> : review.thumbnailFileId ? thumbnail ? <EntityPhoto src={thumbnail} alt="Design to cut" fit="contain" aspect="16/9" /> : <p className="p-4 text-sm">Loading design thumbnail…</p> : <FilePreview src={api.fileRawUrl(slug, review.sourceFile.id, "original")} filename={text(review.sourceFile.filename)} className="h-44" />}</div>
       {review.transport === "udp" ? <p className="text-sm text-amber-700 dark:text-amber-300">This version has no REST project details. Check the layers, speed, power and passes in LightBurn before approving Start.</p> : <>
         <div className="space-y-3">
@@ -45,6 +52,7 @@ export function LightBurnReview({ review, library, starting, onStart, onClose, o
                 <dt>Speed</dt><dd>{text(params.speed)} {text(units.speed)}</dd>
                 <dt>Power</dt><dd>{power}</dd>
                 <dt>Passes</dt><dd>{text(params.num_passes)}</dd>
+                {review.transport === "compiled" && <><dt>Air assist</dt><dd>{params.air_assist === true ? "On" : params.air_assist === false ? "Off" : "Not reported"}</dd><dt>Focus offset</dt><dd>{text(params.z_offset)} {text(units.distance)}</dd></>}
               </dl>
               {Array.isArray(cut.sub_layers) && cut.sub_layers.length > 0 && <div className="text-sm space-y-1">{cut.sub_layers.map((sub, index) => {
                 const settings = paramsOf(sub);

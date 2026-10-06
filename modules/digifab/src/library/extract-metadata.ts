@@ -14,6 +14,11 @@
 import { readZipEntry } from "./extract-thumbnail.js";
 
 export interface PlateMetadata {
+  /** Resin volume in ml, converted from the sliced file's cubic millimetres. */
+  resin_ml?: number;
+  layers?: number;
+  /** Estimated LCD exposure, separate from lift and wait time. */
+  exposure_sec?: number;
   /** Estimated print seconds (slicer's "normal mode" estimate). */
   estimated_sec?: number;
   /** Filament/material type token: PLA, PETG, ABS, … */
@@ -153,6 +158,7 @@ function from3mf(bytes: Buffer): PlateMetadata {
 /** Extract everything we can. Comment headers win over filename tokens. */
 export function extractPlateMetadata(filename: string, bytes: Buffer): PlateMetadata {
   const fromName = fromFilename(filename);
+  if (/\.goo$/i.test(filename)) return { ...fromName, ...fromGoo(bytes) };
   // .3mf is a zip (Bambu/Orca stash a slice_info.config); .bgcode is binary with
   // no readable comments — fall back to the filename convention for it.
   if (/\.3mf$/i.test(filename)) {
@@ -164,4 +170,29 @@ export function extractPlateMetadata(filename: string, bytes: Buffer): PlateMeta
   const tail = bytes.byteLength > SCAN_BYTES ? bytes.subarray(bytes.byteLength - SCAN_BYTES).toString("latin1") : "";
   const fromHeader = fromComments(head + "\n" + tail);
   return { ...fromName, ...fromHeader, ...(fromName.parts_per_plate ? { parts_per_plate: fromName.parts_per_plate } : {}) };
+}
+
+/** Vendor GOO V1.2 header. Offsets follow the field widths in the published
+ * specification: https://github.com/elegooofficial/GOO. No layer image decoding. */
+function fromGoo(bytes: Buffer): PlateMetadata {
+  if (bytes.length < 195477 || !bytes.subarray(4, 12).equals(Buffer.from([7, 0, 0, 0, 0x44, 0x4c, 0x50, 0]))) return {};
+  const layers = bytes.readUInt32BE(195310);
+  const bottom = bytes.readUInt32BE(195373);
+  const seconds = bytes.readUInt32BE(195446);
+  const volume = bytes.readFloatBE(195450);
+  const normalExposure = bytes.readFloatBE(195336);
+  const bottomExposure = bytes.readFloatBE(195369);
+  const thickness = bytes.readFloatBE(195332);
+  const exposure = Math.min(bottom, layers) * bottomExposure + Math.max(0, layers - bottom) * normalExposure;
+  const profile = bytes.subarray(156, 188).toString("utf8").replace(/\0.*$/s, "").trim();
+  const software = bytes.subarray(12, 44).toString("utf8").replace(/\0.*$/s, "").trim();
+  return {
+    ...(layers > 0 && layers <= 1000000 ? { layers } : {}),
+    ...(seconds > 0 ? { estimated_sec: seconds } : {}),
+    ...(Number.isFinite(volume) && volume > 0 ? { resin_ml: Math.round(volume * 1000000) / 1000000000 } : {}),
+    ...(bytes[195445] === 0 && bytes.readUInt16BE(195475) === 0 && Number.isFinite(exposure) && exposure > 0 && normalExposure >= 0 && bottomExposure >= 0 ? { exposure_sec: exposure } : {}),
+    ...(Number.isFinite(thickness) && thickness > 0 ? { layer_height_mm: thickness } : {}),
+    ...(profile ? { material: profile } : {}),
+    ...(software ? { slicer: software } : {}),
+  };
 }

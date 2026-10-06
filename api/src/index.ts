@@ -37,7 +37,7 @@ import { testDoorsEnabled } from "./platform/test-doors.js";
 import { setPlatform, canContain, canBeContained, likeEscape, platform as platformSeams, EntityKindIdRegex, isInstallHolder } from "@cobblr/platform-contract";
 import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { describeBlock, describeCapabilityBlock } from "./platform/approvals.js";
-import { mergeJsonb } from "./platform/jsonb-merge.js";
+import { atVersion, mergeJsonb, rowVersion } from "./platform/jsonb-merge.js";
 import { deleteFieldDef, effectiveFieldDefsForKind } from "./platform/field-defs.js";
 import { choiceLearns } from "@cobblr/platform-contract/field-choices";
 import { pairingResultMetadata } from "@cobblr/platform-contract/pairing-presentation";
@@ -433,7 +433,7 @@ async function boot() {
       register: registerResolvable,
       resolve: resolveValue,
     },
-    db: { meta, mergeJsonb },
+    db: { meta, mergeJsonb, rowVersion, atVersion },
     entities: {
       registerResolver: entities.registerResolver,
       registerWriter: entities.registerEntityWriter,
@@ -555,11 +555,6 @@ async function boot() {
       applicable: live.applicable,
     },
     devices: {
-      registerMachineRecords: devices.registerMachineRecords,
-      machineRecords: devices.machineRecords,
-      machineRecord: devices.machineRecord,
-      registerStationVerifier: devices.registerStationVerifier,
-      authorizeAtStation: devices.authorizeAtStation,
       registerDriverProvider: devices.registerDriverProvider,
       getDriver: devices.getDriver,
       registerConnectionStore: devices.registerConnectionStore,

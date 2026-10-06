@@ -38,7 +38,6 @@ export async function madeByWorkOrder(db: Kysely<BuildsDB>, buildIds: string[]):
     .select(["id", "build_id", "qty", "status", "source_kind", "source_id", "created_at"])
     .where("build_id", "in", buildIds)
     .where("status", "!=", "cancelled")
-    .where("assembly", "is", null)
     .orderBy("created_at", "asc")
     .orderBy("id", "asc")
     .execute();

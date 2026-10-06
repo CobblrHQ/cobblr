@@ -543,19 +543,15 @@ export async function findTracked(
 }
 
 /** Stamp each match with the card it belongs to (itself when it is kept in
- *  one place), one pairing read per kind. A lookup that fails leaves each
- *  record its own card: the old behaviour, never a wrong grouping. */
+ *  one place), one pairing read per kind. A lookup that fails THROWS: read
+ *  as "each its own card", two places of one thing became two things, and
+ *  a pick of one of them was refused as not one of its places (#4985). */
 export async function withCards(orgId: string, matches: TrackedMatch[]): Promise<void> {
   const byKind = new Map<string, TrackedMatch[]>();
   for (const m of matches) if (!m.card_id) byKind.set(m.kind, [...(byKind.get(m.kind) ?? []), m]);
   for (const [kind, ms] of byKind) {
-    let cardOf = new Map<string, string>();
-    try {
-      const pairs = await platform().pairings.findBySources({ orgId, sourceKind: kind, sourceIds: ms.map((m) => m.id), targetKind: kind, relationshipKind: HOLDING_OF });
-      cardOf = new Map(pairs.map((p) => [p.sourceId, p.targetId]));
-    } catch {
-      /* each record stays its own card */
-    }
+    const pairs = await platform().pairings.findBySources({ orgId, sourceKind: kind, sourceIds: ms.map((m) => m.id), targetKind: kind, relationshipKind: HOLDING_OF });
+    const cardOf = new Map(pairs.map((p) => [p.sourceId, p.targetId]));
     for (const m of ms) m.card_id = cardOf.get(m.id) ?? m.id;
   }
 }
@@ -563,9 +559,9 @@ export async function withCards(orgId: string, matches: TrackedMatch[]): Promise
 /** Every place one card is kept in: the card itself and its holdings, each
  *  with where it is and how many are there. */
 export async function placesOfCard(orgId: string, kind: string, cardId: string): Promise<Array<{ id: string; location_id: string | null; qty: number | null; title: string }>> {
-  const held = await platform()
-    .pairings.findByTargets({ orgId, sourceKind: kind, targetKind: kind, targetIds: [cardId], relationshipKind: HOLDING_OF })
-    .catch(() => [] as Array<{ sourceId: string }>);
+  // A failed read throws: "no other places" would let a scan add to a place
+  // nobody chose (#4985).
+  const held = await platform().pairings.findByTargets({ orgId, sourceKind: kind, targetKind: kind, targetIds: [cardId], relationshipKind: HOLDING_OF });
   const refs = [cardId, ...held.map((h) => h.sourceId)].map((id) => ({ kind, id }));
   const resolved = await platform().entities.lookupMany(orgId, refs);
   return resolved.map((e) => ({

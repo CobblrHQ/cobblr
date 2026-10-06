@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.18.19",
+  version: "0.18.17",
   displayName: "Inventory",
   description:
     "Parts and supplies: how many you have, where they are kept, and what is running low.",
@@ -88,6 +88,8 @@ export default defineModule({
           { name: "spare_qty", type: "number", readOnly: true },
           { name: "installed_in", type: "object", readOnly: true },
           { name: "sheet_geometry", type: "object", readOnly: true },
+          { name: "stock", type: "object", readOnly: true },
+          { name: "stock_used", type: "number", readOnly: true },
           { name: "storage_readiness", type: "object", readOnly: true },
           // Which of the workspace's tables (instances) it is in: yarn or hooks.
           { name: "instance", type: "text", readOnly: true },
@@ -144,6 +146,8 @@ export default defineModule({
           "spare_qty",
           "installed_in",
           "sheet_geometry",
+          "stock",
+          "stock_used",
           "instance",
           // `metadata` is the per-part free-form attribute blob —
           // already conceptually a cross-module surface (modules
@@ -209,11 +213,6 @@ export default defineModule({
       "inventory.category.created", // emitted by categories.ts — declare so it's bindable (audit 2026-06-26)
     ],
     actions: [
-      // UI-SCREEN: /station/inspection/<machineId>/<orderId> records board evidence and the tested-stock handoff.
-      {
-        id: "inventory:finish-assembly-stock",
-        examples: ["finish the tested board transfer"],
-        group: "plan", label: "Move inspected boards into tested stock", description: "Settle an immutable native work order inspection transfer once. Only accepted boards move from placed to tested stock.", scope: "workspace", invokeHandler: "inventory.finish-assembly-stock", userInvokable: true, argsSchema: {source_id: {label: "Work order id", type: "text", required: true}, source_kind: {label: "Work order kind", type: "text", required: true}, input_kind: {label: "Placed stock kind", type: "text", required: true}, input_id: {label: "Placed stock id", type: "text", required: true}, output_kind: {label: "Tested stock kind", type: "text", required: true}, output_id: {label: "Tested stock id", type: "text", required: true}, accepted: {label: "Accepted board count", type: "number", required: true}}},
       {
         group: "stock",
         id: "inventory:consume-with-loss",
@@ -420,36 +419,6 @@ export default defineModule({
         userInvokable: true,
       },
       {
-        // UI-SCREEN: /builds/<revision> reserves, reads and cancels native kits through the assembly work order actions.
-        id: "inventory:assembly-kit", group: "plan", label: "Reserve or check an assembly kit", description: "Atomically reserve count stock for an assembly work order, check fresh storage and quantities, or settle the whole kit once. Individual kit allocations cannot be settled separately.",
-        scope: "workspace" as const, invokeHandler: "inventory.assembly-kit", userInvokable: true,
-        argsSchema: {
-          target_kind: { label: "Work order kind", type: "text", required: true },
-          target_id: { label: "Assembly work order id", type: "text", required: true },
-          operation: { label: "reserve, check, release or consume", type: "text", required: true },
-          lines: { label: "Stock lines with part_id, kind and qty", type: "json" },
-          confirmed_placed: { label: "The physical placement already happened; retain late moisture warnings while recording actual stock movement", type: "boolean" },
-          output: { label: "Placed-board stock with part_id, kind and qty, required for consumption", type: "json" },
-          require_ready: { label: "Refuse an unusable kit", type: "boolean" },
-        },
-      },
-      {
-        id: "inventory:change-paste", group: "stock", label: "Record paste handling", description: "Record a liquid paste jar's immutable lot and label limits, take it out of refrigeration, open it after warming, or return an unopened jar to cold storage. Clocks cannot be reset by repeated handling.",
-        scope: "workspace" as const, invokeHandler: "inventory.change-paste", userInvokable: true,
-        argsSchema: {
-          partId: { label: "Paste jar id", type: "text", required: true },
-          revision: { label: "Current handling revision", type: "number", required: true },
-          operation: { label: "configure, out, cold or open", type: "text", required: true },
-          limits: { label: "Label lot, expires_on, timezone, warmup_hours and work_life_hours", type: "json" },
-        },
-      },
-      {
-        // UI-SCREEN: /instances/solder-paste/parts/<id> reads this readiness through the shared GET paste reader.
-        id: "inventory:paste-readiness", group: "stock", label: "Check paste readiness", description: "Read a jar's handling history, warm-up deadline, remaining work life and shelf expiry. Changes nothing.",
-        scope: "workspace" as const, invokeHandler: "inventory.paste-readiness", userInvokable: true,
-        argsSchema: { partId: { label: "Paste jar id", type: "text", required: true } },
-      },
-      {
         group: "plan",
         id: "inventory:reserve-stock",
         examples: ["set aside four for that project", "reserve some of these"],
@@ -626,15 +595,44 @@ export default defineModule({
         },
       },
       {
+        // UI-SCREEN: /station/stock/:station reads the same stock list through its GET route.
+        group: "stock", id: "inventory:list-stock", label: "List workshop stock",
+        examples: ["show me the spools", "what stock is loaded at the cutter"],
+        description: "Read workshop stock across Inventory collections by shape or name. Pass fields with optional shape (sheet, roll, spool, liquid, wearing-tool or count), q, station, limit and offset. Returns remaining amounts, units, thresholds, total and loaded station slots. Continue with offset when complete is false.",
+        scope: "workspace", invokeHandler: "inventory.list-stock", userInvokable: false, effect: "none", undoable: true,
+        argsSchema: { fields: { label: "Stock filters", type: "json", required: true } },
+      },
+      {
+        group: "stock", id: "inventory:configure-stock", label: "Set stock shape",
+        examples: ["this is a roll of white vinyl", "set this bit's life to ten hours"],
+        description: "Set a sheet, roll, spool, liquid, wearing-tool or count shape, its threshold and remaining amount. Pass fields with config (shape, low_threshold and shape fields), revision from the stock field, and optional remaining or used recount. Rolls take width_mm and waste in metres; spools take unit g or m and optional grams_per_m; wearing tools take unit h, uses or m and limit. Sheet dimensions go in sheet. Used stock keeps its shape and unit.",
+        appliesTo: { kinds: ["inventory:part"] }, invokeHandler: "inventory.configure-stock", userInvokable: false,
+        argsSchema: { fields: { label: "Stock shape and recount", type: "json", required: true } },
+      },
+      {
+        group: "stock", id: "inventory:consume-stock", label: "Record stock use",
+        examples: ["the job used two metres of vinyl", "that scrap used thirty ml of resin"],
+        description: "Record stock used by a job, including scrap. Pass fields with revision, a unique source per job and stock draw, verdict good or scrap, amount and unit. Roll waste is added once; override waste in the stock unit if measured. Spools convert g and m only with grams_per_m. Sheet use takes rectangles in mm, kerf_mm and spacing_mm. Repeating a source never consumes twice; a shortage refuses the write.",
+        appliesTo: { kinds: ["inventory:part"] }, invokeHandler: "inventory.consume-stock", userInvokable: false,
+        argsSchema: { fields: { label: "Job stock use", type: "json", required: true } },
+      },
+      {
+        group: "stock", id: "inventory:load-stock", label: "Confirm loaded stock",
+        examples: ["this white vinyl is loaded at the cutter", "unload this spool"],
+        description: "Confirm stock is physically loaded at a named station and slot, or unload it. Pass fields with station, optional slot (a colour or feed position) and loaded true or false. This records stock placement and grants no permission to start a machine.",
+        appliesTo: { kinds: ["inventory:part"] }, invokeHandler: "inventory.load-stock", userInvokable: false,
+        argsSchema: { fields: { label: "Station and slot", type: "json", required: true } },
+      },
+      {
         group: "stock",
         id: "inventory:change-sheet-area",
         label: "Record sheet area",
-        description: "Record cut bounding boxes with kerf and spacing, edit the free rectangles, or undo the latest hand edit. Supply the current revision to prevent stale changes.",
+        description: "Record cut outlines already offset for kerf and spacing, or bounding boxes with kerf and spacing, edit the free rectangles, or undo the latest hand edit. Supply the current revision to prevent stale changes.",
         examples: ["record this sheet cut", "undo the hand edit to this sheet"],
         appliesTo: { kinds: ["inventory:part"] },
         invokeHandler: "inventory.change-sheet-area",
         userInvokable: false,
-        argsSchema: { partId: { label: "Sheet id", type: "text" }, operation: { label: "Change", type: "text" }, revision: { label: "Current revision", type: "number" }, rectangles: { label: "Rectangles in millimetres", type: "json" }, kerf_mm: { label: "Kerf (mm)", type: "number" }, spacing_mm: { label: "Spacing (mm)", type: "number" }, source: { label: "Cut reference", type: "text" } },
+        argsSchema: { partId: { label: "Sheet id", type: "text" }, operation: { label: "Change", type: "text" }, revision: { label: "Current revision", type: "number" }, rectangles: { label: "Rectangles in millimetres", type: "json" }, outlines: { label: "Offset cut outlines in millimetres", type: "json" }, kerf_mm: { label: "Kerf (mm)", type: "number" }, spacing_mm: { label: "Spacing (mm)", type: "number" }, source: { label: "Cut reference", type: "text" } },
       },
       {
         group: "stock",
@@ -1021,6 +1019,10 @@ export default defineModule({
   // with a consume history, so idle workspaces pay nothing.
   lifecycle: {
     onBoot: async () => {
+      const { registerStockShapesHeal } = await import("./heal-stock-shapes.js");
+      registerStockShapesHeal();
+      const { registerShapedStockShortages } = await import("./stock-shortages.js");
+      registerShapedStockShortages();
       const { registerInventoryTidyFinders } = await import("./tidy-finders.js");
       registerInventoryTidyFinders();
       const { registerLowStockAlerts } = await import("./low-stock-alerts.js");

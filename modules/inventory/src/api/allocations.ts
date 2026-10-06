@@ -15,7 +15,7 @@ import { assertStorageReady } from "./storage.js";
 import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
-import { ActionRefusal, platform } from "@cobblr/platform-contract";
+import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody } from "./util.js";
 import { recordConsumption } from "./stock-ledger.js";
@@ -43,7 +43,7 @@ allocationsRouter.get(
       .selectFrom("inventory_allocations as a")
       .leftJoin("inventory_parts as p", "p.id", "a.part_id")
       .select([
-        "a.id", "a.part_id", "a.qty", "a.status", "a.context",
+        "a.id", "a.part_id", "a.qty", "a.status",
         "a.target_module", "a.target_entity_type", "a.target_entity_id",
         "a.reason", "a.target_line", "a.reserved_at", "a.consumed_at", "a.released_at",
         "p.name as part_name",
@@ -196,12 +196,11 @@ export async function settleAllocation(
       .selectFrom("inventory_allocations")
       .select([
         "id", "part_id", "qty", "status", "reason",
-        "target_module", "target_entity_type", "target_entity_id", "target_line",
+        "target_module", "target_entity_type", "target_entity_id",
       ])
       .where("id", "=", id)
       .forUpdate().executeTakeFirst();
     if (!current) return { error: "not_found" as const };
-    if (current.target_line === "assembly-kit") throw new ActionRefusal("Settle this reservation through its whole assembly work order.");
     if (current.status !== "reserved") {
       return { error: "not_reserved" as const, current };
     }

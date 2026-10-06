@@ -328,8 +328,7 @@ const InstanceEntry = z.object({
    *  find-or-creates the parent type by those keys and links it, so a scanned
    *  spool lands in the type→spool model instead of as a flat row. Same params
    *  the `inventory:lift-to-type` migration uses. */
-  board_revisions: z.object({ package_kind: z.string().min(3).max(120), blank_kind: z.string().min(3).max(120), stencil_kind: z.string().min(3).max(120), placed_kind: z.string().min(3).max(120).optional() }).optional(),
-  paste_tracking: z.boolean().optional(),
+  board_revisions: z.object({ package_kind: z.string().min(3).max(120), blank_kind: z.string().min(3).max(120), stencil_kind: z.string().min(3).max(120) }).optional(),
   package_receiving: z.object({ identity_field: z.string().min(1).max(80), storage_tracking: z.boolean().default(false) }).optional(),
   parent: z
     .object({
@@ -2011,7 +2010,7 @@ async function applyValidatedBundleUnlocked(
     // (2026-09-12). The instance's words come first so a table-specific term
     // wins any first-match read.
     const tableWords = bundleTableWords(inst.scan_keywords, m.scan_keywords);
-    const instConfig: Record<string, unknown> = { item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null, parent: inst.parent ?? null, package_receiving: inst.package_receiving ?? null, paste_tracking: inst.paste_tracking ?? false, board_revisions: inst.board_revisions ?? null, nav_group: inst.nav_group ?? null, scan_keywords: tableWords.length ? tableWords : null, faces: inst.faces ?? null, file_intake: inst.file_intake ?? null, connector_import: (inst as { connector_import?: unknown }).connector_import ?? null, noun: inst.noun ?? null, hint: inst.hint ?? null, links: inst.links ?? null, noun_choice: (inst as { noun_choice?: unknown }).noun_choice ?? null, contents_label_default: inst.contents_label ?? null, service_tasks_default: inst.service_tasks ?? null };
+    const instConfig: Record<string, unknown> = { item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null, parent: inst.parent ?? null, package_receiving: inst.package_receiving ?? null, board_revisions: inst.board_revisions ?? null, nav_group: inst.nav_group ?? null, scan_keywords: tableWords.length ? tableWords : null, faces: inst.faces ?? null, file_intake: inst.file_intake ?? null, connector_import: (inst as { connector_import?: unknown }).connector_import ?? null, noun: inst.noun ?? null, hint: inst.hint ?? null, links: inst.links ?? null, noun_choice: (inst as { noun_choice?: unknown }).noun_choice ?? null, contents_label_default: inst.contents_label ?? null, service_tasks_default: inst.service_tasks ?? null };
     // Creation-time stock signal: a bundle that declares a MEASURED unit (a
     // qty_unit that isn't blank or "each" — filament in kg, yarn in skeins)
     // carries stock character before any data exists, so latch it to stock at

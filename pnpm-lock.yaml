@@ -38,9 +38,6 @@ importers:
       '@cobblr/workspace-tools':
         specifier: workspace:*
         version: link:../packages/workspace-tools
-      '@types/nodemailer':
-        specifier: ^8.0.0
-        version: 8.0.0
       ajv:
         specifier: ^8.20.0
         version: 8.20.0
@@ -138,6 +135,9 @@ importers:
       '@types/node':
         specifier: ^22.10.5
         version: 22.19.19
+      '@types/nodemailer':
+        specifier: ^8.0.0
+        version: 8.0.0
       '@types/pg':
         specifier: ^8.11.10
         version: 8.20.0
@@ -212,9 +212,6 @@ importers:
       express:
         specifier: ^4.21.2
         version: 4.22.2
-      fflate:
-        specifier: ^0.8.3
-        version: 0.8.3
       kysely:
         specifier: ^0.27.5
         version: 0.27.6
@@ -441,15 +438,6 @@ importers:
       kysely:
         specifier: ^0.27.5
         version: 0.27.6
-      occt-import-js:
-        specifier: ^0.0.23
-        version: 0.0.23
-      pdfjs-dist:
-        specifier: ^5.4.296
-        version: 5.4.296
-      three:
-        specifier: ^0.171.0
-        version: 0.171.0
       zod:
         specifier: ^3.24.1
         version: 3.25.76
@@ -466,9 +454,18 @@ importers:
       '@types/three':
         specifier: ^0.171.0
         version: 0.171.0
+      occt-import-js:
+        specifier: ^0.0.23
+        version: 0.0.23
+      pdfjs-dist:
+        specifier: ^5.4.296
+        version: 5.4.296
       react:
         specifier: ^19.0.0
         version: 19.2.6
+      three:
+        specifier: ^0.171.0
+        version: 0.171.0
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -969,6 +966,9 @@ importers:
       mqtt:
         specifier: ^5.10.1
         version: 5.15.1
+      polygon-clipping:
+        specifier: 0.15.7
+        version: 0.15.7
       saxes:
         specifier: ^6.0.0
         version: 6.0.0
@@ -1006,6 +1006,9 @@ importers:
       kysely:
         specifier: ^0.27.5
         version: 0.27.6
+      polygon-clipping:
+        specifier: 0.15.7
+        version: 0.15.7
       ws:
         specifier: ^8.22.0
         version: 8.22.0
@@ -4373,6 +4376,9 @@ packages:
     resolution: {integrity: sha512-40QW5YalBNfQo5yRYmiw7Yz6TKKVr3h6970B2YE+3fQpsWcrbj1PzJgxeJ19DRQjhMbKPIuMY8rFaXc8moolVw==}
     engines: {node: '>=10.13.0'}
 
+  polygon-clipping@0.15.7:
+    resolution: {integrity: sha512-nhfdr83ECBg6xtqOAJab1tbksbBAOMUltN60bU+llHVOL0e5Onm1WpAXXWXVB39L8AJFssoIhEVuy/S90MmotA==}
+
   postcss-import@15.1.0:
     resolution: {integrity: sha512-hpr+J05B2FVYUAXHeK1YyI267J/dDDhMU6B6civm8hSY1jYJnBXxzKDKDswzJmtLHryrjhnDjqqp/49t8FALew==}
     engines: {node: '>=14.0.0'}
@@ -4590,6 +4596,9 @@ packages:
     deprecated: Rimraf versions prior to v4 are no longer supported
     hasBin: true
 
+  robust-predicates@3.0.3:
+    resolution: {integrity: sha512-NS3levdsRIUOmiJ8FZWCP7LG3QpJyrs/TE0Zpf1yvZu8cAJJ6QMW92H1c7kWpdIHo8RvmLxN/o2JXTKHp74lUA==}
+
   rollup@4.60.4:
     resolution: {integrity: sha512-WHeFSbZYsPu3+bLoNRUuAO+wavNlocOPf3wSHTP7hcFKVnJeWsYlCDbr3mTS14FCizf9ccIxXA8sGL8zKeQN3g==}
     engines: {node: '>=18.0.0', npm: '>=8.0.0'}
@@ -4717,6 +4726,10 @@ packages:
 
   space-separated-tokens@2.0.2:
     resolution: {integrity: sha512-PEGlAwrG8yXGXRjW32fGbg66JAlOAwbObuqVoJpv/mRgoWDQfgH1wDPvtzWyUSNAXBGSk8h755YDbbcEy3SH2Q==}
+
+  splaytree@3.2.3:
+    resolution: {integrity: sha512-7OXrNWzy6CK+r7Ch9OLPBDTKfB6XlWHjX4P0RU5B3IgFuWPeYN0XtRtlexGRjgbQxpfaUve6jTAwBGWuGntz/w==}
+    engines: {node: '>=18.20 || >=20'}
 
   split2@4.2.0:
     resolution: {integrity: sha512-UcjcJOWknrNkF6PLX83qcHM6KHgVKNkV62Y8a5uYDVv9ydGQVwAHMKqHdJje1VTWpljG0WYpCDhrCdAOYH4TWg==}
@@ -7876,6 +7889,11 @@ snapshots:
 
   pngjs@5.0.0: {}
 
+  polygon-clipping@0.15.7:
+    dependencies:
+      robust-predicates: 3.0.3
+      splaytree: 3.2.3
+
   postcss-import@15.1.0(postcss@8.5.14):
     dependencies:
       postcss: 8.5.14
@@ -8096,6 +8114,8 @@ snapshots:
     dependencies:
       glob: 7.2.3
 
+  robust-predicates@3.0.3: {}
+
   rollup@4.60.4:
     dependencies:
       '@types/estree': 1.0.8
@@ -8305,6 +8325,8 @@ snapshots:
   source-map-js@1.2.1: {}
 
   space-separated-tokens@2.0.2: {}
+
+  splaytree@3.2.3: {}
 
   split2@4.2.0: {}
 

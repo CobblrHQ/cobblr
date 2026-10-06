@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "digifab",
-  version: "0.30.2",
+  version: "0.32.2",
   displayName: "Digital Fabrication",
   description:
     "Send a design to the software that runs your machine (FDM Monster, OctoPrint and others) and follow the job until it is done.",
@@ -220,14 +220,6 @@ export default defineModule({
       { eventType: "digifab.make.ready", label: "A print is ready to start", description: "Print this has sliced a model for a printer; the print waits on its Make for someone to start it." },
     ],
     actions: [
-      // UI-SCREEN: /builds/<revision> saves paste profiles and downloads the oven bridge package.
-      {id: "digifab:reflow-profiles", group: "make", label: "Read paste profiles", description: "List saved immutable reflow profiles for this paste jar.", scope: "workspace", invokeHandler: "digifab.reflow-profiles", userInvokable: true, argsSchema: {paste_kind: {label: "Paste collection kind", type: "text", required: true}, paste_id: {label: "Paste jar id", type: "text", required: true}}},
-      // UI-SCREEN: /builds/<revision> saves paste profiles and downloads the oven bridge package.
-      {id: "digifab:reflow-profile", group: "make", label: "Read a paste profile", description: "Read one saved paste profile and its manufacturer limits.", scope: "workspace", invokeHandler: "digifab.reflow-profile", userInvokable: true, argsSchema: {profile_id: {label: "Paste profile id", type: "text", required: true}}},
-      // UI-SCREEN: /builds/<revision> saves paste profiles and downloads the oven bridge package.
-      {id: "digifab:save-reflow-profile", group: "make", label: "Save a paste reflow profile", description: "Save the four phases and manufacturer limits as a new immutable version for a liquid paste jar.", scope: "workspace", invokeHandler: "digifab.save-reflow-profile", userInvokable: true, argsSchema: {paste_kind: {label: "Paste collection kind", type: "text", required: true}, paste_id: {label: "Paste jar id", type: "text", required: true}, profile: {label: "Four phases and manufacturer limits", type: "json", required: true}}},
-      // UI-SCREEN: /builds/<revision> saves paste profiles and downloads the oven bridge package.
-      {id: "digifab:reflow-bridge-package", group: "make", label: "Download the reflow bridge driver", description: "Read the installable bridge driver package for T-962 open firmware and YARC controllers.", scope: "workspace", invokeHandler: "digifab.reflow-bridge-package", userInvokable: true, argsSchema: {}},
       {
         // UI-SCREEN: /digifab/manager
         id: "digifab:dispatch-material", label: "Dispatch a laser batch by material", scope: "workspace", group: "more", userInvokable: false,
@@ -237,6 +229,17 @@ export default defineModule({
           operation: { label: "Operation", type: "text", required: true, choices: ["plan", "queue", "cancel"].map(value => ({ value, label: value })) },
           request: { label: "Batch request", type: "json", oneOf: "batch" },
           id: { label: "Saved batch id", type: "text", oneOf: "batch" },
+        },
+      },
+      {
+        // UI-SCREEN: /station/machine/:connectionId/:deviceId
+        id: "digifab:laser-setup", label: "Set up a laser at its station", scope: "workspace", group: "more", userInvokable: false,
+        description: "Read G-code laser configuration, explicitly home it or confirm its firmware build settings. Home and confirmation require an admin and the authorized station credential. Never changes firmware or starts a cut.",
+        invokeHandler: "digifab.laser-setup", effect: "writes", undoable: false,
+        argsSchema: {
+          connection_id: {label:"Connection",type:"text",required:true},device_id:{label:"Device",type:"text",required:true},
+          operation:{label:"Operation",type:"text",required:true,choices:["read","home","commission"].map(value=>({value,label:value}))},
+          station_token:{label:"Station credential",type:"text"},configuration:{label:"Firmware configuration",type:"json"},
         },
       },
       {
@@ -253,16 +256,64 @@ export default defineModule({
         },
       },
       {
+        // UI-SCREEN: /station/machine/:connectionId/:deviceId
+        id: "digifab:cutter-batch", label: "Prepare a cutter job", group: "more", scope: "workspace", userInvokable: false,
+        description: "Create or update machine-bound vinyl, HTV and cardstock profiles and prepare SVG/DXF cuts on a native roll. Requires an admin. Never starts a machine. Profile fields: connection_id, device_id, profile (material, material_type, speed, force, blade_depth, passes, blade_offset_mm). Plan fields: connection_id, device_id, library_id, roll_id, mapping (layer to profile id), quantity, length_mm, spacing_mm, mirror, weed_box_mm, weed_line_spacing_mm, dxf_units. Outcome requires the authorized station token, measured used_length_m, good or scrap verdict, idle_confirmed and blade_up_confirmed. Interrupted cuts are scrap. Read profiles and station state with read_laser_batch (cutter_profiles or cutter_station).",
+        invokeHandler: "digifab.cutter-batch", effect: "writes", undoable: false,
+        argsSchema: {
+          operation: {label:"Operation",type:"text",required:true,choices:["create_profile","update_profile","plan","outcome"].map(value=>({value,label:value.replaceAll("_"," ")}))},
+          id: {label:"Profile or job id",type:"text"}, fields: {label:"Fields",type:"json"},
+        },
+      },
+      {
+        // UI-SCREEN: /station/machine/:connectionId/:deviceId
+        id: "digifab:cutter-control", label: "Control a cutter", group: "more", scope: "workspace", userInvokable: false,
+        description: "Stop, pause or resume cutter streaming. Members may stop a cutter without a station credential. Frame requires its reviewed queued job, loaded roll and authorized station token. Confirm idle requires that token and physical idle and blade-up confirmation. Never starts a new cut. Use the machine's physical Stop in an emergency.",
+        invokeHandler: "digifab.cutter-control", effect: "writes", undoable: false,
+        argsSchema: {
+          connection_id:{label:"Connection",type:"text",required:true},device_id:{label:"Device",type:"text",required:true},operation:{label:"Control",type:"text",required:true,choices:["stop","pause","resume","frame","confirm-idle"].map(value=>({value,label:value}))},
+          job_id:{label:"Queued job",type:"text"},file_id:{label:"Reviewed file",type:"text"},project_hash:{label:"Review hash",type:"text"},station_token:{label:"Authorized station token",type:"text"},idle_confirmed:{label:"Machine is idle",type:"boolean"},blade_up_confirmed:{label:"Blade is up",type:"boolean"},
+        },
+      },
+      {
+        // UI-SCREEN: /station/machine/:connectionId/:deviceId
+        id: "digifab:resin-control", label: "Control a resin printer", scope: "workspace", group: "more", userInvokable: false,
+        description: "Stop, pause or resume a resin printer. Stop also prevents an uploading job from starting. Workspace members may use these controls; starting a print requires its authorized station and reviewed file.",
+        invokeHandler: "digifab.resin-control", effect: "writes", undoable: false,
+        argsSchema: {
+          connection_id: { label: "Connection", type: "text", required: true },
+          device_id: { label: "Device", type: "text", required: true },
+          operation: { label: "Control", type: "text", required: true, choices: ["stop", "pause", "resume"].map(value => ({ value, label: value })) },
+        },
+      },
+      {
+        // UI-SCREEN: /station/machine/:connectionId/:deviceId
+        id: "digifab:resin-postprocess", label: "Record resin print washing and curing", scope: "workspace", group: "more", userInvokable: false,
+        description: "Mark a good resin print washed or cured after its stock use is recorded. Washing comes before curing. This records the physical checklist and does not operate a wash or cure machine.",
+        invokeHandler: "digifab.resin-postprocess", effect: "writes", undoable: false,
+        argsSchema: {
+          job_id: { label: "Print job", type: "text", required: true },
+          step: { label: "Finished step", type: "text", required: true, choices: ["wash", "cure"].map(value => ({ value, label: value })) },
+        },
+      },
+      {
         // UI-SCREEN: /digifab
         id: "digifab:laser-batch", label: "Prepare a laser batch", group: "more", scope: "workspace", userInvokable: false,
-        description: "Create, import or update material profiles, plan SVG/DXF batches on chosen sheets, queue reviewed plans or discard unqueued plans. Requires an admin. Never starts the laser. Create fields: connection_id, device_id, profile. Import fields: connection_id, device_id. Update fields: profile from read_laser_batch. Plan fields: connection_id, device_id, library_id, quantity, sheet_ids, mapping (layer to profile id), spacing_mm, kerf_mm, rotate, dxf_units. Queue/discard: saved plan id.",
+        description: "Create, import or update material profiles, plan SVG/DXF batches on chosen sheets, queue reviewed plans or discard unqueued plans. Nest outlines for laser, CNC or cutter previews with operation nest, without a machine or profiles. Requires an admin. Never starts a machine. Create fields: connection_id, device_id, profile. Import fields: connection_id, device_id. Update fields: profile from read_laser_batch. Plan fields: connection_id, device_id, library_id, quantity, sheet_ids, mapping (layer to profile id), spacing_mm, kerf_mm, rotate, rotation_step, budget_ms (3000 default, up to 30000), seed, dxf_units. Nest fields: the same without connection_id, device_id or mapping. Queue/discard: saved plan id.",
         examples: ["prepare 200 parts from this drawing", "import the laser material profiles"],
         invokeHandler: "digifab.laser-batch", effect: "writes", undoable: false,
         argsSchema: {
-          operation: { label: "Operation", type: "text", required: true, choices: ["create_profile", "import_profiles", "update_profile", "plan", "queue", "discard"].map(value => ({ value, label: value.replaceAll("_", " ") })) },
+          operation: { label: "Operation", type: "text", required: true, choices: ["create_profile", "import_profiles", "update_profile", "plan", "nest", "queue", "discard"].map(value => ({ value, label: value.replaceAll("_", " ") })) },
           id: { label: "Profile or plan id", type: "text" },
           fields: { label: "Profile or plan fields", type: "json" },
         },
+      },
+      {
+        // UI-SCREEN: /digifab
+        id: "digifab:discover-snapmakers", label: "Find Snapmakers", group: "more", scope: "workspace", userInvokable: false,
+        description: "Find Snapmakers on one LAN bridge and report which transport each machine advertises. Requires an admin. Does not pair or start a machine.",
+        examples: ["find Snapmakers on the workshop bridge"], invokeHandler: "digifab.discover-snapmakers", effect: "none", undoable: false,
+        argsSchema: { bridge: { label: "Bridge id", type: "text" } },
       },
       {
         // The one door a job reaches a machine by: the page's Send button and

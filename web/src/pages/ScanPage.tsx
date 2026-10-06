@@ -2849,7 +2849,11 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
       <AiOffNotice status={aiStatus} needs="identify" />
 
       <ScanDrivePanel drive={scanDrive} />
-      <Link className="inline-block text-sm text-accent underline" to="/scan/stations">Scan stations</Link>
+      <div className="flex flex-wrap gap-x-4 gap-y-1">
+        <Link className="inline-block text-sm text-accent underline" to="/scan/stations">Scan stations</Link>
+        {/* A tablet and a scanner as a station of its own (#4640). */}
+        <Link className="inline-block text-sm text-accent underline" to="/configuration/devices?tab=stations">Open a station on a tablet</Link>
+      </div>
 
       {/* When you arrived here from an instance's table ("Scan" on the Yarn
           page), confirms default into that instance. */}
@@ -2867,6 +2871,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
       {list.isError && !list.isLoading && (
         <div className="rounded-md border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 p-6 text-center">
           <div className="text-sm text-red-800 dark:text-red-300">
+            {/* failure-copy: list.isError, the inbox request itself failed. */}
             Couldn't load your scan inbox. Your items are still there.
           </div>
           <button

@@ -9,7 +9,7 @@
 // to the same asset; an emit here would re-fire the wire. Same reasoning as
 // inventory's writer (see modules/inventory/src/api/sync-writer.ts).
 
-import { adoptAxisValuesIntoField, findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow, snapshotRowTree, restoreRowTree } from "@cobblr/platform-contract";
+import { adoptAxisValuesIntoField, findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow, snapshotRowTree, restoreRowTree, rowVersionOf, updateRowAt } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { AssetsDB } from "../db.js";
 import { DISPOSITION_LABELS, dispositionOf } from "@cobblr/platform-contract/disposition";
@@ -17,6 +17,30 @@ import { DISPOSITION_LABELS, dispositionOf } from "@cobblr/platform-contract/dis
 const PRIOR_STATE = "state_before_it_left";
 
 let registered = false;
+
+/** What `update` and `updateIf` write for these fields. */
+function patchOf(fields: Record<string, unknown>): Record<string, unknown> {
+  const patch: Record<string, unknown> = { updated_at: new Date() };
+  if (fields.name !== undefined) patch.name = String(fields.name);
+  if (fields.location_id !== undefined) patch.location_id = asStr(fields.location_id);
+  if (fields.type !== undefined) patch.type = asStr(fields.type);
+  if (fields.notes !== undefined) patch.notes = asStr(fields.notes);
+  // What paperwork fills, by role or by its own words (a bill of sale's
+  // make, model, VIN, date, price and dealer).
+  if (fields.manufacturer !== undefined) patch.manufacturer = asStr(fields.manufacturer);
+  if (fields.model !== undefined) patch.model = asStr(fields.model);
+  if (fields.serial_number !== undefined) patch.serial_number = asStr(fields.serial_number);
+  if (fields.purchased_at !== undefined) patch.purchased_at = asStr(fields.purchased_at);
+  if (fields.vendor !== undefined) patch.vendor = asStr(fields.vendor);
+  if (fields.purchase_price_cents !== undefined) {
+    const c = fields.purchase_price_cents === null ? null : Number(fields.purchase_price_cents);
+    patch.purchase_price_cents = c === null || Number.isFinite(c) ? c : null;
+  }
+  if (fields.metadata !== undefined) {
+    patch.metadata = sql`${JSON.stringify(fields.metadata ?? {})}::jsonb`;
+  }
+  return patch;
+}
 
 export function registerAssetsWriter(): void {
   if (registered) return;
@@ -49,27 +73,17 @@ export function registerAssetsWriter(): void {
 
     async update(orgId, id, fields) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<AssetsDB>;
-      const patch: Record<string, unknown> = { updated_at: new Date() };
-      if (fields.name !== undefined) patch.name = String(fields.name);
-      if (fields.location_id !== undefined) patch.location_id = asStr(fields.location_id);
-      if (fields.type !== undefined) patch.type = asStr(fields.type);
-      if (fields.notes !== undefined) patch.notes = asStr(fields.notes);
-      // What paperwork fills, by role or by its own words (a bill of sale's
-      // make, model, VIN, date, price and dealer).
-      if (fields.manufacturer !== undefined) patch.manufacturer = asStr(fields.manufacturer);
-      if (fields.model !== undefined) patch.model = asStr(fields.model);
-      if (fields.serial_number !== undefined) patch.serial_number = asStr(fields.serial_number);
-      if (fields.purchased_at !== undefined) patch.purchased_at = asStr(fields.purchased_at);
-      if (fields.vendor !== undefined) patch.vendor = asStr(fields.vendor);
-      if (fields.purchase_price_cents !== undefined) {
-        const c = fields.purchase_price_cents === null ? null : Number(fields.purchase_price_cents);
-        patch.purchase_price_cents = c === null || Number.isFinite(c) ? c : null;
-      }
-      if (fields.metadata !== undefined) {
-        patch.metadata = sql`${JSON.stringify(fields.metadata ?? {})}::jsonb`;
-      }
-      await db.updateTable("assets_assets").set(patch as never).where("id", "=", id).execute();
+      await db.updateTable("assets_assets").set(patchOf(fields) as never).where("id", "=", id).execute();
       // No emit — see the file header.
+    },
+
+    version: async (orgId, id) => rowVersionOf(await platform().tenants.getDb(orgId), "assets_assets", id),
+
+    async updateIf(orgId, id, fields, version) {
+      const db = (await platform().tenants.getDb(orgId)) as Kysely<AssetsDB>;
+      const v = await updateRowAt(db, "assets_assets", id, patchOf(fields), version);
+      // No emit — see the file header.
+      return v;
     },
 
     /** Something that left is put away: out of the register and its totals,

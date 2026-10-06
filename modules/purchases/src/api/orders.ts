@@ -133,6 +133,7 @@ const encodeCursor = (c: OrderCursor) => Buffer.from(JSON.stringify(c)).toString
 function decodeCursor(raw: unknown): OrderCursor | null {
   if (typeof raw !== "string" || !raw) return null;
   try {
+    // b64-lenient-ok: a list cursor only says where the next page starts; every spelling of it is the same place.
     const c = JSON.parse(Buffer.from(raw, "base64url").toString("utf8")) as OrderCursor;
     return typeof c.d === "string" && typeof c.c === "string" && typeof c.id === "string" ? c : null;
   } catch {

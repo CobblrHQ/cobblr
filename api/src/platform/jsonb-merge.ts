@@ -15,3 +15,8 @@ export function mergeJsonb(column: string, fields: Record<string, unknown>): Raw
   for (const k of plan.remove) expr = sql<Record<string, unknown>>`(${expr} - ${k}::text)`;
   return expr;
 }
+
+/** A row's version for a compare-and-set (contract: `platform().db.rowVersion`):
+ *  xmin, which every write to the row changes. */
+export const rowVersion = () => sql<string>`xmin::text`.as("row_version");
+export const atVersion = (version: string) => sql<boolean>`xmin = ${version}::xid`;

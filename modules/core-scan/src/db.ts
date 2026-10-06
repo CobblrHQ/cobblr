@@ -289,6 +289,40 @@ export interface CoreScanDB {
   core_scan_qr_rules: CoreScanQrRulesTable;
   core_scan_import_runs: CoreScanImportRunsTable;
   core_scan_identify_usage: CoreScanIdentifyUsageTable;
+  core_scan_station_screens: CoreScanStationScreensTable;
+  core_scan_station_moves: CoreScanStationMovesTable;
+  core_scan_station_scans: CoreScanStationScansTable;
+}
+
+/** A Station's settings (#4640, migrations/0037). */
+export interface CoreScanStationScreensTable {
+  address: string;
+  label: string;
+  settings: ColumnType<unknown, string | undefined, string | undefined>;
+  pin_hash: string | null;
+  updated_at: ColumnType<Date, Date | undefined, Date | undefined>;
+}
+
+export interface CoreScanStationMovesTable {
+  address: string;
+  request_id: string;
+  kind: string;
+  entity_id: string;
+  instance: string | null;
+  op: string;
+  delta: ColumnType<string, number, number>;
+  qty: ColumnType<string | null, number | null, number | null>;
+  note: string | null;
+  undone_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
+  created_at: Generated<Date>;
+}
+
+export interface CoreScanStationScansTable {
+  id: Generated<string>;
+  address: string;
+  code: string;
+  created_at: Generated<Date>;
+  taken_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
 }
 
 /** One bulk import, with everything needed to reverse it. An import can touch

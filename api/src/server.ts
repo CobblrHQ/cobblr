@@ -11,6 +11,7 @@ import { deletedRecordsRouter } from "./routes/deleted-records.js";
 // → listen. That keeps module wiring out of the app constructor and
 // makes the boot sequence explicit.
 
+import { floorplanJsonSchema } from "@cobblr/platform-contract/floorplan-format";
 import { lastOrphanFilesReport } from "./platform/heal-orphan-files.js";
 import { WorkspaceNotProvisioned, WORKSPACE_NOT_CREATED_MESSAGE } from "./platform/provision-workspace.js";
 import { InvalidFieldValueError, UnknownFieldError } from "@cobblr/platform-contract/entity-metadata";
@@ -85,6 +86,7 @@ import { driveRouter } from "./routes/drive.js";
 import { resolveRouter } from "./routes/resolve.js";
 import { scanDriveRouter } from "./routes/scan-drive.js";
 import { scanStationsRouter } from "./routes/scan-stations.js";
+import { stationDevicesRouter, stationPublicRouter } from "./routes/station-devices.js";
 import { liveRouter } from "./routes/live.js";
 import { instancesRouter, overridesRouter } from "./routes/instances.js";
 import { navHeadingsRouter } from "./routes/nav-headings.js";
@@ -382,6 +384,13 @@ export function createApp(): AppHandles {
     });
   });
 
+  // The published schema of a floor plan file (cobblr-floorplan/1), for any
+  // AI or editor that validates what it writes before a person imports it.
+  // Public: it is a format description, made from the importer's own schema.
+  v1.get("/schemas/cobblr-floorplan-1.json", (_req, res) => {
+    res.type("application/schema+json").json(floorplanJsonSchema());
+  });
+
   // Hosted-overlay request guard (rate-limit / abuse). No-op until the overlay
   // registers a guard; mounted after /healthz so health checks are never gated.
   v1.use(requestGuardMiddleware());
@@ -516,6 +525,8 @@ export function createApp(): AppHandles {
   // (digifab's /modules/digifab/edge/*) remain as wire-compatible aliases.
   v1.use("/orgs/:slug/edge", edgeRouter);
   v1.use("/edge", edgePairRouter);
+  v1.use("/orgs/:slug/station-devices", stationDevicesRouter);
+  v1.use("/station", stationPublicRouter);
   // Sharing: a workspace's shares, and the doors another Cobblr knocks on.
   v1.use("/orgs", shareLinksOrgRouter);
   v1.use(shareLinksRouter);

@@ -400,6 +400,7 @@ export function ScanCaptureDrawer({
     >
       <div ref={slide.innerRef}>
       <MutationError mutation={answerGlance} className="block px-3 pt-2 pr-8 !text-ember-300">Answer not saved:</MutationError>
+      {/* failure-copy: shown only when the look-again mutation returned an error. */}
       <MutationError mutation={correct} className="block px-3 pt-2 pr-8 !text-ember-300">Could not look again:</MutationError>
       <MutationError mutation={reject} className="block px-3 pt-2 pr-8 !text-ember-300">Not saved:</MutationError>
       <MutationError mutation={rename} className="block px-3 pt-2 pr-8 !text-ember-300">Name not saved:</MutationError>

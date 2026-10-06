@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/platform-contract",
-  "version": "0.5.78",
+  "version": "0.5.81",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
@@ -106,6 +106,7 @@
     "./record-address": "./src/record-address.ts",
     "./pairing-presentation": "./src/pairing-presentation.ts",
     "./scan-fallback": "./src/scan-fallback.ts",
+    "./scan-nameless": "./src/scan-nameless.ts",
     "./scan-session": "./src/scan-session.ts",
     "./scan-source": "./src/scan-source.ts",
     "./document-images": "./src/document-images.ts",
@@ -134,12 +135,19 @@
     "./field-choices": "./src/field-choices.ts",
     "./plan-colours": "./src/plan-colours.ts",
     "./scan-station": "./src/scan-station.ts",
+    "./station-screen": "./src/station-screen.ts",
     "./place-indicate": "./src/place-indicate.ts",
     "./action-groups": "./src/action-groups.ts",
     "./activity-summary": "./src/activity-summary.ts",
-    "./grouped-list": "./src/grouped-list.ts",
+    "./outer-size": "./src/outer-size.ts",
+    "./floorplan-format": "./src/floorplan-format.ts",
     "./placement-count": "./src/placement-count.ts",
-    "./reflow-profile": "./src/reflow-profile.ts"
+    "./laser-setup": "./src/laser-setup.ts",
+    "./grouped-list": "./src/grouped-list.ts",
+    "./laser-setup": "./src/laser-setup.ts",
+    "./grouped-list": "./src/grouped-list.ts",
+    "./cutter-program": "./src/cutter-program.ts",
+    "./base64url-exact": "./src/base64url-exact.ts"
   },
   "types": "src/index.ts",
   "scripts": {

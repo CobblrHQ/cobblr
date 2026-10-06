@@ -30,6 +30,7 @@ export function putAwayParts(i: PutAwayInputs): string[] {
   const parts: string[] = [];
   if (unfiled > 0) parts.push(`${unfiled} scanned item${unfiled === 1 ? "" : "s"} without a home`);
   if (i.ready > 0) parts.push(`${i.ready} ready to put away`);
+  // failure-copy: failedReads counts sessions whose read is recorded as failed.
   if (i.failedReads > 0) parts.push(`${i.failedReads} receipt${i.failedReads === 1 ? "" : "s"} that couldn't be read`);
   return parts;
 }

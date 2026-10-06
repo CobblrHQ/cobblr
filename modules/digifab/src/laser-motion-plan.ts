@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { orderedLaserLayers, type Design, type LayoutSheet, type LayerSettings, type Point, type Profile, type Rect } from "./laser-layout.js";
+import { transformPlacedPoint, orderedLaserLayers, type Design, type LayoutSheet, type LayerSettings, type Point, type Profile, type Rect } from "./laser-layout.js";
 
 const position = z.object({ x: z.number().finite(), y: z.number().finite() });
 export const LaserMotionPlanSchema = z.object({
@@ -66,7 +66,7 @@ export function compileLaserPlan(design:Design,sheet:LayoutSheet,profiles:Record
  const layers:LayerSettings[]=orderedLaserLayers(design,profiles);
  const paths:LaserMotionPlan["paths"]=[];
  for(const layer of layers) for(const part of sheet.parts) {
-  const transform=(p:Point):Point=>({x:part.x+(part.rotated?design.height-p.y:p.x),y:part.y+(part.rotated?p.x:p.y)});
+  const transform=(p:Point):Point=>transformPlacedPoint(p,part,design.height);
   const source=design.paths.filter(p=>p.layer===layer.layer);
   const contours=source.map(p=>({closed:p.closed,points:linearPath(p,transform)}));
   if(layer.operation==="engrave") {

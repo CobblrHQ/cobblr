@@ -12,7 +12,7 @@ import { verifySession } from "./jwt.js";
 import { errors as joseErrors } from "jose";
 import { resolveApiToken } from "./api-tokens.js";
 import { tokenAccessAllows, type TokenAccess } from "./token-access.js";
-import { tokenScopeAllows } from "./scopes.js";
+import { isStationScope, tokenScopeAllows } from "./scopes.js";
 import { runWithActor, runVia, type Via } from "../lib/request-context.js";
 import { env } from "../env.js";
 
@@ -330,6 +330,7 @@ export async function requireAuth(
     let mcpWriteSlug: string | null = null;
     let shareViewSid: string | null = null;
     let tokenScopes: string[] | null = null;
+    let tokenName: string | null = null;
     let tokenGrant: { access: TokenAccess | null; orgId: string | null; orgSlug: string | null } | null = null;
     let tokenIssuedAt: number | null = null; // JWT iat (seconds), session/app only
     if (token.startsWith("cbt_")) {
@@ -339,6 +340,7 @@ export async function requireAuth(
         authMethod = "api_token";
         apiTokenId = resolved.tokenId;
         tokenScopes = resolved.scopes;
+        tokenName = resolved.name;
         // A connector's access token is for the MCP endpoint (its audience).
         // That endpoint reaches REST through this api with its proxy secret
         // (mcp-proxy.ts); from anywhere else the token is refused, so a token
@@ -540,12 +542,16 @@ export async function requireAuth(
     // header themselves, and it would only make their own request ask more:
     // the Cobb door never runs anything the person door would not.
     const client = String(req.headers["x-cobblr-client"] ?? "").toLowerCase();
+    // A station's tablet (#4640) acts as the person who approved it, and its
+    // rows say which station: "via Pantry station".
     const via: Via | null =
       mcpWriteSlug || mcpReadSlug || client === "cobb"
         ? { kind: "assistant" }
         : authMethod === "api_token" && client === "mcp"
           ? { kind: "mcp" }
-          : null;
+          : tokenScopes?.some(isStationScope)
+            ? { kind: "surface", label: tokenName }
+            : null;
     runWithActor(
       { userId: user.id, authMethod, apiTokenId, titlePref: user.title_pref ?? null },
       () => (via ? runVia(via, () => next()) : next()),

@@ -1,3 +1,6 @@
+import type { StockView, ConfigureStock, ConsumeStock, LoadStock } from "../api/stock-shapes";
+import type { z } from "zod";
+export type StockDetail = StockView & { uses: Array<{ id: string; source: string; verdict: string; amount: string; unit: string; at: string }>; loaded: { station: string; slot: string } | null };
 import type { storageView } from "../api/storage";
 export type StorageView = NonNullable<Awaited<ReturnType<typeof storageView>>>;
 import type { SheetChange, sheetView } from "../api/sheets";
@@ -235,6 +238,7 @@ export interface Part extends HomeBoxFields {
 }
 
 export interface ConsumptionRow {
+  unit?: string | null;
   id: string;
   delta: string; // signed: negative = consumed
   reason: string | null;
@@ -315,7 +319,6 @@ export interface InventoryApiOptions {
 }
 
 export class InventoryApi {
-  paste(id: string) { return this.partsRequest<import("../api/paste.js").PasteView>("GET", `/${id}/paste`); }
   storage = (id: string) => this.partsRequest<StorageView | null>("GET", `/${id}/storage`);
   constructor(private readonly slug: string, private readonly opts: InventoryApiOptions) {}
 
@@ -615,6 +618,10 @@ export class InventoryApi {
   };
   getPart = (id: string) => this.partsRequest<Part>("GET", `/${id}`);
   /** A consumable's ledger — what drew it down and how much, newest first. */
+  stockShape = (id: string) => this.request<StockDetail>("GET", `/stock/shapes/${id}`);
+  configureStock = (id: string, body: z.input<typeof ConfigureStock>) => this.request<{ warning?: string }>("PATCH", `/stock/shapes/${id}`, body);
+  consumeStock = (id: string, body: z.input<typeof ConsumeStock>) => this.request<{ warning?: string }>("POST", `/stock/shapes/${id}/consume`, body);
+  loadStock = (id: string, body: z.input<typeof LoadStock>) => this.request<unknown>("POST", `/stock/shapes/${id}/load`, body);
   sheet = (id: string) => this.partsRequest<SheetView | null>("GET", `/${id}/sheet`);
   changeSheet = (id: string, body: SheetChange) => this.partsRequest<SheetView>("POST", `/${id}/sheet`, body);
   findSheets = (body: { material: string; thickness_mm: number; width_mm: number; height_mm: number; rotate: boolean; offset: number }) => this.request<{ items: SheetView[]; total: number }>("GET", `/sheets/find?${new URLSearchParams(Object.entries(body).map(([k, v]) => [k, String(v)]))}`);

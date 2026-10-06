@@ -5,6 +5,8 @@ import { Router } from "express";
 import { remindersRouter } from "./reminders.js";
 import { entriesRouter } from "./entries.js";
 import { schedulesRouter } from "./schedules.js";
+import { termsRouter, endRenewalRoute } from "./terms.js";
+import { asyncHandler } from "./util.js";
 import { tick } from "../sweeper.js";
 import { registerMaintenanceHandlers } from "./handlers.js";
 
@@ -12,6 +14,9 @@ const router = Router({ mergeParams: true });
 router.use("/entries", entriesRouter);
 router.use("/reminders", remindersRouter);
 router.use("/schedules", schedulesRouter);
+router.use("/terms", termsRouter);
+// AI-ACTION: core-maintenance:end-renewal
+router.post("/schedules/:id/end", asyncHandler(endRenewalRoute));
 
 // Synchronous tick endpoint — fires the due-soon sweeper for THIS
 // workspace only. Used by tests + ops; the background interval

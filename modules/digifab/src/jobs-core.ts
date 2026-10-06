@@ -1,8 +1,13 @@
+import { authorizeCutterStart, requireCutterStation } from "./cutter-station.js";
+import { verifyCutterPlan } from "./cutter-plans.js";
+import { reserveResinPrint, checkResinStart, setResinPhase, settleResinPrint } from "./resin-prints.js";
 // Shared job logic — building a driver from a stored connection, and
 // polling a job's status. No express dependency, so both the HTTP route
 // and the core-queue poll worker use the same code.
 
 import { interpretReport, plainDriverError, unreachablePlan, POLL_MS } from "./job-truth.js";
+import { persistResinStart } from "./resin-start.js";
+import { enqueuePoll } from "./poll-worker.js";
 import { drawForCompletedJob } from "./loaded-spools.js";
 import { settleMakeForJob } from "./makes-core.js";
 import { platform } from "@cobblr/platform-contract";
@@ -349,7 +354,7 @@ export function buildEdgeRelay(
         const oe = ownerCreds.edge;
         const instance = id && oe && typeof oe.driver === "string" && oe.driver ? { id, driver: oe.driver, config: edgeDriverConfig(oe) } : undefined;
         const oeBridge = typeof (oe as { bridge?: unknown } | undefined)?.bridge === "string" ? ((oe as { bridge?: string }).bridge as string) : null;
-        const res = await platform().edge.send(edgeChannelKey(ownerOrg, oeBridge), { path: r.path, method, body: r.body, ...(instance ? { instance } : {}), ...(r.file ? { bodyFile: r.file } : {}) });
+        const res = await platform().edge.send(edgeChannelKey(ownerOrg, oeBridge), { path: r.path, method, body: r.body, ...(instance ? { instance } : {}), ...(r.file ? { bodyFile: r.file } : {}), ...(r.timeoutMs ? {timeoutMs:r.timeoutMs} : {}) });
         void odb.updateTable("digifab_edge_shares").set({ last_used_at: new Date() }).where("id", "=", shareId).execute().catch(() => {});
         return { status: res.status, body: res.body };
       } finally {
@@ -373,7 +378,7 @@ export function buildEdgeRelay(
       method: r.method === "POST" ? "POST" : "GET",
       body: r.body,
       ...(instance ? { instance } : {}),
-      ...(r.file ? { bodyFile: r.file } : {}),
+      ...(r.file ? { bodyFile: r.file } : {}), ...(r.timeoutMs ? {timeoutMs:r.timeoutMs} : {}),
     });
     return { status: res.status, body: res.body };
   };
@@ -523,6 +528,7 @@ export async function pollJob(
   }
 
   if (terminal) {
+    const cutterJob = !!await db.selectFrom("digifab_cutter_plans").select("id").where("job_id", "=", jobId).executeTakeFirst();
     // (F-1 bed-clear `needs_attention` was already written atomically with the
     // status flip above — see the transaction — so an assign pass can never see
     // the freed bed without the attention row.)
@@ -535,7 +541,7 @@ export async function pollJob(
     // on a clean completion — a failed print didn't consume the spool.
     const grams = job.material_grams != null ? Number(job.material_grams) : null;
     const material =
-      status === "completed" && job.material_part_id && grams && grams > 0
+      status === "completed" && driver.printProcess !== "resin" && job.material_part_id && grams && grams > 0
         ? {
             partId: job.material_part_id,
             delta: -grams,
@@ -550,7 +556,7 @@ export async function pollJob(
         : {};
     // No spool picked on the job: the spools loaded on its printer pay, each
     // for its own slot's grams.
-    if (status === "completed") {
+    if (status === "completed" && !cutterJob && driver.printProcess !== "resin") {
       await drawForCompletedJob(db, orgId, job as never).catch((err: unknown) =>
         console.error(`[digifab] job ${jobId}: drawing from the loaded spools failed: ${(err as Error).message}`),
       );
@@ -579,11 +585,11 @@ export async function pollJob(
     // reversed. A cancel made nothing and is not scrap; its commit is undone.
     // A completion is judged at the bed-clear verdict; one with no bed to clear
     // (no device on the job) has no verdict coming, so it counts as made now.
-    if (status === "failed") {
+    if (status === "failed" && !cutterJob) {
       await recordJobOutcome(db, orgId, jobId, "scrap", "print-failed");
     } else if (status === "cancelled") {
       await reverseBuildIfCommitted(db, orgId, jobId, "print cancelled");
-    } else if (!needsBedClear(job as never)) {
+    } else if (!cutterJob && !needsBedClear(job as never)) {
       await recordJobOutcome(db, orgId, jobId, "good", "auto");
     }
     // Discord/in-app update on the terminal outcome.
@@ -734,15 +740,17 @@ export async function recordJobOutcome(
 ): Promise<JobOutcomeRecorded> {
   const job = await db
     .selectFrom("digifab_jobs")
-    .select(["id", "run_id", "linked_build_id", "build_qty", "build_consumed_at", "build_reversed_at", "build_output_deferred", "outcome_at"])
+    .select(["id", "run_id", "linked_build_id", "build_qty", "build_consumed_at", "build_reversed_at", "build_output_deferred", "outcome_at", "resin_print"])
     .where("id", "=", jobId)
     .executeTakeFirst();
-  if (!job || job.outcome_at) return { recorded: false };
+  if (!job) return { recorded: false };
   const whole = Math.max(1, Number(job.build_qty ?? 1) || 1);
   const clean = (n: number) => Math.max(0, Math.floor(Number(n) || 0));
   const good = counts ? clean(counts.good) : outcome === "good" ? whole : 0;
   const scrap = counts ? clean(counts.scrap) : outcome === "good" ? 0 : whole;
   const settled: JobOutcome = good > 0 ? "good" : "scrap";
+  if (job.resin_print) await settleResinPrint(db, orgId, jobId, settled, null);
+  if (job.outcome_at) return { recorded: false };
 
   const claim = await db
     .updateTable("digifab_jobs")
@@ -957,19 +965,56 @@ async function sendClaimed(
   let up: Awaited<ReturnType<MachineDriver["uploadFile"]>>;
   let sub: SubmitResult;
   let doing = "uploading the file";
+  let cutter = false;
+  let resinAccepted = false;
+  let resinChecks = 0;
   try {
     doing = "preparing and starting the job";
-    const stationPermit = await sendDriver.jobReviewRequired?.() ? await authorizeLaserStart(db, orgId, job, approval) : undefined;
+    const reviewRequired = await sendDriver.jobReviewRequired?.();
+    const kind = reviewRequired ? await sendDriver.jobReviewKind?.() : undefined;
+    const plannedCut = await db.selectFrom("digifab_cutter_plans").select("id").where("job_id", "=", jobId).executeTakeFirst();
+    if (plannedCut && kind !== "cutter") throw new ReviewRequired("This prepared cut needs its original cutter driver. Restore that connection before Start.");
+    const printReview = approval && kind === "print" ? await sendDriver.getJobReview?.(approval.fileId) : undefined;
+    cutter = kind === "cutter";
+    const stationPermit = reviewRequired ? cutter ? await authorizeCutterStart(db, orgId, { ...job, target_device: deviceId }, approval) : await authorizeLaserStart(db, orgId, { ...job, target_device: deviceId }, approval, printReview) : undefined;
+    if (sendDriver.printProcess === "resin") {
+      if (!approval) throw new ReviewRequired("Review this resin print at its station before Start.");
+      await reserveResinPrint(db, orgId, jobId, approval.fileId);
+    }
     const layout = job.laser_layout;
     if (layout && approval && sendDriver.getJobReview) {
       try { const review = await sendDriver.getJobReview(approval.fileId); verifyLaserOutput(layout.expected, review); if (review.contentHash !== layout.content_hash) throw new Error("The queued layout file changed. Make a new plan."); } catch (e) { throw new ReviewRequired(e instanceof Error ? e.message : "The generated settings changed."); }
     }
-    const checkStartAllowed = sendDriver.laserBackend ? async () => {
+    let cutterMayHaveStarted = false;
+    const checkStartAllowed = sendDriver.laserBackend || cutter || sendDriver.printProcess === "resin" ? async () => {
+      if (sendDriver.printProcess === "resin" && resinChecks++ > 0) {
+        resinAccepted = true;
+        await setResinPhase(db, jobId, "started");
+      }
       const current = await db.selectFrom("digifab_jobs").select(["cancel_requested_at", "status"]).where("id", "=", jobId).executeTakeFirst();
       if (!current || current.cancel_requested_at || TERMINAL.has(current.status)) throw new ReviewRequired("Stop was requested. Review this job again before Start.");
+      if (cutter && deviceId) {
+        await requireCutterStation(db, connectionId, deviceId, approval?.stationToken);
+        await verifyCutterPlan(db, orgId, jobId, connectionId, deviceId, true, cutterMayHaveStarted);
+        if (!cutterMayHaveStarted) {
+          await db.updateTable("digifab_cutter_plans").set({ started_at: new Date() }).where("job_id", "=", jobId).where("started_at", "is", null).execute();
+          cutterMayHaveStarted = true;
+        }
+      }
+      if (sendDriver.printProcess === "resin") {
+        await authorizeLaserStart(db, orgId, { ...job, target_device: deviceId }, approval, printReview);
+        await checkResinStart(db, orgId, jobId);
+      }
     } : undefined;
     ({ up, sub } = await submitReviewedJob(sendDriver, fileBytes, uploadName, { deviceId, tag: job.target_tag, idempotencyKey: token, approval, checkStartAllowed }, stationPermit));
   } catch (e) {
+    if (sendDriver.printProcess === "resin") {
+      if (resinAccepted && approval) {
+        const remote = `cobblr-${approval.fileId}.goo`;
+        await db.updateTable("digifab_jobs").set({ remote_job_id: remote, sent_at: new Date(), cancel_requested_at: new Date(), updated_at: new Date() }).where("id", "=", jobId).execute();
+        await enqueuePoll(orgId, jobId);
+      } else await setResinPhase(db, jobId, "released");
+    }
     if (e instanceof ReviewRequired) return { ok: false, code: "send_failed", message: e.message };
     const message = plainDriverError(e, await managerName(orgId, connectionId), doing).slice(0, 300);
     await markJobTerminal(db, job, "failed", { error: message });
@@ -982,15 +1027,14 @@ async function sendClaimed(
   // track it at the manager (manual poll can't help either).
   const remoteJobId = sub.jobId ? String(sub.jobId) : null;
   const untrackable = sub.queued && !remoteJobId;
-  await db
-    .updateTable("digifab_jobs")
-    .set({
+  const sentFields = {
+      ...(sub.interrupted ? {cancel_requested_at: new Date()} : {}),
       remote_file_id: up.fileId,
       remote_job_id: remoteJobId,
       target_device: sub.deviceId ?? deviceId,
       status,
       sent_at: new Date(),
-      ...(sendDriver.laserBackend ? {} : { cancel_requested_at: null }),
+      ...(sendDriver.laserBackend || cutter || sendDriver.printProcess === "resin" ? {} : { cancel_requested_at: null }),
       send_token: null,
       send_claimed_at: null,
       // A note from before the send (a stopped send, a retry waiting on the
@@ -999,9 +1043,15 @@ async function sendClaimed(
       poll_errors: 0,
       unreachable_since: null,
       updated_at: new Date(),
-    })
-    .where("id", "=", jobId)
-    .execute();
+    };
+  if (sendDriver.printProcess === "resin") {
+    await setResinPhase(db, jobId, "started");
+    if (!deviceId || !await persistResinStart(db, sendDriver, deviceId, jobId, token, sentFields)) {
+      if (remoteJobId) await enqueuePoll(orgId, jobId);
+      return { ok: false, code: "send_failed", message: "Stop was requested. Waiting for the printer to confirm it stopped." };
+    }
+  } else await db.updateTable("digifab_jobs").set(sentFields).where("id", "=", jobId).execute();
+  if (cutter) await db.updateTable("digifab_cutter_plans").set({ started_at: new Date() }).where("job_id", "=", jobId).execute();
   void platform().events.emit("digifab.job.sent", { orgId, jobId, status });
   await commitBuildIfLinked(db, orgId, jobId, job, status);
   if (sub.queued) {

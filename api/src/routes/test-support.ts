@@ -13,6 +13,7 @@ import { rehomeAssetsInstanceToRecords } from "../platform/rehome-instance.js";
 import { reconcileScanCategoryFields, retireScanCategoryPlaceholders } from "../platform/reconcile-scan-category.js";
 import { runAllTenantSweeps, runTenantSweep } from "../platform/tenant-sweeps.js";
 import { setSubscriberDelayForTests } from "../platform/events.js";
+import { mirrorApplyHoldReached, setMirrorApplyHoldForTests } from "../platform/share-mirror.js";
 import * as notifications from "../platform/notifications.js";
 import { registerHandler } from "../platform/actions.js";
 import { ActionRefusal, PLATFORM_OWNER } from "@cobblr/platform-contract";
@@ -274,6 +275,34 @@ testSupportRouter.post("/test-support/subscriber-delay", (req, res) => {
   }
   setSubscriberDelayForTests({ event, orgId: org_id, ms });
   res.json({ ok: true, event, org_id, ms });
+});
+
+// Hold a share's mirror inside its apply on one share space, before or after
+// it writes the owner's change onto the copy, so a test lands the friend's
+// edit exactly there (a friend's edit lost to the mirror). Body: { slug (the
+// share space), at: "before-write" | "after-write", ms }; ms 0 clears. GET
+// reports how many applies reached it, the positive control.
+testSupportRouter.post("/test-support/mirror-apply-hold", async (req, res, next) => {
+  try {
+    const { slug, at, ms } = (req.body ?? {}) as { slug?: string; at?: string; ms?: number };
+    if (!slug || (at !== "before-write" && at !== "after-write") || typeof ms !== "number") {
+      res.status(400).json({ error: { code: "bad_body", message: "slug + at (before-write|after-write) + ms required" } });
+      return;
+    }
+    const o = await meta.selectFrom("orgs").select("id").where("slug", "=", slug).executeTakeFirst();
+    if (!o) {
+      res.status(404).json({ error: { code: "not_found", message: "no such workspace" } });
+      return;
+    }
+    setMirrorApplyHoldForTests({ orgId: o.id, at, ms });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+testSupportRouter.get("/test-support/mirror-apply-hold", (_req, res) => {
+  res.json({ reached: mirrorApplyHoldReached() });
 });
 
 // Hold every outbound fetch whose URL contains a substring until the test

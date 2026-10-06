@@ -43,6 +43,7 @@ export function verifyExportToken(token: string): { orgId: string; fileId: strin
   const b = Buffer.from(expected);
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
   try {
+    // b64-lenient-ok: the signature was checked over the payload string as given, so only its one spelling reaches here.
     const { o, f, e } = JSON.parse(Buffer.from(payload, "base64url").toString()) as { o?: unknown; f?: unknown; e?: unknown };
     if (typeof o !== "string" || typeof e !== "number" || Date.now() > e) return null;
     return { orgId: o, fileId: typeof f === "string" ? f : null };

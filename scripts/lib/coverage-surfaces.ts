@@ -17,6 +17,7 @@
 //   module:<name>         every stock module's own page, /<name>
 // Write routes join when the API's mutating-route reader lands in scripts/lib.
 
+import { moduleForRoute } from "../../packages/platform-contract/src/app-catalog.ts";
 import { ORG_ROLES } from "../../packages/platform-contract/src/org-roles.ts";
 
 export interface Dimension {
@@ -90,22 +91,6 @@ export function deriveSurfaces(i: Inputs): Surface[] {
     if (m.nav?.route) navRoutes.add(norm(m.nav.route));
     if (m.band !== "foundational" && !m.name.startsWith("core-")) navRoutes.add(`/${m.name}`);
   }
-  // The module a path belongs to: the longest module whose name or nav route starts it.
-  const moduleOf = (path: string): string | null => {
-    let best: string | null = null;
-    let len = 0;
-    for (const m of i.manifests) {
-      for (const root of [`/${m.name}`, m.nav?.route ? norm(m.nav.route) : null]) {
-        if (!root) continue;
-        const bare = root.replace(/\/\*$/, "");
-        if ((path === bare || path.startsWith(bare + "/")) && bare.length > len) {
-          best = m.name;
-          len = bare.length;
-        }
-      }
-    }
-    return best;
-  };
   const firstRun = (mod: string | null) => mod === null || i.defaultModules.has(mod);
 
   const out = new Map<string, Surface>();
@@ -116,7 +101,7 @@ export function deriveSurfaces(i: Inputs): Surface[] {
   for (const r of i.appRoutes) {
     if (r.redirect) continue;
     const path = norm(r.path);
-    const mod = moduleOf(path);
+    const mod = moduleForRoute(path, i.manifests);
     add({ id: `route:${path}`, kind: "route", label: path, module: mod, area: areaOf(mod), nav: navRoutes.has(path), first_run: firstRun(mod), source: i.appFile, applicable: PAGE_DIMS, path });
   }
   for (const r of i.moduleRoutes) {

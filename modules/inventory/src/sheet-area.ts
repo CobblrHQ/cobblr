@@ -1,8 +1,9 @@
+import polygonClipping from "polygon-clipping";
 export interface Rect { x: number; y: number; width: number; height: number }
 export interface Point { x: number; y: number }
 export interface SheetSpec { material: string; thickness_mm: number; width_mm: number; height_mm: number; minimum_usable_mm: number; offcut_percent: number }
-export interface SheetState { used: Rect[]; edits: Rect[][]; sources: string[] }
-export interface SheetArea { free_rectangles: Rect[]; used_outlines: Point[][]; percent_left: number; offcut: boolean }
+export interface SheetState { used: Rect[]; edits: Rect[][]; sources: string[]; polygons?: Point[][] }
+export interface SheetArea { free_rectangles: Rect[]; used_outlines: Point[][]; percent_left: number; offcut: boolean; cut_capacity: { shapes: number; vertices: number; sources: number } }
 export const emptySheetState = (): SheetState => ({ used: [], edits: [], sources: [] });
 const edgeX = (r: Rect) => r.x + r.width;
 const edgeY = (r: Rect) => r.y + r.height;
@@ -89,7 +90,8 @@ function outlines(rectangles: Rect[]): Point[][] {
       return !(before.x === p.x && p.x === after.x || before.y === p.y && p.y === after.y);
     }));
   }
-  if (result.every(p => p.length <= 24)) return result;
+  const hasHoles = result.some(p => p.reduce((sum,v,i) => { const next=p[(i+1)%p.length]!; return sum+v.x*next.y-v.y*next.x; },0)<0);
+  if (!hasHoles && result.every(p => p.length <= 24)) return result;
   // Exact strips keep gaps and holes when a boundary is too long to draw plainly.
   const strips: Rect[] = [];
   for (let y = 0; y < ys.length - 1; y++) {
@@ -105,9 +107,10 @@ function outlines(rectangles: Rect[]): Point[][] {
 
 export function sheetArea(s: SheetSpec, state: SheetState): SheetArea {
   const used = state.used.map(r => clipped(r, whole(s))).filter(positive);
-  const free = subtractRectangles([whole(s)], used).filter(r => r.width >= s.minimum_usable_mm && r.height >= s.minimum_usable_mm);
-  const percent = unionArea(free) / (s.width_mm * s.height_mm) * 100;
-  return { free_rectangles: free, used_outlines: outlines(used), percent_left: percent, offcut: percent <= s.offcut_percent };
+  const polygons = state.polygons ?? [];
+  const free = subtractRectangles([whole(s)], [...used, ...polygons.map(polygonBounds)]).filter(r => r.width >= s.minimum_usable_mm && r.height >= s.minimum_usable_mm);
+  const percent = polygons.length ? (s.width_mm * s.height_mm - occupiedArea([...used.map(rectPoints), ...polygons])) / (s.width_mm * s.height_mm) * 100 : unionArea(free) / (s.width_mm * s.height_mm) * 100;
+  return { cut_capacity: { shapes: Math.max(0,512-state.used.length-polygons.length), vertices: Math.max(0,32768-state.used.length*4-polygons.reduce((n,p)=>n+p.length,0)), sources: Math.max(0,512-state.sources.length) }, free_rectangles: free, used_outlines: polygons.length ? [...used.map(rectPoints), ...polygons] : outlines(used), percent_left: percent, offcut: percent <= s.offcut_percent };
 }
 export function fitsSheet(area: SheetArea, width: number, height: number, rotate = true): boolean {
   return area.free_rectangles.some(r => r.width >= width && r.height >= height || rotate && r.width >= height && r.height >= width);
@@ -121,17 +124,17 @@ export function recordCut(s: SheetSpec, state: SheetState, boxes: Rect[], kerf: 
   if (!boxes.length || ![kerf, spacing].every(v => Number.isFinite(v) && v >= 0 && v <= 1000)) throw new Error("Give the cut rectangles, kerf and spacing in millimetres.");
   const margin = (kerf + spacing) / 2;
   const expanded = boxes.map(r => clipped({ x: r.x - margin, y: r.y - margin, width: r.width + margin * 2, height: r.height + margin * 2 }, whole(s)));
-  if (expanded.some(r => state.used.some(c => overlaps(r, c)))) throw new Error("This cut reaches an area already used. Check its position.");
-  if (state.used.length + expanded.length > 512 || state.sources.length >= 512) throw new Error("This sheet has too many recorded cuts.");
-  const next = { used: [...state.used, ...expanded], edits: [], sources: source ? [...state.sources, source] : state.sources };
+  if (expanded.some(r => state.used.some(c => overlaps(r, c)) || (state.polygons ?? []).some(p => intersects(rectPoints(r),p)))) throw new Error("This cut reaches an area already used. Check its position.");
+  if (state.used.length + expanded.length + (state.polygons?.length ?? 0) > 512 || (state.used.length + expanded.length)*4 + (state.polygons ?? []).reduce((n,p)=>n+p.length,0) > 32768 || state.sources.length >= 512) throw new Error("This sheet has too many recorded cuts.");
+  const next = { ...state, used: [...state.used, ...expanded], edits: [], sources: source ? [...state.sources, source] : state.sources };
   sheetArea(s, next);
   return next;
 }
 export function editFreeArea(s: SheetSpec, state: SheetState, free: Rect[]): SheetState {
   validateRectangles(s, free);
-  if (free.some(r => state.used.some(c => overlaps(r, c)))) throw new Error("A hand edit cannot restore an area already used. Undo the previous hand edit instead.");
+  if (free.some(r => state.used.some(c => overlaps(r, c)) || (state.polygons ?? []).some(p => intersects(rectPoints(r),p)))) throw new Error("A hand edit cannot restore an area already used. Undo the previous hand edit instead.");
   const used = subtractRectangles([whole(s)], free, false);
-  if (used.length > 512) throw new Error("Use fewer rectangles for this hand edit.");
+  if (used.length + (state.polygons?.length ?? 0) > 512 || used.length*4 + (state.polygons ?? []).reduce((n,p)=>n+p.length,0) > 32768) throw new Error("Use fewer rectangles for this hand edit.");
   const next = { ...state, used, edits: [...state.edits.slice(-19), state.used] };
   sheetArea(s, next);
   return next;
@@ -139,4 +142,22 @@ export function editFreeArea(s: SheetSpec, state: SheetState, free: Rect[]): She
 export function undoFreeEdit(state: SheetState): SheetState {
   if (!state.edits.length) throw new Error("No hand edit to undo.");
   return { ...state, used: state.edits[state.edits.length - 1]!, edits: state.edits.slice(0, -1) };
+}
+const rectPoints = (r: Rect): Point[] => [{x:r.x,y:r.y},{x:edgeX(r),y:r.y},{x:edgeX(r),y:edgeY(r)},{x:r.x,y:edgeY(r)}];
+const ring = (p: Point[]): [number, number][] => [...p,p[0]!].map(v=>[v.x,v.y]);
+const polygonBounds = (p: Point[]): Rect => { const x=Math.min(...p.map(v=>v.x)),y=Math.min(...p.map(v=>v.y));return {x,y,width:Math.max(...p.map(v=>v.x))-x,height:Math.max(...p.map(v=>v.y))-y}; };
+const multiArea = (polygons: polygonClipping.MultiPolygon) => polygons.reduce((n,p)=>n+p.reduce((sum,r,i)=>sum+(i?-1:1)*Math.abs(r.reduce((a,v,j)=>{const b=r[(j+1)%r.length]!;return a+v[0]*b[1]-v[1]*b[0];},0))/2,0),0);
+const occupiedArea = (p: Point[][]) => p.length ? multiArea(polygonClipping.union(...p.map(v=>[ring(v)] as polygonClipping.Polygon) as [polygonClipping.Polygon,...polygonClipping.Polygon[]])) : 0;
+const intersects = (a: Point[], b: Point[]) => multiArea(polygonClipping.intersection([ring(a)],[ring(b)])) > 1e-5;
+export function recordOutlineCut(s: SheetSpec, state: SheetState, polygons: Point[][], source?: string): SheetState {
+ if (source && state.sources.includes(source)) return state;
+ if (!polygons.length || polygons.length > 128 || polygons.some(p=>p.length<3||p.length>256||p.some(v=>!Number.isFinite(v.x)||!Number.isFinite(v.y)||v.x < -0.0001||v.y < -0.0001||v.x>s.width_mm+0.0001||v.y>s.height_mm+0.0001))) throw new Error("Use up to 128 cut outlines with 3 to 256 vertices inside the sheet.");
+ const clean=polygons.map(p=>p.map(v=>({x:Math.max(0,Math.min(s.width_mm,v.x)),y:Math.max(0,Math.min(s.height_mm,v.y))})));
+ const prior=[...state.used.map(rectPoints),...(state.polygons??[])];
+ if (clean.some(p=>occupiedArea([p])<=1e-5 || prior.some(q=>intersects(p,q)))) throw new Error("This cut reaches an area already used or has an invalid outline. Check its position.");
+ const all=[...(state.polygons??[]),...clean];
+ if (state.used.length+all.length>512 || state.used.length*4+all.reduce((n,p)=>n+p.length,0)>32768 || state.sources.length>=512) throw new Error("This sheet has too many recorded cut outlines.");
+ const next={...state,polygons:all,edits:[],sources:source?[...state.sources,source]:state.sources};
+ sheetArea(s,next);
+ return next;
 }

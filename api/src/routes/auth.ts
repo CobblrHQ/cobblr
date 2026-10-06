@@ -602,6 +602,7 @@ authRouter.post("/signup", async (req, res, next) => {
 
     // Send an email-verification link (best-effort — never blocks signup;
     // no-op delivery when no auth-email sender is configured).
+    // DETACHED: an email; the account exists without it, and the sign-in page offers a resend
     void issueAndSendVerifyEmail(userId, email, req).catch((err) =>
       console.error("[signup] verify-email send failed:", err),
     );
@@ -818,6 +819,7 @@ authRouter.post("/login", async (req, res, next) => {
     // Email-verification gate (trial): deny login until verified, and resend the
     // link so the user has a fresh one. No-op unless COBBLR_REQUIRE_EMAIL_VERIFY.
     if (requireEmailVerify() && !user.email_verified_at) {
+      // DETACHED: an email; the refusal already says to check for it, and asking again resends
       void issueAndSendVerifyEmail(user.id, email, req).catch((e) =>
         console.error("[login] verify-email resend failed:", e),
       );
@@ -1941,6 +1943,7 @@ authRouter.post("/pair/start", requireAuth, async (req, res, next) => {
     }
     // Reaper (best-effort, fire-and-forget): keep the table bounded by dropping
     // rows well past expiry. Cheap, runs only on a mint, never blocks the claim.
+    // DETACHED: housekeeping of expired codes; the next mint tries again
     void meta
       .deleteFrom("auth_pair_codes")
       .where("expires_at", "<", new Date(Date.now() - 3_600_000))
@@ -2098,6 +2101,7 @@ authRouter.post("/pair/claim", async (req, res, next) => {
     const targetOrgSlug = stillMember ? claimed.org_slug : null;
     const out = await buildAuthResponse(claimed.user_id);
     // Audit the login (best-effort — never block the claim on logging).
+    // DETACHED: the audit row of a sign-in; the sign-in itself is complete without it
     void activity
       .log({
         orgId: (

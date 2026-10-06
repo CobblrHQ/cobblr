@@ -1,0 +1,17 @@
+{
+  "name": "Cobblr Station",
+  "short_name": "Station",
+  "description": "A tablet and a barcode scanner: scan something, see it, change its count.",
+  "start_url": "/station",
+  "scope": "/station",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "any",
+  "background_color": "#3D4451",
+  "theme_color": "#3D4451",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

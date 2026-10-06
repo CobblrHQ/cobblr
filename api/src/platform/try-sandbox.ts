@@ -133,6 +133,11 @@ export async function isSandboxUser(userId: string): Promise<boolean> {
   return !!row?.email?.endsWith(`@${SANDBOX_EMAIL_DOMAIN}`);
 }
 
+/** How long a new guest is safe from the prune: far longer than provisioning
+ *  (the tenant database and its migrations) can take, far shorter than a
+ *  sandbox's hour. */
+export const GUEST_BIRTH_GRACE_MS = 10 * 60_000;
+
 /** Delete guest accounts that no longer belong to any workspace.
  *
  *  A sandbox user exists only for its sandbox, and hardDeleteOrg removes the
@@ -143,10 +148,17 @@ export async function isSandboxUser(userId: string): Promise<boolean> {
  *  Scoped to guests with no remaining membership, so it can never reach
  *  somebody who kept their workspace (their address is real by then) or a
  *  sandbox still waiting in the pool (its org still exists). */
-export async function pruneOrphanSandboxUsers(): Promise<number> {
+export async function pruneOrphanSandboxUsers(now: number = Date.now()): Promise<number> {
   const res = await meta
     .deleteFrom("users")
     .where("email", "like", `%@${SANDBOX_EMAIL_DOMAIN}`)
+    // A guest is BORN before their workspace: createSandboxUser, then
+    // provisionOrg adds the membership. A sweep landing in that gap saw an
+    // orphan and deleted the guest mid-provision, so the start answered 500
+    // (seen as a flaky "GET /try/start should redirect", 2026-10-06; the same
+    // window exists on the live box). Only a guest old enough that no
+    // provisioning can still be running is an orphan.
+    .where("created_at", "<", new Date(now - GUEST_BIRTH_GRACE_MS))
     .where(({ not, exists, selectFrom }) =>
       not(
         exists(

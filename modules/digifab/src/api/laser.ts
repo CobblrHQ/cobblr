@@ -1,3 +1,7 @@
+import { LaserSetupRequestSchema } from "@cobblr/platform-contract/laser-setup";
+import { runLaserSetup } from "../laser-setup.js";
+import { ReviewRequired } from "../drivers/job-review.js";
+import { DriverSaid } from "../job-truth.js";
 import { sql } from "kysely";
 import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 import { Router, type Response } from "express";
@@ -8,9 +12,14 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 import { parseDesign } from "../laser-design.js";
 import { ProfileSchema } from "../laser-layout.js";
 import { acceptLaserPlan, LaserPlanRefusal } from "../laser-plans.js";
-import { Machine, Plan, NewProfile, createLaserProfile, createLaserPlan, discardLaserPlan, importLaserProfiles, updateLaserProfile } from "./laser-writes.js";
+import { Machine, Plan, NewProfile, createLaserProfile, NestDrawing, nestDrawing, createLaserPlan, discardLaserPlan, importLaserProfiles, updateLaserProfile } from "./laser-writes.js";
 export const laserRouter = Router({ mergeParams: true });
 const refuse = (res: Response, e: unknown) => { if (!(e instanceof LaserPlanRefusal)) throw e; res.status(409).json({ error: { code: "laser_plan_refused", message: e.message } }); };
+const setupRefusal=(res:Response,error:unknown)=>{
+ if(error instanceof ReviewRequired)return res.status(409).json({error:{code:"laser_setup_refused",message:error.message}});
+ if(error instanceof DriverSaid)return res.status(502).json({error:{code:"laser_connection_failed",message:error.message}});
+ throw error;
+};
 laserRouter.get("/profiles", asyncHandler(async (req, res) => {
  const p = Machine.safeParse(req.query); if (!p.success) return badBody(res, p.error);
  res.json({ items: await tenantDb(req).selectFrom("digifab_laser_profiles").selectAll().where("connection_id", "=", p.data.connection_id).where("remote_device_id", "=", p.data.device_id).orderBy("created_at", "asc").execute() });
@@ -62,4 +71,23 @@ laserRouter.post("/plans/:id/accept", asyncHandler(async (req, res) => {
 laserRouter.delete("/plans/:id", asyncHandler(async (req, res) => {
  if (!requireRole(req, res, "owner", "admin")) return;
  try { res.json(await discardLaserPlan(tenantDb(req), req.params.id!)); } catch (e) { refuse(res, e); }
+}));
+
+laserRouter.get("/setup", asyncHandler(async (req,res)=>{
+ if(!requireRole(req,res,"owner","admin"))return;
+ const parsed=LaserSetupRequestSchema.safeParse({...req.query,operation:"read"});if(!parsed.success)return badBody(res,parsed.error);
+ try{res.json(await runLaserSetup(tenantDb(req),tenantContext(req).org.id,parsed.data));}catch(error){setupRefusal(res,error);}
+}));
+// AI-ACTION: digifab:laser-setup
+// UI-SCREEN: /station/machine/:connectionId/:deviceId
+laserRouter.post("/setup", asyncHandler(async (req,res)=>{
+ if(!requireRole(req,res,"owner","admin"))return;
+ const parsed=LaserSetupRequestSchema.safeParse(req.body);if(!parsed.success)return badBody(res,parsed.error);
+ try{res.json(await runLaserSetup(tenantDb(req),tenantContext(req).org.id,parsed.data));}catch(error){setupRefusal(res,error);}
+}));
+// AI-ACTION: digifab:laser-batch
+laserRouter.post("/nest", asyncHandler(async (req,res)=>{
+ if (!requireRole(req,res,"owner","admin")) return;
+ const p=NestDrawing.safeParse(req.body);if(!p.success)return badBody(res,p.error);
+ try { res.json(await nestDrawing(tenantDb(req),tenantContext(req).org.id,p.data)); } catch(e) { refuse(res,e); }
 }));

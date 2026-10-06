@@ -236,9 +236,13 @@ async function chatPrefsOf(req: Parameters<typeof tenantDb>[0]): Promise<ChatToo
  *  write off → [] → no tools sent, pure conversation. Exported for tests. */
 export function toolDefsFor(
   prefs: ChatToolPrefs,
-  opts: { services?: boolean; "scan-stations"?: boolean } = {},
+  opts: { services?: boolean; "scan-stations"?: boolean; modules?: ReadonlySet<string> | null } = {},
 ): Array<{ name: string; description: string; parameters: unknown }> {
   return WORKSPACE_TOOLS.filter((t) => !t.sentWhen || !!opts[t.sentWhen])
+    // A module's tools only where the module is on. Not knowing which are on
+    // (the read failed) sends them all: a tool too many costs characters, a
+    // tool hidden costs the person the answer.
+    .filter((t) => !t.module || !opts.modules || opts.modules.has(t.module))
     .filter((t) => (t.consentBy ? true : t.mode === "read" ? prefs.read_tools : prefs.write_mode !== "off"))
     .map(
     (t) => ({
@@ -816,7 +820,12 @@ async function answerTurn(
   const hasStations = await callApi(c, "GET", "/scan-stations")
     .then((r) => r.status < 400 && Array.isArray(r.body.items) && r.body.items.length > 0)
     .catch(() => false);
-  const toolDefs = toolDefsFor(prefs, { services: hasServices, "scan-stations": hasStations });
+  const enabledModules = await callApi(c, "GET", "/modules")
+    .then((r) => (r.status < 400 && Array.isArray(r.body.items)
+      ? new Set((r.body.items as Array<{ name?: string; enabled?: boolean; enabled_at?: string | null }>).filter((m) => m.enabled === true || !!m.enabled_at).map((m) => String(m.name)))
+      : null))
+    .catch(() => null);
+  const toolDefs = toolDefsFor(prefs, { services: hasServices, "scan-stations": hasStations, modules: enabledModules });
   // Service jobs are started on Cobb's door, not the person's: the header
   // makes the api stamp them as Cobb's, so they follow Cobb's consent.
   const cobbApi = chatWorkspaceApi({ ...c, client: "cobb" });
@@ -1335,11 +1344,12 @@ chatRouter.post(
     // day, and anything stranded "running" for an hour (a process died mid-turn)
     // is marked failed so a tab does not sit on it forever. A per-tenant timer
     // would need a pool per tenant held open; this needs nothing.
-    if (Math.random() < 0.02) void sweepTurns(tdb).then(() => sweepOffers(tdb)).catch(() => {});
+    if (Math.random() < 0.02) void sweepTurns(tdb).then(() => sweepOffers(tdb)).catch(() => {}); // DETACHED: an occasional sweep of stale turns; the next request runs another
 
     // Detached. The request is answered; this continues on its own. Every
     // outcome - success, a refused provider, a thrown error - lands in the
     // turn row and its event log, so nothing about it depends on a socket.
+    // DETACHED: the turn itself; every outcome lands in its turn row, which the client reads
     void (async () => {
       try {
         const result = await withDeadline(

@@ -1,3 +1,4 @@
+import { perReadRequest } from "../lib/request-context.js";
 // A custom field reads back where it was written.
 //
 // A write takes a custom field at the top level (`{board: "Duet 2"}`: the
@@ -28,6 +29,10 @@ export function clearCustomFieldNamesCache(): void {
 }
 
 async function customFieldNames(orgId: string, kind: string): Promise<string[]> {
+  return perReadRequest(`custom-field-names:${orgId}:${kind}`, () => loadCustomFieldNames(orgId, kind));
+}
+
+async function loadCustomFieldNames(orgId: string, kind: string): Promise<string[]> {
   const key = `${orgId}:${kind}`;
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.names;

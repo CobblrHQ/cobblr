@@ -45,6 +45,11 @@ interface WorkspaceToolBase {
    *  always sent. "services": only when at least one service capability is
    *  connected here, which on most turns in most workspaces it is not. */
   sentWhen?: "services" | "scan-stations";
+  /** The module this tool belongs to: sent only where that module is on. A
+   *  workspace without a laser never pays for the laser's tools, so the
+   *  every-turn budget holds the kernel's tools and each module's own set
+   *  grows apart from it (lint:tool-descriptions). Absent: a kernel tool. */
+  module?: string;
   execute(api: WorkspaceApi, args: Record<string, unknown>): Promise<ToolResult>;
 }
 
@@ -731,7 +736,6 @@ export const ESCORT_DESTINATIONS: EscortDestination[] = [
   },
   {
     id: "ai-config",
-    covered_by: ["builds:configure-placement-machine"],
     path: "/configuration/ai",
     label: "AI providers",
     prefill: {},
@@ -811,6 +815,7 @@ const ROLES_SAID = "By role: acquired-from, seller, acquired-on, acquired-for";
 
 export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
+    module: "digifab",
     name: "read_fabrication_floor", description: "Read all active machine queues, material stock, batch layouts and restock needs.", mode: "read",
     paging: { by: "one-call", why: "Complete current floor state, not job history." }, params: {},
     execute: async api => {
@@ -820,32 +825,41 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     },
   },
   {
+    module: "digifab",
     name: "read_laser_batch",
-    description: "Read a drawing, machine profiles or paged saved laser layouts.",
+    description: "Read laser/cutter drawings, profiles, plans, setup or cutter station.",
     mode: "read",
     paging: { by: "cursor" },
     params: {
-      operation: z.enum(["design", "plans", "profiles"]),
-      id: z.string().describe("Library id; connection id for profiles"),
+      operation: z.enum(["design", "plans", "profiles", "setup", "cutter_profiles", "cutter_station"]),
+      id: z.string().describe("Library or connection id"),
       device_id: z.string().optional().describe("Device id"),
       units: z.enum(["mm", "in"]).optional().describe("Undeclared DXF units"),
       cursor: CURSOR_PARAM,
     },
     execute: async (api, args) => {
-      const cursor = decodeCursor<{ offset: number; id: string; operation: string }>("read_laser_batch", args.cursor);
+      const cursor = decodeCursor<{ offset: number; id: string; operation: string; device_id?: string }>("read_laser_batch", args.cursor);
       if (!cursor.ok) return toolFail(cursor.error);
-      if (cursor.state && (cursor.state.id !== args.id || cursor.state.operation !== args.operation)) return toolFail("Use the cursor for this drawing and operation, or omit it to start again.");
+      if (cursor.state && (cursor.state.id !== args.id || cursor.state.operation !== args.operation || cursor.state.operation === "cutter_profiles" && cursor.state.device_id !== args.device_id)) return toolFail("Use the cursor for this drawing and operation, or omit it to start again.");
       const id = encodeURIComponent(String(args.id ?? ""));
       const offset = cursor.state?.offset ?? 0;
       let path: string;
       if (args.operation === "design") path = `/modules/digifab/laser/design/${id}?units=${args.units === "in" ? "in" : "mm"}`;
       else if (args.operation === "plans") path = `/modules/digifab/laser/plans?library_id=${id}&limit=20&offset=${offset}`;
       else if (args.operation === "profiles") path = `/modules/digifab/laser/profiles?connection_id=${id}&device_id=${encodeURIComponent(String(args.device_id ?? ""))}`;
-      else return toolFail("Choose design, plans or profiles.");
+      else if (args.operation === "cutter_profiles" || args.operation === "cutter_station") {
+        if (!args.device_id) return toolFail("Choose a cutter device id.");
+        path = `/modules/digifab/cutter/${args.operation === "cutter_profiles" ? "profiles" : "station"}?connection_id=${id}&device_id=${encodeURIComponent(String(args.device_id))}&limit=20&offset=${offset}`;
+      }
+      else if (args.operation === "setup") {
+        if (!args.device_id) return toolFail("Choose a device id for this laser connection.");
+        path = `/modules/digifab/laser/setup?connection_id=${id}&device_id=${encodeURIComponent(String(args.device_id))}`;
+      }
+      else return toolFail("Choose design, plans, profiles or setup.");
       const res = await api.request("GET", path);
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "Could not read the laser batch"));
       const items = Array.isArray(res.body.items) ? res.body.items : [];
-      const next = args.operation === "plans" && offset + items.length < Number(res.body.total) ? { offset: offset + items.length, id: String(args.id), operation: String(args.operation) } : null;
+      const next = ["plans", "cutter_profiles"].includes(String(args.operation)) && offset + items.length < Number(res.body.total) ? { offset: offset + items.length, id: String(args.id), operation: String(args.operation), ...(args.operation === "cutter_profiles" ? {device_id:String(args.device_id)} : {}) } : null;
       return toolOk({ ...res.body, ...pageEnd("read_laser_batch", next) });
     },
   },
@@ -1558,12 +1572,15 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     },
   },
   {
+    module: "core-maintenance",
     name: "list_maintenance",
     description:
-      "Read scheduled and completed maintenance for machines, vehicles, assets and tools. Use for service due dates, overdue tasks and past work.",
+      "Read service reminders and history. Set terms for paid renewal terms, receipts and spend totals.",
     mode: "read",
     paging: { by: "cursor" },
     params: {
+      terms: z.boolean().optional(),
+      year: z.number().int().optional(),
       due: z.boolean().optional().describe("Only scheduled, not yet done"),
       history: z.boolean().optional().describe("Only work already done"),
       within_days: z.number().optional().describe("With due: only what falls due inside this many days"),
@@ -1591,6 +1608,16 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         q.push(`due_within_days=${Math.floor(within)}`);
       if (typeof args.entity_id === "string" && args.entity_id.trim())
         q.push(`entity_id=${encodeURIComponent(args.entity_id.trim())}`);
+      if (args.terms === true) {
+        const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+        if (args.entity_id) params.set("entity_id", String(args.entity_id));
+        if (args.year != null) params.set("year", String(args.year));
+        const res = await api.request("GET", `/modules/core-maintenance/terms?${params}`);
+        if (res.status >= 400) return toolFail(apiErrorMessage(res, "Couldn't read renewal terms"));
+        const body = res.body as { items: unknown[]; has_more: boolean; totals: unknown };
+        const { cursor: _c, ...filters } = args;
+        return toolOk({ items: body.items, totals: body.totals, ...pageEnd("list_maintenance", body.has_more ? { o: offset + body.items.length, f: filters } : null) });
+      }
       const res = await api.request("GET", `/modules/core-maintenance/entries?${q.join("&")}`);
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't read maintenance"));
       const rows = ((res.body as { items?: MaintenanceRow[] }).items ?? []).map((e) => ({
@@ -2322,6 +2349,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     },
   },
   {
+    module: "labels",
     name: "list_label_codes",
     description:
       "Read label groups by kind and instance: prefix, count, frozen, code_in_qr and group_key. Change through labels:set-code without an entity, passing group_key and prefix/code_in_qr.",

@@ -1,3 +1,4 @@
+import type { LaserSetup, LaserCommission } from "@cobblr/platform-contract/laser-setup";
 // MachineDriver — the common interface every print-farm backend implements.
 // Pure TypeScript (no platform deps) so it unit-tests in isolation. A
 // MachineDriver shape, made routing-aware for FDM Monster's print-file
@@ -5,6 +6,8 @@
 // (resolve → queue, or explicit printer) rather than "submit to printer N".
 
 export interface RemoteDevice {
+  station_kind?: "laser" | "print" | "cutter";
+  camera_available?: boolean;
   /** The id inside the farm system (stored locally as remote_device_id). */
   id: string;
   name: string;
@@ -47,9 +50,11 @@ export interface DeviceTemps {
   nozzle?: { actual: number; target?: number } | null;
   bed?: { actual: number; target?: number } | null;
   chamber?: { actual: number; target?: number } | null;
+  tools?: { id: string; actual: number; target?: number; filament?: { material?: string; vendor?: string; color?: string } }[];
 }
 
 export type JobState =
+  | "idle"
   | "queued"
   | "printing"
   | "paused"
@@ -92,6 +97,7 @@ export interface UploadResult {
 }
 
 export interface SubmitResult {
+  interrupted?: boolean;
   /** The farm's job id, when a job was actually queued on a printer. */
   jobId: string | null;
   /** The printer it landed on (null when awaiting manual assignment). */
@@ -125,7 +131,7 @@ export interface JobReview {
   cuts: Record<string, unknown>[];
   materialLibrary: Record<string, unknown>;
 }
-export type JobApproval = Pick<JobReview, "fileId" | "projectHash"> & { stationToken?: string; sheetId?: string };
+export type JobApproval = Pick<JobReview, "fileId" | "projectHash"> & { stationToken?: string; sheetId?: string; cutterChecks?: import("zod").infer<typeof import("../cutter-checks.js").CutterChecksSchema> };
 
 export interface SubmitArgs {
   checkStartAllowed?: () => Promise<void>;
@@ -142,7 +148,12 @@ export interface SubmitArgs {
 }
 
 export interface MachineDriver {
+  readonly printProcess?: "fdm" | "resin";
+  jobReviewKind?(): Promise<"laser" | "print" | "cutter">;
   laserBackend?: "gcode" | "ruida" | "galvo";
+  getLaserSetup?(): Promise<LaserSetup>;
+  homeLaser?(checkMotionAllowed?: () => Promise<void>): Promise<LaserSetup>;
+  commissionLaser?(configuration: LaserCommission, checkMotionAllowed?: () => Promise<void>): Promise<LaserSetup>;
   jobReviewRequired?(): Promise<boolean>;
   prepareJob?(file: Uint8Array, filename: string): Promise<JobReview>;
   getJobReview?(fileId: string): Promise<JobReview>;

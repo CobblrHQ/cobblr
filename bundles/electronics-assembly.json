@@ -1,33 +1,13 @@
 {
   "manifest": {
     "id": "cobblr.flagship.electronics-assembly",
-    "version": "0.1.10",
+    "version": "0.1.4",
     "name": "Electronics assembly",
     "author": "Cobblr",
-    "description": "Component packages and board revisions, with stock checks, fabrication purchases, assembly kits, solder paste handling, placement stations and reflow logs.",
+    "description": "Component packages and board revisions, with receiving, moisture clocks, BOM stock checks and fabrication purchases.",
     "released_at": "2026-10-06",
-    "changelog": "Save paste profiles and record reflow at authorized ovens with temperature limit checks.",
+    "changelog": "Import board revisions to check component stock and track fabrication purchases and stencils.",
     "releases": [
-      {
-        "version": "0.1.10",
-        "released_at": "2026-10-06",
-        "notes": "Inspect each board, preserve its evidence and trace tested batches back to their reel lots."
-      },
-      {
-        "version": "0.1.9",
-        "released_at": "2026-10-06",
-        "notes": "Save paste profiles and record reflow at authorized ovens with temperature limit checks."
-      },
-      {
-        "version": "0.1.8",
-        "released_at": "2026-10-06",
-        "notes": "Export calibrated placement files, verify feeder reels and record runs at an authorized station."
-      },
-      {
-        "version": "0.1.5",
-        "released_at": "2026-10-06",
-        "notes": "Reserve assembly kits and track refrigerated paste handling against its label limits."
-      },
       {
         "version": "0.1.4",
         "released_at": "2026-10-06",
@@ -57,126 +37,12 @@
       },
       {
         "module": "purchases"
-      },
-      {
-        "module": "machines"
-      },
-      {
-        "module": "digifab"
       }
     ],
     "wires": [],
     "field_defs": [],
     "saved_views": [],
     "provides_instances": [
-      {
-        "module": "inventory",
-        "instance_name": "tested-boards",
-        "scan_keywords": [
-          "tested PCB",
-          "assembled tested board"
-        ],
-        "display_name": "Tested Boards",
-        "glyph": "▱",
-        "item_noun": "tested board",
-        "qty_unit": "each",
-        "faces": {
-          "stock": true
-        },
-        "field_defs": [
-          {
-            "entity_kind": "inventory:part",
-            "name": "board_revision_id",
-            "display_label": "Board revision",
-            "type": "text",
-            "position": 1
-          }
-        ],
-        "saved_views": []
-      },
-      {
-        "module": "inventory",
-        "instance_name": "placed-boards",
-        "scan_keywords": [
-          "placed PCB",
-          "placed circuit board"
-        ],
-        "display_name": "Placed Boards",
-        "glyph": "▱",
-        "item_noun": "placed board",
-        "qty_unit": "each",
-        "faces": {
-          "stock": true
-        },
-        "field_defs": [
-          {
-            "entity_kind": "inventory:part",
-            "name": "board_revision_id",
-            "display_label": "Board revision",
-            "type": "text",
-            "position": 1
-          }
-        ],
-        "saved_views": []
-      },
-      {
-        "module": "machines",
-        "instance_name": "assembly-machines",
-        "scan_keywords": [
-          "pick and place",
-          "SMT machine",
-          "reflow oven",
-          "inspection bench"
-        ],
-        "display_name": "Assembly Machines",
-        "glyph": "⚙",
-        "item_noun": "assembly machine",
-        "field_defs": [
-          {
-            "entity_kind": "machines:machine",
-            "name": "calibration_notes",
-            "display_label": "Calibration notes",
-            "type": "text",
-            "position": 1
-          }
-        ],
-        "saved_views": []
-      },
-      {
-        "module": "inventory",
-        "instance_name": "solder-paste",
-        "display_name": "Solder Paste",
-        "glyph": "🫙",
-        "item_noun": "paste jar",
-        "qty_unit": "ml",
-        "faces": {
-          "stock": true
-        },
-        "paste_tracking": true,
-        "field_defs": [
-          {
-            "entity_kind": "inventory:part",
-            "name": "lot_code",
-            "display_label": "Paste lot",
-            "type": "text",
-            "position": 1
-          },
-          {
-            "entity_kind": "inventory:part",
-            "name": "alloy",
-            "display_label": "Alloy",
-            "type": "text",
-            "position": 2,
-            "learns": true,
-            "choices": [
-              "SAC305",
-              "Sn63/Pb37",
-              "Sn42/Bi58"
-            ]
-          }
-        ],
-        "saved_views": []
-      },
       {
         "module": "projects",
         "instance_name": "board-projects",
@@ -186,9 +52,7 @@
         "board_revisions": {
           "package_kind": "component-packages:item",
           "blank_kind": "blank-boards:item",
-          "stencil_kind": "board-stencils:item",
-          "placed_kind": "placed-boards:item",
-          "tested_kind": "tested-boards:item"
+          "stencil_kind": "board-stencils:item"
         },
         "scan_keywords": [
           "PCB project",

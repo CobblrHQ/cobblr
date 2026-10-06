@@ -422,6 +422,7 @@ membersRouter.post("/invites", requireAuth, withTenant, async (req, res, next) =
     });
     // Notify/email the invitee (fire-and-forget — don't block or fail the mint).
     if (parsed.data.email) {
+      // DETACHED: the invite email; the invite exists and its link is shown to whoever made it
       void deliverInvite({
         req,
         email: parsed.data.email,

@@ -168,7 +168,7 @@ basicsRouter.post(
     // Remember what we could NOT answer, so the ruleset can grow from what
     // people actually ask. After the response: a question is not worth failing
     // over, and the user is waiting.
-    if (!result.matched) void recordMiss(db, parsed.data.message).catch(() => {});
+    if (!result.matched) void recordMiss(db, parsed.data.message).catch(() => {}); // DETACHED: counting an unanswered question; the answer was already given
   }),
 );
 

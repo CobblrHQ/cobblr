@@ -15,12 +15,15 @@ import { EdgeBridgesPage } from "./EdgeBridgesPage";
 import { DigifabPage } from "./DigifabPage";
 import { ESPHomeDevices } from "./ESPHomeDevices";
 import { PrintPage } from "./PrintPage";
+import { StationDevicesPanel } from "./StationDevicesPanel";
 
 const TABS = [
   { id: "bridges", label: "Bridges" },
   { id: "machines", label: "Machine managers" },
   { id: "printers", label: "Printers" },
   { id: "esphome", label: "ESPHome" },
+  // A tablet a barcode scanner drives (#4640).
+  { id: "stations", label: "Stations" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
@@ -31,6 +34,7 @@ export function DevicesPage() {
   const tab: TabId = TABS.some((t) => t.id === raw) ? (raw as TabId) : "bridges";
   const go = (t: TabId) =>
     setParams(t === "bridges" ? {} : { tab: t }, { replace: true });
+  // The station's QR (?tab=stations&approve=<code>) keeps its code on arrival.
 
   const tabCls = (on: boolean) =>
     "px-3 py-2 text-sm font-medium border-b-2 -mb-px transition " +
@@ -58,6 +62,7 @@ export function DevicesPage() {
       {tab === "machines" && <DigifabPage setupOnly embedded />}
       {tab === "printers" && <PrintPage embedded />}
       {tab === "esphome" && <ESPHomeDevices />}
+      {tab === "stations" && <StationDevicesPanel />}
     </div>
   );
 }

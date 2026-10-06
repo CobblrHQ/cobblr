@@ -340,5 +340,3 @@ export { MoneyTotalNotice } from "./MoneyTotalNotice";
 export { NewItemMenu, NewFromTemplateButton, type TemplateCreateArgs } from "./NewItemMenu";
 
 export { ActionDescription, firstActionSentence } from "./ActionDescription";
-
-export { useStationWakeLock } from "./station-wake-lock";

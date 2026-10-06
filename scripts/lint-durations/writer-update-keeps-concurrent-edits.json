@@ -1,0 +1,10 @@
+{
+  "lint": "lint:writer-update-keeps-concurrent-edits",
+  "run": "node scripts/lint-writer-update-keeps-concurrent-edits.ts",
+  "rows": [
+    "kernel-platform-service"
+  ],
+  "ms": 1188,
+  "recorded": "2026-10-06",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

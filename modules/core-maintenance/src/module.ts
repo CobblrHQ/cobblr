@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-maintenance",
-  version: "0.2.8",
+  version: "0.2.10",
   displayName: "Maintenance",
   description:
     "Remember when things need servicing: log what was done and get a reminder when the next one is due.",
@@ -42,13 +42,25 @@ export default defineModule({
 
   dependencies: [],
 
-  // AI-REACH: no kinds by design (entries hang off the entity they service
-  // rather than standing alone in nav). Read through the shared registry's
-  // list_maintenance tool, which filters at the source (kind=scheduled,
-  // due_within_days) so "what is due" is answered without paging everything.
-
   provides: {
-    entityKinds: [],
+    entityKinds: [{
+      // AI-CRUD: created by Renew so the schedule advances; paid history has no delete door.
+      id: "core-maintenance:term", displayName: "Renewal term", displayNamePlural: "Renewal terms", icon: "calendar-clock",
+      profile: "digital-record", overrides: { identity: null },
+      getEndpoint: "/terms/{id}", listEndpoint: "/terms", updateEndpoint: "/terms/{id}",
+      fields: [
+        { name: "name", type: "text", role: "title", readOnly: true },
+        { name: "term_start", type: "date" }, { name: "term_end", type: "date" },
+        { name: "cost_cents", type: "number", money: "cents", label: "Cost" },
+        { name: "currency", type: "text" }, { name: "reference", type: "text" },
+        { name: "quantity", type: "number", label: "Seats or quantity" },
+        { name: "publisher", type: "text", readOnly: true },
+        { name: "entity_id", type: "text", readOnly: true }, { name: "schedule_id", type: "text", readOnly: true },
+        { name: "performed_by", type: "text", readOnly: true }, { name: "metadata", type: "object" },
+        { name: "performed_at", type: "date", label: "Renewed on", readOnly: true },
+      ],
+      exposableFields: ["name", "term_start", "term_end", "cost_cents", "currency", "reference", "quantity", "publisher", "entity_id", "schedule_id", "performed_by", "performed_at"],
+    }],
   },
 
   exposes: {
@@ -67,6 +79,27 @@ export default defineModule({
       //  the sweeper only emits due-soon. Audit 2026-06-26 follow-up.)
     ],
     actions: [
+      {
+        // UI-SCREEN: /instances/:name
+        group: "service", id: "core-maintenance:end-renewal", label: "End renewal", scope: "workspace", icon: "calendar-x",
+        invokeHandler: "core-maintenance.end-renewal", examples: ["I didn't renew the registration"],
+        description: "End a renewal chain, stop future reminders and keep all past terms. Pass schedule_id from list_maintenance.",
+        argsSchema: { schedule_id: { label: "Renewal", type: "text", required: true } },
+      },
+      {
+        // UI-SCREEN: /instances/:name
+        group: "service", id: "core-maintenance:update-term", label: "Edit renewal term", scope: "workspace", icon: "pencil",
+        invokeHandler: "core-maintenance.update-term", examples: ["the registration cost was actually $87"],
+        description: "Correct a paid term from list_maintenance with terms true. Dates cannot overlap another term. Cost keeps its currency.",
+        argsSchema: { term_id: { label: "Term", type: "text", required: true }, term_start: { label: "Start", type: "date" }, term_end: { label: "End", type: "date" }, cost: { label: "Cost", type: "text", money: true }, currency: { label: "Currency", type: "text" }, reference: { label: "PO or invoice", type: "text" }, quantity: { label: "Seats or quantity", type: "number" }, file_id: { label: "Document", type: "text" } },
+      },
+      {
+        // UI-REACH: stock setup and job-use writers reconcile an automatic usage schedule, rather than offering a second service form.
+        group: "service", id: "core-maintenance:ensure-usage", label: "Keep a usage service scheduled", internal: true, userInvokable: false,
+        description: "Keep one automatic service schedule for a record's usage counter and reconcile its open occurrence. The first interval starts at zero; completed service advances it normally. Repeated and concurrent calls keep one schedule and one due item.",
+        scope: "workspace", invokeHandler: "core-maintenance.ensure-usage",
+        argsSchema: { name: { label: "Service", type: "text", required: true }, counter_field: { label: "Usage counter", type: "text", required: true }, counter_every: { label: "Usage interval", type: "number", required: true } },
+      },
       {
         group: "service", primary: true,
         id: "core-maintenance:log",
@@ -180,6 +213,8 @@ export default defineModule({
         argsSchema: {
           schedule_id: { label: "Schedule", type: "text", required: true },
           new_expiry: { label: "New expiry", type: "date" },
+          term_start: { label: "Term start", type: "date" }, term_end: { label: "Term end", type: "date" },
+          currency: { label: "Currency", type: "text" }, reference: { label: "PO or invoice", type: "text" }, quantity: { label: "Seats or quantity", type: "number" },
           cost: { label: "Cost", type: "text", money: true },
           notes: { label: "Notes", type: "text" },
           file_id: { label: "Document or receipt file", type: "text" },
@@ -294,6 +329,10 @@ export default defineModule({
 
   lifecycle: {
     onBoot: async () => {
+      const { registerTermsHeal } = await import("./heal-terms.js");
+      registerTermsHeal();
+      const { registerTermResolvers } = await import("./term-resolvers.js");
+      registerTermResolvers();
       const { startMaintenanceSweeper } = await import("./sweeper.js");
       startMaintenanceSweeper();
       const { registerMaintenanceContext } = await import("./computed-context.js");

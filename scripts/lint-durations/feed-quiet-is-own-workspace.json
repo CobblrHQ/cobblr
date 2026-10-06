@@ -1,0 +1,10 @@
+{
+  "lint": "lint:feed-quiet-is-own-workspace",
+  "run": "node scripts/lint-feed-quiet-is-own-workspace.ts",
+  "rows": [
+    "generic-web-component"
+  ],
+  "ms": 766,
+  "recorded": "2026-10-06",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

@@ -19,7 +19,7 @@
 
 import { createHash } from "node:crypto";
 import { sql } from "kysely";
-import { DuplicateRecordError, placeLine, platform } from "@cobblr/platform-contract";
+import { DuplicateRecordError, placeLine, platform, type EntityWriter } from "@cobblr/platform-contract";
 import { classifyField, projectRecord, readScope, readVisibility, type ClassifiableField, type ScopeRef, type VisibilityDef } from "@cobblr/platform-contract/share-scope";
 import { meta } from "../db/meta.js";
 import { applyBlueprint, BlueprintManifest, captureBlueprint } from "../routes/blueprint.js";
@@ -30,6 +30,7 @@ import { gatedFields, recordsInScope } from "./scope-eval.js";
 import { sharePerson } from "./share-person.js";
 import { enqueueShareOp, kickShareSync, registerShareOp, type ShareLinkRow } from "./share-sync.js";
 import { runExclusive } from "./exclusive.js";
+import { editsMadeDuringApply, type Bags } from "./share-held-edits.js";
 
 /** The metadata key a copy carries: which share and which original it is. */
 export const ORIGIN_REF_KEY = "origin_ref";
@@ -377,6 +378,76 @@ async function recordCopyBase(
     .execute();
 }
 
+/** Test-only: hold the mirror's apply on one share space at a point, so a
+ *  test can land the friend's edit exactly inside it. Set through the
+ *  test-support door; `reached` is the positive control. */
+type ApplyPoint = "before-write" | "after-write";
+let applyHold: { orgId: string; at: ApplyPoint; ms: number; reached: number } | null = null;
+export function setMirrorApplyHoldForTests(h: { orgId: string; at: ApplyPoint; ms: number } | null): void {
+  applyHold = h && h.ms > 0 ? { ...h, ms: Math.min(h.ms, 30_000), reached: 0 } : null;
+}
+export const mirrorApplyHoldReached = (): number => applyHold?.reached ?? 0;
+async function holdForTests(orgId: string, at: ApplyPoint): Promise<void> {
+  const h = applyHold;
+  if (!h || h.orgId !== orgId || h.at !== at) return;
+  h.reached++;
+  await new Promise((r) => setTimeout(r, h.ms));
+}
+
+async function baseOf(link: ShareLinkRow, originKind: string, originId: string): Promise<Bags | null> {
+  const b = await meta.selectFrom("share_copy_base").select(["fields", "metadata"]).where("link_id", "=", link.id).where("origin_kind", "=", originKind).where("origin_id", "=", originId).executeTakeFirst();
+  return b ? { fields: (b.fields ?? {}) as Record<string, unknown>, metadata: (b.metadata ?? {}) as Record<string, unknown> } : null;
+}
+
+async function activityMark(orgId: string): Promise<number> {
+  const r = await meta.selectFrom("activity_log").select((eb) => eb.fn.max("id").as("id")).where("org_id", "=", orgId).executeTakeFirst();
+  return Number(r?.id ?? 0);
+}
+
+/** The mirror's write is not a compare-and-set: a person who edited the copy
+ *  while it ran would lose the edit, overwritten or folded into the base
+ *  (share-held-edits.ts). Their writes since the apply began are put back
+ *  and measured from what they were based on, so they go to the owner's side
+ *  and meet the owner's change there as a conflict. The mirror's own writes
+ *  log no activity; any row by a person is theirs. */
+async function keepEditsMadeDuringApply(link: ShareLinkRow, kind: string, originId: string, copyId: string, mark: number, before: Bags, sent: Bags): Promise<void> {
+  const writes = await meta
+    .selectFrom("activity_log")
+    .select(["diff"])
+    .where("org_id", "=", link.org_id)
+    .where("entity_id", "=", copyId)
+    .where("id", ">", mark)
+    .where("user_id", "is not", null)
+    .orderBy("id")
+    .execute();
+  if (!writes.length) return;
+  const after = await baseOf(link, kind, originId);
+  if (!after) return;
+  const { restore, base } = editsMadeDuringApply(writes, before, after, sent);
+  if (!Object.keys(restore.fields).length && !Object.keys(restore.metadata).length) return;
+  const w = await platform().entities.getWriter(link.org_id, kind);
+  if (!w) return;
+  if (Object.keys(restore.fields).length) await w.update(link.org_id, copyId, restore.fields);
+  if (Object.keys(restore.metadata).length) {
+    if (w.mergeMetadata) await w.mergeMetadata(link.org_id, copyId, restore.metadata);
+    else {
+      const copy = await lookup(link.org_id, kind, copyId);
+      const m = (((copy?.fields ?? {}) as Record<string, unknown>).metadata ?? {}) as Record<string, unknown>;
+      // read-then-write: a kind with no mergeMetadata writes its metadata whole; the read is the moment before
+      await w.update(link.org_id, copyId, { metadata: { ...m, ...restore.metadata } });
+    }
+  }
+  await meta
+    .updateTable("share_copy_base")
+    .set({ fields: JSON.stringify({ ...after.fields, ...base.fields }) as never, metadata: JSON.stringify({ ...after.metadata, ...base.metadata }) as never, updated_at: new Date() })
+    .where("link_id", "=", link.id)
+    .where("origin_kind", "=", kind)
+    .where("origin_id", "=", originId)
+    .execute();
+  await meta.updateTable("share_links").set({ edits_due_at: new Date() }).where("id", "=", link.id).execute();
+  kickShareSync(4_000);
+}
+
 /** The keys the copy was last sent and is not sent now, each cleared. */
 async function revokedKeys(link: ShareLinkRow, originKind: string, originId: string, fields: Record<string, unknown>, metadata: Record<string, unknown>): Promise<Unsent> {
   const out: Unsent = { fields: {}, metadata: {} };
@@ -404,34 +475,62 @@ export function registerShareMirrorOps(): void {
     const kind = origin.kind;
     const ref = originRef(link, kind, origin.id);
     const place = (p.place ?? {}) as { text?: string | null; path?: string[] | null };
-    const fields: Record<string, unknown> = { ...((p.fields as Record<string, unknown>) ?? {}), name: p.title };
-    const metadata: Record<string, unknown> = { ...((p.metadata as Record<string, unknown>) ?? {}), origin_place: place.text ?? null };
+    const sentFields: Record<string, unknown> = { ...((p.fields as Record<string, unknown>) ?? {}), name: p.title };
+    const sentMetadata: Record<string, unknown> = { ...((p.metadata as Record<string, unknown>) ?? {}), origin_place: place.text ?? null };
     const photo = p.photo as { mime?: string; data?: string } | undefined;
     if (photo?.data && photo.mime) {
       const w = await platform().files.write(link.org_id, new Uint8Array(Buffer.from(photo.data, "base64")), { filename: "photo", mimeType: photo.mime });
-      if (w) fields.image_path = rawPathFor(await slugOf(link.org_id), w.fileId);
+      if (w) sentFields.image_path = rawPathFor(await slugOf(link.org_id), w.fileId);
     }
+    let fields = { ...sentFields };
+    let metadata = { ...sentMetadata };
     let id = await copyOf(link.org_id, kind, ref);
     let unsent: Unsent = { fields: {}, metadata: {} };
+    const mark = id ? await activityMark(link.org_id) : null;
+    const before = id ? await baseOf(link, kind, origin.id) : null;
+    let sent: Bags | null = null;
+    // The version the mirror wrote, when the kind can compare-and-set: the
+    // write then never lands on a copy the friend changed since it was read.
+    let written: string | null = null;
+    let w: EntityWriter | null = null;
     if (!id) {
       id = await createMirrorCopy(link.org_id, kind, ref, fields, metadata);
     } else {
-      const w = await platform().entities.getWriter(link.org_id, kind);
+      w = await platform().entities.getWriter(link.org_id, kind);
       if (!w) throw new Error(`the share space cannot hold ${kind} yet`);
-      // An edit the friend made that has not gone back yet stays: the owner's
-      // change does not land over it, and it goes back measured against what
-      // it was based on, so the owner's side sees both.
-      unsent = await unsentEdits(link, kind, origin.id, id);
-      for (const k of Object.keys(unsent.fields)) delete fields[k];
-      const current = await lookup(link.org_id, kind, id);
-      const m = ((current?.fields as Record<string, unknown> | undefined)?.metadata ?? {}) as Record<string, unknown>;
-      for (const k of Object.keys(unsent.metadata)) metadata[k] = m[k] ?? null;
-      // What the owner's side sent IS the copy. An update merges, so a field
-      // it sent last time and no longer sends (a toggle turned off: private
-      // notes, prices, a restricted field) is cleared here, or the friend
-      // keeps reading it (#4688).
-      const gone = await revokedKeys(link, kind, origin.id, { ...fields, ...unsent.fields }, metadata);
-      await w.update(link.org_id, id, { ...fields, ...gone.fields, metadata: { ...metadata, ...gone.metadata, [ORIGIN_REF_KEY]: ref } });
+      for (let tries = 0; ; tries++) {
+        // The version first, then the copy: a write after this read moves it.
+        const version = w.version && w.updateIf ? await w.version(link.org_id, id) : null;
+        fields = { ...sentFields };
+        metadata = { ...sentMetadata };
+        // An edit the friend made that has not gone back yet stays: the owner's
+        // change does not land over it, and it goes back measured against what
+        // it was based on, so the owner's side sees both.
+        unsent = await unsentEdits(link, kind, origin.id, id);
+        for (const k of Object.keys(unsent.fields)) delete fields[k];
+        const current = await lookup(link.org_id, kind, id);
+        const m = ((current?.fields as Record<string, unknown> | undefined)?.metadata ?? {}) as Record<string, unknown>;
+        for (const k of Object.keys(unsent.metadata)) metadata[k] = m[k] ?? null;
+        // What the owner's side sent IS the copy. An update merges, so a field
+        // it sent last time and no longer sends (a toggle turned off: private
+        // notes, prices, a restricted field) is cleared here, or the friend
+        // keeps reading it (#4688).
+        const gone = await revokedKeys(link, kind, origin.id, { ...fields, ...unsent.fields }, metadata);
+        const payload = { ...fields, ...gone.fields, metadata: { ...metadata, ...gone.metadata, [ORIGIN_REF_KEY]: ref } };
+        await holdForTests(link.org_id, "before-write");
+        if (version === null || !w.updateIf) {
+          // read-then-write: a kind with no updateIf; keepEditsMadeDuringApply below puts back what this overwrote
+          await w.update(link.org_id, id, payload);
+          break;
+        }
+        written = await w.updateIf(link.org_id, id, payload, version);
+        if (written) break;
+        // The friend changed the copy since it was read: read it again, and
+        // their edit is now one not yet sent, which stays.
+        if (tries >= 4) throw new Error(`the copy ${id} kept changing while it was being updated`);
+      }
+      await holdForTests(link.org_id, "after-write");
+      sent = await baseOf(link, kind, origin.id);
     }
     await recordCopyBase(link, kind, origin.id, id, [...Object.keys(fields), ...Object.keys(unsent.fields)], Object.keys(metadata), unsent, (p.changed_since ?? {}) as Record<string, unknown>);
     if (place.path?.length) {
@@ -440,6 +539,12 @@ export function registerShareMirrorOps(): void {
     } else {
       await platform().placement.remove({ orgId: link.org_id, containee: { kind, id } }).catch(() => undefined);
     }
+    // Nothing to repair when the copy is still at the version the mirror
+    // wrote: the base it just recorded was read from exactly that write. A
+    // write after it (or a kind with no compare-and-set) is looked for in
+    // the activity log and kept.
+    const clean = written !== null && w?.version && (await w.version(link.org_id, id)) === written;
+    if (!clean && mark !== null && before) await keepEditsMadeDuringApply(link, kind, origin.id, id, mark, before, sent ?? before);
   });
 
   registerShareOp("mirror.remove", async (link, p) => {

@@ -1401,6 +1401,21 @@ export interface TestOrgPoolTable {
  *  has a bridge long-polling for that CHANNEL KEY (a user id for a personal AI
  *  connection, `<orgId>` or `<orgId>::<name>` for a workspace bridge). */
 /** A one-time code that trades for a bridge's token at install. */
+export interface StationDeviceRequestsTable {
+  id: Generated<string>;
+  code_hash: string;
+  poll_hash: string;
+  org_slug: string;
+  address: string;
+  created_at: Generated<Date>;
+  expires_at: Date;
+  approved_by: string | null;
+  approved_org: string | null;
+  label: string | null;
+  approved_at: Date | null;
+  claimed_at: Date | null;
+}
+
 export interface EdgePairingCodesTable {
   code_hash: string;
   org_id: string;
@@ -1708,6 +1723,7 @@ export interface MetaDB {
   feedback: FeedbackTable;
   edge_bridges: EdgeBridgesTable;
   edge_pairing_codes: EdgePairingCodesTable;
+  station_device_requests: StationDeviceRequestsTable;
   edge_relay_jobs: EdgeRelayJobsTable;
   edge_blobs: EdgeBlobsTable;
   users: UsersTable;

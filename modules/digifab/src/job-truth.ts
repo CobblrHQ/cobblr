@@ -48,6 +48,13 @@ export function interpretReport(i: JobTruthInput): JobTruth {
   const prev = i.prevStatus as JobStatusName;
   const pct = i.progress != null ? Math.round(i.progress * 100) : null;
 
+  if (i.reported === "idle") {
+    if (i.cancelRequested) return { status: "cancelled", note: "Cancelled from Cobblr, and the printer stopped." };
+    if (!seenPrinting(prev)) return notStarted(i, prev);
+    if (i.progress != null) return i.progress >= FINISHED ? { status: "completed", note: null } : { status: "cancelled", note: `Stopped at the printer at ${pct}%.` };
+    return { status: prev, note: "The printer is idle but did not report how this print ended. Check it at the machine." };
+  }
+
   // The printer is idle or reports the job over.
   if (i.reported === "completed") {
     if (i.cancelRequested) return { status: "cancelled", note: "Cancelled from Cobblr, and the printer stopped." };

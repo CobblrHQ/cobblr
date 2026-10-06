@@ -21,8 +21,10 @@ export function StockStepper({
   onStep,
   label,
   size = "md",
+  fractionDigits = 3,
 }: {
   qty: number;
+  fractionDigits?: number;
   /** The unit the record is kept in. Anything but a plain count ("each",
    *  none) goes to AmountControl, which steps a counted unit by one and has a
    *  measured one typed. */
@@ -36,7 +38,7 @@ export function StockStepper({
   size?: "md" | "sm";
 }) {
   if (unit && unit.trim() && unit.trim().toLowerCase() !== "each") {
-    return <AmountControl qty={qty} unit={unit} onChange={onStep} label={label} size={size} />;
+    return <AmountControl fractionDigits={fractionDigits} qty={qty} unit={unit} onChange={onStep} label={label} size={size} />;
   }
   return <CountStepper qty={qty} onStep={onStep} label={label} size={size} />;
 }

@@ -77,6 +77,8 @@ const ALLOWED = new Set([
   "packages/platform-web/src/types.ts",
   "web/src/lib/api.ts",
   "web/src/App.tsx",
+  // The workspace's platform context hands the door to the package (#4640).
+  "web/src/WorkspacePlatformWeb.tsx",
 ]);
 
 /** The [open, close] index of every door call's argument list. Strings,

@@ -212,6 +212,7 @@ surfacesRouter.get(
     // a tenant that never opens stats just keeps slightly more
     // history, which is fine. Best-effort — a failing DELETE here
     // shouldn't 500 the stats response.
+    // DETACHED: pruning views older than 90 days; the next read tries again
     void db
       .deleteFrom("core_public_surfaces_views")
       .where(sql<boolean>`viewed_at < now() - interval '90 days'`)

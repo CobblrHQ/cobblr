@@ -47,6 +47,7 @@ import { } from "../components/ReceiptPeek";
 import { fieldsStillOnTable, fieldsNoLongerOnTable, isQuietDefault, isImpliedByPeer, isStatedByReceipt } from "../lib/scanCandidateFields";
 import { canRerunLookup } from "../lib/scanRerun";
 import { headingSaysItAll, namelessReason, namelessRemedy } from "../lib/identifySentence";
+import { MATCH_FAILED_WORDS, RUN_NO_ANSWER_WORDS, namelessWords } from "@cobblr/platform-contract/scan-nameless";
 import { namelessCard } from "../lib/namelessCard";
 import { fallbackChip, identifyFailureWords, type IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
 import { TrackedMatchBanner, TrackedMatchLine } from "../components/TrackedMatchBanner";
@@ -990,6 +991,13 @@ export function InboxCard({
   // phone row's line and its tool button read this, so neither says the AI
   // failed when it was never asked.
   const namelessFix = identifyFailed ? namelessRemedy(namelessWhy, identifyFailure) : null;
+  const namelessSays = namelessWords(namelessWhy, {
+    noun: idNoun,
+    failure: identifyFailure,
+    classifiedLine: classified?.line ?? null,
+    heldGuess: heldWebGuess,
+    lookupGaveUp: item.ai_notes === LOOKUP_GAVE_UP,
+  });
   // The matchmaker fell to the keyword floor although this workspace HAS
   // working AI — the model call failed and the code silently downgraded. Say
   // so, with a one-tap retry, instead of letting a lexical guess sit there
@@ -2071,7 +2079,7 @@ export function InboxCard({
                           <span className="min-w-0">
                             {label[h.action] ?? h.action}
                             {noAnswer && (
-                              <span className="text-amber-600 dark:text-amber-400"> - the AI didn’t answer</span>
+                              <span className="text-amber-600 dark:text-amber-400"> - {RUN_NO_ANSWER_WORDS}</span>
                             )}
                             {h.note ? `: “${h.note}”` : ""}
                           </span>
@@ -2656,11 +2664,11 @@ export function InboxCard({
                       // asked again, connect when there is no provider to ask
                       // (a Retry on "no AI provider is connected" was a button
                       // that could only fail the same way).
-                      const chip = fallbackChip(topCand?.ai_fallback ?? "no-answer", topCand?.ai_fallback_reason);
+                      const chip = fallbackChip(topCand?.ai_fallback ?? null, topCand?.ai_fallback_reason);
                       return { text: chip.text, recovery: chip.retry ? ("retry" as const) : chip.connect ? ("connect" as const) : null, connectHref: `/w/${activeSlug}/ai` };
                     })()
                   : matchFailed
-                    ? { text: "Matching failed; the AI did not answer.", recovery: "retry" as const }
+                    ? { text: MATCH_FAILED_WORDS, recovery: "retry" as const }
                     : identifyFailed
                       ? namelessFix && { ...namelessFix, connectHref: `/w/${activeSlug}/ai` }
                       : null
@@ -2868,70 +2876,53 @@ export function InboxCard({
               </span>
             ) : readingReceipt ? (
               <span className="text-muted">That’s a receipt - reading its line items…</span>
-            ) : cantIdentify && namelessWhy === "no-identify" ? (
-              // Not "couldn't": nothing tried. The banner up top says the plan
-              // has no AI, and this card said "couldn't identify" under it, with
-              // an Identify button that would fail the same way (blank
-              // workspace e2e, 2026-09-01). Naming it by hand still works.
-              // Only when nothing here can identify a photo (lib/identifySentence.ts):
-              // a person with a working connection never reads this.
-              <span className="text-muted">
-                No AI to read this {idNoun} yet (<Link to={`/w/${activeSlug}/ai`} className="underline hover:text-content" onClick={(e) => e.stopPropagation()}>set it up</Link>) - or name it:
-              </span>
             ) : cantIdentify && namelessWhy === "receipt-unread" && receiptBlock ? (
               <ScanReceiptUnread {...receiptBlock} compact />
-            ) : cantIdentify && namelessWhy === "classified-code" && classified ? (
-              // A code the server classified (a shop's own label, an Amazon
-              // label): nothing to look up, so "couldn't identify" would be
-              // the wrong story.
-              <span className="text-muted" title={classified.title} data-testid="classified-code">
-                {classified.line}
-                {/* Why the label could not be read, by its class: the AI
-                    could not be reached, or it could not read the text
-                    (#4933). Never "the AI could not read this one" about a
-                    read that did not happen. */}
-                {identifyFailure && (
+            ) : cantIdentify ? (
+              // What the card says without a name: the contract's words for
+              // the reason the RECORD carries (scan-nameless.ts, #4933), never
+              // a guessed cause. The button is the reason's way forward.
+              <span className="text-muted" title={namelessWhy === "classified-code" ? classified?.title : undefined} data-testid={namelessWhy === "classified-code" ? "classified-code" : "nameless-line"} data-reason={namelessWhy}>
+                {namelessSays.action === "identify-again" && (
+                  <button type="button" className="underline hover:text-content" onClick={(e) => { e.stopPropagation(); rerun.mutate({}); }} disabled={rerun.isPending} data-testid="nameless-identify-again">
+                    {namelessSays.actionLabel}
+                  </button>
+                )}
+                {namelessSays.line}
+                {namelessSays.action === "set-up-ai" && (
+                  <>
+                    {" ("}
+                    <Link to={`/w/${activeSlug}/ai`} className="underline hover:text-content" onClick={(e) => e.stopPropagation()}>
+                      {namelessSays.actionLabel}
+                    </Link>
+                    {")"}
+                  </>
+                )}
+                {namelessSays.action === "read-as-receipt" && (
+                  <>
+                    {" "}
+                    <button type="button" className="underline hover:text-content" onClick={(e) => { e.stopPropagation(); asReceipt.mutate(); }} disabled={asReceipt.isPending} data-testid="nameless-read-as-receipt">
+                      {namelessSays.actionLabel}
+                    </button>
+                    :
+                  </>
+                )}
+                {namelessSays.action === "identify" && (
+                  <>
+                    {" "}
+                    <button type="button" className="underline hover:text-content" onClick={(e) => { e.stopPropagation(); rerun.mutate({}); }} disabled={rerun.isPending} data-testid="nameless-identify">
+                      {namelessSays.actionLabel}
+                    </button>
+                    :
+                  </>
+                )}
+                {/* Why the label could not be read, by its class (#4933). */}
+                {namelessWhy === "classified-code" && identifyFailure && (
                   <span className="block text-[11px] text-faint" data-testid="classified-code-why">
                     {identifyFailureWords(identifyFailure).sentence}
                   </span>
                 )}
               </span>
-            ) : cantIdentify && namelessWhy === "unresolved-code" ? (
-              // No catalog knows the code and the web guess was held back
-              // (the amber line under this says which); the name is yours.
-              // When there is a guess, the name field offers it as a tap.
-              <span className="text-muted">
-                {nameGuess
-                  ? `No catalog knows this ${idNoun}. Take the guess, or name it:`
-                  : item.ai_notes === LOOKUP_GAVE_UP
-                    ? `Couldn't look this ${idNoun} up - name it:`
-                    : `Nothing found for this ${idNoun} - name it:`}
-              </span>
-            ) : cantIdentify && namelessWhy === "no-item" ? (
-              // The model looked and saw no one thing to name: a group shot,
-              // a document, a receipt it did not call one. The two ways out
-              // are a name, or the receipt parser (#2916).
-              // The amber line under this carries the reason; this line
-              // carries the two ways out.
-              <span className="text-muted">
-                Name this {idNoun}, or{" "}
-                <button type="button" className="underline hover:text-content" onClick={(e) => { e.stopPropagation(); asReceipt.mutate(); }} disabled={asReceipt.isPending} data-testid="nameless-read-as-receipt">
-                  read it as a receipt
-                </button>
-                :
-              </span>
-            ) : cantIdentify && namelessWhy === "ai-failed" ? (
-              // The provider was asked and failed, or the step ran without
-              // the person's own AI: the note above says which, and a retry
-              // is the remedy, not a rename.
-              <span className="text-muted">
-                <button type="button" className="underline hover:text-content" onClick={(e) => { e.stopPropagation(); rerun.mutate({}); }} disabled={rerun.isPending} data-testid="nameless-identify-again">
-                  Identify it again
-                </button>
-                , or name this {idNoun}:
-              </span>
-            ) : cantIdentify ? (
-              <span className="text-muted">Couldn’t identify this {idNoun}  - name it:</span>
             ) : awaitingFresh ? (
               <AwaitingLookupLine
                 words={awaiting ?? { line: "Awaiting lookup…", offerWaysOut: false }}
@@ -3785,13 +3776,13 @@ export function InboxCard({
             >
               <Sparkles size={11} className="shrink-0" />
               <span>
-                {fallbackChip(topCand?.ai_fallback ?? "no-answer", topCand?.ai_fallback_reason).text}
+                {fallbackChip(topCand?.ai_fallback ?? null, topCand?.ai_fallback_reason).text}
                 {/* The consequence, in the row's own terms: the name is the
                     receipt's or the code's and still files; what is missing
                     is the read (the table's fields, a picture). */}
                 {dest && !expanded && <span className="text-amber-600/80 dark:text-amber-400/80"> Files into {dest.label} with nothing read.</span>}
               </span>
-              {fallbackChip(topCand?.ai_fallback ?? "no-answer", topCand?.ai_fallback_reason).retry && (
+              {fallbackChip(topCand?.ai_fallback ?? null, topCand?.ai_fallback_reason).retry && (
                 <button
                   type="button"
                   onClick={() => rerun.mutate(undefined)}

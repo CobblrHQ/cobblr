@@ -1,7 +1,7 @@
 {
   "cobblr.community.3d-printers": {
-    "version": "0.3.4",
-    "hash": "55562c2783575e341b60b45563216a38a00e7167da54cd96ba3c8f0d8b9bf3c8"
+    "version": "0.3.5",
+    "hash": "8e3e24c25f5865fe591bcaea12a345a895b24913dbb7d7ca8f89ff2b634dba16"
   },
   "cobblr.community.bookshelf": {
     "version": "0.3.1",
@@ -72,8 +72,8 @@
     "hash": "fbefad65f76fd344c2f93b79f8895d65584825b1a277c54cd3d28417b457aa4e"
   },
   "cobblr.flagship.electronics-assembly": {
-    "version": "0.1.10",
-    "hash": "e04dcb015a259522d1b5fd681df38ebba93774a0b880ca1817f416a341c43edd"
+    "version": "0.1.4",
+    "hash": "074504070191131167c2e557da720dde9749cf0f06caeb4cc04372e2ae37a807"
   },
   "cobblr.flagship.fasteners": {
     "version": "0.1.4",

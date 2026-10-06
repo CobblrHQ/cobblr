@@ -12,8 +12,8 @@ import { Minus, Plus } from "lucide-react";
 import { useUnits } from "./useUnits";
 import { usedInUnit } from "./units";
 
-function fmt(n: number): string {
-  return Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3)));
+function fmt(n: number, fractionDigits: number): string {
+  return Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(fractionDigits)));
 }
 
 export function AmountControl({
@@ -22,8 +22,10 @@ export function AmountControl({
   onChange,
   label,
   size = "md",
+  fractionDigits = 3,
 }: {
   qty: number;
+  fractionDigits?: number;
   /** The unit the record keeps its count in ("kg", "each", null). */
   unit: string | null;
   /** Apply a change to the count in the record's own unit; resolves with the
@@ -73,7 +75,7 @@ export function AmountControl({
       className={(size === "sm" ? "min-w-[2rem] text-sm" : "min-w-[2.5rem] text-base") + " text-center font-mono tabular-nums text-content dark:text-mortar-100"}
       data-testid="amount-qty"
     >
-      {fmt(value)}
+      {fmt(value, fractionDigits)}
       {shownUnit}
     </span>
   );

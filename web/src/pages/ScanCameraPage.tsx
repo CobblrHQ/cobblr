@@ -718,6 +718,7 @@ export function ScanCameraPage() {
         if (r.resumed && confirmed > 0) showFilingNote(`Sort session resumed: ${confirmed} sorted so far.`);
       })
       .catch(() => {
+        // failure-copy: the sort-session request just failed (this is its catch).
         showFilingNote("Couldn't start the sort session.", "warn");
         setSortMode(false);
       });
@@ -928,6 +929,7 @@ export function ScanCameraPage() {
         const p = decision.reparent ? byId.get(decision.reparent.parent) : null;
         showFilingNote(
           p && nestFailed !== null
+          // failure-copy: nestFailed is the reparent request's own refusal, returned a line above.
             ? `Could not put ${nm} in ${filingLabel(p)}${nestFailed ? `: ${nestFailed}` : ""}. Filing into ${nm}`
             : p ? `Filed ${nm} in ${filingLabel(p)}. Filing into ${nm}` : `Filing into ${nm}`,
         );
@@ -1149,6 +1151,7 @@ export function ScanCameraPage() {
             // Name the code that failed — in a 40-serial run "that serial" is
             // unfindable; this one can be retyped into the manual field.
             showFilingNote(
+            // failure-copy: the file request this code was sent with just threw; its message rides along.
               `Couldn't file ${raw}${e instanceof ApiError ? `: ${e.message}` : ". Scan it again."}`,
               "warn",
             );

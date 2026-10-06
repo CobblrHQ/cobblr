@@ -5,6 +5,14 @@ import type { Request } from "express";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 
 export interface CoreMaintenanceEntriesTable {
+  is_term: Generated<boolean>;
+  term_start: Generated<Date | null>;
+  term_end: Generated<Date | null>;
+  currency: Generated<string | null>;
+  reference: Generated<string | null>;
+  quantity: Generated<string | number | null>;
+  previous_term_id: Generated<string | null>;
+  metadata: Generated<Record<string, unknown>>;
   id: Generated<string>;
   entity_module: string;
   entity_type: string;
@@ -27,6 +35,8 @@ export interface CoreMaintenanceEntriesTable {
 }
 
 export interface CoreMaintenanceSchedulesTable {
+  ended_at: Generated<Date | null>;
+  ended_by: Generated<string | null>;
   overdue_every: import("./schedule.js").OverdueCadence | null;
   anchor: import("./schedule.js").RenewalAnchor | null;
   remind: import("./schedule.js").Reminder | null;

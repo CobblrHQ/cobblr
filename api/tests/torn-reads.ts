@@ -24,29 +24,40 @@ export async function expectNeverTorn<T>(o: {
   torn: (answer: T) => string | null;
   settled: (answer: T) => boolean;
   during?: Promise<unknown>;
+  /** One short line for an answer ("ready/0 needs"): a failure then names the interleaving. */
+  describe?: (answer: T) => string;
   /** Reads in flight at once each round (a page and its retries). */
   width?: number;
   maxRounds?: number;
 }): Promise<T> {
   const width = o.width ?? 3;
   const maxRounds = o.maxRounds ?? 2000;
+  const say = o.describe ?? ((a: T) => JSON.stringify(a));
   let writing = !!o.during;
   const done = o.during?.finally(() => {
     writing = false;
   });
   const tornSeen: string[] = [];
-  let last: T | undefined;
+  const trail: string[] = [];
+  let settledAnswer: T | undefined;
+  let hasSettled = false;
+  let rounds = 0;
   for (let round = 0; round < maxRounds; round++) {
+    rounds = round + 1;
     const answers = await Promise.all(Array.from({ length: width }, () => o.poll()));
-    for (const a of answers) {
+    answers.forEach((a, i) => {
+      trail.push(`round ${round + 1} read ${i + 1}: ${say(a)}`);
       const why = o.torn(a);
-      if (why) tornSeen.push(why);
-      last = a;
-    }
-    if (!writing && answers.some((a) => o.settled(a))) break;
+      if (why) tornSeen.push(`${why} (round ${round + 1}, read ${i + 1}; the reads before it: ${trail.slice(-7, -1).join(" | ") || "none"})`);
+      if (o.settled(a)) {
+        settledAnswer = a;
+        hasSettled = true;
+      }
+    });
+    if (!writing && hasSettled) break;
   }
   await done;
-  expect(tornSeen, "an answer was torn: finished, with what it finished missing").toEqual([]);
-  expect(last !== undefined && o.settled(last), "the work settled while it was polled").toBe(true);
-  return last as T;
+  expect(tornSeen.length, `an answer was torn, finished with what it finished missing: ${tornSeen.join("; ")}`).toBe(0);
+  expect(hasSettled, `the work never settled in ${rounds} rounds of ${width} reads; the last reads: ${trail.slice(-6).join(" | ")}`).toBe(true);
+  return settledAnswer as T;
 }

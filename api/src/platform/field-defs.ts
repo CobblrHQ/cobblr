@@ -1,3 +1,4 @@
+import { perReadRequest } from "../lib/request-context.js";
 // The ONE place that answers "which custom field defs apply to this entity kind?"
 //
 // Two kinds of row live in module_field_defs:
@@ -114,7 +115,11 @@ export async function fieldRolesForKind(orgId: string, kind: string): Promise<Se
   }
 }
 
-export async function resolveFieldDefsForKind(
+export async function resolveFieldDefsForKind(orgId: string, kind: string): Promise<ResolvedFieldDef[]> {
+  return perReadRequest(`field-defs:${orgId}:${kind}`, () => loadFieldDefsForKind(orgId, kind));
+}
+
+async function loadFieldDefsForKind(
   orgId: string,
   kind: string,
 ): Promise<ResolvedFieldDef[]> {

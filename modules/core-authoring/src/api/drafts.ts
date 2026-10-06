@@ -474,6 +474,7 @@ draftsRouter.post(
     // Fire-and-forget: the loop drives the draft to a terminal status; the
     // client polls GET /drafts/:id. (Single api instance — in-process detach
     // is fine; a crash mid-build just leaves a stale "building" draft.)
+    // DETACHED: the build; the client polls the draft, and a build that dies leaves the draft saying so
     void runBuild(req, draft.id, orgId, basePrompt, user?.id ?? null, ctx.task, {
       intent: parsed.data.intent,
       kinds: kindFieldsOf(ctx),
@@ -560,6 +561,7 @@ draftsRouter.post(
     draftEvent(req, "core-authoring.draft.created", draft.id);
 
     if (run) {
+      // DETACHED: the build; the client polls the draft, and a build that dies leaves the draft saying so
       void runBuild(req, draft.id, tc.org.id, basePrompt, user?.id ?? null, refineTask, {
         intent: parsed.data.intent,
         kinds: kindFieldsOf(ctx),

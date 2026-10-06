@@ -1,0 +1,3 @@
+{
+  "esbuild": "api/src/sandbox/pool.ts imports it on the `.ts` (tsx local dev) branch only; production runs the built .js and returns before it. A bundler does not belong in the image."
+}

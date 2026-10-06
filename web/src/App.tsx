@@ -1,4 +1,3 @@
-import { decodeBarcodeImage } from "./lib/decode-barcode-image";
 import { RecentlyDeletedPage } from "./pages/RecentlyDeletedPage";
 import { DeletedRecordUndo } from "./components/DeletedRecordUndo";
 // Top-level shell. AuthProvider hydrates from /me on mount; while
@@ -10,19 +9,14 @@ import { DeletedRecordUndo } from "./components/DeletedRecordUndo";
 // imports its UI from "@cobblr/<name>/ui"; the host wires it under
 // /<module>/* and the module's own internal routes take over.
 
-import { photoSuggestionsWhenOn } from "./lib/photoSuggestionsWhenOn";
 import { OfflineScreen } from "./components/OfflineScreen";
 import { OPEN_RECORD_ROUTE } from "@cobblr/platform-contract/instance-detail";
-import { lazy, Suspense , useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { ScanFiledRefresh } from "./lib/scanFiled";
-import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
-import { CobbHead } from "./components/Cobb";
-import { KERNEL_PANELS, PlatformWebProvider, type FlowRegistry } from "@cobblr/platform-web";
-import { NewFromTemplateFlow } from "./flows/NewFromTemplateFlow";
-import { OrganizeFlow } from "./flows/OrganizeFlow";
+import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { Boxes, FolderKanban } from "lucide-react";
+import { ModuleOffGate } from "./components/ModuleOffGate";
 import { InstanceHubGate } from "./components/InstanceHubGate";
-import { RecordPhoto } from "./components/RecordPhoto";
 import { InventoryUI } from "@cobblr/inventory/ui";
 import { LabelsBasket, LabelsUI } from "@cobblr/labels/ui";
 import { useNavHasRow } from "./components/useNavModules";
@@ -81,7 +75,7 @@ import { TagDetailPage } from "./pages/TagDetailPage";
 import { DiscussionInboxPage } from "./pages/DiscussionInboxPage";
 import { FilesPage } from "./pages/FilesPage";
 import { FileDetailPage } from "./pages/FileDetailPage";
-import { ViewsPage, GroupTableFlow } from "./pages/ViewsPage";
+import { ViewsPage } from "./pages/ViewsPage";
 import { SavedViewPage } from "./pages/SavedViewPage";
 import { TidySuggestionsPage } from "./pages/TidySuggestionsPage";
 import { ConfigurationPage } from "./pages/ConfigurationPage";
@@ -93,6 +87,10 @@ import { PersonThingsPage } from "./pages/PersonThingsPage";
 // Lazy: rarely-visited admin / drill-down pages. Splitting these
 // out keeps the dashboard's initial bundle smaller. Each becomes
 // its own chunk; the chunk loads on first navigation.
+// A Station (#4640): a tablet a barcode scanner drives. Outside the workspace
+// shell: the tablet is approved, never signed in.
+const StationPage = lazy(() => import("./pages/StationPage").then((m) => ({ default: m.StationPage })));
+const StationHome = lazy(() => import("./pages/StationPage").then((m) => ({ default: m.StationHome })));
 const BindingsPage = lazy(() => import("./pages/BindingsPage").then((m) => ({ default: m.BindingsPage })));
 const RecordsPage = lazy(() => import("./pages/RecordsPage").then((m) => ({ default: m.RecordsPage })));
 const ActionsPage = lazy(() => import("./pages/ActionsPage").then((m) => ({ default: m.ActionsPage })));
@@ -127,10 +125,7 @@ const SurfacesPage = lazy(() => import("./pages/SurfacesPage").then((m) => ({ de
 const DigifabPage = lazy(() => import("./pages/DigifabPage").then((m) => ({ default: m.DigifabPage })));
 const PrinterStationPage = lazy(() => import("./pages/PrinterStationPage").then((m) => ({ default: m.PrinterStationPage })));
 const FloorManagerPage = lazy(() => import("./pages/FloorManagerPage").then(m => ({ default: m.FloorManagerPage })));
-const InspectionStationPage = lazy(() => import("./pages/InspectionStationPage").then(m => ({ default: m.InspectionStationPage })));
-const BoardInspectionPage = lazy(() => import("./pages/BoardInspectionPage").then(m => ({ default: m.BoardInspectionPage })));
-const ReflowStationPage = lazy(() => import("./pages/ReflowStationPage").then(m => ({ default: m.ReflowStationPage })));
-const AssemblyStationPage = lazy(() => import("./pages/AssemblyStationPage").then(m => ({ default: m.AssemblyStationPage })));
+const StockStationPage = lazy(() => import("./pages/StockStationPage").then((m) => ({ default: m.StockStationPage })));
 const MachineStationPage = lazy(() => import("./pages/MachineStationPage").then((m) => ({ default: m.MachineStationPage })));
 const MakesPage = lazy(() => import("./pages/MakesPage").then((m) => ({ default: m.MakesPage })));
 const MakePage = lazy(() => import("./pages/MakesPage").then((m) => ({ default: m.MakePage })));
@@ -200,26 +195,16 @@ import { PortalLayout } from "./components/PortalLayout";
 import { ToastProvider, ConfirmProvider } from "@cobblr/platform-web";
 import { BootScrim } from "./components/BootScrim";
 import { api, getToken } from "./lib/api";
-import { raiseBlockedAction } from "./lib/blocked-action";
+import { WorkspacePlatformWeb } from "./WorkspacePlatformWeb";
 import { useNavMode, useNavTopBar } from "./lib/nav-mode";
 import { isFullSidebar } from "./lib/nav-layout";
 import { useIsDesktopWidth } from "./lib/useIsDesktopWidth";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { fileWaitingScan, waitingScans } from "./lib/waitingScans";
+import { useQuery } from "@tanstack/react-query";
 import { InstancePage } from "./pages/InstancePage";
 import { inManagedAppSurface } from "./lib/managed-apps";
 import { WorkspaceShapeRefresh } from "./lib/useWorkspaceShapeRefresh";
 import { hydrateNavPref } from "./lib/nav-mode";
 
-
-// First-party flow registry: id → overlay the shell can open from anywhere
-// (an action's `ui` directive, a view bulk-action, a nav entry). See
-// docs/architecture/invokable-flows-and-lego-redesign.md.
-const WORKSPACE_FLOWS: FlowRegistry = {
-  "core-scan:organize": OrganizeFlow,
-  "core-views:group-table": GroupTableFlow,
-  "core-templates:create": NewFromTemplateFlow,
-};
 
 function RouteFallback() {
   return (
@@ -392,6 +377,12 @@ function PublicRoutes() {
           desktop minted and signs the phone in to that workspace. Reached
           unauthenticated (the code is the secret). */}
       <Route path="/pair" element={<PairPage />} />
+      {/* /station/<workspace>/<address>: a Station tablet (#4640). Opening it
+          is the setup: a new tablet shows a code to approve from a signed-in
+          phone. /station alone goes back to the station this device opened. */}
+      <Route path="/station" element={<Suspense fallback={<BootScrim />}><StationHome /></Suspense>} />
+      <Route path="/station/:slug" element={<Suspense fallback={<BootScrim />}><StationPage /></Suspense>} />
+      <Route path="/station/:slug/:address" element={<Suspense fallback={<BootScrim />}><StationPage /></Suspense>} />
       {/* The sandbox's ending, to look at: test-door boxes only. */}
       <Route path="/try/ended" element={<EndingPreview />} />
       {/* A kept trial's address saying yes to keeping another sandbox. */}
@@ -594,7 +585,6 @@ function ActiveOrgScopedRoutes() {
   // because the shell used to send members to the portal too, contradicting
   // the role's own words (#3122). See docs/modules/member-portal-and-permissions.md.
   const role = activeOrg?.role;
-  const qc = useQueryClient();
   // basename-relative (react-router strips the /w/:slug base) — NOT
   // window.location.pathname, which still carries the base.
   const onPortal = location.pathname.startsWith("/portal/");
@@ -651,94 +641,7 @@ function ActiveOrgScopedRoutes() {
   const shouldRedirectToAppHome = !!appMode && !inManagedAppSurface(location.pathname);
 
   return (
-    <PlatformWebProvider
-      orgSlug={activeSlug}
-      role={role ?? null}
-      appMode={!!appMode}
-      flows={WORKSPACE_FLOWS}
-      recordPhoto={RecordPhoto}
-      decodeBarcodeImage={decodeBarcodeImage}
-      // The app owns what Cobb looks like; the package owns the button that
-      // hands him a record.
-      cobbIcon={CobbHead}
-      api={{
-        listActions: (slug, kind) => api.listActions(slug, kind),
-        setRecordActionPin: (slug, kind, action, pinned) => api.setRecordActionPin(slug, kind, action, pinned),
-        // A record's door to a module that is off (#3883): turning it on is an
-        // owner's or admin's act; everyone else asks, through the one sheet.
-        enableModule: (slug, name) => api.enableModule(slug, name),
-        askForModule: async (slug, name, label) => {
-          const { blocked } = await api.describeBlockedAction(slug, [{ kind: "module", key: name }], `Using ${label}`);
-          raiseBlockedAction({ blocked, refused: null, subject: `Turn on ${label}` });
-        },
-        listFaces: (slug, kind) => api.listFaces(slug, kind),
-        listNativeFieldOverrides: (slug, kind) => api.listNativeFieldOverrides(slug, kind),
-        upsertOverride: (slug, body) => api.upsertOverride(slug, body),
-        invokeAction: (slug, body) => api.invokeAction(slug, body),
-        requestLight: (slug, ref, reason) => api.requestLight(slug, ref, reason),
-        lookupEntity: (slug, kind, id) => api.lookupEntity(slug, kind, id),
-        listShareOffers: (slug) => api.listShareOffers(slug),
-        withdrawShareOffer: (slug, id) => api.withdrawShareOffer(slug, id),
-        recordShares: (slug, kind, id) => api.recordShares(slug, kind, id),
-        listSuggestions: (slug, q) => api.listSuggestions(slug, q),
-        copyNotes: (slug, kind, id) => api.copyNotes(slug, kind, id),
-        // Walk-up printing: platform-web needs the printer list to spot a
-        // browser-driven default, and a way to call a module back once paper
-        // exists. Both optional in the contract; wiring them turns it on.
-        listPrinters: (slug) => api.listPrinters(slug),
-        postToModulePath: (slug, path, body) => api.postToModulePath(slug, path, body),
-        listEntities: (slug, kind, q) => api.listEntities(slug, kind, q),
-        exportEntitiesCsv: (slug, kind, q) => api.exportEntitiesCsv(slug, kind, q),
-        // Mapped down to {user_id, display_name}: platform-web has no business
-        // knowing roles or join dates to draw a name in a picker.
-        listMembers: async (slug) => ({
-          items: (await api.listMembers(slug)).items.map((m) => ({
-            user_id: m.user_id,
-            display_name: m.display_name,
-          })),
-        }),
-        listPeople: async (slug) => ({
-          items: (await api.listPeople(slug)).items.map((p) => ({ id: p.id, name: p.name, member: p.member, left: p.left })),
-        }),
-        addPerson: async (slug, name) => {
-          const p = await api.addPerson(slug, { name });
-          return { id: p.id, name: p.name, member: p.member, left: p.left };
-        },
-        // The resolved read: a record shows its fields as the workspace
-        // arranged them (relabelled, hidden, filed under sections).
-        listBulkFieldOptions: api.listBulkFieldOptions,
-        listFieldDefs: (slug, kind) => api.listFieldDefs(slug, kind, true),
-        // Wires, through the same door as the Wires page: a module's offer to
-        // make one ("add running-low items to a list") on a person's say-so.
-        listWires: (slug) => api.listBindings(slug),
-        createWire: (slug, wire) => api.createBinding(slug, { ...wire, target: "self", enabled: true }),
-        deleteWire: (slug, id) => api.deleteBinding(slug, id),
-        listWireEvents: (slug) => api.listWireEvents(slug),
-        // Contributed panels: what ENABLED modules declare for other modules'
-        // detail pages. platform-web renders them; this is the gate that keeps
-        // a disabled module's panel off the page.
-        listPhotoSuggestions: (slug, kind, ids) => photoSuggestionsWhenOn(qc, slug, kind, ids),
-        searchPhotoFor: (slug, kind, id) => api.searchPhotoFor(slug, kind, id),
-        listContributedPanels: (slug) =>
-          api
-            .orgModules(slug)
-            .then((r) => [...KERNEL_PANELS, ...r.items.filter((m) => m.enabled).flatMap((m) => m.panels ?? [])]),
-        fieldValues: (slug, kind, field, opts) => api.fieldValues(slug, kind, field, opts),
-        sellerOffer: (slug, kind) => api.sellerOffer(slug, kind),
-        listUnits: (slug) => api.listUnits(slug),
-        addUnit: (slug, unit) => api.addUnit(slug, unit),
-        deleteUnit: (slug, code) => api.deleteUnit(slug, code).then(() => undefined),
-        setUnitDisplayMode: (slug, mode) => api.setUnitDisplayMode(slug, mode),
-        // A collection's search shows what is waiting in the scan inbox to
-        // come to it, judged and filed the way the inbox card does.
-        waitingScans: (slug, q, destination) => waitingScans(qc, role ?? null, slug, q, destination),
-        fileWaitingScan: (slug, id) => fileWaitingScan(qc, role ?? null, slug, id),
-        raiseBlocked: (blocked) => raiseBlockedAction({ blocked, refused: null, subject: null }),
-        recordPublicPages: (slug, id) => api.recordPublicPages(slug, id),
-        receivedFrom: (slug, kind, id) => api.receivedFrom(slug, kind, id),
-        sendBackShareOffer: (slug, offerId) => api.sendBackShareOffer(slug, offerId),
-      }}
-    >
+    <WorkspacePlatformWeb orgSlug={activeSlug} role={role ?? null} appMode={!!appMode}>
       <Suspense fallback={<RouteFallback />}>
       {/* Host gate: turns the fabrication file renderers on/off with the
           active workspace's machine domains. core-file-preview stays
@@ -766,14 +669,13 @@ function ActiveOrgScopedRoutes() {
       {shouldRedirectToPortal && <Navigate to={`/portal/${activeSlug}`} replace />}
       {shouldRedirectToAppHome && <Navigate to={appMode!.home_path} replace />}
       <Routes>
-        <Route path="/station/floor" element={<FloorManagerPage screen />} />
-        <Route path="/station/inspection/:machineId/:orderId" element={<InspectionStationPage />} />
-        <Route path="/station/reflow/:machineId/:orderId" element={<ReflowStationPage />} />
-        <Route path="/station/assembly/:machineId/:orderId" element={<AssemblyStationPage />} />
-        <Route path="/station/printer/:machineId" element={<PrinterStationPage />} />
-        <Route path="/station/machine/:connectionId/:deviceId" element={<MachineStationPage />} />
+        <Route path="/station/stock/:station" element={<StockStationPage />} />
+        <Route element={<ModuleOffGate><Outlet /></ModuleOffGate>}>
+          <Route path="/station/floor" element={<FloorManagerPage screen />} />
+          <Route path="/station/printer/:machineId" element={<PrinterStationPage />} />
+          <Route path="/station/machine/:connectionId/:deviceId" element={<MachineStationPage />} />
+        </Route>
         <Route element={<AppLayout activeSlug={activeSlug} />}>
-          <Route path="/builds/inspections/:id" element={<BoardInspectionPage />} />
           <Route index element={<Dashboard />} />
           <Route
             path="/inventory/*"
@@ -1131,6 +1033,6 @@ function ActiveOrgScopedRoutes() {
           chrome. When it does float, it sits ABOVE the feedback pill (see
           BasketWidget) — the two used to overlap in that corner. */}
       {!onAdmin && labelsEnabled && !fullSide && !labelsRowInSidebar && <LabelsBasket orgSlug={activeSlug} getToken={getToken} />}
-    </PlatformWebProvider>
+    </WorkspacePlatformWeb>
   );
 }

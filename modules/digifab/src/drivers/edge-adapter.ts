@@ -18,6 +18,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { LaserSetupSchema, LaserCommissionSchema, type LaserSetup, type LaserCommission } from "@cobblr/platform-contract/laser-setup";
 import { EdgeUnsupported } from "@cobblr/platform-contract";
 import { DriverSaid, sentenceIn } from "../job-truth.js";
 import { ReviewRequired } from "./job-review.js";
@@ -47,10 +48,10 @@ import { edgeInstanceOf } from "@cobblr/platform-contract/edge-bridge-client";
  *  through it (the cloud→edge tunnel) instead of dialing the bridge directly.
  *  Supplied by the caller (which holds platform().edge + the orgId), so this
  *  pure driver stays platform-free. Returns the agent's { status, body }. */
-export type EdgeRelay = (req: { method: string; path: string; body?: unknown; file?: { path: string; sha256: string; size: number } }) => Promise<{ status: number; body: unknown }>;
+export type EdgeRelay = (req: { method: string; path: string; body?: unknown; timeoutMs?: number; file?: { path: string; sha256: string; size: number } }) => Promise<{ status: number; body: unknown }>;
 
 const JOB_STATES = new Set<JobState>([
-  "queued", "printing", "paused", "completed", "failed", "cancelled", "awaiting-assignment", "unknown",
+  "idle", "queued", "printing", "paused", "completed", "failed", "cancelled", "awaiting-assignment", "unknown",
 ]);
 
 function coerceState(raw: unknown): JobState {
@@ -82,7 +83,24 @@ function coerceTemps(raw: unknown): DeviceTemps | null {
   const nozzle = pair(r.nozzle); if (nozzle) out.nozzle = nozzle;
   const bed = pair(r.bed); if (bed) out.bed = bed;
   const chamber = pair(r.chamber); if (chamber) out.chamber = chamber;
-  return out.nozzle || out.bed || out.chamber ? out : null;
+  if (Array.isArray(r.tools)) {
+    const tools: NonNullable<DeviceTemps["tools"]> = [];
+    for (const raw of r.tools.slice(0, 32)) {
+      if (!raw || typeof raw !== "object") continue;
+      const t = raw as Record<string, unknown>;
+      const temperature = pair(t);
+      if (typeof t.id !== "string" || !t.id || !temperature) continue;
+      const f = t.filament && typeof t.filament === "object" ? t.filament as Record<string, unknown> : {};
+      const filament = {
+        ...(typeof f.material === "string" && f.material ? { material: f.material.slice(0, 120) } : {}),
+        ...(typeof f.vendor === "string" && f.vendor ? { vendor: f.vendor.slice(0, 120) } : {}),
+        ...(typeof f.color === "string" && /^#[0-9a-f]{6}$/i.test(f.color) ? { color: f.color } : {}),
+      };
+      tools.push({ id: t.id.slice(0, 120), ...temperature, ...(Object.keys(filament).length ? { filament } : {}) });
+    }
+    if (tools.length) out.tools = tools;
+  }
+  return out.nozzle || out.bed || out.chamber || out.tools ? out : null;
 }
 
 function coerceJob(raw: unknown): DeviceJob | null {
@@ -99,7 +117,14 @@ function coerceJob(raw: unknown): DeviceJob | null {
 }
 
 export class EdgeAdapterDriver implements MachineDriver {
+  readonly laserBackend: MachineDriver["laserBackend"];
+  readonly printProcess: MachineDriver["printProcess"];
+  cancelJob?: (jobId: string) => Promise<void>;
+  pauseJob?: (jobId: string) => Promise<void>;
+  resumeJob?: (jobId: string) => Promise<void>;
   private knownReviewRequired: boolean;
+  private knownPrintReview: boolean;
+  private knownCutterReview: boolean;
   private base: string;
   private token: string | null;
   private relay: EdgeRelay | null;
@@ -110,7 +135,24 @@ export class EdgeAdapterDriver implements MachineDriver {
    *  a bare `cobblr-edge://` (single-instance bridge picks its only one). */
   private tunnelPrefix: string;
   constructor(cfg: ManagerConfig, relay?: EdgeRelay | null) {
-    this.knownReviewRequired = cfg.extra?.creds?.edge != null && (cfg.extra.creds.edge as Record<string, unknown>).driver === "lightburn";
+    const edge = cfg.extra?.creds?.edge as Record<string, unknown> | undefined;
+    this.laserBackend = edge?.driver === "gcode-laser" ? "gcode" : edge?.driver === "ruida" ? "ruida" : edge?.driver === "galvo" ? "galvo" : undefined;
+    this.knownCutterReview = edge?.driver === "cutter";
+    this.printProcess = edge?.driver === "sdcp" ? "resin" : undefined;
+    this.knownPrintReview = edge?.driver === "sdcp" || edge?.driver === "snapmaker" || edge?.driver === "moonraker" && edge.profile === "snapmaker-u1";
+    this.knownReviewRequired = edge?.driver === "lightburn" || this.knownPrintReview || this.knownCutterReview || this.laserBackend != null;
+    if (this.knownPrintReview) {
+      const control = async (id: string) => {
+        const result = await this.runControl("", id, {});
+        if (!result.ok) throw new Error(result.detail || "The printer did not accept the control.");
+      };
+      this.cancelJob = async jobId => {
+        try { await control("stop"); }
+        catch (error) { if ((await this.getJobStatus(jobId).catch(() => null))?.state !== "idle") throw error; }
+      };
+      this.pauseJob = () => control("pause");
+      this.resumeJob = () => control("resume");
+    }
     this.base = cfg.baseUrl.replace(/\/+$/, "");
     // Optional shared-secret: sent as a Bearer if the connection stored an apiKey.
     this.token = cfg.apiKey ?? null;
@@ -119,6 +161,24 @@ export class EdgeAdapterDriver implements MachineDriver {
     this.tunnelPrefix = instance ? `/${instance}` : "";
   }
 
+  async getLaserSetup():Promise<LaserSetup>{
+    if(!this.laserBackend)throw new Error("Choose a direct bridge laser for station setup.");
+    return LaserSetupSchema.parse(await this.req("GET","/laser/setup"));
+  }
+  async homeLaser(checkMotionAllowed?:()=>Promise<void>):Promise<LaserSetup>{
+    return this.setupMotion("/laser/home",{},checkMotionAllowed);
+  }
+  async commissionLaser(configuration:LaserCommission,checkMotionAllowed?:()=>Promise<void>):Promise<LaserSetup>{
+    return this.setupMotion("/laser/commission",LaserCommissionSchema.parse(configuration),checkMotionAllowed);
+  }
+  private async setupMotion(path:string,body:unknown,checkMotionAllowed?:()=>Promise<void>):Promise<LaserSetup>{
+    if(!this.laserBackend||!checkMotionAllowed)throw new Error("Use this laser's authorized station for setup.");
+    await checkMotionAllowed();
+    try{
+      const report=LaserSetupSchema.parse(await this.req("POST",path,{body,timeoutMs:65000}));
+      await checkMotionAllowed();return report;
+    }catch(error){await this.req("POST","/control",{body:{id:"stop",params:{}}}).catch(()=>{});throw error;}
+  }
   private headers(extra: Record<string, string> = {}): Record<string, string> {
     return this.token ? { ...extra, authorization: `Bearer ${this.token}` } : extra;
   }
@@ -136,9 +196,23 @@ export class EdgeAdapterDriver implements MachineDriver {
 
   /** Run a declared control through the bridge. */
   async runControl(_deviceId: string, id: string, params: Record<string, unknown>): Promise<CommandResult> {
-    if (await this.jobReviewRequired()) return { ok: false, detail: "Approve at the laser's station." };
+    if (this.laserBackend && !["frame", "pause", "resume", "stop"].includes(id)) return { ok: false, detail: "Choose a direct laser control." };
+    const cutter = await this.jobReviewRequired() && await this.jobReviewKind() === "cutter";
+    if (cutter && !["frame", "pause", "resume", "stop", "confirm-idle"].includes(id)) return { ok: false, detail: "Choose a cutter station control." };
+    if (!this.laserBackend && !cutter && await this.jobReviewRequired() && !(await this.jobReviewKind() === "print" && ["stop", "pause", "resume"].includes(id))) return { ok: false, detail: "Approve Start at the machine's station." };
+    const { checkMotionAllowed, ...wireParams } = params;
+    const check = (this.laserBackend || cutter) && ["frame", "confirm-idle"].includes(id) && typeof checkMotionAllowed === "function" ? checkMotionAllowed as () => Promise<void> : undefined;
+    if ((this.laserBackend || cutter) && ["frame", "confirm-idle"].includes(id) && !check) return { ok: false, detail: "Frame the reviewed queued job at this laser." };
     try {
-      const r = (await this.req("POST", "/control", { body: { id, params } })) as { ok?: boolean; ref?: string; detail?: string };
+      await check?.();
+      let r: { ok?: boolean; ref?: string; detail?: string };
+      try {
+        r = await this.req("POST", "/control", { body: { id, params: wireParams }, ...(this.laserBackend === "galvo" && id === "frame" ? {timeoutMs:65000} : {}) }) as typeof r;
+        await check?.();
+      } catch (e) {
+        if (check) await this.req("POST", "/control", { body: { id: "stop", params: {} } }).catch(() => {});
+        throw e;
+      }
       return r?.ok ? { ok: true, ref: r.ref ?? id } : { ok: false, detail: r?.detail ?? "control not accepted" };
     } catch (e) {
       return { ok: false, detail: (e as Error).message };
@@ -204,14 +278,14 @@ export class EdgeAdapterDriver implements MachineDriver {
   /** One transport for every contract call. Tunnel mode routes through the relay
    *  (the body is JSON; an upload rides as { filename, data_b64 }); direct mode
    *  dials the bridge (an upload is multipart). */
-  private async req(method: string, path: string, opts: { body?: unknown; file?: { bytes: Uint8Array; filename: string } } = {}): Promise<unknown> {
+  private async req(method: string, path: string, opts: { body?: unknown; timeoutMs?: number; file?: { bytes: Uint8Array; filename: string } } = {}): Promise<unknown> {
     if (this.relay) {
       const body = opts.file
         ? { filename: opts.file.filename, data_b64: Buffer.from(opts.file.bytes).toString("base64") }
         : opts.body;
       // Prefix the instance so one bridge (one workspace channel) routes the call
       // to the right machine: "/voron" + "/devices" → "/voron/devices".
-      const r = await this.relay({ method, path: this.tunnelPrefix + path, body });
+      const r = await this.relay({ method, path: this.tunnelPrefix + path, body, ...(opts.timeoutMs ? {timeoutMs:opts.timeoutMs} : {}) });
       if (r.status >= 400) {
         // The bridge says why in a sentence (an allowlist refusal, a service
         // that did not answer). Keep its words; a 403 from the bridge is not a
@@ -232,7 +306,7 @@ export class EdgeAdapterDriver implements MachineDriver {
       fetchBody = JSON.stringify(opts.body);
       headers["content-type"] = "application/json";
     }
-    const res = await fetch(this.base + path, { method, headers, body: fetchBody, signal: AbortSignal.timeout(15_000) });
+    const res = await fetch(this.base + path, { method, headers, body: fetchBody, signal: AbortSignal.timeout(opts.timeoutMs ?? 15_000) });
     if (!res.ok) throw new Error(`adapter ${method} ${path} → ${res.status}: ${(await res.text()).slice(0, 160)}`);
     return res.status === 204 ? null : res.json().catch(() => null);
   }
@@ -252,6 +326,8 @@ export class EdgeAdapterDriver implements MachineDriver {
       id: String(d.id ?? ""),
       name: String(d.name ?? "device"),
       enabled: d.enabled !== false,
+      station_kind: d.station_kind === "print" || d.station_kind === "laser" || d.station_kind === "cutter" ? d.station_kind : undefined,
+      camera_available: d.camera_available === true,
       state: (d.state as string | undefined) ?? null,
       tags: [],
       temps: coerceTemps(d.temps),
@@ -266,8 +342,11 @@ export class EdgeAdapterDriver implements MachineDriver {
   }
 
   async jobReviewRequired(): Promise<boolean> {
+    if (this.knownReviewRequired) return true;
     try {
-      const data = await this.req("GET", "/capabilities") as { jobReview?: boolean };
+      const data = await this.req("GET", "/capabilities") as { jobReview?: boolean; jobReviewKind?: unknown };
+      if (data?.jobReviewKind === "print") this.knownPrintReview = true;
+      if (data?.jobReviewKind === "cutter") this.knownCutterReview = true;
       return this.knownReviewRequired || data?.jobReview === true;
     } catch (e) {
       const unsupported = e instanceof DriverSaid ? [404, 501].includes(e.status) : e instanceof Error && /adapter GET \/capabilities → (?:404|501)(?::|$)/.test(e.message);
@@ -277,6 +356,14 @@ export class EdgeAdapterDriver implements MachineDriver {
       }
       throw e;
     }
+  }
+
+  async jobReviewKind(): Promise<"laser" | "print" | "cutter"> {
+    if (this.knownCutterReview) return "cutter";
+    if (this.knownPrintReview) return "print";
+    if (this.knownReviewRequired) return "laser";
+    const data = await this.req("GET", "/capabilities") as { jobReviewKind?: unknown };
+    return data?.jobReviewKind === "cutter" ? "cutter" : data?.jobReviewKind === "print" ? "print" : "laser";
   }
 
   async prepareJob(file: Uint8Array, filename: string): Promise<JobReview> {
@@ -326,9 +413,21 @@ export class EdgeAdapterDriver implements MachineDriver {
 
   async submitJob(args: SubmitArgs): Promise<SubmitResult> {
     if (await this.jobReviewRequired() && !args.approval) throw new ReviewRequired("Approve at the laser's station.");
-    const data = (await this.req("POST", "/submit", {
-      body: { ...(args.approval ? { approval: args.approval } : {}), fileId: args.fileId, target: args.deviceId ?? args.tag ?? null, ...(args.idempotencyKey ? { idempotencyKey: args.idempotencyKey } : {}) },
-    })) as { jobId?: string; queued?: boolean };
+    const cutter = await this.jobReviewRequired() && await this.jobReviewKind() === "cutter";
+    if ((this.laserBackend || cutter || this.printProcess === "resin") && !args.checkStartAllowed) throw new ReviewRequired("Approve at the machine's station.");
+    const check = args.checkStartAllowed;
+    await check?.();
+    let data: { jobId?: string; queued?: boolean } | undefined;
+    try {
+      data = await this.req("POST", "/submit", {
+        body: { ...(args.approval ? { approval: args.approval } : {}), fileId: args.fileId, target: args.deviceId ?? args.tag ?? null, ...(args.idempotencyKey ? { idempotencyKey: args.idempotencyKey } : {}) },
+      }) as typeof data;
+      await check?.();
+    } catch (e) {
+      if (this.laserBackend || cutter || this.printProcess === "resin") await this.req("POST", "/control", { body: { id: "stop", params: {} } }).catch(() => {});
+      if (cutter && data?.jobId) return { jobId: data.jobId, deviceId: args.deviceId ?? null, queued: true, status: "queued", interrupted: true };
+      throw e;
+    }
     const jobId = data?.jobId ?? null;
     const queued = data?.queued ?? !!jobId;
     return { jobId, deviceId: args.deviceId ?? null, queued, status: queued ? "queued" : "awaiting-assignment" };

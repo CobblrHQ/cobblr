@@ -1,3 +1,5 @@
+import { stockViews } from "./stock-shapes.js";
+import { stockUnitRefusal } from "../stock-unit.js";
 import { fieldCurrency } from "@cobblr/platform-contract/money";
 // /parts — full CRUD plus the stock-adjust endpoint.
 //
@@ -352,6 +354,7 @@ function encodeOffsetCursor(offset: number): string {
 }
 function decodeCursor(c: string): { name?: string; id?: string; offset?: number } | null {
   try {
+    // b64-lenient-ok: a list cursor only says where the next page starts; every spelling of it is the same place.
     const o = JSON.parse(Buffer.from(c, "base64url").toString("utf8"));
     if (typeof o?.name === "string" && typeof o?.id === "string") return o;
     if (typeof o?.offset === "number" && o.offset >= 0) return { offset: o.offset };
@@ -373,6 +376,8 @@ const listSelect = (db: ReturnType<typeof tenantDb>) =>
       "p.unit",
       "p.cost",
       "p.min_qty",
+      "p.instance",
+      "p.stock_revision",
       "p.manufacturer",
       "p.supplier_url",
       "p.image_path",
@@ -705,8 +710,9 @@ partsRouter.get(
     // enrichment above (location names, catalog images) rather than resolved per
     // row. `items` here is what the parts list renders, so a per-row count would
     // be an N+1 on the hottest read in the module.
+    const stocks = await stockViews(db, filtered);
     const unitCounts = await unitCountsFor(req, ctx.org.id, filtered.map((p) => p.id));
-    const withUnits = filtered.map((p) => ({ ...p, units_count: unitCounts.get(p.id)?.count ?? 0 }));
+    const withUnits = filtered.map((p) => ({ ...p, stock: stocks.get(p.id), stock_used: stocks.get(p.id)?.used ?? 0, units_count: unitCounts.get(p.id)?.count ?? 0 }));
     const withHoldings = nest ? await attachHoldings(holdingsCtx(req), withUnits) : withUnits;
     // What of each is installed in an asset or machine, and what is spare: the
     // row says "0 spare · 1 installed in Gaming PC" and Hide unavailable reads it.
@@ -805,6 +811,8 @@ partsRouter.get(
         "p.unit",
         "p.cost",
         "p.min_qty",
+      "p.instance",
+      "p.stock_revision",
         "p.manufacturer",
         "p.serial_number",
         "p.model_number",
@@ -1169,7 +1177,7 @@ partsRouter.get(
     }
     const rows = await db
       .selectFrom("inventory_consumption")
-      .select(["id", "delta", "reason", "source_kind", "source_id", "kind", "by_user", "at"])
+      .select(["id", "delta", "unit", "reason", "source_kind", "source_id", "kind", "by_user", "at"])
       .where("part_id", "=", id)
       .orderBy("at", "desc")
       .limit(200)
@@ -1527,6 +1535,11 @@ partsRouter.patch(
     if (!before) {
       res.status(404).json({ error: { code: "not_found", message: "part not found" } });
       return;
+    }
+
+    if (parsed.data.unit != null) {
+      const refusal = await stockUnitRefusal(db, id, parsed.data.unit);
+      if (refusal) return void res.status(409).json({ error: { code: "stock_unit_fixed", message: refusal } });
     }
 
     const smNames = await platform().entities.serverManagedFields(ctx.org.id, "inventory:part");

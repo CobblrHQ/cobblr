@@ -198,3 +198,16 @@ export function useActiveOrg(): ActiveOrgCtx {
   if (!v) throw new Error("useActiveOrg called outside ActiveOrgProvider");
   return v;
 }
+
+/** A page drawn outside the workspace shell that still shows the
+ *  workspace's own components (a Station tablet, #4640, which shows the scan
+ *  inbox's card and is not signed in as a person): the one workspace it is
+ *  for, which it cannot switch away from. */
+export function FixedActiveOrgProvider({ org, currency, children }: { org: OrgMembership; currency?: string; children: ReactNode }) {
+  const value = useMemo<ActiveOrgCtx>(() => ({ activeOrg: org, activeSlug: org.slug, setActiveSlug: () => false }), [org]);
+  return (
+    <Ctx.Provider value={value}>
+      <MoneyCurrencyProvider currency={currency || "USD"}>{children}</MoneyCurrencyProvider>
+    </Ctx.Provider>
+  );
+}

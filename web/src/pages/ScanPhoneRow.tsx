@@ -326,7 +326,7 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
             aria-busy={p.rerun.running}
             aria-label={p.rerun.running ? (p.rerun.replaying ? "Replaying" : "Re-running the AI") : p.rerun.failed ? "Retry the AI" : "Re-run AI"}
             data-state={p.rerun.running ? "running" : p.rerun.failed ? "failed" : "idle"}
-            title={p.rerun.running ? "The AI is working on this item" : p.rerun.failed ? "The AI did not answer last time; try again" : "A fresh look at the photo and the code"}
+            title={p.rerun.running ? "The AI is working on this item" : p.rerun.failed ? "Ask the AI again" : "A fresh look at the photo and the code"}
             className={tool + " min-w-10 justify-center" + (p.rerun.failed && !p.rerun.running ? " border-amber-400/70 text-amber-700 dark:text-amber-300" : p.rerun.running ? " border-accent text-accent" : "")}
           >
             {p.rerun.running ? <Loader2 size={15} className="animate-spin" /> : <RotateCcw size={15} />}

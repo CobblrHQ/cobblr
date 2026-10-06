@@ -50,6 +50,8 @@ import { gridPitches, planPitch } from "../lib/planGrid";
 import { usePlanHeightCap } from "./plan-fits-the-screen";
 import { layoutPinLabels } from "../lib/pinLabels";
 import { PinPeek } from "./PinPeek";
+import { AddSizesDialog, ShelfFitLabel, ShelfFitList, SizedThingBox, useSizedThings } from "./PlanSizedThings";
+import { nameUnder } from "../lib/planFit";
 import { PLAN_COLOURS, isPlanColour, planColourOf } from "@cobblr/platform-contract/plan-colours";
 import { GROUP_COLOURS, PLAN_COLOUR_STYLE } from "../lib/planColourStyles";
 import { groupPins, groupableFields, shortFor } from "../lib/pinGroups";
@@ -324,6 +326,26 @@ function PlanFor({
     result.placedOccupants.sort(byAreaDesc);
     return result;
   }, [occupants, held.data, bound]);
+  // The drawing's width on screen, so pin labels are laid out where they
+  // will actually be drawn (a phone's 358 px drawer is not a desk's 900).
+  const [planPx, setPlanPx] = useState(0);
+  useEffect(() => {
+    const el = planRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setPlanPx(el.clientWidth));
+    ro.observe(el);
+    setPlanPx(el.clientWidth);
+    return () => ro.disconnect();
+  }, [bound?.w_mm, bound?.d_mm]);
+  // Things with an outer size are drawn at it, and a shelf says whether they
+  // fit (PlanSizedThings.tsx).
+  const shelvesHere = useMemo(() => placed.filter((p) => p.loc.kind !== "area"), [placed]);
+  // Each shelf on a face keeps a band at its top for its name and its fit
+  // (two lines of small text), and the things stand below it.
+  const bandMm = bound?.view === "front" && planPx > 0 ? Math.round((34 / planPx) * bound.w_mm) : 0;
+  const sized = useSizedThings({ slug, bound, room, pins, occupants, shelves: shelvesHere, placeable, placeableKinds, band_mm: bandMm });
+  const onFloor = bound?.view !== "front";
+  const [addSizes, setAddSizes] = useState(false);
   // Two things in one place is a mistake the plan should SHOW rather than
   // silently accept — a floor plan that quietly stacks records misrepresents
   // the space it exists to describe. Containers and the things placed in them
@@ -333,13 +355,19 @@ function PlanFor({
     const items = [
       ...placed.filter((p) => p.loc.kind !== "area").map((p) => ({ id: p.loc.id, rect: p.rect })),
       ...placedOccupants.map((p) => ({ id: `${p.ent.kind}:${p.ent.id}`, rect: p.rect })),
+      // A thing at its real footprint takes its real room on the floor.
+      ...(onFloor ? sized.things.map((t) => ({ id: t.key, rect: t.rect })) : []),
     ];
     return collidingIds(items);
-  }, [placed, placedOccupants]);
+  }, [placed, placedOccupants, onFloor, sized.things]);
   // What already stands here: a new thing goes where none of it is.
   const taken = useMemo(
-    () => [...placed.filter((p) => p.loc.kind !== "area").map((p) => p.rect), ...placedOccupants.map((p) => p.rect)],
-    [placed, placedOccupants],
+    () => [
+      ...placed.filter((p) => p.loc.kind !== "area").map((p) => p.rect),
+      ...placedOccupants.map((p) => p.rect),
+      ...(onFloor ? sized.things.map((t) => t.rect) : []),
+    ],
+    [placed, placedOccupants, onFloor, sized.things],
   );
   // This place's own drawers and bins, drawn or not: what "arrange" lays out.
   const ownContainers = useMemo(
@@ -361,17 +389,6 @@ function PlanFor({
       return n > 0 ? `holds ${n} ${n === 1 ? "thing" : "things"}` : null;
     };
   }, [holders.data]);
-  // The drawing's width on screen, so pin labels are laid out where they
-  // will actually be drawn (a phone's 358 px drawer is not a desk's 900).
-  const [planPx, setPlanPx] = useState(0);
-  useEffect(() => {
-    const el = planRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => setPlanPx(el.clientWidth));
-    ro.observe(el);
-    setPlanPx(el.clientWidth);
-    return () => ro.disconnect();
-  }, [bound?.w_mm, bound?.d_mm]);
   // The grid, when this plan has it on: its pitch follows the plan's units
   // and the size it is drawn at, unless somebody chose one. Off, boxes keep
   // snapping to the plan's own step and pins go exactly where they are put.
@@ -1079,7 +1096,11 @@ function PlanFor({
       <div
         ref={planRef}
         data-grid={gridOn && pitch ? pitch.label : undefined}
-        className={`relative mx-auto border-2 border-slate-400 dark:border-slate-500 rounded bg-subtle/40 dark:bg-[#0d1526] select-none ${gridOn ? "bg-[linear-gradient(to_right,rgba(100,116,139,.22)_1px,transparent_1px),linear-gradient(to_bottom,rgba(100,116,139,.22)_1px,transparent_1px)]" : edit ? "bg-[radial-gradient(circle,rgba(100,116,139,.25)_1px,transparent_1px)]" : ""}`}
+        // A rack's face with things on its shelves is drawn wide enough to
+        // read (a phone's whole width, at most 32rem), and the page scrolls
+        // down it: three printers on a shelf stay readable instead of the
+        // face shrinking until the whole rack fits the screen.
+        className={`relative mx-auto border-2 border-slate-400 dark:border-slate-500 rounded bg-subtle/40 dark:bg-[#0d1526] select-none ${bound.view === "front" && sized.fits.length > 0 ? "!w-[min(100%,32rem)]" : ""} ${gridOn ? "bg-[linear-gradient(to_right,rgba(100,116,139,.22)_1px,transparent_1px),linear-gradient(to_bottom,rgba(100,116,139,.22)_1px,transparent_1px)]" : edit ? "bg-[radial-gradient(circle,rgba(100,116,139,.25)_1px,transparent_1px)]" : ""}`}
         style={{
           aspectRatio: `${bound.w_mm} / ${bound.d_mm}`,
           // The whole room on one screen: as wide as it can be while its
@@ -1335,8 +1356,19 @@ function PlanFor({
                   className="absolute inset-0 pointer-events-none rounded"
                   style={{ ...(heatStyle(loc.id) ?? {}), ...(rotate ? { writingMode: "horizontal-tb" as const } : {}) }}
                 />
-                <span className="relative break-words">
-                  {pxW < 30 && pxH < 30 ? (loc.short_name || "·") : (loc.short_name && pxW < 90 && !rotate ? loc.short_name : loc.name)}
+                {/* On a face, a shelf's name is the first line of its label band
+                    (a button would centre it, under the things on the shelf). */}
+                <span
+                  className={bound.view === "front" ? "absolute left-1 top-0.5 max-w-[calc(100%-0.5rem)] truncate leading-[13px]" : "relative break-words"}
+                  data-face-text={bound.view === "front" ? "" : undefined}
+                >
+                  {pxW < 30 && pxH < 30
+                    ? (loc.short_name || "·")
+                    : loc.short_name && pxW < 90 && !rotate
+                      ? loc.short_name
+                      : bound.view === "front"
+                        ? nameUnder(loc.name, room.name)
+                        : loc.name}
                 </span>
                 {heatBadge(loc.id)}
                 {placeBadge(loc.id)}
@@ -1351,7 +1383,7 @@ function PlanFor({
             );
           })}
 
-        {pins.map((t) => {
+        {pins.filter((t) => !sized.sizedPinKeys.has(`${t.kind}:${t.id}`)).map((t) => {
           // A pin says what it is, on the plan and not only on hover: a bare
           // pin on the floor was a question nobody could answer (#4147).
           const holds = holdsLabel(t.kind, t.id);
@@ -1459,7 +1491,41 @@ function PlanFor({
             </div>
           );
         })}
+
+        {/* things at their real size: a footprint on a floor, a face on a
+            shelf, standing side by side with the shelf's fit above them */}
+        {sized.things.map((t) => (
+          <SizedThingBox
+            key={`sized:${t.key}`}
+            slug={slug}
+            thing={t}
+            bound={bound}
+            colliding={colliding.has(t.key)}
+            canDrag={edit}
+            shelf={t.shelfId ? (sized.fits.find((f) => f.shelfId === t.shelfId) ?? null) : null}
+            planEl={planRef.current}
+            onOpen={() => {
+              const href = routeFor(t.kind, t.id);
+              if (href) navigate(href);
+            }}
+          />
+        ))}
+        {sized.fits.map((f) => (
+          <ShelfFitLabel key={`fit:${f.shelfId}`} fit={f} bound={bound} />
+        ))}
       </div>
+      <ShelfFitList fits={sized.fits} names={new Map(shelvesHere.map((s) => [s.loc.id, s.loc.name]))} rack={room.name} />
+      {sized.unsized.length > 0 && !placing && (
+        <p data-testid="plan-unsized" className="mt-2 text-center text-xs text-muted dark:text-slate-400">
+          {sized.unsized.length === 1 ? `${sized.unsized[0]!.name} has no size yet.` : `${sized.unsized.length} things here have no size yet.`}{" "}
+          <button type="button" onClick={() => setAddSizes(true)} className="text-accent underline-offset-2 hover:underline">
+            {sized.unsized.length === 1 ? "Add its size to see if it fits" : "Add their sizes to see if they fit"}
+          </button>
+        </p>
+      )}
+      {addSizes && (
+        <AddSizesDialog slug={slug} things={sized.unsized} placeable={placeable} placeableKinds={placeableKinds} onClose={() => setAddSizes(false)} />
+      )}
       {/* What each colour on the plan means: the places that carry it. A
           colour is the person's own grouping, never the only label. */}
       {groupField && pinGroups.length > 0 && (
@@ -1547,10 +1613,10 @@ function PlanFor({
       )}
 
       {/* items filed here but not yet on the plan — tap to drop at center */}
-      {edit && unplacedOccupants.length > 0 && (
+      {edit && unplacedOccupants.filter((e) => !sized.drawnOnShelf.has(`${fieldKindOf(e)}:${e.id}`)).length > 0 && (
         <div data-testid="plan-unplaced-records" className="flex items-baseline gap-2 flex-wrap text-xs text-faint dark:text-slate-500">
           <span>items here, not placed:</span>
-          {unplacedOccupants.slice(0, 24).map((e) => (
+          {unplacedOccupants.filter((e) => !sized.drawnOnShelf.has(`${fieldKindOf(e)}:${e.id}`)).slice(0, 24).map((e) => (
             <button
               key={`${e.kind}:${e.id}`}
               type="button"

@@ -765,12 +765,18 @@ export interface ScanDestinationContext {
  *  catalog said it is. The same evidence the router had. */
 export function scanFitItem(row: ScanTriageRow): FitItem {
   const meta = metaOf(row) as { category?: unknown; description?: unknown };
-  const top = candidatesOf(row)[0] as { category?: unknown } | undefined;
+  const cands = candidatesOf(row) as Array<{ category?: unknown; is_a?: unknown }>;
+  const top = cands[0];
   const text = (v: unknown) => (typeof v === "string" && v.trim() ? v : null);
+  // What the matchmaker said the item IS ("3D printer") stands in for a
+  // category when there is none: a typed "Bambu Lab P1P" has no catalog
+  // category, and without it a catch-all never yields to the list made for
+  // exactly this kind (#5065).
+  const isA = cands.map((c) => text(c?.is_a)).find((v): v is string => !!v) ?? null;
   return {
     name: row.suggested_name ?? "",
     manufacturer: text(row.suggested_manufacturer) ?? null,
-    category: text(top?.category) ?? text(meta.category) ?? null,
+    category: text(top?.category) ?? text(meta.category) ?? isA,
     description: text(meta.description) ?? null,
   };
 }

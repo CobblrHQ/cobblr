@@ -1,3 +1,4 @@
+import { perReadRequest } from "../lib/request-context.js";
 // Computed (template) fields. A field def of type='computed' carries a
 // {{ }} template instead of a stored value; its value is rendered at
 // entity-resolve time, so it reaches every read path uniformly — list
@@ -77,6 +78,10 @@ function topRefs(template: string): Set<string> {
 }
 
 async function computedDefsFor(orgId: string, kind: string): Promise<ComputedDef[]> {
+  return perReadRequest(`computed-defs:${orgId}:${kind}`, () => loadComputedDefsFor(orgId, kind));
+}
+
+async function loadComputedDefsFor(orgId: string, kind: string): Promise<ComputedDef[]> {
   const key = `${orgId}:${kind}`;
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.defs;

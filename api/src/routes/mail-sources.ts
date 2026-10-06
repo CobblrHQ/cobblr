@@ -111,6 +111,7 @@ mailSourcesRouter.get("/me/mail-sources/gmail/callback", async (req, res) => {
 
     // The backfill runs behind the redirect: the person is back on the page
     // in a second, and the first parcels appear as it walks.
+    // DETACHED: the first backfill; parcels appear as it walks, and the regular sync picks up anything it misses
     void syncCredential({ credentialId, ownerUserId: claims.userId, orgId: claims.orgId, force: true }).catch((err) => {
       console.error("[mail-source] first sync failed:", (err as Error).message);
     });

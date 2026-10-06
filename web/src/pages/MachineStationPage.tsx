@@ -1,24 +1,38 @@
+import { CutterStation } from "../features/digifab/CutterStation";
 import { countOf } from "@cobblr/platform-contract";
 import { fabricationMachineName, fabricationBridgeName } from "../lib/fabrication-display";
 import { LaserDrawing } from "../features/digifab/LaserLayout";
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { EntityPhoto, useStationWakeLock, Modal, SearchInput, useImageSrc, usePageTitle, useRunAction } from "@cobblr/platform-web";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { EntityPhoto, Modal, SearchInput, useImageSrc, usePageTitle, useRunAction } from "@cobblr/platform-web";
 import { MAIN_ID, SkipToContent } from "../components/a11y/shell-landmarks";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, ApiError, type DigifabJobReview, type LaserMaterialTag } from "../lib/api";
 import { resolveScannedThing, useScanTarget } from "../lib/scanTarget";
 import { GlobalScanWedge } from "../components/GlobalScanWedge";
 import { ScanOneSheet } from "../components/ScanOneSheet";
+import type {GalvoSetupMemory} from "../features/digifab/GalvoSetupFields";
+import { LaserSetupPanel } from "../features/digifab/LaserSetupPanel";
 import { DirectLaserControls } from "../features/digifab/DirectLaserControls";
 import { LightBurnReview } from "../features/digifab/startReview";
 import { LaserMaterialForm } from "../features/digifab/laserMaterial";
+
+import { ResinStation } from "../features/digifab/ResinStation";
+import { PrintStation } from "../features/digifab/PrintStation";
 
 const button = "min-h-12 rounded border border-line px-4 py-3 text-base disabled:opacity-50";
 const errorText = (e: unknown) => e instanceof ApiError ? e.message : String(e);
 
 export function MachineStationPage() {
+  const { activeSlug: slug } = useActiveOrg();
+  const { connectionId = "", deviceId = "" } = useParams();
+  const q = useQuery({ queryKey: ["digifab-station", slug, connectionId, deviceId, ""], queryFn: () => api.digifabStation(slug, connectionId, deviceId), refetchInterval: 4000 });
+  if (!q.data && !q.error) return <p>Loading the station…</p>;
+  return q.data?.kind === "cutter" ? <CutterStation slug={slug} connectionId={connectionId} deviceId={deviceId} /> : q.data?.kind === "resin" ? <ResinStation slug={slug} connectionId={connectionId} deviceId={deviceId} /> : q.data?.kind === "print" ? <PrintStation slug={slug} connectionId={connectionId} deviceId={deviceId} /> : <LaserMachineStationPage />;
+}
+
+function LaserMachineStationPage() {
   const { activeSlug: slug } = useActiveOrg();
   usePageTitle("Laser station");
   // PRESS-ARGS: The confirmed sheet supplies the label target; this action has no other inputs.
@@ -27,8 +41,10 @@ export function MachineStationPage() {
   const storageKey = `cobblr.machine-station.${slug}.${connectionId}.${deviceId}`;
   const [credential, setCredential] = useState<{ id: string; token: string } | null>(() => { try { return JSON.parse(localStorage.getItem(storageKey) || "null"); } catch { return null; } });
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const operation = useMutation({ mutationKey: ["machine-station", slug, connectionId, deviceId], mutationFn: (work: () => Promise<void>) => work() });
+  const busy = operation.isPending;
   const working = useRef(false);
+  const [setupEpoch,setSetupEpoch]=useState(0);
   const [review, setReview] = useState<DigifabJobReview | null>(null);
   const [confirmed, setConfirmed] = useState<{ id: string; name: string } | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -44,6 +60,10 @@ export function MachineStationPage() {
   const connection = fleet.data?.connections.find(c => c.connection_id === connectionId);
   const device = connection?.devices.find(d => d.id === deviceId);
   const direct = !!device?.laser_backend;
+  const galvo = device?.laser_backend === "galvo";
+  const profileScope=useRef(storageKey);
+  const galvoMemory=useRef<GalvoSetupMemory>({draft:{},correction:null});
+  if(profileScope.current!==storageKey){profileScope.current=storageKey;galvoMemory.current={draft:{},correction:null};}
   const screens = useQuery({ queryKey: ["digifab-station-screens", slug], queryFn: () => api.listDigifabStations(slug) });
   const inventoryKinds = useQuery({ queryKey: ["entity-kinds", slug], queryFn: () => api.listEntityKinds(slug), staleTime: 300_000 });
   const data = q.data;
@@ -62,12 +82,19 @@ export function MachineStationPage() {
 
   useEffect(() => { try { setCredential(JSON.parse(localStorage.getItem(storageKey) || "null")); } catch { setCredential(null); } setConfirmed(null); setReview(null); setPick(""); }, [storageKey]);
   useEffect(() => { setConfirmed(null); setReview(null); setSuggestion(undefined); setError(""); }, [job?.id, job?.status, JSON.stringify(material)]);
-  useStationWakeLock(true);
+  useEffect(() => {
+    let stopped = false;
+    let lock: WakeLockSentinel | undefined;
+    const acquire = async () => { if (document.visibilityState !== "visible" || !navigator.wakeLock) return; try { const next = await navigator.wakeLock.request("screen"); if (stopped) await next.release(); else lock = next; } catch { /* the tablet can deny staying awake */ } };
+    void acquire();
+    document.addEventListener("visibilitychange", acquire);
+    return () => { stopped = true; document.removeEventListener("visibilitychange", acquire); void lock?.release(); };
+  }, []);
 
   const run = async (work: () => Promise<void>) => {
     if (working.current) return;
-    working.current = true; setBusy(true); setError("");
-    try { await work(); } catch (e) { setError(errorText(e)); } finally { working.current = false; setBusy(false); }
+    working.current = true; setError("");
+    try { await operation.mutateAsync(work); } catch (e) { setError(errorText(e)); } finally { working.current = false; }
   };
   const confirmSheet = async (id: string, manual: boolean): Promise<string> => {
     setConfirmed(null);
@@ -80,7 +107,7 @@ export function MachineStationPage() {
       const key = `cobblr.sheet-label-reminder.${slug}.${id}`;
       if (!localStorage.getItem(key)) { localStorage.setItem(key, "seen"); setLabelNag(true); }
     }
-    return `${result.name}: material matches. Load it against the corner stop.`;
+    return `${result.name}: material matches. ${galvo?"Place it within the confirmed lens field and check it with the red guide.":"Load it against the corner stop."}`;
   };
   useScanTarget(credential && job?.status === "queued" ? { takes: kind => kind === "inventory:part" || inventoryKinds.data?.items.some(k => k.id === kind && k.module_name === "inventory") === true, take: async thing => { try { return await confirmSheet(thing.id, false); } catch (e) { setError(errorText(e)); throw e; } } } : null);
   const scanned = async (code: string) => {
@@ -98,7 +125,8 @@ export function MachineStationPage() {
     <header className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-2xl font-semibold">Laser station</h1><p className="text-muted break-all">{connection && device ? `${fabricationMachineName(connection, device)} · ${fabricationBridgeName(connection, bridges.data?.bridges ?? [])}` : "Laser"}</p></div><details className="text-sm"><summary className="cursor-pointer min-h-11 flex items-center">Station settings</summary><div className="space-y-3 py-3"><Link to="/digifab" className="block">Exit to the fleet</Link><button className={button} onClick={() => void run(async () => { await navigator.clipboard.writeText(`${window.location.origin}/w/${slug}${stationPath}`); })}>Copy station link</button>{credential && <button className={button} disabled={busy} onClick={() => void run(async () => { await api.revokeDigifabStation(slug, credential.id); localStorage.removeItem(storageKey); setCredential(null); setReview(null); setConfirmed(null); await screens.refetch(); })}>Revoke this screen</button>}{screens.data?.items.filter(s => s.connection_id === connectionId && s.remote_device_id === deviceId && !s.revoked_at).map(s => <div key={s.id} className="flex flex-wrap gap-2 items-center"><span>{s.label} · {s.id.slice(0, 8)}</span><button className={button} disabled={busy} onClick={() => void run(async () => { await api.revokeDigifabStation(slug, s.id); if (credential?.id === s.id) { localStorage.removeItem(storageKey); setCredential(null); setReview(null); setConfirmed(null); } await screens.refetch(); })}>Revoke screen</button></div>)}</div></details></header>
     {(error || q.error) && <p role="alert" className="rounded border border-red-500 bg-red-50 dark:bg-red-950 p-4 break-words">{error || errorText(q.error)}</p>}
     {startNeedsAttention && !direct && <p role="alert" className="rounded border border-line p-4">LightBurn needs attention on its screen. Start was sent, but running has not been reported. Check the screen and machine before continuing.</p>}
-    {direct && !review && <DirectLaserControls slug={slug} connectionId={connectionId} deviceId={deviceId} status={job?.status} onAccepted={() => void q.refetch()} />}
+    {direct && !review && <DirectLaserControls slug={slug} connectionId={connectionId} deviceId={deviceId} status={job?.status} onAccepted={() => {setSetupEpoch(v=>v+1);void q.refetch();}} />}
+    {device?.laser_setup && !review && <LaserSetupPanel galvoMemory={galvoMemory} key={`${storageKey}:${job?.status}:${setupEpoch}`} slug={slug} connectionId={connectionId} deviceId={deviceId} stationToken={credential?.token} blocked={busy||!!data?.attention||!!(job&&job.status!=="queued")} />}
     {!credential && <section className="rounded border border-line p-4 space-y-3"><h2 className="text-xl font-semibold font-mono uppercase tracking-wide">Set this screen up at the laser</h2><p>Keep this tablet beside the machine. An owner or admin must be signed in to approve and start jobs here.</p><button className={button} disabled={busy} onClick={() => void run(async () => { const result = await api.registerDigifabStation(slug, connectionId, deviceId); const next = { id: result.id, token: result.token }; localStorage.setItem(storageKey, JSON.stringify(next)); setCredential(next); await screens.refetch(); })}>Authorize this machine station</button></section>}
     {credential && !data && !q.error && <p>Loading the station…</p>}
     {data?.attention ? <section className="rounded border border-line p-5 space-y-4"><h2 className="text-2xl font-semibold font-mono uppercase tracking-wide">Take out the pieces. Came out good?</h2><p>Leave the machine clear for the next job.</p><div className="flex flex-wrap gap-3"><button className={`${button} bg-ember-600 text-white`} disabled={busy} onClick={() => void run(async () => { await api.markDigifabDeviceReady(slug, connectionId, deviceId, "good"); await q.refetch(); })}>Yes, came out good</button><button className={button} disabled={busy} onClick={() => void run(async () => { await api.markDigifabDeviceReady(slug, connectionId, deviceId, "scrapped"); await q.refetch(); })}>No, scrap these pieces</button></div></section> : job ? <>
@@ -108,9 +136,9 @@ export function MachineStationPage() {
           <h3 className="text-lg font-semibold font-mono uppercase tracking-wide">What to load</h3>{material ? <><p className="text-2xl">{material.thickness_mm} mm {material.material}</p><p className="text-lg">At least {material.width_mm} × {material.height_mm} mm</p>{!layout && <button className={button} onClick={() => setEditFile(true)}>Edit file material</button>}</> : <><p>Save the material and sheet size this prepared file needs.</p><button className={button} disabled={!credential || busy} onClick={() => void run(async () => { const context = currentContext.current; const result = await api.prepareDigifabJob(slug, job.id, credential!.token); if (context !== currentContext.current) throw new Error("The job changed. Review this job again."); if (!result.review) throw new Error("Authorize this screen for this laser first."); const match = result.review.materialSuggestion; if (!match) throw new Error("No unique material library entry matches these settings. Enter the material yourself."); setSuggestion(match); })}>Read material from LightBurn</button><LaserMaterialForm key={JSON.stringify(suggestion)} initial={suggestion} onSave={saveFile} busy={busy} /></>}
         </>}</div>
         {job.status !== "queued" && <section aria-label="Running job facts" className="space-y-4 min-w-0"><h3 className="text-xl font-semibold font-mono uppercase tracking-wide">Job facts</h3><dl className="space-y-3"><div><dt className="text-muted">Material</dt><dd className="text-2xl">{material ? `${material.thickness_mm} mm ${material.material}` : "Not reported"}</dd></div><div><dt className="text-muted">Elapsed since Start</dt><dd className="text-2xl">{elapsed == null ? "Not reported" : `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`}</dd></div></dl><h4 className="font-semibold">Settings summary</h4>{layout?.expected?.length ? layout.expected.map(settings => <p key={settings.index} className="break-words">{settings.operation} · {settings.speed} mm/s · {settings.min_power}% to {settings.max_power}% power · {countOf(settings.passes, "pass")} · Air assist {settings.air_assist ? "on" : "off"} · Focus offset {settings.focus_offset} mm</p>) : <p>No saved settings summary is available for this file.</p>}</section>}
-        {job.status === "queued" && <div className="space-y-4"><h3 className="text-lg font-semibold font-mono uppercase tracking-wide">Against the corner stop</h3><svg viewBox="0 0 300 200" role="img" aria-label="Load the sheet against the lower left corner stop" className="w-full max-h-48"><rect x="20" y="10" width="270" height="180" fill="none" stroke="currentColor" /><path d="M25 125 V185 H85" fill="none" stroke="currentColor" strokeWidth="6" /><rect x="30" y="55" width="180" height="125" fill="currentColor" opacity="0.15" /><path d="M120 90 L45 163 M45 140 V163 H68" fill="none" stroke="currentColor" strokeWidth="3" /></svg>
+        {job.status === "queued" && <div className="space-y-4"><h3 className="text-lg font-semibold font-mono uppercase tracking-wide">{galvo?"Within the lens field":"Against the corner stop"}</h3>{galvo?<svg viewBox="0 0 300 200" role="img" aria-label="Place the sheet within the confirmed lens field" className="w-full max-h-48"><rect x="20" y="10" width="270" height="180" fill="none" stroke="currentColor" /><rect x="55" y="45" width="190" height="110" fill="currentColor" opacity="0.15" /><rect x="80" y="60" width="100" height="70" fill="none" stroke="red" strokeDasharray="5 5" /></svg>:<svg viewBox="0 0 300 200" role="img" aria-label="Load the sheet against the lower left corner stop" className="w-full max-h-48"><rect x="20" y="10" width="270" height="180" fill="none" stroke="currentColor" /><path d="M25 125 V185 H85" fill="none" stroke="currentColor" strokeWidth="6" /><rect x="30" y="55" width="180" height="125" fill="currentColor" opacity="0.15" /><path d="M120 90 L45 163 M45 140 V163 H68" fill="none" stroke="currentColor" strokeWidth="3" /></svg>}
           {layout && <p>Load the sheet chosen for this layout. This sheet makes {countOf(layout.quantity, "part")}.</p>}
-          <p>Load the sheet at the machine's corner stop. Keep the saved origin and sheet orientation.</p>
+          <p>{galvo?"Place the sheet within the confirmed lens field. Keep the saved lower left origin and sheet orientation. Set focus at the machine, then check the bounds with the red guide.":"Load the sheet at the machine’s corner stop. Keep the saved origin and sheet orientation."}</p>
           <button className={button} disabled={!credential || busy || !material} onClick={() => setScanning(true)}>Scan sheet QR</button>
           <label className="block">Find a sheet<SearchInput value={search} onChange={setSearch} placeholder="Search your inventory" aria-label="Find a sheet" /></label>
           <label className="block">Sheet without a label<select className="block min-h-12 w-full rounded border border-line bg-surface px-3" value={pick} onChange={e => { setPick(e.target.value); setConfirmed(null); }}><option value="">Choose a sheet</option>{data.sheets.map(s => <option key={s.id} value={s.id}>{s.name}{s.material ? ` · ${s.material.thickness_mm} mm ${s.material.material}` : " · needs sheet details"}</option>)}</select></label>
@@ -121,9 +149,9 @@ export function MachineStationPage() {
       </section>
     </> : data ? <section className="rounded border border-line p-6"><h2 className="text-2xl font-semibold font-mono uppercase tracking-wide">Ready for the next job</h2><p className="mt-2">Upload an SVG or DXF in the library and prepare a batch with a material profile and physical sheet. You can also queue a prepared LightBurn file.</p><Link className="inline-block mt-4 underline" to="/digifab">Open the file library</Link></section> : null}
     {labelNag && confirmed && <section className="rounded border border-line p-4 space-y-3"><p>Queue a QR label for this sheet so next time you can scan it.</p><div className="flex flex-wrap gap-3"><button className={button} disabled={busy} onClick={() => void run(async () => { await runAction({ actionId: "labels:print", entityKind: "inventory:part", entityId: confirmed.id }); setLabelNag(false); })}>Queue sheet label</button><Link className={`${button} inline-flex items-center`} to="/labels">Open labels</Link><button className={button} onClick={() => setLabelNag(false)}>Later</button></div></section>}
-    {review && job && <LightBurnReview slug={slug} review={review} library={library ?? undefined} starting={busy} error={error} controls={direct ? <DirectLaserControls slug={slug} connectionId={connectionId} deviceId={deviceId} status={job.status} onAccepted={() => void q.refetch()} /> : undefined} atStation onFrame={direct ? () => void run(async () => { await api.runDigifabControl(slug, connectionId, deviceId, "frame", { fileId: review.fileId, jobId: job.id }); }) : undefined} onClose={() => { if (!busy) setReview(null); }} onStart={() => void run(async () => { if (!credential || !confirmed) throw new Error("Confirm the loaded sheet first."); try { await api.sendDigifabJob(slug, job.id, { fileId: review.fileId, projectHash: review.projectHash, stationToken: credential.token, sheetId: confirmed.id }); } finally { setReview(null); setConfirmed(null); await q.refetch(); } })} />}
+    {review && job && <LightBurnReview slug={slug} review={review} library={library ?? undefined} starting={busy} error={error} controls={direct ? <DirectLaserControls slug={slug} connectionId={connectionId} deviceId={deviceId} status={job.status} onAccepted={() => {setSetupEpoch(v=>v+1);void q.refetch();}} /> : undefined} atStation onFrame={direct ? () => void run(async () => { await api.runDigifabControl(slug, connectionId, deviceId, "frame", { fileId: review.fileId, jobId: job.id }); }) : undefined} onClose={() => { if (!busy) setReview(null); }} onStart={() => void run(async () => { if (!credential || !confirmed) throw new Error("Confirm the loaded sheet first."); try { await api.sendDigifabJob(slug, job.id, { fileId: review.fileId, projectHash: review.projectHash, stationToken: credential.token, sheetId: confirmed.id }); } finally { setReview(null); setConfirmed(null); await q.refetch(); } })} />}
     {editFile && library && <Modal open title="File material" onClose={() => setEditFile(false)}><LaserMaterialForm initial={material ?? review?.materialSuggestion ?? undefined} onSave={saveFile} busy={busy} /></Modal>}
     {editSheet && pick && <Modal open title="Sheet details" onClose={() => setEditSheet(false)}><LaserMaterialForm initial={data?.sheets.find(s => s.id === pick)?.material ?? undefined} busy={busy} onSave={tag => run(async () => { await api.saveLaserSheet(slug, pick, tag); setEditSheet(false); setConfirmed(null); await q.refetch(); })} /></Modal>}
-    {scanning && <ScanOneSheet open title="Scan sheet QR" hint="Scan the sheet you have loaded against the corner stop." onCode={code => void scanned(code)} onClose={() => setScanning(false)} />}
+    {scanning && <ScanOneSheet open title="Scan sheet QR" hint={galvo?"Scan the sheet placed within the lens field.":"Scan the sheet you have loaded against the corner stop."} onCode={code => void scanned(code)} onClose={() => setScanning(false)} />}
   </main></>;
 }

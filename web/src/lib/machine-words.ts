@@ -8,7 +8,7 @@
 // cutter's page never says "print" (`lint:machine-words` holds the surfaces
 // that must stay kind-neutral; `machine-words.test.ts` holds the words).
 
-export type MachineKind = "3d-printer" | "laser" | "cnc" | "assembly" | "pick-and-place" | "reflow" | "generic";
+export type MachineKind = "3d-printer" | "laser" | "cnc" | "generic";
 
 /** The machine collections the stock bundles provision, by instance id. The
  *  instance id is the stable key a bundle owns (its display name and noun are
@@ -18,7 +18,6 @@ export const MACHINE_KIND_BY_INSTANCE: Readonly<Record<string, MachineKind>> = {
   "3d-printers": "3d-printer",
   "laser-cutters": "laser",
   "cnc-machines": "cnc",
-  "assembly-machines": "assembly",
 };
 
 export function machineKindOf(instance: string | null | undefined): MachineKind {
@@ -78,23 +77,6 @@ const WORDS: Record<MachineKind, MachineWords> = {
     managerExamples: "the software that runs it, through your bridge",
     familyExample: `e.g. "desktop router", "mill"`,
   },
-  "pick-and-place": {
-    kind: "pick-and-place", device: "pick-and-place machine", verb: "place", job: "placement job", jobs: "placement jobs", manager: "placement manager", Manager: "Placement Manager", managerExamples: "OpenPnP or the machine controller, through your bridge", familyExample: "",
-  },
-  reflow: {
-    kind: "reflow", device: "reflow oven", verb: "reflow", job: "reflow run", jobs: "reflow runs", manager: "reflow manager", Manager: "Reflow Manager", managerExamples: "the oven controller, through your bridge", familyExample: "",
-  },
-  assembly: {
-    kind: "assembly",
-    device: "assembly machine",
-    verb: "run",
-    job: "job",
-    jobs: "jobs",
-    manager: "job manager",
-    Manager: "Job Manager",
-    managerExamples: "OpenPnP or the controller, through your bridge",
-    familyExample: "",
-  },
   generic: {
     kind: "generic",
     device: "machine",
@@ -121,10 +103,4 @@ export function machineWordsFor(instance: string | null | undefined): MachineWor
 
 export function capitalise(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-export function machineKindForRecord(instance: string | null | undefined, record: { type?: string | null; metadata?: Record<string, unknown> | null } | null | undefined): MachineKind {
-  if (record?.metadata?.assembly_placement || /^(?:pick[- ]and[- ]place)(?: machine)?$/i.test(record?.type ?? "")) return "pick-and-place";
-  if (record?.metadata?.assembly_reflow || /^reflow(?: oven)?$/i.test(record?.type ?? "")) return "reflow";
-  return machineKindOf(instance);
 }

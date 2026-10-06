@@ -1,3 +1,5 @@
+import { planResinPrint, readLoadedResinStock, resinStationKey } from "../resin-stock.js";
+import { reservedResin } from "../resin-prints.js";
 import { sql } from "kysely";
 import { libraryForJob } from "../laser-plans.js";
 import { randomBytes } from "node:crypto";
@@ -11,10 +13,7 @@ import { ReviewRequired } from "../drivers/job-review.js";
 import { LaserMaterialSchema, materialFromFields } from "../laser-material.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
-import { machineStationsRouter } from "./machine-stations.js";
-
 export const stationsRouter = Router({ mergeParams: true });
-stationsRouter.use("/machines", machineStationsRouter);
 const Machine = z.object({ connection_id: z.string().uuid(), device_id: z.string().min(1).max(200) });
 
 // AI-REACH: exempt station setup requires the owner at the machine, never an assistant or a wire.
@@ -27,7 +26,7 @@ stationsRouter.post("/", asyncHandler(async (req, res) => {
   const driver = await buildDriverById(db, orgId, parsed.data.connection_id);
   const devices = await driver?.listDevices();
   const device = devices?.find(d => d.id === parsed.data.device_id);
-  if (!device || !await driver?.jobReviewRequired?.()) return void res.status(409).json({ error: { code: "not_laser", message: "Choose a connected laser with job review." } });
+  if (!device || !await driver?.jobReviewRequired?.()) return void res.status(409).json({ error: { code: "not_station_machine", message: "Choose a connected machine that starts at a station." } });
   const token = randomBytes(32).toString("base64url");
   const row = await db.insertInto("digifab_stations").values({ connection_id: parsed.data.connection_id, remote_device_id: device.id, label: device.name, token_hash: stationTokenHash(token), revoked_at: null }).returning(["id", "label"]).executeTakeFirstOrThrow();
   await platform().activity.log({ orgId, userId: sessionUser(req)?.id ?? null, action: "station_created", ref: { module: "digifab", entityType: "station", entityId: row.id }, diff: { label: row.label } });
@@ -36,7 +35,7 @@ stationsRouter.post("/", asyncHandler(async (req, res) => {
 
 stationsRouter.get("/", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin")) return;
-  res.json({ items: await tenantDb(req).selectFrom("digifab_stations").select(["id", "label", "connection_id", "remote_device_id", "purpose", "machine_kind", "machine_id", "created_at", "revoked_at"]).orderBy("created_at", "desc").execute() });
+  res.json({ items: await tenantDb(req).selectFrom("digifab_stations").select(["id", "label", "connection_id", "remote_device_id", "created_at", "revoked_at"]).orderBy("created_at", "desc").execute() });
 }));
 
 // AI-REACH: exempt an owner revokes a station screen's Start permission.
@@ -57,6 +56,24 @@ stationsRouter.get("/:connectionId/:deviceId", asyncHandler(async (req, res) => 
   const attention = await db.selectFrom("digifab_device_attention").selectAll().where("connection_id", "=", connection).where("remote_device_id", "=", device).executeTakeFirst();
   const job = jobs.find(j => j.status !== "queued") ?? jobs[0] ?? null;
   const library = job ? await libraryForJob(db, job) : null;
+  const driver = await buildDriverById(db, orgId, connection);
+  if (await driver?.jobReviewKind?.() === "cutter") return void res.json({ kind: "cutter", job, library: library ?? null, attention: attention ?? null, sheets: [] });
+  if (driver?.printProcess === "resin") {
+    let loaded: Awaited<ReturnType<typeof readLoadedResinStock>> = [];
+    let canStart = false, warning = "";
+    try {
+      loaded = await readLoadedResinStock(orgId, connection, device);
+      const plan = planResinPrint(library?.metadata ?? {}, loaded, await reservedResin(db, job?.id));
+      canStart = plan.canStart && job?.status === "queued" && !job.send_token && !job.remote_job_id; warning = job ? plan.warning : "";
+    } catch (error) { warning = error instanceof Error ? error.message : "Check the loaded resin stock."; }
+    const postprocess = await db.selectFrom("digifab_resin_prints as p").innerJoin("digifab_jobs as j", "j.id", "p.job_id")
+      .select(["p.job_id", "p.wash_done", "p.cure_done", "j.file_ref"])
+      .where("p.connection_id", "=", connection).where("p.device_id", "=", device).where("p.phase", "=", "settled").where("j.outcome", "=", "good")
+      .where(eb => eb.or([eb("p.wash_done", "=", false), eb("p.cure_done", "=", false)])).orderBy("p.created_at", "asc").limit(50).execute();
+    const accounting = attention?.job_id ? await db.selectFrom("digifab_resin_prints").select("stock_error").where("job_id", "=", attention.job_id).executeTakeFirst() : null;
+    return void res.json({ kind: "resin", job, library: library ?? null, attention: attention ?? null, sheets: [], resin: { station: resinStationKey(connection, device), loaded, canStart, warning, stockError: accounting?.stock_error ?? null, postprocess } });
+  }
+  if (await driver?.jobReviewKind?.() === "print") return void res.json({ kind: "print", job, library: library ?? null, attention: attention ?? null, sheets: [] });
   const stockKind = "inventory:part";
   const stockModule = stockKind.split(":")[0];
   const inventories = (await platform().instances.list(orgId)).filter(i => i.module_name === stockModule);

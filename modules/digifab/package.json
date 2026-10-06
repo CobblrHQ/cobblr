@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/digifab",
-  "version": "0.30.0",
+  "version": "0.32.1",
   "private": true,
   "type": "module",
   "main": "dist/module.js",
@@ -24,6 +24,7 @@
     "fflate": "^0.8.3",
     "kysely": "^0.27.5",
     "mqtt": "^5.10.1",
+    "polygon-clipping": "0.15.7",
     "saxes": "^6.0.0",
     "svgpath": "^2.6.0",
     "unzipper": "^0.12.3",

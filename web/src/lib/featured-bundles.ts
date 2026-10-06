@@ -177,6 +177,14 @@ function machineBundleChangelog(instance: string, tab: string, fields: string): 
 /** Release metadata for the three machine bundles: every version's notes,
  *  newest first, so an update lists all of them. 0.3.2 is where each kind got
  *  its own words; 0.3.1 is where the full machine page arrived. */
+/** A newer release on top of a bundle's release notes. */
+function withRelease(
+  base: Pick<PlatformBundleManifest, "released_at" | "changelog" | "releases">,
+  next: { version: string; released_at: string; notes: string },
+): Pick<PlatformBundleManifest, "released_at" | "changelog" | "releases"> {
+  return { released_at: next.released_at, changelog: next.notes, releases: [next, ...(base.releases ?? [])] };
+}
+
 function machineBundleRelease(
   version: string,
   instance: string,
@@ -204,24 +212,16 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     item_example: "a reel of components",
     next_steps: [{ label: "Receive components", module: "inventory", path: "/instances/component-parts", hint: "Scan a distributor's package label, review its count and queue its reel QR label." }, { label: "Add a board project", module: "projects", path: "/instances/board-projects", hint: "Import a revision’s BOM and centroid, check components and track blank board orders." }],
     manifest: {
-      id: "cobblr.flagship.electronics-assembly", version: "0.1.10", name: "Electronics assembly", author: "Cobblr",
-      description: "Component packages and board revisions, with stock checks, fabrication purchases, assembly kits, solder paste handling, placement stations and reflow logs.",
-      released_at: "2026-10-06", changelog: "Save paste profiles and record reflow at authorized ovens with temperature limit checks.",
-      releases: [{ version: "0.1.10", released_at: "2026-10-06", notes: "Inspect each board, preserve its evidence and trace tested batches back to their reel lots." }, { version: "0.1.9", released_at: "2026-10-06", notes: "Save paste profiles and record reflow at authorized ovens with temperature limit checks." }, { version: "0.1.8", released_at: "2026-10-06", notes: "Export calibrated placement files, verify feeder reels and record runs at an authorized station." }, { version: "0.1.5", released_at: "2026-10-06", notes: "Reserve assembly kits and track refrigerated paste handling against its label limits." }, { version: "0.1.4", released_at: "2026-10-06", notes: "Import board revisions to check component stock and track fabrication purchases and stencils." }, { version: "0.1.1", released_at: "2026-10-05", notes: "Receive component packages by their distributor labels and track moisture exposure and counts." }],
-      requires: [{ module: "inventory" }, { module: "core-scan" }, { module: "labels" }, { module: "projects" }, { module: "builds" }, { module: "purchases" }, { module: "machines" }, { module: "digifab" }],
+      id: "cobblr.flagship.electronics-assembly", version: "0.1.4", name: "Electronics assembly", author: "Cobblr",
+      description: "Component packages and board revisions, with receiving, moisture clocks, BOM stock checks and fabrication purchases.",
+      released_at: "2026-10-06", changelog: "Import board revisions to check component stock and track fabrication purchases and stencils.",
+      releases: [{ version: "0.1.4", released_at: "2026-10-06", notes: "Import board revisions to check component stock and track fabrication purchases and stencils." }, { version: "0.1.1", released_at: "2026-10-05", notes: "Receive component packages by their distributor labels and track moisture exposure and counts." }],
+      requires: [{ module: "inventory" }, { module: "core-scan" }, { module: "labels" }, { module: "projects" }, { module: "builds" }, { module: "purchases" }],
       wires: [], field_defs: [], saved_views: [],
       provides_instances: [
-        { module: "inventory", instance_name: "tested-boards", scan_keywords: ["tested PCB", "assembled tested board"], display_name: "Tested Boards", glyph: "▱", item_noun: "tested board", qty_unit: "each", faces: { stock: true }, field_defs: [{ entity_kind: "inventory:part", name: "board_revision_id", display_label: "Board revision", type: "text", position: 1 }], saved_views: [] },
-        { module: "inventory", instance_name: "placed-boards", scan_keywords: ["placed PCB", "placed circuit board"], display_name: "Placed Boards", glyph: "▱", item_noun: "placed board", qty_unit: "each", faces: { stock: true }, field_defs: [{ entity_kind: "inventory:part", name: "board_revision_id", display_label: "Board revision", type: "text", position: 1 }], saved_views: [] },
-        { module: "machines", instance_name: "assembly-machines", scan_keywords: ["pick and place", "SMT machine", "reflow oven", "inspection bench"], display_name: "Assembly Machines", glyph: "⚙", item_noun: "assembly machine", field_defs: [{ entity_kind: "machines:machine", name: "calibration_notes", display_label: "Calibration notes", type: "text", position: 1 }], saved_views: [] },
-        {
-          module: "inventory", instance_name: "solder-paste", display_name: "Solder Paste", glyph: "🫙", item_noun: "paste jar", qty_unit: "ml",
-          faces: { stock: true }, paste_tracking: true,
-          field_defs: [{ entity_kind: "inventory:part", name: "lot_code", display_label: "Paste lot", type: "text", position: 1 }, { entity_kind: "inventory:part", name: "alloy", display_label: "Alloy", type: "text", position: 2, learns: true, choices: ["SAC305", "Sn63/Pb37", "Sn42/Bi58"] }], saved_views: [],
-        },
         {
           module: "projects", instance_name: "board-projects", display_name: "Board Projects", glyph: "🔌", item_noun: "board project",
-          board_revisions: { package_kind: "component-packages:item", blank_kind: "blank-boards:item", stencil_kind: "board-stencils:item", placed_kind: "placed-boards:item", tested_kind: "tested-boards:item" },
+          board_revisions: { package_kind: "component-packages:item", blank_kind: "blank-boards:item", stencil_kind: "board-stencils:item" },
           scan_keywords: ["PCB project", "board project", "electronics project"],
           field_defs: [{ entity_kind: "projects:project", name: "board_notes", display_label: "Board notes", type: "text", position: 1 }], saved_views: [],
         },
@@ -2798,12 +2798,17 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track your 3D printers: hotend, extruder, board, firmware, bed size, local IP. Its own tab; still part of your machines (prints, fleet, maintenance).",
     manifest: {
       id: "cobblr.community.3d-printers",
-      version: "0.3.4",
+      version: "0.3.5",
       name: "3D Printers",
       description:
         "A 3D Printers tracker: your printers with hotend, extruder, board, firmware, bed size, and local IP. It's a named view of your machines, so each printer still drives prints, fleet status, and maintenance.",
       author: "Cobblr community",
-      ...machineBundleRelease("0.3.4", "3d-printers", "3D Printers", "hotend, extruder, mainboard, firmware, bed size, local IP"),
+      // 0.3.5: a printer added by its name alone names this list (#5065).
+      ...withRelease(machineBundleRelease("0.3.4", "3d-printers", "3D Printers", "hotend, extruder, mainboard, firmware, bed size, local IP"), {
+        version: "0.3.5",
+        released_at: "2026-10-06",
+        notes: "A printer added by name alone (a Bambu Lab P1P, a Prusa MK4) is recognised as a 3D printer and lands in 3D Printers, from its maker and model.",
+      }),
       requires: [{ module: "machines" }],
       features: [connectMachinesFeature("3d-printers")],
       provides_instances: [
@@ -2813,6 +2818,10 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           service_tasks: ["Nozzle swap", "Bed level", "Belt tension", "Lubricate rails", "Clean build plate"],
           display_name: "3D Printers",
           item_noun: "3D printer",
+          // Maker and model, never a maker alone: "bambu lab" would claim
+          // the same maker's filament and nozzles (#5065). Multi-word, so each
+          // names a printer when it appears in the name.
+          scan_keywords: ["3d printer", "fdm printer", "resin printer", "bambu lab p1p", "bambu lab p1s", "bambu lab x1", "bambu lab x1c", "bambu lab x1 carbon", "bambu lab a1", "bambu lab h2d", "prusa mk3", "prusa mk3s", "prusa mk4", "prusa mk4s", "prusa mini", "prusa xl", "prusa core one", "original prusa", "creality ender", "creality cr-10", "creality k1", "creality k2", "makergear m2", "makergear m3", "makermex mm1", "voron 2.4", "voron trident", "anycubic kobra", "anycubic vyper", "elegoo neptune", "sovol sv06", "flashforge adventurer", "qidi x-plus", "snapmaker 2.0", "ultimaker s5", "lulzbot taz", "raise3d pro2"],
           glyph: "🖨️",
           field_defs: [
             {

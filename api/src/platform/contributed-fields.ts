@@ -8,7 +8,9 @@
 // without its own row a field read "tools:item has no field assigned_to", so a
 // thing in a named collection could never be lent or given a due-back day.
 
+import type { Insertable } from "kysely";
 import { meta } from "../db/meta.js";
+import type { ModuleFieldDefsTable } from "../db/schema.js";
 import { list } from "../modules/registry.js";
 import { clearServerManagedCache } from "./entities.js";
 import { clearRelationDefsCache } from "./relation-fields.js";
@@ -52,6 +54,33 @@ async function kindsCarrying(entityKind: string, orgIds: readonly string[]): Pro
   return out;
 }
 
+/** Insert one def's rows for every target whose workspace still exists, in
+ *  one statement. A workspace deleted after the caller read its list (a test
+ *  tearing its own down, a person deleting one during a boot) would fail the
+ *  whole statement on the org foreign key and keep the field from every other
+ *  workspace (#4937): the targets are re-read against `orgs` and, if one goes
+ *  between that read and the write, written again without it. */
+async function insertForLiveWorkspaces<T extends { orgId: string }>(targets: readonly T[], row: (t: T) => Insertable<ModuleFieldDefsTable>): Promise<number> {
+  let left = [...targets];
+  for (let attempt = 0; ; attempt++) {
+    if (left.length === 0) return 0;
+    const live = new Set((await meta.selectFrom("orgs").select("id").where("id", "in", [...new Set(left.map((t) => t.orgId))]).execute()).map((o) => o.id));
+    left = left.filter((t) => live.has(t.orgId));
+    if (left.length === 0) return 0;
+    try {
+      const rows = await meta
+        .insertInto("module_field_defs")
+        .values(left.map(row))
+        .onConflict((b) => b.columns(["org_id", "entity_kind", "name"]).doNothing())
+        .returning("id")
+        .execute();
+      return rows.length;
+    } catch (err) {
+      if ((err as { code?: string }).code !== "23503" || attempt >= 2) throw err;
+    }
+  }
+}
+
 /** Write these contributed field defs into the given workspaces where they are
  *  missing, on their kind and its collections. Returns the rows added. */
 export async function applyContributedFieldDefs(
@@ -62,11 +91,7 @@ export async function applyContributedFieldDefs(
   if (fieldDefs.length === 0 || orgIds.length === 0) return 0;
   let added = 0;
   for (const fd of fieldDefs) {
-    const targets = await kindsCarrying(fd.entity_kind, orgIds);
-    const rows = await meta
-      .insertInto("module_field_defs")
-      .values(
-        targets.map(({ orgId, kind }) => ({
+    const rows = await insertForLiveWorkspaces(await kindsCarrying(fd.entity_kind, orgIds), ({ orgId, kind }) => ({
           org_id: orgId,
           entity_kind: kind,
           name: fd.name,
@@ -80,13 +105,9 @@ export async function applyContributedFieldDefs(
           renderer: fd.renderer ?? null,
           server_managed: fd.server_managed ?? false,
           ref_kind: fd.ref_kind ?? null,
-          field_role: fd.field_role ?? null,
-        })),
-      )
-      .onConflict((b) => b.columns(["org_id", "entity_kind", "name"]).doNothing())
-      .returning("id")
-      .execute();
-    added += rows.length;
+      field_role: fd.field_role ?? null,
+    }));
+    added += rows;
     // Whether the list learns is the module's to say (lint:field-learns-declared),
     // so a row it made before it said so follows the manifest: a workspace
     // born today and one from last month read the same field the same way.

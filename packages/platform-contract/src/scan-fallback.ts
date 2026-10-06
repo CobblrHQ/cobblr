@@ -81,8 +81,11 @@ export const RETIRED_FALLBACK_HINTS: readonly string[] = [
   "The AI did not answer in time, so this was matched by keywords. Retry with AI.",
 ];
 
-/** The card's one line beside the keyword match, and whether a retry helps. */
-export function fallbackChip(why: AiFallback, reason?: ProviderErrorReason): { text: string; retry: boolean; connect: boolean } {
+/** The card's one line beside the keyword match, and whether a retry helps.
+ *  `why` is the reason the RECORD carries; with none, the line says what is
+ *  true (it matched by keywords) and claims no cause (#4933). */
+export function fallbackChip(why: AiFallback | null | undefined, reason?: ProviderErrorReason): { text: string; retry: boolean; connect: boolean } {
+  if (!why) return { text: "Matched by keywords, not by the AI.", retry: true, connect: false };
   const own = why === "provider-error" ? providerErrorWords(reason) : null;
   if (own) return { text: own.chip, retry: own.retry, connect: false };
   switch (why) {

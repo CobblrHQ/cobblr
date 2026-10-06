@@ -50,6 +50,7 @@ function verifyScanExportToken(token: string): { orgId: string; fileId: string |
   const b = Buffer.from(expected);
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
   try {
+    // b64-lenient-ok: the signature was checked over the payload string as given, so only its one spelling reaches here.
     const { o, f, e } = JSON.parse(Buffer.from(payload, "base64url").toString()) as { o?: unknown; f?: unknown; e?: unknown };
     if (typeof o !== "string" || typeof e !== "number" || Date.now() > e) return null;
     return { orgId: o, fileId: typeof f === "string" ? f : null };
@@ -564,6 +565,7 @@ publicRouter.get("/:token", (req, res, next) => {
       });
       const ua = req.headers["user-agent"];
       const referer = req.headers.referer ?? req.headers.referrer;
+      // DETACHED: a page-view count; the page is served without it
       void tenantDb
         .insertInto("core_public_surfaces_views" as never)
         .values({

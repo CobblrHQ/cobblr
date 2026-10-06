@@ -76,14 +76,16 @@ export function countWordsFor(raw: string, known: readonly CountWords[] = []): C
 /** A quantity with its unit, wherever a sentence says one ("Added Wool (3
  *  hanks)"). A measured unit the vocabulary knows reads as its symbol ("750
  *  g"); a counted one agrees with the number, from the vocabulary's own words,
- *  else the table's declared words (`known`), else the regular rules. */
+ *  else the table's declared words (`known`), else the regular rules.
+ *  Callers preserving fine remainders can pass their stored precision. */
 export function quantityWithUnit(
   n: number,
   raw: string | null | undefined,
   resolved?: { symbol: string; name: string; plural: string; category: string; factor?: number | null } | null,
   known: readonly CountWords[] = [],
+  fractionDigits = 3,
 ): string {
-  const num = Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3)));
+  const num = Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(fractionDigits)));
   const typed = (raw ?? "").trim();
   if (!typed) return num;
   if (resolved && resolved.category !== "count") return `${num} ${resolved.symbol}`;

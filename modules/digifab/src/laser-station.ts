@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { Kysely, Selectable } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { DigifabDB } from "./db.js";
-import type { JobApproval } from "./drivers/types.js";
+import type { JobApproval, JobReview } from "./drivers/types.js";
 import { ReviewRequired } from "./drivers/job-review.js";
 import { LaserMaterialSchema, materialFromFields, materialMismatch, preparedSheetAreaMismatch } from "./laser-material.js";
 
@@ -23,14 +23,21 @@ export async function requireLaserBedReady(db: Kysely<DigifabDB>, job: Pick<Sele
   if (active) throw new ReviewRequired("This laser already has a job. Finish it at the station before loading another file.");
 }
 
-export async function authorizeLaserStart(db: Kysely<DigifabDB>, orgId: string, job: Pick<Selectable<DigifabDB["digifab_jobs"]>, "id" | "file_id" | "connection_id" | "target_device">, approval?: JobApproval): Promise<StationPermit> {
-  if (!approval?.stationToken || !approval.sheetId || !job.connection_id || !job.target_device) throw new ReviewRequired("Approve at the laser's station.");
+export async function authorizeLaserStart(db: Kysely<DigifabDB>, orgId: string, job: Pick<Selectable<DigifabDB["digifab_jobs"]>, "id" | "file_id" | "connection_id" | "target_device">, approval?: JobApproval, printReview?: JobReview): Promise<StationPermit> {
+  if (!approval?.stationToken || !job.connection_id || !job.target_device) throw new ReviewRequired("Approve at the machine's station.");
   const station = await db.selectFrom("digifab_stations").select("id")
     .where("token_hash", "=", stationTokenHash(approval.stationToken))
     .where("connection_id", "=", job.connection_id).where("remote_device_id", "=", job.target_device)
     .where("revoked_at", "is", null).executeTakeFirst();
-  if (!station) throw new ReviewRequired("This screen is not approved for this laser. Approve at the laser's station.");
+  if (!station) throw new ReviewRequired("This screen is not approved for this machine. Approve at the machine's station.");
   await requireLaserBedReady(db, job);
+  if (printReview && ["snapmaker-print", "snapmaker-u1-print", "resin-print"].includes(String(printReview.project.kind))) {
+    if (printReview.fileId !== approval.fileId || printReview.projectHash !== approval.projectHash) throw new ReviewRequired("The print file or toolhead changed. Review this print again.");
+    const permit = Object.freeze({ fileId: approval.fileId, projectHash: approval.projectHash });
+    permits.add(permit);
+    return permit;
+  }
+  if (!approval.sheetId) throw new ReviewRequired("Confirm the loaded sheet at the laser's station.");
   const queued = await db.selectFrom("digifab_jobs").select(["run_id", "laser_layout"]).where("id", "=", job.id).executeTakeFirst();
   const library = await libraryForJob(db, { file_id: job.file_id, laser_layout: queued?.laser_layout });
   if (library?.kind !== "lbrn2" && library?.kind !== "laser-plan") throw new ReviewRequired("Choose a prepared laser file from the library for this station.");

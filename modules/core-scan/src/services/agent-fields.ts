@@ -175,6 +175,25 @@ export function placeAgentFields(
 
 /** "MakerGear M2 (from RainMotorSports)" is the thing and who it came from:
  *  the name, and the seller. Null when the name says no one. */
+/** The thing a caller's name is about, without a remark that tells one unit
+ *  apart:
+ *  "Bambu Lab P1P #36 (for parts, power issue)" and "Bambu Lab P1P (ex-print
+ *  farm)" are both a Bambu Lab P1P. The thing's name is what is matched and
+ *  routed, so the same model routes the same way (#4591); the caller's whole
+ *  name is kept as theirs for the card. Null when nothing was set apart. */
+export function thingInName(name: string): string | null {
+  let n = name.trim();
+  for (let i = 0; i < 3; i++) {
+    // A remark in brackets starts lower case ("(ex-print farm)", "(for
+    // parts)") or is a bare count ("(2)"); a variant is named ("(OLED
+    // Model)", "(2nd Gen)") and stays part of the thing.
+    const next = n.replace(/\s*\((?:[a-z][^()]*|\d+)\)\s*$/, "").replace(/\s+#\s*\d+\s*$/, "").trim();
+    if (next === n) break;
+    n = next;
+  }
+  return n && n !== name.trim() ? n : null;
+}
+
 export function sellerInName(name: string): { name: string; seller: string } | null {
   const m = /^(.*\S)\s*\((?:bought\s+)?(?:from|via)\s+([^()]+?)\)\s*$/i.exec(name.trim());
   if (!m || !m[1] || !m[2]) return null;

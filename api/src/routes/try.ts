@@ -189,6 +189,7 @@ tryRouter.get(
           );
           // Covers are still arriving; say so when they have, rather than holding
           // the visitor at a loading page for them.
+          // DETACHED: a log line when the covers land; the sandbox is handed over without them
           void r?.images.then((n) => console.log(`[try-sandbox] covers landed: ${n}`));
         } catch (err) {
           console.error("[try-sandbox] seed failed (continuing empty):", (err as Error).message);

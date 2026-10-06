@@ -53,6 +53,7 @@ export function ScanOneSheet({ open, title, hint, onCode, onClose }: { open: boo
         };
         tick();
       } catch (e) {
+        // failure-copy: the browser's own camera error (NotAllowed / denied), caught here.
         setError(e instanceof Error && /denied|NotAllowed/i.test(`${e.name} ${e.message}`) ? "The camera is blocked for this site. Allow it in the browser's settings." : "The camera could not start.");
       }
     })();

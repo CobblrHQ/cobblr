@@ -7,6 +7,7 @@ import { dropPending, usePendingPictures } from "../lib/pendingPictures";
 const STAGE_WORDS = {
   uploading: "Uploading…",
   reading: "Reading the picture…",
+  // failure-copy: the upload's own recorded stage, set when its request failed.
   failed: "Couldn't add this picture.",
 } as const;
 

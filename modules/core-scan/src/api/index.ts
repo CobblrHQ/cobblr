@@ -14,6 +14,7 @@ import { recordPhotosRouter } from "./record-photos.js";
 import { qrRulesRouter } from "./qr-rules.js";
 import { decodeRouter } from "./decode.js";
 import { feedRouter } from "./feed.js";
+import { stationsRouter } from "./stations.js";
 import { duplicatesRouter } from "./duplicates.js";
 import { shipmentEventRouter } from "./shipment-event.js";
 import { registerScanHandlers } from "./handlers.js";
@@ -51,5 +52,6 @@ router.use("/", recordPhotosRouter); // pictures suggested for records made with
 router.use("/", qrRulesRouter);
 router.use("/", decodeRouter); // identifier-decoder registry: POST /decode { code }
 router.use("/", feedRouter); // live feed: the last few captures, for a screen that is not the scanner
+router.use("/", stationsRouter); // a Station: a tablet a barcode scanner drives (#4640)
 
 export default router;

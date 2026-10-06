@@ -21,7 +21,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-locations",
-  version: "0.9.0",
+  version: "0.10.0",
   displayName: "Locations",
   description:
     "Where your things live: rooms, shelves and bins, one inside another, and a floor plan to draw them on.",
@@ -259,6 +259,51 @@ export default defineModule({
           colour: { label: "Colour: red, orange, yellow, green, blue, purple, grey, or none", type: "text" as const, required: true },
           outline_group: { label: "Previous outline group (for Undo)", type: "text" as const },
         },
+      },
+      // A whole house as one file (floorplan-file.ts). The person-facing
+      // doors are Import a plan and Export on the floor plan.
+      {
+        group: "stock",
+        // UI-SCREEN: /locations
+        id: "core-locations:import-floorplan",
+        examples: ["import this floor plan", "bring in the plan another AI made of my house"],
+        undoable: true,
+        label: "Import a floor plan",
+        description:
+          "Make or update rooms, levels, zones, racks, shelves and drawers from a cobblr-floorplan/1 plan (JSON, as text or an object; https://docs.cobblr.xyz/schemas/cobblr-floorplan-1.json). Matched by name under each parent, so the same plan twice makes nothing new; nothing missing from the plan is deleted; anything outside its room is moved inside and warned about. `dry_run: true` says what it would make and update and writes nothing: run that first and show it. Undo takes the import back.",
+        icon: "upload",
+        scope: "workspace" as const,
+        invokeHandler: "core-locations.import-floorplan",
+        userInvokable: false,
+        argsSchema: {
+          plan: { label: "The plan (cobblr-floorplan/1 JSON)", type: "json" as const, required: true },
+          dry_run: { label: "Only say what it would do", type: "boolean" as const },
+        },
+      },
+      {
+        group: "stock",
+        id: "core-locations:export-floorplan",
+        examples: ["export my house plan", "give me the floor plan as JSON"],
+        label: "Export a floor plan",
+        description:
+          "This place and every room drawn under it as one cobblr-floorplan/1 plan: sizes, walls and openings, zones, containers with their shelves and drawers. Importing it back changes nothing. Changes nothing.",
+        icon: "download",
+        appliesTo: { kinds: ["core-locations:location"] },
+        invokeHandler: "core-locations.export-floorplan",
+        userInvokable: false,
+        argsSchema: {},
+      },
+      // NO-PHRASING: only ever run as Import a floor plan's Undo, never asked for.
+      {
+        group: "stock",
+        id: "core-locations:undo-floorplan-import",
+        label: "Undo a floor plan import",
+        description: "The way back for Import a floor plan: puts each place it updated back as it was and deletes the ones it made.",
+        scope: "workspace" as const,
+        internal: true,
+        userInvokable: false,
+        invokeHandler: "core-locations.undo-floorplan-import",
+        argsSchema: { import: { label: "The import to undo", type: "json" as const, required: true } },
       },
       // NO-PHRASING: only ever run as Move everything's Undo, never asked for.
       {

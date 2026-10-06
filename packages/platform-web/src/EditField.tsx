@@ -45,6 +45,7 @@ export interface EditFieldProps {
   value: string | number | null;
   onCommit: (v: string) => void;
   numeric?: boolean;
+  fractionDigits?: number;
   multiline?: boolean;
   /** The input's type when it is not text or number: "date", "url". */
   type?: string;
@@ -55,7 +56,7 @@ export interface EditFieldProps {
 
 /** The text an EditField shows for a value: "" for none, and a number
  *  without the zeros Postgres pads it with. */
-export function editFieldText(value: string | number | null | undefined, numeric?: boolean, type?: string): string {
+export function editFieldText(value: string | number | null | undefined, numeric?: boolean, type?: string, fractionDigits = 3): string {
   // Blank stays blank: Number("") is 0, so an empty number field read as a 0
   // nobody entered (an order with no total said "Total cost 0").
   if (value == null || value === "") return "";
@@ -66,13 +67,13 @@ export function editFieldText(value: string | number | null | undefined, numeric
     const day = value.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
     if (day) return day;
   }
-  if (numeric && Number.isFinite(Number(value))) return String(parseFloat(Number(value).toFixed(3)));
+  if (numeric && Number.isFinite(Number(value))) return String(parseFloat(Number(value).toFixed(fractionDigits)));
   return String(value);
 }
 
-export function EditField({ label, value, onCommit, numeric, multiline, type, placeholder, className }: EditFieldProps) {
+export function EditField({ label, value, onCommit, numeric, fractionDigits, multiline, type, placeholder, className }: EditFieldProps) {
   const Cmp = multiline ? "textarea" : "input";
-  const initial = editFieldText(value, numeric, type);
+  const initial = editFieldText(value, numeric, type, fractionDigits);
   const f = useFieldDraft(initial);
   // Escape leaves without writing; the blur it causes must not write the draft.
   const leaving = useRef(false);
@@ -123,7 +124,7 @@ export function editFieldNeed(key: string, p: { label: string; numeric?: boolean
 /** An EditField as a pack item: the need from its props (a long value wants
  *  the row, as on the scan form), the node the field itself. */
 export function editFieldItem(key: string, p: EditFieldProps & { label: string }): FieldPackItem {
-  return { need: editFieldNeed(key, { ...p, valueLength: editFieldText(p.value, p.numeric).length }), node: <EditField {...p} /> };
+  return { need: editFieldNeed(key, { ...p, valueLength: editFieldText(p.value, p.numeric, p.type, p.fractionDigits).length }), node: <EditField {...p} /> };
 }
 
 /** A record's own text column offered from what the kind's records already

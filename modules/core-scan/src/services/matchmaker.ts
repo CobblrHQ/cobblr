@@ -204,6 +204,12 @@ export interface MatchCandidate {
   /** On a provider error, the provider's own reason (provider-reason.ts), so
    *  the chip can say "the key is not valid" rather than "the AI errored". */
   ai_fallback_reason?: ProviderReason;
+  /** What the item IS, in the plain noun a shop would use ("3D printer",
+   *  "filament spool"), whatever table it went to (#5065). The fit rule reads
+   *  it, so a catch-all yields to the module's own list for exactly this kind
+   *  even when nothing else names it (a typed "Bambu Lab P1P" has no category
+   *  and no photo). Top candidate only. */
+  is_a?: string;
   /** The table the model picked when the noun plan overruled it (#2865):
    *  both verdicts stay visible, and the eval harness can see they disagreed. */
   overruled_model_pick?: string;
@@ -1028,6 +1034,12 @@ export const MATCHMAKER_SYSTEM =
     "item's domain. Items of the same domain MUST route the same way: a run of " +
     "like items belongs in one table distinguished by category, not scattered " +
     "across near-synonym tables that all mean roughly 'stuff'.\n" +
+    "1b2. A MODULE'S OWN LIST FOR EXACTLY THIS KIND IS THE TABLE. Rule 1b is " +
+    "about near-synonym catch-alls. When a module offers both its general table " +
+    "and a list made for one kind of thing (a list whose noun is '3D printer' " +
+    "beside a general machines table), and the item IS that kind, route it to " +
+    "that list, never to the general table. A Bambu Lab P1P is a 3D printer: it " +
+    "goes to the 3D printer list, not the general machines table.\n" +
     "1c. Setting the category: use one of the `category_field.values` already in " +
     "use when one genuinely fits — reuse beats invention, and the workspace's " +
     "existing vocabulary is the right vocabulary. When none fits, PROPOSE a new " +
@@ -1100,7 +1112,8 @@ export const MATCHMAKER_SYSTEM =
     'Reply with ONLY JSON: {"candidates":[{"module":<string>,"instance":<string|null>,' +
     '"confidence":<0..1>,"name":<string>,"fields":{<field_name>:<value>},' +
     '"inferred":[<field_name>,...] (top candidate only; the fields you filled from KNOWLEDGE of a confident known entity, not the item data; omit when none),' +
-    '"notes":<string, first candidate ONLY when reconciling is needed; else omit>,"quantity":<int, optional>}]}. ' +
+    '"notes":<string, first candidate ONLY when reconciling is needed; else omit>,"quantity":<int, optional>,' +
+    '"is_a":<string, first candidate ONLY: what the item IS, the plain noun a shop would use (\'3D printer\', \'filament spool\', \'drill\'); always give it>}]}. ' +
     "Inside string values NEVER use the double-quote character — quote words " +
     "with single quotes ('medium weight') — or the JSON will not parse. " +
     "Order candidates best-first. confidence is how well the table fits the item.";
@@ -1390,6 +1403,13 @@ export async function runMatchmaker(
   // place is the downgrade this whole path exists to stop — so keep what the row
   // already had and let the user re-identify if they want a fresh opinion.
   if (out.length === 0) return replay ? (replay.storedCandidates as MatchCandidate[]) : heuristicMatch(item, menu, "no-answer");
+  // What the item IS rides on the top candidate, whichever table that is: the
+  // model says it once, on its first answer, and that answer may not have
+  // survived the menu check (#5065).
+  const isA = rawList
+    .map((c) => (c && typeof c === "object" ? (c as { is_a?: unknown }).is_a : undefined))
+    .find((v): v is string => typeof v === "string" && !!v.trim());
+  if (isA) out[0] = { ...out[0]!, is_a: isA.trim().slice(0, 60) };
   // Code plans, the model narrates: a name that says what the thing IS, with
   // a table for exactly that on the menu, is the plan; the model refines it
   // and does not get to lose it to the catch-all (applyNounPlan). Then, AI

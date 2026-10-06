@@ -1,4 +1,7 @@
-import { reflowProfilesRouter, registerReflowProfiles } from "./reflow-profiles.js";
+import { cutterRouter } from "./cutter.js";
+import { registerCutterActions } from "../cutter-actions.js";
+import { resinRouter } from "./resin.js";
+import { registerResinPostprocessAction } from "../resin-postprocess.js";
 // digifab router. Mounted at
 //   /api/v1/orgs/:slug/modules/digifab/.
 
@@ -23,11 +26,14 @@ import { printRulesRouter } from "./print-rules.js";
 import { failureRouter } from "./failure.js";
 import { loadedRouter } from "./loaded.js";
 import { laserRouter } from "./laser.js";
-import { registerMachineStationVerifier } from "./machine-stations.js";
 import { stationsRouter } from "./stations.js";
+import { snapmakerRouter } from "./snapmaker.js";
+import { registerSnapmakerDiscovery } from "../snapmaker.js";
 import { registerFarmResolvers } from "./resolvers.js";
 import { registerFloorManager } from "../floor-manager.js";
 import { floorRouter } from "./floor.js";
+import { registerLaserSetupAction } from "../laser-setup.js";
+import { registerResinControlAction } from "../resin-controls.js";
 import { registerLaserControlAction } from "../laser-controls.js";
 import { registerLaserActions } from "../laser-actions.js";
 import { registerMakeActions } from "../make-actions.js";
@@ -40,11 +46,15 @@ import { asyncHandler } from "./util.js";
 import { tenantContext } from "../db.js";
 import { extractPlateMetadata } from "../library/extract-metadata.js";
 
-registerMachineStationVerifier();
 registerFarmResolvers();
 registerMakeActions();
 registerLaserActions();
+registerCutterActions();
+registerSnapmakerDiscovery();
 registerLaserControlAction();
+registerResinControlAction();
+registerResinPostprocessAction();
+registerLaserSetupAction();
 registerFloorManager();
 registerDeviceSeam(); // back platform().devices.getDriver + the digifab:run-command alias
 registerDetectorServices(); // the in-process print checks as inspect.print built-ins
@@ -64,12 +74,13 @@ platform().edge.registerConsumer({
   href: "/digifab",
 });
 
-registerReflowProfiles();
 const router = Router({ mergeParams: true });
-router.use("/", reflowProfilesRouter);
 router.use("/connections", connectionsRouter);
 router.use("/stations", stationsRouter);
+router.use("/resin", resinRouter);
+router.use("/snapmaker", snapmakerRouter);
 router.use("/laser", laserRouter);
+router.use("/cutter", cutterRouter);
 router.use("/jobs", jobsRouter);
 router.use("/links", linksRouter);
 router.use("/drivers", driversRouter);

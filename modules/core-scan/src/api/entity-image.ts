@@ -362,6 +362,7 @@ entityImageRouter.post(
         continue;
       }
       started++;
+      // DETACHED: the cover backfill the answer reports as started; a record without a cover is found again next time
       void enrichEntityImage({
         orgId,
         orgSlug: slug,

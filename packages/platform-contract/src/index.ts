@@ -221,6 +221,7 @@ export const FIELD_ROLE_VALUES = [
   "year-made",
   "belongs-to",
   "usage",
+  "outer-size",
 ] as const;
 export type FieldRole = (typeof FIELD_ROLE_VALUES)[number];
 
@@ -280,6 +281,11 @@ export const FIELD_ROLE_LABELS: Record<
   // mower's hours, a press's cycles. A service schedule can fall due every so
   // many of it, on any kind, with no code of the kind's own.
   usage: { label: "What it counts as it is used (miles, hours)", pickable: true, type: "number" },
+  // How much room the thing takes: width, depth and height, as written
+  // ("600 x 550 x 700 mm"; parseOuterSize in ./outer-size). The floor plan
+  // draws a placed thing at this size and checks it fits its shelf. Its
+  // outside, never what it holds or makes (a printer's build volume is not it).
+  "outer-size": { label: "Its outer size (W × D × H)", pickable: true, type: "text" },
 };
 
 /** Why a field of this type cannot carry this role, or null when it can. A
@@ -2495,6 +2501,12 @@ export interface PlatformDb {
    *  (@cobblr/platform-contract/jsonb-merge). Never read the bag, change it
    *  in JS and write it back: a concurrent edit in between is lost. */
   mergeJsonb(column: string, fields: Record<string, unknown>): unknown;
+  /** A row's version, to select (`… as row_version`): Postgres's xmin, which
+   *  every write to the row changes, by any path. With `atVersion` it makes a
+   *  compare-and-set: read the version, decide, write only if it is the same. */
+  rowVersion(): unknown;
+  /** A WHERE condition: the row is still at this version. */
+  atVersion(version: string): unknown;
 }
 
 // ──────────────── Pillar A runtime — entities ──────────────────────
@@ -2908,6 +2920,16 @@ export interface EntityWriter {
   /** Create an entity; returns the new entity's id. */
   create(orgId: string, fields: Record<string, unknown>): Promise<string>;
   update(orgId: string, id: string, fields: Record<string, unknown>): Promise<void>;
+  /** Optional, with `updateIf`: the record's version now (`rowVersionOf`),
+   *  null when there is no such record. */
+  version?(orgId: string, id: string): Promise<string | null>;
+  /** Optional: `update`, only if the record is still at `version`. Answers
+   *  the record's new version, or null when it changed in between and
+   *  nothing was written (`updateRowAt`). Kernel code that writes a record
+   *  somebody else may be editing (a share's mirror) reads the version,
+   *  then the record, decides, and writes with this, so an edit in between
+   *  is never overwritten. */
+  updateIf?(orgId: string, id: string, fields: Record<string, unknown>, version: string): Promise<string | null>;
   /** Optional: set these metadata keys on one record and leave every other
    *  key as the live row holds it, in one statement (`withMetadataMerged`).
    *  `update` writes metadata wholesale, which is right for a sync that owns
@@ -7087,7 +7109,7 @@ export interface DeviceConnectionPatch {
   enabled?: boolean;
   config?: Record<string, unknown>;
   /** Raw credential fields to merge; a null value clears that field. */
-  creds?: Record<string, string | null>;
+  creds?: Record<string, unknown>;
 }
 
 /** The connection store — implemented by the owner of the connections table
@@ -7106,20 +7128,7 @@ export interface DeviceConnectionStore {
   setProbe(orgId: string, id: string, capabilities: Record<string, unknown>, status: string): Promise<void>;
 }
 
-export interface MachineStationRequest { machine_kind: string; machine_id: string; purpose: "placement" | "reflow" | "inspection"; token: string }
-export type MachineStationVerifier = (orgId: string, request: MachineStationRequest) => Promise<{ id: string; label: string }>;
-
-export interface MachineRecordsProvider {
-  list(orgId: string, userId?: string | null): Promise<Array<{ kind: string; record: ResolvedEntity }>>;
-  get(orgId: string, kind: string, id: string, userId?: string | null): Promise<ResolvedEntity | null>;
-}
-
 export interface PlatformDevices {
-  registerMachineRecords(provider: MachineRecordsProvider): void;
-  machineRecords(orgId: string, userId?: string | null): ReturnType<MachineRecordsProvider["list"]>;
-  machineRecord(orgId: string, kind: string, id: string, userId?: string | null): ReturnType<MachineRecordsProvider["get"]>;
-  registerStationVerifier(verifier: MachineStationVerifier): void;
-  authorizeAtStation(orgId: string, request: MachineStationRequest): Promise<{ id: string; label: string }>;
   /** The connection/driver owner registers this at boot (one provider). */
   registerDriverProvider(provider: DeviceDriverProvider, types?: readonly string[]): void;
   /** Resolve a connection ref to a driver via the registered provider. */
@@ -7551,6 +7560,26 @@ export async function mergeRowMetadata(db: unknown, table: string, id: string, f
     .set({ metadata: platform().db.mergeJsonb("metadata", fields), updated_at: new Date() })
     .where("id", "=", id)
     .execute();
+}
+
+/** A writer's `version`: the row's version (`platform().db.rowVersion`). */
+export async function rowVersionOf(db: unknown, table: string, id: string): Promise<string | null> {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const q = db as { selectFrom: (t: string) => any };
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+  const row = (await q.selectFrom(table).select(platform().db.rowVersion()).where("id", "=", id).executeTakeFirst()) as { row_version?: string } | undefined;
+  return row?.row_version ?? null;
+}
+
+/** A writer's `updateIf`: the same patch its `update` writes, only while the
+ *  row is at `version`, in one statement. The new version, or null when the
+ *  row moved on (or is gone) and nothing was written. */
+export async function updateRowAt(db: unknown, table: string, id: string, patch: Record<string, unknown>, version: string): Promise<string | null> {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const q = db as { updateTable: (t: string) => any };
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+  const row = (await q.updateTable(table).set(patch).where("id", "=", id).where(platform().db.atVersion(version)).returning(platform().db.rowVersion()).executeTakeFirst()) as { row_version?: string } | undefined;
+  return row?.row_version ?? null;
 }
 
 /** A writer's `adoptAxisValues` for a kind whose category is a native text

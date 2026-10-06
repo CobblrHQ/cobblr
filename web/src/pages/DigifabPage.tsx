@@ -2525,13 +2525,13 @@ function LibrarySection({ slug }: { slug: string }) {
         <h2 className="text-sm font-semibold text-content dark:text-mortar-100">Library</h2>
         <span className="text-xs text-faint">{itemsL.length} file{itemsL.length === 1 ? "" : "s"}</span>
         <div className="flex-1" />
-        <input ref={fileRef} type="file" accept=".3mf,.gcode,.gco,.g,.svg,.dxf,.ai,.pdf,.lbrn2" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload.mutate(f); e.target.value = ""; }} />
+        <input ref={fileRef} type="file" accept=".3mf,.gcode,.gco,.g,.goo,.svg,.dxf,.ai,.pdf,.lbrn2" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload.mutate(f); e.target.value = ""; }} />
         <button onClick={() => fileRef.current?.click()} disabled={upload.isPending} className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2.5 py-1 text-xs disabled:opacity-50">
           <Plus size={13} /> {upload.isPending ? "Uploading…" : "Upload file"}
         </button>
       </div>
       {itemsL.length === 0 ? (
-        <div className="text-xs text-muted dark:text-slate-400 italic">No files yet. Upload a drawing or prepared machine file: SVG, DXF, AI, PDF, .lbrn2, .3mf or .gcode.</div>
+        <div className="text-xs text-muted dark:text-slate-400 italic">No files yet. Upload a drawing or prepared machine file: SVG, DXF, AI, PDF, .lbrn2, .3mf, .gcode or .goo.</div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
           {itemsL.map((it) => <LibraryCard key={it.id} item={it} slug={slug} />)}
@@ -2561,12 +2561,12 @@ export function LibraryCard({ item, slug }: { item: DigifabLibraryItem; slug: st
     // the FDMM drag-a-gcode-onto-a-printer interaction.
     <div
       className="rounded-lg border border-line dark:border-slate-700 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing"
-      draggable={!item.metadata?.laser_layout && !["svg", "dxf"].includes(item.kind)}
+      draggable={!(item.metadata?.laser_layout || item.metadata?.cutter_plan) && !["svg", "dxf"].includes(item.kind)}
       onDragStart={(e) => {
         e.dataTransfer.setData(LIBRARY_DRAG_MIME, JSON.stringify({ name: item.name, file_id: item.file_id }));
         e.dataTransfer.effectAllowed = "copy";
       }}
-      title={item.metadata?.laser_layout ? "Use the queued sheet job at its laser station" : "Drag onto a fleet machine to send it there"}
+      title={(item.metadata?.laser_layout || item.metadata?.cutter_plan) ? "Use the queued job at its machine station" : "Drag onto a fleet machine to send it there"}
     >
       {item.kind === "svg" && !item.thumbnail_file_id ? <FilePreview src={api.fileRawUrl(slug, item.file_id, "original")} filename={/\.svg$/i.test(item.name) ? item.name : `${item.name}.svg`} className="aspect-square bg-subtle overflow-hidden" /> : <EntityPhoto src={thumb} alt={item.name} aspect="square" fit="contain" placeholder={<Boxes size={26} className="text-faint" />} />}
       <div className="p-2 space-y-1 flex-1 flex flex-col">
@@ -2579,20 +2579,22 @@ export function LibraryCard({ item, slug }: { item: DigifabLibraryItem; slug: st
           {item.metadata?.estimated_sec && (
             <span>· ~{Math.floor(item.metadata.estimated_sec / 3600)}h{Math.round((item.metadata.estimated_sec % 3600) / 60)}m</span>
           )}
+          {item.metadata?.resin_ml != null && <span>· {item.metadata.resin_ml} ml resin</span>}
+          {item.metadata?.layers != null && <span>· {item.metadata.layers} layers</span>}
           {item.metadata?.parts_per_plate && <span>· {item.metadata.parts_per_plate}{item.metadata.laser_layout ? " parts/sheet" : "×/plate"}</span>}
         </div>
         <div className="flex items-center gap-1.5 pt-1 mt-auto">
-          {!item.metadata?.laser_layout && !["svg", "dxf"].includes(item.kind) && <button onClick={() => setSendOpen(true)} className="flex-1 inline-flex items-center justify-center gap-1 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2 py-1 text-[11px]"><Send size={11} /> Send</button>}
-          {item.metadata?.laser_layout && <span className="text-xs text-muted">Use the queued sheet job at its station.</span>}
+          {!(item.metadata?.laser_layout || item.metadata?.cutter_plan) && !["svg", "dxf"].includes(item.kind) && <button onClick={() => setSendOpen(true)} className="flex-1 inline-flex items-center justify-center gap-1 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2 py-1 text-[11px]"><Send size={11} /> Send</button>}
+          {(item.metadata?.laser_layout || item.metadata?.cutter_plan) && <span className="text-xs text-muted">Use the queued job at its station.</span>}
           <button
             onClick={async () => { if (await confirm({ title: `Delete "${item.name}"?`, message: "Removes it from the library (doesn't touch any machine).", confirmLabel: "Delete", destructive: true })) del.mutate(); }}
-            disabled={del.isPending || !!item.metadata?.laser_layout}
+            disabled={del.isPending || !!(item.metadata?.laser_layout || item.metadata?.cutter_plan)}
             className="text-faint hover:text-ember-500 p-1 disabled:opacity-50"
             title="Delete"
           ><Trash2 size={13} /></button>
         </div>
         {["svg", "dxf"].includes(item.kind) && <button className="min-h-11 text-xs underline" onClick={() => setLayoutOpen(true)}>Prepare laser batch</button>}
-        {item.kind === "lbrn2" && !item.metadata?.laser_layout && <button className="min-h-11 text-xs underline" onClick={() => setMaterialOpen(true)}>{item.metadata?.laser_material ? `${item.metadata.laser_material.thickness_mm} mm ${item.metadata.laser_material.material} · Edit material` : "Set file material"}</button>}
+        {item.kind === "lbrn2" && !(item.metadata?.laser_layout || item.metadata?.cutter_plan) && <button className="min-h-11 text-xs underline" onClick={() => setMaterialOpen(true)}>{item.metadata?.laser_material ? `${item.metadata.laser_material.thickness_mm} mm ${item.metadata.laser_material.material} · Edit material` : "Set file material"}</button>}
       </div>
       {layoutOpen && <LaserLayoutPlanner slug={slug} item={item} onClose={() => setLayoutOpen(false)} />}
       {sendOpen && <LibrarySendModal item={item} slug={slug} onClose={() => setSendOpen(false)} />}
@@ -3324,7 +3326,7 @@ export function ProductionRunsSection({ slug }: { slug: string }) {
                     }}
                     className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5">
                     <option value="">Pick a file…</option>
-                    {(library.data?.items ?? []).filter((f) => !f.metadata?.laser_layout).map((f) => (
+                    {(library.data?.items ?? []).filter((f) => !(f.metadata?.laser_layout || f.metadata?.cutter_plan)).map((f) => (
                       <option key={f.id} value={f.file_id}>{f.name}</option>
                     ))}
                   </select>

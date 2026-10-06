@@ -1,4 +1,3 @@
-import { AssemblyOrdersCard } from "./AssemblyOrders.js";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -10,7 +9,7 @@ import type { BuildsApi } from "./api.js";
 const control = "w-full rounded border border-line bg-surface px-3 py-2 text-sm text-content";
 const button = "rounded border border-line px-3 py-2 text-sm disabled:opacity-50";
 const primary = `${button} bg-cobble-600 text-white`;
-export function useBoardAction(slug: string) {
+function useBoardAction(slug: string) {
   const { api } = usePlatformWeb();
   const qc = useQueryClient();
   return async <T,>(action: string, args: Record<string, unknown>): Promise<T> => {
@@ -93,7 +92,6 @@ export function BoardRevisionCard({ slug, id, spec, api }: { slug: string; id: s
   const files = useQuery({ queryKey: ["board-files", slug, id], queryFn: () => api.boardRevision(id) });
   function run(task: () => Promise<void>) { setMessage(""); operation.mutate(task); }
   return <section className="space-y-4" data-testid="board-revision">
-    <AssemblyOrdersCard slug={slug} buildId={id} spec={spec} api={api} />
     <p>Revision {spec.revision} · {spec.placements.length} placements · {spec.bom.length} BOM lines</p>
     <Link className="underline text-accent" to={`/instances/${spec.project_kind.split(":")[0]}/${spec.project_id}`}>Open board project</Link>
     <div className="flex flex-wrap items-end gap-2"><label className="text-sm">Boards to make<input aria-label="Boards to make" className={control} type="number" min={1} max={1_000_000} value={boards} onChange={e => { setBoards(Number(e.target.value)); setChecked(null); }} /></label><button type="button" disabled={busy} className={button} onClick={() => void run(async () => setChecked(await call("builds:check-board-stock", { build_id: id, boards })))}>Check BOM stock</button></div>

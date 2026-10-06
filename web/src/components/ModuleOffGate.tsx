@@ -5,30 +5,25 @@
 // the whole working page (filters, "New part", "Import CSV") over calls that
 // all answered 409, and Lists and Purchases showed "New list" and "Log the
 // first order" the same way. A first-time user pressed them and nothing
-// worked. The gate stands at the one outlet every page renders through, and
-// knows a page's module from the app catalogue (the registry the All apps
-// page reads), so no page has to remember to wrap itself.
+// worked. The layout and chromeless outlets share this gate and the app catalogue
+// route ownership rule, so pages do not have to gate their own reads.
 
 import type { ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { Power } from "lucide-react";
-import type { AppEntry } from "@cobblr/platform-contract/app-catalog";
+import { moduleForRoute, type AppEntry } from "@cobblr/platform-contract/app-catalog";
 import { useAppCatalog, useModuleDoor } from "../lib/appCatalog";
 import { CONFIG_DESTINATIONS } from "../lib/configuration-nav";
 
-/** The app whose page this is, when that app is off. A page belongs to the
- *  app whose route's first segment it starts with, the same key the nav and
- *  the All apps page use, or, for a settings page, to the module its
- *  settings entry names (QR codes under /configuration belong to Labels). */
+/** The off app that owns this page, including its station and settings addresses. */
 export function moduleOffAt(
   pathname: string,
   apps: readonly AppEntry[],
   settings: ReadonlyArray<{ to: string; module?: string }> = CONFIG_DESTINATIONS,
 ): AppEntry | null {
-  const seg = pathname.split("/").filter(Boolean)[0];
-  if (!seg) return null;
-  const owner = settings.find((d) => d.module && (pathname === d.to || pathname.startsWith(`${d.to}/`)))?.module;
-  const app = apps.find((a) => a.key === seg) ?? (owner ? apps.find((a) => a.name === owner) : undefined);
+  const owner = moduleForRoute(pathname, apps.map(a => ({ name: a.name, nav: { route: a.route } })))
+    ?? settings.find(d => d.module && (pathname === d.to || pathname.startsWith(`${d.to}/`)))?.module;
+  const app = apps.find(a => a.name === owner);
   return app && app.state === "off" ? app : null;
 }
 

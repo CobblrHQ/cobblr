@@ -19,6 +19,7 @@ import { platform } from "@cobblr/platform-contract";
 import { sql, type Kysely, type Selectable } from "kysely";
 import type { CoreMaintenanceDB, CoreMaintenanceEntriesTable, CoreMaintenanceSchedulesTable } from "./db.js";
 import { dueState, hasCounter, nextRenewalExpiry, reminderAt, addInterval, type Due, type ScheduleState } from "./schedule.js";
+import { termValues } from "./term-fields.js";
 
 export type ScheduleRow = Selectable<CoreMaintenanceSchedulesTable>;
 type EntryRow = Selectable<CoreMaintenanceEntriesTable>;
@@ -97,6 +98,10 @@ export async function ensureOccurrence(db: Db, orgId: string, s: ScheduleRow, no
 }
 
 async function ensureOccurrenceLocked(db: Db, orgId: string, s: ScheduleRow, now: Date): Promise<EntryRow | null> {
+  if (s.ended_at) {
+    await db.deleteFrom("core_maintenance_entries").where("schedule_id", "=", s.id).where("performed_at", "is", null).execute();
+    return null;
+  }
   const due = await dueOf(orgId, s, now);
   const byCounter = due.counter != null && due.next_due_counter != null && due.counter >= due.next_due_counter;
   const target = byCounter ? now : due.next_due_at;
@@ -177,6 +182,7 @@ async function rollForwardLocked(
     const s = await scheduleFor(db, entry);
     if (entry.schedule_id && entry.entity_id !== s?.entity_id) throw new Error("The schedule belongs to another record");
     if (!s) return null;
+    if (s.ended_at) throw new MaintenanceRefusal("This renewal chain has ended");
     // A service logged for a date before the schedule's last one (entering old
     // history) is history only; it must not move the schedule backwards.
     if (s.last_done_at && entry.performed_at.getTime() < s.last_done_at.getTime()) {
@@ -185,6 +191,10 @@ async function rollForwardLocked(
     }
     const renewal = await renewalState(orgId, s);
     const expiry = newExpiry ?? nextRenewalExpiry(renewal);
+    if (s.anchor && expiry && renewal.current_expiry && !entry.is_term) {
+      const term = await termValues(db, orgId, s, renewal.current_expiry, expiry, entry.cost_cents == null ? {} : { cost_cents: entry.cost_cents });
+      await db.updateTable("core_maintenance_entries").set(term).where("id", "=", entry.id).execute();
+    }
     if (expiry) await writeExpiry(orgId, s, expiry);
     const reading = s.counter_field ? await readCounter(orgId, kindOf(s), s.entity_id, s.counter_field) : null;
     const rolled = await db
@@ -209,6 +219,7 @@ async function rollForwardLocked(
       .where("id", "!=", entry.id)
       .execute();
     const next = await ensureOccurrence(db, orgId, rolled);
+    if (s.anchor && !entry.is_term) await platform().activity.log({ orgId, userId: entry.performed_by, action: "term_created", ref: { module: "core-maintenance", entityType: "term", entityId: entry.id }, diff: { name: entry.name } });
     const was: RolledFrom = {
       schedule_id: s.id,
       current_expiry: renewal.current_expiry?.toISOString() ?? null,

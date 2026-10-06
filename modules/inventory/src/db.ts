@@ -27,6 +27,7 @@ export interface InventoryCategoriesTable {
 export type PartState = "active" | "draft" | "needs_review";
 
 export interface InventoryPartsTable {
+  stock_revision: Generated<number>;
   id: Generated<string>;
   name: string;
   description: string | null;
@@ -83,6 +84,7 @@ export interface InventoryPartsTable {
  *  the table without landing here.
  */
 export const PART_FILTER_COLS = new Set([
+  "stock_revision",
   "id",
   "name",
   "description",
@@ -127,7 +129,6 @@ export const PART_CI_FILTER_COLS = new Set(["serial_number", "model_number", "as
 export type AllocationStatus = "reserved" | "consumed" | "released";
 
 export interface InventoryAllocationsTable {
-  context: Generated<Record<string, unknown>>;
   id: Generated<string>;
   part_id: string;
   qty: string;
@@ -149,6 +150,7 @@ export interface InventoryAllocationsTable {
  *  a consumable shows WHAT drew it down and HOW MUCH (the spool's print history).
  *  delta is signed: negative = consumed, positive = restocked. */
 export interface InventoryConsumptionTable {
+  unit: Generated<string | null>;
   id: Generated<string>;
   part_id: string;
   delta: string;
@@ -179,7 +181,9 @@ export interface InventoryPackageReceiptsTable {
 }
 
 export interface InventoryDB {
-  inventory_paste_storage: { part_id: string; state: import("./paste-lifecycle.js").PasteClock; revision: Generated<number>; updated_at: Generated<Date> };
+  inventory_stock: { part_id: string; config: import("./stock-shapes.js").StockConfig; shape: Generated<import("./stock-shapes.js").StockShape>; used: Generated<string>; revision: Generated<number>; updated_at: Generated<Date> };
+  inventory_stock_uses: { id: Generated<string>; part_id: string; source: string; verdict: "good" | "scrap" | "recount"; amount: string; unit: string; remaining: string; by_user: string | null; at: Generated<Date> };
+  inventory_stock_loaded: { station: string; slot: Generated<string>; part_id: string; by_user: string; loaded_at: Generated<Date> };
   inventory_stock_storage: InventoryStockStorageTable;
   inventory_package_receipts: InventoryPackageReceiptsTable;
   inventory_sheet_area: { part_id: string; revision: Generated<number>; state: Generated<import("./sheet-area.js").SheetState>; updated_at: Generated<Date> };

@@ -1,3 +1,6 @@
+import type { CutterProfile, CutterProgram } from "@cobblr/platform-contract/cutter-program";
+import type { StockView, StockDetail } from "@cobblr/inventory/ui";
+import type { LaserSetup, LaserCommission } from "@cobblr/platform-contract/laser-setup";
 import type { InvitableOrgRole } from "@cobblr/platform-contract/org-roles";
 import type { MoneyTotal } from "@cobblr/platform-contract/money";
 // Thin fetch wrapper. Reads the auth token from localStorage on every
@@ -39,11 +42,13 @@ import { describeUnreadableBody, sendUpload, uploadErrorOf, UploadError } from "
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 import { walkPages } from "./list-pages";
 import { getShareViewToken, setShareViewToken } from "./share-view";
+import { getStationTokenOverride } from "./station-token";
+import type { StationLookup, StationMove, StationSettings, StationStockOp } from "@cobblr/platform-contract/station-screen";
 
 const TOKEN_KEY = "cobblr.token";
 
 export function getToken(): string | null {
-  return getShareViewToken() ?? localStorage.getItem(TOKEN_KEY);
+  return getShareViewToken() ?? getStationTokenOverride() ?? localStorage.getItem(TOKEN_KEY);
 }
 
 export function setToken(token: string | null) {
@@ -2279,6 +2284,13 @@ export const api = {
 
   // Placement — containment (core-placement). "What's inside this container?"
   // and "what is this thing installed in?"
+  // A whole house as one file (cobblr-floorplan/1, core-locations floorplan-file.ts).
+  floorplanImport: (slug: string, plan: unknown, dryRun: boolean) =>
+    request<FloorplanImportResult>("POST", `/orgs/${slug}/modules/core-locations/locations/floorplan/import`, { plan, dry_run: dryRun }),
+  floorplanImportUndo: (slug: string, imp: { created: string[]; updated: unknown[] }) =>
+    request<{ note: string }>("POST", `/orgs/${slug}/modules/core-locations/locations/floorplan/import/undo`, { import: imp }),
+  floorplanExport: (slug: string, locationId: string) =>
+    request<Record<string, unknown>>("GET", `/orgs/${slug}/modules/core-locations/locations/${locationId}/floorplan/export`),
   placementContents: (slug: string, containerKind: string, containerId: string) =>
     request<{ items: PlacedThing[] }>(
       "GET",
@@ -3376,6 +3388,8 @@ export const api = {
       "GET",
       `/orgs/${slug}/modules/digifab/connections`,
     ),
+  discoverSnapmakers: (slug: string, bridge: string | null) => request<{ items: { name: string; host: string; model: string; transport: "http" | "sacp" }[] }>("GET", `/orgs/${slug}/modules/digifab/snapmaker/discover${bridge ? `?bridge=${encodeURIComponent(bridge)}` : ""}`),
+  pairSnapmaker: (slug: string, connectionId: string) => request<{ state: "waiting" | "paired" }>("POST", `/orgs/${slug}/modules/digifab/snapmaker/${connectionId}/pair`, {}),
   // The live fleet/floor view: every enabled connection's devices + state, with
   // Cobblr's in-flight jobs overlaid. Read-only; the page polls it.
   getFabricationFloor: (slug: string) => request<FabricationFloor>("GET", `/orgs/${slug}/modules/digifab/floor`),
@@ -3607,8 +3621,9 @@ export const api = {
   createLaserProfile: (slug: string, connectionId: string, deviceId: string, profile: LaserProfile) => request<LaserProfileRecord>("POST", `/orgs/${slug}/modules/digifab/laser/profiles`, { connection_id: connectionId, device_id: deviceId, profile }),
   saveLaserProfile: (slug: string, id: string, profile: LaserProfile) => request<LaserProfileRecord>("PUT", `/orgs/${slug}/modules/digifab/laser/profiles/${id}`, profile),
   laserDesign: (slug: string, id: string, units: string) => request<LaserDesign>("GET", `/orgs/${slug}/modules/digifab/laser/design/${id}?units=${units}`),
-  laserSheets: (slug: string, body: { material: string; thickness_mm: number; width_mm: number; height_mm: number; rotate: boolean; offset: number }) => request<{ items: LaserSheet[]; total: number }>("GET", `/orgs/${slug}/modules/inventory/sheets/find?${new URLSearchParams(Object.entries(body).map(([k, v]) => [k, String(v)]))}`),
-  createLaserPlan: (slug: string, body: { connection_id: string; device_id: string; library_id: string; quantity: number; sheet_ids: string[]; mapping: Record<string, string>; spacing_mm: number; kerf_mm: number; rotate: boolean; dxf_units: string }) => request<LaserPlanRecord>("POST", `/orgs/${slug}/modules/digifab/laser/plans`, body),
+  laserSheets: (slug: string, body: { material: string; thickness_mm: number; width_mm: number; height_mm: number; rotate: boolean; offset: number; outline?: boolean }) => request<{ items: LaserSheet[]; total: number }>("GET", `/orgs/${slug}/modules/inventory/sheets/find?${new URLSearchParams(Object.entries(body).map(([k, v]) => [k, String(v)]))}`),
+  nestDrawing: (slug: string, body: { library_id: string; quantity: number; sheet_ids: string[]; spacing_mm: number; kerf_mm: number; rotate: boolean; dxf_units: string; rotation_step?: number; budget_ms?: number }) => request<{ design: LaserDesign; sheets: LaserLayoutSheet[]; quantity: number }>("POST", `/orgs/${slug}/modules/digifab/laser/nest`, body),
+  createLaserPlan: (slug: string, body: { connection_id: string; device_id: string; library_id: string; quantity: number; sheet_ids: string[]; mapping: Record<string, string>; spacing_mm: number; kerf_mm: number; rotate: boolean; dxf_units: string; rotation_step?: number; budget_ms?: number; seed?: number }) => request<LaserPlanRecord>("POST", `/orgs/${slug}/modules/digifab/laser/plans`, body),
   acceptLaserPlan: (slug: string, id: string) => request<{ run_id: string; jobs: string[] }>("POST", `/orgs/${slug}/modules/digifab/laser/plans/${id}/accept`, {}),
   discardLaserPlan: (slug: string, id: string) => request<{ ok: boolean }>("DELETE", `/orgs/${slug}/modules/digifab/laser/plans/${id}`),
   // ── File library (stored 3MF/gcode + send-to-machine) ─────────────────────
@@ -3854,6 +3869,17 @@ export const api = {
       "GET",
       `/orgs/${slug}/modules/digifab/files/${fileId}/slicer-meta`,
     ),
+  getLaserSetup: (slug:string,connectionId:string,deviceId:string) =>
+    request<LaserSetup>("GET",`/orgs/${slug}/modules/digifab/laser/setup?connection_id=${encodeURIComponent(connectionId)}&device_id=${encodeURIComponent(deviceId)}`),
+  setLaserSetup: (slug:string,body:{connection_id:string;device_id:string;operation:"home"|"commission";station_token?:string;configuration?:LaserCommission}) =>
+    request<LaserSetup>("POST",`/orgs/${slug}/modules/digifab/laser/setup`,body),
+  cutterStation: (slug:string,connectionId:string,deviceId:string) => request<CutterStationView>("GET",`/orgs/${slug}/modules/digifab/cutter/station?connection_id=${encodeURIComponent(connectionId)}&device_id=${encodeURIComponent(deviceId)}`),
+  cutterProfiles: (slug:string,connectionId:string,deviceId:string,offset=0) => request<{items:CutterProfileRecord[];total:number;complete:boolean}>("GET",`/orgs/${slug}/modules/digifab/cutter/profiles?connection_id=${encodeURIComponent(connectionId)}&device_id=${encodeURIComponent(deviceId)}&limit=1000&offset=${offset}`),
+  createCutterProfile: (slug:string,body:{connection_id:string;device_id:string;profile:CutterProfile}) => request<CutterProfileRecord>("POST",`/orgs/${slug}/modules/digifab/cutter/profiles`,body),
+  updateCutterProfile: (slug:string,id:string,profile:CutterProfile) => request<CutterProfileRecord>("PUT",`/orgs/${slug}/modules/digifab/cutter/profiles/${id}`,profile),
+  createCutterPlan: (slug:string,body:{connection_id:string;device_id:string;library_id:string;roll_id:string;mapping:Record<string,string>;quantity:number;length_mm:number;spacing_mm:number;mirror?:boolean;weed_box_mm:number;weed_line_spacing_mm:number;dxf_units:"mm"|"in"}) => request<CutterStationView["plan"]>("POST",`/orgs/${slug}/modules/digifab/cutter/plans`,body),
+  cutterControl: (slug:string,body:{connection_id:string;device_id:string;operation:"stop"|"pause"|"resume"|"frame"|"confirm-idle";job_id?:string;file_id?:string;project_hash?:string;station_token?:string;idle_confirmed?:boolean;blade_up_confirmed?:boolean}) => request<{ok:boolean;detail?:string}>("POST",`/orgs/${slug}/modules/digifab/cutter/control`,body),
+  cutterOutcome: (slug:string,jobId:string,body:{station_token:string;verdict:"good"|"scrap";used_length_m:number;idle_confirmed:true;blade_up_confirmed:true}) => request<{ok:boolean}>("POST",`/orgs/${slug}/modules/digifab/cutter/jobs/${jobId}/outcome`,body),
   prepareDigifabJob: (slug: string, id: string, stationToken?: string) =>
     request<{ review: DigifabJobReview | null; stationRequired?: { connectionId: string; deviceId: string | null } }>("POST", `/orgs/${slug}/modules/digifab/jobs/${id}/prepare`, stationToken ? { stationToken } : {}),
   registerDigifabStation: (slug: string, connectionId: string, deviceId: string) =>
@@ -3862,13 +3888,19 @@ export const api = {
     request<{ items: Array<{ id: string; label: string; connection_id: string; remote_device_id: string; revoked_at: string | null }> }>("GET", `/orgs/${slug}/modules/digifab/stations`),
   revokeDigifabStation: (slug: string, id: string) =>
     request<{ ok: boolean }>("DELETE", `/orgs/${slug}/modules/digifab/stations/${id}`),
+  finishResinPostprocess: (slug: string, jobId: string, step: "wash" | "cure") =>
+    request<{ ok: boolean }>("POST", `/orgs/${slug}/modules/digifab/resin/jobs/${jobId}/postprocess`, { step }),
   digifabStation: (slug: string, connectionId: string, deviceId: string, q = "") =>
     request<MachineStationView>("GET", `/orgs/${slug}/modules/digifab/stations/${connectionId}/${encodeURIComponent(deviceId)}${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   saveLaserSheet: (slug: string, partId: string, material: LaserMaterialTag) =>
     request<{ ok: boolean }>("PUT", `/orgs/${slug}/modules/digifab/stations/sheets/material`, { part_id: partId, laser_sheet: material }),
+  listWorkshopStock: (slug: string, query: { q?: string; station?: string; offset?: number; shape?: StockView["shape"]; limit?: number } = {}) =>
+    request<{ items: StockView[]; total: number | null; complete: boolean; loaded: Array<{ station: string; slot: string; part_id: string }> }>("GET", `/orgs/${slug}/modules/inventory/stock/shapes?${new URLSearchParams(Object.entries(query).map(([k, v]) => [k, String(v)]))}`),
+  workshopStock: (slug: string, id: string) => request<StockDetail>("GET", `/orgs/${slug}/modules/inventory/stock/shapes/${id}`),
+  loadWorkshopStock: (slug: string, id: string, body: { station: string; slot: string; loaded: boolean }) => request<unknown>("POST", `/orgs/${slug}/modules/inventory/stock/shapes/${id}/load`, body),
   confirmLaserSheet: (slug: string, connectionId: string, deviceId: string, jobId: string, sheetId: string, stationToken: string) =>
     request<{ id: string; name: string }>("POST", `/orgs/${slug}/modules/digifab/stations/${connectionId}/${encodeURIComponent(deviceId)}/confirm`, { job_id: jobId, sheet_id: sheetId, station_token: stationToken }),
-  sendDigifabJob: (slug: string, id: string, approval?: Pick<DigifabJobReview, "fileId" | "projectHash"> & { stationToken?: string; sheetId?: string }) =>
+  sendDigifabJob: (slug: string, id: string, approval?: Pick<DigifabJobReview, "fileId" | "projectHash"> & { stationToken?: string; sheetId?: string; cutterChecks?: {media_loaded:true;blade_depth_set:true;native_offset_zero:true;test_cut_checked:true;origin_checked:true} }) =>
     request<{ status: string; remote_job_id: string | null; placement: unknown; uploaded_bytes?: number }>(
       "POST",
       `/orgs/${slug}/modules/digifab/jobs/${id}/send`,
@@ -3983,7 +4015,10 @@ export const api = {
   setMaintenanceReminderPreferences: (slug: string, overdue_every: OverdueCadence) => request<{ overdue_every: OverdueCadence }>("PUT", `/orgs/${slug}/modules/core-maintenance/reminders/preferences`, { overdue_every }),
   maintenanceReminders: (slug: string, id: string, body: { mode: "snooze" | "stop" | "resume"; duration?: "week" | "month"; until?: string }) => request<{ entry: MaintenanceEntry }>("PATCH", `/orgs/${slug}/modules/core-maintenance/reminders/${id}`, body),
   maintenanceRenewalFields: (slug: string, kind: string, entityId: string) => request<{ fields: Array<{ key: string; label: string; value: string | null }> }>("GET", `/orgs/${slug}/modules/core-maintenance/schedules/renewal-fields?kind=${encodeURIComponent(kind)}&entity_id=${encodeURIComponent(entityId)}`),
-  renewMaintenanceSchedule: (slug: string, id: string, body: { new_expiry: string; file_id?: string; cost_cents?: number | null; notes?: string | null }) => request<{ entry: { id: string }; schedule: MaintenanceSchedule }>("POST", `/orgs/${slug}/modules/core-maintenance/schedules/${id}/renew`, body),
+  renewMaintenanceSchedule: (slug: string, id: string, body: MaintenanceTermPatch & { new_expiry: string; file_id?: string; notes?: string | null }) => request<{ entry: { id: string }; schedule: MaintenanceSchedule }>("POST", `/orgs/${slug}/modules/core-maintenance/schedules/${id}/renew`, body),
+  listMaintenanceTerms: (slug: string, entityId: string, offset = 0) => request<{ items: MaintenanceTerm[]; has_more: boolean; totals: MaintenanceTermTotals }>("GET", `/orgs/${slug}/modules/core-maintenance/terms?entity_id=${encodeURIComponent(entityId)}&offset=${offset}`),
+  updateMaintenanceTerm: (slug: string, id: string, body: MaintenanceTermPatch) => request<MaintenanceTerm>("PATCH", `/orgs/${slug}/modules/core-maintenance/terms/${id}`, body),
+  endMaintenanceRenewal: (slug: string, id: string) => request<MaintenanceSchedule>("POST", `/orgs/${slug}/modules/core-maintenance/schedules/${id}/end`, {}),
   deleteMaintenanceSchedule: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/modules/core-maintenance/schedules/${id}`),
   updateMaintenanceSchedule: (
@@ -4649,6 +4684,43 @@ export const api = {
       total?: number;
     }>("GET", `/orgs/${slug}/modules/core-scan/inbox${qs ? "?" + qs : ""}`);
   },
+  // ── A Station (#4640): a tablet a barcode scanner drives ──────────────
+  /** A tablet asks to become a station: no session, so a plain fetch. */
+  stationRequest: async (slug: string, address: string) => {
+    const r = await fetch("/api/v1/station/requests", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slug, address }) });
+    if (!r.ok) throw new ApiError(r.status, "station_request", (await r.json().catch(() => null))?.error?.message ?? "Could not ask to become a station.");
+    return (await r.json()) as { request_id: string; poll_key: string; code: string; expires_at: string };
+  },
+  stationPoll: async (requestId: string, pollKey: string) => {
+    const r = await fetch(`/api/v1/station/requests/${encodeURIComponent(requestId)}?key=${encodeURIComponent(pollKey)}`, { cache: "no-store" });
+    if (!r.ok) throw new ApiError(r.status, "station_poll", "Could not check the approval.");
+    return (await r.json()) as { status: "pending" | "approved" | "gone"; token?: string; address?: string; label?: string; expires_at?: string };
+  },
+  approveStation: (slug: string, code: string, label?: string) =>
+    request<{ address: string; label: string }>("POST", `/orgs/${slug}/station-devices/approve`, { code, ...(label ? { label } : {}) }),
+  listStationDevices: (slug: string) =>
+    request<{ items: Array<{ id: string; name: string; address: string; label: string; approved_by: string; created_at: string; last_used_at: string | null }> }>(
+      "GET",
+      `/orgs/${slug}/station-devices`,
+    ),
+  revokeStationDevice: (slug: string, id: string) => request<{ ok: true }>("DELETE", `/orgs/${slug}/station-devices/${id}`),
+  stationScreen: (slug: string, address: string) =>
+    request<{ address: string; label: string; settings: StationSettings; has_pin: boolean; device: boolean }>(
+      "GET",
+      `/orgs/${slug}/modules/core-scan/stations/screens/${address}`,
+    ),
+  saveStationScreen: (slug: string, address: string, body: { label?: string; settings?: Partial<StationSettings>; pin?: string; new_pin?: string | null }) =>
+    request<{ address: string; label: string; settings: StationSettings; has_pin: boolean }>("PUT", `/orgs/${slug}/modules/core-scan/stations/screens/${address}`, body),
+  stationLookup: (slug: string, address: string, body: { code: string } | { record: { kind: string; id: string } }) =>
+    request<StationLookup>("POST", `/orgs/${slug}/modules/core-scan/stations/screens/${address}/lookup`, body),
+  stationCount: (slug: string, address: string, body: { request_id: string; kind: string; entity_id: string; op: StationStockOp; value?: number }) =>
+    request<StationMove & { replayed?: boolean }>("POST", `/orgs/${slug}/modules/core-scan/stations/screens/${address}/count`, body),
+  stationUndo: (slug: string, address: string, requestId: string) =>
+    request<{ ok: true; qty: number | null }>("POST", `/orgs/${slug}/modules/core-scan/stations/screens/${address}/undo`, { request_id: requestId }),
+  stationMove: (slug: string, address: string, body: { kind: string; entity_id: string; location_id: string }) =>
+    request<{ ok: true }>("POST", `/orgs/${slug}/modules/core-scan/stations/screens/${address}/move`, body),
+  stationNextScan: (slug: string, address: string) =>
+    request<{ code: string | null }>("POST", `/orgs/${slug}/modules/core-scan/stations/screens/${address}/scans/next`, {}),
   getScanItem: (slug: string, id: string) =>
     request<ScanInboxItem>("GET", `/orgs/${slug}/modules/core-scan/inbox/${id}`),
   /** Re-run the receipt parser on a session's stored original, replacing its
@@ -8518,7 +8590,10 @@ export interface DigifabLibraryItem {
   /** Slicer metadata parsed at upload: est time / material / layer / ppp. */
   metadata?: {
     laser_material?: LaserMaterialTag;
-    laser_layout?: LaserJobLayout;
+    laser_layout?: LaserJobLayout; cutter_plan?: boolean; mirrored?: boolean; mirror_label?: string;
+    resin_ml?: number;
+    layers?: number;
+    exposure_sec?: number;
     estimated_sec?: number;
     material?: string;
     layer_height_mm?: number;
@@ -8618,7 +8693,11 @@ export type BambuLoginResponse =
   | { status: "ready"; session: string; devices: BambuDiscoveredDevice[] };
 
 export interface DigifabFleetDevice {
+  monitor_only?: boolean;
+  print_process?: "resin" | null;
+  station_kind?: "laser" | "print" | "cutter";
   laser_backend?: "gcode" | "ruida" | "galvo" | null;
+  laser_setup?: boolean;
   lightburn_readiness?: { api: { ready: boolean; fix: string }; paired: { ready: boolean; fix: string }; udp: { ready: boolean; fix: string } } | null;
   id: string;
   name: string;
@@ -8633,7 +8712,7 @@ export interface DigifabFleetDevice {
   pool_id: string | null;
   pool_name: string | null;
   /** Cockpit: live temps the manager reports (°C), if any. */
-  temps: { nozzle?: DigifabDeviceTemp | null; bed?: DigifabDeviceTemp | null; chamber?: DigifabDeviceTemp | null } | null;
+  temps: { nozzle?: DigifabDeviceTemp | null; bed?: DigifabDeviceTemp | null; chamber?: DigifabDeviceTemp | null; tools?: (DigifabDeviceTemp & { id: string; filament?: { material?: string; vendor?: string; color?: string } })[] } | null;
   /** Cockpit: current job sub-stage (preheating/leveling/…) when reported — the
    *  "why isn't it printing yet" signal. */
   stage: string | null;
@@ -8805,7 +8884,10 @@ export interface DigifabJobReview {
 }
 
 export interface LaserMaterialTag { material: string; thickness_mm: number; width_mm: number; height_mm: number }
+export interface ResinStockChoice { id: string; kind: string; name: string; shape: string; unit: string; remaining: number; used: number; revision: number; slot?: string; maintenance_due?: boolean; low?: boolean }
 export interface MachineStationView {
+  resin?: { station: string; loaded: ResinStockChoice[]; canStart: boolean; warning: string; stockError: string | null; postprocess: Array<{ job_id: string; file_ref: string; wash_done: boolean; cure_done: boolean }> };
+  kind?: "laser" | "print" | "cutter" | "resin";
   job: (DigifabJob & { sent_at?: string | null }) | null;
   library: DigifabLibraryItem | null;
   attention: { job_id: string | null; reason: string } | null;
@@ -9027,7 +9109,23 @@ export type OverdueCadence = "day" | "week" | "month" | "off";
 export type RenewalAnchor = string | { month: number; last_day: true };
 export type MaintenanceReminder = { before: number; unit: "day" | "week" | "month" } | { on: "month_start" };
 
+export interface MaintenanceTermPatch {
+  term_start?: string; term_end?: string; cost_cents?: number | null; currency?: string;
+  reference?: string | null; quantity?: number | null; file_id?: string;
+}
+export interface MaintenanceTerm extends MaintenanceEntry {
+  is_term: true; term_start: string | null; term_end: string | null; currency: string | null;
+  reference: string | null; quantity: number | null; previous_term_id: string | null; renewed_by: string | null;
+}
+export interface MaintenanceTermTotals {
+  lifetime: Array<{ currency: string; cost_cents: number }>;
+  per_year: Array<{ year: number; currency: string; cost_cents: number }>;
+}
+
 export interface MaintenanceSchedule {
+  ended_at: string | null;
+  renewal_status: "active" | "lapsed" | "ended";
+  latest_term: Pick<MaintenanceTerm, "id" | "term_start" | "term_end" | "cost_cents" | "currency" | "quantity"> | null;
   overdue_every: OverdueCadence | null;
   occurrence: { id: string; nag_stopped_at: string | null; nag_snoozed_until: string | null } | null;
   anchor: RenewalAnchor | null;
@@ -9505,6 +9603,16 @@ export interface PlatformResolvedEntity {
 
 /** A thing inside a container, with where in it: its slot, and the exact spot
  *  a floor plan pinned it at (in the container's plan's mm), or null. */
+/** What a floor plan import did (or, on a dry run, would do). */
+export interface FloorplanImportResult {
+  dry_run: boolean;
+  steps: Array<{ path: string; kind: "area" | "container"; action: "create" | "update" | "unchanged" }>;
+  warnings: string[];
+  created: string[];
+  updated: Array<{ id: string; before: unknown }>;
+  note: string;
+}
+
 export interface PlacedThing extends PlatformResolvedEntity {
   slot: string | null;
   position: { x_mm: number; y_mm: number } | null;
@@ -10021,9 +10129,8 @@ export interface PlatformBundleInstance {
   /** When items belong to a parent "type" in another instance (Spool →
    *  Filament type), the forms show a parent picker + write an `instance-of`
    *  pairing. `instance` is the parent instance name. */
-  paste_tracking?: boolean;
   package_receiving?: { identity_field: string; storage_tracking?: boolean };
-  board_revisions?: { package_kind: string; blank_kind: string; stencil_kind: string; placed_kind?: string; tested_kind?: string };
+  board_revisions?: { package_kind: string; blank_kind: string; stencil_kind: string };
   parent?: {
     instance: string;
     label?: string;
@@ -10264,8 +10371,8 @@ export interface LaserRect { x: number; y: number; width: number; height: number
 export interface LaserPoint { x: number; y: number; c0?: { x: number; y: number }; c1?: { x: number; y: number } }
 export interface LaserDesign { width: number; height: number; paths: Array<{ layer: string; points: LaserPoint[]; closed: boolean; curves?: boolean[] }> }
 export interface LaserSheet { id: string; name: string; spec: { width_mm: number; height_mm: number; material: string; thickness_mm: number }; revision: number; offcut: boolean; percent_left: number; free_rectangles: LaserRect[] }
-export interface LaserPlacement extends LaserRect { number: number; rotated: boolean; footprint: LaserRect }
-export interface LaserLayoutSheet { id: string; name?: string; width: number; height: number; revision: number; free_rectangles: LaserRect[]; parts: LaserPlacement[]; remaining: LaserRect[] }
+export interface LaserPlacement extends LaserRect { number: number; rotated: boolean; footprint: LaserRect; angle?: number; translation?: { x: number; y: number }; footprint_outline?: Array<{ x: number; y: number }> }
+export interface LaserLayoutSheet { id: string; name?: string; width: number; height: number; revision: number; free_rectangles: LaserRect[]; parts: LaserPlacement[]; remaining: LaserRect[]; svg?: string; nesting?: "outline" | "rectangle"; nest_ms?: number; utilisation?: number; used_outlines?: Array<Array<{ x: number; y: number }>> }
 export interface LaserPlanRecord { id: string; connection_id: string; remote_device_id: string; run_id: string | null; plan: { name: string; quantity: number; material: string; thickness_mm: number; estimated_sec: number; design: LaserDesign; sheets: LaserLayoutSheet[] } }
 export interface LaserJobLayout { plan_id: string; sheet_id: string; quantity: number; design: LaserDesign; parts: LaserPlacement[]; footprints: LaserRect[]; expected?: Array<LaserProfileRecord["profile"] & { index: number; layer: string }> }
 
@@ -10279,4 +10386,12 @@ export interface FabricationFloor {
  pools: Array<{ id: string; name: string }>; members: Array<{ pool_id: string; connection_id: string; remote_device_id: string }>;
  laser_materials: Array<{ material: string; thickness_mm: number }>;
  laser_devices: Array<{ connection_id: string; device_id: string }>;
+}
+
+export interface CutterProfileRecord {id:string;profile:CutterProfile;connection_id:string;remote_device_id:string}
+export interface CutterRollView {id:string;name:string;kind:string;instance:string;remaining:number;revision:number;config:{width_mm:number;waste:number}}
+export interface CutterStationView {
+ plan:{id:string;job_id:string;started_at:string|null;report:{verdict:"good"|"scrap";used_length_m:number}|null;plan:{program:CutterProgram;roll:CutterRollView;quantity:number;used_length_m:number;content_hash:string}}|null;
+ job:DigifabJob|null;attention:{job_id:string|null;reason:string}|null;
+ stock:{items:CutterRollView[];loaded:Array<{part_id:string;station:string;slot:string}>};station_key:string;
 }

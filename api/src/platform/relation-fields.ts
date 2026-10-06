@@ -1,3 +1,4 @@
+import { perReadRequest } from "../lib/request-context.js";
 // Relation (entity-reference) fields. A field def of type='relation' stores a
 // reference to another entity kind — the "link to another record" field. The
 // stored VALUE is the target entity's id (in the metadata jsonb, like any custom
@@ -34,6 +35,10 @@ export function clearRelationDefsCache(): void {
 }
 
 async function relationDefsFor(orgId: string, kind: string): Promise<RelDef[]> {
+  return perReadRequest(`relation-defs:${orgId}:${kind}`, () => loadRelationDefsFor(orgId, kind));
+}
+
+async function loadRelationDefsFor(orgId: string, kind: string): Promise<RelDef[]> {
   const key = `${orgId}:${kind}`;
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.defs;
