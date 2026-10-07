@@ -17,8 +17,10 @@ export function outerSizeOf(
   sizeFields: readonly string[],
 ): OuterSize | null {
   if (!values) return null;
+  // A resolver may hand the record's custom fields over inside its metadata.
+  const meta = (values.metadata && typeof values.metadata === "object" ? values.metadata : {}) as Record<string, unknown>;
   for (const f of sizeFields) {
-    const s = parseOuterSize(values[f]);
+    const s = parseOuterSize(values[f] ?? meta[f]);
     if (s) return s;
   }
   return null;

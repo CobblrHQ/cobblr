@@ -1,8 +1,13 @@
 {
   "manifest": {
     "id": "cobblr.flagship.groceries",
-    "version": "0.13.5",
+    "version": "0.13.7",
     "releases": [
+      {
+        "version": "0.13.7",
+        "released_at": "2026-10-07",
+        "notes": "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed."
+      },
       {
         "version": "0.13.5",
         "released_at": "2026-10-03",
@@ -341,6 +346,7 @@
             "name": "shelf_life_days",
             "display_label": "Good for (days)",
             "type": "number",
+            "aggregate": "none",
             "position": 1,
             "help": "How long this keeps from the day it arrives. Used to date a new one when you add it, so you never type a use-by. Leave blank and nothing is dated for you."
           },
@@ -349,6 +355,7 @@
             "name": "shelf_life_opened_days",
             "display_label": "Once opened, good for (days)",
             "type": "number",
+            "aggregate": "none",
             "position": 2,
             "help": "A lemon lasts weeks whole and days once cut. Opening one starts this shorter clock on that one only; the unopened ones keep their own dates."
           },
@@ -357,6 +364,7 @@
             "name": "grace_days",
             "display_label": "Still fine for (days past)",
             "type": "number",
+            "aggregate": "none",
             "position": 3,
             "help": "Food does not go off at midnight. Inside this window past the use-by it is mentioned rather than alarming; beyond it you are asked whether you threw it out."
           },

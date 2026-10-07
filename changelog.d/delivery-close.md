@@ -3,6 +3,7 @@ type: feature
 scope: sales
 date: 2026-10-04
 docs_target: docs/USER_GUIDE.md#Closing a delivered sales order
+docs_published: 2026-10-08
 ---
 Paid, fully fulfilled sales orders can close when delivered, with a notification, Undo and a setting to keep them open.
 

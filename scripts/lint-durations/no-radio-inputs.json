@@ -1,0 +1,10 @@
+{
+  "lint": "lint:no-radio-inputs",
+  "run": "node scripts/lint-no-radio-inputs.ts",
+  "rows": [
+    "shared-web-primitive"
+  ],
+  "ms": 500,
+  "recorded": "2026-10-06",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

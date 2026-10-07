@@ -3,8 +3,13 @@
     "id": "cobblr.community.computers",
     "released_at": "2026-10-02",
     "changelog": "A computer's Contents are called Parts: install what it is built from, and rename the word if you call them something else.",
-    "version": "0.2.1",
+    "version": "0.2.2",
     "releases": [
+      {
+        "version": "0.2.2",
+        "released_at": "2026-10-07",
+        "notes": "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed."
+      },
       {
         "version": "0.2.1",
         "released_at": "2026-10-02",
@@ -90,6 +95,7 @@
             "name": "ram_gb",
             "display_label": "Memory",
             "type": "number",
+            "aggregate": "none",
             "unit": "GB",
             "position": 4
           },
@@ -98,6 +104,7 @@
             "name": "storage_gb",
             "display_label": "Storage",
             "type": "number",
+            "aggregate": "none",
             "unit": "GB",
             "position": 5
           },

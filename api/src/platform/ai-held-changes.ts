@@ -150,6 +150,7 @@ export async function confirmHeldChange(changeId: string, userId: string): Promi
     // The person's own session: no AI door, so it runs as if they had pressed
     // delete themselves, under their own role and capability checks.
     const token = await signSession(userId);
+    // loopback-ok: #5153 moves this onto selfFetch
     const r = await fetch(`http://127.0.0.1:${process.env.API_PORT || "4000"}/api/v1/orgs/${org?.slug ?? ""}${row.path}`, {
       method: row.method,
       headers: { authorization: `Bearer ${token}` },

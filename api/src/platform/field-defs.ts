@@ -1,3 +1,4 @@
+import { FieldAggregateSchema } from "@cobblr/platform-contract/field-aggregate";
 import { perReadRequest } from "../lib/request-context.js";
 // The ONE place that answers "which custom field defs apply to this entity kind?"
 //
@@ -276,6 +277,8 @@ export const FieldDefCreate = z.object({
   /** Whether a person's typing grows the choices. Omitted: the default rule
    *  (@cobblr/platform-contract/field-choices). */
   learns: z.boolean().nullable().optional(),
+  /** How it adds up in a group's summary (@cobblr/platform-contract/field-aggregate). */
+  aggregate: FieldAggregateSchema.nullable().optional(),
   help: z.string().max(500).nullable().optional(),
   /** The person was shown that this kind already has a field with this
    *  meaning and chose to add this one anyway, as a field of its own: it is
@@ -421,6 +424,7 @@ export async function createFieldDef(
         field_role: role,
         // A new field with choices learns unless it says not to.
         learns: input.learns ?? null,
+        aggregate: input.aggregate ?? null,
         help: input.help ?? null,
       })
       .returningAll()
@@ -477,6 +481,8 @@ export const FieldDefPatch = z.object({
   /** Whether a person's typing grows the choices ("Remember new entries").
    *  On a bundle's field it is the person's own override, like choices. */
   learns: z.boolean().nullable().optional(),
+  /** How it adds up in a group's summary. Null goes back to the default rule. */
+  aggregate: FieldAggregateSchema.nullable().optional(),
   /** Private: kept out of every share and public page unless it shows
    *  private notes. A person's own mark, kept in the override layer for every
    *  field, shipped or not, so a bundle update never clears it. */
@@ -513,6 +519,7 @@ export async function updateFieldDef(
   if (patch.unit !== undefined) updates.unit = patch.unit;
   if (patch.field_role !== undefined) updates.field_role = patch.field_role;
   if (patch.learns !== undefined) updates.learns = patch.learns;
+  if (patch.aggregate !== undefined) updates.aggregate = patch.aggregate;
 
   const def = await meta
     .selectFrom("module_field_defs")

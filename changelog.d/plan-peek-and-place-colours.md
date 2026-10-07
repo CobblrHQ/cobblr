@@ -3,6 +3,7 @@ type: feature
 scope: locations
 date: 2026-10-02
 docs_target: docs/USER_GUIDE.md#3.12 Locations (foundational)
+docs_published: 2026-10-08
 ---
 On a phone, tapping a pin on a floor plan opens a card with the thing's whole name, its size, how many and where, with Open to go to it. A place can wear a colour on its plan (set from Edit layout, or ask the assistant to make the chest drawers red), and a legend under the plan says which places carry each colour.
 

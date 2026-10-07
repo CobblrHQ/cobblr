@@ -9,7 +9,7 @@
 // was due: an oil change done a month late starts the next three months from
 // the day it was actually changed.
 
-import { dayIn, daysUntil } from "@cobblr/platform-contract/day";
+import { dayIn, daysUntil, spanWords } from "@cobblr/platform-contract/day";
 
 // The calendar step rule is shared with everything else that repeats.
 import { addInterval, INTERVAL_UNITS, type IntervalUnit } from "@cobblr/platform-contract/interval";
@@ -88,10 +88,10 @@ export interface Due {
  *  reader's; without one, the day that has arrived everywhere. */
 export function calendarDue(at: Date, now: Date, timeZone?: string | null): { state: DueState; reason: string; days: number } {
   const d = daysUntil(dayIn(at, timeZone), dayIn(now, timeZone));
-  if (d < 0) return { state: "overdue", reason: `overdue by ${-d} day${-d === 1 ? "" : "s"}`, days: d };
+  if (d < 0) return { state: "overdue", reason: `overdue by ${spanWords(-d)}`, days: d };
   if (d === 0) return { state: "due-soon", reason: "due today", days: d };
   if (d <= DUE_SOON_DAYS) return { state: "due-soon", reason: `due in ${d} day${d === 1 ? "" : "s"}`, days: d };
-  return { state: "ok", reason: `due in ${d} days`, days: d };
+  return { state: "ok", reason: `due in ${spanWords(d)}`, days: d };
 }
 
 function round(n: number): number {

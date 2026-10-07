@@ -4,13 +4,14 @@
 // tag, a URL) — unlike a scanner's CONFIG barcodes, which are exact Code-128 and
 // must be stored as an image, never regenerated (KB spec §3.5).
 import { useEffect, useState } from "react";
-import QRCode from "qrcode";
 
 export function QrCode({ value, size = 128 }: { value: string; size?: number }) {
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
-    QRCode.toDataURL(value, { margin: 1, errorCorrectionLevel: "M", width: size })
+    // The QR library loads with the first code drawn, not with every page (#4945).
+    import("qrcode")
+      .then(({ default: QRCode }) => QRCode.toDataURL(value, { margin: 1, errorCorrectionLevel: "M", width: size }))
       .then((url) => alive && setSrc(url))
       .catch(() => alive && setSrc(null));
     return () => {

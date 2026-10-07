@@ -92,7 +92,7 @@ export type FieldRendererId =
 // The shared list, not a seventh copy. This one was written across nine lines,
 // which is how it slipped past the first version of lint:field-type-enum: a
 // per-line scan cannot see a union that spans a page.
-import type { FieldDefType as FieldType } from "@cobblr/platform-contract";
+import type { FieldDefType as FieldType } from "@cobblr/platform-contract/field-vocabulary";
 export type { FieldType };
 
 /** A person who can be picked into a `member` field. Deliberately the minimum:
@@ -222,6 +222,10 @@ export interface PlatformWebApi {
   requestLight?(slug: string, ref: { kind: string; id: string }, reason?: "shown" | "found" | "picked" | "put-away" | "label-scanned"): Promise<{ requested: boolean; place: string | null; note: string }>;
   /** Who this workspace can hand things to (its shares), and what it has
    *  handed over. Optional: a host without sharing offers no Give to. */
+  sendTargets?(slug: string): Promise<import("./SendRecords").WorkspaceSendTargets>;
+  previewSend?(slug: string, p: import("./SendRecords").WorkspaceSendRequest): Promise<import("./SendRecords").WorkspaceSendPreview>;
+  sendRecords?(slug: string, p: import("./SendRecords").WorkspaceSendRequest): Promise<{ summary: string; offer_ids: string[] }>;
+  undoSend?(slug: string, id: string): Promise<unknown>;
   listShareOffers?(slug: string): Promise<{ items: Array<{ id: string; direction: "out" | "in"; status: string; can_withdraw: boolean }>; targets: Array<{ link_id: string; to: string }> }>;
   withdrawShareOffer?(slug: string, id: string): Promise<unknown>;
   /** The shares of this workspace's own things, and which of them hold this

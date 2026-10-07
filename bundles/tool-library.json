@@ -3,7 +3,14 @@
     "id": "cobblr.community.tool-library",
     "base_kind_fields_reason": "Adds lending fields (borrower, due date, condition, deposit) to the machines already kept as Machines; lending is a face on the workspace's own tools, not a table of its own.",
     "catalog": "disabled",
-    "version": "0.1.1",
+    "version": "0.1.2",
+    "releases": [
+      {
+        "version": "0.1.2",
+        "released_at": "2026-10-07",
+        "notes": "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed."
+      }
+    ],
     "name": "Tool Library",
     "description": "Track who's borrowed a tool, when it's due back, and its condition. Custom machine:machine fields.",
     "author": "Cobblr community",
@@ -33,6 +40,7 @@
         "name": "condition",
         "display_label": "Condition (1-5)",
         "type": "number",
+        "aggregate": "none",
         "position": 3
       },
       {

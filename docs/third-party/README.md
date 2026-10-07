@@ -19,8 +19,14 @@ including build tools, plus the polygon union dependencies. The bundle
 `nesting-licenses.txt` retains their original notices. MIT, Apache-2.0, BSD,
 ISC and MPL-2.0 are permitted dependency licences. The existing locked closure
 also contains Zlib, Unicode-3.0 and Unlicense notices; these permissive
-transitive licences are recorded explicitly. The lint refuses missing inventory
-entries, unreviewed licences, changed primary pins or omitted image notices.
+transitive licences are recorded explicitly, and only for transitive
+dependencies: a direct dependency (the `[dependencies]` of the nesting crate,
+and polygon-clipping) takes a permitted licence. The npm half is checked the
+same way as the Rust half: polygon-clipping's whole locked closure in
+`pnpm-lock.yaml` must be in the inventory at the versions pnpm resolves, and
+each row's licence must equal the one its installed package declares (CI
+installs before it lints). The lint refuses missing inventory entries,
+unreviewed licences, changed primary pins or omitted image notices.
 
 The public exporter preserves the licence bundle byte for byte against a
 reviewed SHA-256. This prevents identity sanitization from changing a third

@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-06
 docs_target: docs/USER_GUIDE.md#Direct laser jobs
+docs_published: 2026-10-08
 ---
 Added direct BJJCZ galvo jobs with lens and source confirmation, a red-guide Frame and station-only Start.
 

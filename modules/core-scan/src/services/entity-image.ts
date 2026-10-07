@@ -18,6 +18,7 @@ import { deriveImageQuery } from "./ddg-images.js";
 import { fileIdOfImagePath } from "./record-photo-searches.js";
 import type { PhotoSource } from "@cobblr/platform-contract/photo-source";
 
+// loopback-ok: #5153 moves this onto selfFetch
 const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 

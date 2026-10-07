@@ -3,6 +3,7 @@ type: feature
 scope: dashboard
 date: 2026-10-05
 docs_target: docs/USER_GUIDE.md#1.3 The plain workspace
+docs_published: 2026-10-08
 ---
 The dashboard groups captures into compact rows with photos, expandable duplicates and an Add all button for each collection.
 

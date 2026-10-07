@@ -22,6 +22,7 @@
 import type { ToolCall, ChatTurn } from "../providers/tool-wire.js";
 import { scrubIds, namesFromToolResults } from "./scrub-ids.js";
 import { stripStageDirections } from "./stage-directions.js";
+import { actionToolCall } from "./action-tool-call.js";
 
 export interface LoopModelResult {
   content: string;
@@ -34,7 +35,23 @@ export interface AppliedWrite {
   result: unknown;
 }
 
+/** A write of this turn that did not happen: refused by the workspace,
+ *  thrown, or handed back as written. Kept until the same write succeeds
+ *  later in the turn, so the answer can never claim it (#5067). */
+export interface FailedWrite {
+  call: ToolCall;
+  error: string;
+}
+
+/** Two writes are the same step when the same tool did the same kind of
+ *  thing: an action is told apart by its id, everything else by its name. */
+export function writeKey(call: ToolCall): string {
+  const action = (call.args as { action_id?: unknown }).action_id;
+  return typeof action === "string" ? `${call.name}:${action}` : call.name;
+}
+
 export interface AgentLoopDeps {
+  actionIds?: readonly string[];
   /** One model call over the CURRENT transcript (system+tools ride outside). */
   callModel(turns: ChatTurn[]): Promise<LoopModelResult>;
   /** Execute one READ tool; returns a JSON-stringifiable result. */
@@ -76,6 +93,13 @@ export interface AgentLoopDeps {
    *  person's own things is never given from one list. See
    *  none-from-one-list.ts. */
   absenceNudge?(userText: string, reply: string, reads: string[]): string | null;
+  /** The writes of one round, in the order they can run: a step that makes
+   *  something (a list) before a step that names it. Optional; the model's
+   *  order otherwise (#5067). */
+  orderWrites?(calls: ToolCall[]): ToolCall[];
+  /** After a write succeeds: should this earlier failed write run again now?
+   *  "no list called Mugs" is worth one more go once Mugs is made (#5067). */
+  retryAfter?(failed: FailedWrite, made: AppliedWrite): boolean;
   /** Progress, as it happens. Optional so every existing caller and test is
    *  unchanged; the chat route passes one to feed the persisted turn log, which
    *  is what lets a widget show "reading your locations…" instead of nothing
@@ -94,8 +118,8 @@ export type AgentLoopEvent =
 export const ROUND_CAP_NUDGE = "(You've used the maximum number of tool rounds. Answer the user now with what you've learned: no more tool calls.)";
 
 export type AgentLoopOutcome =
-  | { kind: "reply"; text: string; applied: AppliedWrite[] }
-  | { kind: "writes"; calls: ToolCall[]; text: string; applied: AppliedWrite[] };
+  | { kind: "reply"; text: string; applied: AppliedWrite[]; failed?: FailedWrite[] }
+  | { kind: "writes"; calls: ToolCall[]; text: string; applied: AppliedWrite[]; failed?: FailedWrite[] };
 
 /** Exported for the bench: it runs the same loop shape against the same
  *  reads, so its cap and clamp are these and not a copy. */
@@ -189,6 +213,16 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
   const maxChars = deps.maxResultChars ?? DEFAULT_MAX_RESULT_CHARS;
   const transcript: ChatTurn[] = [...turns];
   const applied: AppliedWrite[] = [];
+  let failed: FailedWrite[] = [];
+  const fail = (call: ToolCall, error: string): void => {
+    failed.push({ call, error });
+  };
+  // Only when there is one: an outcome with nothing failed reads as it always did.
+  const withFailed = (): { failed?: FailedWrite[] } => (failed.length ? { failed } : {});
+  const succeeded = (call: ToolCall): void => {
+    const key = writeKey(call);
+    failed = failed.filter((f) => writeKey(f.call) !== key);
+  };
 
   const emit = (ev: AgentLoopEvent): void => {
     if (!deps.onEvent) return;
@@ -233,7 +267,7 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
   for (let round = 0; round < maxRounds; round++) {
     emit({ kind: "thinking", round });
     const r = await deps.callModel(transcript);
-    const calls = r.tool_calls ?? [];
+    const calls = (r.tool_calls ?? []).map((call) => actionToolCall(call, deps.actionIds ?? []));
 
     if (calls.length === 0) {
       // What the person would actually see. A reply that is nothing but a
@@ -251,9 +285,12 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
           }
         }
         if (!nudgedForReply) {
+          // Nothing read yet: a question about records is grounded first, and
+          // an instruction answered with "that can't be done" is sent to look
+          // at what the workspace can do before saying so (#5067).
           const nudge =
             readsDone === 0
-              ? (deps.groundingNudge?.(lastUserSaid, r.content) ?? null)
+              ? (deps.groundingNudge?.(lastUserSaid, r.content) ?? (handedBack ? null : ((await deps.actNudge?.(lastUserSaid, r.content, readNames)) ?? null)))
               : handedBack
                 ? null
                 : ((await deps.actNudge?.(lastUserSaid, r.content, readNames)) ??
@@ -266,7 +303,7 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
             continue;
           }
         }
-        return { kind: "reply", text: spoken, applied };
+        return { kind: "reply", text: spoken, applied, ...withFailed() };
       }
       // No tool calls AND no words. Two different models arrive here for two
       // opposite reasons, and the nudge has to serve both:
@@ -298,6 +335,7 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
         kind: "reply",
         text: "Sorry, I couldn't get that answer out. Try asking me again, or in a different way.",
         applied,
+        ...withFailed(),
       };
     }
 
@@ -307,8 +345,9 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
     // planned the round as one thing; if part of it was refused, the rest is
     // not the plan it made and is not shown as if it were.
     let writeFailedThisRound = false;
+    const ordered = deps.orderWrites ? deps.orderWrites(calls) : calls;
 
-    for (const call of calls) {
+    for (const call of ordered) {
       if (!deps.isWrite(call.name)) {
         // Read — always executes.
         emit({ kind: "tool", name: call.name, args: call.args, write: false });
@@ -342,6 +381,9 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
         if (bounce) {
           handedBack = true;
           writeFailedThisRound = true;
+          // Handed back before it ran (which one? which arguments?): the turn
+          // goes on to settle it, often with a question for the person, so it
+          // is a step they see but not a write that failed.
           emit({ kind: "tool-result", name: call.name, ok: false, summary: bounce.slice(0, 160) });
           turnResults.push({ call, text: clampJson({ ok: false, error: bounce }, maxChars) });
           continue;
@@ -357,10 +399,11 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
           // A failed auto-write feeds the error back like a read failure — the
           // model can react (retry differently / tell the user) — never a
           // half-recorded proposal.
-          turnResults.push({
-            call,
-            text: clampJson({ ok: false, error: (err as Error)?.message ?? "write failed" }, maxChars),
-          });
+          const error = (err as Error)?.message ?? "write failed";
+          writeFailedThisRound = true;
+          emit({ kind: "tool-result", name: call.name, ok: false, summary: error.slice(0, 160) });
+          fail(call, error);
+          turnResults.push({ call, text: clampJson({ ok: false, error }, maxChars) });
           continue;
         }
         if (result !== null) {
@@ -372,12 +415,43 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
           if (refused(result)) {
             writeFailedThisRound = true;
             emit({ kind: "tool-result", name: call.name, ok: false, summary: refusalOf(result).slice(0, 160) });
+            fail(call, refusalOf(result));
             turnResults.push({ call, text: clampJson({ ok: false, error: refusalOf(result) }, maxChars) });
             continue;
           }
-          applied.push({ call, result });
+          const made: AppliedWrite = { call, result };
+          applied.push(made);
+          succeeded(call);
           emit({ kind: "applied", name: call.name, summary: clampJson(result, 160) });
-          turnResults.push({ call, text: clampJson(result, maxChars) });
+          // A step that failed earlier only because this one had not run yet
+          // ("no list called Mugs" before Mugs was made) runs again now, once.
+          // Its outcome rides on THIS call's result, so the model reads that
+          // the filing is done and does not file the same things again.
+          const retried: Array<{ step: string; ok: boolean; result: unknown }> = [];
+          for (const f of deps.retryAfter ? failed.filter((x) => deps.retryAfter!(x, made)) : []) {
+            emit({ kind: "tool", name: f.call.name, args: f.call.args, write: true });
+            let again: unknown = null;
+            try {
+              again = await deps.executeWrite(f.call);
+            } catch (err) {
+              again = { ok: false, error: (err as Error)?.message ?? "write failed" };
+            }
+            if (again !== null && !refused(again)) {
+              applied.push({ call: f.call, result: again });
+              succeeded(f.call);
+              emit({ kind: "applied", name: f.call.name, summary: clampJson(again, 160) });
+              retried.push({ step: f.call.name, ok: true, result: again });
+            } else {
+              const error = again === null ? "it still needs a confirm" : refusalOf(again);
+              emit({ kind: "tool-result", name: f.call.name, ok: false, summary: error.slice(0, 160) });
+              failed = failed.map((x) => (x === f ? { call: f.call, error } : x));
+              retried.push({ step: f.call.name, ok: false, result: error });
+            }
+          }
+          turnResults.push({
+            call,
+            text: clampJson(retried.length ? { result, also_done_now: retried } : result, maxChars),
+          });
           continue;
         }
       }
@@ -405,7 +479,7 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
     if (pendingProposals.length > 0) {
       // Some write(s) still need the confirm gate — stop here. Anything already
       // applied this turn is reported alongside.
-      return { kind: "writes", calls: pendingProposals, text: r.content, applied };
+      return { kind: "writes", calls: pendingProposals, text: r.content, applied, ...withFailed() };
     }
 
     // Everything executed — feed the results back and continue the loop.
@@ -431,5 +505,6 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
     kind: "reply",
     text: said || "I couldn't finish that one: I ran out of steps before reaching an answer. Try asking again, or in a different way.",
     applied,
+    ...withFailed(),
   };
 }

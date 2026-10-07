@@ -15,7 +15,7 @@
 // deployment scoped to one app told every other workspace that its photos
 // would be read, and the scan then declined (#3867). hostedIdentifyReach is
 // the one answer both read.
-import { platform } from "@cobblr/platform-contract";
+import { platform } from "@cobblr/platform-contract/platform-runtime";
 
 export const HOSTED_IDENTIFY_URL_VAR = "COBBLR_IDENTIFY_URL";
 

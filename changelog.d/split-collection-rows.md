@@ -3,6 +3,7 @@ type: feature
 scope: bundles
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#The app's own settings
+docs_published: 2026-10-08
 ---
 Sets and Bricks share one navigation row, and you can join or split collection rows from their menu or by asking Cobb.
 

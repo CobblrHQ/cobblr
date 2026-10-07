@@ -109,6 +109,7 @@ export async function intakeFiles(opts: {
   for (const [key, v] of Object.entries(opts.values ?? {})) if (asked.has(key) && typeof v === "string" && v.trim()) values[key] = v.trim();
 
   const session = await signSession(opts.userId);
+  // loopback-ok: #5153 moves this onto selfFetch
   const base = `http://127.0.0.1:${env.API_PORT}/api/v1/orgs/${encodeURIComponent(slug)}/instances/${encodeURIComponent(instance)}`;
   const out: IntakeOutcome[] = [];
   // One file, one record, within a batch too: the same bytes twice in one zip

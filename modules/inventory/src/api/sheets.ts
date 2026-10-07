@@ -57,13 +57,17 @@ sheetRouter.post("/:id/sheet", asyncHandler(async (req, res) => {
 
 export const sheetSearchRouter = Router({ mergeParams: true });
 sheetSearchRouter.get("/find", asyncHandler(async (req, res) => {
-  const p = z.object({ material: z.string().trim().min(1).max(120), thickness_mm: z.coerce.number().positive().max(1000), width_mm: z.coerce.number().positive().max(100000), height_mm: z.coerce.number().positive().max(100000), rotate: z.enum(["true", "false"]).default("true"), outline: z.enum(["true", "false"]).default("false"), offset: z.coerce.number().int().nonnegative().default(0) }).safeParse(req.query);
+  // With no filters it lists every available sheet: a collection asks this to
+  // know whether "Find a sheet" means anything in the workspace at all.
+  const p = z.object({ material: z.string().trim().min(1).max(120).optional(), thickness_mm: z.coerce.number().positive().max(1000).optional(), width_mm: z.coerce.number().positive().max(100000).optional(), height_mm: z.coerce.number().positive().max(100000).optional(), rotate: z.enum(["true", "false"]).default("true"), outline: z.enum(["true", "false"]).default("false"), offset: z.coerce.number().int().nonnegative().default(0) })
+    .refine(q => (q.width_mm == null) === (q.height_mm == null), { message: "Give both the width and the height, or neither." }).safeParse(req.query);
   if (!p.success) return void badBody(res, p.error);
+  const { material, thickness_mm, width_mm, height_mm } = p.data;
   const db = tenantDb(req);
-  const rows = await db.selectFrom("inventory_parts").selectAll().where("archived", "=", false).where("state", "=", "active").where("qty", ">", "0")
-    .where(sql<boolean>`lower(coalesce(metadata->>'material',metadata->'laser_sheet'->>'material')) = ${p.data.material.toLowerCase()}`).execute();
-  const views = await sheetViews(db, rows);
-  const matches = [...views.values()].filter(v => Math.abs(v.spec.thickness_mm - p.data.thickness_mm) <= 0.01 && (p.data.outline === "true" ? v.percent_left > 0 : fitsSheet(v, p.data.width_mm, p.data.height_mm, p.data.rotate === "true")))
+  let query = db.selectFrom("inventory_parts").selectAll().where("archived", "=", false).where("state", "=", "active").where("qty", ">", "0");
+  if (material) query = query.where(sql<boolean>`lower(coalesce(metadata->>'material',metadata->'laser_sheet'->>'material')) = ${material.toLowerCase()}`);
+  const views = await sheetViews(db, await query.execute());
+  const matches = [...views.values()].filter(v => (thickness_mm == null || Math.abs(v.spec.thickness_mm - thickness_mm) <= 0.01) && (p.data.outline === "true" ? v.percent_left > 0 : width_mm == null || height_mm == null || fitsSheet(v, width_mm, height_mm, p.data.rotate === "true")))
     .sort((a, b) => Number(b.offcut) - Number(a.offcut) || a.percent_left - b.percent_left || a.name.localeCompare(b.name));
   res.json({ items: matches.slice(p.data.offset, p.data.offset + 50), total: matches.length });
 }));

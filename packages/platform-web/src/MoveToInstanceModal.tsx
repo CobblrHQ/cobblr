@@ -15,7 +15,7 @@
 import { useEffect, useState } from "react";
 import { Modal } from "./Modal";
 import { carryFieldNames, moveDestinations, type InstanceOption } from "./move-destinations";
-import { countOf } from "@cobblr/platform-contract";
+import { countOf } from "@cobblr/platform-contract/plural";
 
 type CarryField = { name: string; display_label: string; type: string; count: number };
 

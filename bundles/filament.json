@@ -1,13 +1,18 @@
 {
   "manifest": {
     "id": "cobblr.flagship.filament",
-    "version": "0.8.6",
+    "version": "0.8.7",
     "name": "Filament",
     "description": "A filament type (Royal Blue PLA) says the filament once: material, colour, diameter, temperatures, whether it needs drying. Each spool picks its type and adds its own size, batch code, how much is left and its state. Each type adds up its spools and kilograms.",
     "author": "Cobblr",
     "released_at": "2026-06-17",
     "changelog": "Filament's description in the bundle list reads plainly, without capitals shouting TYPE and SPOOLS. Earlier: A filament type's fields sit under three headings, Identity, Printing and Spool, and each folds away, so a type's page reads in parts instead of one long list. A field you moved to another section stays where you put it when Filament updates. Earlier: A filament type has ONE colour field. It holds one colour, a blend or several, so a rainbow reads as a rainbow, and the separate colour swatch field is folded into it. Earlier: A scanned spool files as a spool: its type is found or made under it, and a scan never offers the table of types. The spools also know what filament is called (PLA, PETG, 1.75 mm), so a spool is not filed as generic inventory. Earlier: Scanning a spool's QR fills in everything its maker publishes: the exact colour swatch, the UPC, the nozzle and bed temperature ranges, the drying temperature, density, the empty spool weight, and the date the spool was made and its measured length. The UPC is the type's identifier, so scanning the box barcode finds the same type. Earlier: Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: Types and Spools now sit together in the navbar as one element, a quiet \"Filament\" stem with \"Types │ Spools\" links, so the two related tables read as one thing. (0.5.1: scanning a spool's QR find-or-creates its filament TYPE and links the spool automatically, a scan lands in the type→spool model instead of a flat row. 0.5.0: the TYPE defines the whole filament: colour, diameter, nozzle/bed temps and needs-drying live on the type, not re-entered per spool; a SPOOL just picks its type and carries the per-spool facts: size, batch code, remaining, state. Upgrading carries your existing temps + colour up onto the type automatically.)",
     "releases": [
+      {
+        "version": "0.8.7",
+        "released_at": "2026-10-07",
+        "notes": "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed."
+      },
       {
         "version": "0.8.6",
         "released_at": "2026-10-04",
@@ -137,6 +142,7 @@
             "name": "nozzle_temp",
             "display_label": "Nozzle °C",
             "type": "number",
+            "aggregate": "none",
             "position": 4,
             "section": "Printing",
             "help": "The hot-end temperature that prints this filament cleanly, same for every spool of it."
@@ -146,6 +152,7 @@
             "name": "bed_temp",
             "display_label": "Bed °C",
             "type": "number",
+            "aggregate": "none",
             "position": 5,
             "section": "Printing",
             "help": "The bed temperature that makes the first layer stick."
@@ -196,6 +203,7 @@
             "name": "nozzle_temp_min",
             "display_label": "Nozzle min °C",
             "type": "number",
+            "aggregate": "none",
             "position": 11,
             "section": "Printing",
             "help": "The coolest nozzle temperature the maker lists."
@@ -205,6 +213,7 @@
             "name": "nozzle_temp_max",
             "display_label": "Nozzle max °C",
             "type": "number",
+            "aggregate": "none",
             "position": 12,
             "section": "Printing",
             "help": "The hottest nozzle temperature the maker lists."
@@ -214,6 +223,7 @@
             "name": "bed_temp_min",
             "display_label": "Bed min °C",
             "type": "number",
+            "aggregate": "none",
             "position": 13,
             "section": "Printing",
             "help": "The coolest bed temperature the maker lists."
@@ -223,6 +233,7 @@
             "name": "bed_temp_max",
             "display_label": "Bed max °C",
             "type": "number",
+            "aggregate": "none",
             "position": 14,
             "section": "Printing",
             "help": "The hottest bed temperature the maker lists."
@@ -232,6 +243,7 @@
             "name": "dry_temp",
             "display_label": "Dry °C",
             "type": "number",
+            "aggregate": "none",
             "position": 15,
             "section": "Spool",
             "help": "The highest temperature to dry this filament at."
@@ -241,6 +253,7 @@
             "name": "density",
             "display_label": "Density g/cm³",
             "type": "number",
+            "aggregate": "none",
             "position": 16,
             "section": "Spool",
             "help": "Used to turn a weight into a length."
@@ -250,6 +263,7 @@
             "name": "empty_spool_g",
             "display_label": "Empty spool g",
             "type": "number",
+            "aggregate": "none",
             "position": 17,
             "section": "Spool",
             "help": "What the empty spool weighs, to weigh what is left."
@@ -277,6 +291,7 @@
             "name": "price_per_kg",
             "display_label": "Price per kg",
             "type": "money",
+            "aggregate": "none",
             "position": 20,
             "section": "Spool"
           },
@@ -469,6 +484,7 @@
             "name": "length_m",
             "display_label": "Length (m)",
             "type": "number",
+            "aggregate": "per_unit",
             "position": 5,
             "help": "The filament length the maker measured on this spool."
           },
@@ -477,6 +493,7 @@
             "name": "initial_g",
             "display_label": "Initial filament (g)",
             "type": "number",
+            "aggregate": "none",
             "position": 6,
             "help": "The filament weight when this spool was new, without the empty spool."
           }
@@ -576,6 +593,7 @@
             "name": "empty_spool_g",
             "display_label": "Empty spool g",
             "type": "number",
+            "aggregate": "none",
             "position": 1,
             "help": "The maker's default empty spool weight; a type or spool can override it."
           }

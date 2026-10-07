@@ -3,6 +3,7 @@ type: feature
 scope: locations
 date: 2026-10-01
 docs_target: docs/USER_GUIDE.md#3.12b Containment: what's inside your things (core-placement, foundational)
+docs_published: 2026-10-08
 ---
 Anything that holds things, like a backpack or a toolbox, now works as a place: headphones in a backpack read "Backpack, in Desk drawer" in the list, search and the assistant, and the backpack can be picked wherever a place is chosen.
 

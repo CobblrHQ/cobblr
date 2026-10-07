@@ -21,3 +21,10 @@ export interface ModulePageTabCtx {
  *  platform-web (module-owned detail pages host these too) and re-exported
  *  here so both halves of the seam read the same shape. */
 export type { EntityDetailPanelCtx } from "@cobblr/platform-web";
+
+/** Context for `surface: "configuration-section"`: a section on a kernel
+ *  Configuration page (one of CONFIGURATION_SECTION_HOSTS). The page owns the
+ *  card and its title; the section renders its controls and nothing else. */
+export interface ConfigSectionCtx {
+  slug: string;
+}

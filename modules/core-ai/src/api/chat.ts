@@ -45,6 +45,7 @@ import {
   type KindRec,
   type WorkspaceApi,
 } from "@cobblr/workspace-tools";
+import { actionToolCall } from "./action-tool-call.js";
 import { runAgentLoop, type AgentLoopDeps, type AgentLoopOutcome, type AppliedWrite } from "./agent-loop.js";
 import { recordsFromToolResult, withMentions, type ChatMention } from "./mentions.js";
 import { createTurn, emitTurnEvent, finishTurn, readTurn, eventsAfter, openTurnFor, subscribe, sweepTurns } from "./turns.js";
@@ -55,12 +56,13 @@ import type { ToolCall, ChatTurn } from "../providers/tool-wire.js";
 import { summariseAction, type ActionCopy } from "./action-summary.js";
 import { actionArgValues, writeValues } from "./write-values.js";
 import { actionRunsUnconfirmed, type ActionConsent } from "@cobblr/platform-contract/action-consent";
-import { inferMoveFromToolShape, jsonBlockIn } from "./tool-shaped-move.js";
+import { moveInReply } from "./tool-shaped-move.js";
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { asksForAChange, proposesSeriousChange } from "./plan-tier.js";
 import type { PlanStepBefore } from "@cobblr/platform-contract";
 import { WHOLE, cardsOf, planTitle, withCards, type Card } from "./one-plan.js";
 import { forAPerson } from "./says-something.js";
+import { insteadList, listMadeBy, mayPassOnRetry, missingList, orderWrites, personReason, retryAfter, saidWhatFailed, stepSaid } from "./failed-steps.js";
 
 /** ToolCall → the ledgered write request shape (null = not a known write). */
 /** The writes a tool call MEANS — one for a single write, many for a bulk one.
@@ -289,7 +291,7 @@ export function ctxOf(req: Parameters<typeof tenantContext>[0]): Ctx {
     slug: org.slug,
     orgName: org.name,
     auth: req.headers.authorization ?? "",
-    base: `http://127.0.0.1:${process.env.API_PORT ?? "4000"}/api/v1`,
+    base: "/api/v1",
     userName: sessionDisplayName(req),
   };
 }
@@ -307,7 +309,7 @@ async function callApi(
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   let r: Awaited<ReturnType<typeof fetch>>;
   try {
-    r = await fetch(`${c.base}/orgs/${c.slug}${path}`, {
+    r = await platform().selfFetch(`${c.base}/orgs/${c.slug}${path}`, {
       method,
       headers: { "content-type": "application/json", authorization: c.auth, ...(c.client ? { "x-cobblr-client": c.client } : {}), ...(c.reader ? { "x-cobblr-reader": c.reader } : {}) },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -711,16 +713,13 @@ async function proposalOf(
   }
 }
 
+// No `type`, but it may still plainly BE a call: some models answer a request
+// to act by writing out the tool's own arguments in a fenced block instead of
+// calling it (granite3.3, command-r7b — measured 2026-08-25, both scoring 1/8
+// for this reason alone). They wrote the right thing; nobody was reading it.
+// The bench reads replies through the same function (tool-shaped-move.ts).
 function parseMove(raw: string): Move | null {
-  const parsed = jsonBlockIn(raw);
-  if (parsed && typeof parsed === "object" && typeof (parsed as Move).type === "string") {
-    return parsed as Move;
-  }
-  // No `type`, but it may still plainly BE a call: some models answer a request
-  // to act by writing out the tool's own arguments in a fenced block instead of
-  // calling it (granite3.3, command-r7b — measured 2026-08-25, both scoring 1/8
-  // for this reason alone). They wrote the right thing; nobody was reading it.
-  return inferMoveFromToolShape(parsed) as Move | null;
+  return moveInReply(raw) as Move | null;
 }
 
 const ChatBody = z.object({
@@ -881,7 +880,8 @@ async function answerTurn(
     // model said, per round, to build replay fixtures. No-op unless set,
     // and the provider id is what keeps a replay from recording itself.
     recordRound(turns, round, r.provider_id);
-    return round;
+    const known = calls?.some((call) => call.name.includes(":")) ? (await actionIds(c)) ?? [] : [];
+    return { ...round, tool_calls: calls?.map((call) => actionToolCall(call, known)) };
   };
   // The fuller model plans a change; the chat model answers the rest. A
   // message that asks for one starts there; a round that proposes one moves
@@ -1005,6 +1005,10 @@ async function answerTurn(
       // The answer has to match the ledger: a turn that only created things
       // cannot say it moved them. See reported-truthfully.ts.
       reportCheck: (_said, reply, appliedTools) => misreportedWrites(reply, appliedTools),
+      // A step that makes a list runs before one that names it, and a step
+      // refused for a list not made yet runs again once it is (#5067).
+      orderWrites,
+      retryAfter,
       // The mirror: an instruction answered by naming the action instead of
       // running it. Needs a write tool to exist for the answer to be "run it".
       ...(prefs.write_mode !== "off" && toolDefs.length > 0
@@ -1016,7 +1020,14 @@ async function answerTurn(
               describedInsteadOfActing(said, reply, await actionLabels(c), reads.includes("list_actions")),
           }
         : {}),
-      ...(onEvent ? { onEvent } : {}),
+      // A failed step's reason is shown to the person under the step: their
+      // half of it, never the hint meant for the model (#5067).
+      ...(onEvent
+        ? {
+            onEvent: (ev: Parameters<NonNullable<AgentLoopDeps["onEvent"]>>[0]) =>
+              onEvent(ev.kind === "tool-result" && !ev.ok ? { ...ev, summary: personReason(ev.summary) } : ev),
+          }
+        : {}),
       ...(prefs.write_mode === "auto"
         ? {
             executeWrite: async (call: ToolCall) => {
@@ -1062,6 +1073,8 @@ async function answerTurn(
   }
 
   const done = appliedSummaries(outcome.applied);
+  // Proposals offered after a step that did not happen say that step first.
+  const failedFirst = outcome.failed?.length ? saidWhatFailed(outcome.failed, done.length) : null;
 
   // Write tool calls → user-confirmed proposals (one per call; the widget
   // renders each with its own Confirm). Invalid calls turn into an honest
@@ -1084,7 +1097,7 @@ async function answerTurn(
     if (items.length === 0) {
       return {
         type: "reply",
-        text: (problems.length ? forAPerson(problems.join(" "), kinds) : "") || outcome.text || "I couldn't line that up — can you rephrase?",
+        text: (problems.length ? forAPerson(problems.join(" "), kinds) : "") || failedFirst || outcome.text || "I couldn't line that up — can you rephrase?",
         ...(done.length ? { applied: done } : {}),
         ...(escorts.length ? { escorts } : {}), ...(serviceJobs.length ? { service_jobs: serviceJobs } : {}),
       };
@@ -1092,14 +1105,77 @@ async function answerTurn(
     if (items.length === 1) {
       return {
         type: "proposal",
-        text: outcome.text || undefined,
+        text: failedFirst ?? (outcome.text || undefined),
         summary: items[0]!.summary,
         proposal: items[0]!.proposal,
         ...(done.length ? { applied: done } : {}),
         ...(escorts.length ? { escorts } : {}), ...(serviceJobs.length ? { service_jobs: serviceJobs } : {}),
       };
     }
-    return { type: "proposals", text: outcome.text || undefined, items, ...(done.length ? { applied: done } : {}), ...(escorts.length ? { escorts } : {}), ...(serviceJobs.length ? { service_jobs: serviceJobs } : {}) };
+    return { type: "proposals", text: failedFirst ?? (outcome.text || undefined), items, ...(done.length ? { applied: done } : {}), ...(escorts.length ? { escorts } : {}), ...(serviceJobs.length ? { service_jobs: serviceJobs } : {}) };
+  }
+
+  // A write that did not happen is said as not done, in words built from the
+  // step and its refusal, never in the model's sentence, which is the one
+  // that claimed it (#5067). Each comes back with the proposal that retries
+  // it, so the panel can offer Retry on the step itself.
+  const unresolved = outcome.failed ?? [];
+  if (unresolved.length) {
+    const kinds = await fetchKinds(wsApi).catch(() => [] as KindRec[]);
+    // The ways out a person can take, per step. A plain retry only when the
+    // failure may pass by itself (a timeout, a busy service): "no list called
+    // Cups" fails the same way every time, so it is offered somewhere else to
+    // file, or the list made first and then filed into (#5067).
+    const lists = ((await callApi(c, "GET", "/instances").catch(() => ({ body: {} }))).body as {
+      items?: Array<{ display_name?: string | null; instance_name: string; module_name: string; is_scan_fallback?: boolean }>;
+    }).items ?? [];
+    const made = outcome.applied.map((a) => listMadeBy(a.call)).filter((x): x is string => !!x);
+    const proposal = async (call: ToolCall) => {
+      const built = await proposalOf(c, wsApi, kinds, call, askedFor).catch(() => ({ error: "" }));
+      return "proposal" in built ? built : null;
+    };
+    const failed = await Promise.all(
+      unresolved.map(async (f) => {
+        const ways: Array<{ label: string; proposal: Record<string, unknown> }> = [];
+        const missing = missingList(f);
+        if (mayPassOnRetry(f.error)) {
+          const again = await proposal(f.call);
+          if (again) ways.push({ label: "Retry", proposal: again.proposal });
+        } else if (missing) {
+          const instead = insteadList(missing, made, lists.map((l) => l.display_name ?? l.instance_name));
+          if (instead) {
+            const there = await proposal({ ...f.call, args: { ...f.call.args, list: instead } });
+            if (there) ways.push({ label: `File into ${instead} instead`, proposal: there.proposal });
+          }
+          // Kept like the list this turn made, else like where the inbox files
+          // what it cannot place; with neither, no guess is offered.
+          const like = lists.find((l) => (l.display_name ?? l.instance_name) === made.at(-1)) ?? lists.find((l) => l.is_scan_fallback);
+          const makeIt = like ? await proposal({ id: `${f.call.id}-make`, name: "invoke_action", args: { action_id: "platform:create-instance", args: { module_name: like.module_name, display_name: missing } } }) : null;
+          const fileIt = await proposal(f.call);
+          if (makeIt && fileIt) {
+            ways.push({
+              label: `Create a list called ${missing}`,
+              proposal: {
+                kind: "plan",
+                title: `Make the list ${missing}, then file into it`,
+                steps: [
+                  { summary: makeIt.summary, proposal: makeIt.proposal, undoable: true },
+                  { summary: fileIt.summary, proposal: fileIt.proposal, undoable: true },
+                ],
+              },
+            });
+          }
+        }
+        return { step: stepSaid(f.call), error: personReason(f.error), ...(ways.length ? { ways } : {}) };
+      }),
+    );
+    return {
+      type: "reply",
+      text: saidWhatFailed(unresolved, done.length),
+      failed,
+      ...(done.length ? { applied: done } : {}),
+      ...(escorts.length ? { escorts } : {}), ...(serviceJobs.length ? { service_jobs: serviceJobs } : {}),
+    };
   }
 
   const text = outcome.text;

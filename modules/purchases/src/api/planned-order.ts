@@ -29,7 +29,9 @@ export function registerPlannedOrderAction() {
         return { order_id: old.id, already_recorded: true };
       }
       const order = await trx.insertInto("purchases_orders").values({ vendor: p.vendor, status: "planned", expected_arrival: p.expected_arrival ?? null,
-        tracking_number: p.tracking_number ?? null, add_to_stock: p.add_to_stock, notes: p.notes ?? null,
+        tracking_number: p.tracking_number ?? null,
+        // Whoever planned it owns the parcel: the arrival sweep asks them alone.
+        tracking_added_by_user_id: p.tracking_number ? ctx.userId ?? null : null, add_to_stock: p.add_to_stock, notes: p.notes ?? null,
         metadata: { planned_request_key: p.request_key, planned_fingerprint: fingerprint, source_file_id: p.source_file_id ?? null } } as never).returning("id").executeTakeFirstOrThrow();
       await trx.insertInto("purchases_order_items").values(p.lines.map(l => ({ order_id: order.id, part_id: l.part_id ?? null, description: l.description, qty: l.qty, metadata: {} })) as never).execute();
       return { order_id: order.id, already_recorded: false };

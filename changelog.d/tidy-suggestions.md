@@ -3,6 +3,7 @@ type: feature
 scope: platform
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#Tidy
+docs_published: 2026-10-08
 ---
 Turn on Tidy to get up to five overnight ideas for organising your workspace, with review, Undo and remembered dismissals.
 

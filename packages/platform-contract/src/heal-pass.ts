@@ -20,7 +20,7 @@
 // failure. (Reporting only then lost every report on staging, which restarts
 // more often than a round's cadence.)
 
-import { platform } from "@cobblr/platform-contract";
+import { platform } from "@cobblr/platform-contract/platform-runtime";
 
 /** How often a heal looks again at the workspaces it has not seen clean. */
 export const HEAL_EVERY_MS = 30 * 60_000;

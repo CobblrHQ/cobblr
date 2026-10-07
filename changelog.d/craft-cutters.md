@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-06
 docs_target: docs/USER_GUIDE.md#3.19 Digital Fabrication (`digifab`, stock)
+docs_published: 2026-10-08
 ---
 Added vinyl and craft cutter stations with mirrored heat-transfer cuts, tested material profiles and roll usage recorded in Inventory.
 

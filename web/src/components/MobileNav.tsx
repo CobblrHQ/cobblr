@@ -20,7 +20,7 @@ import { MoreAppsDoor } from "./MoreAppsDoor";
 import { NavLink, useNavigate } from "react-router-dom";
 import { Menu, X, Moon, Sun, LogOut, Sliders, UserCog, Bell } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { LabelsBasket } from "@cobblr/labels/ui";
+import { LabelsBasket } from "./LabelsBasketLazy";
 import { api, getToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { configurationReachable } from "../lib/configuration-nav";

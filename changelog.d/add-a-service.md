@@ -3,6 +3,7 @@ type: feature
 scope: connections
 date: 2026-09-29
 docs_target: docs/USER_GUIDE.md#4. The platform layer
+docs_published: 2026-10-08
 ---
 Connect a service you installed yourself, such as a slicer, from Your account → Connections → Add a service: Cobblr reads what it offers from the service, tests your key, and says exactly what is wrong when something is.
 

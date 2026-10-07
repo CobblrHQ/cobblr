@@ -40,6 +40,7 @@ import { isLowStock, modelIsLow, modelOfUnit, onHandCount, openUnitsFor } from "
 import { BELOW_ZERO, NOTHING_ON_HAND, floorDelta } from "../stock-floor.js";
 import { dayIn } from "@cobblr/platform-contract/day";
 import { stillGoodPatch } from "../still-good.js";
+import { stateWrite, type StateFieldDef } from "../state-write.js";
 
 /** The day it is for the person doing this: the zone their client sent, else
  *  what the platform knows of them (accounts.dayFor: the zone they told us,
@@ -1158,36 +1159,57 @@ export function registerInventoryActionHandlers(): void {
   );
 
   // ─────────────────────── set-status ──────────────────────────────
-  // A small, member-appropriate write: set a part's metadata.status
-  // (the Lego set Built/Unbuilt/Missing-pieces field). This is the
-  // canonical action a custom (Tier B) app block invokes — capability
-  // -gated (`inventory:set-status`) like any other, so a worker can only
-  // run it if granted. partId comes from args or the targeted entity.
+  // A small, member-appropriate write: set a part's state, metadata.status by
+  // default. This is the canonical action a custom (Tier B) app block invokes,
+  // capability-gated (`inventory:set-status`) like any other, so a worker can
+  // only run it if granted. partId comes from args or the targeted entity.
+  //
+  // `field` names another state field on the record's table: the shipped Lego
+  // bundle keeps a set's state in `lifecycle` (sealed / built / disassembled),
+  // and with only `status` a Club Member's Build Tracker could never mark a
+  // set of that table built. The field must be one the table declares, and a
+  // field with choices takes only one of them (stateWrite).
   platform().actions.registerHandler("inventory.set-status", (ctx) =>
     withPartUndo(ctx, async () => {
-      const args = (ctx.args as { partId?: string; status?: string } | null) ?? {};
+      const args = (ctx.args as { partId?: string; status?: string; field?: string } | null) ?? {};
       const partId = args.partId ?? (ctx.entity as { id?: string } | null)?.id;
       const status = typeof args.status === "string" ? args.status.trim().slice(0, 60) : undefined;
       if (!partId || !status) return { ok: false, error: "missing partId or status" };
       const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
       const row = await db
         .selectFrom("inventory_parts")
-        .select(["metadata"])
+        .select(["metadata", "instance"])
         .where("id", "=", partId)
         .executeTakeFirst();
       if (!row) return { ok: false, error: "part_not_found" };
+      const field = args.field?.trim() || "status";
+      let def: StateFieldDef | null = null;
+      if (field !== "status") {
+        const kind = row.instance ? `${row.instance}:item` : "inventory:part";
+        const meta = platform().db.meta as unknown as Kysely<{ module_field_defs: { org_id: string; entity_kind: string; name: string; choices: unknown } }>;
+        const found = await meta
+          .selectFrom("module_field_defs")
+          .select(["name", "choices"])
+          .where("org_id", "=", ctx.orgId)
+          .where("entity_kind", "in", [kind, "inventory:part"])
+          .where("name", "=", field)
+          .executeTakeFirst();
+        def = found ? { name: found.name, choices: Array.isArray(found.choices) ? (found.choices as unknown[]).filter((c): c is string => typeof c === "string") : null } : null;
+      }
+      const write = stateWrite(field, status, def);
+      if (!write.ok) return { ok: false, error: write.error };
       await db
         .updateTable("inventory_parts")
         .set({
-          // Overlay just `status`, DB-side — a part's metadata is multi-writer (the
-          // Lego lifecycle, scan-confirm fields, connector namespaces), and a
-          // snapshot rewrite that set status dropped whatever else had changed.
-          metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({ status })}::jsonb` as never,
+          // Overlay just this one key, DB-side: a part's metadata is
+          // multi-writer (the Lego lifecycle, scan-confirm fields, connector
+          // namespaces), and a snapshot rewrite dropped whatever else changed.
+          metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({ [write.field]: write.value })}::jsonb` as never,
           updated_at: new Date(),
         })
         .where("id", "=", partId)
         .execute();
-      return { ok: true, partId, status };
+      return { ok: true, partId, status: write.value, field: write.field };
     }),
   );
 

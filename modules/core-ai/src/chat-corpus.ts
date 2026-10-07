@@ -329,6 +329,11 @@ const RAW_CORPUS: CorpusCase[] = [
   ...ph("write", neverOffer, "action:core-maintenance:log|create:record", [
     "log a maintenance entry for the CNC: changed the spindle belt",
   ]),
+  // Removing a schedule is a person's one press on the record, and now the
+  // assistant's too (it asks first); Undo of setting one runs it as well.
+  ...ph("write", neverOffer, "action:core-maintenance:remove-schedule", [
+    "stop tracking the oil change on the van",
+  ]),
   // A module's own create action counts as creating the record.
   // Three spools of a filament the workspace already stocks is a stock
   // adjustment as much as a create; both are right.

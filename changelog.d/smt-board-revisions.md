@@ -3,6 +3,7 @@ type: feature
 scope: builds
 date: 2026-10-06
 docs_target: docs/modules/electronics-assembly.md#Board projects and revisions
+docs_published: 2026-10-08
 ---
 Added board revision imports, component stock checks with attrition and moisture warnings, shortage carts and tracked fabrication purchases.
 

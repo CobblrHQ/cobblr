@@ -2,12 +2,17 @@
   "manifest": {
     "id": "cobblr.flagship.small-shop",
     "base_kind_fields_reason": "A shop runs on the modules' own records (orders, parts, products), not a table of its own; the few fields it adds are what a selling business needs on those records.",
-    "version": "0.1.3",
+    "version": "0.1.4",
     "name": "Small shop",
     "description": "For a small shop, maker business or manufacturer: customer orders, the products you make, stock, production, the print farm, purchase orders and shipments, turned on together and kept in one Shop section of the sidebar, each with a view to start from.",
     "author": "Cobblr",
     "released_at": "2026-10-02",
     "releases": [
+      {
+        "version": "0.1.4",
+        "released_at": "2026-10-07",
+        "notes": "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed."
+      },
       {
         "version": "0.1.3",
         "released_at": "2026-10-02",
@@ -118,6 +123,7 @@
         "name": "sell_price",
         "display_label": "Sells for",
         "type": "money",
+        "aggregate": "none",
         "position": 1
       }
     ],

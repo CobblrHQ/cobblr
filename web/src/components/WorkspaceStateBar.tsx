@@ -28,11 +28,11 @@
 // pieces above it. It yields while any overlay is open, the way every piece of
 // chrome does by default; it once sat over the camera's shutter (#3012).
 import { useCallback, useEffect, useState } from "react";
-import { FloatingChrome } from "@cobblr/platform-web";
+import { FloatingChrome, lazyOverlay } from "@cobblr/platform-web";
 import { api } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { sandboxExpiry, clearSandboxExpiry, markSandboxEnded } from "../lib/sandbox-session";
-import { SandboxSaveModal } from "./SandboxSaveModal";
+const SandboxSaveModal = lazyOverlay(() => import("./SandboxSaveModal").then((m) => ({ default: m.SandboxSaveModal })));
 import { sandboxLine, signInLinkLead, trialLine } from "../lib/workspace-state-copy";
 import { makeItYours } from "../lib/make-it-yours";
 

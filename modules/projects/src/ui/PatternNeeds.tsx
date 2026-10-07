@@ -125,6 +125,12 @@ export function PatternNeedsPanel({
         </p>
       )}
 
+      {s?.sewing && <section aria-label="Sewing supplies and sizes" className="space-y-3 mb-4">
+        <h3 className="font-semibold">Supplies and sizes</h3>
+        <p className="text-sm text-muted">Check these against the PDF for your chosen size. Keep corrections in the pattern's supply notes.</p>
+        <p className="break-words">Sizes: {s.sewing.sizes.length ? s.sewing.sizes.join(", ") : "Not stated in a readable sizes line"}</p>
+        <ul className="space-y-2">{s.sewing.supplies.map((supply,i)=><li key={i} className="text-sm break-words">{supply.text}</li>)}</ul>
+      </section>}
       {canReadText && (
         <div className="mb-3">
           <button

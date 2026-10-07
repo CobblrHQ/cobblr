@@ -7,11 +7,12 @@
 // Filed, it says where it came from through the same facts a receipt's seller
 // does: Acquired from is the person, Acquired on the day it arrived.
 
+import { fileThroughConfirm, BundleInstaller } from "./file-through-confirm.js";
 import { routeWhereKept, type RouteCandidate } from "./kept-route.js";
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
-import { INBOX_OFFER_KEY, readInboxOffer, type OfferIntake, type OfferState, type OfferedThing } from "@cobblr/platform-contract/share-offer";
+import { INBOX_OFFER_KEY, readInboxOffer, incomingThingForInbox, type OfferIntake, type OfferState, type OfferedThing } from "@cobblr/platform-contract/share-offer";
 import type { CoreScanDB } from "../db.js";
 import { intakeRow } from "./intake.js";
 import { assembleScanMenu, heuristicMatch, perceiveRow, type ScanMenuEntry } from "./matchmaker.js";
@@ -97,6 +98,21 @@ const metaOf = (v: unknown): Record<string, unknown> =>
   typeof v === "string" ? (JSON.parse(v) as Record<string, unknown>) : ((v as Record<string, unknown> | null) ?? {});
 
 export const offerIntake: OfferIntake = {
+  async room(orgId, as, p) {
+    const blocked: string[] = [];
+    const records = await platform().entitlements.check({ orgId, userId: as.userId, feature: "records.create", quantity: p.count });
+    if (!records.allow) blocked.push(records.reason ?? "This send exceeds this workspace's record limit.");
+    if (p.bytes) {
+      const token = await platform().auth.mintSession({ userId: as.userId });
+      const res = await fetch(`${INTERNAL_API}/api/v1/orgs/${as.orgSlug}/modules/core-files/files/usage`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error("The target's file storage could not be checked.");
+      const usage = await res.json() as { bytes_used: number; quota_bytes: number | null };
+      const files = await platform().entitlements.check({ orgId, userId: as.userId, feature: "files.upload", quantity: p.bytes, used: usage.bytes_used });
+      if (!files.allow) blocked.push(files.reason ?? "This send exceeds this workspace's storage limit.");
+      if (usage.quota_bytes && usage.bytes_used + p.bytes > usage.quota_bytes) blocked.push("This send exceeds this workspace's storage limit.");
+    }
+    return blocked;
+  },
   async receive(orgId, p) {
     const db = await dbFor(orgId);
     let batchId = (await db.selectFrom("core_scan_batches").select("id").where("import_source_id", "=", p.session.key).executeTakeFirst())?.id;
@@ -111,7 +127,8 @@ export const offerIntake: OfferIntake = {
     }
     const out: Array<{ offer_id: string; inbox_id: string }> = [];
     const made: string[] = [];
-    for (const { offer_id, thing } of p.things) {
+    for (const { offer_id, thing: arrival } of p.things) {
+      const thing = incomingThingForInbox(arrival, p.own);
       const there = await db
         .selectFrom("core_scan_inbox_items")
         .select("id")
@@ -132,13 +149,21 @@ export const offerIntake: OfferIntake = {
         if (k) userFields[k] = value;
       }
       if (thing.notes) userFields.notes = thing.notes;
+      const sentFiles = [];
+      for (const f of thing.send?.files ?? []) {
+        const stored = await platform().files.write(orgId, new Uint8Array(Buffer.from(f.data, "base64")), { filename: f.filename, mimeType: f.mime });
+        if (!stored) throw new Error(`Could not store ${f.filename}. Nothing was sent.`);
+        if (f.mime.startsWith("image/")) photoIds.push(stored.fileId);
+        sentFiles.push({ fileId: stored.fileId, role: f.role, sort_order: f.sort_order });
+      }
       const metadata = {
-        [INBOX_OFFER_KEY]: { offer_id, from: p.acquiredFrom, state: "offered" satisfies OfferState },
+        [INBOX_OFFER_KEY]: { offer_id, from: p.acquiredFrom, state: "offered" satisfies OfferState, ...(thing.send ? { own: true, mode: thing.send.mode, needs: thing.send.needs } : {}) },
+        ...(thing.send ? { send: { ...thing.send, files: sentFiles }, user_fields: { kind: thing.send.target_kind, values: thing.send.mapped } } : {}),
         // Filed, these say where it came from (receipt-facts: Acquired from,
         // Acquired on), the same way a receipt's seller does.
         receipt_seller: p.acquiredFrom,
         receipt_date: p.acquiredOn,
-        user_fields: userFields,
+        ...(!thing.send ? { user_fields: userFields } : {}),
         offered_fields: thing.fields ?? {},
         ...(thing.kind_words ? { offered_kind: thing.kind_words } : {}),
         ...(thing.collection?.module ? { offered_collection: thing.collection } : {}),
@@ -168,7 +193,38 @@ export const offerIntake: OfferIntake = {
       made.push(ins.row.id);
     }
     if (made.length) await routeArrivals(db, orgId, made, p.as ?? null);
+    for (const entry of out) {
+      const thing = p.things.find((t) => t.offer_id === entry.offer_id)?.thing;
+      if (!p.own || !thing?.send?.target_kind) continue;
+      const kind = thing.send.target_kind;
+      const resolved = await platform().entities.resolveKind(orgId, kind);
+      const module = resolved.base.split(":")[0]!;
+      await db.updateTable("core_scan_inbox_items").set({ suggested_candidates: JSON.stringify([{ kind, module, instance: resolved.instance, fields: thing.send.mapped, label: thing.collection?.instance ?? thing.kind_words }]) as never }).where("id", "=", entry.inbox_id).execute();
+    }
     return out;
+  },
+
+  async file(orgId, inboxId, as) {
+    const state = await offerIntake.state(orgId, inboxId);
+    if (state.status === "filed" && state.record) return state.record;
+    const db = await dbFor(orgId);
+    const row = await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", inboxId).executeTakeFirstOrThrow();
+    const meta = metaOf(row.suggested_metadata);
+    const token = await platform().auth.mintSession({ userId: as.userId });
+    const door = { baseUrl: INTERNAL_API, slug: as.orgSlug, authHeaders: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, canInstall: false };
+    const sent = meta.send as NonNullable<OfferedThing["send"]> | undefined;
+    const filed = await fileThroughConfirm(door, new BundleInstaller(door), row, sent?.location ?? null);
+    if (!filed.ok || !filed.entity_id || !filed.entity_kind) throw new Error(!filed.ok ? filed.reason : "The item did not file.");
+    await finishOwnSend(orgId, inboxId, { kind: filed.entity_kind, id: filed.entity_id });
+    return { kind: filed.entity_kind, id: filed.entity_id };
+  },
+
+  async retarget(orgId, inboxId, record) {
+    const db = await dbFor(orgId);
+    const {base} = await platform().entities.resolveKind(orgId, record.kind);
+    const [module] = base.split(":");
+    await db.updateTable("core_scan_inbox_items").set({ status: "resolved", target_module: module!, target_kind: record.kind, target_entity_id: record.id, updated_at: new Date() }).where("id", "=", inboxId).execute();
+    return finishOwnSend(orgId, inboxId, record);
   },
 
   async state(orgId, inboxId) {
@@ -260,3 +316,24 @@ export const offerIntake: OfferIntake = {
     };
   },
 };
+
+
+export async function finishOwnSend(orgId: string, inboxId: string, record: { kind: string; id: string }): Promise<string[]> {
+  const db = await dbFor(orgId);
+  const row = await db.selectFrom("core_scan_inbox_items").select("suggested_metadata").where("id", "=", inboxId).executeTakeFirst();
+  const metadata = metaOf(row?.suggested_metadata);
+  const sent = metadata.send as { origin: unknown; files: Array<{ fileId: string; role: string | null; sort_order: number }> } | undefined;
+  if (!sent) return [];
+  const resolved = await platform().entities.resolveKind(orgId, record.kind);
+  const [module, type] = resolved.base.split(":");
+  const added: string[] = [];
+  for (const f of sent.files) {
+    const attached = await platform().files.attach(orgId, { ...f, source_module: module!, source_type: type!, source_id: record.id });
+    if (!attached) throw new Error("The received files could not be attached.");
+    if (!attached.existed) added.push(attached.attachmentId);
+  }
+  const got = await platform().entities.lookup(orgId, record.kind, record.id);
+  const old = (got?.fields?.metadata as Record<string, unknown> | undefined)?.send_origin;
+  if (JSON.stringify(old) !== JSON.stringify(sent.origin)) await platform().entities.mergeMetadata(orgId, record.kind, record.id, { send_origin: sent.origin });
+  return added;
+}

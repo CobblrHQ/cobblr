@@ -13,6 +13,7 @@
 // under whatever link the sign-up page happened to carry would hide the one
 // path the sandbox exists to feed. The sandbox's own origin (the booth's QR
 // that opened it) rides along on the account row as `carried_origin`.
+import { operatorSandboxOrgIds } from "./operator-sandboxes.js";
 import { meta } from "../db/meta.js";
 
 /** The bucket an account is counted under. */
@@ -86,7 +87,12 @@ export async function signupsBySource(opts: { days: number; accounts: boolean })
     .select(["org_id", "user_id", "created_at", "detail"])
     .where("event", "=", "signed_up")
     .where("created_at", ">=", since)
-    .execute();
+    .execute()
+    // An operator's own sandbox walk, kept into an account, is not a signup.
+    .then(async (rows) => {
+      const mine = await operatorSandboxOrgIds();
+      return rows.filter((r) => !mine.has(r.org_id));
+    });
   const orgIds = [...new Set(signed.map((r) => r.org_id))];
   const carried = orgIds.length
     ? await meta

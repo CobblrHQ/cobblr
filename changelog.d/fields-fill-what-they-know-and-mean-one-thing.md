@@ -3,6 +3,7 @@ type: feature
 scope: fields
 date: 2026-10-02
 docs_target: docs/USER_GUIDE.md#Saying what a field means
+docs_published: 2026-10-08
 ---
 A vehicle fills its empty Model and Year from its name and VIN, never over what you typed. Adding a field that means the same as one the kind already has is noticed before it is made, and a seller you keep noting is offered as a field of its own, once.
 

@@ -22,7 +22,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { usePlatformWeb, useFlowHost } from "./context";
-import { printDirectiveOf, runPrintDirective } from "./print-directive";
+import { printDirectiveOf } from "./print-directive-of";
 import { printNextStep, refusalKind, verdictOf } from "./action-outcome-compose";
 import { runAction } from "./run-action";
 import { useLater } from "./use-later";
@@ -115,10 +115,14 @@ export function useInvokeEntityAction({ entityKind, entityId }: InvokeTarget) {
         // there is one, is the next step for the person, never an error
         // over the verdict; a workspace with no walk-up printer intent
         // (no Print module, no default) gets the verdict alone (#2884).
-        void runPrintDirective(directive, {
-          listPrinters: () => listPrinters(orgSlug),
-          post: (path, body) => post(orgSlug, path, body),
-        })
+        // The printer drivers load with the first directive, not with every page.
+        void import("./print-directive")
+          .then(({ runPrintDirective }) =>
+            runPrintDirective(directive, {
+              listPrinters: () => listPrinters(orgSlug),
+              post: (path, body) => post(orgSlug, path, body),
+            }),
+          )
           .then((r) => {
             if (r.printed) void qc.invalidateQueries({ queryKey: ["labels-queue"] });
             const next = printNextStep({ result: r });

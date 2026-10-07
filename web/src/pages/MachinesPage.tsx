@@ -61,7 +61,7 @@ import {
 } from "@cobblr/platform-web";
 import { EntityAttachments } from "../components/EntityAttachments";
 import { LocationTreePicker } from "../components/LocationTreePicker";
-import { itemNounFor, pluralise } from "@cobblr/platform-contract";
+import { itemNounFor, pluralise } from "@cobblr/platform-contract/plural";
 
 const ENTITY_KIND = "machines:machine";
 
@@ -703,6 +703,7 @@ export function MachinesPage({
         }}
       />
       <BulkActionBar
+        records={{ kind: instance ? `${instance}:item` : ENTITY_KIND, ids: Array.from(selected) }}
         onAskCobb={askCobb}
         count={selected.size}
         onClear={() => setSelected(new Set())}

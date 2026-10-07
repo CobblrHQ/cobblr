@@ -14,7 +14,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowRight, CheckCircle2, ChevronDown, ChevronRight, Compass, Download, Package, Trash2 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import { MarkdownText } from "@cobblr/platform-web";
 import {
   ApiError,
   api,
@@ -968,7 +968,7 @@ export function BundleDetailModal(props: Props) {
         {readme && (
           <Section title="walkthrough">
             <div className="prose prose-sm dark:prose-invert max-w-none text-content dark:text-mortar-100">
-              <ReactMarkdown>{readme}</ReactMarkdown>
+              <MarkdownText>{readme}</MarkdownText>
             </div>
           </Section>
         )}

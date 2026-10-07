@@ -20,7 +20,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, KeyRound, Plus, Trash2, RefreshCw } from "lucide-react";
 import { ApiError, api, type ApiTokenListItem } from "../lib/api";
-import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, SegmentedChoice } from "@cobblr/platform-web";
 import { TOKEN_ACCESS, TOKEN_ACCESS_LABEL, TOKEN_ACCESS_MEANS, type TokenAccess } from "@cobblr/platform-contract/token-access";
 import { useAuth } from "../auth/AuthContext";
 import { grantLabel, initialGrant, isLegacyFullToken } from "../lib/token-grant";
@@ -487,34 +487,16 @@ function MintModal({
                 <option value="">All my workspaces</option>
               </select>
             </label>
-            <fieldset className="space-y-1.5">
-              <legend className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-                Access
-              </legend>
-              {TOKEN_ACCESS.map((a) => (
-                <label
-                  key={a}
-                  className={
-                    "flex items-start gap-2 rounded-md border p-2 cursor-pointer text-sm " +
-                    (access === a
-                      ? "border-cobble-300 dark:border-cobble-700 bg-cobble-50/50 dark:bg-cobble-900/20"
-                      : "border-line dark:border-slate-700")
-                  }
-                >
-                  <input
-                    type="radio"
-                    name="token-access"
-                    checked={access === a}
-                    onChange={() => setAccess(a)}
-                    className="accent-cobble-500 mt-0.5 shrink-0"
-                  />
-                  <span className="min-w-0">
-                    <span className="font-medium text-content dark:text-mortar-100">{TOKEN_ACCESS_LABEL[a]}</span>
-                    <span className="block text-xs text-muted dark:text-slate-400">{TOKEN_ACCESS_MEANS[a]}</span>
-                  </span>
-                </label>
-              ))}
-            </fieldset>
+            <div className="space-y-1.5">
+              <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Access</span>
+              <SegmentedChoice
+                stack
+                label="Access"
+                value={access}
+                onChange={setAccess}
+                options={TOKEN_ACCESS.map((a) => ({ value: a, label: TOKEN_ACCESS_LABEL[a], hint: TOKEN_ACCESS_MEANS[a] }))}
+              />
+            </div>
             {access === "full" && !workspace && (
               <p className="text-xs text-ember-500">
                 This token will be able to do anything you can, in every workspace. Treat it like a password.

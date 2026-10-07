@@ -66,7 +66,23 @@ export interface WedgeDetector {
   feed(key: string, now: number): string | null;
   /** Drop any in-progress buffer (e.g. on blur). */
   reset(): void;
+  /** Whether a scanner burst is under way: characters are buffered and the
+   *  last one arrived within the pause a scanner keeps. */
+  inBurst(now: number): boolean;
 }
+
+/** The ASCII control characters a keyboard-mode scanner sends as a Ctrl
+ *  chord, because a keyboard has no key for them. A component reel's 2D
+ *  label (Digi-Key, Mouser: ISO/IEC 15434) separates its fields with GS and
+ *  RS and ends with EOT; read as a shortcut, each one threw the whole label
+ *  away (#4973 review). Keyed by KeyboardEvent.key with Ctrl held. */
+export const CTRL_CHORD_CHARS: Readonly<Record<string, string>> = {
+  "]": "\u001d", // GS, group separator
+  "^": "\u001e", // RS, record separator (Ctrl+Shift+6)
+  "6": "\u001e",
+  d: "\u0004", // EOT, end of transmission
+  D: "\u0004",
+};
 
 /** Is `key` a single printable character (a barcode payload char)? */
 function isPrintable(key: string): boolean {
@@ -101,6 +117,9 @@ export function createWedgeDetector(
 
   return {
     reset,
+    inBurst(now) {
+      return buffer.length > 0 && now - lastAt <= config.maxPauseMs;
+    },
     feed(key, now) {
       if (config.terminators.includes(key)) {
         // Complete a code only if it's long enough, the terminator didn't arrive

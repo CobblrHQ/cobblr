@@ -24,7 +24,7 @@ import { MoneyInput, MoneyValueInput } from "./MoneyInput";
 import { useMoneyCurrency } from "./MoneyCurrency";
 import { fieldCurrency, moneyStorageOf } from "@cobblr/platform-contract/money";
 import { formatMeasure, parseMeasure } from "@cobblr/platform-contract/measure";
-import { fieldTypeTakesUnit } from "@cobblr/platform-contract";
+import { fieldTypeTakesUnit } from "@cobblr/platform-contract/field-vocabulary";
 import { FieldPack, fieldPackControlClass } from "./FieldPack";
 import { fieldNeed } from "./field-pack";
 import { FieldRenderer, boolLabel, boolTruthy } from "./FieldRenderer";
@@ -143,12 +143,16 @@ export function CustomFieldsPanel({
     const shown: PlatformFieldDef[] = [];
     const hidden: PlatformFieldDef[] = [];
     for (const f of fields) {
-      if (!f.source_module || hasValueOrFallback(f.name)) shown.push(f);
+      // A field the kind's own module declares is part of the record's shape
+      // (a task's "Assigned to"), so it shows empty like a native field. Only
+      // what ANOTHER module added to the kind (a specialisation) collapses.
+      const ownModule = f.source_module === entityKind.split(":")[0];
+      if (!f.source_module || ownModule || hasValueOrFallback(f.name)) shown.push(f);
       else hidden.push(f);
     }
     return { shown, hidden };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fields, values, fallbackValues]);
+  }, [fields, values, fallbackValues, entityKind]);
 
   if (fields.length === 0) return null;
   const visible = showAll ? fields : shown;

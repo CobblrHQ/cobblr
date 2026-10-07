@@ -125,6 +125,7 @@ export interface ProjectsPatternNeedsTable {
 }
 
 export interface ProjectsPatternReadsTable {
+  sewing: Generated<import("./api/sewing-pattern.js").SewingPattern|null>;
   project_id: string;
   pattern_file_id: string;
   status: "ready" | "empty" | "failed";

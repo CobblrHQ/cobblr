@@ -1,5 +1,5 @@
 export async function decodeBarcodeImage(file: File): Promise<string | null> {
-  const { createBarcodeReader, decodeCanvasSmart } = await import("./barcodeScanner");
+  const { createBarcodeReader, decodeCanvasSmart } = await import("./barcodeDecode");
   const image = await createImageBitmap(file);
   try {
     const canvas = document.createElement("canvas");

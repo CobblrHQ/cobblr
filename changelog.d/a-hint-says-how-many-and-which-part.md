@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-10-02
 docs_target: docs/USER_GUIDE.md#Re-running the AI on an item
+docs_published: 2026-10-08
 ---
 A hint like "8x S-12415" on a scanned card now sets the count to 8 and looks up S-12415 itself: the card is renamed to what the part number is, its picture is searched for by the part number, and if nothing is found the part number is kept as the model number. Scanning the same part number in another place offers Add as another place, so eight bins in the kitchen and four in the garage are one item with a row for each place, never a second item. The photo search no longer picks up words for what is inside or beside the thing, like the roll of tape in a stack of bins.
 

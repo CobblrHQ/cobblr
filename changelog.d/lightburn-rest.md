@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-04
 docs_target: docs/USER_GUIDE.md#LightBurn job review
+docs_published: 2026-10-08
 ---
 Added LightBurn file upload and live status through its REST API, with cut settings and material library details to review before approving each laser job.
 

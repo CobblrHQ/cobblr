@@ -624,7 +624,7 @@ export class InventoryApi {
   loadStock = (id: string, body: z.input<typeof LoadStock>) => this.request<unknown>("POST", `/stock/shapes/${id}/load`, body);
   sheet = (id: string) => this.partsRequest<SheetView | null>("GET", `/${id}/sheet`);
   changeSheet = (id: string, body: SheetChange) => this.partsRequest<SheetView>("POST", `/${id}/sheet`, body);
-  findSheets = (body: { material: string; thickness_mm: number; width_mm: number; height_mm: number; rotate: boolean; offset: number }) => this.request<{ items: SheetView[]; total: number }>("GET", `/sheets/find?${new URLSearchParams(Object.entries(body).map(([k, v]) => [k, String(v)]))}`);
+  findSheets = (body: Partial<{ material: string; thickness_mm: number; width_mm: number; height_mm: number; rotate: boolean; offset: number }>) => this.request<{ items: SheetView[]; total: number }>("GET", `/sheets/find?${new URLSearchParams(Object.entries(body).map(([k, v]) => [k, String(v)]))}`);
   material = (id: string) => this.partsRequest<MaterialView | null>("GET", `/${id}/material`);
   measureMaterial = (id: string, body: { gross_g?: number; used_mm?: number }) =>
     this.partsRequest<unknown>("POST", `/${id}/material`, body);
@@ -1031,6 +1031,9 @@ export interface FamilyPayload {
   types: FamilyType[];
   unclaimed: FamilyThing[];
   counts: { types: number; children: number; low: number };
+  /** What this read carried, when the family is bigger than one read. */
+  shown?: { types: number; children: number };
+  complete?: boolean;
 }
 
 /** Lots going off soon, wherever they are. */

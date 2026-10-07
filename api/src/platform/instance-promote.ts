@@ -367,6 +367,7 @@ async function copyFieldDefs(orgId: string, fromKind: string, toKind: string): P
         decode_role: d.decode_role,
         server_managed: d.server_managed,
         ref_kind: d.ref_kind,
+        aggregate: d.aggregate,
       })
       .onConflict((oc) => oc.doNothing())
       .execute();

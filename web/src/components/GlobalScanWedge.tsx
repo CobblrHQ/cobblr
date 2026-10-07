@@ -133,7 +133,7 @@ export function GlobalScanWedge({ activeSlug }: { activeSlug: string }) {
       try {
         toast.success(await target.take({ kind: out.entity_kind, id: out.entity_id, label: out.entity_label }));
       } catch (e) {
-        toast.error(e instanceof ApiError ? e.message : String(e));
+        toast.error(e instanceof Error ? e.message : String(e));
       }
       return;
     }
@@ -177,7 +177,7 @@ export function GlobalScanWedge({ activeSlug }: { activeSlug: string }) {
       try {
         toast.success(await target.take({ kind: resolved.entity_kind, id: resolved.entity_id, label: "" }));
       } catch (e) {
-        toast.error(e instanceof ApiError ? e.message : String(e));
+        toast.error(e instanceof Error ? e.message : String(e));
       }
       return;
     }

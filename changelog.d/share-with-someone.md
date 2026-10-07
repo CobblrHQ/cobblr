@@ -3,6 +3,7 @@ type: feature
 scope: sharing
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#4.5g Sharing (`/configuration/sharing`)
+docs_published: 2026-10-08
 ---
 You can now share part of your workspace with someone, even when their account is on another Cobblr. **Settings, Sharing, Share with someone** makes an invite link; they accept it on their own Cobblr and get a workspace of their own for it, named after you. Each share shows when it last synced and what is waiting, keeps trying while the other side is offline, and either of you can end it.
 

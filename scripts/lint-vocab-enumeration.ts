@@ -37,7 +37,7 @@
 import { readFileSync } from "node:fs";
 import { repoFiles } from "./lib/repo-files.js";
 
-const CONTRACT = "packages/platform-contract/src/index.ts";
+const CONTRACT = "packages/platform-contract/src/field-vocabulary.ts";
 
 /** Closed vocabularies worth guarding, read from their single definition so this
  *  lint cannot drift from the enum it protects.
@@ -90,7 +90,9 @@ for (const vocab of VOCABS) {
       continue;
     }
     // The vocabulary's own module defines and documents it.
-    if (file === CONTRACT) continue;
+    // The vocabulary's declaration file, and the contract index it was split
+    // from, which still holds the schemas over it.
+    if (file === CONTRACT || file === "packages/platform-contract/src/index.ts") continue;
 
     const lines = src.split("\n");
     const seen = new Map<string, number>();

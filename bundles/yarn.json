@@ -1,13 +1,18 @@
 {
   "manifest": {
     "id": "cobblr.flagship.yarn",
-    "version": "0.9.3",
+    "version": "0.9.5",
     "name": "Yarn",
     "description": "Yarn as its own inventory instance: counted in balls, skeins or hanks, yarn-only fields, grouped by weight. Optional Hooks, Supplies and Patterns tables.",
     "author": "Cobblr",
     "released_at": "2026-09-29",
     "changelog": "Importing patterns with Source: Ribblr now shows how to get them out of Ribblr: what can be downloaded, what cannot, and how to bring the downloads in.",
     "releases": [
+      {
+        "version": "0.9.5",
+        "released_at": "2026-10-07",
+        "notes": "By weight adds up only what adds up: length per ball is totalled as length times balls (Total length), and each row's count says it in your own word, 2 balls or 3 hanks."
+      },
       {
         "version": "0.9.3",
         "released_at": "2026-10-02",
@@ -146,6 +151,7 @@
             "name": "length_per_skein",
             "display_label": "Length / {{noun}} (m)",
             "type": "number",
+            "aggregate": "per_unit",
             "unit": "m",
             "position": 6,
             "help": "Metres per {{noun}}, from the label, used to estimate if you have enough for a project."
@@ -266,7 +272,6 @@
                 "fiber",
                 "vendor",
                 "qty",
-                "unit",
                 "length_per_skein"
               ]
             }

@@ -18,7 +18,7 @@
 
 import { lazy, Suspense, type ComponentType, type LazyExoticComponent } from "react";
 import { ContributedDetailPanels, registerDetailPanel, hasDetailPanel } from "@cobblr/platform-web";
-import type { ModulePageTabCtx } from "./types";
+import type { ConfigSectionCtx, ModulePageTabCtx } from "./types";
 
 registerDetailPanel(
   "builds:board-revisions",
@@ -29,6 +29,7 @@ const PAGE_TABS: Record<string, LazyExoticComponent<ComponentType<{ ctx: ModuleP
   "digifab:fleet-tab": lazy(() => import("../features/digifab/fleet").then((m) => ({ default: m.FleetPageTab }))),
 };
 
+registerDetailPanel("digifab:kiln", lazy(() => import("../features/digifab/kiln").then(m => ({ default: m.KilnPanel }))));
 registerDetailPanel(
   "digifab:cockpit",
   lazy(() => import("../features/digifab/fleet").then((m) => ({ default: m.MachineCockpitPanel }))),
@@ -116,7 +117,36 @@ registerDetailPanel(
   lazy(() => import("../features/core-devices/readings").then(m => ({ default: m.ReadingsPanel }))),
 );
 
+// Sections on a kernel Configuration page (surface "configuration-section"):
+// a module's own setting shown where its people look for it, without the
+// page importing the module (lint:kernel-config-pages-name-no-module).
+const CONFIG_SECTIONS: Record<string, LazyExoticComponent<ComponentType<{ ctx: ConfigSectionCtx }>>> = {
+  "core-maintenance:reminder-default": lazy(() => import("../features/core-maintenance/reminderDefault").then((m) => ({ default: m.ReminderDefaultSection }))),
+};
+
 export const hasPageTab = (id: string): boolean => !!PAGE_TABS[id];
+export const hasConfigSection = (id: string): boolean => !!CONFIG_SECTIONS[id];
+
+/** Every section enabled modules contribute to this Configuration page, each
+ *  in the page's own card. Nothing when none does. */
+export function ContributedConfigSections({ target, panels, ctx }: { target: string; panels: ReadonlyArray<{ id: string; surface: string; target: string; title: string }>; ctx: ConfigSectionCtx }) {
+  const mine = panels.filter((p) => p.surface === "configuration-section" && p.target === target && hasConfigSection(p.id));
+  return (
+    <>
+      {mine.map((p) => {
+        const Section = CONFIG_SECTIONS[p.id]!;
+        return (
+          <section key={p.id} data-config-section={p.id} className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-2">
+            <h2 className="text-sm font-semibold text-content dark:text-mortar-100">{p.title}</h2>
+            <Suspense fallback={<p className="text-sm text-faint">Loading…</p>}>
+              <Section ctx={ctx} />
+            </Suspense>
+          </section>
+        );
+      })}
+    </>
+  );
+}
 export { hasDetailPanel, ContributedDetailPanels };
 
 const spinner = (
@@ -134,3 +164,5 @@ export function ContributedPageTab({ id, ctx }: { id: string; ctx: ModulePageTab
     </Suspense>
   );
 }
+
+registerDetailPanel("digifab:instrument",lazy(()=>import("../features/digifab/bench").then(m=>({default:m.BenchPanel}))));

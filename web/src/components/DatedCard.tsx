@@ -7,7 +7,7 @@
 // "Open" on every row sent a person to the record to do one tap there and
 // back again, 22 times (the owner, 2026-09-28). A stale backlog can be
 // cleared in one go, behind a confirm.
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { ArrowRight, CheckCircle2, ChevronDown } from "lucide-react";
@@ -15,7 +15,8 @@ import { useConfirm, useRunAction, useToast, type ActionRun } from "@cobblr/plat
 import { api, type AttentionFeedItem } from "../lib/api";
 import { datedCounts, type DatedCardModel, type DatedGroup } from "../lib/attention-cards";
 import { useDetailRoute } from "../lib/useDetailRoute";
-import { DuplicateRecordsSheet } from "../pages/DuplicateRecordsSheet";
+// The merge sheet loads when it is opened (#4945).
+const DuplicateRecordsSheet = lazy(() => import("../pages/DuplicateRecordsSheet").then((m) => ({ default: m.DuplicateRecordsSheet })));
 
 type Entry = NonNullable<AttentionFeedItem["entries"]>[number];
 /** An action's way back: the invoke route answers a list of steps, run in
@@ -274,7 +275,11 @@ export function DatedCard({ slug, card }: { slug: string; card: DatedCardModel }
             )}
           </div>
         )}
-        {merging && <DuplicateRecordsSheet slug={slug} onClose={() => setMerging(false)} />}
+        {merging && (
+          <Suspense fallback={null}>
+            <DuplicateRecordsSheet slug={slug} onClose={() => setMerging(false)} />
+          </Suspense>
+        )}
       </div>
     </li>
   );

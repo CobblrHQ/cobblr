@@ -3,6 +3,7 @@ type: feature
 scope: sharing
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#4.5g Sharing (`/configuration/sharing`)
+docs_published: 2026-10-08
 ---
 Sharing with a friend whose Cobblr is somewhere else no longer means editing the invite link by hand: the invite asks where their Cobblr is and makes the link for it. Someone with no account there yet can make one from the invite and comes straight back to it, ready to accept.
 

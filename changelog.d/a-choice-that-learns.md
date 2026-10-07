@@ -3,6 +3,7 @@ type: feature
 scope: fields
 date: 2026-10-02
 docs_target: docs/USER_GUIDE.md#Making a field a dropdown
+docs_published: 2026-10-08
 ---
 Every dropdown is now one picker you can type in: it opens with what your records already hold, typing filters it, and a value that is not on the list is simply the value, remembered for next time with an Undo. Brand, vendor and service jobs offer what you used before, and a vehicle or a 3D printer suggests its usual service jobs.
 

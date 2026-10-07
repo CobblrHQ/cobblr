@@ -44,7 +44,7 @@ COPY modules/core-file-preview/package.json ./modules/core-file-preview/
 COPY modules/knowledge/package.json ./modules/knowledge/
 
 RUN corepack enable
-RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+RUN --mount=type=cache,sharing=shared,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 
 COPY packages/platform-contract ./packages/platform-contract

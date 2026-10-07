@@ -3,6 +3,7 @@ type: feature
 scope: sales
 date: 2026-10-04
 docs_target: docs/USER_GUIDE.md#Bringing sales orders in automatically
+docs_published: 2026-10-08
 ---
 Sales gained automatic order intake from WooCommerce and a free email feed, with SKU mapping, source links, duplicate prevention and failures shown in Settings.
 

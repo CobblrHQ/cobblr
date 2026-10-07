@@ -12,7 +12,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
 import { type FeaturedBundle } from "../lib/featured-bundles";
 import { useBundleCatalog } from "../lib/useBundleCatalog";
-import { BundleDetailModal } from "../components/BundleDetailModal";
+import { BundleDetailModal } from "../components/BundleDetailModalLazy";
 import { RemoveBundleDialog } from "../components/RemoveBundleDialog";
 import { RegistryItemModal, type RegistryItem } from "../components/RegistryItemModal";
 import { FieldPack, LabeledField, changeWorkspaceShape, downloadBlob, fieldNeed, Modal, useConfirm, useToast, usePageTitle, SearchInput } from "@cobblr/platform-web";

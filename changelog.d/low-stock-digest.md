@@ -3,6 +3,7 @@ type: feature
 scope: inventory
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#4.7 Notifications
+docs_published: 2026-10-08
 ---
 Added a daily low-stock summary with counts and minimums, optional alerts for existing workspaces, and a way to leave individual items out.
 

@@ -143,10 +143,18 @@ export async function exportEntitiesCsv(
     let parent: import("@cobblr/platform-contract").EntityGroup | undefined;
     let parentLabel = "";
     let grand: import("@cobblr/platform-contract").GroupedResult["totals"] = {};
-    const subtotal = (label: string, totals: typeof grand) => columns.map((c) => c.field === "title" ? label : (totals[c.field] ?? []).map((a) => a.currency ? formatMoney(centsFromAmount(a.value), { currency: a.currency }) : String(a.value)).join(" · "));
+    // A per-unit column's subtotal is value x quantity (#5079): said so, since
+    // it sits under a heading that names one item.
+    let weighted: Record<string, string> = {};
+    const subtotal = (label: string, totals: typeof grand) => columns.map((c) => {
+      if (c.field === "title") return label;
+      const cell = (totals[c.field] ?? []).map((a) => a.currency ? formatMoney(centsFromAmount(a.value), { currency: a.currency }) : String(a.value)).join(" · ");
+      return cell && weighted[c.field] ? `${cell} (total)` : cell;
+    });
     while (rowCount < cap) {
       const page = await list(orgId, kind, { ...query, group_offset: groupOffset, limit: 50 }, viewer);
       grand = page.totals ?? {};
+      weighted = page.weighted_by ?? {};
       const depth = Math.max(0, ...(page.groups ?? []).map((g) => g.keys.length));
       const leaves = (page.groups ?? []).filter((g) => g.keys.length === depth);
       if (!leaves.length) break;

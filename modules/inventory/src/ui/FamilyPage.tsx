@@ -416,6 +416,13 @@ export function FamilyPage({ childPath, tablePath }: { childPath: string; tableP
         <span className="flex-1 min-w-0 text-sm text-muted dark:text-slate-400" data-testid="family-counts">
           {countOf(data.counts.children, noun)} · {countOf(data.counts.types, typeNoun)}
           {data.counts.low ? ` · ${data.counts.low} low` : ""}
+          {data.complete === false && data.shown && (
+            <span className="block text-xs text-amber-700 dark:text-amber-300" data-testid="family-partial">
+              Showing {data.shown.children} of {countOf(data.counts.children, noun)} and {data.shown.types} of {countOf(data.counts.types, typeNoun)}. Every one is in the{" "}
+              <Link to={`/instances/${encodeURIComponent(data.child)}`} className="underline">{pluralise(noun)}</Link> and{" "}
+              <Link to={`/instances/${encodeURIComponent(data.parent)}`} className="underline">{pluralise(typeNoun)}</Link> tables.
+            </span>
+          )}
         </span>
         <button type="button" onClick={() => setAdding({ type: null })} className="px-3 py-1.5 rounded-md text-sm bg-cobble-600 text-white">
           + {noun[0]!.toUpperCase() + noun.slice(1)}

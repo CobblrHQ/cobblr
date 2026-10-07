@@ -1,6 +1,7 @@
 import { prepareResinPrint } from "../resin-prints.js";
 import { extractPlateMetadata } from "../library/extract-metadata.js";
 import { controlResinPrinter } from "../resin-controls.js";
+import { stopLargePrint } from "../large-format/service.js";
 // /api/v1/orgs/:slug/modules/digifab/jobs —
 // the print queue. Create a job (queued), SEND it to the farm
 // (upload + place), and track it to completion.
@@ -29,6 +30,7 @@ import { plainDriverError } from "../job-truth.js";
 export const jobsRouter = Router({ mergeParams: true });
 
 const JOB_COLS = [
+  "embroidery_run",
   "id",
   "connection_id",
   "file_ref",
@@ -135,7 +137,7 @@ jobsRouter.get(
         .orderBy("started_at", "desc")
         .execute();
       const ext = obs.map((o) => ({
-        id: o.id, connection_id: o.connection_id, file_ref: o.file_ref ?? "(started on the printer)",
+        embroidery_run: false, id: o.id, connection_id: o.connection_id, file_ref: o.file_ref ?? "(started on the printer)",
         target_device: o.serial, target_tag: null, target_pool: null,
         material_part_id: null, material_grams: null, material_type: null, material_grams_by_tool: null, material_drawn: null, remote_file_id: null, remote_job_id: null,
         status: "printing", priority: 0, attempts: 0, max_attempts: 1, progress: null, eta_sec: null,
@@ -281,14 +283,14 @@ jobsRouter.post("/:id/prepare", asyncHandler(async (req, res) => {
   if (!file) return void res.status(409).json({ error: { code: "file_missing", message: "The job's stored file no longer exists." } });
   const kind = await driver.jobReviewKind?.();
   const print = kind === "print", cutter = kind === "cutter";
-  const preparedFile = cutter ? /\.cutterplan$/i : driver.printProcess === "resin" ? /\.goo$/i : print ? /\.(gcode|gco)$/i : driver.laserBackend ? /\.laserplan$/i : /\.lbrn2$/i;
+  const preparedFile = cutter ? /\.cutterplan$/i : driver.printProcess === "large-format" ? /\.ippplan$/i : driver.printProcess === "resin" ? /\.goo$/i : print ? /\.(gcode|gco)$/i : driver.laserBackend ? /\.laserplan$/i : /\.lbrn2$/i;
   if (!preparedFile.test(file.filename)) return void res.status(409).json({ error: { code: "prepared_file_required", message: cutter ? "Choose a prepared cutter file for this station." : driver.printProcess === "resin" ? "Choose a sliced GOO resin print for this station." : print ? "Choose a sliced G-code print for this station." : "Choose a prepared laser file for this station." } });
   try {
     await requireLaserBedReady(db, job);
     const devices = await driver.listDevices();
     const device = devices.find(d => d.id === job.target_device);
     if (!device || ["running", "printing", "paused", "busy"].includes(device.state ?? "")) throw new Error("This machine is busy. Finish its current job before loading another file.");
-    if (driver.laserBackend || cutter || driver.printProcess === "resin") await db.updateTable("digifab_jobs").set({ cancel_requested_at: null }).where("id", "=", job.id).where("send_token", "is", null).execute();
+    if (driver.laserBackend || cutter || ["resin", "large-format"].includes(driver.printProcess ?? "")) await db.updateTable("digifab_jobs").set({ cancel_requested_at: null }).where("id", "=", job.id).where("send_token", "is", null).execute();
     const review = await driver.prepareJob(new Uint8Array(file.bytes), file.filename);
     if (driver.printProcess === "resin") {
       if (!job.target_device) throw new Error("Choose this resin printer before reviewing the print.");
@@ -417,8 +419,9 @@ jobsRouter.post(
     if (!requireRole(req, res, "owner", "admin")) return;
     const ctx = tenantContext(req);
     const db = tenantDb(req);
-    const job = await db.selectFrom("digifab_jobs").select(["id", "status", "target_pool"]).where("id", "=", req.params.id!).executeTakeFirst();
+    const job = await db.selectFrom("digifab_jobs").select(["id", "status", "target_pool", "embroidery_run"]).where("id", "=", req.params.id!).executeTakeFirst();
     if (!job) return void res.status(404).json({ error: { code: "not_found", message: "no such job" } });
+    if (job.embroidery_run) return void res.status(409).json({ error: { code: "embroidery_station_required", message: "Prepare a new embroidery run or record this run at its embroidery station." } });
     if (job.status !== "failed" && job.status !== "cancelled") {
       return void res.status(409).json({ error: { code: "not_retryable", message: "only a failed or cancelled job can be retried" } });
     }
@@ -488,6 +491,7 @@ jobsRouter.post(
     const db = tenantDb(req);
     const src = await db.selectFrom("digifab_jobs").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
     if (!src) return void res.status(404).json({ error: { code: "not_found", message: "no such job" } });
+    if (src.embroidery_run) return void res.status(409).json({ error: { code: "embroidery_station_required", message: "Prepare a new embroidery run with its hoop and thread choices." } });
     // A double tap is almost never "two copies, please", and a print is
     // physical. The stamp is one conditional UPDATE, so two taps at once
     // cannot both pass; the second is asked, and `again: true` is the
@@ -572,46 +576,51 @@ jobsRouter.post(
 // the poll loop. Best-effort tells the manager to abort where the driver supports
 // it; otherwise it's local-only (the physical print may keep running — stop it at
 // the machine). Refuses to "cancel" an already-terminal job.
-// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
-jobsRouter.post(
-  "/:id/cancel",
-  asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
-    const ctx = tenantContext(req);
-    const db = tenantDb(req);
-    const job = await db.selectFrom("digifab_jobs").select(["id", "status", "connection_id", "remote_job_id", "target_device"]).where("id", "=", req.params.id!).executeTakeFirst();
-    if (!job) return void res.status(404).json({ error: { code: "not_found", message: "no such job" } });
-    if (TERMINAL.has(job.status)) return void res.status(409).json({ error: { code: "already_terminal", message: `job is ${job.status}` } });
+/** What a request to change a job came back with, for a route to send and an
+ *  action to say. */
+export interface JobReply { status: number; body: Record<string, unknown> }
+const reply = (status: number, body: Record<string, unknown>): JobReply => ({ status, body });
 
-    const resinDriver = job.connection_id ? await buildDriverById(db, ctx.org.id, job.connection_id) : null;
-    if (resinDriver?.printProcess === "resin" && job.target_device && job.connection_id) {
+/** Cancel a job: the page's Cancel and the assistant's Stop are this one call
+ *  (#5091). It stops the machine where the job runs, and is real only when the
+ *  machine says it stopped. */
+export async function cancelJob(db: ReturnType<typeof tenantDb>, orgId: string, jobId: string): Promise<JobReply> {
+    const job = await db.selectFrom("digifab_jobs").select(["id", "status", "connection_id", "remote_job_id", "target_device", "embroidery_run"]).where("id", "=", jobId).executeTakeFirst();
+    if (!job) return reply(404, { error: { code: "not_found", message: "no such job" } });
+    if (job.embroidery_run) return reply(409, { error: { code: "embroidery_station_required", message: "Stop the physical embroidery machine using its own controls, then record the interruption and measured thread use at its embroidery station." } });
+    if (TERMINAL.has(job.status)) return reply(409, { error: { code: "already_terminal", message: `job is ${job.status}` } });
+
+    const printDriver = job.connection_id ? await buildDriverById(db, orgId, job.connection_id) : null;
+    if ((printDriver?.printProcess === "resin" || printDriver?.printProcess === "large-format") && job.target_device && job.connection_id) {
       try {
-        const result = await controlResinPrinter(db, ctx.org.id, resinDriver, job.target_device, "stop", job.connection_id);
-        if (!result.ok) return void res.status(502).json({ error: { code: "cancel_failed", message: result.detail ?? "The printer did not confirm Stop." } });
+        const result = printDriver.printProcess === "large-format"
+          ? await stopLargePrint(db, orgId, {connection_id:job.connection_id,device_id:job.target_device})
+          : await controlResinPrinter(db, orgId, printDriver, job.target_device, "stop", job.connection_id);
+        if (!result.ok) return reply(502, { error: { code: "cancel_failed", message: result.detail ?? "The printer did not confirm Stop." } });
       } catch (e) {
-        return void res.status(502).json({ error: { code: "cancel_failed", message: plainDriverError(e, "the resin printer", "stopping the print") } });
+        return reply(502, { error: { code: "cancel_failed", message: plainDriverError(e, "the printer", "stopping the print") } });
       }
       const now = await db.selectFrom("digifab_jobs").select("status").where("id", "=", job.id).executeTakeFirst();
-      if (job.remote_job_id && now?.status !== "cancelled") await enqueuePoll(ctx.org.id, job.id);
-      return void res.status(now?.status === "cancelled" ? 200 : 202).json({ status: now?.status ?? job.status, remote_cancelled: now?.status === "cancelled", cancelling: now?.status !== "cancelled", message: "Stop sent. The printer's status confirms when it has stopped." });
+      if (job.remote_job_id && now?.status !== "cancelled") await enqueuePoll(orgId, job.id);
+      return reply(now?.status === "cancelled" ? 200 : 202, { status: now?.status ?? job.status, remote_cancelled: now?.status === "cancelled", cancelling: now?.status !== "cancelled", message: "Stop sent. The printer's status confirms when it has stopped." });
     }
 
     // Not on a printer yet (queued, or sent with no id to track): there is
     // nothing physical to stop, so the cancel is Cobblr's alone.
     if (!job.connection_id || !job.remote_job_id) {
       await markJobTerminal(db, job, "cancelled");
-      await reverseBuildIfCommitted(db, ctx.org.id, job.id, "print cancelled");
-      return void res.json({ status: "cancelled", remote_cancelled: false });
+      await reverseBuildIfCommitted(db, orgId, job.id, "print cancelled");
+      return reply(200, { status: "cancelled", remote_cancelled: false });
     }
 
     // On a printer: the cancel is real only when the printer says it stopped.
     // It used to be marked Cancelled whatever happened, so on a manager that
     // cannot cancel (PrusaLink, FDM Monster) the job read Cancelled while the
     // printer kept printing, and someone walked away from a running print.
-    const manager = await managerName(ctx.org.id, job.connection_id);
-    const driver = await buildDriverById(db, ctx.org.id, job.connection_id);
+    const manager = await managerName(orgId, job.connection_id);
+    const driver = await buildDriverById(db, orgId, job.connection_id);
     if (!driver?.cancelJob) {
-      return void res.status(501).json({
+      return reply(501, {
         error: {
           code: "cannot_cancel",
           message: `${manager} can't stop a print from Cobblr. Stop it at the printer; Cobblr will see it stop.`,
@@ -621,52 +630,67 @@ jobsRouter.post(
     try {
       await driver.cancelJob(job.remote_job_id);
     } catch (e) {
-      return void res.status(502).json({ error: { code: "cancel_failed", message: plainDriverError(e, manager, "cancelling the print") } });
+      return reply(502, { error: { code: "cancel_failed", message: plainDriverError(e, manager, "cancelling the print") } });
     }
     await db.updateTable("digifab_jobs").set({ cancel_requested_at: new Date(), updated_at: new Date() }).where("id", "=", job.id).execute();
     // Ask straight away: most managers stop within the request. What the
     // printer answers decides, through the same rule every poll uses.
-    const polled = await pollJob(db, ctx.org.id, job.id).catch(() => null);
+    const polled = await pollJob(db, orgId, job.id).catch(() => null);
     const now = await db.selectFrom("digifab_jobs").select(["status", "error"]).where("id", "=", job.id).executeTakeFirst();
     if (now?.status === "cancelled") {
-      await reverseBuildIfCommitted(db, ctx.org.id, job.id, "print cancelled");
-      return void res.json({ status: "cancelled", remote_cancelled: true });
+      await reverseBuildIfCommitted(db, orgId, job.id, "print cancelled");
+      return reply(200, { status: "cancelled", remote_cancelled: true });
     }
     // Still going: the poll chain finishes the cancel when the printer stops.
-    if (polled && !polled.terminal) await enqueuePoll(ctx.org.id, job.id);
-    res.status(202).json({ status: now?.status ?? job.status, remote_cancelled: false, cancelling: true, message: "Cancel sent; waiting for the printer to stop." });
+    if (polled && !polled.terminal) await enqueuePoll(orgId, job.id);
+    return reply(202, { status: now?.status ?? job.status, remote_cancelled: false, cancelling: true, message: "Cancel sent; waiting for the printer to stop." });
+}
+
+// AI-ACTION: digifab:stop
+jobsRouter.post(
+  "/:id/cancel",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const out = await cancelJob(tenantDb(req), tenantContext(req).org.id, req.params.id!);
+    res.status(out.status).json(out.body);
   }),
 );
 
 // ── Cockpit live-control: pause / resume a running job at the manager. 501 when
 // the driver can't (a fabrication-only / SD-card manager). ──
-async function controlJob(req: import("express").Request, res: import("express").Response, action: "pause" | "resume") {
-  if (!requireRole(req, res, "owner", "admin")) return;
-  const ctx = tenantContext(req);
-  const db = tenantDb(req);
-  const job = await db.selectFrom("digifab_jobs").select(["id", "status", "connection_id", "remote_job_id"]).where("id", "=", req.params.id!).executeTakeFirst();
-  if (!job) return void res.status(404).json({ error: { code: "not_found", message: "no such job" } });
-  if (TERMINAL.has(job.status)) return void res.status(409).json({ error: { code: "already_terminal", message: `job is ${job.status}` } });
-  if (!job.connection_id || !job.remote_job_id) return void res.status(409).json({ error: { code: "not_running", message: "job isn't on a printer yet" } });
-  const driver = await buildDriverById(db, ctx.org.id, job.connection_id);
-  const manager = await managerName(ctx.org.id, job.connection_id);
+/** Pause or resume a running job at its manager. Pause is also the
+ *  assistant's Stop with pause (#5091); resume is the page's alone. */
+export async function controlJobById(db: ReturnType<typeof tenantDb>, orgId: string, jobId: string, action: "pause" | "resume"): Promise<JobReply> {
+  const job = await db.selectFrom("digifab_jobs").select(["id", "status", "connection_id", "remote_job_id"]).where("id", "=", jobId).executeTakeFirst();
+  if (!job) return reply(404, { error: { code: "not_found", message: "no such job" } });
+  if (TERMINAL.has(job.status)) return reply(409, { error: { code: "already_terminal", message: `job is ${job.status}` } });
+  if (!job.connection_id || !job.remote_job_id) return reply(409, { error: { code: "not_running", message: "job isn't on a printer yet" } });
+  const driver = await buildDriverById(db, orgId, job.connection_id);
+  const manager = await managerName(orgId, job.connection_id);
   if (action === "pause") {
-    if (!driver?.pauseJob) return void res.status(501).json({ error: { code: "unsupported", message: `${manager} can't pause a print from Cobblr. Pause it at the printer.` } });
+    if (!driver?.pauseJob) return reply(501, { error: { code: "unsupported", message: `${manager} can't pause a print from Cobblr. Pause it at the printer.` } });
   } else if (!driver?.resumeJob) {
-    return void res.status(501).json({ error: { code: "unsupported", message: `${manager} can't resume a print from Cobblr. Resume it at the printer.` } });
+    return reply(501, { error: { code: "unsupported", message: `${manager} can't resume a print from Cobblr. Resume it at the printer.` } });
   }
   try {
     if (action === "pause") await driver!.pauseJob!(job.remote_job_id);
     else await driver!.resumeJob!(job.remote_job_id);
   } catch (e) {
-    return void res.status(502).json({ error: { code: `${action}_failed`, message: plainDriverError(e, manager, action === "pause" ? "pausing the print" : "resuming the print") } });
+    return reply(502, { error: { code: `${action}_failed`, message: plainDriverError(e, manager, action === "pause" ? "pausing the print" : "resuming the print") } });
   }
   const status = action === "pause" ? "paused" : "printing";
   await db.updateTable("digifab_jobs").set({ status, updated_at: new Date() }).where("id", "=", job.id).execute();
-  res.json({ status });
+  return reply(200, { status });
 }
-// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+async function controlJob(req: import("express").Request, res: import("express").Response, action: "pause" | "resume") {
+  if (!requireRole(req, res, "owner", "admin")) return;
+  const out = await controlJobById(tenantDb(req), tenantContext(req).org.id, req.params.id!, action);
+  res.status(out.status).json(out.body);
+}
+// AI-ACTION: digifab:stop
 jobsRouter.post("/:id/pause", asyncHandler((req, res) => controlJob(req, res, "pause")));
+// AI-REACH: exempt resuming starts a machine again; a person presses it at the page, where it is confirmed
+
 jobsRouter.post("/:id/resume", asyncHandler((req, res) => controlJob(req, res, "resume")));
 
 // ── F-4 delete — remove a job from Cobblr's queue. Refuses an active job (sent/
@@ -677,8 +701,9 @@ jobsRouter.delete(
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin")) return;
     const db = tenantDb(req);
-    const job = await db.selectFrom("digifab_jobs").select(["id", "status"]).where("id", "=", req.params.id!).executeTakeFirst();
+    const job = await db.selectFrom("digifab_jobs").select(["id", "status", "embroidery_run"]).where("id", "=", req.params.id!).executeTakeFirst();
     if (!job) return void res.status(404).json({ error: { code: "not_found", message: "no such job" } });
+    if (job.embroidery_run) return void res.status(409).json({ error: { code: "embroidery_station_required", message: "Prepare a new embroidery run or record this run at its embroidery station." } });
     // `paused` is physically mid-print too, and an `unknown`-status job may be —
     // anything that isn't locally terminal or pre-send must be cancelled first,
     // so a live print can't silently vanish from tracking.

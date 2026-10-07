@@ -3,6 +3,7 @@ type: feature
 scope: sharing
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#4.5g Sharing (`/configuration/sharing`)
+docs_published: 2026-10-08
 ---
 What the person you share with changes now comes back to you. By default you review each edit first (Accept or Reject under **Their edits**); for someone you trust, let their edits change your records at once. Either way your history names them, each applied edit can be undone, and when you both changed the same thing it waits for you instead of one overwriting the other.
 

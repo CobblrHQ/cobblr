@@ -6,7 +6,7 @@
 // (new-user-flow.md F3). `ready` is false while loading: render nothing, not
 // the empty state, or furniture flashes on reload.
 
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "./api";
 import { isSandboxSession } from "./sandbox-session";
@@ -74,4 +74,17 @@ export function useWorkspaceContentProbe(slug: string): { ready: boolean; hasCon
   const ready = mods.data !== undefined && (enabled.size === 0 || probeQ.data !== undefined);
   const hasContent = (probeQ.data ?? 0) > 0;
   return { ready, hasContent, userMade: hasContent && !isSandboxSession() };
+}
+
+/** The first answer a value gave once `ready`, held for the life of the
+ *  component. The dashboard places its add-things panel at the top for a
+ *  workspace the person has not made anything in, and below the data once they
+ *  have; deciding that again on every refetch moved the panel to the other slot
+ *  the moment the first capture was filed. The move remounted it, which closed
+ *  the table setup it had just opened, two seconds after it opened. A placement
+ *  changes on the next visit, never under the person's hand. */
+export function useSettledOnce<T>(ready: boolean, value: T): T {
+  const held = useRef<{ value: T } | null>(null);
+  if (!held.current && ready) held.current = { value };
+  return held.current ? held.current.value : value;
 }

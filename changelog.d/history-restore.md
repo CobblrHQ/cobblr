@@ -3,6 +3,7 @@ type: feature
 scope: history
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#4.8 Activity + wire firings
+docs_published: 2026-10-08
 ---
 See what each field was before an edit and restore a saved version from the record's history.
 

@@ -3,6 +3,7 @@ type: feature
 scope: assets
 date: 2026-10-01
 docs_target: docs/USER_GUIDE.md#3.12b Containment: what's inside your things (core-placement, foundational)
+docs_published: 2026-10-08
 ---
 A computer, a machine or any asset can now be built from parts you have recorded: install some of a part from its page (2 of 4 RAM sticks), see each part's value and the total, take parts back out with undo, and hide what has nothing on hand from the Inventory list.
 

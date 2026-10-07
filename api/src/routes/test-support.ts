@@ -8,11 +8,12 @@ import { checkoutTestOrg, poolStatus } from "../db/test-org-pool.js";
 import { workspaceShape } from "../db/workspace-shape.js";
 import { clearPassFailures, passFailures } from "../platform/pass-failures.js";
 import { retireReceiptFailurePlaceholders } from "../platform/retire-receipt-failure-placeholders.js";
-import { retireGroceriesBaseKindTwin } from "../platform/migrate-groceries-twin-to-instance.js";
 import { rehomeAssetsInstanceToRecords } from "../platform/rehome-instance.js";
 import { reconcileScanCategoryFields, retireScanCategoryPlaceholders } from "../platform/reconcile-scan-category.js";
 import { runAllTenantSweeps, runTenantSweep } from "../platform/tenant-sweeps.js";
 import { setSubscriberDelayForTests } from "../platform/events.js";
+import { selfFetch } from "../platform/self-fetch.js";
+import { runWithActor } from "../lib/request-context.js";
 import { mirrorApplyHoldReached, setMirrorApplyHoldForTests } from "../platform/share-mirror.js";
 import * as notifications from "../platform/notifications.js";
 import { registerHandler } from "../platform/actions.js";
@@ -106,15 +107,6 @@ const onlyOrg = (req: { body?: unknown }): { onlyOrgId?: string } => {
   const { org_id } = (req.body ?? {}) as { org_id?: string };
   return org_id ? { onlyOrgId: org_id } : {};
 };
-
-// Same reason, for the pass that retires the Groceries base-kind twin (#2860).
-testSupportRouter.post("/test-support/run-migration/groceries-twin", async (req, res, next) => {
-  try {
-    res.json(await retireGroceriesBaseKindTwin({ force: true, ...onlyOrg(req) }));
-  } catch (err) {
-    next(err);
-  }
-});
 
 // Same reason, for the pass that moves a failed receipt's placeholder row into
 // the session's read state (#2898). Scoped to one org so a test proves the
@@ -277,6 +269,33 @@ testSupportRouter.post("/test-support/subscriber-delay", (req, res) => {
   res.json({ ok: true, event, org_id, ms });
 });
 
+// The api calling itself in-process (self-fetch.ts), from inside a request
+// that already has an actor: the inner request must be judged on its own
+// Authorization exactly as one off a socket is, never as the outer caller.
+// Body: { method, path, authorization?, outer_user_id? }; answers the inner
+// response's status and body.
+testSupportRouter.post("/test-support/self-fetch", async (req, res, next) => {
+  try {
+    const b = (req.body ?? {}) as { method?: string; path?: string; authorization?: string; outer_user_id?: string };
+    if (!b.path || !b.path.startsWith("/api/")) {
+      res.status(400).json({ error: { code: "bad_body", message: "path (/api/…) required" } });
+      return;
+    }
+    const call = () => selfFetch(b.path!, { method: b.method ?? "GET", headers: b.authorization ? { authorization: b.authorization } : {} });
+    const r = b.outer_user_id ? await runWithActor({ userId: b.outer_user_id, authMethod: "session", apiTokenId: null }, call) : await call();
+    const text = await r.text();
+    let body: unknown = text;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      /* not JSON */
+    }
+    res.json({ status: r.status, body });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Hold a share's mirror inside its apply on one share space, before or after
 // it writes the owner's change onto the copy, so a test lands the friend's
 // edit exactly there (a friend's edit lost to the mirror). Body: { slug (the
@@ -285,7 +304,7 @@ testSupportRouter.post("/test-support/subscriber-delay", (req, res) => {
 testSupportRouter.post("/test-support/mirror-apply-hold", async (req, res, next) => {
   try {
     const { slug, at, ms } = (req.body ?? {}) as { slug?: string; at?: string; ms?: number };
-    if (!slug || (at !== "before-write" && at !== "after-write") || typeof ms !== "number") {
+    if (!slug || (at !== "before-write" && at !== "after-write" && at !== "owner-pass") || typeof ms !== "number") {
       res.status(400).json({ error: { code: "bad_body", message: "slug + at (before-write|after-write) + ms required" } });
       return;
     }

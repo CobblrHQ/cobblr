@@ -7,13 +7,13 @@
 // told; this page decides WHETHER they are one of the people to tell, per
 // kind: everyone, the owners only, or specific people.
 
-import { CadencePicker } from "../features/core-maintenance/renewals";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Users } from "lucide-react";
 import { usePageTitle, useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { api, ApiError, type NotificationAudienceKind, type NotificationAudienceMode, type WorkspaceMember, type OverdueCadence } from "../lib/api";
+import { ContributedConfigSections } from "../panels/registry";
+import { api, ApiError, type NotificationAudienceKind, type NotificationAudienceMode, type WorkspaceMember } from "../lib/api";
 
 const MODES: Array<{ mode: NotificationAudienceMode; label: string; blurb: string }> = [
   { mode: "all", label: "Everyone", blurb: "Every member of this workspace." },
@@ -30,6 +30,11 @@ export function NotificationAudiencesPage() {
   const kinds = useQuery({
     queryKey: ["notification-audiences", activeSlug],
     queryFn: () => api.listNotificationAudiences(activeSlug),
+    enabled: !!activeSlug,
+  });
+  const orgModules = useQuery({
+    queryKey: ["org-modules", activeSlug],
+    queryFn: () => api.orgModules(activeSlug),
     enabled: !!activeSlug,
   });
   const members = useQuery({
@@ -62,7 +67,11 @@ export function NotificationAudiencesPage() {
           first of each kind arrives.
         </div>
       )}
-      <MaintenanceReminderDefault slug={activeSlug} />
+      <ContributedConfigSections
+        target="notification-audiences"
+        panels={(orgModules.data?.items ?? []).filter((m) => m.enabled).flatMap((m) => m.panels ?? [])}
+        ctx={{ slug: activeSlug }}
+      />
       {[...byModule.entries()].map(([module, items]) => (
         <section key={module} className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-4">
           <h2 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">{module}</h2>
@@ -161,13 +170,4 @@ function KindRow({ slug, kind, members }: { slug: string; kind: NotificationAudi
       )}
     </div>
   );
-}
-
-function MaintenanceReminderDefault({ slug }: { slug: string }) {
-  const toast = useToast();
-  const qc = useQueryClient();
-  const preferences = useQuery({ queryKey: ["maintenance-reminder-default", slug], queryFn: () => api.maintenanceReminderPreferences(slug), enabled: !!slug });
-  const save = useMutation({ mutationFn: (v: OverdueCadence) => api.setMaintenanceReminderPreferences(slug, v), onSuccess: () => { void qc.invalidateQueries({ queryKey: ["maintenance-reminder-default", slug] }); toast.success("Overdue reminder cadence saved."); }, onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't save reminders") });
-  if (!preferences.data) return null;
-  return <section className="rounded-xl border border-line bg-surface p-4 space-y-2"><h2 className="text-sm font-semibold">Maintenance reminders</h2><p className="text-sm text-muted">After a service or renewal is overdue, keep reminding us at this cadence. Individual schedules can choose their own.</p><CadencePicker workspace value={preferences.data.overdue_every} onChange={(v) => { if (v) save.mutate(v); }} /></section>;
 }

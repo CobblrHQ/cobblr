@@ -3,6 +3,7 @@ type: feature
 scope: activity
 date: 2026-10-05
 docs_target: docs/USER_GUIDE.md#4.6 Audit log (`/activity`)
+docs_published: 2026-10-08
 ---
 Recent activity now names what changed in plain sentences, links to your things, shows photos and keeps the time in one place.
 

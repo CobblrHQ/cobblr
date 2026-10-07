@@ -4,8 +4,8 @@
 // One scan, one big card. Something you already have shows its photo, its
 // place and "You have 3", with +1 · Used one · Set total… · Move to…, each
 // applied straight to the record's stock (no inbox detour). Something new is
-// handed to the scan intake and shown in the scan inbox's own card, so a
-// station can do everything the inbox can. A Cobblr label opens its record.
+// handed to the scan intake and shown at the same scale: its photo, its name,
+// how many and one big Add, with More for the scan inbox's whole card. A Cobblr label opens its record.
 //
 // Opening the address is the setup: a tablet that has never been here shows a
 // code to approve from a signed-in phone, then keeps a token that reaches only
@@ -29,11 +29,12 @@ import {
 } from "@cobblr/platform-contract/station-screen";
 import { api, ApiError, getToken, type Location, type ScanInboxItem, type OrgMembership } from "../lib/api";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
-import { DragInput, EntityPhoto, OverlayLayer, SearchInput, useEscapeToClose, useLater } from "@cobblr/platform-web";
+import { DragInput, OverlayLayer, SearchInput, useEscapeToClose, useLater, SegmentedChoice } from "@cobblr/platform-web";
 import { MAIN_ID, SkipToContent } from "../components/a11y/shell-landmarks";
 import { FixedActiveOrgProvider } from "../auth/ActiveOrgContext";
 import { WorkspacePlatformWeb } from "../WorkspacePlatformWeb";
 import { InboxCard } from "./ScanInboxCard";
+import { StationPhoto } from "./StationNewFace";
 import {
   flushQueue,
   isRepeatScan,
@@ -125,16 +126,20 @@ function DeviceStation({ slug, address, token, kiosk, onForget }: { slug: string
 }
 
 /** No device token: a signed-in member opens it as themselves; anyone else
- *  sees the approval code. */
+ *  (signed out, another workspace's person, or a guest, whom a station's own
+ *  routes refuse) sees the approval code without asking for the station. */
 function PersonOrApproval({ slug, address, kiosk, personToken, onApproved }: { slug: string; address: string; kiosk: boolean; personToken: string | null; onApproved: (token: string) => void }) {
+  const me = useQuery({ queryKey: ["station-me", !!personToken], queryFn: () => api.me(), enabled: !!personToken, retry: false, staleTime: 60_000 });
+  const role = me.data?.orgs.find((o) => o.slug === slug)?.role ?? null;
+  const mayUse = !!role && role !== "guest";
   const asPerson = useQuery({
     queryKey: ["station-person", slug, address, !!personToken],
     queryFn: () => api.stationScreen(slug, address),
-    enabled: !!personToken,
+    enabled: !!personToken && mayUse,
     retry: false,
   });
-  if (personToken && asPerson.isPending) return <Shell kiosk={kiosk}><Centered title="Opening…" /></Shell>;
-  if (personToken && asPerson.data) return <StationLoader slug={slug} address={address} kiosk={kiosk} device={false} onForget={() => {}} />;
+  if (personToken && (me.isPending || (mayUse && asPerson.isPending))) return <Shell kiosk={kiosk}><Centered title="Opening…" /></Shell>;
+  if (personToken && mayUse && asPerson.data) return <StationLoader slug={slug} address={address} kiosk={kiosk} device={false} onForget={() => {}} />;
   return <ApprovalView slug={slug} address={address} onApproved={onApproved} />;
 }
 
@@ -531,13 +536,18 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
           )}
           {view.kind === "new" && (
             <div className="w-full max-w-3xl space-y-4" data-testid="station-new">
-              <div className="text-lg font-medium">New: not something you have yet</div>
               <InboxCard
                 item={view.item}
                 pageTarget={null}
                 menu={menu.data ?? null}
                 hasLocations={(places.data?.length ?? 0) > 0}
                 defaultExpanded
+                station={{
+                  onFiled: () => {
+                    setView({ kind: "ready" });
+                    signal(true);
+                  },
+                }}
               />
               <div className="flex justify-end">
                 <BigButton tone="plain" onClick={() => setView({ kind: "ready" })}>
@@ -634,7 +644,7 @@ function RecordCard(props: {
     <div className="w-full max-w-4xl" data-testid="station-record">
       <div className="flex gap-5 max-sm:flex-col">
         <div className="w-40 shrink-0 max-sm:w-28">
-          <EntityPhoto src={r.image_path} alt={r.title} aspect="square" eager className="rounded-2xl" />
+          <StationPhoto src={r.image_path} alt={r.title} />
         </div>
         <div className="min-w-0 flex-1 space-y-2">
           <h1 className="text-3xl font-semibold leading-tight max-sm:text-2xl">{r.title}</h1>
@@ -796,11 +806,12 @@ function SettingsSheet(props: {
           </Field>
           <Field label="When a scan is something you have">
             <div className="grid gap-2">
-              {STATION_ACTIONS.map((a) => (
-                <label key={a} className="flex items-center gap-2 text-lg">
-                  <input type="radio" checked={draft.action === a} onChange={() => set("action", a)} /> {actionWords[a]}
-                </label>
-              ))}
+              <SegmentedChoice
+                label="When a scan is something you have"
+                value={draft.action}
+                onChange={(a) => set("action", a)}
+                options={STATION_ACTIONS.map((a) => ({ value: a, label: actionWords[a] }))}
+              />
               {draft.action !== "ask" && (
                 <label className="flex items-center gap-2">
                   <input type="checkbox" checked={draft.count_repeats} onChange={(e) => set("count_repeats", e.target.checked)} /> Count a second scan of the same thing within 2 seconds

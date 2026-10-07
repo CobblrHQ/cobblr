@@ -1,3 +1,4 @@
+import { jobDisplayName } from "./jobDisplayName";
 import { LASER_FIRMWARES } from "@cobblr/platform-contract/laser-setup";
 import { laserState } from "../../lib/fabrication-display";
 import { DirectLaserControls } from "./DirectLaserControls";
@@ -240,12 +241,21 @@ const BRIDGE_DRIVERS: { key: string; label: string; driver?: string; config?: Re
   { key: "moonraker", label: "Klipper (Moonraker)", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.50" }, { key: "apiKey", label: "API key (only if locked down)", optional: true }] },
   { key: "snapmaker-u1", driver: "moonraker", config: { profile: "snapmaker-u1" }, label: "Snapmaker U1", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.50" }, { key: "apiKey", label: "Moonraker API key", optional: true }] },
   { key: "snapmaker", label: "Snapmaker (2.0, J1, Artisan)", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.50" }] },
+  {key:"ipp",label:"Large-format printer (IPP / SNMP)",fields:[{key:"url",label:"Printer IPP URL",placeholder:"ipp://192.168.1.50:631/ipp/print"},{key:"community",label:"Read-only SNMP community",optional:true,secret:true}]},
   { key: "sdcp", label: "Resin printer (Elegoo / SDCP)", fields: [{ key: "host", label: "Printer LAN IPv4 address", placeholder: "192.168.1.50" }] },
   { key: "prusalink", label: "Prusa (PrusaLink)", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.213" }, { key: "apiKey", label: "PrusaLink API key" }] },
   { key: "duet", label: "Duet (RepRapFirmware)", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.50" }] },
   { key: "bambu", label: "Bambu Lab (LAN)", fields: [{ key: "host", label: "Printer IP" }, { key: "serial", label: "Serial" }, { key: "accessCode", label: "LAN access code" }] },
+  { key: "kiln", label: "ESPHome kiln", fields: [{ key: "base_url", label: "Kiln controller URL", placeholder: "http://kiln.local" }] },
   { key: "lightburn", label: "LightBurn laser", fields: [{ key: "host", label: "LightBurn host" }] },
   { key: "gcode-laser", label: "G-code laser", fields: [] },
+  {key:"scpi-psu-tcp",driver:"scpi",config:{profile:"psu",transport:"tcp"},label:"Power supply (LAN)",fields:[{ key: "host", label: "Instrument IP / host" }, { key: "port", label: "SCPI port", placeholder: "5025", optional: true }]},
+  {key:"scpi-psu-usbtmc",driver:"scpi",config:{profile:"psu",transport:"usbtmc"},label:"Power supply (USB)",fields:[{key:"vendor_id",label:"USB vendor ID",placeholder:"0x1ab1"},{key:"product_id",label:"USB product ID",placeholder:"0x0588"},{key:"serial",label:"USB serial number",optional:true},{key:"libusb",label:"libusb library path",optional:true},{key:"python",label:"Python 3 executable",optional:true}]},
+  {key:"scpi-dmm-tcp",driver:"scpi",config:{profile:"dmm",transport:"tcp"},label:"Digital multimeter (LAN)",fields:[{ key: "host", label: "Instrument IP / host" }, { key: "port", label: "SCPI port", placeholder: "5025", optional: true }]},
+  {key:"scpi-dmm-usbtmc",driver:"scpi",config:{profile:"dmm",transport:"usbtmc"},label:"Digital multimeter (USB)",fields:[{key:"vendor_id",label:"USB vendor ID",placeholder:"0x1ab1"},{key:"product_id",label:"USB product ID",placeholder:"0x0588"},{key:"serial",label:"USB serial number",optional:true},{key:"libusb",label:"libusb library path",optional:true},{key:"python",label:"Python 3 executable",optional:true}]},
+  {key:"scpi-rigol-ds1000z-tcp",driver:"scpi",config:{profile:"rigol-ds1000z",transport:"tcp"},label:"Rigol DS1000Z scope (LAN)",fields:[{ key: "host", label: "Instrument IP / host" }, { key: "port", label: "SCPI port", placeholder: "5025", optional: true }]},
+  {key:"scpi-rigol-ds1000z-usbtmc",driver:"scpi",config:{profile:"rigol-ds1000z",transport:"usbtmc"},label:"Rigol DS1000Z scope (USB)",fields:[{key:"vendor_id",label:"USB vendor ID",placeholder:"0x1ab1"},{key:"product_id",label:"USB product ID",placeholder:"0x0588"},{key:"serial",label:"USB serial number",optional:true},{key:"libusb",label:"libusb library path",optional:true},{key:"python",label:"Python 3 executable",optional:true}]},
+
   {key:"galvo",label:"BJJCZ EZCAD2 galvo",fields:[{key:"usbSerial",label:"USB serial (if present)",optional:true},{key:"boardId",label:"Board ID (16 hex digits)",placeholder:"From this board’s setup report",optional:true}]},
   { key: "ruida", label: "Ruida DSP laser", fields: [{key:"host",label:"Controller IPv4 address",placeholder:"192.168.1.60"},{key:"magic",label:"Card scramble key (hex)",placeholder:"88, 11 or 10",optional:true}] },
 ];
@@ -1547,7 +1557,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
       ) : null}
       {d.lightburn_readiness && <div className="mt-2"><LightBurnReadiness readiness={d.lightburn_readiness} /></div>}
       {(laser || d.station_kind) && <Link className="inline-flex min-h-11 items-center mt-2 text-sm underline" to={`/station/machine/${connId}/${encodeURIComponent(d.id)}`}>Open machine station</Link>}
-      {d.laser_backend && <DirectLaserControls slug={slug} connectionId={connId} deviceId={d.id} status={job?.status} />}
+      {d.laser_backend && <DirectLaserControls slug={slug} connectionId={connId} deviceId={d.id} status={job?.status} state={d.state} />}
       {laser && !d.laser_backend && job && <p className="mt-2 text-xs text-muted">{job.status === "sent" ? "Start sent, waiting for LightBurn to report running. " : ""}Stop in LightBurn or at the machine</p>}
       {blocked && <div className="mt-1 text-[10px] text-ember-600 dark:text-ember-500">{blocked}</div>}
       {/* A print that finished outside a Cobblr job (no attention row, no verdict
@@ -1558,8 +1568,8 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
       )}
       {/* Next up — what this machine will do next (queued to it or its pool). */}
       {d.next_job && !att && (
-        <div className="mt-1 text-[10px] text-faint truncate" title={d.next_job.file_ref}>
-          ⏭ next: <span className="text-muted dark:text-slate-400">{d.next_job.file_ref}</span>{d.next_job.pooled ? " · pool" : ""}
+        <div className="mt-1 text-[10px] text-faint truncate" title={jobDisplayName(d.next_job)}>
+          ⏭ next: <span className="text-muted dark:text-slate-400">{jobDisplayName(d.next_job)}</span>{d.next_job.pooled ? " · pool" : ""}
         </div>
       )}
       {camOpen && (
@@ -1665,8 +1675,8 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
       {job && (
         <div className="mt-1.5">
           <div className="flex items-center gap-1.5">
-            <div className="flex-1 min-w-0 text-[11px] text-muted dark:text-slate-400 truncate" title={job.file_ref}>
-              {job.file_ref}
+            <div className="flex-1 min-w-0 text-[11px] text-muted dark:text-slate-400 truncate" title={jobDisplayName(job)}>
+              {jobDisplayName(job)}
             </div>
             {job.priority > 0 && (
               <span className={"text-[9px] font-mono uppercase px-1 rounded shrink-0 " + (job.priority >= 20 ? "bg-ember-500/15 text-ember-600 dark:text-ember-400" : "bg-amber-500/15 text-amber-600")}>
@@ -2175,13 +2185,13 @@ function FilesPanel({ slug, connId, deviceId, onZoom, history, onOpenPrint, onRe
       if (nf.length < 4) continue;
       const m = hist.find((h) => {
         if (used.has(h.id)) return false;
-        const nh = normPrintName(h.sub_label || h.file_ref);
+        const nh = normPrintName(h.sub_label || jobDisplayName(h));
         const nh2 = normPrintName(h.file_ref);
         const hit = (x: string) => x.length >= 4 && (nf.includes(x) || x.includes(nf));
         return hit(nh) || hit(nh2);
       });
       if (m) {
-        printedFor.set(f.name, { at: m.at, status: m.status, title: m.file_ref || null, cover: m.cover ?? null });
+        printedFor.set(f.name, { at: m.at, status: m.status, title: jobDisplayName(m) || null, cover: m.cover ?? null });
         used.add(m.id);
       }
     }
@@ -2256,8 +2266,8 @@ function FilesPanel({ slug, connId, deviceId, onZoom, history, onOpenPrint, onRe
                   </span>
                 )}
                 <button type="button" onClick={() => onOpenPrint?.(r)} className="flex-1 min-w-0 text-left hover:text-accent">
-                  <span className="block truncate text-content dark:text-mortar-100">{r.file_ref}</span>
-                  <span className="block truncate text-faint text-[10px]">{r.sub_label && r.sub_label !== r.file_ref ? r.sub_label + " · " : ""}{new Date(r.at).toLocaleDateString()}</span>
+                  <span className="block truncate text-content dark:text-mortar-100">{jobDisplayName(r)}</span>
+                  <span className="block truncate text-faint text-[10px]">{r.sub_label && r.sub_label !== jobDisplayName(r) ? r.sub_label + " · " : ""}{new Date(r.at).toLocaleDateString()}</span>
                 </button>
                 <SourceChip kind="cloud" />
                 {onReprint && isReprintable(r) && (
@@ -2639,7 +2649,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
             <div className="space-y-3 min-w-0">
               <div>
                 <div className={lbl + " mb-1.5"}>Controls</div>
-                {device.laser_backend ? <DirectLaserControls slug={slug} connectionId={connId} deviceId={device.id} status={device.active_job?.status} /> : laser ? <div className="space-y-3 text-sm"><p>Start jobs at this laser's station. Stop or pause in LightBurn or at the machine.</p><Link className="inline-flex min-h-11 items-center text-accent underline" to={`/station/machine/${connId}/${encodeURIComponent(device.id)}`} onClick={onClose}>Open laser station</Link></div> : <ControlsPanel slug={slug} connId={connId} deviceId={device.id} name={device.name} telemetry={t} lanActive={!!detail.data?.lan?.configured && detail.data?.lan?.mode !== "cloud"} />}
+                {device.laser_backend ? <DirectLaserControls slug={slug} connectionId={connId} deviceId={device.id} status={device.active_job?.status} state={device.state} /> : laser ? <div className="space-y-3 text-sm"><p>Start jobs at this laser's station. Stop or pause in LightBurn or at the machine.</p><Link className="inline-flex min-h-11 items-center text-accent underline" to={`/station/machine/${connId}/${encodeURIComponent(device.id)}`} onClick={onClose}>Open laser station</Link></div> : <ControlsPanel slug={slug} connId={connId} deviceId={device.id} name={device.name} telemetry={t} lanActive={!!detail.data?.lan?.configured && detail.data?.lan?.mode !== "cloud"} />}
               </div>
             </div>
           </div>
@@ -2655,7 +2665,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
             <div className={lbl + " mb-1.5"}>On {device.name}  - files &amp; jobs</div>
             {laser ? <div className="space-y-2 text-xs text-muted">
               <p>Upload an SVG or DXF in the Library, choose a material profile and sheet, then preview and queue the layout. For a prepared LightBurn file, save its material and sheet size. Confirm the loaded sheet and review settings at the laser station before Start.</p>
-              <details><summary>Job history</summary>{mine.map(item => <button key={item.id} type="button" onClick={() => setPrintOpen(item)} className="block text-accent hover:underline py-1">{item.file_ref} · {laserState(item.status)}</button>)}</details>
+              <details><summary>Job history</summary>{mine.map(item => <button key={item.id} type="button" onClick={() => setPrintOpen(item)} className="block text-accent hover:underline py-1">{jobDisplayName(item)} · {laserState(item.status)}</button>)}</details>
             </div> : <FilesPanel
               slug={slug}
               connId={connId}
@@ -2680,7 +2690,7 @@ export function PrintDetailModal({ item, onClose, onZoom, onReprint, laser = fal
   const dur = durMin >= 60 ? `${Math.floor(durMin / 60)}h ${durMin % 60}m` : durMin > 0 ? `${durMin}m` : null;
   const row = (k: string, v: ReactNode) => (v ? <div className="flex justify-between gap-3 text-xs py-1 border-b border-line dark:border-slate-800 last:border-0"><span className="text-faint">{k}</span><span className="text-content dark:text-mortar-100 text-right">{v}</span></div> : null);
   return (
-    <Modal open onClose={onClose} title={item.file_ref} size="md">
+    <Modal open onClose={onClose} title={jobDisplayName(item)} size="md">
       <div className="space-y-3">
         {item.cover && (
           // EXTERNAL-IMAGE-OK: the vendor task cover URL from the printer's own API.

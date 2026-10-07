@@ -43,6 +43,14 @@ export interface CoverageSurface {
   applicable?: string[];
   /** A page's route pattern, when the row is a page. */
   path?: string;
+  /** The files that make the surface what it is (the page component, the
+   *  module's ui or api), repository-relative. Stable, so the generated rows
+   *  do not change with every commit. */
+  files?: string[];
+  /** When those files last changed (the newest commit touching them), stamped
+   *  when the rows are posted. A pass from before it is stale: the walk saw a
+   *  different surface. Absent when nobody could tell. */
+  changed_at?: string;
 }
 
 export interface CoverageCell {
@@ -81,15 +89,28 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  *    would hide a known break behind a softer word until someone walked it.
  *  - Not applicable does not age: nothing is owed there.
  *  - A pass older than STALE_AFTER_DAYS is stale; so is a cell whose time
- *    cannot be read, since an undated pass proves nothing. */
-export function cellState(cell: CoverageCell | undefined | null, now: Date | number = Date.now()): CellState {
+ *    cannot be read, since an undated pass proves nothing.
+ *  - A pass from before the surface last changed (`changed_at`) is stale
+ *    however recent: the walk saw a different surface. */
+export function cellState(cell: CoverageCell | undefined | null, now: Date | number = Date.now(), surface?: Pick<CoverageSurface, "changed_at"> | null): CellState {
   if (!cell) return "never";
   if (cell.result === "fail") return "fail";
   if (cell.result === "na") return "na";
+  return staleReason(cell, now, surface) ? "stale" : "pass";
+}
+
+/** Why a pass reads stale, or null when it does not: it is older than
+ *  STALE_AFTER_DAYS (or undated), or the surface changed after it was walked.
+ *  The second is checked first, because it is the stronger reason: a pass
+ *  from yesterday on a page that changed this morning proves nothing. */
+export function staleReason(cell: CoverageCell, now: Date | number = Date.now(), surface?: Pick<CoverageSurface, "changed_at"> | null): "changed" | "old" | null {
+  if (cell.result !== "pass") return null;
   const at = Date.parse(cell.at);
+  if (!Number.isFinite(at)) return "old";
+  const changed = surface?.changed_at ? Date.parse(surface.changed_at) : NaN;
+  if (Number.isFinite(changed) && at < changed) return "changed";
   const nowMs = typeof now === "number" ? now : now.getTime();
-  if (!Number.isFinite(at) || nowMs - at > STALE_AFTER_DAYS * DAY_MS) return "stale";
-  return "pass";
+  return nowMs - at > STALE_AFTER_DAYS * DAY_MS ? "old" : null;
 }
 
 /** The dimensions a surface is walked in. */

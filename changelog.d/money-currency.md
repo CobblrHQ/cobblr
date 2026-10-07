@@ -3,6 +3,7 @@ type: feature
 scope: platform
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#Money and currencies
+docs_published: 2026-10-08
 ---
 Prices kept their original currency, and totals converted them into your workspace currency at purchase-date rates.
 

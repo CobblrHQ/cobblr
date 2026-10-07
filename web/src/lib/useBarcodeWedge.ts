@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import {
+  CTRL_CHORD_CHARS,
   createWedgeDetector,
   type WedgeConfig,
   type WedgeDetector,
@@ -44,12 +45,23 @@ export function useBarcodeWedge({ enabled = true, onScan, config }: UseBarcodeWe
     const handler = (e: KeyboardEvent) => {
       // Don't compete with a field the user is typing into.
       // AltGraph produces printable characters on some scanner layouts.
+      const now = performance.now();
+      // A scanner sends the control characters a reel label carries as Ctrl
+      // chords (Ctrl+] is GS). Inside a scanner burst they are payload, never
+      // a shortcut: kept for the parser, and the browser's own Ctrl+D never
+      // fires mid-scan. Outside a burst a Ctrl chord is a person's shortcut.
+      const chord = e.ctrlKey && !e.altKey && !e.metaKey ? CTRL_CHORD_CHARS[e.key] : undefined;
+      if (chord && !isEditableTarget(e.target) && detector.inBurst(now)) {
+        e.preventDefault();
+        detector.feed(chord, now);
+        return;
+      }
       const shortcut = !e.getModifierState("AltGraph") && (e.ctrlKey || e.metaKey || e.altKey);
       if (isEditableTarget(e.target) || shortcut) {
         detector.reset();
         return;
       }
-      const code = detector.feed(e.key, performance.now());
+      const code = detector.feed(e.key, now);
       if (code) {
         // Swallow the trailing Enter so it can't also trigger something else.
         e.preventDefault();

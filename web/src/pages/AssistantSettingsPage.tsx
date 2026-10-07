@@ -8,7 +8,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import ReactMarkdown from "react-markdown";
+import { MarkdownText } from "@cobblr/platform-web";
 import { Check, MessageCircleQuestion, Pencil, Plus, RotateCcw, Trash2, Wand2 } from "lucide-react";
 import { Modal, useConfirm, useToast, usePageTitle, MutationError } from "@cobblr/platform-web";
 import { ApiError, api, type BasicRuleRow, type BasicAnswer, type BasicMissRow, type CommandCandidate } from "../lib/api";
@@ -222,7 +222,7 @@ function Tester({ slug }: { slug: string }) {
       {result && (
         <div className="mt-3 text-sm">
           <div className="prose prose-sm dark:prose-invert max-w-none text-content dark:text-mortar-100">
-            <ReactMarkdown>{result.reply}</ReactMarkdown>
+            <MarkdownText>{result.reply}</MarkdownText>
           </div>
           <div className="mt-2 text-xs text-muted dark:text-slate-400">
             {result.matched ? (

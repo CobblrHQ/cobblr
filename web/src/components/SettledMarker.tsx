@@ -7,11 +7,18 @@
 // ten nightly areas went unwalked for lack of time (2026-10-03). Between two
 // polls nothing is in flight, so this settles as soon as the page has what it
 // asked for. Renders nothing.
-import { useEffect } from "react";
+//
+// It also counts every request the app makes outside a query (the sign-in
+// check, a one-off read), through lib/in-flight.ts: the app loads in waves
+// (signed in, then the workspace, then the page), and between two waves no
+// query was in flight, so a walk judged a page with nothing on it yet.
+import { useEffect, useSyncExternalStore } from "react";
 import { useIsFetching, useIsMutating } from "@tanstack/react-query";
+import { inFlight, onInFlight } from "../lib/in-flight";
 
 export function SettledMarker() {
-  const busy = useIsFetching() + useIsMutating();
+  const requests = useSyncExternalStore(onInFlight, inFlight, () => 0);
+  const busy = useIsFetching() + useIsMutating() + requests;
   useEffect(() => {
     document.documentElement.dataset.settled = busy === 0 ? "true" : "false";
   }, [busy]);

@@ -10,7 +10,7 @@
 
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FACE_LABELS, FACE_NAMES, type FaceName } from "@cobblr/platform-contract";
+import { FACE_LABELS, FACE_NAMES, type FaceName } from "@cobblr/platform-contract/field-vocabulary";
 import { usePlatformWeb } from "./context";
 import { MutationError } from "./MutationError";
 

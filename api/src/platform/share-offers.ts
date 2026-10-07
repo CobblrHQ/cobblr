@@ -285,7 +285,7 @@ export async function decideOffer(
     .set({ status: decision, decided_at: new Date(), ...(decision === "taken" ? { taken_at: new Date() } : {}), landed: JSON.stringify(landed) as never })
     .where("id", "=", row.id)
     .execute();
-  await enqueueShareOp(row.link_id, "offer.decided", { offer_id: row.peer_offer_id, decision, by_name: await nameOf(opts.userId) }, `offer.decided:${row.id}:${decision}:${Date.now()}`);
+  await enqueueShareOp(row.link_id!, "offer.decided", { offer_id: row.peer_offer_id, decision, by_name: await nameOf(opts.userId) }, `offer.decided:${row.id}:${decision}:${Date.now()}`);
   return { ok: true, ...(landed.org_id !== orgId ? { landed: { orgId: landed.org_id, inboxId: landed.inbox_id } } : {}) };
 }
 
@@ -327,7 +327,7 @@ export async function withdrawOffer(orgId: string, offerId: string, userId: stri
   if (!open(row.status)) return { ok: false, error: `It was already ${row.status}.` };
   await meta.updateTable("share_offers").set({ status: "withdrawn", decided_at: new Date() }).where("id", "=", row.id).execute();
   await clearSourceMark(row.source as Source);
-  await enqueueShareOp(row.link_id, "offer.withdrawn", { offer_id: row.id }, `offer.withdrawn:${row.id}`);
+  await enqueueShareOp(row.link_id!, "offer.withdrawn", { offer_id: row.id }, `offer.withdrawn:${row.id}`);
   return { ok: true };
 }
 
@@ -348,7 +348,7 @@ export async function sendBack(orgId: string, offerId: string, userId: string): 
     }
   }
   await meta.updateTable("share_offers").set({ status: "returned", decided_at: new Date() }).where("id", "=", row.id).execute();
-  await enqueueShareOp(row.link_id, "offer.returned", { offer_id: row.peer_offer_id }, `offer.returned:${row.id}`);
+  await enqueueShareOp(row.link_id!, "offer.returned", { offer_id: row.peer_offer_id }, `offer.returned:${row.id}`);
   return { ok: true };
 }
 
@@ -394,29 +394,32 @@ export interface OfferView {
   taken_at: Date | null;
   can_withdraw: boolean;
   can_send_back: boolean;
+  can_undo?: boolean;
+  send_mode?: "copy" | "move";
 }
 
 /** What has been handed over through this workspace's shares, newest first. */
-export async function listOffers(orgId: string): Promise<OfferView[]> {
+export async function listOffers(orgId: string, userId?: string): Promise<OfferView[]> {
   const rows = await meta
     .selectFrom("share_offers as o")
-    .innerJoin("share_links as l", "l.id", "o.link_id")
-    .select(["o.id", "o.direction", "o.title", "o.status", "o.created_at", "o.taken_at", "l.peer_name"])
-    .where((eb) => eb.or([eb("l.org_id", "=", orgId), eb(sql<string>`o.source->>'org_id'`, "=", orgId)]))
+    .leftJoin("share_links as l", "l.id", "o.link_id")
+    .select(["o.id", "o.direction", "o.title", "o.status", "o.created_at", "o.taken_at", "l.peer_name", "o.transfer", "o.target_org_id", "o.created_by"])
+    .where((eb) => eb.or([eb("l.org_id", "=", orgId), eb(sql<string>`o.source->>'org_id'`, "=", orgId), eb("o.target_org_id", "=", orgId)]))
     .orderBy("o.created_at", "desc")
     .limit(200)
     .execute();
   const now = Date.now();
   return rows.map((r) => ({
     id: r.id,
-    direction: r.direction,
+    direction: r.target_org_id === orgId ? "in" : r.direction,
     title: r.title,
     status: r.status as OfferState,
-    peer_name: r.peer_name,
+    peer_name: r.target_org_id ? String((r.transfer as { target_name?: string; source_name?: string })[r.target_org_id === orgId ? "source_name" : "target_name"] ?? "your workspace") : r.peer_name,
+    ...(r.target_org_id ? { can_undo: r.target_org_id !== orgId && r.created_by === userId && ["complete", "undoing"].includes((r.transfer as { state?: string }).state ?? ""), send_mode: (r.transfer as { mode: "copy" | "move" }).mode } : {}),
     created_at: r.created_at,
     taken_at: r.taken_at,
-    can_withdraw: r.direction === "out" && open(r.status),
-    can_send_back: r.direction === "in" && r.status === "taken" && !!r.taken_at && now - r.taken_at.getTime() <= SEND_BACK_DAYS * 86_400_000,
+    can_withdraw: !r.target_org_id && r.direction === "out" && open(r.status),
+    can_send_back: !r.target_org_id && r.direction === "in" && r.status === "taken" && !!r.taken_at && now - r.taken_at.getTime() <= SEND_BACK_DAYS * 86_400_000,
   }));
 }
 

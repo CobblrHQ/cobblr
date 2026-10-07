@@ -46,18 +46,25 @@ async function declaredPanels(): Promise<DeclaredPanel[]> {
 
 /** Ids the web registry has a component for, by surface. Text-matched rather
  *  than imported: the registry pulls in the whole web app's TSX otherwise. */
-function registeredIds(src: string): { tabs: Set<string>; panels: Set<string> } {
-  const tabs = new Set<string>();
+/** The `"<module>:<panel>": lazy(...)` keys of one named map in the registry. */
+function mapKeys(src: string, name: string): Set<string> {
+  const out = new Set<string>();
+  const start = src.search(new RegExp(`const ${name}\\b[^=]*=\\s*\\{`));
+  if (start < 0) return out;
+  const end = src.indexOf("\n};", start);
+  for (const m of src.slice(start, end < 0 ? undefined : end).matchAll(/["']([a-z][a-z0-9-]*:[a-z][a-z0-9-]*)["']\s*:\s*lazy\(/g)) out.add(m[1]!);
+  return out;
+}
+
+function registeredIds(src: string): { tabs: Set<string>; panels: Set<string>; sections: Set<string> } {
+  const tabs = mapKeys(src, "PAGE_TABS");
+  const sections = mapKeys(src, "CONFIG_SECTIONS");
   const panels = new Set<string>();
-  // PAGE_TABS keys: `"<module>:<panel>": lazy(...)`
-  for (const m of src.matchAll(/["']([a-z][a-z0-9-]*:[a-z][a-z0-9-]*)["']\s*:\s*lazy\(/g)) {
-    tabs.add(m[1]!);
-  }
   // registerDetailPanel("<module>:<panel>", …)
   for (const m of src.matchAll(/registerDetailPanel\(\s*["']([a-z][a-z0-9-]*:[a-z][a-z0-9-]*)["']/g)) {
     panels.add(m[1]!);
   }
-  return { tabs, panels };
+  return { tabs, panels, sections };
 }
 
 async function main(): Promise<void> {
@@ -66,19 +73,21 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   const src = readFileSync(REGISTRY, "utf8");
-  const { tabs, panels } = registeredIds(src);
+  const { tabs, panels, sections } = registeredIds(src);
   const declared = await declaredPanels();
   const failures: string[] = [];
 
   for (const d of declared) {
-    const have = d.surface === "module-page-tab" ? tabs : panels;
+    const have = d.surface === "module-page-tab" ? tabs : d.surface === "configuration-section" ? sections : panels;
     if (!have.has(d.id)) {
       failures.push(
         `${d.module} declares panel "${d.id}" (${d.surface}) but nothing renders it.\n` +
           `    Fix: add it to ${REGISTRY} — ` +
           (d.surface === "module-page-tab"
             ? `a PAGE_TABS entry "${d.id}": lazy(...)`
-            : `registerDetailPanel("${d.id}", lazy(...))`),
+            : d.surface === "configuration-section"
+              ? `a CONFIG_SECTIONS entry "${d.id}": lazy(...)`
+              : `registerDetailPanel("${d.id}", lazy(...))`),
       );
     }
   }

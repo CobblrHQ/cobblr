@@ -18,7 +18,7 @@
 // Seller and where-it-came-from are a pair, never the same: "eBay" is where,
 // "detroitaxle" is who (arrivals.md).
 
-import type { FieldRole } from "@cobblr/platform-contract";
+import type { FieldRole } from "@cobblr/platform-contract/field-vocabulary";
 import {
   PURCHASE_PRICE_NAMES,
   PURCHASE_SELLER_NAMES,

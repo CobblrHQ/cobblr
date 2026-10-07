@@ -20,7 +20,7 @@ import { useLater, usePageTitle, useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, ApiError, type BundleValidation } from "../lib/api";
 import { Cobb } from "../components/Cobb";
-import { pluralise, itemNounFor } from "@cobblr/platform-contract";
+import { pluralise, itemNounFor } from "@cobblr/platform-contract/plural";
 
 // Tolerant: pull the first {…} block out of a paste (handles "Here's your
 // bundle: { … }" prose around the JSON).

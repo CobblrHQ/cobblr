@@ -575,7 +575,7 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     icon: Activity,
     label: "Activity log",
     description:
-      "Every mutation, attributed to who (UI / api token / system) and when. Filterable.",
+      "Everything that changed in this workspace: who did it, how, and when.",
     to: "/activity",
     minRole: "member",
     module: "core-activity-log",

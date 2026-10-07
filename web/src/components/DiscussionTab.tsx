@@ -26,7 +26,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useLater, useToast, useConfirm, relativeTime, ContextChip, discussionRecordOf, openDiscussion } from "@cobblr/platform-web";
+import { useLater, useToast, useConfirm, relativeTime, ContextChip, discussionRecordOf, openDiscussion, walkPages } from "@cobblr/platform-web";
 import { clearChatSelection, useChatSelection } from "../lib/chat-context";
 import { api, ApiError, type DiscussionComment } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -390,7 +390,8 @@ export function DiscussionTab() {
   // second endpoint that could answer differently.
   const inbox = useQuery({
     queryKey: ["discussion-inbox", activeSlug],
-    queryFn: () => api.discussionInbox(activeSlug),
+    // Every page: a record further down the inbox is followed all the same.
+    queryFn: () => walkPages((offset, limit) => api.discussionInbox(activeSlug, undefined, { offset, limit })),
     enabled: !!activeSlug && active,
     staleTime: 30_000,
   });

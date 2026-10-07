@@ -9,10 +9,18 @@
 //
 // The standing door is `InstallThisPhoneItem` in the account menu: it ignores
 // "Not now", so a person who declined can still find it.
-import { useState } from "react";
+import { lazy, Suspense, useState, type ComponentProps } from "react";
 import { Smartphone } from "lucide-react";
 import { Modal, registerTip, type Tip } from "@cobblr/platform-web";
-import { InstallWalkBody } from "../components/InstallWalk";
+// The walk's steps load when it is shown, not with every page (#4945).
+const InstallWalkLazy = lazy(() => import("../components/InstallWalk").then((m) => ({ default: m.InstallWalkBody })));
+function InstallWalkBody(props: ComponentProps<typeof InstallWalkLazy>) {
+  return (
+    <Suspense fallback={<div className="h-40" aria-busy="true" />}>
+      <InstallWalkLazy {...props} />
+    </Suspense>
+  );
+}
 import { dismissInstall, installDismissed, installRoute, readInstallEnv, shouldOfferInstall, type InstallRoute } from "../lib/install-app";
 
 export const INSTALL_TIP_ID = "install-app";

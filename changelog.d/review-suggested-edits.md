@@ -3,6 +3,7 @@ type: feature
 scope: sharing
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#4.5g Sharing (`/configuration/sharing`)
+docs_published: 2026-10-08
 ---
 Edits suggested by someone you share with now wait where you look: on the thing itself, on a new **Suggested edits** page, and in Needs you. Accept or reject each one, a whole record's or a whole person's at once, and undo either. When you changed the same field too, you choose whose value stays. You hear about their edits once per burst, and they hear your answer.
 

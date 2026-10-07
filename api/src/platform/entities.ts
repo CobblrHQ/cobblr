@@ -1,3 +1,4 @@
+import { aggregateOf } from "@cobblr/platform-contract/field-aggregate";
 import { GroupingError, normalizeGrouping } from "@cobblr/platform-contract/grouped-list";
 import { moneyStorageOf } from "@cobblr/platform-contract/money";
 import { resolveFieldDefsForKind } from "./field-defs.js";
@@ -914,7 +915,7 @@ export async function list(
   }
   const publicRead = viewer?.publicRead === true;
   const resolver = listResolvers.get(kind) ?? (await instanceFallbackResolver(orgId, kind));
-  if (!resolver) return { items: [] };
+  if (!resolver) return { items: [], unlisted: "no-such-list" };
   // A kind whose module this workspace never enabled has no tables in that
   // tenant, so calling its resolver can only raise `relation "<x>" does not
   // exist`. listKindsForOrg already filters the kind LISTING for this reason
@@ -924,7 +925,7 @@ export async function list(
   // Guarding the chokepoint covers them and anyone who shows up next.
   // Instance kinds are already org-scoped by instanceFallbackResolver.
   const baseModule = listResolvers.has(kind) ? kind.split(":")[0] : undefined;
-  if (baseModule && !(await moduleEnabledForOrg(orgId, baseModule))) return { items: [] };
+  if (baseModule && !(await moduleEnabledForOrg(orgId, baseModule))) return { items: [], unlisted: "module-off" };
   const whitelist = await getExposableFields(kind);
   const fieldReadScopes = await getFieldReadScopes(kind, orgId);
   // Resolve the viewer's field-read access ONLY when the kind actually
@@ -955,18 +956,30 @@ export async function list(
       if (group.bucket && (!def || !["date", "datetime"].includes(def.type))) throw new GroupingError("Date buckets need a date column.");
     }
     if (Object.keys(query.filter ?? {}).some((f) => hidden.has(f)) || query.where?.some((p) => hidden.has(p.col) || (p.ref_col && hidden.has(p.ref_col)))) throw new GroupingError("A grouped view cannot filter by a field you cannot read.");
-    const fields = new Map<string, { name: string; money?: "amount" | "cents" }>();
+    // Only what adds up is totalled (@cobblr/platform-contract/field-aggregate):
+    // a per-unit field (length per ball, price each) is value x the kind's
+    // quantity or nothing, never a sum of the values (#5079).
+    const quantity = record.fields.find((f) => f.role === "quantity" && allowed(f.name))?.name;
+    const fields = new Map<string, { name: string; money?: "amount" | "cents"; times?: string }>();
+    const weightedBy: Record<string, string> = {};
     for (const f of defs) {
       if (!allowed(f.name)) continue;
       const money = moneyStorageOf(f);
-      if (money || f.type === "number") fields.set(f.name, { name: f.name, ...(money ? { money } : {}) });
+      if (!money && f.type !== "number") continue;
+      const how = aggregateOf({ type: f.type, aggregate: (f as { aggregate?: string | null }).aggregate, money });
+      if (how === "none") continue;
+      if (how === "per_unit") {
+        if (!quantity) continue;
+        weightedBy[f.name] = quantity;
+      }
+      fields.set(f.name, { name: f.name, ...(money ? { money } : {}), ...(how === "per_unit" ? { times: quantity } : {}) });
     }
     const hasStock = record.fields.some((f) => f.name === "spare_qty");
     const places = hasStock || by.some((g) => g.field === "location") ? await platform().placement.groupValues({ orgId, kind }) : undefined;
     const stock = hasStock ? places?.numbers : undefined;
     const hideFlag = query.filter?.hide_unavailable;
     const hideUnavailable = hideFlag === true || hideFlag === "true" || hideFlag === "1";
-    query = { ...query, q: undefined, group_plan: { by, fields: [...fields.values()], currency: await workspaceCurrency(orgId), ...(stock ? { numbers: stock, ...(hideUnavailable ? { where: sql<boolean>`${stock.spare_qty!} > 0` } : {}) } : {}), ...(by.some((g) => g.field === "location") ? { values: places?.values } : {}), search: query.q, search_fields: [...new Set(["name", ...defs.filter((f) => allowed(f.name)).map((f) => f.name)])] } };
+    query = { ...query, q: undefined, group_plan: { by, fields: [...fields.values()], weighted_by: weightedBy, currency: await workspaceCurrency(orgId), ...(stock ? { numbers: stock, ...(hideUnavailable ? { where: sql<boolean>`${stock.spare_qty!} > 0` } : {}) } : {}), ...(by.some((g) => g.field === "location") ? { values: places?.values } : {}), search: query.q, search_fields: [...new Set(["name", ...defs.filter((f) => allowed(f.name)).map((f) => f.name)])] } };
   }
 
   // Own-workspace results first.

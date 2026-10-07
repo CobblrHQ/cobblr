@@ -28,6 +28,7 @@ import { goneWorkspaceMessage, noteGoneWorkspace, takeGoneWorkspace } from "../l
 import { BootScrim } from "../components/BootScrim";
 import { useToast } from "@cobblr/platform-web";
 import type { OrgMembership } from "../lib/api";
+import { mayRead, rememberRole } from "../lib/acting-role";
 
 const STORAGE_KEY = "cobblr.activeOrgSlug";
 
@@ -116,6 +117,8 @@ export function ActiveOrgProvider({
     }
     return resolveHandle(urlHandle, orgs);
   }, [urlHandle, orgs, imp]);
+  // In render, before any page below starts a query (lib/acting-role.ts).
+  if (org) rememberRole(org.slug, org.role);
 
   // If the URL handle doesn't resolve to a membership (deleted, revoked, wrong
   // account, typo, or a shared/placeholder slug like a docs link), go where the
@@ -123,7 +126,7 @@ export function ActiveOrgProvider({
   // operator legitimately isn't a member of the workspace they're viewing).
   // `orgs` is authoritative here: it arrives with the user, and this provider
   // only renders once there is one, so an empty list means no workspace at all.
-  const money = useQuery({ queryKey: ["workspace-currency", org?.slug], queryFn: () => api.workspaceCurrency(org!.slug), enabled: !!org });
+  const money = useQuery({ queryKey: ["workspace-currency", org?.slug], queryFn: () => api.workspaceCurrency(org!.slug), enabled: !!org && mayRead(`/orgs/${org.slug}/currency`) });
   const unknown = !org && !imp;
   useEffect(() => {
     if (!unknown) return;

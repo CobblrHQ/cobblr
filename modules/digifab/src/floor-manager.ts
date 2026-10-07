@@ -60,7 +60,7 @@ export async function floorStock(orgId: string, viewer: EntityViewer = SYSTEM_VI
 export async function floorSnapshot(db: Kysely<DigifabDB>, orgId: string, viewer: EntityViewer) {
  const [stock, candidates, jobs, batches, profiles, drawings, pools, members] = await Promise.all([
   floorStock(orgId, viewer), gatherCandidates(orgId, db),
-  db.selectFrom("digifab_jobs").select(["id", "connection_id", "target_device", "target_pool", "file_ref", "status", "progress", "eta_sec", "material_type", "material_part_id", "material_grams", "material_grams_by_tool", "priority", "error", "run_id", "created_at"]).where("status", "not in", ["completed", "cancelled", "failed"]).orderBy("priority", "desc").orderBy("created_at", "asc").execute(),
+  db.selectFrom("digifab_jobs").select(["id", "connection_id", "target_device", "target_pool", "file_ref", "metadata", "status", "progress", "eta_sec", "material_type", "material_part_id", "material_grams", "material_grams_by_tool", "priority", "error", "run_id", "created_at"]).where("status", "not in", ["completed", "cancelled", "failed"]).orderBy("priority", "desc").orderBy("created_at", "asc").execute(),
   db.selectFrom("digifab_material_dispatches").selectAll().where("status", "not in", ["dispatched", "cancelled"]).orderBy("created_at", "asc").execute(),
   db.selectFrom("digifab_laser_profiles").select(["profile", "connection_id", "remote_device_id"]).execute(),
   db.selectFrom("digifab_library").select(["id", "name", "kind"]).where("kind", "in", ["svg", "dxf"]).orderBy("name", "asc").execute(),

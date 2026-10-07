@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-05
 docs_target: docs/USER_GUIDE.md#Direct laser jobs
+docs_published: 2026-10-08
 ---
 Added direct G-code laser jobs with material profiles, a settings review, laser-off framing and station controls without requiring LightBurn.
 

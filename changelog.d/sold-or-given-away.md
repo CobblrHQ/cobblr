@@ -3,6 +3,7 @@ type: feature
 scope: records
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#4.2 Actions + the EntityActionsBar
+docs_published: 2026-10-08
 ---
 A thing you sold, gave away or threw out can now say so. **No longer mine…** on its page asks how it left, when, for how much and to whom; it then leaves your lists and totals (an asset no longer counts in "paid X in all"), stays findable under **Gone** and in search, and its page reads "Sold 2026-09-12 for $180 to a neighbour · kept 3 years 2 months". **Bring back** undoes it, and you can tell the assistant ("I sold the old Ender 3 for $120").
 

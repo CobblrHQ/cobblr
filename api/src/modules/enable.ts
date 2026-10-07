@@ -13,7 +13,7 @@ import { readdirSync } from "node:fs";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { runMigrations } from "../db/migrate.js";
-import { describeMigrationFiles, healthVerdict, moduleIsBehind, newerName, type ModuleMigrationFiles } from "./migration-currency.js";
+import { describeMigrationFiles, healthVerdict, moduleIsBehind, newerName, pendingCause, type ModuleMigrationFiles, type PendingCause } from "./migration-currency.js";
 import { getTenantPool, evictTenantPool } from "../db/tenant.js";
 import { canonicalModuleName, getEntry, listEntries } from "./registry.js";
 import * as activity from "../platform/activity.js";
@@ -608,8 +608,11 @@ export interface MigrationSummary {
   /** `unprovisioned_workspaces`: workspaces with module rows and no tenant
    *  database this api can open. Never pending (there is nothing to migrate
    *  into) and never a refusal, but said, so a half-made signup stays in
-   *  sight instead of vanishing from every count. */
-  pending: { count: number; modules: string[]; unprovisioned_workspaces: number };
+   *  sight instead of vanishing from every count.
+   *  `causes`: how many pending pairs are each kind (pendingCause), and
+   *  `breaking`: a declared peer's breaking migrations as module/file, so the
+   *  deploy reader names the cause it has instead of listing three. */
+  pending: { count: number; modules: string[]; unprovisioned_workspaces: number; causes: Record<PendingCause, number>; breaking: string[] };
   ahead: { count: number; modules: string[]; peer: string | null };
 }
 let pendingCache: { at: number; value: MigrationSummary } | null = null;
@@ -637,6 +640,8 @@ export async function pendingMigrationSummary(): Promise<MigrationSummary> {
   const peer = process.env.COBBLR_SHARED_DB_PEER?.trim() || undefined;
   let count = 0;
   const modules = new Set<string>();
+  const causes: Record<PendingCause, number> = { own: 0, downgrade: 0, peer_breaking: 0 };
+  const breaking = new Set<string>();
   let aheadCount = 0;
   const aheadModules = new Set<string>();
   for (const row of rows) {
@@ -644,13 +649,16 @@ export async function pendingMigrationSummary(): Promise<MigrationSummary> {
     if (verdict === "pending") {
       count++;
       modules.add(row.module_name);
+      const cause = pendingCause(row, filesFor(row.module_name), peer);
+      if (cause) causes[cause]++;
+      if (cause === "peer_breaking" && row.newest_breaking_migration) breaking.add(`${row.module_name}/${row.newest_breaking_migration}`);
     } else if (verdict === "ahead") {
       aheadCount++;
       aheadModules.add(row.module_name);
     }
   }
   const value: MigrationSummary = {
-    pending: { count, modules: [...modules].sort(), unprovisioned_workspaces: unprovisioned },
+    pending: { count, modules: [...modules].sort(), unprovisioned_workspaces: unprovisioned, causes, breaking: [...breaking].sort() },
     ahead: { count: aheadCount, modules: [...aheadModules].sort(), peer: peer ?? null },
   };
   pendingCache = { at: Date.now(), value };
@@ -680,7 +688,10 @@ export async function pendingMigrationSummary(): Promise<MigrationSummary> {
  */
 export async function enableDefaultModulesForOrg(
   orgId: string,
-  userId?: string,
+  // Who signed up. Not the actor: the platform turns these on, so the
+  // activity log says "Set up for you: Tags", never "You turned on Tags"
+  // twenty times for a person who only signed up.
+  _signedUpBy?: string,
 ): Promise<string[]> {
   const enabled: string[] = [];
   const foundationals = listEntries().filter(
@@ -720,7 +731,7 @@ export async function enableDefaultModulesForOrg(
 
   for (const entry of sortByDeps(foundationals)) {
     try {
-      const result = await enableModuleForOrg(orgId, entry.manifest.name, { userId });
+      const result = await enableModuleForOrg(orgId, entry.manifest.name, {});
       if (!result.alreadyEnabled) enabled.push(entry.manifest.name);
     } catch (err) {
       notePassFailure("enable.defaults", `${orgId}:${entry.manifest.name}`, err);

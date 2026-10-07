@@ -1,0 +1,10 @@
+{
+  "lint": "lint:bundle-number-fields-say-how-they-add-up",
+  "run": "node scripts/lint-bundle-number-fields-say-how-they-add-up.ts",
+  "rows": [
+    "bundle"
+  ],
+  "ms": 16944,
+  "recorded": "2026-10-07",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

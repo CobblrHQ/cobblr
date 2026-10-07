@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-10-06
 docs_target: docs/USER_GUIDE.md#1.2 Scanning, the spine
+docs_published: 2026-10-08
 ---
 A tablet and a barcode scanner can be a station of their own: scan something and it shows what it is, with +1, Used one, Set total and Move to, or the scan inbox's card for something new.
 

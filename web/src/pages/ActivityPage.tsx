@@ -7,7 +7,7 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import { Filter, KeyRound, ShieldCheck, Wrench } from "lucide-react";
 import { api, type ActivityEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { usePageTitle } from "@cobblr/platform-web";
+import { usePageTitle, relativeTime } from "@cobblr/platform-web";
 import { QueryError } from "../components/QueryError";
 import { FEED_SCROLL_PAGE } from "../lib/feed";
 import { ActorVia } from "../components/ActorVia";
@@ -17,6 +17,14 @@ import { activityKind } from "../lib/activityKind";
 import { useKindLabels } from "../lib/useKindLabels";
 
 type AuthMethod = "session" | "api_token" | "system";
+
+/** How each way a change was made reads to a person. */
+const MADE_BY: Record<AuthMethod | "all", string> = {
+  all: "any way",
+  session: "in the app",
+  api_token: "with a token",
+  system: "by Cobblr",
+};
 
 export function ActivityPage() {
   usePageTitle("Activity");
@@ -48,7 +56,7 @@ export function ActivityPage() {
       <div className="flex items-center gap-4 flex-wrap text-xs">
         <div className="flex items-center gap-1.5">
           <Filter size={11} className="text-faint" />
-          <span className="font-mono uppercase tracking-widest text-[10px] text-muted">auth</span>
+          <span className="font-mono uppercase tracking-widest text-[10px] text-muted">made</span>
           {(["all", "session", "api_token", "system"] as const).map((f) => (
             <button
               key={f}
@@ -61,16 +69,16 @@ export function ActivityPage() {
                   : "text-faint hover:text-accent")
               }
             >
-              {f === "api_token" ? "api" : f}
+              {MADE_BY[f]}
             </button>
           ))}
         </div>
         <label className="flex items-center gap-1.5">
-          <span className="font-mono uppercase tracking-widest text-[10px] text-muted">entity</span>
+          <span className="font-mono uppercase tracking-widest text-[10px] text-muted">about</span>
           <input
             value={entityFilter}
             onChange={(e) => setEntityFilter(e.target.value)}
-            placeholder="part / wire / bundle / …"
+            placeholder="what it was about"
             className="input !w-44 !py-1 text-xs"
           />
         </label>
@@ -119,8 +127,9 @@ function ActivityRow({ entry, labels }: { entry: ActivityEntry; labels: KindLabe
       <div className={ACTIVITY_FEED_LAYOUT}>
         <ActivityThumbnail entry={entry} labels={labels} />
         <ActivitySentence entry={entry} labels={labels} />
-        <time dateTime={entry.occurred_at} className="font-mono text-[10px] text-faint shrink-0">
-          {new Date(entry.occurred_at).toLocaleString()}
+        {/* The same "3 min ago" the dashboard says; the exact moment on hover. */}
+        <time dateTime={entry.occurred_at} title={new Date(entry.occurred_at).toLocaleString()} className="font-mono text-[10px] text-faint shrink-0">
+          {relativeTime(entry.occurred_at)}
         </time>
       </div>
       {/* What an admin needs to trace it, a tap down, in words: how it was

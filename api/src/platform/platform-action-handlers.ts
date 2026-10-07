@@ -1,5 +1,8 @@
+import { SendError, sendRecords, previewSend, undoSend, type SendRequest } from "./record-send.js";
+import { SendBody } from "../routes/record-send.js";
 import { EditRecordActionLayout, editRecordActionLayout, readRecordActionLayout } from "./record-action-layout.js";
-import { ACTION_GROUPS, RecordActionLayout, similarActionGroup } from "@cobblr/platform-contract/action-groups";
+import { ACTION_GROUPS, similarActionGroup } from "@cobblr/platform-contract/action-groups";
+import { RecordActionLayout } from "@cobblr/platform-contract/action-groups-schema";
 import { restore as restoreDeletedRecord } from "./deleted-records.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { restoreHistoryVersion } from "./history-restore.js";
@@ -1123,6 +1126,8 @@ export function registerPlatformActionHandlers(): void {
         instance: result.instance.instance_name,
         module: result.instance.module_name,
         kind: `${result.instance.instance_name}:item`,
+        // The list itself, so whatever says it was made can open it (#5067).
+        touched: [{ kind: "instance", id: result.instance.instance_name, label: displayName, href: `/instances/${result.instance.instance_name}` }],
       },
     };
   });
@@ -2042,6 +2047,65 @@ export function registerPlatformActionHandlers(): void {
       return { ok: true, summary: `${take ? "Took" : "Left"} ${what}.${refused ? ` ${refused}` : ""}` };
     });
   }
+
+  // One reading of the send's arguments for the plan and the run: a call the
+  // route would refuse as a bad body is refused here in its words, and only
+  // SendError (a sentence written for the person) is a refusal. Anything
+  // else thrown is a crash with a ref, never a message read out as a reason.
+  const sendArgs = (ctx: ActionInvokeContext): { p: SendRequest } | { error: string } => {
+    const parsed = SendBody.safeParse(ctx.args ?? {});
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      return { error: `${issue?.path.join(".") || "the arguments"}: ${issue?.message ?? "not understood"}` };
+    }
+    return { p: parsed.data as SendRequest };
+  };
+  const previewLines = (preview: Awaited<ReturnType<typeof previewSend>>) =>
+    [...(preview.blocked ?? []), ...preview.items.flatMap((i) => [i.name, ...i.mappings.map((m) => `${m.from}: ${m.to ?? "no field here"}`), ...i.needs])];
+  registerPlanner("platform.send-records", async (ctx: ActionInvokeContext) => {
+    const a = sendArgs(ctx);
+    if ("error" in a) return { error: a.error };
+    try {
+      const preview = await previewSend(ctx.orgId, ctx.userId!, a.p);
+      return { title: `${a.p.mode === "move" ? "Move" : "Copy"} to ${preview.target.name}`, lines: previewLines(preview) };
+    } catch (err) {
+      if (err instanceof SendError) return { error: err.message };
+      throw err;
+    }
+  });
+  registerHandler("platform.send-records", async (ctx: ActionInvokeContext) => {
+    const a = sendArgs(ctx);
+    if ("error" in a) return { ok: false, error: a.error };
+    try {
+      // A preview sends nothing, so it is never answered as acted: the
+      // mapping comes back in words, as a decline, for MCP to read before it
+      // sends for real (ok means acted, action-result.ts).
+      if (a.p.dry_run) {
+        const preview = await previewSend(ctx.orgId, ctx.userId!, a.p);
+        return { ok: false, skipped: true, error: `Preview only, nothing was sent. To ${preview.target.name}: ${previewLines(preview).join("; ")}.`, data: preview };
+      }
+      const result = await sendRecords(ctx.orgId, ctx.userId!, { ...a.p, dry_run: false });
+      return { ...result, ok: true, data: result };
+    } catch (err) {
+      if (err instanceof SendError) return { ok: false, error: err.message };
+      throw err;
+    }
+  });
+  registerUndo("platform.send-records", (result) => {
+    const ids = (result as { data?: { offer_ids?: string[] } })?.data?.offer_ids;
+    return ids?.length ? ids.map((id) => ({ action_id: "platform:undo-send", args: { id } })) : null;
+  });
+  registerHandler("platform.undo-send", async (ctx: ActionInvokeContext) => {
+    const id = typeof ctx.args?.id === "string" ? ctx.args.id.trim() : "";
+    if (!id) return { ok: false, error: "id is required: the send's id, from list_actions with send_targets." };
+    try {
+      await undoSend(ctx.orgId, ctx.userId!, id);
+      return { ok: true, summary: "That send is undone: the copy there is gone and anything moved is back here." };
+    } catch (err) {
+      if (err instanceof SendError) return { ok: false, error: err.message };
+      throw err;
+    }
+  });
 
   registerHandler("platform.offer-to", async (ctx: ActionInvokeContext) => {
     const a = await offerArgs(ctx);

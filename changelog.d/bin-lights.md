@@ -3,6 +3,7 @@ type: feature
 scope: locations
 date: 2026-10-04
 docs_target: docs/USER_GUIDE.md#3.12 Locations (foundational)
+docs_published: 2026-10-08
 ---
 Added bin lights through WLED or Home Assistant, with grid mapping, Show me, and picking that lights the next bin.
 

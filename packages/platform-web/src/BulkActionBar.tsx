@@ -16,6 +16,7 @@
 // this". Cobb is one of the ACTIONS here now, so pointing him at a selection is
 // something you ask for.
 
+import { SendRecords } from "./SendRecords";
 import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { MessageSquare, X } from "lucide-react";
 import { usePlatformWeb } from "./context";
@@ -25,6 +26,7 @@ import { clearBarSelection } from "./chat-context";
 
 interface Props {
   count: number;
+  records?: { kind: string; ids: string[] };
   /** Action buttons to render between the count and the dismiss
    *  button. Each consumer page decides what actions make sense
    *  (delete / tag / move / etc.). */
@@ -35,11 +37,12 @@ interface Props {
   onAskCobb?: (() => void) | null;
 }
 
-export function BulkActionBar({ count, actions, onClear, onAskCobb }: Props) {
+export function BulkActionBar({ count, actions, onClear, onAskCobb, records }: Props) {
   const { cobbIcon: Cobb } = usePlatformWeb();
   const actionsRef = useRef<HTMLDivElement>(null);
   const iconsOnly = useIconsBesidePanel(actionsRef, count > 0);
-  if (count === 0) return null;
+  const [sendOpen, setSendOpen] = useState(false);
+  if (count === 0 && !sendOpen) return null;
   return (
     /* ONE line, always, clear of the floating chat button, and the CLOSE never
        moves.
@@ -51,6 +54,7 @@ export function BulkActionBar({ count, actions, onClear, onAskCobb }: Props) {
        control that gets you out could scroll off the edge. The count and the X
        are pinned; only the actions between them slide. */
     <FloatingChrome
+      style={count === 0 ? {display: "none"} : undefined}
       anchor="corner"
       stack={CORNER_STACK.selectionBar}
       lift="var(--bulk-bar-lift, 5rem)"
@@ -70,6 +74,7 @@ export function BulkActionBar({ count, actions, onClear, onAskCobb }: Props) {
       </span>
       <span className="shrink-0 text-faint dark:text-slate-600">·</span>
       <div ref={actionsRef} className="flex min-w-0 items-center gap-1 sm:gap-2 overflow-x-auto no-scrollbar">
+        {records && <SendRecords kind={records.kind} ids={records.ids} onDone={onClear} onOpenChange={setSendOpen} />}
         {actions}
         {onAskCobb && (
           <button

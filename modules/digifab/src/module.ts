@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "digifab",
-  version: "0.32.2",
+  version: "0.32.7",
   displayName: "Digital Fabrication",
   description:
     "Send a design to the software that runs your machine (FDM Monster, OctoPrint and others) and follow the job until it is done.",
@@ -37,8 +37,11 @@ export default defineModule({
   // until done (no cron). Same dynamic-import shape as `api`.
   lifecycle: {
     onBoot: async () => {
+      const { registerKilnMonitor } = await import("./kilns/monitor.js");
+      registerKilnMonitor();
       const { registerPollWorker } = await import("./poll-worker.js");
       registerPollWorker();
+    (await import("./large-format/supplies.js")).registerSupplyPolling();
       // One-shot heal: detectors onto adapter connections (see
       // heal-detectors-to-connections.ts for the retirement condition).
       const { registerDetectorsToConnectionsHeal } = await import("./heal-detectors-to-connections.js");
@@ -71,6 +74,18 @@ export default defineModule({
 
   provides: {
     entityKinds: [
+      {
+        // AI-CRUD: no create/update/delete: creation and completion share the kiln-log action; firing recipes stay immutable.
+        id: "digifab:firing", displayName: "Firing", displayNamePlural: "Firings", icon: "flame", profile: "work-item",
+        fields: [{ name: "name", type: "text", role: "title", required: true }, { name: "status", type: "text" }, { name: "peak_c", type: "number" }, { name: "duration_hours", type: "number" }],
+        exposableFields: ["name", "status", "peak_c", "duration_hours"],
+      },
+      {
+        // AI-CRUD: no create/update/delete, immutable readings come from digifab:instrument and remain evidence.
+        id: "digifab:instrument-reading",displayName:"Instrument reading",displayNamePlural:"Instrument readings",icon:"activity",profile:"work-item",
+        fields:[{name:"identity",type:"text",role:"title"},{name:"measured_at",type:"text"},{name:"readings",type:"object"},{name:"screenshot_file_id",type:"text"}],
+        exposableFields:["identity","measured_at","readings","screenshot_file_id"],
+      },
       {
         // AI-CRUD: no create — jobs are created by the send-to-machine flow
         // (file + machine + driver), not a generic POST.
@@ -131,6 +146,8 @@ export default defineModule({
     // Components live in web/src/panels/registry.tsx under these ids; the
     // machines pages render them generically, never naming digifab.
     panels: [
+      { id: "digifab:kiln", surface: "entity-detail-panel" as const, target: "machines:machine", title: "Firing logs" },
+      {id: "digifab:instrument",surface:"entity-detail-panel" as const,target:"machines:machine",title:"Bench instrument"},
       // "Just my 3D printers, live" — the scoped fleet floor as a page tab
       // on every machines collection (3D Printers, Laser Cutters, …).
       { id: "digifab:fleet-tab", surface: "module-page-tab" as const, target: "machines", title: "Fleet" },
@@ -217,9 +234,32 @@ export default defineModule({
     ],
     // Who hears that a print is waiting for its one yes (Configuration > Who gets told).
     notifications: [
+      {eventType:"digifab.ink.low",label:"Printer ink is running low",description:"An IPP printer reports an ink or toner supply at 10 percent or less. One alert until a known refill."},
       { eventType: "digifab.make.ready", label: "A print is ready to start", description: "Print this has sliced a model for a printer; the print waits on its Make for someone to start it." },
     ],
     actions: [
+      {
+        // UI-SCREEN: /machines
+        id: "digifab:kiln-log", label: "Record kiln firings", scope: "workspace", group: "more", userInvokable: false, effect: "writes", undoable: false,
+        description: "Save a kiln profile, create a firing log with schedule and every piece, or finish a log with measured hours and peak temperature. Requires an admin. Never starts or stops a kiln. Profile id is machine id, fields: connection_id, device_id, components (name, interval_hours, replaced_at_hours). Create id is a new UUID, fields: machine_id, firing (name, cone, schedule of ramp_c_per_hour/target_c/hold_minutes, pieces of kind/id, glazes of part_id/ml and optional kind for an Inventory collection (must be liquid workshop stock), notes). Finish id is firing id, fields: duration_hours, peak_c, outcome completed/failed/stopped.",
+        examples: ["log this glaze firing and all its pieces", "replace the kiln elements after 200 firing hours"], invokeHandler: "digifab.kiln-log",
+        argsSchema: {
+          operation: { label: "Operation", type: "text", required: true, choices: ["profile", "create", "finish"].map(value => ({ value, label: value })) },
+          id: { label: "Machine or firing id", type: "text", required: true },
+          fields: { label: "Profile or log fields", type: "json", required: true },
+        },
+      },
+      {
+        // UI-SCREEN: /station/machine/:connectionId/:deviceId
+        id:"digifab:large-format",label:"Prepare and account for a large-format print",scope:"workspace",group:"more",userInvokable:false,
+        description:"Plan PDF/image prints on loaded Roll stock; refresh IPP/SNMP supplies; record roll and Liquid ink use. Admin required; members Stop through digifab:stop. Plan fields: connection_id, device_id, library_id, roll_id, copies, margin_mm, media_type, image width_mm and height_mm. Outcome id is the job; fields: station_token, verdict, used_length_m, idle_confirmed:true, ink [{stock_id,kind,amount_ml,estimated:true}]. Start requires station review through digifab:send. Read via read_laser_batch large_format_station or large_format_jobs.",
+        invokeHandler:"digifab.large-format",effect:"writes",undoable:false,
+        argsSchema: {
+          operation: {label:"Operation",type:"text",required:true,choices:["plan","refresh","outcome"].map(value=>({value,label:value}))},
+          fields: {label:"Print fields",type:"json",required:true},
+          id: {label:"Job id",type:"text"},
+        },
+      },
       {
         // UI-SCREEN: /digifab/manager
         id: "digifab:dispatch-material", label: "Dispatch a laser batch by material", scope: "workspace", group: "more", userInvokable: false,
@@ -232,10 +272,17 @@ export default defineModule({
         },
       },
       {
+        // UI-SCREEN: /machines/:id
+        id: "digifab:instrument",label:"Read a bench instrument",scope:"workspace",group:"more",userInvokable:false,
+        description:"Identify or read a SCPI instrument, log a fresh reading to a workspace record, or turn the power supply's selected output off. Never enables outputs or changes settings. Log needs record_kind and record_id.",
+        invokeHandler:"digifab.instrument",effect:"writes",undoable:false,
+        argsSchema:{machine_id:{label:"Machine",type:"text",required:true},operation:{label:"Operation",type:"text",required:true,choices:["identify","read","log","output_off"].map(value=>({value,label:value.replaceAll("_"," ")}))},record_kind:{label:"Record kind",type:"text"},record_id:{label:"Record",type:"text"}},
+      },
+      {
         // UI-SCREEN: /station/machine/:connectionId/:deviceId
         id: "digifab:laser-setup", label: "Set up a laser at its station", scope: "workspace", group: "more", userInvokable: false,
         description: "Read G-code laser configuration, explicitly home it or confirm its firmware build settings. Home and confirmation require an admin and the authorized station credential. Never changes firmware or starts a cut.",
-        invokeHandler: "digifab.laser-setup", effect: "writes", undoable: false,
+        invokeHandler: "digifab.laser-setup", effect: "physical", undoable: false,
         argsSchema: {
           connection_id: {label:"Connection",type:"text",required:true},device_id:{label:"Device",type:"text",required:true},
           operation:{label:"Operation",type:"text",required:true,choices:["read","home","commission"].map(value=>({value,label:value}))},
@@ -244,15 +291,50 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /station/machine/:connectionId/:deviceId
+        // Stop is its own action, and it never waits for a yes (#5091).
+        group: "more", id: "digifab:stop", label: "Stop a machine", scope: "workspace", userInvokable: false,
+        description: "Stop or pause what a machine is doing: the job it is running by job_id, or a laser, cutter, resin or large-format machine by connection_id and device_id. Runs at once, with no confirm: it only brings a machine toward stopped and never starts or resumes anything. Workspace members may stop a machine. Use the machine's physical Stop in an emergency too.",
+        examples: ["stop the laser", "stop that print", "pause the resin printer"],
+        invokeHandler: "digifab.stop", effect: "stops", undoable: false,
+        argsSchema: {
+          command: { label: "Stop or pause", type: "text", choices: [{ value: "stop", label: "Stop" }, { value: "pause", label: "Pause" }] },
+          job_id: { label: "Job", type: "text" },
+          connection_id: { label: "Connection", type: "text" },
+          device_id: { label: "Machine", type: "text" },
+        },
+      },
+      {
+        // UI-SCREEN: /digifab
+        // Revoking only removes access, so it is not a security exception;
+        // minting or showing a station credential stays the page's alone (#5091).
+        group: "more", id: "digifab:revoke-station", label: "Take a station's Start away", scope: "workspace", userInvokable: false,
+        description: "Take a station screen's permission to start jobs away, by the station's name. The screen can no longer start a job; nothing already running is stopped. Requires an admin. Asks the person first.",
+        examples: ["kick that tablet off the laser station", "the shop tablet should not start jobs any more"],
+        invokeHandler: "digifab.revoke-station", effect: "writes", undoable: false,
+        argsSchema: { station: { label: "Station", type: "text", required: true } },
+      },
+      {
+        // UI-SCREEN: /station/machine/:connectionId/:deviceId
         id: "digifab:laser-control", label: "Control a direct laser", scope: "workspace", group: "more", userInvokable: false,
         description: "Stop, pause or resume a direct laser, or frame its reviewed file with the cutting laser off. Workspace members may stop a laser. This action cannot start a new cutting job.",
-        invokeHandler: "digifab.laser-control", effect: "writes", undoable: false,
+        invokeHandler: "digifab.laser-control", effect: "physical", undoable: false,
         argsSchema: {
           connection_id: { label: "Connection", type: "text", required: true },
           device_id: { label: "Device", type: "text", required: true },
           operation: { label: "Control", type: "text", required: true, choices: ["stop", "pause", "resume", "frame"].map(value => ({ value, label: value })) },
           file_id: { label: "Reviewed file for Frame", type: "text" },
           job_id: { label: "Queued job for Frame", type: "text" },
+        },
+      },
+      {
+        // UI-SCREEN: /digifab/embroidery
+        id:"digifab:embroidery-job",label:"Prepare and record embroidery",scope:"workspace",group:"more",userInvokable:false,
+        description:"Create or update a machine (label, hoops with name/width_mm/height_mm, formats, stitches_per_minute, filename_prefix, asset_ref), import a design (file_id, name), prepare a USB run (machine_id, design_id, hoop, format, threads mapping colour-stop indices to native spool ids), start tracking at its authorized station (station_token and file_copied/file_confirmed/hoop_mounted/colours_loaded/origin_clear all true), record interruption, or record outcome (station_token, verdict good/scrap, finished, idle_confirmed and needle_up_confirmed true, usage array of index/metres for every colour stop). Requires admin. Never operates a physical machine. Unstarted discards require scrap and zero use. Read with read_laser_batch embroidery operations. Download the prepared machine file with /embroidery/runs/{job_id}/export.",
+        invokeHandler:"digifab.embroidery-job",effect:"writes",undoable:false,
+        argsSchema: {
+          operation: {label:"Operation",type:"text",required:true,choices:["create_machine","update_machine","import_design","prepare","start","interrupt","outcome"].map(value=>({value,label:value.replaceAll("_"," ")}))},
+          id: {label:"Machine or job id",type:"text"},
+          fields: {label:"Fields",type:"json"},
         },
       },
       {
@@ -269,7 +351,7 @@ export default defineModule({
         // UI-SCREEN: /station/machine/:connectionId/:deviceId
         id: "digifab:cutter-control", label: "Control a cutter", group: "more", scope: "workspace", userInvokable: false,
         description: "Stop, pause or resume cutter streaming. Members may stop a cutter without a station credential. Frame requires its reviewed queued job, loaded roll and authorized station token. Confirm idle requires that token and physical idle and blade-up confirmation. Never starts a new cut. Use the machine's physical Stop in an emergency.",
-        invokeHandler: "digifab.cutter-control", effect: "writes", undoable: false,
+        invokeHandler: "digifab.cutter-control", effect: "physical", undoable: false,
         argsSchema: {
           connection_id:{label:"Connection",type:"text",required:true},device_id:{label:"Device",type:"text",required:true},operation:{label:"Control",type:"text",required:true,choices:["stop","pause","resume","frame","confirm-idle"].map(value=>({value,label:value}))},
           job_id:{label:"Queued job",type:"text"},file_id:{label:"Reviewed file",type:"text"},project_hash:{label:"Review hash",type:"text"},station_token:{label:"Authorized station token",type:"text"},idle_confirmed:{label:"Machine is idle",type:"boolean"},blade_up_confirmed:{label:"Blade is up",type:"boolean"},
@@ -279,7 +361,7 @@ export default defineModule({
         // UI-SCREEN: /station/machine/:connectionId/:deviceId
         id: "digifab:resin-control", label: "Control a resin printer", scope: "workspace", group: "more", userInvokable: false,
         description: "Stop, pause or resume a resin printer. Stop also prevents an uploading job from starting. Workspace members may use these controls; starting a print requires its authorized station and reviewed file.",
-        invokeHandler: "digifab.resin-control", effect: "writes", undoable: false,
+        invokeHandler: "digifab.resin-control", effect: "physical", undoable: false,
         argsSchema: {
           connection_id: { label: "Connection", type: "text", required: true },
           device_id: { label: "Device", type: "text", required: true },

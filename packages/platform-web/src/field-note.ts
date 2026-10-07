@@ -35,8 +35,8 @@ export {
   FIELD_NOTE_SUFFIX as NOTE_SUFFIX,
   fieldNoteKey as noteKey,
   isFieldNoteKey as isNoteKey,
-} from "@cobblr/platform-contract";
-import { fieldNoteKey as noteKey } from "@cobblr/platform-contract";
+} from "@cobblr/platform-contract/field-vocabulary";
+import { fieldNoteKey as noteKey } from "@cobblr/platform-contract/field-vocabulary";
 import { isAcquiredFromField } from "@cobblr/platform-contract/acquisition-source";
 
 /**

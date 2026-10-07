@@ -3,6 +3,7 @@ type: feature
 scope: locations
 date: 2026-10-02
 docs_target: docs/USER_GUIDE.md#3.12 Locations (foundational)
+docs_published: 2026-10-08
 ---
 A floor plan or drawer can group the things pinned on it by one of their own fields, such as a drawer of sockets by drive, with each pin tinted by its group and a legend saying which is which. Measured values now read lengths too (10 mm, 3/8 in, 1-1/4 in), and the new Hand Tools bundle fills each tool's size, drive and type from its name.
 

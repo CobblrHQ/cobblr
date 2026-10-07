@@ -682,6 +682,7 @@ export function LocationsPage() {
         />
       )}
       <BulkActionBar
+        records={{ kind: "core-locations:location", ids: Array.from(selected) }}
         count={selected.size}
         onClear={() => setSelected(new Set())}
         onAskCobb={askCobb}

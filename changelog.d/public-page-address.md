@@ -3,6 +3,7 @@ type: feature
 scope: sharing
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#4.5g Sharing (`/configuration/sharing`)
+docs_published: 2026-10-08
 ---
 A public page can have a memorable address, like /p/your-workspace/my-printers, that people can remember and type. It is off until you set one, shows what the page shows, and ends the moment you clear it.
 

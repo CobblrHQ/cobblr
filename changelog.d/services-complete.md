@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-04
 docs_target: docs/USER_GUIDE.md#3.19 Digital Fabrication (`digifab`, stock)
+docs_published: 2026-10-08
 ---
 Makes can now design a request, keep its source and preview for review, and resume slicing after a restart while requiring approval of the exact print shown.
 

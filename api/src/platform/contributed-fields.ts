@@ -29,6 +29,8 @@ export type ContributedFieldDef = {
   server_managed?: boolean;
   ref_kind?: string;
   field_role?: string;
+  /** How it adds up in a group's summary (@cobblr/platform-contract/field-aggregate). */
+  aggregate?: "sum" | "per_unit" | "none";
 };
 
 /** Every kind in each workspace a def on `entityKind` belongs on: the kind
@@ -102,6 +104,7 @@ export async function applyContributedFieldDefs(
           source_module: moduleName,
           choices: fd.choices ? JSON.stringify(fd.choices) : null,
           learns: (fd as { learns?: boolean }).learns ?? null,
+          aggregate: fd.aggregate ?? null,
           renderer: fd.renderer ?? null,
           server_managed: fd.server_managed ?? false,
           ref_kind: fd.ref_kind ?? null,
@@ -120,6 +123,18 @@ export async function applyContributedFieldDefs(
         .where("source_module", "=", moduleName)
         .where("name", "=", fd.name)
         .where((eb) => eb.or([eb("learns", "is", null), eb("learns", "!=", learns)]))
+        .execute();
+    }
+    // How it adds up is the module's to say too (#5079): a row made before
+    // it said so follows the manifest, unless a person has set it since.
+    if (fd.aggregate) {
+      await meta
+        .updateTable("module_field_defs")
+        .set({ aggregate: fd.aggregate })
+        .where("org_id", "in", orgIds)
+        .where("source_module", "=", moduleName)
+        .where("name", "=", fd.name)
+        .where("aggregate", "is", null)
         .execute();
     }
   }

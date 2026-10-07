@@ -18,7 +18,7 @@ import { createPortal } from "react-dom";
 import { Link, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Plus, ScanLine, LogOut, LayoutDashboard, LayoutGrid, ChevronDown } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import { MarkdownText } from "@cobblr/platform-web";
 import { useAuth } from "../auth/AuthContext";
 import { useRunAction, AskBeforeRun, type Asking, EntityActionsBar, EntityThumb, usePageTitle, useToast, OverlayLayer, BackdropLayer } from "@cobblr/platform-web";
 import { NewPartDialog, InventoryProvider } from "@cobblr/inventory/ui";
@@ -319,7 +319,7 @@ function BlockRenderer({
             className="prose prose-sm dark:prose-invert max-w-none text-content dark:text-mortar-100"
             style={proseStyle(theme)}
           >
-            <ReactMarkdown>{block.body}</ReactMarkdown>
+            <MarkdownText>{block.body}</MarkdownText>
           </div>
         </div>
       );

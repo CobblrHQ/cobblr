@@ -1,0 +1,10 @@
+{
+  "lint": "lint:worktree-remove-is-guarded",
+  "run": "node scripts/lint-worktree-remove-is-guarded.ts",
+  "rows": [
+    "dev-script"
+  ],
+  "ms": 500,
+  "recorded": "2026-10-07",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

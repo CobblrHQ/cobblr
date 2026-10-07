@@ -12,11 +12,13 @@
 
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
-import { withCount, type CountedRow } from "@cobblr/inventory/ui";
+import { withCount, type CountedRow } from "@cobblr/inventory/stock-derived";
 import { useFaces } from "@cobblr/platform-web";
 import { api, type ViewDataResponse } from "../lib/api";
 import { fieldVal } from "../lib/view-group-key";
 import { StockStepper } from "@cobblr/platform-web";
+import { nounOptions, type NounChoiceDecl } from "@cobblr/platform-contract/kind-label";
+import type { CountWords } from "@cobblr/platform-contract/plural";
 
 /** The least a row must carry to be stepped. */
 export interface StockableRow {
@@ -42,10 +44,17 @@ export function useRowStock(): RowStock {
 /** Where a collection's counts are stepped, when it counts: the instance whose
  *  door the adjust goes through. Null for anything that is not counted stock,
  *  and null until the answer is known, so nothing appears and then vanishes. */
-export function useCountedCollection(slug: string, kind: string): { instance: string } | null {
+export function useCountedCollection(slug: string, kind: string): { instance: string; countWords: CountWords[] } | null {
   const kinds = useQuery({
     queryKey: ["entity-kinds", slug],
     queryFn: () => api.listEntityKinds(slug),
+    enabled: !!slug,
+  });
+  // The table's own words for what it counts in (Yarn: ball, skein, hank), so
+  // a row's count reads "2 balls" and a stored "skeins" reads "1 skein".
+  const overrides = useQuery({
+    queryKey: ["entity-kind-overrides", slug],
+    queryFn: () => api.listOverrides(slug),
     enabled: !!slug,
   });
   const { verdict } = useFaces(kind);
@@ -53,8 +62,11 @@ export function useCountedCollection(slug: string, kind: string): { instance: st
     const k = (kinds.data?.items ?? []).find((x) => x.id === kind);
     if (!k || k.module_name !== "inventory") return null;
     if (!verdict?.faces.includes("stock")) return null;
-    return { instance: k.instance_name ?? "inventory" };
-  }, [kinds.data, kind, verdict]);
+    const instance = k.instance_name ?? "inventory";
+    const o = (overrides.data?.items ?? []).find((x) => x.target_kind === "instance" && x.target_id === `inventory:${instance}`);
+    const noun = (o?.config as { noun?: NounChoiceDecl } | undefined)?.noun;
+    return { instance, countWords: noun?.of === "unit" ? nounOptions(noun) : [] };
+  }, [kinds.data, overrides.data, kind, verdict]);
 }
 
 export function RowStockProvider({ slug, kind, children }: { slug: string; kind: string; children: ReactNode }) {
@@ -90,7 +102,7 @@ export function RowStockProvider({ slug, kind, children }: { slug: string; kind:
         void qc.invalidateQueries({ queryKey: ["view-data", slug], refetchType: "none" });
         return n;
       };
-      return <StockStepper qty={qty} unit={(fieldVal(row.fields, "unit") as string | null | undefined) ?? null} onStep={step} label={row.title} size="sm" />;
+      return <StockStepper qty={qty} unit={(fieldVal(row.fields, "unit") as string | null | undefined) ?? null} countWords={counted.countWords} onStep={step} label={row.title} size="sm" />;
     };
     return { on: true, stepper };
   }, [counted, slug, qc]);

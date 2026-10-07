@@ -25,7 +25,6 @@ import { AppsDoorChip } from "./MoreAppsDoor";
 import { NavLink } from "react-router-dom";
 import { ChevronDown, PanelLeft, Settings2, Sliders } from "lucide-react";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { ModulePickerModal } from "./ModulePickerModal";
 import { useHoverAwareOpen } from "./hover-aware-open";
 import { isFocused } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
@@ -34,7 +33,9 @@ import { isInvoluntaryFold, layoutExpressed, shouldOfferSidebar } from "../lib/n
 import { NavCountBadge } from "./NavCountBadge";
 import { useNavBadges } from "./useNavBadges";
 import { useNavModules, HEADING_PREFIX, NAVGROUP_PREFIX, navTargetFor, surfaceTops } from "./useNavModules";
-import { PopoverLayer } from "@cobblr/platform-web";
+import { PopoverLayer, lazyOverlay } from "@cobblr/platform-web";
+
+const ModulePickerModal = lazyOverlay(() => import("./ModulePickerModal").then((m) => ({ default: m.ModulePickerModal })));
 import { NavSplitRow, NavRowMenu } from "./NavSplitRow";
 
 export function ModuleNav({ quiet = false }: {

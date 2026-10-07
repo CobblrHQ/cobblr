@@ -197,7 +197,7 @@ fleetRouter.get(
     // (connection, target_device). One active job per device shown.
     const jobs = await db
       .selectFrom("digifab_jobs")
-      .select(["id", "connection_id", "target_device", "target_pool", "file_ref", "status", "progress", "priority", "attempts", "max_attempts", "eta_sec", "created_at"])
+      .select(["id", "connection_id", "target_device", "target_pool", "file_ref", "metadata", "status", "progress", "priority", "attempts", "max_attempts", "eta_sec", "created_at"])
       .where("status", "not in", TERMINAL)
       .execute();
     // A snapshot begun before completion can mistake the finished job for an external run.
@@ -390,10 +390,10 @@ fleetRouter.get(
               // AI failure watch: live score while printing + whether it auto-paused.
               failure: fw && (fw.watch_at || fw.paused_at) ? { score: Number(fw.score), watching: !!fw.watch_at, paused: !!fw.paused_at } : null,
               active_job: job
-                ? { id: job.id, file_ref: job.file_ref, status: job.status, progress: job.progress, priority: job.priority, attempts: job.attempts, max_attempts: job.max_attempts, eta_sec: job.eta_sec }
+                ? { id: job.id, file_ref: job.file_ref, metadata: job.metadata, status: job.status, progress: job.progress, priority: job.priority, attempts: job.attempts, max_attempts: job.max_attempts, eta_sec: job.eta_sec }
                 : null,
               // What this machine will do next (queued to it or its pool).
-              next_job: next ? { id: next.id, file_ref: next.file_ref, pooled: !!next.target_pool } : null,
+              next_job: next ? { id: next.id, file_ref: next.file_ref, metadata: next.metadata, pooled: !!next.target_pool } : null,
             };
           });
           return { connection_id: c.id, label: c.label, type: c.type, bridge, error: null, fetched_at: new Date(at).toISOString(), stale, devices: mapped };

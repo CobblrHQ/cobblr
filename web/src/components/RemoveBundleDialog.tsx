@@ -3,7 +3,7 @@
 // any (keeping them is the default), and offers Undo when they were kept.
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { changeWorkspaceShape, Modal, useToast } from "@cobblr/platform-web";
+import { changeWorkspaceShape, Modal, SegmentedChoice, useToast } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
 import { planRemove } from "../lib/bundle-remove";
 
@@ -63,16 +63,18 @@ export function RemoveBundleDialog({
       <div className="space-y-3 text-sm" data-testid="remove-bundle-dialog">
         {preview.isLoading ? <p className="text-muted">Checking what it would remove…</p> : <p className="text-content dark:text-mortar-200">{plan.always}</p>}
         {plan.choice && (
-          <fieldset className="space-y-2" data-testid="remove-bundle-choice">
-            <label className="flex gap-2 items-start">
-              <input type="radio" name="remove-data" checked={!deleteData} onChange={() => setChoice("keep")} className="mt-1" />
-              <span>{plan.choice.keepLabel}</span>
-            </label>
-            <label className="flex gap-2 items-start">
-              <input type="radio" name="remove-data" checked={deleteData} onChange={() => setChoice("delete")} className="mt-1" />
-              <span className="text-ember-700 dark:text-ember-300">{plan.choice.deleteLabel}</span>
-            </label>
-          </fieldset>
+          <div data-testid="remove-bundle-choice">
+            <SegmentedChoice
+              stack
+              label="What happens to the data"
+              value={deleteData ? "delete" : "keep"}
+              onChange={(v) => setChoice(v)}
+              options={[
+                { value: "keep", label: plan.choice.keepLabel },
+                { value: "delete", label: plan.choice.deleteLabel, tone: "danger" },
+              ]}
+            />
+          </div>
         )}
         {plan.stays.map((s) => (
           <p key={s} className="text-xs text-muted">{s}</p>

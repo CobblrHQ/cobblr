@@ -344,6 +344,7 @@ export interface PatternRead {
   pattern_file_id: string | null;
 }
 export interface PatternNeedsState {
+  sewing?: {sizes:string[];supplies:{text:string;quantity:number|null;unit:string|null}[]};
   read: PatternRead;
   items: PatternNeed[];
 }

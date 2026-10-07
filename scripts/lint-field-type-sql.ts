@@ -25,7 +25,7 @@ import { stripComments } from "./lib/source-scan.js";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DIR = join(ROOT, "api/migrations/platform");
 const CONSTRAINT = "module_field_defs_type_check";
-const CONTRACT = join(ROOT, "packages/platform-contract/src/index.ts");
+const CONTRACT = join(ROOT, "packages/platform-contract/src/field-vocabulary.ts");
 
 /** Read FIELD_TYPE_VALUES as TEXT rather than importing it: lints run from the
  *  repo root without workspace resolution, and importing the package fails in

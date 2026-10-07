@@ -89,3 +89,15 @@ export function jsonBlockIn(text: string): unknown | null {
   }
   return null;
 }
+
+/** The move a reply states, the one way the app reads it (chat.ts): a JSON
+ *  object with a `type` (the tool-less shapes the prompt teaches: create,
+ *  action, reply, build) is that move; one without is read for a tool's own
+ *  arguments. The bench used only the second half, so a model that answered
+ *  in the shape the prompt teaches was scored "answered in words" while the
+ *  app would have made the card (Haiku 5.5, 2026-10-07: 116 of them). */
+export function moveInReply(text: string): ({ type: string } & Record<string, unknown>) | null {
+  const parsed = jsonBlockIn(text);
+  if (isObj(parsed) && typeof parsed.type === "string") return parsed as { type: string } & Record<string, unknown>;
+  return inferMoveFromToolShape(parsed) as ({ type: string } & Record<string, unknown>) | null;
+}

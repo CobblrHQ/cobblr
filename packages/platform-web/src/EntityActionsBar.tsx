@@ -20,6 +20,7 @@ import { DormantActionButton } from "./DormantActionButton";
 import { RecordDisposition } from "./RecordDisposition";
 import { RecordSharing } from "./RecordSharing";
 import { RecordPublic } from "./RecordPublic";
+import { SendRecords } from "./SendRecords";
 import { RecordSendBack } from "./RecordSendBack";
 import { RecordSuggestions } from "./RecordSuggestions";
 import { RecordShareNote } from "./RecordShareNote";
@@ -125,6 +126,7 @@ export function EntityActionsBar({ entityKind, entityId, entityLabel, className,
         {data?.lifecycle && <RecordDisposition kind={entityKind} id={entityId} />}
         <RecordSharing kind={entityKind} id={entityId} />
         <RecordPublic id={entityId} />
+        <SendRecords kind={entityKind} ids={[entityId]} record />
         <RecordSendBack kind={entityKind} id={entityId} />
         {primaries.map((item) => entry(item, true))}
         {menus.map((group) => (

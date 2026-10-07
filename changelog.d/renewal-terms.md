@@ -3,6 +3,7 @@ type: feature
 scope: maintenance
 date: 2026-10-06
 docs_target: docs/USER_GUIDE.md#3.16 Maintenance
+docs_published: 2026-10-08
 ---
 Renewals now keep linked terms with coverage dates, costs and documents, and let you end a renewal without losing its history.
 

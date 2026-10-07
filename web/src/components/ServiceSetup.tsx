@@ -24,6 +24,7 @@ import { AddressInput, SecretInput } from "@cobblr/platform-web";
 export const EFFECT_WORDS: Record<ServicePreview["capabilities"][number]["effect"], { label: string; tone: string }> = {
   none: { label: "changes nothing elsewhere", tone: "text-faint dark:text-slate-400" },
   signal: { label: "briefly signals, then turns off", tone: "text-faint dark:text-slate-400" },
+  stops: { label: "only stops or pauses a machine; never waits for a yes", tone: "text-faint dark:text-slate-400" },
   writes: { label: "changes things you own elsewhere; asks first", tone: "text-amber-700 dark:text-amber-400" },
   spends: { label: "costs money per use; asks first", tone: "text-amber-700 dark:text-amber-400" },
   physical: { label: "acts in the world; always asks first", tone: "text-ember-600 dark:text-ember-400" },

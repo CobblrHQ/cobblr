@@ -73,6 +73,16 @@ export interface VocabularyCapability extends Base {
 export const CAPABILITIES: Capability[] = [
   {
     kind: "owns",
+    id: "digifab:job-display-name",
+    what: "fabrication job titles use the saved display name with a filename fallback",
+    why: "generated laser and cutter filenames hide the drawing name in the queue and fleet",
+    owner: "web/src/features/digifab/jobDisplayName.ts",
+    scope: ["web/src/features/digifab/**/*.tsx", "web/src/pages/DigifabPage.tsx", "web/src/pages/FloorManagerPage.tsx", "web/src/pages/MachineStationPage.tsx"],
+    detect: /\{[^{}\n]*\.file_ref\b/,
+    use: "jobDisplayName(job)",
+  },
+  {
+    kind: "owns",
     id: "records:one-deletion-image",
     what: "one private before-image store for every record deletion",
     why: "a delete kept only by an assistant ledger cannot be undone when a person deletes the same record in the app",
@@ -1667,6 +1677,31 @@ export const CAPABILITIES: Capability[] = [
     detect: /\[selected, setSelected\]\s*=\s*useState<Set<string>>/,
     also: /<BulkActionBar\b/,
     use: "const [selected, setSelected, clearTicks] = useTickedRows(loaded ? ids : null) from @cobblr/platform-web; call clearTicks() when a bulk action finishes and hand what it returns to that action's Undo.",
+  },
+  {
+    id: "markdown:render",
+    kind: "owns",
+    what: "Rendering Markdown as elements (react-markdown), loaded the first time a Markdown block is drawn.",
+    why: "Seven surfaces imported react-markdown directly, so the renderer and its parser rode in every first page load whether or not a page drew any Markdown (#4945).",
+    owner: "packages/platform-web/src/markdown-render.tsx",
+    scope: ["web/src/**/*.tsx", "packages/platform-web/src/**/*.tsx", "modules/*/src/ui/**/*.tsx"],
+    detect: /^import (?!type\b)[^;]*from "react-markdown"/,
+    use: "Render through <MarkdownText> (or <Markdown> for the styled block) from @cobblr/platform-web; it loads the renderer on first use and shows the words meanwhile.",
+    except: {
+      "web/src/components/ChatRefChip.test.tsx": "a test rendering the chips with the renderer itself, synchronously, to read the links it draws",
+      "web/src/components/PayloadView.render.test.tsx": "a test rendering the renderer itself, synchronously, to read what it draws",
+      "web/src/lib/every-record-cobb-names-is-a-chip-that-opens-it.test.tsx": "a test rendering the chips with the renderer itself, synchronously, to read the links it draws",
+    },
+  },
+  {
+    id: "scanner:decode",
+    kind: "owns",
+    what: "Decoding barcodes from camera frames with ZXing (about 120 KB gzipped).",
+    why: "The decoder shared a file with the camera helpers the app shell uses, so every first page load downloaded it (#4945).",
+    owner: "web/src/lib/barcodeDecode.ts",
+    scope: ["web/src/**/*.{ts,tsx}", "packages/platform-web/src/**/*.{ts,tsx}"],
+    detect: /^import (?!type\b)[^;]*from "@zxing\//,
+    use: "Import the decoder from web/src/lib/barcodeDecode.ts, statically only from a screen that reads codes, and with import() from anything the shell can load.",
   },
   {
     id: "camera:torch-on",

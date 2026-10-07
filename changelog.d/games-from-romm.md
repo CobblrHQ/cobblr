@@ -3,6 +3,7 @@ type: feature
 scope: core-documents
 date: 2026-10-01
 docs_target: docs/USER_GUIDE.md#3.4 Files (foundational)
+docs_published: 2026-10-08
 ---
 Your games in RomM now show up on the cartridges and discs they belong to. Connect RomM under Your account → Connections → Add a service, and each game you own gets its ROM matched by title and platform, or by IGDB id, with its cover, its platform, whether it plays in RomM, and a link to open it there.
 

@@ -16,6 +16,6 @@ export function cancelOutcome(r: CancelResult): { tone: "success" | "info"; text
   return { tone: "success", text: "Cancelled. It hadn't reached a printer yet." };
 }
 
-export function canCancelJob(job: { status: string; external?: boolean; target_device: string | null; remote_job_id: string | null }): boolean {
-  return !["completed", "failed", "cancelled"].includes(job.status) && !job.external && !(job.target_device === "lightburn" && !!job.remote_job_id);
+export function canCancelJob(job: { status: string; external?: boolean; embroidery_run?: boolean; target_device: string | null; remote_job_id: string | null }): boolean {
+  return !job.embroidery_run && !["completed", "failed", "cancelled"].includes(job.status) && !job.external && !(job.target_device === "lightburn" && !!job.remote_job_id);
 }

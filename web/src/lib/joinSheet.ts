@@ -1,7 +1,6 @@
 // The sheet a club tapes to its closet wall: the workspace's name, the join
 // link's QR, and one line on what happens next (#3801). Its own window, so
 // the browser prints the sheet and nothing of the app around it.
-import QRCode from "qrcode";
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
@@ -14,6 +13,7 @@ export function joinSheetText(workspace: string): { title: string; line: string 
 }
 
 export async function printJoinSheet(opts: { url: string; workspace: string }): Promise<boolean> {
+  const { default: QRCode } = await import("qrcode");
   const qr = await QRCode.toDataURL(opts.url, { margin: 1, errorCorrectionLevel: "M", width: 640 });
   const w = window.open("", "_blank", "noopener=no");
   if (!w) return false;

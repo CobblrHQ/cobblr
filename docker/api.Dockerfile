@@ -10,9 +10,9 @@ RUN rustup target add wasm32-unknown-unknown \
 WORKDIR /app
 COPY modules/digifab/nesting ./modules/digifab/nesting
 COPY scripts/build-nesting.sh ./scripts/build-nesting.sh
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/app/modules/digifab/nesting/target \
+RUN --mount=type=cache,sharing=locked,target=/usr/local/cargo/registry \
+    --mount=type=cache,sharing=locked,target=/usr/local/cargo/git \
+    --mount=type=cache,sharing=locked,target=/app/modules/digifab/nesting/target \
     bash scripts/build-nesting.sh
 
 # ─── builder ─────────────────────────────────────────────────────────
@@ -88,7 +88,7 @@ COPY packages/sandbox-sdk-as/package.json ./packages/sandbox-sdk-as/
 COPY sandboxed-modules/hello-as/package.json ./sandboxed-modules/hello-as/
 
 RUN corepack enable
-RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+RUN --mount=type=cache,sharing=shared,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 
 # Source for every workspace the runtime needs.
@@ -171,7 +171,7 @@ RUN node scripts/fast-build.mjs
 FROM builder AS prod-deps
 RUN rm -rf node_modules \
  && node scripts/prod-lockfile.mjs --from scripts/ci/api-image-projects.json
-RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+RUN --mount=type=cache,sharing=shared,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile --prod
 RUN find node_modules \( -name '*.map' -o -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' \) -type f -delete
 

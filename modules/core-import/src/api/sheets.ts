@@ -29,6 +29,7 @@ import { nameColumnsWithAi } from "../services/sheet-ai-names.js";
 
 export const sheetsRouter = Router({ mergeParams: true });
 
+// loopback-ok: #5153 moves this onto selfFetch
 const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT || 4000}`;
 
 /** Rows shown back with the understanding; the whole sheet is re-read for

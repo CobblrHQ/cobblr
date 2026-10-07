@@ -55,14 +55,50 @@ export async function generate(): Promise<string> {
   const defaultModules = new Set<string>([...allow.matchAll(/"([^"]+)"/g)].map((x) => x[1]!));
   for (const m of manifests) if (m.autoEnable) defaultModules.add(m.name);
 
-  const areas: Array<{ area: string; modules: string[] }> = [];
+  const areas: Array<{ area: string; modules: string[]; paths?: string[] }> = [];
   for (const f of readdirSync(join(ROOT, "e2e")).filter((n) => /^fundamentals-.+-walk\.mjs$/.test(n)).sort()) {
     const w = await import(pathToFileURL(join(ROOT, "e2e", f)).href);
-    if (typeof w.area === "string") areas.push({ area: w.area, modules: Array.isArray(w.modules) ? w.modules : [] });
+    if (typeof w.area === "string") areas.push({ area: w.area, modules: Array.isArray(w.modules) ? w.modules : [], paths: w.coveragePaths });
   }
 
-  const surfaces = deriveSurfaces({ appRoutes, appFile, moduleRoutes, manifests, defaultModules, areas });
+  const appRouteFiles = pageFilesOf(readFileSync(join(ROOT, appFile), "utf8"), appFile);
+  const hasDir = (p: string) => existsSync(join(ROOT, p));
+  const platformFile = "api/src/platform/platform-actions.ts";
+  const { PLATFORM_ACTIONS } = await import(pathToFileURL(join(ROOT, platformFile)).href);
+  const platformActions = {
+    file: platformFile,
+    actions: (PLATFORM_ACTIONS as Array<{ id: string; label: string; user_invokable: boolean; wire_only?: boolean }>).map((a) => ({ id: a.id, label: a.label, userInvokable: a.user_invokable, wireOnly: a.wire_only })),
+  };
+  const surfaces = deriveSurfaces({ appRoutes, appFile, appRouteFiles, hasDir, moduleRoutes, manifests, defaultModules, areas, platformActions });
   return JSON.stringify({ dimensions: DIMENSIONS, surfaces }, null, 1) + "\n";
+}
+
+/** The page component file each `<Route path=…>` in App.tsx renders: the first
+ *  component inside its element (past fragments and wrappers like Suspense),
+ *  resolved through the file's own imports. A route whose component cannot be
+ *  traced is left out, so its row simply has no change time. */
+export function pageFilesOf(app: string, appFile: string): Record<string, string> {
+  const importOf = new Map<string, string>();
+  for (const m of app.matchAll(/const (\w+) = lazy\(\(\) =>\s*import\("([^"]+)"\)/g)) importOf.set(m[1]!, m[2]!);
+  for (const m of app.matchAll(/import \{([^}]+)\} from "([^"]+)"/g)) for (const n of m[1]!.split(",")) importOf.set(n.trim().split(/\s+as\s+/).pop()!, m[2]!);
+  for (const m of app.matchAll(/import (\w+) from "([^"]+)"/g)) importOf.set(m[1]!, m[2]!);
+  const WRAPPERS = new Set(["Suspense", "RequireRole", "RequireModule", "ErrorBoundary", "Navigate"]);
+  const out: Record<string, string> = {};
+  for (const m of app.matchAll(/<Route\b[^>]*?\bpath="([^"]+)"[\s\S]{0,600}?element=\{([\s\S]{0,600}?)\}\s*\/?>/g)) {
+    const comp = [...m[2]!.matchAll(/<([A-Z]\w*)/g)].map((x) => x[1]!).find((c) => !WRAPPERS.has(c) && importOf.has(c));
+    const spec = comp ? importOf.get(comp)! : null;
+    // A module's own pages, mounted by the app: @cobblr/<module>/ui is modules/<module>/src/ui.
+    const pkg = spec ? /^@cobblr\/([a-z0-9-]+)\/ui$/.exec(spec) : null;
+    if (pkg && existsSync(join(ROOT, "modules", pkg[1]!, "src", "ui"))) {
+      if (!(m[1]! in out)) out[m[1]!] = `modules/${pkg[1]}/src/ui`;
+      continue;
+    }
+    if (!spec || !spec.startsWith(".")) continue;
+    const base = join(dirname(appFile), spec);
+    const file = [".tsx", ".ts", "/index.tsx", "/index.ts"].map((e) => base + e).find((f) => existsSync(join(ROOT, f)));
+    if (file && !(m[1]! in out)) out[m[1]!] = file;
+  }
+  return out;
 }
 
 async function main(): Promise<void> {

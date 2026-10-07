@@ -10,16 +10,16 @@
 // embedded flagship catalog by manifest id — in ONE place, so both the
 // marketplace page and the first-run wizard get correct landings.
 
+import { useMemo } from "react";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { api, type RegistryIndex } from "./api";
-import { FEATURED_BUNDLES, type FeaturedBundle } from "./featured-bundles";
+import type { FeaturedBundle } from "./featured-bundles";
+import { useFeaturedBundles } from "./useFeaturedBundles";
 import { classifyBundleUpdate } from "@cobblr/platform-contract/bundle-update-tier";
 
 export type CatalogBundle = FeaturedBundle & { source?: string };
 
-const EMBEDDED_BY_ID = new Map(FEATURED_BUNDLES.map((b) => [b.manifest.id, b]));
-
-export function useBundleCatalog(sources?: string[]): {
+export function useBundleCatalog(sources?: string[], { when = "now" }: { when?: "now" | "idle" } = {}): {
   registry: UseQueryResult<RegistryIndex>;
   catalog: CatalogBundle[];
 } {
@@ -27,9 +27,15 @@ export function useBundleCatalog(sources?: string[]): {
     queryKey: ["registry-index", sources ?? []],
     queryFn: () => api.getRegistryIndex(sources),
   });
+  // The embedded manifests load on demand (useFeaturedBundles). Until they
+  // arrive the catalog is empty rather than half-enriched, so nothing reads a
+  // registry entry without its flagship fields as the whole answer.
+  const featured = useFeaturedBundles({ when });
+  const EMBEDDED_BY_ID = useMemo(() => new Map((featured ?? []).map((b) => [b.manifest.id, b])), [featured]);
 
-  const catalog: CatalogBundle[] =
-    registry.data && registry.data.bundles.length > 0
+  const catalog: CatalogBundle[] = !featured
+    ? []
+    : registry.data && registry.data.bundles.length > 0
       ? registry.data.bundles.map((e) => {
           const embedded = EMBEDDED_BY_ID.get(e.manifest.id);
           const manifest = embedded && classifyBundleUpdate(e.manifest.version, embedded.manifest.version) !== "prompt"
@@ -62,7 +68,7 @@ export function useBundleCatalog(sources?: string[]): {
       : // Offline fallback (registry unreachable). Mirror the API gate: a
         // `disabled` bundle is withdrawn from the offer. `extended` still shows
         // here — this is the browse catalog, not the per-scan menu.
-        FEATURED_BUNDLES.filter((b) => b.manifest.catalog !== "disabled");
+        featured.filter((b) => b.manifest.catalog !== "disabled");
 
   return { registry, catalog };
 }

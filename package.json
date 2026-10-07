@@ -23,6 +23,7 @@
     "where": "tsx scripts/placement.ts",
     "lint": "node scripts/run-lints.mjs --one",
     "lint:all": "node scripts/run-lints.mjs",
+    "budget:first-load": "pnpm --filter @cobblr/web exec vite build --logLevel warn && node scripts/first-load-budget.mjs",
     "eval:image-rank": "tsx e2e/image-rank-eval.mjs",
     "merged-prs-on-main": "bash scripts/merged-prs-on-main.sh",
     "audit:push-mirrors": "node scripts/audit-push-mirrors.mjs",

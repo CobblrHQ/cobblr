@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-10-04
 docs_target: docs/modules/scan-relay.md#NFC stations and filing sessions
+docs_published: 2026-10-08
 ---
 Added NFC stations that file scanned things into a place, write or link tags from any phone, and let you review and undo a session.
 

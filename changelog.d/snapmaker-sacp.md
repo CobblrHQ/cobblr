@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-05
 docs_target: docs/USER_GUIDE.md#3.19 Digital Fabrication (`digifab`, stock)
+docs_published: 2026-10-08
 ---
 Added touchscreen pairing and reviewed print starts for Snapmaker SACP firmware on 2.0, J1 and Artisan.
 

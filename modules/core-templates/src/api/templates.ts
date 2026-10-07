@@ -241,6 +241,7 @@ templatesRouter.post(
     // points at this same host.
     const baseUrl =
       (req.headers["x-cobblr-base-url"] as string | undefined) ??
+      // loopback-ok: #5153 moves this onto selfFetch
       `http://127.0.0.1:${process.env.API_PORT || 4000}`;
     const [sourceModule, sourceType] = tmpl.target_kind.split(":");
     const instance = parsed.data.instance;

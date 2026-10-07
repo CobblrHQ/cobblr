@@ -67,6 +67,13 @@ const MIN_WORDS = 4;
  *  names no action label, so the name trigger never saw it (2026-09-12). */
 const OFFER = /\b(?:want|would you like|do you want|like) me to\b|\bshall i\b|\bshould i (?:go ahead|move|do|run|make)\b/i;
 
+/** A reply that says the workspace CANNOT do it: "there is no workspace
+ *  action available to create new lists", "I can't make that". Said before
+ *  the action list was read, it is a guess at a no; the owner got exactly
+ *  that for "create Mugs and file these in it", and the same ask a minute
+ *  later made the list (#5067). */
+const DENIED = /\b(?:no|not any)\b[^.?!]{0,40}\b(?:actions?|tools?|ways?|options?|features?)\b|\b(?:can(?:no|['\u2019])t|cannot|unable to|not able to|isn['\u2019]t possible|is not possible)\b/i;
+
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** The action the reply talks about, or null. */
@@ -96,6 +103,14 @@ export function describedInsteadOfActing(
   if (userText.trim().split(/\s+/).filter(Boolean).length < MIN_WORDS) return null;
   const named = actionNamedIn(reply, actionNames);
   const offered = OFFER.test(reply) && reply.includes("?");
+  if (!sawActionList && !named && !offered && DENIED.test(reply)) {
+    return (
+      `(You said this cannot be done without checking what this workspace can do. Call list_actions first: ` +
+      `actions that run on the WORKSPACE (making a list, turning on a feature, changing a field) are there, ` +
+      `not only actions on records. If one does what they asked, call invoke_action with it, filling its ` +
+      `arguments from what they said. If none does, say that plainly - never invent an action id.)`
+    );
+  }
   if (!named && !sawActionList && !offered) return null;
   // The tail matters as much as the ask. "Make me an api token" and "restore
   // last week's backup" ALSO read the action list and answer in prose, and

@@ -3,6 +3,7 @@ type: feature
 scope: locations
 date: 2026-10-02
 docs_target: docs/USER_GUIDE.md#3.12 Locations (foundational)
+docs_published: 2026-10-08
 ---
 A floor plan or drawer can show a grid to place things by. The grid button turns it on for that plan and it stays on; its cells follow the plan's units (inches, feet, centimetres), sized so they stay readable on a phone, with a Gridfinity 42 mm option for drawers. With the grid on, boxes and pinned things snap to it.
 

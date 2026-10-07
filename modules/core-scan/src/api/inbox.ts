@@ -1,3 +1,5 @@
+import { finishOwnSend } from "../services/offer-intake.js";
+import { mapOfferedFields, type OfferedThing } from "@cobblr/platform-contract/share-offer";
 // /api/v1/orgs/:slug/modules/core-scan
 //
 // v0.1 routes:
@@ -99,7 +101,7 @@ import {
   SCAN_TRIAGE_COLUMNS,
   type ScanTriageFacet,
   splitUncutWords,
-  type ScanTriageRow, type ScanRowStateContext, type ScanResolverTable, DESTINATION_KEY, KEEP_SEPARATE_KEY, scanKeepSeparateStamp, FILED_INTO_KEY, type FiledInto, type StoredDestination, filedIntoOf, isPaperworkRow, scanFitItem } from "@cobblr/platform-contract/scan-triage";
+  type ScanTriageRow, type ScanRowStateContext, type ScanResolverTable, DESTINATION_KEY, KEEP_SEPARATE_KEY, scanKeepSeparateStamp, FILED_INTO_KEY, type FiledInto, type StoredDestination, filedIntoOf, isPaperworkRow, scanFitItem, scanRebuy, scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
 import { scanToolRelevance, type ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { liveTablesOf, withResolvedOffers, type LiveTable } from "../services/resolve-offers.js";
@@ -256,6 +258,7 @@ registerMatchRunners({
 /** Exported so the import path reaches the api by THIS url rather than its own
  *  copy. A second spelling of a base url does not fail loudly - the caller still
  *  runs, just against nothing. */
+// loopback-ok: #5153 moves this onto selfFetch
 export const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
 
 /** Run tasks at most `width` at a time, in order. For work that talks to an
@@ -2779,6 +2782,8 @@ inboxRouter.get(
 // and an optional name correction. Triage/commit still happens on /scan.
 
 export const PatchBody = z.object({
+  send_drop_unmapped: z.boolean().optional(),
+  send_unplaced: z.boolean().optional(),
   quantity: FiledQuantity.optional(),
   name: z.string().min(1).max(160).optional(),
   // Set/clear the filing location on an existing item (bulk "Set location" in
@@ -2868,6 +2873,8 @@ inboxRouter.patch(
       // Metadata-riders (box_state / reviewed): merge into suggested_metadata
       // without clobbering the rest of the blob.
       if (
+        parsed.data.send_drop_unmapped !== undefined ||
+        parsed.data.send_unplaced !== undefined ||
         parsed.data.box_state !== undefined ||
         parsed.data.reviewed !== undefined ||
         parsed.data.quantity !== undefined ||
@@ -2888,6 +2895,8 @@ inboxRouter.patch(
           .forUpdate()
           .executeTakeFirst();
         let meta = (cur?.suggested_metadata ?? {}) as Record<string, unknown>;
+        if (parsed.data.send_drop_unmapped !== undefined) meta.send_drop_unmapped = parsed.data.send_drop_unmapped;
+        if (parsed.data.send_unplaced !== undefined) meta.send_unplaced = parsed.data.send_unplaced;
         if (parsed.data.fields !== undefined) {
           const kind = parsed.data.fields_kind ?? candidateKind(storedCandidateList(cur?.suggested_candidates)[0]);
           meta = applyUserFieldPatch(meta, parsed.data.fields, kind);
@@ -3172,6 +3181,8 @@ const FileSelectedBody = z.object({
   target_module: z.string().min(1).optional(),
   target_kind: z.string().min(1).optional(),
   instance: z.string().min(1).optional(),
+  /** File a thing the workspace already tracks as a second record anyway. */
+  allow_duplicate: z.boolean().optional(),
 });
 
 // AI-TOOL: file_inbox_items
@@ -3183,9 +3194,29 @@ inboxRouter.post("/inbox/file-selected", asyncHandler(async (req, res) => {
   if (!token) { res.status(401).json({ error: { code: "no_auth", message: "Bearer token required" } }); return; }
   const ctx = tenantContext(req);
   const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
-  const { ids, ...target } = parsed.data;
+  const { ids, allow_duplicate, ...target } = parsed.data;
+  // This door CREATES a record per item. One the workspace already tracks
+  // (its card offers "+1 more") or whose match is a choice a person must
+  // make is never made a second record here: the dashboard's Add and an
+  // agent's file_inbox_items both came through this door and duplicated a
+  // printer the workspace already had (review of #4912). scanRebuy is the
+  // card's own rule.
+  const tables = await destinationTablesFor(req);
+  const rows = await tenantDb(req).selectFrom("core_scan_inbox_items").selectAll().where("id", "in", ids).execute();
+  const already = new Map<string, string>();
+  if (!allow_duplicate) {
+    for (const r of rows) {
+      const row = withPersonName(r as never) as unknown as ScanTriageRow;
+      const rebuy = scanRebuy(row, { tables });
+      if (rebuy.kind === "none") continue;
+      const title = scanTrackedMatch(row)?.title;
+      already.set(r.id, rebuy.kind === "hold" && "sentence" in rebuy && rebuy.sentence ? rebuy.sentence : `already tracked as "${title ?? "something you have"}"; add to it from its card`);
+    }
+  }
   const { fileSelected } = await import("../services/file-selected.js");
   const result = await fileSelected(ids, target.instance ? `${target.instance}:item` : target.target_kind ?? "", async (id) => {
+    const held = already.get(id);
+    if (held) throw new Error(held);
     const response = await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-scan/inbox/${encodeURIComponent(id)}/confirm`, {
       method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(target),
     });
@@ -3367,9 +3398,14 @@ inboxRouter.post(
     // the instance routes the create (createUrl below) without a 400. (This
     // route had its own copy of that rule since a vehicle hit "assets:vehicles:item
     // is not a scan target"; attach and the bin adjust had none.)
-    const scanTarget = (
+    let scanTarget = (
       await scanTargetOf(ctx.org.id, kindKey, instance, target.module)
     )?.scannable;
+    if (!scanTarget && meta.send) {
+      const resolved = await platform().entities.resolveKind(ctx.org.id, instance ? `${instance}:item` : kindKey);
+      const k = (await platform().entities.listKindsForOrg(ctx.org.id)).find((k) => k.id === resolved.base);
+      if (k?.endpoints?.create) scanTarget = { noun: k.display_name, createEndpoint: `${k.module_name}${k.endpoints.create}` };
+    }
     if (!scanTarget) {
       res.status(400).json({
         error: {
@@ -3684,7 +3720,7 @@ inboxRouter.post(
     // Only when no location, stored home or container was chosen, and only
     // when the place names exactly one Location.
     if (
-      body.location_id === undefined &&
+      !meta.send && body.location_id === undefined &&
       !(row.target_container_kind && row.target_container_id) &&
       (meta as { box_state?: string }).box_state !== "empty-box"
     ) {
@@ -3754,6 +3790,26 @@ inboxRouter.post(
     // (/instances/:name/items), which scopes the create to that instance of
     // the owning module. The kind still drives the qty-field mapping above —
     // an inventory instance keeps `qty`. Absent → the module's default path.
+    if (meta.send) {
+      const sent = meta.send as NonNullable<OfferedThing["send"]>;
+      const kind = instance ? `${instance}:item` : kindKey;
+      const k = (await platform().entities.listKindsForOrg(ctx.org.id)).find((k) => k.id === kind);
+      const custom = await platform().entities.fieldsFor(ctx.org.id, kind);
+      const fields = [...(k?.fields ?? []).filter((f) => !f.readOnly && !custom.some((c) => c.name === f.name)).map((f) => ({name: f.name, display_label: f.label || f.name.replace(/_/g, " "), type: f.type, native: true})), ...custom];
+      const mapping = mapOfferedFields(sent.values, fields, sent.field_map);
+      if (mapping.missing.length && meta.send_drop_unmapped !== true) {
+        res.status(422).json({error: {code: "send_needs_fields", message: `${mapping.missing.join(", ")} has no field here. Add the fields or choose to drop them before filing.`}}); return;
+      }
+      if (sent.needs.includes("Choose a placement in this workspace") && !body.location_id && meta.send_unplaced !== true) {
+        res.status(422).json({error: {code: "send_needs_placement", message: "Choose a placement or choose to arrive unplaced before filing."}}); return;
+      }
+      const bag = body.metadata as Record<string, unknown>;
+      for (const f of fields) if (Object.hasOwn(mapping.values, f.name)) {
+        if (f.native) { body[f.name] = mapping.values[f.name]; delete bag[f.name]; }
+        else bag[f.name] = mapping.values[f.name];
+      }
+      bag.send_origin = sent.origin;
+    }
     const createUrl = instance
       ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/instances/${instance}/items`
       : `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${createPath}`;
@@ -4176,6 +4232,7 @@ inboxRouter.post(
       console.warn("[core-scan] activity log for the commit failed:", (err as Error).message);
     }
 
+    if (meta.send) await finishOwnSend(ctx.org.id, id, {kind: effectiveKindId, id: created.id});
     void platform().events.emit("core-scan.scan.confirmed", {
       orgId: ctx.org.id,
       itemId: id,

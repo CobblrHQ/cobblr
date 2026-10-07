@@ -12,7 +12,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Sparkles } from "lucide-react";
 import { api } from "../lib/api";
-import { BundleDetailModal } from "./BundleDetailModal";
+import { BundleDetailModal } from "./BundleDetailModalLazy";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
 export function BundleFeaturesStrip({ slug, instance }: { slug: string; instance: string }) {

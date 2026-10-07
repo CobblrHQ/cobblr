@@ -69,3 +69,12 @@ html[data-covering-open] .fc-yield-covered {
 .fc-bar-icons .fc-bar-words {
   display: none;
 }
+
+/* Chrome that floats over the page (the feedback button, a corner pill)
+   belongs to the screen, never to paper: a printed plan or label sheet
+   carries the page alone. */
+@media print {
+  .fc-fixed {
+    display: none !important;
+  }
+}

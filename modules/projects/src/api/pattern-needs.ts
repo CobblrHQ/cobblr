@@ -1,3 +1,4 @@
+import {readSewingPattern,type SewingPattern} from "./sewing-pattern.js";
 // What a pattern needs, read from its PDF and kept on the pattern.
 //
 // The order is the house rule, heuristics first and AI last: the pattern's
@@ -64,6 +65,7 @@ export interface PatternRead {
 }
 
 export interface PatternNeedsState {
+  sewing?: SewingPattern;
   read: PatternRead;
   items: PatternNeed[];
 }
@@ -302,12 +304,12 @@ async function recordRead(
   db: Kysely<ProjectsDB>,
   projectId: string,
   fileId: string,
-  row: { status: "ready" | "empty" | "failed"; method: "pattern" | "ai" | null; ai_tried: boolean; reason: string | null },
+  row: { sewing?: SewingPattern; status: "ready" | "empty" | "failed"; method: "pattern" | "ai" | null; ai_tried: boolean; reason: string | null },
 ): Promise<void> {
   await db
     .insertInto("projects_pattern_reads")
-    .values({ project_id: projectId, pattern_file_id: fileId, ...row })
-    .onConflict((oc) => oc.columns(["project_id", "pattern_file_id"]).doUpdateSet({ ...row, read_at: new Date() }))
+    .values({ project_id: projectId, pattern_file_id: fileId, sewing: row.sewing ?? null, ...row })
+    .onConflict((oc) => oc.columns(["project_id", "pattern_file_id"]).doUpdateSet({ ...row, sewing: row.sewing ?? null, read_at: new Date() }))
     .execute();
 }
 
@@ -336,6 +338,12 @@ export function runPatternRead(
     await storePatternText(db, projectId, fileId, "error" in got ? null : got.text);
     if ("error" in got) {
       await recordRead(db, projectId, fileId, { status: "failed", method: null, ai_tried: false, reason: got.error });
+      return;
+    }
+    const sewing = readSewingPattern(got.text);
+    if (sewing) {
+      await writeNeeds(db, projectId, fileId, "pattern", {yarns:[], tools:[], notions:[]});
+      await recordRead(db, projectId, fileId, {status:"ready", method:"pattern", ai_tried:false, reason:null, sewing});
       return;
     }
     const fromText = readPatternMaterials(got.text);
@@ -412,7 +420,7 @@ export async function readPatternNeedsState(
     start();
     return { read: { status: "pending", method: null, reason: null, pattern_file_id: fileId }, items };
   }
-  return { read: { status: row.status, method: row.method, reason: row.reason, pattern_file_id: fileId }, items };
+  return { read: { status: row.status, method: row.method, reason: row.reason, pattern_file_id: fileId }, items, ...(row.sewing ? {sewing:row.sewing} : {}) };
 }
 
 /** A pattern PDF landed on a pattern: read its text now (no AI; see above). */

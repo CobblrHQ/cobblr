@@ -18,6 +18,7 @@ const ref = (r: ResolvedEntity) => ({ kind: r.kind, id: r.id, name: r.title, ...
 
 async function bestHomes(ctx: TidyFinderContext): Promise<TidyCandidate[]> {
   const token = await platform().auth.mintSession({ userId: ctx.as.userId });
+  // loopback-ok: #5153 moves this onto selfFetch
   const menu = await assembleMergedMenu(`http://127.0.0.1:${process.env.API_PORT || 4000}`, ctx.as.orgSlug, token, ctx.orgId);
   const live = menu.filter((m) => !m.bundle_external_id);
   const records: Array<{ record: ResolvedEntity; table: ScanMenuEntry }> = [];

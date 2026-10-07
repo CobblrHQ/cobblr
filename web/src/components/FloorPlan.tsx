@@ -12,7 +12,7 @@ import { RecordFormModal, Modal, useImageSrc, useToast } from "@cobblr/platform-
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Flame, Grid3x3, Loader2, MapPin, Pencil, Plus, Printer, Redo2, ScanLine, Sparkles, Tag, Undo2, X } from "lucide-react";
+import { Check, Flame, Grid3x3, LayoutGrid, Loader2, MapPin, Pencil, Plus, Printer, Redo2, ScanLine, Sparkles, Tag, Undo2, X } from "lucide-react";
 import { diffPlaces, historyKey, planHistoryFor, type PlanChange, type PlanStep } from "../lib/planHistory";
 import { ApiError, api, type Location, type TagAttachment, type TagRecord } from "../lib/api";
 import { totalUsage, useLocationUsage } from "../lib/useLocationUsage";
@@ -971,6 +971,15 @@ function PlanFor({
         >
           <Printer size={12} /> print
         </button>
+        {room.kind === "area" && bound.view !== "front" && (
+          <Link
+            to={`/locations/${room.id}/plan`}
+            className="inline-flex items-center gap-1 rounded-md border border-line dark:border-slate-600 px-2 py-1 text-xs text-muted hover:text-accent hover:border-accent transition"
+            title="Try a layout as a draft: nothing moves until you apply it"
+          >
+            <LayoutGrid size={12} /> Plan a layout
+          </Link>
+        )}
         </>
         )}
         {edit && (

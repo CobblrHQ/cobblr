@@ -1,3 +1,4 @@
+import { jobDisplayName } from "./jobDisplayName";
 // "Print again", one implementation for every surface that offers it (the
 // fleet cockpit's history and the print history section). A reprint is a
 // physical print, so a second press within seconds is asked about rather than
@@ -33,9 +34,9 @@ export function useReprint(slug: string, refresh: readonly (readonly unknown[])[
       toast.error(e instanceof ApiError ? e.message : "Couldn't reprint");
     },
   });
-  return async (r: { id: string; file_ref: string }) => {
+  return async (r: { id: string; file_ref: string; metadata?: Record<string, unknown> }) => {
     const ok = await confirm({
-      title: `Print "${r.file_ref}" again?`,
+      title: `Print "${jobDisplayName(r)}" again?`,
       message: "Clones the original job (same file, routing, material and build) and sends it to the printer. On a live farm this physically starts the print.",
       confirmLabel: "Print again",
       destructive: true,

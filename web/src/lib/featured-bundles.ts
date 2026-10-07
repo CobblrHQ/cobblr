@@ -19,7 +19,7 @@ import { NOTION_NAMES } from "@cobblr/platform-contract";
 import type { PlatformBundleManifest, PlatformBundleFeature } from "./api";
 import { OUTFIT_PLANNER_HTML } from "./outfit-planner-app";
 import { CATALOGING_BENCH_HTML } from "./bench-app";
-import { pluralise } from "@cobblr/platform-contract";
+import { pluralise } from "@cobblr/platform-contract/plural";
 import { withArticle } from "@cobblr/platform-contract/plural";
 
 const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -207,15 +207,46 @@ function machineBundleRelease(
 
 export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
+    glyph:"🧵", blurb:"Sewing machines, their service history, thread spools, wearing needles and pattern PDFs.", item_example:"a sewing machine",
+    next_steps:[{label:"Add your sewing machine",module:"assets",path:"/instances/sewing-machines",hint:"Attach its manual and set oiling and cleaning schedules in Maintenance."},{label:"Add thread spools",module:"inventory",path:"/instances/sewing-threads",hint:"Set stock shape to Spool, measured in metres, or grams with grams per metre."},{label:"Add your needle",module:"inventory",path:"/instances/sewing-needles",hint:"Set Wearing tool, count hours or uses for projects, and give its replacement limit. Record use after sewing."},{label:"Import pattern PDFs",module:"projects",path:"/instances/sewing-patterns",hint:"Read the pattern's supplies and sizes, then choose your size and check the fabric amount."}],
+    manifest:{
+      id:"cobblr.flagship.sewing",version:"0.1.2",name:"Sewing",author:"Cobblr",released_at:"2026-10-07",
+      description:"Maintain sewing machines, keep manuals and linked accessories, track thread and needle wear, and read sewing pattern supplies and sizes from PDFs.",
+      changelog:"Keep sewing machines, thread spools, wearing needles and pattern PDFs together, with optional USB embroidery run tracking.",
+      releases:[{version:"0.1.2",released_at:"2026-10-07",notes:"A group of sewing machines totals its hours sewn and projects sewn."},{version:"0.1.1",released_at:"2026-10-07",notes:"Keep sewing machines, thread spools, wearing needles and pattern PDFs together, with optional USB embroidery run tracking."}],
+      requires:[{module:"assets"},{module:"core-maintenance"},{module:"inventory"},{module:"projects"}],
+      provides_instances:[
+        {module:"assets",instance_name:"sewing-machines",display_name:"Sewing machines",item_noun:"sewing machine",glyph:"🧵",faces:{maintained:true},service_tasks:["Change needle","Oil machine","Clean lint","Check tension","Service"],
+         links:[{kind:"uses-foot",label:"uses foot or accessory",inverse:"used on",to:["sewing-accessories:item"]},{kind:"uses-needle",label:"uses needle",inverse:"used on",to:["sewing-needles:item"]}],
+         field_defs:[{entity_kind:"assets:asset",name:"sewing_type",display_label:"Machine type",type:"text",position:1,learns:false,choices:["Sewing","Overlocker","Coverstitch","Embroidery"]},{entity_kind:"assets:asset",name:"hours_run",display_label:"Hours sewn",type:"number",aggregate:"sum",field_role:"usage",position:2,help:"Keep the cumulative hours here. Maintenance can schedule service by this counter."},{entity_kind:"assets:asset",name:"projects_sewn",display_label:"Projects sewn",type:"number",aggregate:"sum",field_role:"usage",position:3,help:"Cumulative finished projects. Record needle use separately on its wearing tool stock record."}],
+         saved_views:[{entity_kind:"assets:asset",name:"My sewing machines",view_type:"table",pinned:true,config:{visible_fields:["title","sewing_type","hours_run","projects_sewn"]}}]},
+        {module:"inventory",instance_name:"sewing-threads",display_name:"Thread",item_noun:"thread spool",glyph:"🧵",faces:{stock:true},
+         field_defs:[{entity_kind:"inventory:part",name:"thread_brand",display_label:"Brand chart",type:"text",position:1,learns:true,choices:["Brother","Madeira Polyneon","Madeira Rayon","Isacord Polyester","Robison-Anton Polyester"]},{entity_kind:"inventory:part",name:"thread_code",display_label:"Chart code",type:"text",position:2,field_role:"identifier",help:"Copy the thread's catalogue number. The embroidery screen can look up its approximate chart colour."},{entity_kind:"inventory:part",name:"thread_color",display_label:"Thread colour",type:"text",renderer:"color-hex",position:3,help:"Optional screen colour. Confirm the physical thread before sewing."}],
+         saved_views:[{entity_kind:"inventory:part",name:"Thread by brand",view_type:"table",pinned:true,config:{group_by:"thread_brand",visible_fields:["title","thread_code","thread_color","qty","unit"]}}]},
+        {module:"inventory",instance_name:"sewing-needles",display_name:"Needles",item_noun:"sewing needle",glyph:"🪡",faces:{stock:true},scan_keywords:["sewing needle","machine needle"],
+         links:[{kind:"installed-on",label:"installed on",inverse:"has needle",to:["sewing-machines:item"]}],
+         field_defs:[{entity_kind:"inventory:part",name:"needle_type",display_label:"Needle type",type:"text",position:1,learns:true,choices:["Universal","Ballpoint","Stretch","Jeans","Embroidery","Leather"]},{entity_kind:"inventory:part",name:"needle_size",display_label:"Size",type:"text",position:2,help:"For example 80/12. Set Wearing tool stock in hours or uses for projects and a replacement limit. Each replacement gets a new stock record."}],saved_views:[]},
+        {module:"inventory",instance_name:"sewing-accessories",display_name:"Feet and accessories",item_noun:"sewing accessory",glyph:"🧰",faces:{stock:true},
+         links:[{kind:"fits-machine",label:"fits machine",inverse:"has accessory",to:["sewing-machines:item"]}],
+         field_defs:[{entity_kind:"inventory:part",name:"accessory_type",display_label:"Accessory type",type:"text",position:1,learns:true,choices:["Presser foot","Bobbin","Plate","Hoop","Guide","Other"]},{entity_kind:"inventory:part",name:"compatibility",display_label:"Compatibility",type:"text",position:2}],saved_views:[]},
+        {module:"projects",instance_name:"sewing-patterns",display_name:"Sewing patterns",item_noun:"sewing pattern",glyph:"📐",scan_keywords:["sewing pattern","dress pattern","bag pattern"],
+         file_intake:{accept:["application/pdf"],role:"pattern",folder:"Sewing patterns",folder_field:"pattern_category",ask:["pattern_source"],label:"Import sewing patterns"},
+         field_defs:[{entity_kind:"projects:project",name:"pattern_category",display_label:"Category",type:"text",position:1,learns:true,choices:["Clothing","Bags","Home","Quilting"]},{entity_kind:"projects:project",name:"pattern_source",display_label:"Source",type:"text",position:2,learns:true,choices:["Designer","Book","Magazine","My own"]},{entity_kind:"projects:project",name:"chosen_size",display_label:"Chosen size",type:"text",position:3},{entity_kind:"projects:project",name:"supply_notes",display_label:"Supply notes",type:"text",position:4,help:"Keep corrections and the fabric amount for your chosen size here. Check the PDF before cutting."}],saved_views:[]}
+      ],
+      features:[{key:"embroidery",name:"Embroidery",question:"Track USB embroidery runs too?",description:"Preview PES, DST, EXP, JEF and VP3 designs, check hoops and owned threads, and record measured thread use at an authorized screen.",default:false,requires:[{module:"digifab"}],next_steps:[{label:"Set up embroidery",module:"digifab",path:"/digifab/embroidery",hint:"Save the machine's hoops and formats, then authorize its station screen."}]}]
+    }
+  },
+
+  {
     glyph: "🔌",
     blurb: "Receive components by distributor label, keep their moisture clocks and counts, and import board revisions to check parts and track fabrication orders.",
     item_example: "a reel of components",
     next_steps: [{ label: "Receive components", module: "inventory", path: "/instances/component-parts", hint: "Scan a distributor's package label, review its count and queue its reel QR label." }, { label: "Add a board project", module: "projects", path: "/instances/board-projects", hint: "Import a revision’s BOM and centroid, check components and track blank board orders." }],
     manifest: {
-      id: "cobblr.flagship.electronics-assembly", version: "0.1.4", name: "Electronics assembly", author: "Cobblr",
+      id: "cobblr.flagship.electronics-assembly", version: "0.1.5", name: "Electronics assembly", author: "Cobblr",
       description: "Component packages and board revisions, with receiving, moisture clocks, BOM stock checks and fabrication purchases.",
       released_at: "2026-10-06", changelog: "Import board revisions to check component stock and track fabrication purchases and stencils.",
-      releases: [{ version: "0.1.4", released_at: "2026-10-06", notes: "Import board revisions to check component stock and track fabrication purchases and stencils." }, { version: "0.1.1", released_at: "2026-10-05", notes: "Receive component packages by their distributor labels and track moisture exposure and counts." }],
+      releases: [{ version: "0.1.5", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { version: "0.1.4", released_at: "2026-10-06", notes: "Import board revisions to check component stock and track fabrication purchases and stencils." }, { version: "0.1.1", released_at: "2026-10-05", notes: "Receive component packages by their distributor labels and track moisture exposure and counts." }],
       requires: [{ module: "inventory" }, { module: "core-scan" }, { module: "labels" }, { module: "projects" }, { module: "builds" }, { module: "purchases" }],
       wires: [], field_defs: [], saved_views: [],
       provides_instances: [
@@ -259,8 +290,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             { entity_kind: "inventory:part", name: "packaging", display_label: "Packaging", type: "text", position: 2, learns: false, choices: ["reel", "cut tape", "tray", "tube"] },
             { entity_kind: "inventory:part", name: "lot_code", display_label: "Lot code", type: "text", position: 3 },
             { entity_kind: "inventory:part", name: "date_code", display_label: "Date code", type: "text", position: 4 },
-            { entity_kind: "inventory:part", name: "attrition_pct", display_label: "Attrition (%)", type: "number", position: 5, help: "Extra components consumed for setup and placement loss, rounded up to whole components." },
-            { entity_kind: "inventory:part", name: "msl_floor_hours", display_label: "MSL 6 label floor life (hours)", type: "number", position: 6, help: "For level 6, the label's deadline after a completed bake. Dry storage does not extend it." },
+            { entity_kind: "inventory:part", name: "attrition_pct", display_label: "Attrition (%)", type: "number", aggregate: "none", position: 5, help: "Extra components consumed for setup and placement loss, rounded up to whole components." },
+            { entity_kind: "inventory:part", name: "msl_floor_hours", display_label: "MSL 6 label floor life (hours)", type: "number", aggregate: "none", position: 6, help: "For level 6, the label's deadline after a completed bake. Dry storage does not extend it." },
             { entity_kind: "inventory:part", name: "distributor", display_label: "Distributor", type: "text", position: 7 },
             { entity_kind: "inventory:part", name: "distributor_part_number", display_label: "Distributor stock code", type: "text", position: 8 },
             { entity_kind: "inventory:part", name: "purchase_order", display_label: "Customer purchase order", type: "text", position: 9 },
@@ -277,21 +308,21 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     blurb: "Sheet stock with usable offcuts, cut outlines and QR labels.",
     next_steps: [{ label: "Add your first piece", module: "inventory", path: "/instances/sheets/items", hint: "Keep one record for each physical piece." }],
     manifest: {
-      id: "cobblr.community.sheets", catalog: "extended", version: "0.1.2", name: "Sheets", author: "Cobblr", released_at: "2026-10-05",
+      id: "cobblr.community.sheets", catalog: "extended", version: "0.1.3", name: "Sheets", author: "Cobblr", released_at: "2026-10-05",
       description: "Keep sheet material, its size, storage place and cost, and find room in the offcuts before opening new stock.",
       changelog: "Track each physical piece, record cuts without losing usable gaps, undo hand edits and find room in offcuts first.",
-      releases: [{ version: "0.1.2", released_at: "2026-10-05", notes: "Track each physical piece, record cuts without losing usable gaps, undo hand edits and find room in offcuts first." }],
+      releases: [{ version: "0.1.3", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { version: "0.1.2", released_at: "2026-10-05", notes: "Track each physical piece, record cuts without losing usable gaps, undo hand edits and find room in offcuts first." }],
       requires: [{ module: "inventory" }, { module: "labels" }],
       provides_instances: [{
         module: "inventory", instance_name: "sheets", display_name: "Sheets", item_noun: "sheet", glyph: "▱", qty_unit: "each", faces: { stock: true },
         field_defs: [
           { entity_kind: "inventory:part", name: "material", display_label: "Material", type: "text", position: 1, required: true, learns: true, choices: ["Plywood", "MDF", "Acrylic", "Cardboard", "Aluminium"], help: "The material this piece is made from." },
-          { entity_kind: "inventory:part", name: "thickness_mm", display_label: "Thickness", type: "number", unit: "mm", position: 2, required: true, help: "Measured thickness in millimetres." },
-          { entity_kind: "inventory:part", name: "width_mm", display_label: "Width", type: "number", unit: "mm", position: 3, required: true, help: "Original width in the loaded orientation." },
-          { entity_kind: "inventory:part", name: "height_mm", display_label: "Height", type: "number", unit: "mm", position: 4, required: true, help: "Original height in the loaded orientation." },
+          { entity_kind: "inventory:part", name: "thickness_mm", display_label: "Thickness", type: "number", aggregate: "none", unit: "mm", position: 2, required: true, help: "Measured thickness in millimetres." },
+          { entity_kind: "inventory:part", name: "width_mm", display_label: "Width", type: "number", aggregate: "none", unit: "mm", position: 3, required: true, help: "Original width in the loaded orientation." },
+          { entity_kind: "inventory:part", name: "height_mm", display_label: "Height", type: "number", aggregate: "none", unit: "mm", position: 4, required: true, help: "Original height in the loaded orientation." },
           { entity_kind: "inventory:part", name: "finish", display_label: "Colour or finish", type: "text", position: 5, learns: true, help: "Colour, coating or surface finish." },
-          { entity_kind: "inventory:part", name: "minimum_usable_mm", display_label: "Smallest usable gap", type: "number", unit: "mm", position: 6, help: "Gaps narrower than this in either direction are left out. Defaults to 20 mm." },
-          { entity_kind: "inventory:part", name: "offcut_percent", display_label: "Offcut below (%)", type: "number", position: 7, help: "Flag a piece as an offcut below this usable percentage. Defaults to 25%." },
+          { entity_kind: "inventory:part", name: "minimum_usable_mm", display_label: "Smallest usable gap", type: "number", aggregate: "none", unit: "mm", position: 6, help: "Gaps narrower than this in either direction are left out. Defaults to 20 mm." },
+          { entity_kind: "inventory:part", name: "offcut_percent", display_label: "Offcut below (%)", type: "number", aggregate: "none", position: 7, help: "Flag a piece as an offcut below this usable percentage. Defaults to 25%." },
         ],
         field_overrides: [
           { entity_kind: "inventory:part", name: "cost", display_label: "Paid" },
@@ -310,8 +341,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Your spice cabinet as its own table. Which jar is open, which are still sealed, and how often you actually re-buy each one.",
     manifest: {
           "id": "cobblr.flagship.spice-rack",
-          "version": "0.2.5",
-          "releases": [{ "version": "0.2.5", "released_at": "2026-10-02", "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
+          "version": "0.2.6",
+          "releases": [{ "version": "0.2.6", "released_at": "2026-10-07", "notes": "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { "version": "0.2.5", "released_at": "2026-10-02", "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
           "released_at": "2026-09-12",
           "name": "Spice Rack",
           "author": "Cobblr",
@@ -448,6 +479,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                                   "name": "net_weight_g",
                                   "display_label": "Net weight (g)",
                                   "type": "number",
+                                  "aggregate": "per_unit",
                                   "unit": "g",
                                   "position": 2,
                                   "help": "Grams in a full jar, off the label. Used to gauge how much is left in the open one, so you never type a capacity."
@@ -590,8 +622,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     next_steps: [{ label: "Add your first bottle", module: "inventory", path: "/instances/wine/items", hint: "Scan the barcode and the vintage is read off the label" }],
     manifest: {
       "id": "cobblr.flagship.wine",
-      "version": "0.1.5",
-      "releases": [{ "version": "0.1.5", "released_at": "2026-10-02", "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
+      "version": "0.1.6",
+      "releases": [{ "version": "0.1.6", "released_at": "2026-10-07", "notes": "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { "version": "0.1.5", "released_at": "2026-10-02", "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
       "released_at": "2026-09-28",
       "name": "Wine",
       "author": "Cobblr",
@@ -706,6 +738,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
               "name": "vintage",
               "display_label": "Vintage",
               "type": "number",
+              "aggregate": "none",
               "position": 2,
               "field_role": "year-made",
               "help": "The year on the label. Read off the {{noun}} when you scan it, and never shared as a fact about the barcode: one barcode covers every vintage."
@@ -767,6 +800,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
               "name": "abv",
               "display_label": "ABV",
               "type": "number",
+              "aggregate": "none",
               "position": 8,
               "unit": "%",
               "help": "Alcohol by volume, off the label: 13.5"
@@ -802,6 +836,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
               "name": "rating",
               "display_label": "Rating",
               "type": "number",
+              "aggregate": "none",
               "position": 12,
               "help": "Your score out of 100."
             },
@@ -1063,8 +1098,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Your tea cupboard as its own table. Which box is open, which are still sealed, and how often you actually re-buy each one.",
     manifest: {
           "id": "cobblr.flagship.tea",
-          "version": "0.2.5",
-          "releases": [{ "version": "0.2.5", "released_at": "2026-10-02", "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
+          "version": "0.2.6",
+          "releases": [{ "version": "0.2.6", "released_at": "2026-10-07", "notes": "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { "version": "0.2.5", "released_at": "2026-10-02", "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
           "released_at": "2026-09-12",
           "name": "Tea",
           "author": "Cobblr",
@@ -1200,6 +1235,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                                   "name": "bags_per_box",
                                   "display_label": "Bags per box",
                                   "type": "number",
+                                  "aggregate": "per_unit",
                                   "unit": "bags",
                                   "position": 2,
                                   "help": "Off the label. Used to gauge how much is left in the open box, so you never type a capacity."
@@ -1353,8 +1389,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track the fridge/pantry with expiry + storage, and auto-build a shopping list when something runs low or is about to expire. Check an item off → it restocks.",
     manifest: {
       id: "cobblr.flagship.groceries",
-      version: "0.13.3",
-      releases: [{ version: "0.13.5", released_at: "2026-10-03", notes: "A scanned bottle of water now goes to Groceries: the barcode catalog calls it water, and Groceries now knows the word." }, { version: "0.13.1", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
+      version: "0.13.7",
+      releases: [{ version: "0.13.7", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { version: "0.13.5", released_at: "2026-10-03", notes: "A scanned bottle of water now goes to Groceries: the barcode catalog calls it water, and Groceries now knows the word." }, { version: "0.13.1", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
       // What its items are actually CALLED. A bundle's suggestion has to be
       // corroborated by the capture's own text before it is trusted, and a
       // category whose members never share its name can never corroborate:
@@ -1701,6 +1737,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                                       "name": "shelf_life_days",
                                       "display_label": "Good for (days)",
                                       "type": "number",
+                                      "aggregate": "none",
                                       "position": 1,
                                       "help": "How long this keeps from the day it arrives. Used to date a new one when you add it, so you never type a use-by. Leave blank and nothing is dated for you."
                               },
@@ -1709,6 +1746,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                                       "name": "shelf_life_opened_days",
                                       "display_label": "Once opened, good for (days)",
                                       "type": "number",
+                                      "aggregate": "none",
                                       "position": 2,
                                       "help": "A lemon lasts weeks whole and days once cut. Opening one starts this shorter clock on that one only; the unopened ones keep their own dates."
                               },
@@ -1717,6 +1755,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                                       "name": "grace_days",
                                       "display_label": "Still fine for (days past)",
                                       "type": "number",
+                                      "aggregate": "none",
                                       "position": 3,
                                       "help": "Food does not go off at midnight. Inside this window past the use-by it is mentioned rather than alarming; beyond it you are asked whether you threw it out."
                               },
@@ -1957,13 +1996,14 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.small-shop",
       base_kind_fields_reason: "A shop runs on the modules' own records (orders, parts, products), not a table of its own; the few fields it adds are what a selling business needs on those records.",
-      version: "0.1.3",
+      version: "0.1.4",
       name: "Small shop",
       description:
         "For a small shop, maker business or manufacturer: customer orders, the products you make, stock, production, the print farm, purchase orders and shipments, turned on together and kept in one Shop section of the sidebar, each with a view to start from.",
       author: "Cobblr",
       released_at: "2026-10-02",
       releases: [
+        { version: "0.1.4", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." },
         { version: "0.1.3", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." },
         {
           version: "0.1.2",
@@ -1998,7 +2038,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         { entity_kind: "sales:order", name: "channel", display_label: "Came in through", type: "text", position: 2, learns: true, choices: ["Website", "Etsy", "Email", "In person", "Wholesale", "Other"] },
         { entity_kind: "inventory:part", name: "sku", display_label: "SKU", type: "text", position: 1, field_role: "identifier" },
         { entity_kind: "inventory:part", name: "sourcing", display_label: "Made or bought", type: "text", position: 2, learns: false, choices: ["Made here", "Bought in"] },
-        { entity_kind: "builds:build", name: "sell_price", display_label: "Sells for", type: "money", position: 1 },
+        { entity_kind: "builds:build", name: "sell_price", display_label: "Sells for", type: "money", aggregate: "none", position: 1 },
       ],
       saved_views: [
         { entity_kind: "sales:order", name: "Orders by status", view_type: "kanban", config: { group_by: "status" }, pinned: true, is_default: true },
@@ -2074,8 +2114,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.community.lego",
-      version: "0.6.3",
-      releases: [{ version: "0.6.3", released_at: "2026-10-03", notes: "Sets and Bricks share a navigation row that you can join or split on this device." }, { version: "0.6.2", released_at: "2026-10-03", notes: "Adding Sets offers BrickLink as an optional service instead of turning it on or adding a sidebar row." }, { version: "0.6.1", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
+      version: "0.6.4",
+      releases: [{ version: "0.6.4", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { version: "0.6.3", released_at: "2026-10-03", notes: "Sets and Bricks share a navigation row that you can join or split on this device." }, { version: "0.6.2", released_at: "2026-10-03", notes: "Adding Sets offers BrickLink as an optional service instead of turning it on or adding a sidebar row." }, { version: "0.6.1", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
       name: "Lego",
       description:
         "Lego as its own tables. Sets you own (sealed / built / disassembled) with optional Bricks bins, a Rebrickable catalog link, and a one-tap Disassemble that spawns the parts and opens the sorting planner.",
@@ -2104,9 +2144,9 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             { entity_kind: "inventory:part", name: "lifecycle", display_label: "State", type: "text", position: 1, learns: false, choices: ["sealed", "built", "disassembled"], help: "Where this {{noun}} is: still sealed in the box, built, or taken apart into bricks." },
             { entity_kind: "inventory:part", name: "set_number", display_label: "{{Noun}} number", type: "text", position: 2, field_role: "identifier", help: "The number printed on the box (e.g. 75192)." },
             { entity_kind: "inventory:part", name: "theme", display_label: "Theme", type: "text", position: 3, help: "Star Wars, City, Technic, Botanicals…" },
-            { entity_kind: "inventory:part", name: "year", display_label: "Release year", type: "number", position: 4, help: "The year the {{noun}} was released." },
-            { entity_kind: "inventory:part", name: "piece_count", display_label: "Pieces", type: "number", position: 5, help: "How many pieces the {{noun}} has, from the box." },
-            { entity_kind: "inventory:part", name: "minifig_count", display_label: "Minifigs", type: "number", position: 6, help: "How many minifigures come with the {{noun}}." },
+            { entity_kind: "inventory:part", name: "year", display_label: "Release year", type: "number", aggregate: "none", position: 4, help: "The year the {{noun}} was released." },
+            { entity_kind: "inventory:part", name: "piece_count", display_label: "Pieces", type: "number", aggregate: "per_unit", position: 5, help: "How many pieces the {{noun}} has, from the box." },
+            { entity_kind: "inventory:part", name: "minifig_count", display_label: "Minifigs", type: "number", aggregate: "per_unit", position: 6, help: "How many minifigures come with the {{noun}}." },
             { entity_kind: "inventory:part", name: "instructions_url", display_label: "Instructions", type: "url", position: 7, renderer: "url-link", help: "Link to the build instructions (a PDF or Rebrickable page)." },
           ],
           field_overrides: [
@@ -2333,8 +2373,9 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       id: "cobblr.community.computers",
       released_at: "2026-10-02",
       changelog: "A computer's Contents are called Parts: install what it is built from, and rename the word if you call them something else.",
-      version: "0.2.1",
+      version: "0.2.2",
       releases: [
+        { version: "0.2.2", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." },
         { version: "0.2.1", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." },
         { version: "0.2.0", released_at: "2026-10-02", notes: "A computer's Contents are called Parts: install what it is built from, and rename the word if you call them something else." },
       ],
@@ -2408,8 +2449,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
               position: 3,
               help: "Discrete graphics, when there are any.",
             },
-            { entity_kind: "assets:asset", name: "ram_gb", display_label: "Memory", type: "number", unit: "GB", position: 4 },
-            { entity_kind: "assets:asset", name: "storage_gb", display_label: "Storage", type: "number", unit: "GB", position: 5 },
+            { entity_kind: "assets:asset", name: "ram_gb", display_label: "Memory", type: "number", aggregate: "none", unit: "GB", position: 4 },
+            { entity_kind: "assets:asset", name: "storage_gb", display_label: "Storage", type: "number", aggregate: "none", unit: "GB", position: 5 },
             {
               entity_kind: "assets:asset",
               name: "operating_system",
@@ -2548,8 +2589,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       id: "cobblr.community.bookshelf",
       released_at: "2026-06-28",
       changelog: "Call them books or titles: pick the word when you install, or change it later in the table's settings, and every label says it. Earlier: The shelf opens on its covers rather than the table, and remembers the view you pick. A book is not stock: the shelf no longer offers Use one, Used up or a reorder point, and the parts-category picker is gone from the book form. An ISBN scan fills author, year and ISBN, and a book you already have is offered instead of a second copy.",
-      version: "0.3.1",
-      releases: [{ version: "0.3.1", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
+      version: "0.3.2",
+      releases: [{ version: "0.3.2", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { version: "0.3.1", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
       name: "Bookshelf",
       description:
         "Your books as their own shelf: author + ISBN + year + read status, on a lean catalog that opens as a cover wall. Spine-label wire bundled.",
@@ -2605,9 +2646,9 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             // ISBN. Without them a scanned ISBN made a second, blank Hobbit.
             { entity_kind: "bookshelf:item", name: "author", display_label: "Author", type: "text", position: 1, decode_role: "decode:author" },
             { entity_kind: "bookshelf:item", name: "isbn", display_label: "ISBN", type: "text", position: 2, decode_role: "identifier:isbn", field_role: "identifier" },
-            { entity_kind: "bookshelf:item", name: "year", display_label: "Year", type: "number", position: 3, decode_role: "decode:year" },
+            { entity_kind: "bookshelf:item", name: "year", display_label: "Year", type: "number", aggregate: "none", position: 3, decode_role: "decode:year" },
             { entity_kind: "bookshelf:item", name: "read_status", display_label: "Status", type: "text", learns: false, choices: ["To read", "Reading", "Read", "Abandoned"], position: 4 },
-            { entity_kind: "bookshelf:item", name: "rating", display_label: "Rating (1-5)", type: "number", position: 5 },
+            { entity_kind: "bookshelf:item", name: "rating", display_label: "Rating (1-5)", type: "number", aggregate: "none", position: 5 },
           ],
           saved_views: [
             {
@@ -2640,8 +2681,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       released_at: "2026-06-28",
       changelog: "Says up front that it tracks stock, so counts and Use one or Used up are there from the first item rather than after one is counted. Earlier: An ISBN scan fills author, year and ISBN, and a title you already have is offered instead of a second copy.",
       catalog: "extended",
-      version: "0.1.4",
-      releases: [{ version: "0.1.4", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
+      version: "0.1.5",
+      releases: [{ version: "0.1.5", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { version: "0.1.4", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
       name: "Lending Library",
       description:
         "A shelf you lend from: each title carries its copies, and lending one out reserves it against a borrower until it comes back.",
@@ -2684,7 +2725,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           field_defs: [
             { entity_kind: "lending-library:item", name: "author", display_label: "Author", type: "text", position: 1, decode_role: "decode:author" },
             { entity_kind: "lending-library:item", name: "isbn", display_label: "ISBN", type: "text", position: 2, decode_role: "identifier:isbn", field_role: "identifier" },
-            { entity_kind: "lending-library:item", name: "year", display_label: "Year", type: "number", position: 3, decode_role: "decode:year" },
+            { entity_kind: "lending-library:item", name: "year", display_label: "Year", type: "number", aggregate: "none", position: 3, decode_role: "decode:year" },
             // Choices are not decoration: they are the fingerprint the HEURISTIC
             // (no-AI) scan router matches a capture against, so this shelf is
             // reachable on a workspace with AI off. lint:bundle-quality enforces
@@ -2709,7 +2750,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       id: "cobblr.community.tool-library",
       base_kind_fields_reason: "Adds lending fields (borrower, due date, condition, deposit) to the machines already kept as Machines; lending is a face on the workspace's own tools, not a table of its own.",
       catalog: "disabled",
-      version: "0.1.0",
+      version: "0.1.2",
+      releases: [{ version: "0.1.2", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }],
       name: "Tool Library",
       description:
         "Track who's borrowed a tool, when it's due back, and its condition. Custom machine:machine fields.",
@@ -2719,7 +2761,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       field_defs: [
         { entity_kind: "machines:machine", name: "borrower", display_label: "Borrower", type: "text", position: 1 },
         { entity_kind: "machines:machine", name: "due_date", display_label: "Due back", type: "date", position: 2 },
-        { entity_kind: "machines:machine", name: "condition", display_label: "Condition (1-5)", type: "number", position: 3 },
+        { entity_kind: "machines:machine", name: "condition", display_label: "Condition (1-5)", type: "number", aggregate: "none", position: 3 },
         { entity_kind: "machines:machine", name: "deposit_paid", display_label: "Deposit paid?", type: "text", position: 4 },
         { entity_kind: "machines:machine", name: "tool_category", display_label: "Category", type: "text", position: 5 },
       ],
@@ -2918,12 +2960,12 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.community.laser-cutters",
       catalog: "extended",
-      version: "0.3.3",
+      version: "0.3.4",
       name: "Laser Cutters",
       description:
         "A Laser Cutters tracker: tube type, wattage, bed size, cooling, focal length. A named view of your machines, so each cutter still drives jobs, fleet status, and maintenance.",
       author: "Cobblr community",
-      ...machineBundleRelease("0.3.3", "laser-cutters", "Laser Cutters", "tube type, wattage, bed size, cooling, focal length"),
+      ...withRelease(machineBundleRelease("0.3.3", "laser-cutters", "Laser Cutters", "tube type, wattage, bed size, cooling, focal length"), { version: "0.3.4", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }),
       requires: [{ module: "machines" }],
       features: [connectMachinesFeature("laser-cutters")],
       provides_instances: [
@@ -2946,7 +2988,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           entity_kind: "machines:machine",
           name: "wattage",
           display_label: "Wattage (W)",
-          type: "number", unit: "W",
+          type: "number", aggregate: "none", unit: "W",
           position: 21,
         },
         {
@@ -2969,7 +3011,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           entity_kind: "machines:machine",
           name: "focal_length_mm",
           display_label: "Focal length (mm)",
-          type: "number", unit: "mm",
+          type: "number", aggregate: "none", unit: "mm",
           position: 24,
             },
           ],
@@ -2993,12 +3035,12 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.community.cnc-machines",
       catalog: "extended",
-      version: "0.3.3",
+      version: "0.3.4",
       name: "CNC Machines",
       description:
         "A CNC Machines tracker: spindle, axes, work area, controller, coolant. A named view of your machines, so each mill still drives jobs, fleet status, and maintenance.",
       author: "Cobblr community",
-      ...machineBundleRelease("0.3.3", "cnc-machines", "CNC Machines", "spindle, axes, work area, controller, coolant"),
+      ...withRelease(machineBundleRelease("0.3.3", "cnc-machines", "CNC Machines", "spindle, axes, work area, controller, coolant"), { version: "0.3.4", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }),
       requires: [{ module: "machines" }],
       features: [connectMachinesFeature("cnc-machines")],
       provides_instances: [
@@ -3030,7 +3072,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           entity_kind: "machines:machine",
           name: "axis_count",
           display_label: "Axes",
-          type: "number",
+          type: "number", aggregate: "none",
           position: 31,
         },
         {
@@ -3086,7 +3128,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.yarn",
-      version: "0.9.3",
+      version: "0.9.5",
       name: "Yarn",
       description:
         "Yarn as its own inventory instance: counted in balls, skeins or hanks, yarn-only fields, grouped by weight. Optional Hooks, Supplies and Patterns tables.",
@@ -3095,6 +3137,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       changelog:
         "Importing patterns with Source: Ribblr now shows how to get them out of Ribblr: what can be downloaded, what cannot, and how to bring the downloads in.",
       releases: [
+        { version: "0.9.5", released_at: "2026-10-07", notes: "By weight adds up only what adds up: length per ball is totalled as length times balls (Total length), and each row's count says it in your own word, 2 balls or 3 hanks." },
         { version: "0.9.3", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." },
         {
           version: "0.9.2",
@@ -3141,7 +3184,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             { entity_kind: "inventory:part", name: "fiber", display_label: "Fibre", type: "text", position: 3, learns: true, choices: ["Wool", "Merino", "Cotton", "Acrylic", "Nylon", "Chenille", "Alpaca", "Silk", "Linen", "Bamboo", "Cashmere", "Blend"], help: "What the yarn is made of." },
             { entity_kind: "inventory:part", name: "weight_class", display_label: "Weight", type: "text", position: 4, learns: false, choices: ["0 – Lace", "1 – Fingering", "2 – Sport", "3 – DK", "4 – Worsted", "4 – Aran", "5 – Bulky", "6 – Super Bulky"], help: "Craft Yarn Council standard weight. 0 (Lace, thinnest) to 6 (Super Bulky, thickest)." },
             { entity_kind: "inventory:part", name: "vendor", display_label: "Vendor", type: "text", position: 5, learns: true, choices: ["Michaels", "Hobby Lobby", "Walmart", "Joann", "Amazon", "Etsy", "Local yarn shop"], help: "Where you bought it." },
-            { entity_kind: "inventory:part", name: "length_per_skein", display_label: "Length / {{noun}} (m)", type: "number", unit: "m", position: 6, help: "Metres per {{noun}}, from the label, used to estimate if you have enough for a project." },
+            { entity_kind: "inventory:part", name: "length_per_skein", display_label: "Length / {{noun}} (m)", type: "number", aggregate: "per_unit", unit: "m", position: 6, help: "Metres per {{noun}}, from the label, used to estimate if you have enough for a project." },
             { entity_kind: "inventory:part", name: "capacity", display_label: "Full {{noun}}", type: "computed", template: "{{ length_per_skein }}", position: 7, help: "Metres in one full {{noun}}, from the length above. When you track {{noun}} by {{noun}}, each opened {{noun}}'s gauge is measured against this: you never type it." },
             { entity_kind: "inventory:part", name: "dye_lot", display_label: "Dye lot", type: "text", position: 8, field_role: "lot", help: "The batch code on the label, buy the same lot so colours match across {{nouns}}." },
             { entity_kind: "inventory:part", name: "needle_size", display_label: "Suggested needle size", type: "text", position: 9, learns: false, choices: ["2.0 mm", "2.5 mm", "3.0 mm", "3.5 mm", "4.0 mm", "4.5 mm", "5.0 mm", "5.5 mm", "6.0 mm", "6.5 mm", "7.0 mm", "8.0 mm", "9.0 mm", "10.0 mm", "12.0 mm"], help: "The needle/hook size the label recommends for this yarn (in mm)." },
@@ -3168,7 +3211,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             { entity_kind: "inventory:part", name: "consumable" },
           ],
           saved_views: [
-            { entity_kind: "inventory:part", name: "By weight", view_type: "table", pinned: true, config: { group_by: "weight_class", visible_fields: ["title", "color", "colorway", "fiber", "vendor", "qty", "unit", "length_per_skein"] } },
+            { entity_kind: "inventory:part", name: "By weight", view_type: "table", pinned: true, config: { group_by: "weight_class", visible_fields: ["title", "color", "colorway", "fiber", "vendor", "qty", "length_per_skein"] } },
           ],
         },
       ],
@@ -3352,7 +3395,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.filament",
-      version: "0.8.6",
+      version: "0.8.7",
       name: "Filament",
       description: "A filament type (Royal Blue PLA) says the filament once: material, colour, diameter, temperatures, whether it needs drying. Each spool picks its type and adds its own size, batch code, how much is left and its state. Each type adds up its spools and kilograms.",
       author: "Cobblr",
@@ -3360,6 +3403,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       changelog:
         "Filament's description in the bundle list reads plainly, without capitals shouting TYPE and SPOOLS. Earlier: A filament type's fields sit under three headings, Identity, Printing and Spool, and each folds away, so a type's page reads in parts instead of one long list. A field you moved to another section stays where you put it when Filament updates. Earlier: A filament type has ONE colour field. It holds one colour, a blend or several, so a rainbow reads as a rainbow, and the separate colour swatch field is folded into it. Earlier: A scanned spool files as a spool: its type is found or made under it, and a scan never offers the table of types. The spools also know what filament is called (PLA, PETG, 1.75 mm), so a spool is not filed as generic inventory. Earlier: Scanning a spool's QR fills in everything its maker publishes: the exact colour swatch, the UPC, the nozzle and bed temperature ranges, the drying temperature, density, the empty spool weight, and the date the spool was made and its measured length. The UPC is the type's identifier, so scanning the box barcode finds the same type. Earlier: Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: Types and Spools now sit together in the navbar as one element, a quiet \"Filament\" stem with \"Types │ Spools\" links, so the two related tables read as one thing. (0.5.1: scanning a spool's QR find-or-creates its filament TYPE and links the spool automatically, a scan lands in the type→spool model instead of a flat row. 0.5.0: the TYPE defines the whole filament: colour, diameter, nozzle/bed temps and needs-drying live on the type, not re-entered per spool; a SPOOL just picks its type and carries the per-spool facts: size, batch code, remaining, state. Upgrading carries your existing temps + colour up onto the type automatically.)",
       releases: [
+        { version: "0.8.7", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." },
         { version: "0.8.6", released_at: "2026-10-04", notes: "Spools show use and length, accept scale and firmware reports, and can send Cobblr counts back to Spoolman. Import filament types and vendors from the public catalog."  },
         { version: "0.8.2", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." },
         { version: "0.8.1", released_at: "2026-09-30", notes: "Filament's description in the bundle list reads plainly, without capitals shouting TYPE and SPOOLS." },
@@ -3404,23 +3448,23 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             { entity_kind: "inventory:part", name: "material", display_label: "Material", type: "text", position: 1, section: "Identity", learns: true, choices: ["PLA", "PLA+", "PETG", "ABS", "ASA", "TPU", "Nylon", "PC", "PVA", "Other"], help: "The plastic type. PLA is the easy default; PETG/ABS for tougher parts." },
             { entity_kind: "inventory:part", name: "color", display_label: "Colour", type: "text", position: 2, section: "Identity", renderer: "color-hex", help: "One colour, a blend or several: pick them, or type a colour's name." },
             { entity_kind: "inventory:part", name: "diameter", display_label: "Diameter", type: "text", position: 3, section: "Identity", learns: false, choices: ["1.75 mm", "2.85 mm"], help: "Filament thickness. 1.75 mm is by far the most common; 2.85 mm for some older/large printers." },
-            { entity_kind: "inventory:part", name: "nozzle_temp", display_label: "Nozzle °C", type: "number", position: 4, section: "Printing", help: "The hot-end temperature that prints this filament cleanly, same for every spool of it." },
-            { entity_kind: "inventory:part", name: "bed_temp", display_label: "Bed °C", type: "number", position: 5, section: "Printing", help: "The bed temperature that makes the first layer stick." },
+            { entity_kind: "inventory:part", name: "nozzle_temp", display_label: "Nozzle °C", type: "number", aggregate: "none", position: 4, section: "Printing", help: "The hot-end temperature that prints this filament cleanly, same for every spool of it." },
+            { entity_kind: "inventory:part", name: "bed_temp", display_label: "Bed °C", type: "number", aggregate: "none", position: 5, section: "Printing", help: "The bed temperature that makes the first layer stick." },
             { entity_kind: "inventory:part", name: "needs_drying", display_label: "Needs drying", type: "boolean", position: 6, section: "Spool", choices: ["Stable", "Hygroscopic"], help: "Whether this filament tends to absorb moisture and should be kept dry / dried before use." },
             // Live rollups over the spools linked to this type (instance-of).
             { entity_kind: "inventory:part", name: "spool_count", display_label: "Spools", type: "computed", position: 7, template: "{{instances.count}}", help: "How many physical spools of this type you own." },
             { entity_kind: "inventory:part", name: "total_remaining", display_label: "In stock", type: "computed", position: 8, template: "{{instances.total_qty}} kg", help: "Total filament remaining across all your spools of this type." },
             { entity_kind: "inventory:part", name: "upc", display_label: "UPC", type: "text", position: 10, section: "Identity", field_role: "identifier", help: "The barcode on the spool's box, so a scan of it finds this type." },
-            { entity_kind: "inventory:part", name: "nozzle_temp_min", display_label: "Nozzle min °C", type: "number", position: 11, section: "Printing", help: "The coolest nozzle temperature the maker lists." },
-            { entity_kind: "inventory:part", name: "nozzle_temp_max", display_label: "Nozzle max °C", type: "number", position: 12, section: "Printing", help: "The hottest nozzle temperature the maker lists." },
-            { entity_kind: "inventory:part", name: "bed_temp_min", display_label: "Bed min °C", type: "number", position: 13, section: "Printing", help: "The coolest bed temperature the maker lists." },
-            { entity_kind: "inventory:part", name: "bed_temp_max", display_label: "Bed max °C", type: "number", position: 14, section: "Printing", help: "The hottest bed temperature the maker lists." },
-            { entity_kind: "inventory:part", name: "dry_temp", display_label: "Dry °C", type: "number", position: 15, section: "Spool", help: "The highest temperature to dry this filament at." },
-            { entity_kind: "inventory:part", name: "density", display_label: "Density g/cm³", type: "number", position: 16, section: "Spool", help: "Used to turn a weight into a length." },
-            { entity_kind: "inventory:part", name: "empty_spool_g", display_label: "Empty spool g", type: "number", position: 17, section: "Spool", help: "What the empty spool weighs, to weigh what is left." },
+            { entity_kind: "inventory:part", name: "nozzle_temp_min", display_label: "Nozzle min °C", type: "number", aggregate: "none", position: 11, section: "Printing", help: "The coolest nozzle temperature the maker lists." },
+            { entity_kind: "inventory:part", name: "nozzle_temp_max", display_label: "Nozzle max °C", type: "number", aggregate: "none", position: 12, section: "Printing", help: "The hottest nozzle temperature the maker lists." },
+            { entity_kind: "inventory:part", name: "bed_temp_min", display_label: "Bed min °C", type: "number", aggregate: "none", position: 13, section: "Printing", help: "The coolest bed temperature the maker lists." },
+            { entity_kind: "inventory:part", name: "bed_temp_max", display_label: "Bed max °C", type: "number", aggregate: "none", position: 14, section: "Printing", help: "The hottest bed temperature the maker lists." },
+            { entity_kind: "inventory:part", name: "dry_temp", display_label: "Dry °C", type: "number", aggregate: "none", position: 15, section: "Spool", help: "The highest temperature to dry this filament at." },
+            { entity_kind: "inventory:part", name: "density", display_label: "Density g/cm³", type: "number", aggregate: "none", position: 16, section: "Spool", help: "Used to turn a weight into a length." },
+            { entity_kind: "inventory:part", name: "empty_spool_g", display_label: "Empty spool g", type: "number", aggregate: "none", position: 17, section: "Spool", help: "What the empty spool weighs, to weigh what is left." },
             { entity_kind: "inventory:part", name: "vendor_id", display_label: "Vendor", type: "relation", ref_kind: "filament-vendors:item", position: 18, section: "Identity", help: "The maker's record and default empty spool weight." },
             { entity_kind: "inventory:part", name: "article_number", display_label: "Article number", type: "text", position: 19, section: "Identity" },
-            { entity_kind: "inventory:part", name: "price_per_kg", display_label: "Price per kg", type: "money", position: 20, section: "Spool" },
+            { entity_kind: "inventory:part", name: "price_per_kg", display_label: "Price per kg", type: "money", aggregate: "none", position: 20, section: "Spool" },
             { entity_kind: "inventory:part", name: "spoolmandb_id", display_label: "Filament catalog id", type: "text", position: 21, section: "Identity" },
 
           ],
@@ -3471,8 +3515,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             { entity_kind: "inventory:part", name: "batch_code", display_label: "Batch / lot code", type: "text", position: 2, help: "The batch or lot code from the maker's label (e.g. Polar's spool code), for traceability of this exact spool." },
             { entity_kind: "inventory:part", name: "state", display_label: "State", type: "text", position: 3, learns: false, choices: ["sealed", "open", "empty"], help: "Sealed = unopened; open = in use; empty = used up (keep it for the record or delete it)." },
             { entity_kind: "inventory:part", name: "mfg_date", display_label: "Made on", type: "date", position: 4, help: "The date the maker's tag says this spool was made." },
-            { entity_kind: "inventory:part", name: "length_m", display_label: "Length (m)", type: "number", position: 5, help: "The filament length the maker measured on this spool." },
-            { entity_kind: "inventory:part", name: "initial_g", display_label: "Initial filament (g)", type: "number", position: 6, help: "The filament weight when this spool was new, without the empty spool." },
+            { entity_kind: "inventory:part", name: "length_m", display_label: "Length (m)", type: "number", aggregate: "per_unit", position: 5, help: "The filament length the maker measured on this spool." },
+            { entity_kind: "inventory:part", name: "initial_g", display_label: "Initial filament (g)", type: "number", aggregate: "none", position: 6, help: "The filament weight when this spool was new, without the empty spool." },
           ],
           field_overrides: [
             { entity_kind: "inventory:part", name: "qty", display_label: "Remaining (kg)" },
@@ -3494,7 +3538,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           module: "inventory", instance_name: "filament-vendors", display_name: "Filament vendors",
           nav_group: { key: "filament", label: "Filament" },
           glyph: "🏷️", item_noun: "vendor", faces: { stock: false }, scan_keywords: ["filament vendor", "filament manufacturer"],
-          field_defs: [{ entity_kind: "inventory:part", name: "empty_spool_g", display_label: "Empty spool g", type: "number", position: 1, help: "The maker's default empty spool weight; a type or spool can override it." }],
+          field_defs: [{ entity_kind: "inventory:part", name: "empty_spool_g", display_label: "Empty spool g", type: "number", aggregate: "none", position: 1, help: "The maker's default empty spool weight; a type or spool can override it." }],
           field_overrides: ["qty", "unit", "cost", "min_qty", "location", "warranty", "category"].map((name) => ({ entity_kind: "inventory:part", name, hidden: true })),
         },
       ],
@@ -3512,12 +3556,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.home-inventory",
-      version: "0.6.3",
+      version: "0.6.4",
       name: "Home Inventory",
       description: "Your belongings as their own room-by-room catalog: make/model + condition, filed by room. Scan to add, print labels for boxes, optional insurance valuation.",
       author: "Cobblr",
       released_at: "2026-10-02",
       releases: [
+        { version: "0.6.4", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." },
         { version: "0.6.3", released_at: "2026-10-05", notes: "Bed linen scans stay with household belongings while material stock has its own table." },
         { version: "0.6.2", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." },
         {
@@ -3625,7 +3670,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             instance_name: "home-inventory",
             display_name: "Home Inventory",
             field_defs: [
-              { entity_kind: "inventory:part", name: "replacement_value", display_label: "Replacement value", type: "money", position: 3, help: "What it'd cost to buy new today, what an insurer pays out (not what you paid)." },
+              { entity_kind: "inventory:part", name: "replacement_value", display_label: "Replacement value", type: "money", aggregate: "sum", position: 3, help: "What it'd cost to buy new today, what an insurer pays out (not what you paid)." },
               { entity_kind: "inventory:part", name: "purchased_from", display_label: "Bought from", type: "text", position: 4, help: "Store or site, proof-of-purchase for a claim." },
               { entity_kind: "inventory:part", name: "purchase_date", display_label: "Purchased", type: "date", position: 5 },
             ],
@@ -3705,8 +3750,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.medications",
       catalog: "extended",
-      version: "0.3.5",
-      releases: [{ version: "0.3.5", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
+      version: "0.3.6",
+      releases: [{ version: "0.3.6", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { version: "0.3.5", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
       name: "Medications",
       description: "Your medications as their own table: dose, schedule, instructions, prescriber/pharmacy, refills left + a refill-by date. Caregiver-friendly.",
       author: "Cobblr",
@@ -3735,7 +3780,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             { entity_kind: "inventory:part", name: "prescriber", display_label: "Prescriber", type: "text", position: 8 },
             { entity_kind: "inventory:part", name: "pharmacy", display_label: "Pharmacy", type: "text", position: 9 },
             { entity_kind: "inventory:part", name: "rx_number", display_label: "Rx number", type: "text", position: 10, help: "The prescription number on the label, quote it to the pharmacy for a refill." },
-            { entity_kind: "inventory:part", name: "refills_left", display_label: "Refills left", type: "number", position: 11, help: "Refills remaining before you need a new prescription." },
+            { entity_kind: "inventory:part", name: "refills_left", display_label: "Refills left", type: "number", aggregate: "none", position: 11, help: "Refills remaining before you need a new prescription." },
             { entity_kind: "inventory:part", name: "refill_by", display_label: "Refill by", type: "date", position: 12, help: "Order a refill by this date so you don't run out." },
           ],
           field_overrides: [
@@ -3764,12 +3809,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.plants",
-      version: "0.3.4",
+      version: "0.3.5",
       name: "Plants",
       description: "Your houseplants as their own table: species, light, watering interval + pot size, grouped by light.",
       author: "Cobblr",
       released_at: "2026-09-30",
       releases: [
+        { version: "0.3.5", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." },
         { version: "0.3.4", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." },
         {
           version: "0.3.3",
@@ -3791,7 +3837,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           field_defs: [
             { entity_kind: "assets:asset", name: "species", display_label: "Species", type: "text", position: 1, help: "The plant's name/type, e.g. “Monstera”, “Snake plant”." },
             { entity_kind: "assets:asset", name: "light", display_label: "Light", type: "text", position: 2, learns: false, choices: ["Low", "Medium", "Bright indirect", "Direct sun"], help: "How much light its spot gets, the table groups by this so similar plants sit together." },
-            { entity_kind: "assets:asset", name: "water_every_days", display_label: "Water every (days)", type: "number", unit: "d", position: 3, help: "Days between waterings, e.g. 7 for weekly." },
+            { entity_kind: "assets:asset", name: "water_every_days", display_label: "Water every (days)", type: "number", aggregate: "none", unit: "d", position: 3, help: "Days between waterings, e.g. 7 for weekly." },
             { entity_kind: "assets:asset", name: "last_watered", display_label: "Last watered", type: "date", position: 4 },
             { entity_kind: "assets:asset", name: "pot_size", display_label: "Pot size", type: "text", position: 5, help: "Pot diameter, e.g. “6 in”, “15 cm”." },
           ],
@@ -3833,7 +3879,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
               display_name: "Plants",
               field_defs: [
                 { entity_kind: "assets:asset", name: "zone", display_label: "Irrigation zone", type: "text", position: 7, help: "Which valve/zone waters this plant, passed to the controller (e.g. “3”)." },
-                { entity_kind: "assets:asset", name: "water_seconds", display_label: "Water (seconds)", type: "number", position: 8, help: "How long to run the zone each watering, in seconds." },
+                { entity_kind: "assets:asset", name: "water_seconds", display_label: "Water (seconds)", type: "number", aggregate: "none", position: 8, help: "How long to run the zone each watering, in seconds." },
               ],
             },
           ],
@@ -3869,12 +3915,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.subscriptions",
       catalog: "extended",
-      version: "0.2.6",
+      version: "0.2.7",
       name: "Subscriptions",
       description: "Every recurring charge as its own table: cost/cycle, renewal date, payment method, grouped by category.",
       author: "Cobblr",
       released_at: "2026-10-02",
       releases: [
+        { version: "0.2.7", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." },
         { version: "0.2.6", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." },
         {
           version: "0.2.5",
@@ -3894,7 +3941,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           glyph: "🔁",
           item_noun: "subscription",
           field_defs: [
-            { entity_kind: "inventory:part", name: "cost_per_cycle", display_label: "Cost / cycle", type: "money", position: 1, help: "What you're charged each billing cycle." },
+            { entity_kind: "inventory:part", name: "cost_per_cycle", display_label: "Cost / cycle", type: "money", aggregate: "sum", position: 1, help: "What you're charged each billing cycle." },
             { entity_kind: "inventory:part", name: "billing_cycle", display_label: "Billing cycle", type: "text", position: 2, learns: false, choices: ["Weekly", "Monthly", "Quarterly", "Yearly"] },
             { entity_kind: "inventory:part", name: "renewal_date", display_label: "Renews", type: "date", position: 3, help: "Next charge / renewal date, when to cancel by if you don't want it." },
             { entity_kind: "inventory:part", name: "category", display_label: "Category", type: "text", position: 4, learns: true, choices: ["Streaming", "Software", "Membership", "Utility", "Insurance", "Phone / internet", "Other"] },
@@ -3928,12 +3975,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.collections",
       catalog: "disabled",
-      version: "0.3.4",
+      version: "0.3.5",
       name: "Collections",
       description: "Your collection as its own cover wall: condition, edition, paid vs value today, so you stop buying the dupe.",
       author: "Cobblr",
       released_at: "2026-10-02",
       releases: [
+        { version: "0.3.5", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." },
         { version: "0.3.4", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." },
         {
           version: "0.3.3",
@@ -3957,8 +4005,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             { entity_kind: "inventory:part", name: "condition", display_label: "Condition", type: "text", position: 1, learns: false, choices: ["Mint / Sealed", "Near Mint", "Excellent", "Good", "Fair", "Poor"], help: "Collector grade, the table groups by this; condition drives resale value." },
             { entity_kind: "inventory:part", name: "edition", display_label: "Edition / year", type: "text", position: 2, help: "Printing/pressing/edition or year: first editions, reissues, etc." },
             { entity_kind: "inventory:part", name: "acquired_date", display_label: "Acquired", type: "date", position: 3 },
-            { entity_kind: "inventory:part", name: "acquired_price", display_label: "Paid", type: "money", position: 4 },
-            { entity_kind: "inventory:part", name: "current_value", display_label: "Value today", type: "money", position: 5, help: "Roughly what it'd sell for now, for insurance or knowing your collection's worth." },
+            { entity_kind: "inventory:part", name: "acquired_price", display_label: "Paid", type: "money", aggregate: "sum", position: 4 },
+            { entity_kind: "inventory:part", name: "current_value", display_label: "Value today", type: "money", aggregate: "sum", position: 5, help: "Roughly what it'd sell for now, for insurance or knowing your collection's worth." },
             { entity_kind: "inventory:part", name: "signed", display_label: "Signed / sealed", type: "boolean", position: 6, help: "Tick if signed, sealed, or otherwise special, usually a value bump." },
           ],
           field_overrides: [
@@ -3992,8 +4040,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.fasteners",
       changelog: "Says up front that it tracks stock, so counts and Use one or Used up are there from the first item rather than after one is counted. Earlier: First catalogued release: the fastener drawer skin (length, diameter, thread, head) on inventory.",
-      version: "0.1.4",
-      releases: [{ version: "0.1.4", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
+      version: "0.1.5",
+      releases: [{ version: "0.1.5", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { version: "0.1.4", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
       name: "Fasteners",
       description:
         "Your fastener drawers as their own table: an inventory instance with thread, length, head, drive and material pre-shaped, quantities + reorder thresholds kept, grouped by thread.",
@@ -4034,7 +4082,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           field_defs: [
             { entity_kind: "inventory:part", name: "fastener_type", display_label: "Type", type: "text", position: 1, learns: true, choices: ["Screw", "Bolt", "Nut", "Washer", "Standoff", "Threaded insert", "Rivet", "Anchor"] },
             { entity_kind: "inventory:part", name: "thread", display_label: "Thread", type: "text", position: 2, help: "M3, M5, 1/4-20, #6-32…, the table groups by this." },
-            { entity_kind: "inventory:part", name: "length_mm", display_label: "Length (mm)", type: "number", unit: "mm", position: 3, help: "Shaft length, not counting the head. Leave blank for nuts/washers." },
+            { entity_kind: "inventory:part", name: "length_mm", display_label: "Length (mm)", type: "number", aggregate: "none", unit: "mm", position: 3, help: "Shaft length, not counting the head. Leave blank for nuts/washers." },
             { entity_kind: "inventory:part", name: "head", display_label: "Head", type: "text", position: 4, learns: true, choices: ["Socket cap", "Button", "Countersunk (flat)", "Pan", "Hex", "Flanged", "None"] },
             { entity_kind: "inventory:part", name: "drive", display_label: "Drive", type: "text", position: 5, learns: true, choices: ["Hex (Allen)", "Phillips", "Torx", "Slotted", "External hex", "None"] },
             { entity_kind: "inventory:part", name: "material", display_label: "Material", type: "text", position: 6, learns: true, choices: ["Steel (black oxide)", "Stainless", "Zinc-plated", "Brass", "Nylon", "Titanium"] },
@@ -4115,8 +4163,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.pets",
       catalog: "extended",
-      version: "0.2.3",
-      releases: [{ version: "0.2.3", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
+      version: "0.2.4",
+      releases: [{ version: "0.2.4", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { version: "0.2.3", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
       name: "Pets",
       description: "Your pets as their own table: vitals + vet/vaccination dates (calendar-reminded), grouped by species.",
       author: "Cobblr",
@@ -4136,7 +4184,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             { entity_kind: "assets:asset", name: "species", display_label: "Species", type: "text", position: 1, learns: true, choices: ["Dog", "Cat", "Rabbit", "Bird", "Reptile", "Fish", "Horse", "Other"], help: "The table groups pets by this." },
             { entity_kind: "assets:asset", name: "breed", display_label: "Breed", type: "text", position: 2 },
             { entity_kind: "assets:asset", name: "birthdate", display_label: "Birthday", type: "date", position: 3 },
-            { entity_kind: "assets:asset", name: "weight_kg", display_label: "Weight (kg)", type: "number", unit: "kg", position: 4, help: "Current weight, handy for dosing meds + spotting changes." },
+            { entity_kind: "assets:asset", name: "weight_kg", display_label: "Weight (kg)", type: "number", aggregate: "none", unit: "kg", position: 4, help: "Current weight, handy for dosing meds + spotting changes." },
             { entity_kind: "assets:asset", name: "vet", display_label: "Vet", type: "text", position: 5 },
             { entity_kind: "assets:asset", name: "microchip", display_label: "Microchip", type: "text", position: 6, help: "The chip ID registered to you, vets/shelters scan it to find the owner." },
             { entity_kind: "assets:asset", name: "next_vet_visit", display_label: "Next vet visit", type: "date", position: 7, help: "Next check-up, lands on your calendar." },
@@ -4166,12 +4214,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.gifts-occasions",
       catalog: "disabled",
-      version: "0.2.4",
+      version: "0.2.5",
       name: "Gifts & Occasions",
       description: "Gift ideas as their own table: who, occasion + date (calendar-reminded), budget, and an idea→bought→wrapped→given pipeline.",
       author: "Cobblr",
       released_at: "2026-10-02",
       releases: [
+        { version: "0.2.5", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." },
         { version: "0.2.4", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." },
         {
           version: "0.2.3",
@@ -4194,7 +4243,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             { entity_kind: "inventory:part", name: "recipient", display_label: "For", type: "text", position: 1, help: "Who the gift is for, the table groups by this." },
             { entity_kind: "inventory:part", name: "occasion", display_label: "Occasion", type: "text", position: 2, learns: true, choices: ["Birthday", "Christmas", "Anniversary", "Wedding", "Graduation", "Holiday", "Just because", "Other"] },
             { entity_kind: "inventory:part", name: "occasion_date", display_label: "Occasion date", type: "date", position: 3, help: "When you need it by, lands on your calendar." },
-            { entity_kind: "inventory:part", name: "budget", display_label: "Budget", type: "money", position: 4 },
+            { entity_kind: "inventory:part", name: "budget", display_label: "Budget", type: "money", aggregate: "sum", position: 4 },
             { entity_kind: "inventory:part", name: "status", display_label: "Status", type: "text", position: 5, learns: false, choices: ["Idea", "Bought", "Wrapped", "Given"], help: "Where it is in the pipeline. Idea → Bought → Wrapped → Given." },
           ],
           field_overrides: [
@@ -4459,7 +4508,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.cnc-tooling",
       catalog: "extended",
-      version: "0.2.4",
+      version: "0.2.5",
       name: "CNC Tooling",
       description:
         "Your CNC tooling as its own table (end mills, drills, taps, reamers, inserts) by type/diameter/flutes/material, with the bin each lives in. Ships the guided Cataloging Bench app: capture an unknown tool's measurements + observations and it composes the spec for you (AI-enriched when a provider is connected).",
@@ -4468,6 +4517,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       changelog:
         "The Cataloging Bench reads in plain sentences. Earlier: Says up front that it tracks stock, so counts and Use one or Used up are there from the first item rather than after one is counted. Earlier: The guided Cataloging Bench: measure (caliper) → weigh (scale) → observe → photograph → bin, hands-busy, no typing, with a live edge mode that streams real readings from an on-site agent. The structured spec is composed deterministically; a best-effort multimodal AI identify enriches the name/brand from the measurements when a provider is connected. Built on two GENERIC capabilities the bench app wires together, inventory:create-item + core-scan:identify, not a bench-specific module action. See docs/product/cataloging-bench.md.",
       releases: [
+        { version: "0.2.5", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." },
         { version: "0.2.4", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." },
         { version: "0.2.3", released_at: "2026-09-30", notes: "The Cataloging Bench reads in plain sentences." },
       ],
@@ -4483,15 +4533,15 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           qty_unit: "each",
           field_defs: [
             { entity_kind: "inventory:part", name: "tool_type", display_label: "Type", type: "text", position: 1, learns: true, choices: ["End mill", "Drill", "Tap", "Reamer", "Insert", "Collet", "Other"], help: "What kind of tool, the table groups by this." },
-            { entity_kind: "inventory:part", name: "diameter_mm", display_label: "Diameter (mm)", type: "number", unit: "mm", position: 2, help: "Cutting diameter, from the calipers." },
-            { entity_kind: "inventory:part", name: "shank_dia_mm", display_label: "Shank (mm)", type: "number", unit: "mm", position: 3, help: "Shank diameter, the size your collet/holder needs." },
-            { entity_kind: "inventory:part", name: "overall_length_mm", display_label: "Overall length (mm)", type: "number", unit: "mm", position: 4, help: "Tip to end, for reach + holder clearance." },
-            { entity_kind: "inventory:part", name: "flute_length_mm", display_label: "Flute length (mm)", type: "number", unit: "mm", position: 5, help: "Length of cut." },
-            { entity_kind: "inventory:part", name: "flute_count", display_label: "Flutes", type: "number", position: 6, help: "Number of flutes / lands." },
+            { entity_kind: "inventory:part", name: "diameter_mm", display_label: "Diameter (mm)", type: "number", aggregate: "none", unit: "mm", position: 2, help: "Cutting diameter, from the calipers." },
+            { entity_kind: "inventory:part", name: "shank_dia_mm", display_label: "Shank (mm)", type: "number", aggregate: "none", unit: "mm", position: 3, help: "Shank diameter, the size your collet/holder needs." },
+            { entity_kind: "inventory:part", name: "overall_length_mm", display_label: "Overall length (mm)", type: "number", aggregate: "none", unit: "mm", position: 4, help: "Tip to end, for reach + holder clearance." },
+            { entity_kind: "inventory:part", name: "flute_length_mm", display_label: "Flute length (mm)", type: "number", aggregate: "none", unit: "mm", position: 5, help: "Length of cut." },
+            { entity_kind: "inventory:part", name: "flute_count", display_label: "Flutes", type: "number", aggregate: "none", position: 6, help: "Number of flutes / lands." },
             { entity_kind: "inventory:part", name: "end_type", display_label: "End", type: "text", position: 7, learns: false, choices: ["Square", "Ball", "Corner-radius", "Chamfer", "Drill point"], help: "Geometry of the cutting end." },
             { entity_kind: "inventory:part", name: "material", display_label: "Material", type: "text", position: 8, learns: true, choices: ["Carbide", "HSS", "Cobalt", "Other"], help: "What the tool is made of." },
             { entity_kind: "inventory:part", name: "coating", display_label: "Coating", type: "text", position: 9, learns: true, choices: ["Uncoated", "TiN", "TiCN", "TiAlN", "AlTiN", "DLC", "Other"], help: "Surface coating, if any." },
-            { entity_kind: "inventory:part", name: "weight_g", display_label: "Weight (g)", type: "number", unit: "g", position: 10, help: "From the scale, helps the AI tell carbide from HSS." },
+            { entity_kind: "inventory:part", name: "weight_g", display_label: "Weight (g)", type: "number", aggregate: "per_unit", unit: "g", position: 10, help: "From the scale, helps the AI tell carbide from HSS." },
             { entity_kind: "inventory:part", name: "bin", display_label: "Bin", type: "text", position: 11, help: "Where it physically lives. “Bin 1 / Comp 6”. Set at the bench." },
           ],
           field_overrides: [
@@ -4532,12 +4582,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       "id": "cobblr.flagship.vehicles",
       "name": "Vehicles",
-      "version": "0.4.8",
+      "version": "0.4.9",
       "description": "Your vehicles as their own table - make/model/year, VIN, mileage, plate - with service logs (oil, tires, brakes) and next-due dates on your calendar. Replaces a glovebox folder of receipts and a sticky note on the windshield.",
       "author": "Cobblr",
       "released_at": "2026-07-13",
       "changelog": "Mileage counts as the vehicle's use, so a bill of sale's odometer reading fills it when it is empty, and a service schedule can fall due every so many miles. Earlier changes below.: The licence plate is a vehicle's identity, like its VIN: two scans with different plates are never taken for one car, and a typed plate finds the car you already have. Earlier changes below.: Renamed to Vehicles and given its OWN table (an assets instance), not generic Assets with extra columns - its own nav entry, a “New vehicle” button, and only the fields a vehicle needs (VIN, make, model, year, trim, mileage, fuel, color). Service logs come from core-maintenance; scan a VIN and it fills the whole record.",
       "releases": [
+        { "version": "0.4.9", "released_at": "2026-10-07", "notes": "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." },
         { "version": "0.4.8", "released_at": "2026-10-05", "notes": "Track registration and inspection expiry dates, renew without losing time, and choose when reminders arrive." },
         { "version": "0.4.5", "released_at": "2026-10-02", "notes": "A vehicle fills its empty Model, Year and Trim from its VIN and its name (\"Yamaha YZF-R3, Blue\" says the model), never over what you typed, with an Undo. Bought from is who sold it, so the place you found it and the person you bought it from are kept as two things." },
         { "version": "0.4.4", "released_at": "2026-10-02", "notes": "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before. Setting a service schedule offers the usual jobs (oil change, tire rotation, brake pads and more) beside the ones you have logged." },
@@ -4605,6 +4656,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
               "name": "year",
               "display_label": "Year",
               "type": "number",
+              "aggregate": "none",
               "position": 1,
               "decode_role": "decode:year"
             },
@@ -4630,6 +4682,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
               "name": "mileage",
               "display_label": "Mileage",
               "type": "number",
+              "aggregate": "none",
               "position": 4,
               "help": "Current odometer reading - service schedules count from this.",
               "field_role": "usage"

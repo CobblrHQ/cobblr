@@ -3,6 +3,7 @@ type: feature
 scope: locations
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#3.12 Locations (foundational)
+docs_published: 2026-10-08
 ---
 See what everything in a place cost, including sub-places and containers, and download an insurance list as CSV or PDF.
 

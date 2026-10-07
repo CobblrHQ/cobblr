@@ -1,3 +1,10 @@
+import {largeFormatRouter} from "./large-format.js";
+import {registerLargeFormatActions} from "../large-format/actions.js";
+import {embroideryRouter} from "./embroidery.js";
+import {registerEmbroideryActions} from "../embroidery-actions.js";
+
+import { registerStopAction } from "./stop-action.js";
+import { registerRevokeStationAction } from "./stations.js";
 import { cutterRouter } from "./cutter.js";
 import { registerCutterActions } from "../cutter-actions.js";
 import { resinRouter } from "./resin.js";
@@ -7,6 +14,8 @@ import { registerResinPostprocessAction } from "../resin-postprocess.js";
 
 import { Router } from "express";
 import { platform } from "@cobblr/platform-contract";
+import { benchRouter } from "./bench.js";
+import { registerBench } from "../bench.js";
 import { connectionsRouter } from "./connections.js";
 import { jobsRouter, registerSendAction } from "./jobs.js";
 import { linksRouter } from "./links.js";
@@ -25,6 +34,8 @@ import { libraryRouter } from "./library.js";
 import { printRulesRouter } from "./print-rules.js";
 import { failureRouter } from "./failure.js";
 import { loadedRouter } from "./loaded.js";
+import { kilnsRouter } from "./kilns.js";
+import { registerKilnActions } from "../kilns/actions.js";
 import { laserRouter } from "./laser.js";
 import { stationsRouter } from "./stations.js";
 import { snapmakerRouter } from "./snapmaker.js";
@@ -46,13 +57,20 @@ import { asyncHandler } from "./util.js";
 import { tenantContext } from "../db.js";
 import { extractPlateMetadata } from "../library/extract-metadata.js";
 
+registerBench();
 registerFarmResolvers();
 registerMakeActions();
 registerLaserActions();
+registerKilnActions();
+
 registerCutterActions();
+registerLargeFormatActions();
+registerEmbroideryActions();
 registerSnapmakerDiscovery();
 registerLaserControlAction();
 registerResinControlAction();
+registerStopAction();
+registerRevokeStationAction();
 registerResinPostprocessAction();
 registerLaserSetupAction();
 registerFloorManager();
@@ -75,12 +93,16 @@ platform().edge.registerConsumer({
 });
 
 const router = Router({ mergeParams: true });
+router.use("/bench",benchRouter);
 router.use("/connections", connectionsRouter);
 router.use("/stations", stationsRouter);
 router.use("/resin", resinRouter);
 router.use("/snapmaker", snapmakerRouter);
 router.use("/laser", laserRouter);
+router.use("/kilns", kilnsRouter);
 router.use("/cutter", cutterRouter);
+router.use("/large-format",largeFormatRouter);
+router.use("/embroidery", embroideryRouter);
 router.use("/jobs", jobsRouter);
 router.use("/links", linksRouter);
 router.use("/drivers", driversRouter);

@@ -1,8 +1,13 @@
 {
   "manifest": {
     "id": "cobblr.community.lego",
-    "version": "0.6.3",
+    "version": "0.6.4",
     "releases": [
+      {
+        "version": "0.6.4",
+        "released_at": "2026-10-07",
+        "notes": "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed."
+      },
       {
         "version": "0.6.3",
         "released_at": "2026-10-03",
@@ -102,6 +107,7 @@
             "name": "year",
             "display_label": "Release year",
             "type": "number",
+            "aggregate": "none",
             "position": 4,
             "help": "The year the {{noun}} was released."
           },
@@ -110,6 +116,7 @@
             "name": "piece_count",
             "display_label": "Pieces",
             "type": "number",
+            "aggregate": "per_unit",
             "position": 5,
             "help": "How many pieces the {{noun}} has, from the box."
           },
@@ -118,6 +125,7 @@
             "name": "minifig_count",
             "display_label": "Minifigs",
             "type": "number",
+            "aggregate": "per_unit",
             "position": 6,
             "help": "How many minifigures come with the {{noun}}."
           },

@@ -15,7 +15,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Smartphone } from "lucide-react";
-import QRCode from "qrcode";
 import { Modal } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -137,14 +136,15 @@ function PairPhoneModal({ onClose }: { onClose: () => void }) {
   // Render the QR; re-runs when the selected address changes.
   useEffect(() => {
     if (!claimUrl || !canvasRef.current) return;
-    void QRCode.toCanvas(canvasRef.current, claimUrl, {
+    const canvas = canvasRef.current;
+    void import("qrcode").then(({ default: QRCode }) => QRCode.toCanvas(canvas, claimUrl, {
       width: 264,
       // 4-module quiet zone — the spec minimum; tighter trips strict scanners.
       margin: 4,
       color: { dark: "#1e293b", light: "#ffffff" },
     }).catch(() => {
       /* canvas failed — the printed URL below is the fallback */
-    });
+    }));
   }, [claimUrl]);
 
   // Poll status until claimed or expired; tick the countdown.

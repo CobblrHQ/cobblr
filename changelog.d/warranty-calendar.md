@@ -3,6 +3,7 @@ type: feature
 scope: calendar
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#4.5c Calendar (`/calendar`)
+docs_published: 2026-10-08
 ---
 Added warranty and purchase dates to the calendar and iCal feed, with separate filters and optional 30-day warranty reminders.
 

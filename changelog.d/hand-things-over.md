@@ -3,6 +3,7 @@ type: feature
 scope: sharing
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#4.5g Sharing (`/configuration/sharing`)
+docs_published: 2026-10-08
 ---
 You can now hand things over to someone you share with. **Give to…** on a thing's page (or on ticked rows) offers it; it arrives in their scan inbox with its photos and details, where they **Take**, **Pass** or choose **Maybe later**. Once taken, your record is marked given away to them, with its history kept, and when they file it, it says it came from you. They can send it back within 14 days, and you can withdraw an offer until they answer.
 

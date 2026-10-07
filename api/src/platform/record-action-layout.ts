@@ -1,6 +1,7 @@
 import { sql } from "kysely";
 import { z } from "zod";
-import { ACTION_GROUPS, RecordActionLayout, type RecordActionPins } from "@cobblr/platform-contract/action-groups";
+import { ACTION_GROUPS, type RecordActionPins } from "@cobblr/platform-contract/action-groups";
+import { RecordActionLayout } from "@cobblr/platform-contract/action-groups-schema";
 import { meta } from "../db/meta.js";
 
 export async function readRecordActionLayout(orgId: string, kind: string, userId?: string) {

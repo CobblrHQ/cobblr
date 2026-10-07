@@ -1,4 +1,6 @@
-import { ACTION_GROUPS, RecordActionLayout, similarActionGroup } from "@cobblr/platform-contract/action-groups";
+import { FieldAggregateSchema } from "@cobblr/platform-contract/field-aggregate";
+import { ACTION_GROUPS, similarActionGroup } from "@cobblr/platform-contract/action-groups";
+import { RecordActionLayout } from "@cobblr/platform-contract/action-groups-schema";
 import { bundleFieldReference } from "../platform/bundle-field-reference.js";
 // Bundles — publishable artifacts that bundle multiple wires +
 // field defs into one install. Phase 4 C.2: export current org
@@ -192,6 +194,8 @@ const FieldDefEntry = z
      *  text field with choices a bundle ships declares it
      *  (lint:field-learns-declared). */
     learns: z.boolean().optional(),
+    /** How it adds up in a group's summary (@cobblr/platform-contract/field-aggregate). */
+    aggregate: FieldAggregateSchema.optional(),
   })
   .refine((f) => f.type !== "relation" || !!f.ref_kind, { message: "relation field_defs need a target kind", path: ["ref_kind"] })
   .refine((f) => f.type !== "computed" || (f.template && f.template.trim().length > 0), {
@@ -1748,6 +1752,7 @@ function fieldDefRow(
     decode_role: (f as { decode_role?: string | null }).decode_role ?? null,
     field_role: (f as { field_role?: string | null }).field_role ?? null,
     learns: (f as { learns?: boolean | null }).learns ?? null,
+    aggregate: f.aggregate ?? null,
   };
 }
 

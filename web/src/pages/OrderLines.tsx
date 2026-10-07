@@ -16,6 +16,7 @@ import { Pencil, Plus, Trash2, ArrowUpRight } from "lucide-react";
 import { Link } from "react-router-dom";
 import { MoneyInput, useMoneyCurrency, RelationSelect, useConfirm, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type Order, type OrderItem } from "../lib/api";
+import { StartReturnButton } from "./OrderReturns";
 
 /** The choice an order that has already arrived carries: whether its lines
  *  add their stock. On by default; off when filling in past purchases. */
@@ -187,7 +188,7 @@ export function OrderLineKind({ slug, order, item }: { slug: string; order: Orde
   );
 }
 
-export function OrderLineControls({ slug, order, item }: { slug: string; order: Order; item: OrderItem }) {
+export function OrderLineControls({ slug, order, item, onStartReturn }: { slug: string; order: Order; item: OrderItem; onStartReturn?: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
@@ -243,6 +244,7 @@ export function OrderLineControls({ slug, order, item }: { slug: string; order: 
       // a phone: beside them its name and price were squeezed into each other.
       <span className={`flex items-center gap-1 shrink-0 ${orderLineKind(item) ? "max-sm:basis-full max-sm:justify-end" : ""}`}>
         <OrderLineKind slug={slug} order={order} item={item} />
+        {onStartReturn && order.status === "arrived" && <StartReturnButton onClick={onStartReturn} />}
         <button type="button" onClick={() => setEditing(true)} aria-label="Correct this line" title="Correct this line" className="p-1.5 rounded text-faint hover:text-accent hover:bg-subtle dark:hover:bg-slate-800">
           <Pencil size={13} />
         </button>

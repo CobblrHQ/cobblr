@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-05
 docs_target: docs/USER_GUIDE.md#LightBurn job review
+docs_published: 2026-10-08
 ---
 Added outline nesting for laser, CNC and cutter parts around used sheet areas, with rotation choices and a longer search option.
 

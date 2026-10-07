@@ -3,6 +3,7 @@ type: feature
 scope: assets
 date: 2026-10-02
 docs_target: docs/USER_GUIDE.md#3.12b Containment: what's inside your things (core-placement, foundational)
+docs_published: 2026-10-08
 ---
 The Contents of a kind of record can be called what you call them, like Parts for a computer or In the bag for a backpack: a pencil on the panel heading renames it for every record of that kind, and the word follows into messages, history and the assistant's answers.
 

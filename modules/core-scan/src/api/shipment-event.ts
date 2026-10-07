@@ -291,7 +291,7 @@ shipmentEventRouter.post(
           method: "POST",
           headers: { Authorization: `Bearer ${bearer(req)}`, "Content-Type": "application/json" },
           // jsonb-replace-ok: an HTTP request body, not a jsonb column.
-          body: JSON.stringify({ stage: ev.stage, item: ev.item ?? null, refund_amount: ev.refund_amount ?? null, description: ev.description ?? null }),
+          body: JSON.stringify({ stage: ev.stage, item: ev.item ?? null, refund_amount: ev.refund_amount ?? null, description: ev.description ?? null, source: "email" }),
         });
         if (r.ok) {
           res.status(200).json({ applied: true, order_id: orderId, stage: ev.stage, recorded: "order" });

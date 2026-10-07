@@ -29,6 +29,7 @@ import { listAdditions } from "../platform/share-additions.js";
 
 export const attentionRouter = Router({ mergeParams: true });
 
+// loopback-ok: #5153 moves this onto selfFetch
 const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
 const DUE_RE = /(renew|expir|due|refill|return|service|maintain|deadline)/i;
 const WINDOW_DAYS = 30;

@@ -3,10 +3,10 @@
 // own without writing a bundle manifest.
 
 import { useDeferredValue, useState, type FormEvent } from "react";
-import { FIELD_TYPE_VALUES, fieldTypeTakesUnit } from "@cobblr/platform-contract";
+import { FIELD_TYPE_VALUES, fieldTypeTakesUnit } from "@cobblr/platform-contract/field-vocabulary";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Plus } from "lucide-react";
-import { FIELD_ROLE_LABELS, FIELD_ROLE_VALUES, fieldRoleTypeRefusal } from "@cobblr/platform-contract";
+import { FIELD_ROLE_LABELS, FIELD_ROLE_VALUES, fieldRoleTypeRefusal } from "@cobblr/platform-contract/field-vocabulary";
 import { ApiError, api, type CatalogFieldRenderer, type FieldScope, type PlatformFieldDef, type FieldPresetState } from "../lib/api";
 import { TraitScopePicker } from "../components/TraitScopePicker";
 import { ChoicesInput, LearnsToggle } from "../components/ChoicesInput";
@@ -14,7 +14,7 @@ import { slugifyFieldName } from "../lib/field-key";
 import { fieldFormReadiness } from "../lib/field-form";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { FieldDefDetail } from "../components/FieldDefDetail";
-import { FieldRenderer, UnitInput, changeWorkspaceShape, useToast, usePageTitle } from "@cobblr/platform-web";
+import { FieldRenderer, UnitInput, changeWorkspaceShape, useToast, usePageTitle, SegmentedChoice } from "@cobblr/platform-web";
 import { FieldMeaningNotices } from "../components/FieldMeaningNotices";
 
 // `relation` is deliberately absent: user-authored relation fields (picking a
@@ -407,19 +407,15 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
           <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
             Applies to
           </span>
-          {(["kind", "scope"] as const).map((m) => (
-            <label key={m} className="flex items-center gap-1.5 cursor-pointer select-none">
-              <input
-                type="radio"
-                checked={mode === m}
-                onChange={() => setMode(m)}
-                className="accent-cobble-500"
-              />
-              <span className="text-content dark:text-mortar-100">
-                {m === "kind" ? "One kind" : "A class of things"}
-              </span>
-            </label>
-          ))}
+          <SegmentedChoice
+            label="Applies to"
+            value={mode}
+            onChange={setMode}
+            options={[
+              { value: "kind", label: "One kind" },
+              { value: "scope", label: "A class of things" },
+            ]}
+          />
         </div>
 
         {mode === "scope" && (

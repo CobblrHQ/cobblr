@@ -3,6 +3,7 @@ type: feature
 scope: sharing
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#4.5g Sharing (`/configuration/sharing`)
+docs_published: 2026-10-08
 ---
 Choose how a public page looks: which fields a thing shows and in what order, a few words and links shown with every thing, or your own HTML for the whole look, which is only ever handed what the page shows. A page also counts how often its labels are opened, and nothing about who.
 

@@ -3,6 +3,7 @@ type: feature
 scope: views
 date: 2026-10-05
 docs_target: docs/USER_GUIDE.md#3.5 Views
+docs_published: 2026-10-08
 ---
 Grouped table views now show counts and totals by one or two columns, with separate totals for each currency.
 

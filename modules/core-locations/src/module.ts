@@ -21,7 +21,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-locations",
-  version: "0.10.0",
+  version: "0.11.0",
   displayName: "Locations",
   description:
     "Where your things live: rooms, shelves and bins, one inside another, and a floor plan to draw them on.",
@@ -259,6 +259,119 @@ export default defineModule({
           colour: { label: "Colour: red, orange, yellow, green, blue, purple, grey, or none", type: "text" as const, required: true },
           outline_group: { label: "Previous outline group (for Undo)", type: "text" as const },
         },
+      },
+      // Planning a layout (plan-drafts.ts). The person-facing door is
+      // "Plan a layout" on a room's floor plan; these are the assistant's,
+      // so it can propose a layout as a draft the person applies.
+      {
+        group: "stock",
+        id: "core-locations:plan-layout",
+        examples: ["plan a layout for the printer room", "start a new layout option for the garage"],
+        label: "Plan a layout",
+        description:
+          "Start a planning layout (a draft) for a room: a copy of its arrangement in which places and things can be moved, and racks that do not exist yet planned, without moving anything real. Returns its draft_id. `name` (optional, else Option A, B…); `from`: a draft_id to copy. Then plan-put, plan-add-rack and plan-read; the person applies it.",
+        icon: "layout",
+        appliesTo: { kinds: ["core-locations:location"] },
+        invokeHandler: "core-locations.plan-layout",
+        userInvokable: false,
+        argsSchema: {
+          name: { label: "Name of this option", type: "text" as const },
+          from: { label: "Copy this draft (its draft_id)", type: "text" as const },
+        },
+      },
+      {
+        group: "stock",
+        // UI-SCREEN: /locations/:id/plan
+        id: "core-locations:plan-put",
+        examples: ["in the draft, put the Prusa MK4 on rack 1's bottom shelf", "lay out the 3D printers on Rack 1 and Rack 2, biggest on the bottom shelf"],
+        label: "Put things somewhere in a layout",
+        description:
+          "In a planning layout (draft), put things on shelves or places. Nothing real moves. `draft_id`; `put`: a list of {kind, id, into, x_mm?} where `into` is a place id or a planned place (planned:<key>), and x_mm is how far from the shelf's left end (things stand side by side in x_mm order). Read plan-read first for each shelf's width and each thing's outer size, so what you propose fits.",
+        icon: "layout",
+        scope: "workspace" as const,
+        invokeHandler: "core-locations.plan-put",
+        userInvokable: false,
+        argsSchema: {
+          draft_id: { label: "The layout (draft_id)", type: "text" as const, required: true },
+          put: { label: "Things to put: [{kind, id, into, x_mm?}]", type: "json" as const, required: true },
+        },
+      },
+      {
+        group: "stock",
+        // UI-SCREEN: /locations/:id/plan
+        id: "core-locations:plan-add-rack",
+        examples: ["plan a second 48 inch rack with 5 shelves against the back wall"],
+        label: "Plan a rack in a layout",
+        description:
+          "Add a rack that does not exist yet to a planning layout, with its shelves, made for real only when the layout is applied. `draft_id`; `size`: width x depth x height in any unit (\"1220 x 610 x 1830 mm\"); `shelves`: how many (even spacing); `name`; `x_mm`, `y_mm`: its spot on the room's floor (top-left). Returns the planned rack and shelf keys to put things into.",
+        icon: "layout",
+        scope: "workspace" as const,
+        invokeHandler: "core-locations.plan-add-rack",
+        userInvokable: false,
+        argsSchema: {
+          draft_id: { label: "The layout (draft_id)", type: "text" as const, required: true },
+          size: { label: "Width x depth x height", type: "text" as const, required: true },
+          shelves: { label: "How many shelves", type: "number" as const },
+          name: { label: "Its name", type: "text" as const },
+          x_mm: { label: "Distance from the room's left wall, mm", type: "number" as const },
+          y_mm: { label: "Distance from the room's top wall, mm", type: "number" as const },
+        },
+      },
+      {
+        group: "stock",
+        // UI-SCREEN: /locations/:id/plan
+        id: "core-locations:plan-read",
+        examples: ["does option A fit", "what is on each shelf in the draft"],
+        label: "Read a layout",
+        description:
+          "The room as a planning layout would make it: each shelf (real or planned) with its width and height, the things on it with their outer sizes, how much width they use and whether they fit, and the things it puts elsewhere. Changes nothing.",
+        icon: "layout",
+        scope: "workspace" as const,
+        invokeHandler: "core-locations.plan-read",
+        userInvokable: false,
+        argsSchema: { draft_id: { label: "The layout (draft_id)", type: "text" as const, required: true } },
+      },
+      {
+        group: "stock",
+        // UI-SCREEN: /locations/:id/plan
+        id: "core-locations:plan-apply",
+        examples: ["apply option A", "move everything the way the layout says"],
+        // Not undoable on purpose, so it always asks first: the assistant
+        // proposes a layout, the person applies it (an undoable action may
+        // run without a confirmation). Its Undo still exists (plan-undo).
+        label: "Apply a layout",
+        description:
+          "Make a planning layout real as one step: make its planned racks and shelves, move the places it moves, and put every thing where it says, each move recorded on the thing. Undo puts each one back (a thing moved again since stays put) and takes the planned racks away.",
+        icon: "layout",
+        scope: "workspace" as const,
+        invokeHandler: "core-locations.plan-apply",
+        userInvokable: false,
+        argsSchema: { draft_id: { label: "The layout (draft_id)", type: "text" as const, required: true } },
+      },
+      // NO-PHRASING: only ever run as Apply a layout's Undo, never asked for.
+      {
+        group: "stock",
+        id: "core-locations:plan-undo",
+        label: "Undo an applied layout",
+        description: "The way back for Apply a layout: puts each thing and place back where the apply found it, and takes away the racks it made.",
+        scope: "workspace" as const,
+        internal: true,
+        userInvokable: false,
+        invokeHandler: "core-locations.plan-undo",
+        argsSchema: { draft_id: { label: "The layout (draft_id)", type: "text" as const, required: true } },
+      },
+      {
+        group: "stock",
+        // UI-SCREEN: /locations/:id/plan
+        id: "core-locations:plan-discard",
+        examples: ["throw away option B"],
+        label: "Discard a layout",
+        description: "Throw a planning layout away. Nothing real had moved, so nothing changes.",
+        icon: "layout",
+        scope: "workspace" as const,
+        invokeHandler: "core-locations.plan-discard",
+        userInvokable: false,
+        argsSchema: { draft_id: { label: "The layout (draft_id)", type: "text" as const, required: true } },
       },
       // A whole house as one file (floorplan-file.ts). The person-facing
       // doors are Import a plan and Export on the floor plan.

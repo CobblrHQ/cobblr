@@ -69,8 +69,31 @@ export interface PurchasesOrderItemsTable {
   updated_at: Generated<Date>;
 }
 
+export type ReturnStage = "requested" | "dropped_off" | "received" | "refunded" | "cancelled";
+
+export interface PurchasesReturnsTable {
+  id: Generated<string>;
+  order_id: string;
+  line_id: string | null;
+  item: string | null;
+  qty: ColumnType<string, number | undefined, number | undefined>;
+  reason: string | null;
+  stage: ReturnStage;
+  refund_amount: ColumnType<string | null, number | null | undefined, number | null | undefined>;
+  refunded_at: ColumnType<Date | null, string | null | undefined, string | null | undefined>;
+  stock_returned_at: ColumnType<Date | null, string | null | undefined, string | null | undefined>;
+  moved_in: Generated<boolean>;
+  /** A jsonb array: written as a JSON string (lint:jsonb-array-writes). */
+  steps: ColumnType<unknown[], string | undefined, string>;
+  created_by: string | null;
+  instance: Generated<string>;
+  created_at: Generated<Date>;
+  updated_at: ColumnType<Date, Date | undefined, Date>;
+}
+
 export interface PurchasesDB {
   purchases_vendors: PurchasesVendorsTable;
+  purchases_returns: PurchasesReturnsTable;
   purchases_orders: PurchasesOrdersTable;
   purchases_order_items: PurchasesOrderItemsTable;
 }

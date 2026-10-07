@@ -4,7 +4,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Check } from "lucide-react";
-import { useToast } from "@cobblr/platform-web";
+import { SegmentedChoice, useToast } from "@cobblr/platform-web";
 import { ApiError, api, WORKSPACE_SOURCE_KIND, type ActionArgSpec, type PlatformBinding } from "../lib/api";
 import {
   TRIGGER_OPTIONS,
@@ -566,19 +566,16 @@ export function WireComposer({
         </button>
         {showTarget && (
           <div className="mt-2 space-y-2 rounded-lg border border-line dark:border-slate-700 p-3">
-            <label className="flex items-center gap-2 text-xs">
-              <input type="radio" checked={target === "self"} onChange={() => setTarget("self")} />
-              the record the trigger fired on
-            </label>
-            <label className="flex items-start gap-2 text-xs">
-              <input
-                type="radio"
-                checked={target !== "self"}
-                onChange={() => setTarget({ rel: "", dir: "out" })}
-              />
-              <span className="flex-1">
-                records <em>linked</em> to it
-                {target !== "self" && (
+            <SegmentedChoice
+              label="Run on"
+              value={target === "self" ? "self" : "linked"}
+              onChange={(v) => setTarget(v === "self" ? "self" : { rel: "", dir: "out" })}
+              options={[
+                { value: "self", label: "the record the trigger fired on" },
+                { value: "linked", label: "records linked to it" },
+              ]}
+            />
+            {target !== "self" && (
                   <div className="mt-1.5 grid grid-cols-3 gap-2">
                     <input
                       value={target.rel}
@@ -596,8 +593,6 @@ export function WireComposer({
                     </select>
                   </div>
                 )}
-              </span>
-            </label>
             <p className="text-[10px] text-faint dark:text-slate-500">
               Linked records are discovered through entity pairings (the same relationships you create on a record's “linked” section).
             </p>

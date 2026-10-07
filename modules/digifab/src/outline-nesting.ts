@@ -1,4 +1,4 @@
-import { canRecordCuts, subtractRectangles, type Design, type Sheet, type LayoutSheet, type Point, type Rect } from "./laser-layout.js";
+import { canRecordCuts, type Design, type Sheet, type LayoutSheet, type Point, type Rect } from "./laser-layout.js";
 import { runNestWorker, type NestResult } from "./nesting-pool.js";
 export type NestOptions = { rotation_step?: number; budget_ms?: number; seed?: number; partial?: boolean };
 const bounds = (points: Point[]): Rect => {
@@ -45,7 +45,8 @@ export async function nestOutlines(design: Design, quantity: number, sheets: She
  let outline: ReturnType<typeof designOutline> = null;
  try { outline = designOutline(design); } catch { /* A complex contour can still use the rectangle planner. */ }
  const started = performance.now();
- const rectangleSheets = sheets.map(s=>({...s,free_rectangles:(s.used_outlines??[]).reduce((free,p)=>subtractRectangles(free,bounds(p)),s.free_rectangles)}));
+ // The sheet's free rectangles already exclude every used area. Subtracting the BOUNDS of a used outline again removed an L-shaped offcut's free notch (its bounds are the whole sheet).
+ const rectangleSheets = sheets;
  const rectangle = runNestWorker<LayoutSheet[]>({rectangle:{design,quantity,sheets:rectangleSheets,spacing,kerf,rotate:rotate && step !== 360 && 90 % step === 0,partial:options.partial}},Math.max(1,budget-Math.ceil(performance.now()-started))).then(result=>({result}),error=>({error}));
  const fallback = async () => { const answer = await rectangle; if ("error" in answer) throw answer.error; if (answer.result.some(s=>!canRecordCuts(s.cut_capacity,s.parts.map(p=>p.footprint)))) throw new Error("This sheet cannot record all these cuts. Use fewer parts or another sheet."); return answer.result.map(s=>({...s, nesting: "rectangle" as const, nest_ms: Math.round(performance.now()-started), utilisation:s.parts.length*(outline ? area(outline.points) : design.width*design.height)/(s.width*s.height)})); };
  if (!outline || !outline.curved && Math.abs(area(outline.points)-design.width*design.height)<1e-6) return fallback();

@@ -3,6 +3,7 @@ type: feature
 scope: sharing
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#4.5g Sharing (`/configuration/sharing`)
+docs_published: 2026-10-08
 ---
 Lend something to the person you share with and it appears in their shared workspace until you get it back. Any record can now be shared on its own: **Share with…** on its page or in a list's selection bar, and its page says who it is shared with, with **Stop** beside it.
 

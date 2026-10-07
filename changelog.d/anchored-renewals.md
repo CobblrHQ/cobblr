@@ -3,6 +3,7 @@ type: feature
 scope: core-maintenance
 date: 2026-10-05
 docs_target: docs/USER_GUIDE.md#3.16 Maintenance
+docs_published: 2026-10-08
 ---
 Track registration and inspection expiry dates, renew without losing time, and snooze or stop overdue reminders.
 

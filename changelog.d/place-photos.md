@@ -3,6 +3,7 @@ type: feature
 scope: locations
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#3.12 Locations (foundational)
+docs_published: 2026-10-08
 ---
 Added photo editing to every place page, with camera, upload, paste, web search and a gallery, and the main photo appears in the tree and on shapes with photo fill on the floor plan.
 

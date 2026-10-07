@@ -3,6 +3,7 @@ type: feature
 date: 2026-10-04
 scope: inventory
 docs_target: docs/USER_GUIDE.md#3.1 Inventory
+docs_published: 2026-10-08
 ---
 Filament spools show their use and remaining length, accept scale and firmware measurements, and can send Cobblr counts back to Spoolman.
 

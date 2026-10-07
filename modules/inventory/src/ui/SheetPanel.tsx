@@ -4,6 +4,8 @@ import { MutationError, QueryError } from "@cobblr/platform-web";
 import { sheetSpec, type Rect } from "../sheet-area";
 import { useInventory } from "./context";
 
+// A free area edge is a sum with kerf and spacing, so 120 + 1.1 can read 121.10000000000001.
+const mm = (n: number) => Math.round(n * 10) / 10;
 const button = "min-h-11 rounded border border-line px-3 py-2 text-sm disabled:opacity-50";
 export function SheetPanel({ id, metadata }: { id: string; metadata: Record<string, unknown> }) {
   const { api, orgSlug } = useInventory();
@@ -28,14 +30,15 @@ export function SheetPanel({ id, metadata }: { id: string; metadata: Record<stri
     {query.isError && <QueryError what="The record could not be loaded." onRetry={() => void query.refetch()} />}
     {view && <>
       <div className="flex flex-wrap items-center gap-2"><strong>About {Math.round(view.percent_left)}% left</strong>{view.offcut && <span className="rounded bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200 px-2 py-1 text-sm">Offcut</span>}<span className="text-sm text-muted">{view.spec.width_mm} × {view.spec.height_mm} mm</span></div>
-      <svg role="img" aria-label="Sheet drawing with used areas shaded and free areas outlined" viewBox={`0 0 ${view.spec.width_mm} ${view.spec.height_mm}`} className="block w-full max-h-72 rounded border border-line bg-slate-50 dark:bg-slate-900">
+      <svg role="img" aria-label="Sheet drawing with used areas shaded and free areas outlined" viewBox={`0 0 ${view.spec.width_mm} ${view.spec.height_mm}`} className="block w-full max-h-72">
+        <rect x={0} y={0} width={view.spec.width_mm} height={view.spec.height_mm} className="fill-slate-50 stroke-slate-300 dark:fill-slate-900 dark:stroke-slate-700" strokeWidth={1} vectorEffect="non-scaling-stroke" data-testid="sheet-outline" />
         <g transform={`translate(0 ${view.spec.height_mm}) scale(1 -1)`}>
           <path d={view.used_outlines.map(points => `M ${points.map(p => `${p.x},${p.y}`).join(" L ")} Z`).join(" ")} fill="#94a3b8" fillRule="evenodd" />
           {view.free_rectangles.map((r, i) => <rect key={i} {...r} fill="none" stroke="#2563eb" strokeWidth={Math.max(view.spec.width_mm, view.spec.height_mm) / 250} />)}
         </g>
       </svg>
       <p className="text-sm text-muted">Grey is used. Blue outlines show room for another piece. Gaps under {view.spec.minimum_usable_mm} mm are left out.</p>
-      <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm">{view.free_rectangles.map((r, i) => <li key={i}>{r.width} × {r.height} mm at {r.x}, {r.y}</li>)}{!view.free_rectangles.length && <li>No usable area left.</li>}</ul>
+      <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm">{view.free_rectangles.map((r, i) => <li key={i}>{mm(r.width)} × {mm(r.height)} mm at {mm(r.x)}, {mm(r.y)}</li>)}{!view.free_rectangles.length && <li>No usable area left.</li>}</ul>
       {!mode && <div className="flex flex-wrap gap-2">
         <button className={button} onClick={() => { setMode("cut"); setRevision(view.revision); setRectangles([{ x: 0, y: 0, width: Math.min(100, view.spec.width_mm), height: Math.min(100, view.spec.height_mm) }]); save.reset(); }}>Record a cut</button>
         <button className={button} onClick={() => { setMode("edit"); setRevision(view.revision); setRectangles(view.free_rectangles.map(r => ({ ...r }))); save.reset(); }}>Edit free area</button>

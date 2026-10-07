@@ -15,7 +15,8 @@
 import { fieldKindOf } from "@cobblr/platform-contract/kind-label";
 import { asMeasure } from "@cobblr/platform-contract/measure";
 import { readMoney, parseMoney } from "@cobblr/platform-contract/money";
-import { isListedChoice, platform } from "@cobblr/platform-contract";
+import { isListedChoice } from "@cobblr/platform-contract/field-vocabulary";
+import { platform } from "@cobblr/platform-contract/platform-runtime";
 
 export function routeUnknownToMetadata<T extends Record<string, unknown>>(
   body: unknown,

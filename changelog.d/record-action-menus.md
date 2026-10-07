@@ -3,6 +3,7 @@ type: feature
 scope: records
 date: 2026-10-04
 docs_target: docs/USER_GUIDE.md#Record action menus
+docs_published: 2026-10-08
 ---
 Record actions now sit in menus you can arrange, with your own pinned shortcuts and a single Actions sheet on a phone.
 

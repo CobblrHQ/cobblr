@@ -53,9 +53,10 @@ export async function createCutterPlan(db:Kysely<DigifabDB>,orgId:string,b:z.inf
  const stored=await platform().files.write(orgId,bytes,{filename:`cut-${source!.id}.cutterplan`,mimeType:"application/json"});
  if(!stored)throw new ReviewRequired("The prepared cut could not be saved.");
  const plan:CutterPlan={program,roll,quantity:b.quantity,used_length_m,content_hash:hash(bytes),source_hash:hash(file.bytes),source_library_id:source!.id};
+ const displayName = `${source!.name} · Cut`;
  return db.transaction().execute(async trx=>{
-  const library=await trx.insertInto("digifab_library").values({name:`${source!.name} · Cut`,file_id:stored.fileId,thumbnail_file_id:null,kind:"cutter-plan",size_bytes:bytes.length,plate_count:1,notes:"Prepared cutter plan. Review and Start at its station.",metadata:{cutter_plan:true,mirrored:program.mirrored,mirror_label:program.mirror_label}}).returning("id").executeTakeFirstOrThrow();
-  const job=await trx.insertInto("digifab_jobs").values({connection_id:b.connection_id,target_device:b.device_id,file_id:stored.fileId,file_ref:`${source!.name}.cutterplan`,max_attempts:1,metadata:{cutter_plan:true}}).returning("id").executeTakeFirstOrThrow();
+  const library=await trx.insertInto("digifab_library").values({name:displayName,file_id:stored.fileId,thumbnail_file_id:null,kind:"cutter-plan",size_bytes:bytes.length,plate_count:1,notes:"Prepared cutter plan. Review and Start at its station.",metadata:{cutter_plan:true,mirrored:program.mirrored,mirror_label:program.mirror_label}}).returning("id").executeTakeFirstOrThrow();
+  const job=await trx.insertInto("digifab_jobs").values({connection_id:b.connection_id,target_device:b.device_id,file_id:stored.fileId,file_ref:`${source!.name}.cutterplan`,max_attempts:1,metadata:{cutter_plan:true,display_name:displayName}}).returning("id").executeTakeFirstOrThrow();
   return trx.insertInto("digifab_cutter_plans").values({connection_id:b.connection_id,remote_device_id:b.device_id,library_id:library.id,job_id:job.id,plan}).returningAll().executeTakeFirstOrThrow();
  });
 }
@@ -92,7 +93,7 @@ export async function recordCutterUse(db:Kysely<DigifabDB>,orgId:string,jobId:st
  if(saved.started_at && report.used_length_m+saved.plan.roll.config.waste>0) {
   const roll=await currentCutterRoll(orgId,saved.connection_id,saved.remote_device_id,saved.plan.roll.id,false,true);
   if(roll.kind!==saved.plan.roll.kind || roll.config.width_mm!==saved.plan.roll.config.width_mm)throw new ReviewRequired("Keep the original roll stock record until its used length is saved.");
-  const out=normaliseActionResult(await platform().actions.invoke("inventory:consume-stock",{orgId,userId,entity:{kind:roll.kind,id:roll.id},args:{fields:{revision:roll.revision,source:`cutter:${jobId}`,verdict:report.verdict,amount:report.used_length_m+saved.plan.roll.config.waste,unit:"m",waste:0}},event:{name:"digifab.job.outcome",payload:{jobId},actor:{user_id:userId,display_name:null,auth_method:"session"},timestamp:new Date().toISOString(),trigger_type:"user-invoked"}}),"inventory:consume-stock");
+  const out=normaliseActionResult(await platform().actions.invoke("inventory:consume-stock",{orgId,userId,entity:{kind:roll.kind,id:roll.id},args:{fields:{source:`cutter:${jobId}`,verdict:report.verdict,amount:report.used_length_m+saved.plan.roll.config.waste,unit:"m",waste:0}},event:{name:"digifab.job.outcome",payload:{jobId},actor:{user_id:userId,display_name:null,auth_method:"session"},timestamp:new Date().toISOString(),trigger_type:"user-invoked"}}),"inventory:consume-stock");
   if(!out.ok)throw new ReviewRequired("The roll use could not be recorded. Keep this roll reserved and retry the same outcome.");
  }
  await recordJobOutcome(db,orgId,jobId,report.verdict,"bed-clear",{good:report.verdict==="good"?saved.plan.quantity:0,scrap:report.verdict==="scrap"?saved.plan.quantity:0});

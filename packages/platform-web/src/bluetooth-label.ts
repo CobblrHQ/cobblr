@@ -15,7 +15,6 @@
 // iOS has no Web Bluetooth and never will; callers must say so plainly rather
 // than appear broken. Use isWebBluetoothAvailable().
 
-import QRCode from "qrcode";
 import { setPrintProgress } from "./print-progress.js";
 import {
   CANDIDATE_SERVICES,
@@ -526,6 +525,7 @@ export async function renderLabelCanvas(
   const drawQr = async (qx: number, qy: number, size: number): Promise<void> => {
     const s = Math.max(1, Math.round(size));
     const qr = document.createElement("canvas");
+    const { default: QRCode } = await import("qrcode");
     await QRCode.toCanvas(qr, content.qrPayload, {
       width: s,
       margin: 0,

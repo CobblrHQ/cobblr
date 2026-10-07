@@ -28,6 +28,7 @@ import { readReceiptAnswer, type ReceiptAnswer } from "./receipt-photo.js";
 
 // enrich.ts's INTERNAL_API — these calls carry a minted bearer, so they must
 // target our own API, never a caller-influenced URL.
+// loopback-ok: #5153 moves this onto selfFetch
 const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
 
 // Abuse caps. core-files itself caps a single upload at 25 MB; we stay under it

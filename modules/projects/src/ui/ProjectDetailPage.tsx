@@ -127,6 +127,17 @@ export function ProjectDetailPage() {
     enabled: !!id,
   });
   usePageTitle(project.data?.name ?? "Project");
+  // The same read as "what this pattern needs" (shared cache): where it lists
+  // yarn or a hook, the older empty panels below would only contradict it.
+  const needs = useQuery({
+    queryKey: patternNeedsKey(id ?? ""),
+    queryFn: () => api.patternNeeds(id!),
+    enabled: !!id && holdsPatterns,
+    retry: false,
+  });
+  const needItems = needs.data?.items ?? [];
+  const needsAnswerYarn = needItems.some((n) => n.kind === "yarn");
+  const needsAnswerTools = needItems.some((n) => n.kind === "hook" || n.kind === "needle");
   // The open task rides in the address (?task=), so a link can land on it and
   // the back button closes it.
   const [params, setParams] = useSearchParams();
@@ -177,6 +188,8 @@ export function ProjectDetailPage() {
 
   if (project.isLoading) return <div className="text-sm text-faint dark:text-slate-500">loading…</div>;
   if (!project.data) return <div className="text-sm text-ember-500">Project not found.</div>;
+  const listed = (project.data.metadata as Record<string, unknown> | null)?.hooks_needed;
+  const hooksNeeded = Array.isArray(listed) ? (listed as string[]) : [];
   // The collection's presentation decides the fields; nothing generic is drawn
   // in its place while it loads or when it cannot be read.
   if (!fp.ready || fp.failed) {
@@ -303,21 +316,19 @@ export function ProjectDetailPage() {
 
       <DesignFiles designId={project.data.id} />
 
-      <MaterialsPanel designId={project.data.id} status={project.data.status} api={api} />
+      <MaterialsPanel designId={project.data.id} status={project.data.status} api={api} hideWhenEmpty={needsAnswerYarn} />
 
-      <HooksNeededPanel
-        api={api}
-        neededIds={
-          Array.isArray((project.data.metadata as Record<string, unknown>)?.hooks_needed)
-            ? ((project.data.metadata as Record<string, unknown>).hooks_needed as string[])
-            : []
-        }
-        onChange={(ids) =>
-          updateProject.mutate({
-            metadata: { hooks_needed: ids },
-          })
-        }
-      />
+      {(hooksNeeded.length > 0 || !needsAnswerTools) && (
+        <HooksNeededPanel
+          api={api}
+          neededIds={hooksNeeded}
+          onChange={(ids) =>
+            updateProject.mutate({
+              metadata: { hooks_needed: ids },
+            })
+          }
+        />
+      )}
         </>
       )}
 
@@ -596,10 +607,14 @@ function MaterialsPanel({
   designId,
   status,
   api,
+  hideWhenEmpty,
 }: {
   designId: string;
   status: ProjectStatus;
   api: ProjectsApi;
+  /** "What this pattern needs" already lists its yarn: an empty panel here
+   *  would say none is reserved while that one says which is in use. */
+  hideWhenEmpty: boolean;
 }) {
   const qc = useQueryClient();
   const units = useUnits();
@@ -633,6 +648,7 @@ function MaterialsPanel({
   // Inventory module not enabled → the allocations read errors; show nothing.
   if (allocs.isError) return null;
   const items = allocs.data?.items ?? [];
+  if (items.length === 0 && hideWhenEmpty) return null;
   const label: Record<string, string> = { reserved: "reserved", consumed: "used", released: "returned" };
   const open = status !== "done" && status !== "abandoned";
 

@@ -9,6 +9,7 @@ import { resolveQrToken } from "../routes/qr-scan.js";
 import { routeScanToDrive } from "./scan-drive.js";
 
 export interface StationCaller { orgId: string; userId: string; orgSlug: string; token: string }
+// loopback-ok: #5153 moves this onto selfFetch
 const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT || 4000}`;
 
 async function record(orgId: string, ref: EntityRef): Promise<StationRef> {

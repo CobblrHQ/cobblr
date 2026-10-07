@@ -1023,12 +1023,20 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
       return items.map(() => []);
     });
 
+    const workspaceRowTitle = (i: { entity_type: string; entity_id: string; action: string }): string | null => {
+      if (i.entity_type === "org_module") return getModuleEntry(i.entity_id)?.manifest.displayName || null;
+      if (i.entity_type === "user" || i.action === "member_joined") return req.tenant!.org.name;
+      return null;
+    };
     res.json({
       items: shown.map((i, n) => {
         const entry = {
         ...i,
         said: said[n] ?? [],
-        entity_title: titleByEntity.get(`${i.entity_type}:${i.entity_id}`) ?? null,
+        // Rows about the workspace itself have no record to resolve: a module
+        // is said by its name ("turned on Lists"), an account joining by the
+        // workspace it joined, never by the internal type ("org module").
+        entity_title: titleByEntity.get(`${i.entity_type}:${i.entity_id}`) ?? workspaceRowTitle(i),
         entity_kind: kindByEntity.get(`${i.entity_type}:${i.entity_id}`) ?? null,
         actor: i.user_id
           ? {

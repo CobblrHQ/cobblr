@@ -3,6 +3,7 @@ type: feature
 scope: account
 date: 2026-10-05
 docs_target: docs/USER_GUIDE.md#Forgot your password? Verifying your email
+docs_published: 2026-10-08
 ---
 Cobblr can now sign you in through the identity provider your server already runs, such as Authentik, Authelia, Keycloak or Pocket ID, so one login (and its two-factor) covers Cobblr too. Link it once from your account; after that, Sign in with on the sign-in page takes you straight in.
 

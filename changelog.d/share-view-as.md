@@ -3,6 +3,7 @@ type: feature
 scope: sharing
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#4.5g Sharing (`/configuration/sharing`)
+docs_published: 2026-10-08
 ---
 See a share the way the other person sees it: **View as** in Settings, Sharing opens their shared workspace in a new tab, read-only, for half an hour. They can see that you looked.
 

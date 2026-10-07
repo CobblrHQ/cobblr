@@ -18,7 +18,10 @@
 // rule argued with at every feed stops being read. That left knowledge's
 // `/entries` answering its newest 500 and nothing else, unseen (#4134). So it
 // reads every such path, and each feed says why its cap is the answer on the
-// line above the limit; a list still waiting to be converted says
+// line above the limit, unless the list marks rows a person has to deal with
+// (unread, unseen, overdue: an inbox), which a reason cannot excuse, because
+// the cut hides exactly the rows it exists to show. A list still waiting to
+// be converted says
 // `list-cap-ok: not paged yet, #4134`. A `.limit(1)` is one row ("the latest
 // plan"), not a list. A limit read from the request is a page the caller
 // chose; sub-routes (`/:id/units`) list a record's parts.
@@ -57,6 +60,9 @@ function* walk(dir: string): Generator<string> {
   }
 }
 
+/** A list whose rows a person has to deal with, never a feed. */
+const WORK_LIST = /\b(unread|unseen|overdue|needs_you)\b/;
+
 /** The check. Return every violation in one file; an empty array is a pass. */
 function check(file: string, src: string): Violation[] {
   const out: Violation[] = [];
@@ -74,7 +80,16 @@ function check(file: string, src: string): Violation[] {
     if (!cap) continue;
     const at = start + 5 + cap.index;
     const line = src.slice(0, at).split("\n").length;
-    if (/\/\/ list-cap-ok: \S/.test(src.split("\n")[line - 2] ?? "")) continue;
+    if (/\/\/ list-cap-ok: \S/.test(src.split("\n")[line - 2] ?? "")) {
+      // A reason excuses a feed whose cap IS the answer. It cannot excuse a
+      // list of things a person has to deal with: an inbox that marks rows
+      // unread cut at its newest 200 never shows the 201st unread one, and
+      // its "New" count reads as all of them (#4134, the discussion inbox).
+      if (WORK_LIST.test(body)) {
+        out.push({ file, line, what: `this list marks rows a person has to deal with (${WORK_LIST.exec(body)![0]}), so its cut at ${cap[0].slice(7, -1).trim()} hides some of them; a reason cannot excuse it, answer through pagedAnswer` });
+      }
+      continue;
+    }
     out.push({ file, line, what: `the list route cuts at ${cap[0].slice(7, -1).trim()} and never says how many there are; answer through pagedAnswer (@cobblr/platform-contract/list-page)` });
   }
   return out;

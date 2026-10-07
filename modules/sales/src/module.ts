@@ -94,7 +94,7 @@ export default defineModule({
         fields: [
           { name: "description", type: "text", role: "title" },
           { name: "qty", type: "number", role: "quantity" },
-          { name: "unit_price", type: "number" },
+          { name: "unit_price", type: "number", aggregate: "per_unit" },
         ],
         exposableFields: ["description", "qty"],
       },

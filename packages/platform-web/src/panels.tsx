@@ -43,7 +43,7 @@ export interface EntityDetailPanelCtx {
 /** A manifest-declared UI contribution, as the API reports it. */
 export interface ContributedPanelSpec {
   id: string;
-  surface: "module-page-tab" | "entity-detail-panel";
+  surface: "module-page-tab" | "entity-detail-panel" | "configuration-section";
   target: string;
   title: string;
   /** The panel's own predicate, when it declared one. Only `traits` is read

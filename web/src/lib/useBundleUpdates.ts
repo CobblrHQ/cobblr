@@ -5,6 +5,7 @@
 // (was previously inlined only in BundlesPage).
 
 import { useQuery } from "@tanstack/react-query";
+import { mayRead } from "./acting-role";
 import { isDowngradeOrSame } from "./bundleUpdateTier";
 import { api, type PlatformBundleManifest } from "./api";
 import { useBundleCatalog } from "./useBundleCatalog";
@@ -60,9 +61,10 @@ export function useBundleUpdates(slug: string): BundleUpdate[] {
   const installed = useQuery({
     queryKey: ["bundles", slug],
     queryFn: () => api.listBundles(slug),
-    enabled: !!slug,
+    enabled: !!slug && mayRead(`/orgs/${slug}/bundles`),
   });
-  const { catalog } = useBundleCatalog(loadSources());
+  // A badge, read in the background: the catalog waits for the page to settle.
+  const { catalog } = useBundleCatalog(loadSources(), { when: "idle" });
   const sandbox = hintedSandbox || kind.data?.kind === "sandbox";
   // An answer we could not get is not a sandbox: an instance whose trial route
   // fails still gets its update prompts.

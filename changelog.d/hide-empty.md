@@ -3,6 +3,7 @@ type: feature
 scope: locations
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#3.12 Locations (foundational)
+docs_published: 2026-10-08
 ---
 Added Hide empty to Locations and Tags, with a count of what is hidden and your choice remembered on this device.
 

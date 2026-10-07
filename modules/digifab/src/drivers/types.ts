@@ -148,7 +148,10 @@ export interface SubmitArgs {
 }
 
 export interface MachineDriver {
-  readonly printProcess?: "fdm" | "resin";
+  readonly benchInstrument?:boolean;
+  identifyBench?():Promise<{identity:string;profile:string}>;
+  readBench?():Promise<import("../bench-model.js").BenchReport>;
+  readonly printProcess?: "fdm" | "resin" | "large-format";
   jobReviewKind?(): Promise<"laser" | "print" | "cutter">;
   laserBackend?: "gcode" | "ruida" | "galvo";
   getLaserSetup?(): Promise<LaserSetup>;

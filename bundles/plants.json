@@ -1,12 +1,17 @@
 {
   "manifest": {
     "id": "cobblr.flagship.plants",
-    "version": "0.3.4",
+    "version": "0.3.5",
     "name": "Plants",
     "description": "Your houseplants as their own table: species, light, watering interval + pot size, grouped by light.",
     "author": "Cobblr",
     "released_at": "2026-09-30",
     "releases": [
+      {
+        "version": "0.3.5",
+        "released_at": "2026-10-07",
+        "notes": "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed."
+      },
       {
         "version": "0.3.4",
         "released_at": "2026-10-02",
@@ -67,6 +72,7 @@
             "name": "water_every_days",
             "display_label": "Water every (days)",
             "type": "number",
+            "aggregate": "none",
             "unit": "d",
             "position": 3,
             "help": "Days between waterings, e.g. 7 for weekly."
@@ -179,6 +185,7 @@
                 "name": "water_seconds",
                 "display_label": "Water (seconds)",
                 "type": "number",
+                "aggregate": "none",
                 "position": 8,
                 "help": "How long to run the zone each watering, in seconds."
               }

@@ -329,10 +329,24 @@ export interface CardField {
 /** A field's label as a person reads it: the declared label, else the name
  *  with its underscores and prefixes spelt out ("set_number" reads "Set
  *  number", "isbn" reads "ISBN"). */
+const SPELLED_OUT: Readonly<Record<string, string>> = {
+  qty: "quantity",
+  min: "minimum",
+  max: "maximum",
+  approx: "approximate",
+  desc: "description",
+  loc: "location",
+  num: "number",
+  amt: "amount",
+  pcs: "pieces",
+};
+
 export function humanFieldLabel(name: string, label?: string | null): string {
   const l = clean(label);
   if (l) return l;
-  const words = name.replace(/^x_/, "").split(/[_\s]+/).filter(Boolean);
+  // A storage key's shorthand is said as the word it stands for: "min_qty"
+  // reads "Minimum quantity", never "Min qty", in a label or a sentence.
+  const words = name.replace(/^x_/, "").split(/[_\s]+/).filter(Boolean).map((w) => SPELLED_OUT[w.toLowerCase()] ?? w);
   const upper = new Set(["isbn", "upc", "ean", "sku", "vin", "id", "url", "qr", "gtin", "asin", "mpn"]);
   return words
     .map((w, i) => (upper.has(w.toLowerCase()) ? w.toUpperCase() : i === 0 ? w[0]!.toUpperCase() + w.slice(1) : w))

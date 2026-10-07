@@ -31,9 +31,23 @@ export interface DeletedPlacesTable {
   deleted_at: Generated<Date>;
 }
 
+/** migrations/0005_plan_drafts.sql: a planning layout, and what applying it did. */
+export interface PlanDraftsTable {
+  id: Generated<string>;
+  location_id: string;
+  name: string;
+  body: Generated<unknown>;
+  created_by: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+  applied_at: Date | null;
+  applied: unknown | null;
+}
+
 export interface CoreLocationsDB {
   core_locations_locations: LocationsTable;
   core_locations_deleted: DeletedPlacesTable;
+  core_locations_plan_drafts: PlanDraftsTable;
 }
 
 /** Re-exported from the contract so this module cannot fall behind the

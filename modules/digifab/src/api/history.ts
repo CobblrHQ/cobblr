@@ -84,7 +84,7 @@ historyRouter.get(
       .selectFrom("digifab_jobs")
       .where("status", "in", TERMINAL)
       .where("updated_at", ">", since)
-      .select(["id", "file_ref", "connection_id", "target_device", "status", "material_grams", "created_at", "updated_at"])
+      .select(["id", "file_ref", "metadata", "connection_id", "target_device", "status", "material_grams", "created_at", "updated_at"])
       .orderBy("updated_at", "desc")
       // list-cap-ok: the latest 50 finished jobs are the feed; the rollups beside it count every job
       .limit(50)
@@ -111,7 +111,7 @@ historyRouter.get(
     // richer than the MQTT-observed rows: model name (translated), cover thumbnail,
     // weight, duration. One row per cloud task; supersedes digifab_observed_prints
     // for Bambu (which the pump can no longer name well).
-    type Item = { id: string; file_ref: string; sub_label: string | null; cover: string | null; device: string; connection_id: string | null; device_id: string | null; status: string; filament_g: number | null; at: string; duration_s: number };
+    type Item = { id: string; file_ref: string; metadata?: Record<string, unknown>; sub_label: string | null; cover: string | null; device: string; connection_id: string | null; device_id: string | null; status: string; filament_g: number | null; at: string; duration_s: number };
     const taskRows = await db.selectFrom("digifab_bambu_tasks").select(["task_id", "raw", "captured_at"]).execute();
     const taskItems: Item[] = taskRows
       .map((t) => {
@@ -158,6 +158,7 @@ historyRouter.get(
       ...recent.map((r) => ({
         id: r.id,
         file_ref: r.file_ref,
+        metadata: r.metadata,
         sub_label: null as string | null,
         cover: null as string | null,
         device: nameOf(r.connection_id, r.target_device),

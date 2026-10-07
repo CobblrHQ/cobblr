@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-06
 docs_target: docs/USER_GUIDE.md#Resin printers
+docs_published: 2026-10-08
 ---
 Added resin printer stations with shared LAN control, liquid stock and wearing part tracking, wash and cure checklists, and Formlabs monitoring.
 

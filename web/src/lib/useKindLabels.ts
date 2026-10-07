@@ -7,7 +7,7 @@
 // costs no extra fetch.
 import { useQuery } from "@tanstack/react-query";
 import { collectionLabelFor, collectionLabelForRecord, itemNounForKind, itemNounPluralForKind, viewTypeLabel } from "@cobblr/platform-contract/kind-label";
-import { pluralise } from "@cobblr/platform-contract";
+import { pluralise } from "@cobblr/platform-contract/plural";
 import { api } from "./api";
 
 export function useKindLabels(slug: string | null | undefined) {

@@ -1162,6 +1162,9 @@ export interface ModuleFieldDefsTable {
   /** Remembers what a person types as a new choice (migration 181). NULL is
    *  the default rule in @cobblr/platform-contract/field-choices. */
   learns: Generated<boolean | null>;
+  /** How it adds up in a group's summary (migration 203). NULL is the default
+   *  rule in @cobblr/platform-contract/field-aggregate. */
+  aggregate: Generated<"sum" | "per_unit" | "none" | null>;
   created_at: Generated<Date>;
 }
 
@@ -1389,6 +1392,18 @@ export interface FeedbackTable {
 
 /** TEST-ONLY: pool of pre-provisioned orgs the integration suite checks out
  *  instead of provisioning. Always empty in prod. See db/test-org-pool.ts. */
+/** A sandbox an operator made from the box, and why (scripts/try-sandbox.sh). */
+export interface OperatorSandboxesTable {
+  id: Generated<string>;
+  org_id: string;
+  slug: string;
+  operator_user_id: string;
+  operator_email: string;
+  reason: string;
+  created_at: Generated<Date>;
+  expires_at: Date;
+}
+
 export interface TestOrgPoolTable {
   org_id: string;
   slug: string;
@@ -1672,7 +1687,9 @@ export interface ShareNoncesTable {
 
 export interface ShareOffersTable {
   id: Generated<string>;
-  link_id: string;
+  link_id: string | null;
+  target_org_id: string | null;
+  transfer: unknown;
   direction: "out" | "in";
   peer_offer_id: string | null;
   batch: string;
@@ -1771,6 +1788,7 @@ export interface MetaDB {
   org_outbound_email: OrgOutboundEmailTable;
   outbound_email_log: OutboundEmailLogTable;
   test_org_pool: TestOrgPoolTable;
+  operator_sandboxes: OperatorSandboxesTable;
   entity_pairings: EntityPairingsTable;
   tags: TagsTable;
   tag_assignments: TagAssignmentsTable;

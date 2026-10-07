@@ -13,7 +13,7 @@
 //   • One "Find a photo on the web", whose AI Pick is the scan inbox's, shown
 //     only where AI can answer.
 
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Image as ImageIcon } from "lucide-react";
 import { useToast } from "@cobblr/platform-web";
@@ -21,7 +21,8 @@ import { api, ApiError, type ImageOption } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { markShownBeside, PICTURE_STATE_TEXT, usePhotoSuggestionFor } from "../lib/photoSuggestions";
 import { EntityImageEdit } from "./EntityImageEdit";
-import { ImageSearchPicker } from "./ImageSearchPicker";
+// The web photo search loads when it is opened (#4945).
+const ImageSearchPicker = lazy(() => import("./ImageSearchPicker").then((m) => ({ default: m.ImageSearchPicker })));
 import { useAiStatus } from "./AiStatusNotice";
 
 const KEEP_FAILED = "That picture couldn't be kept. Try another.";
@@ -242,6 +243,7 @@ export function WebPhotoSearch({
         {open ? "Hide the photo search" : "Find a photo on the web"}
       </button>
       {open && (
+        <Suspense fallback={<div className="mt-1.5 h-24" aria-busy="true" />}>
         <div className="mt-1.5">
           {/* Derived mode: the server builds the phrase from this record's own
               name, maker and fields, the way the scan inbox does. It also
@@ -259,6 +261,7 @@ export function WebPhotoSearch({
             bestReason={best?.reason ?? undefined}
           />
         </div>
+        </Suspense>
       )}
     </div>
   );

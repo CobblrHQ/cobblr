@@ -233,6 +233,17 @@ function fieldValueRaw(rec: Record<string, unknown>, key: string): unknown {
   return undefined;
 }
 
+/** A list answer that is not "none": the list could not be read, the kind
+ *  has no list here, or its module is off. Each used to reach the assistant
+ *  as an empty page, which it said as "you have none" (#4199). */
+export function listRefusal(body: unknown, kind: string): string | null {
+  const b = (body ?? {}) as { failed?: unknown; unlisted?: unknown };
+  if (b.failed === true) return `The ${kind} list could not be read just now. That is not the same as none; try again.`;
+  if (b.unlisted === "no-such-list") return `There is no list of "${kind}" here. list_record_kinds gives the kinds this workspace can list.`;
+  if (b.unlisted === "module-off") return `The feature that keeps "${kind}" is turned off in this workspace, so there is nothing of it to read.`;
+  return null;
+}
+
 /** Every record of a kind, page by page (the route caps a page at 200). */
 async function walkKind(
   api: WorkspaceApi,
@@ -254,6 +265,8 @@ async function walkKind(
   for (let offset = 0; offset < (opts.maxRecords ?? COUNT_SCAN_MAX); offset += COUNT_PAGE) {
     const res = await api.request("GET", `/entities/${encodeURIComponent(kind)}?limit=${COUNT_PAGE}&offset=${offset}${retired}`);
     if (res.status >= 400) return { ok: false, res };
+    const refused = listRefusal(res.body, kind);
+    if (refused) return { ok: false, res: { status: 409, body: { error: { message: refused } } } };
     const body = res.body as { items?: unknown[]; total?: number };
     const page = Array.isArray(body.items) ? (body.items as Array<Record<string, unknown>>) : [];
     if (page.length && page.every((r) => typeof r.id === "string")) {
@@ -816,7 +829,23 @@ const ROLES_SAID = "By role: acquired-from, seller, acquired-on, acquired-for";
 export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     module: "digifab",
-    name: "read_fabrication_floor", description: "Read all active machine queues, material stock, batch layouts and restock needs.", mode: "read",
+    name: "read_kiln", description: "Kiln telemetry, wear, firing logs.", mode: "read", paging: { by: "cursor" },
+    params: { machine_id: z.string().uuid(), cursor: CURSOR_PARAM },
+    execute: async (api, args) => {
+      const cursor = decodeCursor<{ offset: number; machine_id: string }>("read_kiln", args.cursor);
+      if (!cursor.ok) return toolFail(cursor.error);
+      if (cursor.state && cursor.state.machine_id !== args.machine_id) return toolFail("Use this kiln's cursor or omit it to start again.");
+      const offset = cursor.state?.offset ?? 0;
+      const res = await api.request("GET", `/modules/digifab/kilns/${encodeURIComponent(String(args.machine_id))}?limit=20&offset=${offset}`);
+      if (res.status >= 400) return toolFail(apiErrorMessage(res, "Could not read this kiln"));
+      const items = Array.isArray(res.body.items) ? res.body.items : [];
+      const next = offset + items.length < Number(res.body.total) ? { offset: offset + items.length, machine_id: String(args.machine_id) } : null;
+      return toolOk({ ...res.body, ...pageEnd("read_kiln", next) });
+    },
+  },
+  {
+    module: "digifab",
+    name: "read_fabrication_floor", description: "Machine queues, stock, batch layouts, restock.", mode: "read",
     paging: { by: "one-call", why: "Complete current floor state, not job history." }, params: {},
     execute: async api => {
       const [floor, fleet] = await Promise.all([api.request("GET", "/modules/digifab/floor"), api.request("GET", "/modules/digifab/fleet")]);
@@ -826,30 +855,56 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   },
   {
     module: "digifab",
+    name:"read_bench",description:"Read a bench instrument and paged readings.",mode:"read",paging:{by:"cursor"},
+    params:{machine_id:z.string().uuid(),cursor:CURSOR_PARAM},
+    execute:async(api,args)=>{
+      const cursor=decodeCursor<{offset:number;machine_id:string}>("read_bench",args.cursor);
+      if(!cursor.ok)return toolFail(cursor.error);
+      if(cursor.state&&cursor.state.machine_id!==args.machine_id)return toolFail("Use this instrument's cursor, or omit it to start again.");
+      const offset=cursor.state?.offset || 0;
+      const result=await api.request("GET",`/modules/digifab/bench/${encodeURIComponent(String(args.machine_id))}?limit=20&offset=${offset}`);
+      if(result.status>=400)return toolFail(apiErrorMessage(result,"Could not read the bench"));
+      const items=Array.isArray(result.body.items)?result.body.items:[];
+      const next=offset+items.length<Number(result.body.total)&&items.length?{offset:offset+items.length,machine_id:String(args.machine_id)}:null;
+      return toolOk({...result.body,...pageEnd("read_bench",next)});
+    },
+  },
+  {
+    module: "digifab",
     name: "read_laser_batch",
-    description: "Read laser/cutter drawings, profiles, plans, setup or cutter station.",
+    description: "Read workshop plans and state.",
     mode: "read",
     paging: { by: "cursor" },
     params: {
-      operation: z.enum(["design", "plans", "profiles", "setup", "cutter_profiles", "cutter_station"]),
-      id: z.string().describe("Library or connection id"),
-      device_id: z.string().optional().describe("Device id"),
-      units: z.enum(["mm", "in"]).optional().describe("Undeclared DXF units"),
+      operation: z.enum(["design", "plans", "profiles", "setup", "cutter_profiles", "cutter_station", "large_format_station", "large_format_jobs", "machines", "designs", "runs", "spools", "chart", "stations"]),
+      id: z.string().describe("Drawing/conn/machine; spools: design; lists: empty"),
+      device_id: z.string().optional(),
+      units: z.enum(["mm", "in"]).optional(),
+      q: z.string().max(200).optional(),
       cursor: CURSOR_PARAM,
     },
     execute: async (api, args) => {
-      const cursor = decodeCursor<{ offset: number; id: string; operation: string; device_id?: string }>("read_laser_batch", args.cursor);
+      const cursor = decodeCursor<{ offset: number; id: string; operation: string; device_id?: string; q?:string }>("read_laser_batch", args.cursor);
       if (!cursor.ok) return toolFail(cursor.error);
-      if (cursor.state && (cursor.state.id !== args.id || cursor.state.operation !== args.operation || cursor.state.operation === "cutter_profiles" && cursor.state.device_id !== args.device_id)) return toolFail("Use the cursor for this drawing and operation, or omit it to start again.");
+      if (cursor.state && (cursor.state.id !== args.id || cursor.state.operation !== args.operation || (cursor.state.q ?? "") !== (args.q ?? "") || ["cutter_profiles", "large_format_jobs"].includes(cursor.state.operation) && cursor.state.device_id !== args.device_id)) return toolFail("Use the cursor for this drawing and operation, or omit it to start again.");
       const id = encodeURIComponent(String(args.id ?? ""));
       const offset = cursor.state?.offset ?? 0;
       let path: string;
-      if (args.operation === "design") path = `/modules/digifab/laser/design/${id}?units=${args.units === "in" ? "in" : "mm"}`;
+      if (["machines","designs","runs","spools","chart","stations"].includes(String(args.operation))) {
+        const operation = String(args.operation);
+        const search=`&q=${encodeURIComponent(String(args.q??""))}${operation==="spools"&&args.id?`&design_id=${id}`:""}`;
+        path = operation === "runs" ? `/modules/digifab/embroidery/runs?machine_id=${id}&limit=20&offset=${offset}` : operation === "stations" ? `/modules/digifab/embroidery/machines/${id}/stations?limit=20&offset=${offset}${search}` : `/modules/digifab/embroidery/${operation}?limit=20&offset=${offset}${search}`;
+      }
+      else if (args.operation === "design") path = `/modules/digifab/laser/design/${id}?units=${args.units === "in" ? "in" : "mm"}`;
       else if (args.operation === "plans") path = `/modules/digifab/laser/plans?library_id=${id}&limit=20&offset=${offset}`;
       else if (args.operation === "profiles") path = `/modules/digifab/laser/profiles?connection_id=${id}&device_id=${encodeURIComponent(String(args.device_id ?? ""))}`;
       else if (args.operation === "cutter_profiles" || args.operation === "cutter_station") {
         if (!args.device_id) return toolFail("Choose a cutter device id.");
         path = `/modules/digifab/cutter/${args.operation === "cutter_profiles" ? "profiles" : "station"}?connection_id=${id}&device_id=${encodeURIComponent(String(args.device_id))}&limit=20&offset=${offset}`;
+      }
+      else if (args.operation === "large_format_station" || args.operation === "large_format_jobs") {
+        if (!args.device_id) return toolFail("Choose a printer device id.");
+        path = `/modules/digifab/large-format/${args.operation === "large_format_station" ? "station" : "jobs"}?connection_id=${id}&device_id=${encodeURIComponent(String(args.device_id))}&limit=20&offset=${offset}`;
       }
       else if (args.operation === "setup") {
         if (!args.device_id) return toolFail("Choose a device id for this laser connection.");
@@ -859,7 +914,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       const res = await api.request("GET", path);
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "Could not read the laser batch"));
       const items = Array.isArray(res.body.items) ? res.body.items : [];
-      const next = ["plans", "cutter_profiles"].includes(String(args.operation)) && offset + items.length < Number(res.body.total) ? { offset: offset + items.length, id: String(args.id), operation: String(args.operation), ...(args.operation === "cutter_profiles" ? {device_id:String(args.device_id)} : {}) } : null;
+      const next = (["plans", "cutter_profiles", "large_format_jobs"].includes(String(args.operation)) || ["machines","designs","runs","spools","chart","stations"].includes(String(args.operation))) && offset + items.length < Number(res.body.total) ? { offset: offset + items.length, id: String(args.id), operation: String(args.operation), ...(args.q?{q:String(args.q)}:{}), ...(["cutter_profiles", "large_format_jobs"].includes(String(args.operation)) ? {device_id:String(args.device_id)} : {}) } : null;
       return toolOk({ ...res.body, ...pageEnd("read_laser_batch", next) });
     },
   },
@@ -871,8 +926,8 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     // to choose this tool and to NOT choose it over an action - the longer
     // rationale that used to sit here cost 900 chars on every turn.
     description:
-      "ESCORT the user to a configuration screen you cannot operate. In the app this MOVES their screen there and can PREFILL the form; nothing is submitted. " +
-      "NEVER escort for something an action covers: check list_actions and RUN it. Destinations: " +
+      "ESCORT to configuration you cannot operate: prefill only, submit nothing. " +
+      "NEVER escort for an action: use list_actions. Destinations: " +
       ESCORT_DESTINATIONS.map(
         (d) =>
           `${d.id} (${d.why}${d.covered_by?.length ? `; but ${d.covered_by.join(", ")} are actions` : ""})`,
@@ -931,18 +986,18 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_records",
     description:
-      "List records of ONE kind, optionally filtered by a text query. Use this to see what the user actually has (their stock, their projects, their entries) BEFORE answering questions about their data.",
+      "List one kind, optionally by text. Read the user’s actual records before answering questions about their data.",
     mode: "read",
     paging: { by: "cursor" },
     params: {
       kind: z.string().describe("Entity kind id, e.g. inventory:part (see list_record_kinds)"),
       q: z.string().optional().describe(LIST_Q_MEANS),
-      group_by: z.union([z.string(), z.array(z.object({ field: z.string(), bucket: z.enum(["month", "quarter", "year"]).optional() })).max(2)]).optional().describe("Group in the database by one or two fields. Returns full counts, currency-separated numeric subtotals and grand totals, with a bounded page of records per group."),
+      group_by: z.union([z.string(), z.array(z.object({ field: z.string(), bucket: z.enum(["month", "quarter", "year"]).optional() })).max(2)]).optional().describe("Group by one or two fields: full counts, currency-separated subtotals and totals, plus bounded record pages."),
       group_offset: z.number().int().min(0).optional().describe("Skip this many groups, default 0."),
       group_keys: z.array(z.string().nullable()).optional().describe("Read a page of one exact group using the keys returned by grouping."),
       offset: z.number().int().min(0).optional().describe("With group_keys, skip this many records within that group."),
       limit: z.number().optional().describe(`Max results (default 20, max ${LIST_LIMIT_MAX})`),
-      include_retired: z.boolean().optional().describe("Also list archived/retired records (off by default). Set it when asked about something old or retired: \"where is my old drill\""),
+      include_retired: z.boolean().optional().describe("Include archived/retired records when asked about old things; default off."),
       cursor: CURSOR_PARAM,
     },
     execute: async (api, args) => {
@@ -955,7 +1010,9 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         if (args.group_keys) qs.set("group_keys", JSON.stringify(args.group_keys));
         if (args.include_retired) qs.set("include_retired", "1");
         const grouped = await api.request("GET", `/entities/${encodeURIComponent(String(args.kind))}?${qs}`);
-        return grouped.status >= 400 ? toolFail(apiErrorMessage(grouped, "Couldn't group this collection.")) : toolOk(grouped.body);
+        if (grouped.status >= 400) return toolFail(apiErrorMessage(grouped, "Couldn't group this collection."));
+        const refusedGroup = listRefusal(grouped.body, String(args.kind));
+        return refusedGroup ? toolFail(refusedGroup) : toolOk(grouped.body);
       }
       const cur = decodeCursor<{ k: string; o: number; q?: string; r?: boolean; s?: boolean }>("list_records", args.cursor);
       if (!cur.ok) return toolFail(cur.error);
@@ -975,6 +1032,8 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         const retired = includeRetired ? "&include_retired=1" : "";
         const res = await api.request("GET", `/entities/${encodeURIComponent(kind)}?limit=${limit}&offset=${offset}${q}${retired}`);
         if (res.status >= 400) return toolFail(apiErrorMessage(res, `couldn't list ${kind}`));
+        const refused = listRefusal(res.body, kind);
+        if (refused) return toolFail(refused);
         const page = pageWithTruth(res.body, limit, offset) as { items?: unknown[]; total?: number };
         const shown = Array.isArray(page.items) ? page.items.length : 0;
         if (!(qText && offset === 0 && shown === 0)) {
@@ -1045,6 +1104,8 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         const retired = args.include_retired === true ? "&include_retired=1" : "";
         const one = await api.request("GET", `/entities/${encodeURIComponent(kind)}?limit=1${retired}`);
         if (one.status >= 400) return toolFail(apiErrorMessage(one, `couldn't count ${kind}`));
+        const refusedCount = listRefusal(one.body, kind);
+        if (refusedCount) return toolFail(refusedCount);
         const counted = (one.body as { total?: unknown }).total;
         if (typeof counted === "number") {
           let unitsPart = {};
@@ -1121,7 +1182,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "search_records",
     description:
-      "Search ACROSS every kind at once by text. Use when you don't know which kind holds the thing (\"citron\" might be a yarn, a part, or a note). For one known kind, prefer list_records with q.",
+      "Search all kinds by text when the kind is unknown. For one known kind, use list_records with q.",
     mode: "read",
     paging: { by: "cursor" },
     params: {
@@ -1303,13 +1364,19 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_actions",
     description:
-      "List actions, args_schema and undoable. Entity actions use matched_kinds and a record; workspace actions omit the record. Filter by kind. Run with invoke_action.",
+      "Discover actions: no filter returns an index mapping action ids to labels. Pass action_id for its arguments, or kind for applicable actions and arguments. Run invoke_action; send_targets lists destinations and recent sends.",
     mode: "read",
     paging: { by: "one-call", why: "every action the workspace registers; the registry is small and whole" },
     params: {
+      send_targets: z.boolean().optional().describe("Send destinations and your sends"),
       kind: z.string().optional().describe("Only entity actions applicable to this kind id (workspace actions still included)"),
+      action_id: z.string().optional().describe("One action from the index, with its arguments and consent requirements"),
     },
     execute: async (api, args) => {
+      if (args.send_targets) {
+        const r = await api.request("GET", "/records/send-targets");
+        return r.status >= 400 ? toolFail(apiErrorMessage(r, "couldn't list send destinations")) : toolOk(r.body);
+      }
       const res = await api.request("GET", "/registered-actions");
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't list actions"));
       const items =
@@ -1334,7 +1401,11 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       // When filtering by a record's kind, still surface workspace-level config
       // actions — they're not record-scoped but the user may want one from here.
       // A wire-only action is never offered (offerableToAssistant).
-      const picked = items.filter(offerableToAssistant).filter((a) => !kind || a.scope === "workspace" || (a.matched_kinds ?? []).includes(kind));
+      const actionId = typeof args.action_id === "string" ? args.action_id.trim() : "";
+      const picked = items.filter(offerableToAssistant)
+        .filter((a) => !actionId || a.id === actionId)
+        .filter((a) => !kind || a.scope === "workspace" || (a.matched_kinds ?? []).includes(kind));
+      if (!kind && !actionId) return toolOk({ index: Object.fromEntries(picked.map((a) => [a.id, a.label])) });
       // Project to what a caller needs to actually RUN one. `args` is the
       // decisive field: an action listed without its arguments is an action
       // that cannot be invoked, and the honest-looking conclusion is "I have no

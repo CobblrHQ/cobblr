@@ -6,7 +6,7 @@
 // (no React re-render plumbing): a page just publishes while mounted.
 
 import { useEffect, useRef, useState } from "react";
-import { countOf } from "@cobblr/platform-contract";
+import { countOf } from "@cobblr/platform-contract/plural";
 
 export interface ChatPageContext {
   /** Human page name, e.g. "Scan Inbox". */

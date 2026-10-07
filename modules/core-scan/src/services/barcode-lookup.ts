@@ -730,6 +730,33 @@ function normalizeOutcome(outcome: BarcodeOutcome): BarcodeOutcome {
   return { ...outcome, hit: { ...outcome.hit, brand: primaryBrand(outcome.hit.brand) } };
 }
 
+/** An Open Facts record's categories, read directly when a resolver or BIdb
+ *  answer carried the name and brand from its Open Facts mirror but not them
+ *  (#5102). The categories are what routes a food with no AI: Barilla Rigatoni
+ *  from the box resolver arrived with `category: null` and no
+ *  `categories_tags`, so nothing named pasta, and in a Groceries-only
+ *  workspace it filed as an Inventory part beside Nutella in Groceries. The
+ *  read is the same free, keyless one the direct chain makes, under the same
+ *  switches; it never changes the answer's name, brand or picture, and a
+ *  failure leaves the answer as it came. */
+async function withFactsCategories(norm: string, hit: BarcodeHit): Promise<BarcodeHit> {
+  if (hit.category) return hit;
+  const raw = (hit.raw && typeof hit.raw === "object" ? hit.raw : {}) as Record<string, unknown>;
+  if (Array.isArray(raw.categories_tags) && raw.categories_tags.length > 0) return hit;
+  const db = OPEN_FACTS_DBS.find((d) => d.source === hit.source || d.source === raw.facts_mirror);
+  if (!db || !externalLookupsEnabled() || !envBool("COBBLR_SCAN_OPENFACTS", true)) return hit;
+  const r = await tryOpenFacts(norm, db.host, db.source).catch((): ProviderResult => ({ kind: "miss" }));
+  if (r.kind !== "hit") return hit;
+  const p = (r.hit.raw ?? {}) as Record<string, unknown>;
+  if (!Array.isArray(p.categories_tags) && !r.hit.category) return hit;
+  return {
+    ...hit,
+    category: r.hit.category,
+    description: hit.description ?? r.hit.description,
+    raw: { ...raw, categories_tags: p.categories_tags, ...(typeof p.categories === "string" ? { categories: p.categories } : {}) },
+  };
+}
+
 async function doLookupBarcode(norm: string): Promise<BarcodeOutcome> {
 
   // Box-level resolver first (when configured): the host-wide chain —
@@ -739,7 +766,7 @@ async function doLookupBarcode(norm: string): Promise<BarcodeOutcome> {
   if (process.env.COBBLR_BARCODE_RESOLVER_URL) {
     try {
       const r = await tryResolver(norm);
-      if (r.kind === "hit") return { outcome: "hit", hit: withVia(r.hit, "resolver") };
+      if (r.kind === "hit") return { outcome: "hit", hit: withVia(await withFactsCategories(norm, r.hit), "resolver") };
       if (r.kind === "rate_limited") return { outcome: "rate_limited", scope: r.scope };
       return { outcome: "miss" };
     } catch (e) {
@@ -758,7 +785,7 @@ async function doLookupBarcode(norm: string): Promise<BarcodeOutcome> {
   if (bidbEnabled()) {
     try {
       const r = await tryBidb(norm);
-      if (r.kind === "hit") return { outcome: "hit", hit: withVia(r.hit, "bidb") };
+      if (r.kind === "hit") return { outcome: "hit", hit: withVia(await withFactsCategories(norm, r.hit), "bidb") };
       if (r.kind === "rate_limited") bidbThrottled = true;
       if (r.kind === "miss" && r.unconfirmed) bidbUnconfirmed = true;
     } catch (e) {

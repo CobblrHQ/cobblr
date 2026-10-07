@@ -1,4 +1,5 @@
 import { registerPlannedOrderAction } from "./planned-order.js";
+import { registerPackageArrivals } from "../package-arrivals.js";
 // Default-exported Router for the purchases module. Mounted at
 // /api/v1/orgs/:slug/modules/purchases/ with requireAuth + withTenant.
 
@@ -7,7 +8,7 @@ import { Router } from "express";
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { ordersRouter } from "./orders.js";
-import { returnsRouter } from "./returns.js";
+import { returnsRouter, registerReturnActions } from "./returns.js";
 import { itemsRouter } from "./items.js";
 import { vendorsRouter } from "./vendors.js";
 import { registerPurchasesResolvers } from "./resolvers.js";
@@ -16,6 +17,8 @@ import { registerPurchasesCalendarSource } from "./calendar-source.js";
 import { startArrivalSweeper } from "../arrival-sweeper.js";
 
 registerPlannedOrderAction();
+registerReturnActions();
+registerPackageArrivals();
 registerPurchasesResolvers();
 registerPurchasesActionHandlers();
 registerPurchasesCalendarSource();

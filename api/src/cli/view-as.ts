@@ -153,6 +153,7 @@ async function read(): Promise<void> {
   // would to a browser. GET only - this command cannot express a mutation.
   // 127.0.0.1, not localhost: the same address the image's healthcheck uses, so
   // there is no IPv6-first resolution to disagree with what the api bound.
+  // loopback-ok: the view-as CLI is its own process, not the api, so it must use HTTP
   const origin = `http://127.0.0.1:${env.API_PORT}`;
   const url = path.startsWith("/api/v1") ? origin + path : `${origin}/api/v1${path}`;
   let res: Response;

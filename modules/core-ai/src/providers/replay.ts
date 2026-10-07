@@ -241,12 +241,16 @@ function lastToolResult(turns: ChatTurn[], tool?: string): unknown {
 /** "$prev.data.items[0].id" -> the value at that path in the previous tool
  *  result; "$result.list_records.data.items[0].id" -> in the most recent
  *  result of THAT tool. Any other value is returned as it is. Walks objects
- *  and arrays so a nested `args` is resolved too. */
+ *  and arrays so a nested `args` is resolved too. A reference that finds
+ *  nothing throws, naming the result it read: passed on as written, the
+ *  literal "$result..." reached a uuid column as an id, and the card crashed
+ *  with only "check the log for act-..." to go on (main red, 2026-10-07). */
 function resolvePrevRefs(v: unknown, turns: ChatTurn[]): unknown {
   if (typeof v === "string") {
     const m = /^\$(prev|result\.([a-z_]+))\.(.+)$/.exec(v);
     if (!m) return v;
-    let cur: unknown = lastToolResult(turns, m[2]);
+    const read = lastToolResult(turns, m[2]);
+    let cur: unknown = read;
     const path = m[3]!;
     for (const step of path.split(".")) {
       const idx = /^([^[]+)\[(\d+)\]$/.exec(step);
@@ -254,7 +258,8 @@ function resolvePrevRefs(v: unknown, turns: ChatTurn[]): unknown {
       cur = cur && typeof cur === "object" ? (cur as Record<string, unknown>)[key] : undefined;
       if (idx) cur = Array.isArray(cur) ? cur[Number(idx[2])] : undefined;
     }
-    return cur ?? v;
+    if (cur === undefined || cur === null) throw new Error(`replay: ${v} found nothing in the ${m[2] ?? "previous"} result: ${JSON.stringify(read).slice(0, 800)}`);
+    return cur;
   }
   if (Array.isArray(v)) return v.map((x) => resolvePrevRefs(x, turns));
   if (v && typeof v === "object") return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, resolvePrevRefs(x, turns)]));

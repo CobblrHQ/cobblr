@@ -9,6 +9,7 @@
 // for a record deleted since says so rather than landing on an error page.
 
 import { useQuery } from "@tanstack/react-query";
+import { List } from "lucide-react";
 import type { AnchorHTMLAttributes, ReactNode } from "react";
 import { useToast } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
@@ -71,6 +72,25 @@ export function ChatRefChip({
         <Icon size={12} className="shrink-0 opacity-70" aria-hidden="true" />
         {children}
         <span className="sr-only">, {noun}</span>
+      </a>
+    );
+  }
+  // A list Cobb named ("Mugs", made a moment ago) is a chip too: it opens the
+  // list, as a record's chip opens the record (#5067).
+  if (href && /^\/instances\/[a-z0-9][a-z0-9-]*\/?$/.test(href)) {
+    return (
+      <a
+        href={href}
+        className={`${CHIP} hover:border-cobble-400 dark:hover:border-cobble-500 hover:bg-cobble-100 dark:hover:bg-cobble-900 transition cursor-pointer`}
+        title="Open this list"
+        onClick={(e) => {
+          e.preventDefault();
+          onGo(href);
+        }}
+      >
+        <List size={12} className="shrink-0 opacity-70" aria-hidden="true" />
+        {children}
+        <span className="sr-only">, list</span>
       </a>
     );
   }

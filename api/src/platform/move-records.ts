@@ -294,6 +294,7 @@ export async function moveRecords(
             type: d.type,
             required: false,
             position: d.position,
+            aggregate: d.aggregate,
             bundle_id: null,
           })
           .onConflict((c) => c.columns(["org_id", "entity_kind", "name"]).doNothing())

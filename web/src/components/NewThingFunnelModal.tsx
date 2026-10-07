@@ -11,7 +11,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Boxes } from "lucide-react";
-import { changeWorkspaceShape, Modal, NewFromTemplateButton, useToast } from "@cobblr/platform-web";
+import { changeWorkspaceShape, Modal, NewFromTemplateButton, SegmentedChoice, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type OrgModuleListItem } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
@@ -373,36 +373,17 @@ export function NewThingFunnelModal({
               </span>
             </button>
             {step === "advanced" && (
-              <fieldset className="space-y-2 px-3 pb-3 border-t border-line dark:border-slate-800 pt-2">
-                <label className="flex items-start gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    className="mt-1 accent-cobble-600"
-                    checked={placement === "standalone"}
-                    onChange={() => setPlacement("standalone")}
-                  />
-                  <span className="text-sm text-content dark:text-mortar-200">
-                    Its own menu item
-                    <span className="block text-xs text-muted dark:text-slate-400">
-                      A top-level entry of its own.
-                    </span>
-                  </span>
-                </label>
-                <label className="flex items-start gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    className="mt-1 accent-cobble-600"
-                    checked={placement === "menu"}
-                    onChange={() => setPlacement("menu")}
-                  />
-                  <span className="flex-1 text-sm text-content dark:text-mortar-200">
-                    Inside a menu
-                    <span className="block text-xs text-muted dark:text-slate-400">
-                      Grouped under a navbar dropdown - tidy when you have several of
-                      the same kind.
-                    </span>
-                  </span>
-                </label>
+              <div className="space-y-2 px-3 pb-3 border-t border-line dark:border-slate-800 pt-2">
+                <SegmentedChoice
+                  stack
+                  label="Where it goes in the menu"
+                  value={placement}
+                  onChange={(v) => setPlacement(v)}
+                  options={[
+                    { value: "standalone", label: "Its own menu item", hint: "A top-level entry of its own." },
+                    { value: "menu", label: "Inside a menu", hint: "Grouped under a navbar dropdown - tidy when you have several of the same kind." },
+                  ]}
+                />
                 {placement === "menu" && (
                   <div className="ml-6 space-y-2">
                     <select
@@ -428,7 +409,7 @@ export function NewThingFunnelModal({
                     )}
                   </div>
                 )}
-              </fieldset>
+              </div>
             )}
           </div>
         )}

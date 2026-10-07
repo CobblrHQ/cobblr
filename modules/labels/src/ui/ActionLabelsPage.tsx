@@ -17,7 +17,7 @@ import { useMemo, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Printer, QrCode, Plus, Power, Pencil, RotateCcw } from "lucide-react";
-import { usePlatformWeb, useToast, usePageTitle } from "@cobblr/platform-web";
+import { SEGMENTED_MAX, SegmentedChoice, usePlatformWeb, useToast, usePageTitle } from "@cobblr/platform-web";
 import { askBeforePress, pressAnswersToArgs, pressStillNeeds } from "@cobblr/platform-contract/action-args";
 import { useLabels } from "./context";
 import type { ActionLabel, ActionLabelButton } from "./api";
@@ -125,15 +125,39 @@ function Composer({ kind, id, recordTitle }: { kind: string; id: string; recordT
       ) : choices.length === 0 ? (
         <p className="text-sm text-muted dark:text-slate-400">This record has nothing a label could press.</p>
       ) : (
-        <fieldset className="space-y-2">
-          <legend className="text-sm text-muted dark:text-slate-400 mb-1">When scanned, it should</legend>
-          {choices.map((c) => (
-            <label key={c.key} className="flex items-center gap-3 rounded-lg border border-line dark:border-slate-700 px-3 py-3 text-base">
-              <input type="radio" name="does" value={c.key} checked={pick === c.key} onChange={() => { setPick(c.key); setAnswers({}); }} />
-              <span className="text-content dark:text-slate-100">{c.label}</span>
-            </label>
-          ))}
-        </fieldset>
+        <div className="space-y-2">
+          <span className="block text-sm text-muted dark:text-slate-400 mb-1">When scanned, it should</span>
+          {choices.length > SEGMENTED_MAX ? (
+            // More than a handful is a list to choose from, not a row of buttons.
+            <select
+              aria-label="When scanned, it should"
+              className={input}
+              value={pick ?? ""}
+              onChange={(e) => {
+                setPick(e.target.value);
+                setAnswers({});
+              }}
+            >
+              <option value="">Choose</option>
+              {choices.map((c) => (
+                <option key={c.key} value={c.key}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <SegmentedChoice
+              stack
+              label="When scanned, it should"
+              value={pick}
+              onChange={(k) => {
+                setPick(k);
+                setAnswers({});
+              }}
+              options={choices.map((c) => ({ value: c.key, label: c.label }))}
+            />
+          )}
+        </div>
       )}
       {ask.map((q) => (
         <label key={q.arg} className="block space-y-1">

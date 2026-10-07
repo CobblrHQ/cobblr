@@ -45,6 +45,23 @@ export async function receiveOrderLines(db: Kysely<PurchasesDB>, orgId: string, 
   return received;
 }
 
+/** Receive ONE line, claiming it for `partId` when it names none: the same
+ *  stamp-then-tell as a whole order, so a line received by scan is never
+ *  received again when the order later arrives. Answers whether this call
+ *  received it. */
+export async function receiveOrderLine(db: Kysely<PurchasesDB>, orgId: string, lineId: string, receivedOn: string, partId: string | null): Promise<boolean> {
+  const rows = await sql<ReceivedLine & { order_id: string; part_id: string | null }>`
+    update purchases_order_items
+       set received_at = ${receivedOn}, part_id = coalesce(part_id, ${partId}::uuid)
+     where id = ${lineId}
+       and received_at is null
+    returning id, order_id, part_id, qty, unit_cost, line_amount, description`.execute(db);
+  const it = rows.rows[0];
+  if (!it) return false;
+  if (it.part_id) await tellReceived(orgId, it.order_id, it as ReceivedLine, await orderAddsStock(db, it.order_id));
+  return true;
+}
+
 async function orderAddsStock(db: Kysely<PurchasesDB>, orderId: string): Promise<boolean> {
   const o = await db.selectFrom("purchases_orders").select("add_to_stock").where("id", "=", orderId).executeTakeFirst();
   return o?.add_to_stock !== false;

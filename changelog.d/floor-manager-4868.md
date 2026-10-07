@@ -3,6 +3,7 @@ type: feature
 date: 2026-10-05
 scope: digifab
 docs_target: docs/USER_GUIDE.md#LightBurn job review
+docs_published: 2026-10-08
 ---
 Added a floor manager with all machine queues, material dispatch, stock shortages and a shared monitor screen.
 

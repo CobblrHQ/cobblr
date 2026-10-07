@@ -4,7 +4,7 @@ import type { CoreCadenceDB } from "./db.js";
 
 export default defineModule({
   name: "core-cadence",
-  version: "0.2.10",
+  version: "0.2.11",
   maturity: "beta",
   displayName: "Cadence",
   description:
@@ -137,10 +137,6 @@ export default defineModule({
       // module's HTTP surface yet.
       const { registerCadenceComputedContext } = await import("./computed.js");
       registerCadenceComputedContext();
-      // One-shot heal for ledgers split across a presentation kind and its base
-      // (see heal-instance-kinds.ts for the retirement condition).
-      const { registerCadenceInstanceKindsHeal } = await import("./heal-instance-kinds.js");
-      registerCadenceInstanceKindsHeal();
     },
   },
 });

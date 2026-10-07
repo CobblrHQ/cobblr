@@ -14,6 +14,7 @@
 // `edge_adapter` is a BUILT-IN driver key (always available); no install
 // needed — just create a connection pointing base_url at your bridge.
 
+import { hasKilnPermit, type KilnPermit } from "../kilns/station.js";
 import { createHash, randomUUID } from "node:crypto";
 import { unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -117,6 +118,7 @@ function coerceJob(raw: unknown): DeviceJob | null {
 }
 
 export class EdgeAdapterDriver implements MachineDriver {
+  readonly benchInstrument?:boolean;
   readonly laserBackend: MachineDriver["laserBackend"];
   readonly printProcess: MachineDriver["printProcess"];
   cancelJob?: (jobId: string) => Promise<void>;
@@ -136,10 +138,11 @@ export class EdgeAdapterDriver implements MachineDriver {
   private tunnelPrefix: string;
   constructor(cfg: ManagerConfig, relay?: EdgeRelay | null) {
     const edge = cfg.extra?.creds?.edge as Record<string, unknown> | undefined;
+    this.benchInstrument = edge?.driver ? edge.driver === "scpi" : undefined;
     this.laserBackend = edge?.driver === "gcode-laser" ? "gcode" : edge?.driver === "ruida" ? "ruida" : edge?.driver === "galvo" ? "galvo" : undefined;
     this.knownCutterReview = edge?.driver === "cutter";
-    this.printProcess = edge?.driver === "sdcp" ? "resin" : undefined;
-    this.knownPrintReview = edge?.driver === "sdcp" || edge?.driver === "snapmaker" || edge?.driver === "moonraker" && edge.profile === "snapmaker-u1";
+    this.printProcess = edge?.driver === "sdcp" ? "resin" : edge?.driver === "ipp" ? "large-format" : undefined;
+    this.knownPrintReview = edge?.driver === "ipp" || edge?.driver === "sdcp" || edge?.driver === "snapmaker" || edge?.driver === "moonraker" && edge.profile === "snapmaker-u1";
     this.knownReviewRequired = edge?.driver === "lightburn" || this.knownPrintReview || this.knownCutterReview || this.laserBackend != null;
     if (this.knownPrintReview) {
       const control = async (id: string) => {
@@ -147,7 +150,7 @@ export class EdgeAdapterDriver implements MachineDriver {
         if (!result.ok) throw new Error(result.detail || "The printer did not accept the control.");
       };
       this.cancelJob = async jobId => {
-        try { await control("stop"); }
+        try { const result = await this.runControl("", "stop", this.printProcess === "large-format" ? {jobId} : {}); if (!result.ok) throw new Error(result.detail || "The printer did not accept Stop."); }
         catch (error) { if ((await this.getJobStatus(jobId).catch(() => null))?.state !== "idle") throw error; }
       };
       this.pauseJob = () => control("pause");
@@ -159,6 +162,21 @@ export class EdgeAdapterDriver implements MachineDriver {
     this.relay = relay ?? null;
     const instance = edgeInstanceOf(this.base);
     this.tunnelPrefix = instance ? `/${instance}` : "";
+  }
+
+  async kilnAtStation(permit: KilnPermit, operation: "start" | "stop", params: Record<string, unknown>): Promise<CommandResult> {
+    if (!hasKilnPermit(permit)) return { ok: false, detail: "Authorize at the kiln's station." };
+    return await this.req("POST", "/command", { body: { command: `kiln_${operation}`, params: { ...params, device_id: permit.deviceId } } }) as CommandResult;
+  }
+
+  async identifyBench():Promise<{identity:string;profile:string}>{
+    const result=await this.req("GET","/bench/identify");
+    const { z }=await import("zod");
+    return z.object({identity:z.string().min(1).max(512),profile:z.enum(["psu","dmm","rigol-ds1000z"])}).parse(result);
+  }
+  async readBench():Promise<import("../bench-model.js").BenchReport>{
+    const {BenchReportSchema}=await import("../bench-model.js");
+    return BenchReportSchema.parse(await this.req("GET","/bench",{timeoutMs:30000}));
   }
 
   async getLaserSetup():Promise<LaserSetup>{
@@ -414,7 +432,7 @@ export class EdgeAdapterDriver implements MachineDriver {
   async submitJob(args: SubmitArgs): Promise<SubmitResult> {
     if (await this.jobReviewRequired() && !args.approval) throw new ReviewRequired("Approve at the laser's station.");
     const cutter = await this.jobReviewRequired() && await this.jobReviewKind() === "cutter";
-    if ((this.laserBackend || cutter || this.printProcess === "resin") && !args.checkStartAllowed) throw new ReviewRequired("Approve at the machine's station.");
+    if ((this.laserBackend || cutter || ["resin", "large-format"].includes(this.printProcess ?? "")) && !args.checkStartAllowed) throw new ReviewRequired("Approve at the machine's station.");
     const check = args.checkStartAllowed;
     await check?.();
     let data: { jobId?: string; queued?: boolean } | undefined;
@@ -424,8 +442,8 @@ export class EdgeAdapterDriver implements MachineDriver {
       }) as typeof data;
       await check?.();
     } catch (e) {
-      if (this.laserBackend || cutter || this.printProcess === "resin") await this.req("POST", "/control", { body: { id: "stop", params: {} } }).catch(() => {});
-      if (cutter && data?.jobId) return { jobId: data.jobId, deviceId: args.deviceId ?? null, queued: true, status: "queued", interrupted: true };
+      if (this.laserBackend || cutter || ["resin", "large-format"].includes(this.printProcess ?? "")) await this.req("POST", "/control", { body: { id: "stop", params: {} } }).catch(() => {});
+      if ((cutter || this.printProcess === "large-format") && data?.jobId) return { jobId: data.jobId, deviceId: args.deviceId ?? null, queued: true, status: "queued", interrupted: true };
       throw e;
     }
     const jobId = data?.jobId ?? null;
@@ -452,6 +470,8 @@ export class EdgeAdapterDriver implements MachineDriver {
   // handler, which only reads `ok`). This is what makes an `edge_adapter`
   // connection a valid target of the digifab:run-command action.
   async runCommand(command: string, params: Record<string, unknown>): Promise<CommandResult> {
+    if (command === "kiln_start" || command === "kiln_stop") return { ok: false, detail: "Use the authorized kiln station." };
+
     if (await this.jobReviewRequired()) return { ok: false, detail: "Approve at the laser's station." };
     try {
       const data = (await this.req("POST", "/command", {

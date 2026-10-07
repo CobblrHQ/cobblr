@@ -51,9 +51,20 @@ export function ScanOfferStrip({ item, slug }: { item: ScanInboxItem; slug: stri
     onError: (e) => toast.error((e as Error).message),
   });
 
+  const resolveSend = useMutation({
+    mutationFn: (body: {send_drop_unmapped?: boolean; send_unplaced?: boolean}) => api.updateScanItem(slug, item.id, body),
+    onSuccess: refresh,
+    onError: (e) => toast.error((e as Error).message),
+  });
   const box = "flex flex-wrap items-center gap-2 rounded-lg border border-line bg-subtle px-3 py-2 text-sm text-content dark:border-slate-600";
   const btn = "rounded border border-line px-2 py-1 text-xs text-muted hover:border-accent hover:text-accent disabled:opacity-60 dark:border-slate-600";
 
+  if (offer?.own) return <div className={box} data-testid="scan-own-send">
+    <span>{offer.mode === "copy" ? "Copied" : "Sent"} from {offer.from}</span>
+    <ul className="w-full list-disc pl-5">{offer.needs?.map((need) => <li key={need}>{need}</li>)}</ul>
+    {offer.needs?.some((n) => n.includes("has no field")) && <button type="button" className={btn} disabled={resolveSend.isPending || meta.send_drop_unmapped === true} onClick={() => resolveSend.mutate({send_drop_unmapped: true})}>{meta.send_drop_unmapped ? "Unmatched fields will be dropped" : "Drop unmatched fields when filing"}</button>}
+    {offer.needs?.includes("Choose a placement in this workspace") && <button type="button" className={btn} disabled={resolveSend.isPending || meta.send_unplaced === true} onClick={() => resolveSend.mutate({send_unplaced: true})}>{meta.send_unplaced ? "Will arrive unplaced" : "Arrive unplaced"}</button>}
+  </div>;
   if (offer) {
     const open = offer.state === "offered" || offer.state === "maybe";
     return (

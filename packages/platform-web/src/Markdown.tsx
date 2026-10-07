@@ -3,7 +3,22 @@
 // raw HTML — so a stored Markdown string is safe to render without a sanitizer
 // (no XSS surface). Styling matches the app convention (Tailwind Typography
 // `prose`), same as ChatWidget / BundleDetailModal.
-import ReactMarkdown from "react-markdown";
+import { lazy, Suspense } from "react";
+import type { Components } from "react-markdown";
+
+const Render = lazy(() => import("./markdown-render"));
+
+/** Markdown rendered as elements, with no wrapper of its own. The renderer
+ *  loads on first use; until it arrives the words show as plain text in the
+ *  same place, so nothing is blank and nothing jumps far. Every surface that
+ *  renders Markdown comes through here (capability markdown:render). */
+export function MarkdownText({ children, components }: { children: string; components?: Components }) {
+  return (
+    <Suspense fallback={<p className="whitespace-pre-wrap">{children}</p>}>
+      <Render components={components}>{children}</Render>
+    </Suspense>
+  );
+}
 
 export function Markdown({ children, className }: { children: string; className?: string }) {
   return (
@@ -15,7 +30,7 @@ export function Markdown({ children, className }: { children: string; className?
         (className ?? "")
       }
     >
-      <ReactMarkdown>{children}</ReactMarkdown>
+      <MarkdownText>{children}</MarkdownText>
     </div>
   );
 }

@@ -5,8 +5,9 @@
 import { aiAvailabilityKeys } from "../lib/ai-availability-keys";
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { mayRead } from "../lib/acting-role";
 import { Link } from "react-router-dom";
-import { CobbHead } from "./Cobb";
+import { CobbHead } from "./CobbHead";
 import { api, type AiStatus } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
@@ -17,7 +18,7 @@ export function useAiStatus(): AiStatus | null {
   const q = useQuery({
     queryKey: aiAvailabilityKeys.status(activeSlug),
     queryFn: () => api.getAiStatus(activeSlug),
-    enabled: !!activeSlug,
+    enabled: !!activeSlug && mayRead(`/orgs/${activeSlug}/ai-status`),
     staleTime: 5 * 60_000,
   });
   return q.data ?? null;

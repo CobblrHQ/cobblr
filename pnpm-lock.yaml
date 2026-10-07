@@ -966,6 +966,9 @@ importers:
       mqtt:
         specifier: ^5.10.1
         version: 5.15.1
+      pdf-lib:
+        specifier: ^1.17.1
+        version: 1.17.1
       polygon-clipping:
         specifier: 0.15.7
         version: 0.15.7

@@ -116,6 +116,14 @@ export function registerPackageReceiving() {
       await platform().activity.log({ orgId: ctx.orgId, userId: ctx.userId ?? null, action: p.partId ? "part_restocked" : "part_created", ref: { module: "inventory", entityType: "part", entityId: received.part_id }, diff: { name: identity, qty: quantity.data } });
       await stockMoved(db, ctx.orgId, { partId: received.part_id, delta: received.quantity, newQty: received.newQty, minQty: received.minQty, reason: "Package received", ledger: false });
       if (!p.partId) await platform().events.emit("inventory.part.created", { orgId: ctx.orgId, partId: received.part_id });
+      // The label names who sold it and the buyer's PO, so whoever recorded the
+      // order can mark its line received without a second, manual step.
+      await platform().events.emit("inventory.package.received", {
+        orgId: ctx.orgId, receiptKey, partId: received.part_id, typeId: received.type_id, mpn: identity.trim(), manufacturer, quantity: received.quantity,
+        distributor: typeof fields.distributor === "string" ? fields.distributor : null,
+        purchaseOrder: typeof fields.purchase_order === "string" ? fields.purchase_order : null,
+        receivedBy: ctx.userId ?? null,
+      });
     }
     return { ok: true, changed: !received.already_received, data: received };
   });

@@ -3,6 +3,7 @@ type: feature
 scope: locations
 date: 2026-10-05
 docs_target: docs/USER_GUIDE.md#3.12 Locations (foundational)
+docs_published: 2026-10-08
 ---
 The floor plan draws things at their real size: a printer with an outer size takes its real footprint on the floor and its real width on a rack's shelf, and a shelf says whether what is on it fits ("3 machines, 1,278 of 1,220 mm: 58 mm too wide").
 

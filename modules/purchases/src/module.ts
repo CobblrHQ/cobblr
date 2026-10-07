@@ -4,11 +4,12 @@
 // printers/mods/projects in other modules.
 
 import { ORDER_ITEM_RECEIVED_KEYS } from "./receive-keys.js";
+import { ORDER_ITEM_RETURNED_KEYS } from "./return-keys.js";
 import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "purchases",
-  version: "0.12.2",
+  version: "0.13.0",
   displayName: "Purchases",
   description:
     "Orders you placed and what they cost, with each line tied to the parts it bought and what they went into.",
@@ -90,7 +91,7 @@ export default defineModule({
         fields: [
           { name: "description", type: "text", role: "title" },
           { name: "qty", type: "number", role: "quantity" },
-          { name: "unit_cost", type: "number" },
+          { name: "unit_cost", type: "number", aggregate: "per_unit" },
           { name: "received_at", type: "date" },
         ],
         // Line description + qty + received-at for cross-module display
@@ -134,25 +135,52 @@ export default defineModule({
     // the one emitter of order_item.received).
     eventPayloads: {
       "purchases.order_item.received": [...ORDER_ITEM_RECEIVED_KEYS],
+      "purchases.order_item.returned": [...ORDER_ITEM_RETURNED_KEYS],
     },
     // The KINDS of workspace notification this module sends, so the
     // workspace can say who each kind is for (Configuration > Who gets told).
     notifications: [
       { eventType: "purchases.order.due", label: "An order that should have arrived", description: "A purchase order past its expected arrival, with a Yes it turned up button." },
       { eventType: "purchases.receipts.unconfirmed", label: "Orders to check", description: "Once, when orders marked arrived before a fix may not have added their stock, with a link to settle each line." },
-      { eventType: "purchases.order.return", label: "A return moved", description: "A return on one of your orders was started, dropped off, received, or refunded, read from the store's own email." },
+      { eventType: "purchases.order.return", label: "A return moved", description: "A store's own email said a return on one of your orders was started, dropped off, received, or refunded." },
     ],
     events: [
       "purchases.order.created",
-      // A return step recorded from the store's email: requested, dropped
-      // off, received, refunded.
+      // A return step, from the order page, the assistant or the store's
+      // email: requested, dropped off, received, refunded, cancelled.
       "purchases.order.return_recorded",
+      // A returned line left the shelf (delta < 0), or an undo put it back.
+      "purchases.order_item.returned",
       "purchases.order.status_changed",
       "purchases.order.arrived",
       "purchases.order_item.received",
       "purchases.vendor.created",
     ],
     actions: [
+      {
+        id: "purchases:start-return", group: "buy", label: "Start a return", examples: ["return two of those", "I'm sending this back"],
+        description: "Start a return on an order that arrived: which line (line_id) or item, how many (qty, default 1) and why. One open return per line; a second start on the same line answers with the open one. The stock comes off the shelf when the store has it, the refund off the order's spend when it is refunded.",
+        appliesTo: { kinds: ["purchases:order"] }, invokeHandler: "purchases.start-return", userInvokable: true, undoable: true,
+        argsSchema: {
+          order_id: { label: "Which order, defaults to the record this ran on", type: "text" },
+          line_id: { label: "Which line of the order", type: "text" },
+          item: { label: "The item, in words, when there is no line id", type: "text" },
+          qty: { label: "How many", type: "number" },
+          reason: { label: "Why it is going back", type: "text" },
+        },
+      },
+      {
+        // UI-SCREEN: /purchases/:id (the stage pills on each return)
+        id: "purchases:advance-return", group: "buy", label: "Move a return along", examples: ["I dropped the return off", "the refund came through"],
+        description: "Move a return to its next stage: dropped_off, received (its count comes off the shelf, once), refunded (with refund_amount, default the line's cost; it comes off the order's spend once) or cancelled (only before the store has it). Stages only move forward.",
+        scope: "workspace" as const, invokeHandler: "purchases.advance-return", userInvokable: false, undoable: true,
+        argsSchema: {
+          return_id: { label: "Which return", type: "text", required: true },
+          stage: { label: "dropped_off, received, refunded or cancelled", type: "text", required: true },
+          refund_amount: { label: "The refund, when refunded", type: "number" },
+          revert: { label: "Undo only: move back to this stage", type: "boolean" },
+        },
+      },
       {
         id: "purchases:plan-order", group: "buy", label: "Plan an order", examples: ["plan an order for these parts", "track this fabrication order"],
         description: "Create a planned purchase with lines, expected arrival, tracking and an optional source file. request_key makes retries safe. add_to_stock is false for scanned component receiving and true for blank board stock. No supplier order is submitted.",

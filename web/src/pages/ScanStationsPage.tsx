@@ -22,13 +22,17 @@ export function ScanStationsPage() {
   const [mode, setMode] = useState<StationMode>("file");
   const [showCard, setShowCard] = useState(false);
   const devices = useQuery({ queryKey: stationKeys.devices(slug), queryFn: client.list, enabled: !!slug, refetchInterval: id ? 5000 : false });
-  const device = useQuery({ queryKey: stationKeys.device(slug, id), queryFn: () => client.get(id), enabled: !!slug && !!id, refetchInterval: 5000 });
+  // A station is its owner's device: someone else's link says so from the
+  // list of their own, and never asks for (or polls every five seconds) a
+  // station the server will refuse them.
+  const mine = !id ? null : devices.data ? devices.data.items.some((x) => x.id === id) : null;
+  const device = useQuery({ queryKey: stationKeys.device(slug, id), queryFn: () => client.get(id), enabled: !!slug && !!id && mine === true, refetchInterval: 5000 });
   const sessions = useInfiniteQuery({
     queryKey: stationKeys.sessions(slug, id), queryFn: ({ pageParam }) => client.sessions(id, pageParam),
     initialPageParam: undefined as string | undefined, getNextPageParam: (page) => page.next_before || undefined,
-    enabled: !!slug && !!id && !sessionId, refetchInterval: 5000,
+    enabled: !!slug && !!id && !sessionId && mine === true, refetchInterval: 5000,
   });
-  const session = useQuery({ queryKey: stationKeys.session(slug, id, sessionId), queryFn: () => client.session(id, sessionId), enabled: !!slug && !!id && !!sessionId, refetchInterval: 5000 });
+  const session = useQuery({ queryKey: stationKeys.session(slug, id, sessionId), queryFn: () => client.session(id, sessionId), enabled: !!slug && !!id && !!sessionId && mine === true, refetchInterval: 5000 });
   const controls = useQuery({
     queryKey: [...stationKeys.device(slug, id), "controls"], enabled: !!id && showCard,
     queryFn: async () => Promise.all([
@@ -53,7 +57,7 @@ export function ScanStationsPage() {
       <Link className="text-accent underline" to={id ? "/scan/stations" : "/scan"}>{id ? "All stations" : "Scan inbox"}</Link>
     </div>
     {error && <p role="alert" className="text-ember-600 dark:text-ember-400">{error.message}</p>}
-    {!id ? <>
+    {mine === false ? <p role="alert" className="text-ember-600 dark:text-ember-400">That station is not yours in this workspace.</p> : !id ? <>
       <p className="text-muted">Scan a place, then things to put away. A station remembers the place for ten idle minutes. Review or undo what it did here.</p>
       <form className="space-y-3 rounded-lg border border-line dark:border-slate-600 p-4" onSubmit={(e) => { e.preventDefault(); change.mutate({ type: "create" }); }}>
         <label className="block">Station name<input className={input} value={name} onChange={(e) => setName(e.target.value)} required maxLength={80} /></label>

@@ -84,6 +84,7 @@ export interface RecordSeedOutcome {
 const IMAGE_TIMEOUT_MS = 8_000;
 
 function base(): string {
+  // loopback-ok: #5153 moves this onto selfFetch
   return `http://127.0.0.1:${env.API_PORT}`;
 }
 

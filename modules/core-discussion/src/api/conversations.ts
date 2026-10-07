@@ -5,6 +5,8 @@
 import { Router } from "express";
 import { z } from "zod";
 import { likeEscape, platform } from "@cobblr/platform-contract";
+import { TOTAL_COLUMN, pagedAnswer, readListPage } from "@cobblr/platform-contract/list-page";
+import { sql } from "kysely";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { tenantContext, tenantDb, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
@@ -541,6 +543,9 @@ discussionRouter.get(
     // shape change to serve a question people ask from this page. Scoped search
     // is the honest 90%; the doc records what the other 10% would cost.
     const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    // Every conversation reaches the inbox, a page at a time with the total:
+    // an unread one older than the newest page is still unread.
+    const page = readListPage(req.query);
     const rows = await db
       .selectFrom("core_discussion_conversations as v")
       .innerJoin("core_discussion_comments as c", "c.conversation_id", "v.id")
@@ -564,6 +569,7 @@ discussionRouter.get(
         "r.last_read_at as last_read_at",
         fn.max("c.created_at").as("latest_at"),
         fn.count<number>("c.id").as("comments"),
+        sql<string>`count(*) over()`.as(TOTAL_COLUMN),
       ])
       .where("c.deleted_at", "is", null)
       .$if(q.length > 0, (qb) => qb.where("c.body", "ilike", `%${likeEscape(q)}%`))
@@ -577,9 +583,11 @@ discussionRouter.get(
         "r.last_read_at",
       ])
       .orderBy("latest_at", "desc")
-      // list-cap-ok: the newest conversations with something unread; an inbox is read from the top
-      .limit(200)
+      .orderBy("v.id")
+      .limit(page.limit)
+      .offset(page.offset)
       .execute();
+    const answer = pagedAnswer(rows, page);
 
     // Which of these NAME me. Done as one read rather than per row: an inbox
     // that costs a query per conversation is one that gets slow exactly as it
@@ -598,7 +606,7 @@ discussionRouter.get(
       ).map((r) => r.conversation_id),
     );
 
-    const items = rows.map((r) => {
+    const items = answer.items.map((r) => {
       const latest = r.latest_at ? new Date(r.latest_at as unknown as string) : null;
       const read = r.last_read_at ? new Date(r.last_read_at as unknown as string) : null;
       return {
@@ -617,6 +625,6 @@ discussionRouter.get(
         follow_reason: r.follow_reason ?? null,
       };
     });
-    res.json({ items });
+    res.json({ ...answer, items });
   }),
 );

@@ -1,12 +1,17 @@
 {
   "manifest": {
     "id": "cobblr.flagship.home-inventory",
-    "version": "0.6.3",
+    "version": "0.6.4",
     "name": "Home Inventory",
     "description": "Your belongings as their own room-by-room catalog: make/model + condition, filed by room. Scan to add, print labels for boxes, optional insurance valuation.",
     "author": "Cobblr",
     "released_at": "2026-10-02",
     "releases": [
+      {
+        "version": "0.6.4",
+        "released_at": "2026-10-07",
+        "notes": "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed."
+      },
       {
         "version": "0.6.3",
         "released_at": "2026-10-05",
@@ -264,6 +269,7 @@
                 "name": "replacement_value",
                 "display_label": "Replacement value",
                 "type": "money",
+                "aggregate": "sum",
                 "position": 3,
                 "help": "What it'd cost to buy new today, what an insurer pays out (not what you paid)."
               },

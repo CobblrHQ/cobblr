@@ -33,8 +33,9 @@ import { ApiError, api, type OrgMembership } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { displaySlug, slugifyHandle } from "../lib/workspaceSlug";
-import { Modal, useToast, PopoverLayer } from "@cobblr/platform-web";
-import { MembersModal } from "./MembersModal";
+import { Modal, useToast, PopoverLayer, lazyOverlay } from "@cobblr/platform-web";
+
+const MembersModal = lazyOverlay(() => import("./MembersModal").then((m) => ({ default: m.MembersModal })));
 import { LeaveWorkspaceModal } from "./LeaveWorkspaceModal";
 
 export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {}) {

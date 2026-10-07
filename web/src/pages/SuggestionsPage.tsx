@@ -11,7 +11,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { openRecordPath } from "@cobblr/platform-contract/instance-detail";
-import { countOf } from "@cobblr/platform-contract";
+import { countOf } from "@cobblr/platform-contract/plural";
 import { relativeTime, usePageTitle, useRunAction, useToast } from "@cobblr/platform-web";
 import { api, type ShareEditItem } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";

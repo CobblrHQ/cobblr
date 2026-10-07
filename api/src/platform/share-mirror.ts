@@ -155,6 +155,22 @@ async function shapeFor(orgId: string, kinds: string[], vis: VisibilityDef, gate
 export async function mirrorShare(linkId: string): Promise<{ sent: number; removed: number }> {
   const link = await meta.selectFrom("share_links").select(["id", "org_id", "side", "status", "settings"]).where("id", "=", linkId).executeTakeFirst();
   if (!link || link.side !== "owner" || link.status !== "active") return { sent: 0, removed: 0 };
+  // Due no longer, BEFORE anything is read: a change the owner makes while
+  // this pass runs marks the share due again (noteWorkspaceChanged only marks
+  // one that is not due) and gets a pass of its own. Cleared at the end, it
+  // was swallowed: that edit never reached the friend until the next one, or
+  // the daily reconcile (#5119). A pass that fails marks it due again.
+  await meta.updateTable("share_links").set({ mirror_due_at: null }).where("id", "=", linkId).execute();
+  try {
+    return await mirrorPass(link);
+  } catch (err) {
+    await meta.updateTable("share_links").set({ mirror_due_at: new Date() }).where("id", "=", linkId).where("mirror_due_at", "is", null).execute();
+    throw err;
+  }
+}
+
+async function mirrorPass(link: { id: string; org_id: string; settings: unknown }): Promise<{ sent: number; removed: number }> {
+  const linkId = link.id;
   const settings = (link.settings ?? {}) as Record<string, unknown>;
   const scope = readScope(settings.scope);
   const vis = readVisibility(settings.visibility);
@@ -241,7 +257,8 @@ export async function mirrorShare(linkId: string): Promise<{ sent: number; remov
     await meta.deleteFrom("share_mirror_state").where("link_id", "=", linkId).where("entity_kind", "=", row.entity_kind).where("entity_id", "=", row.entity_id).execute();
     removed++;
   }
-  await meta.updateTable("share_links").set({ mirrored_at: new Date(), mirror_due_at: null }).where("id", "=", linkId).execute();
+  await holdForTests(link.org_id, "owner-pass");
+  await meta.updateTable("share_links").set({ mirrored_at: new Date() }).where("id", "=", linkId).execute();
   return { sent, removed };
 }
 
@@ -381,7 +398,7 @@ async function recordCopyBase(
 /** Test-only: hold the mirror's apply on one share space at a point, so a
  *  test can land the friend's edit exactly inside it. Set through the
  *  test-support door; `reached` is the positive control. */
-type ApplyPoint = "before-write" | "after-write";
+type ApplyPoint = "before-write" | "after-write" | "owner-pass";
 let applyHold: { orgId: string; at: ApplyPoint; ms: number; reached: number } | null = null;
 export function setMirrorApplyHoldForTests(h: { orgId: string; at: ApplyPoint; ms: number } | null): void {
   applyHold = h && h.ms > 0 ? { ...h, ms: Math.min(h.ms, 30_000), reached: 0 } : null;

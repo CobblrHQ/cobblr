@@ -4,6 +4,7 @@ scope: ai
 date: 2026-10-01
 docs_target: docs/USER_GUIDE.md#4.4 Bundles (publishable presets)
 ui: none (the card is the existing confirm card in Ask Cobb, which renders any action's planner title and lines)
+docs_published: 2026-10-08
 ---
 **Ask Cobb to remove a bundle.** "Get rid of Yarn and everything in it" now offers to remove the Yarn bundle, with a card that says what goes: the table and how many records are deleted for good, the fields, views and automations it brought, and any feature switched off because nothing else uses it. Ask to keep the records and the card says that instead. Before, Cobb could only offer to turn off a feature, which a bundle's table is not, so the offer failed when you pressed it.
 

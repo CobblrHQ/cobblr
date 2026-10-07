@@ -31,7 +31,7 @@ export async function authorizeLaserStart(db: Kysely<DigifabDB>, orgId: string, 
     .where("revoked_at", "is", null).executeTakeFirst();
   if (!station) throw new ReviewRequired("This screen is not approved for this machine. Approve at the machine's station.");
   await requireLaserBedReady(db, job);
-  if (printReview && ["snapmaker-print", "snapmaker-u1-print", "resin-print"].includes(String(printReview.project.kind))) {
+  if (printReview && ["snapmaker-print", "snapmaker-u1-print", "resin-print", "ipp-print"].includes(String(printReview.project.kind))) {
     if (printReview.fileId !== approval.fileId || printReview.projectHash !== approval.projectHash) throw new ReviewRequired("The print file or toolhead changed. Review this print again.");
     const permit = Object.freeze({ fileId: approval.fileId, projectHash: approval.projectHash });
     permits.add(permit);

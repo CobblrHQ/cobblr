@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.18.17",
+  version: "0.18.19",
   displayName: "Inventory",
   description:
     "Parts and supplies: how many you have, where they are kept, and what is running low.",
@@ -56,8 +56,8 @@ export default defineModule({
           { name: "description", type: "text", role: "summary" },
           { name: "qty", type: "number", role: "quantity", trait: "fungible" },
           { name: "unit", type: "text", role: "unit", trait: "fungible" },
-          { name: "cost", type: "number", money: "amount", trait: "fungible" },
-          { name: "min_qty", type: "number", trait: "fungible" },
+          { name: "cost", type: "number", money: "amount", aggregate: "per_unit", trait: "fungible" },
+          { name: "min_qty", type: "number", aggregate: "none", trait: "fungible" },
           // An ESTIMATE, deliberately not role:"quantity" — that role means a
           // counted amount, and a face reading it as one would render a guess
           // with a stepper. Its presence is what marks a record as an
@@ -192,6 +192,7 @@ export default defineModule({
     ],
     events: [
       "inventory.part.created",
+      "inventory.package.received",
       "inventory.part.updated",
       "inventory.part.deleted",
       "inventory.stock.changed",
@@ -409,12 +410,13 @@ export default defineModule({
         undoable: true,
         label: "Set status",
         description:
-          "Set a part's `metadata.status` (e.g. a Lego set's Built / Unbuilt / Missing pieces). A member-appropriate, user-invokable action: grant it and a worker can update status from their app: the canonical write a custom (Tier B) app block performs. Args: { partId?, status }; partId falls back to the targeted entity.",
+          "Set a part's `metadata.status` (e.g. a Lego set's Built / Unbuilt / Missing pieces), or another state field its table declares, such as the Lego Sets table's `lifecycle`, to one of that field's choices. A member-appropriate, user-invokable action: grant it and a worker can update state from their app: the canonical write a custom (Tier B) app block performs. Args: { partId?, status, field? }; partId falls back to the targeted entity, field defaults to status.",
         appliesTo: { kinds: ["inventory:part"], requires: { traits: ["physical"] } },
         invokeHandler: "inventory.set-status",
         argsSchema: {
           partId: { label: "Which part, defaults to the record this ran on", type: "text" },
           status: { label: "The status to set", type: "text", required: true },
+          field: { label: "Which state field, when not status (the Lego Sets table's lifecycle)", type: "text" },
         },
         userInvokable: true,
       },
@@ -612,7 +614,7 @@ export default defineModule({
       {
         group: "stock", id: "inventory:consume-stock", label: "Record stock use",
         examples: ["the job used two metres of vinyl", "that scrap used thirty ml of resin"],
-        description: "Record stock used by a job, including scrap. Pass fields with revision, a unique source per job and stock draw, verdict good or scrap, amount and unit. Roll waste is added once; override waste in the stock unit if measured. Spools convert g and m only with grams_per_m. Sheet use takes rectangles in mm, kerf_mm and spacing_mm. Repeating a source never consumes twice; a shortage refuses the write.",
+        description: "Record stock used by a job, including scrap. Pass fields with a unique source per job and stock draw, verdict good or scrap, amount and unit. Roll waste is added once; override waste in the stock unit if measured. Spools convert g and m only with grams_per_m. Sheet use takes rectangles in mm, kerf_mm and spacing_mm, and the sheet revision it was planned against. Repeating a source never consumes twice; a shortage refuses the write.",
         appliesTo: { kinds: ["inventory:part"] }, invokeHandler: "inventory.consume-stock", userInvokable: false,
         argsSchema: { fields: { label: "Job stock use", type: "json", required: true } },
       },
@@ -978,6 +980,14 @@ export default defineModule({
         trigger_type: "event",
         trigger_event: "purchases.order_item.received",
       },
+      // The mirror: a line returned to the store leaves the shelf (delta < 0),
+      // and an undone return puts it back. purchases sends it once per return.
+      {
+        source_kind: "purchases:order_item",
+        action_id: "inventory:adjust-stock",
+        trigger_type: "event",
+        trigger_event: "purchases.order_item.returned",
+      },
       // A completed print deducts the filament it consumed. digifab's
       // print.completed payload carries { partId, delta } when the job declared
       // a material; adjust-stock reads them off the payload. Inert for a print
@@ -1033,24 +1043,10 @@ export default defineModule({
       // to ball) has its records still on the old default follow it.
       const { registerDefaultUnitFollows } = await import("./default-unit-follows.js");
       registerDefaultUnitFollows();
-      // A type collection and its things (Filament Types + Spools): a scanned
-      // spool left in the types table, and a spool with no type, put back.
-      const { registerFamiliesHeal } = await import("./heal-families.js");
-      registerFamiliesHeal();
       // Parts from before measured values were read get read once, so an old
       // "4k7" answers a search for 4.7 kΩ (heal-measure-readings.ts).
       const { registerMeasureReadingsHeal } = await import("./heal-measure-readings.js");
       registerMeasureReadingsHeal();
-      // Catalog instances the camera sheet latched to the stock face go back to
-      // the catalog face. One-shot and idempotent; meta-only for a workspace
-      // with nothing to heal. Awaited rather than fired off: it is a few
-      // queries, and a half-healed workspace serving its first request is worse
-      // than a boot that takes a moment longer.
-      const { healCatalogStockLatch } = await import("./heal-catalog-stock-latch.js");
-      const unlatched = await healCatalogStockLatch();
-      if (unlatched > 0) {
-        console.log(`[inventory] ${unlatched} catalog instance(s) returned to the catalog face`);
-      }
     },
     onShutdown: async () => {
       const { stopBurnRateSweeper } = await import("./burn-rate.js");

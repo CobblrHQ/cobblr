@@ -3,6 +3,7 @@ type: feature
 scope: sales
 date: 2026-10-04
 docs_target: docs/modules/sales.md#Automatic order intake
+docs_published: 2026-10-08
 ---
 
 Sales reads order emails into drafts you can review and confirm, and keeps each order in its own currency.

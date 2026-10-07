@@ -127,7 +127,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { } from "../lib/useFieldPresentation";
 import { } from "../auth/AuthContext";
-import { destinationLabel, type DestinationTable } from "@cobblr/platform-contract";
+import { destinationLabel, type DestinationTable } from "@cobblr/platform-contract/destination-label";
 import { KeepAsPurchase } from "./KeepAsPurchase";
 import { InboxCard, GalleryTile } from "./ScanInboxCard";
 import { FiledRowView, FiledSummaryView } from "./ScanFiledRow";

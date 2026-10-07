@@ -45,7 +45,16 @@ export function StockStationPage() {
     } catch (e) { setError(e instanceof Error ? e.message : "Stock could not be confirmed."); throw e; }
     finally { working.current = false; setBusy(false); }
   };
-  useScanTarget(slot.trim() ? { takes: accepts, take: thing => load(thing.id) } : null);
+  // The station keeps every stock scan, ready or not: without a slot it says
+  // so here, rather than the app-wide wedge opening the record and taking the
+  // person off the station (review of #4963).
+  useScanTarget({
+    takes: accepts,
+    take: thing => {
+      if (!slot.trim()) return Promise.reject(new Error("Name the slot or colour first, then scan the label again."));
+      return load(thing.id);
+    },
+  });
   const scanned = async (code: string) => {
     setScanning(false);
     try {

@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Share2 } from "lucide-react";
-import { countOf } from "@cobblr/platform-contract";
+import { countOf } from "@cobblr/platform-contract/plural";
 import { usePlatformWeb } from "./context";
 import { FooterActionPopover } from "./FooterActionPopover";
 import { useRunAction } from "./run-action";

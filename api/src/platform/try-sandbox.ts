@@ -23,6 +23,7 @@ import { randomBytes } from "node:crypto";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { announceSandboxKept, announceSandboxStarted, createAccount } from "./accounts.js";
+import { isOperatorSandbox } from "./operator-sandboxes.js";
 import { env } from "../env.js";
 import { expiredSandboxesQuery, reapCutoff } from "./try-sandbox-query.js";
 import { hashToken } from "./try-sandbox-token.js";
@@ -240,6 +241,7 @@ export async function provisionSandboxWorkspace(deps: ProvisionDeps): Promise<Sa
 export async function handOverSandbox(
   ws: SandboxWorkspace,
   now: number = Date.now(),
+  opts: { quiet?: boolean } = {},
 ): Promise<SandboxResult> {
   const expiresAt = new Date(now + sandboxTtlMs());
   await meta
@@ -266,8 +268,9 @@ export async function handOverSandbox(
     console.error(`[try-sandbox] hand-over row for ${ws.slug} failed:`, (err as Error).message);
   }
   // Somebody arrived. Its own event, apart from real signups: at a booth
-  // this is everybody who stops walking.
-  announceSandboxStarted({ slug: ws.slug });
+  // this is everybody who stops walking. An operator's sandbox is not
+  // somebody arriving, so it says nothing.
+  if (!opts.quiet) announceSandboxStarted({ slug: ws.slug });
   return { ...ws, token: plain, expiresAt };
 }
 
@@ -445,8 +448,9 @@ export async function keepSandbox(
     );
   }
   // A trial that became somebody's: the second thing the operator wants to
-  // know after "a visitor arrived".
-  announceSandboxKept({ email, slug: org.slug, days });
+  // know after "a visitor arrived". Not when the operator made it: that is
+  // their own walk, kept on purpose.
+  if (!(await isOperatorSandbox(orgId))) announceSandboxKept({ email, slug: org.slug, days });
   return { ok: true, kind: "trial", expiresAt, emailed };
 }
 

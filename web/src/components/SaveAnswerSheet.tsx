@@ -6,6 +6,7 @@
 // It opens IN the conversation, under the answer, the way a Confirm card
 // does, not as a modal: on a phone the chat panel covers the screen above
 // the modal layer, and a modal opened from it lands underneath.
+import { SegmentedChoice } from "@cobblr/platform-web";
 import { useState } from "react";
 import { api, ApiError } from "../lib/api";
 import { answerTitle, DESTINATION_LABEL, saveDestination, saveProposal, type SaveDestination } from "../lib/save-answer";
@@ -68,26 +69,16 @@ export function SaveAnswerSheet({
           <span className="block text-[11px] font-medium text-content dark:text-mortar-200 mb-1">Title</span>
           <input value={title} onChange={(e) => setTitle(e.target.value)} className="input" maxLength={160} />
         </label>
-        <fieldset>
-          <legend className="block text-[11px] font-medium text-content dark:text-mortar-200 mb-1">Save to</legend>
-          <div className="space-y-1.5">
-            {choices.map((c) => (
-              <label
-                key={c}
-                className={
-                  "flex items-start gap-2 rounded-lg border px-3 py-2 cursor-pointer " +
-                  (dest === c ? "border-cobble-500 bg-subtle dark:bg-slate-800" : "border-line dark:border-slate-600")
-                }
-              >
-                <input type="radio" name="save-dest" checked={dest === c} onChange={() => setDest(c)} className="mt-1" />
-                <span>
-                  <span className="block text-sm text-content dark:text-mortar-100">{DESTINATION_LABEL[c]}</span>
-                  <span className="block text-[11px] text-muted dark:text-slate-400">{HINT[c]}</span>
-                </span>
-              </label>
-            ))}
-          </div>
-        </fieldset>
+        <div>
+          <span className="block text-[11px] font-medium text-content dark:text-mortar-200 mb-1">Save to</span>
+          <SegmentedChoice
+            stack
+            label="Save to"
+            value={dest}
+            onChange={setDest}
+            options={choices.map((c) => ({ value: c, label: DESTINATION_LABEL[c], hint: HINT[c] }))}
+          />
+        </div>
         {error && <p className="text-xs text-ember-600 dark:text-ember-400">{error}</p>}
         <div className="flex items-center gap-3 pt-1">
           <button

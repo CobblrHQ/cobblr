@@ -603,6 +603,35 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     version: "0.1.0",
   },
   {
+    // UI-SCREEN: /machines
+    group: "share", id: "platform:send-records", min_role: "guest",
+    label: "Send to another workspace", description: "Copy or move records into another workspace of your own. Preview the mapping first; complete items file directly and items needing a decision wait in the inbox. Read the records and send their real ids.",
+    icon: "send", scope: "workspace", invoke_handler: "platform.send-records", user_invokable: true, undoable: false,
+    args_schema: {
+      entity_kind: { label: "Record kind", type: "text", required: true },
+      ids: { label: "Record ids", type: "list", required: true },
+      target_org: { label: "Target workspace id or slug", type: "text", required: true },
+      collection: { label: "Target collection kind", type: "text" },
+      create_matching: { label: "Create a matching collection if needed", type: "boolean" },
+      add_fields: { label: "Source field labels to add in the target", type: "list" },
+      placement: { label: "Use unplaced to explicitly leave the arrival unplaced", type: "text" },
+      location: { label: "Target location id", type: "text" },
+      mode: { label: "Copy or move", type: "text", required: true },
+      dry_run: { label: "Preview only: answers the mapping in words, sends nothing", type: "boolean" },
+      include_secrets: { label: "Include secrets", type: "boolean" },
+      field_map: { label: "Field label to target field name, null to drop", type: "json" },
+      duplicate: { label: "Update the earlier copy or make another", type: "text" },
+      request_id: { label: "Stable send request id", type: "text" },
+    }, version: "0.1.1",
+  },
+  {
+    // UI-SCREEN: /machines
+    group: "share", id: "platform:undo-send", min_role: "guest", label: "Undo a workspace send",
+    description: "Remove a received copy and restore the source of your own workspace send.",
+    icon: "undo", scope: "workspace", invoke_handler: "platform.undo-send", user_invokable: true, undoable: false,
+    args_schema: { id: { label: "Send id, from list_actions send_targets (sends)", type: "text", required: true } }, version: "0.1.1",
+  },
+  {
     // UI-SCREEN: /configuration/sharing (and every record page: "Give to…")
     group: "share",
     id: "platform:offer-to",
@@ -1191,14 +1220,18 @@ export function platformActionMinRole(actionId: string): OrgRoleName | null {
 /** Thrown by {@link assertActingRoleClearsActionFloor} when the acting user's
  *  role does not clear an action's min_role floor. Carries the pieces a caller
  *  needs to shape its own refusal (an HTTP 403 body, a neutral Discord card). */
+// Plain fields, not parameter properties: the coverage generator imports this
+// file under Node's type stripping, which has no parameter properties.
 export class ActionRoleFloorError extends Error {
-  constructor(
-    readonly actionId: string,
-    readonly requiredRole: OrgRoleName,
-    readonly actingRole: string | null,
-  ) {
+  readonly actionId: string;
+  readonly requiredRole: OrgRoleName;
+  readonly actingRole: string | null;
+  constructor(actionId: string, requiredRole: OrgRoleName, actingRole: string | null) {
     super(`The ${actionId} action requires the ${requiredRole} role.`);
     this.name = "ActionRoleFloorError";
+    this.actionId = actionId;
+    this.requiredRole = requiredRole;
+    this.actingRole = actingRole;
   }
 }
 

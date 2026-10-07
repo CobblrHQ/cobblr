@@ -373,6 +373,7 @@ async function replay(
       }
     }
     try {
+      // loopback-ok: #5153 moves this onto selfFetch
       const res = await fetch(`http://127.0.0.1:${env.API_PORT}${kindBase(slug, k)}${create}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${session}`, "Content-Type": "application/json" },

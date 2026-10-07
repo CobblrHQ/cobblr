@@ -53,14 +53,13 @@ import { LocationChipPicker } from "../components/LocationChipPicker";
 import {
   SCAN_ATTEMPT_DELAY_MS,
   numericOverride,
-  decodeCanvasSmart,
   NATIVE_FORMATS,
   acquireScannerStream,
   cameraHasTorch,
   captureFrame,
-  createBarcodeReader,
   setTorch,
 } from "../lib/barcodeScanner";
+import { createBarcodeReader, decodeCanvasSmart } from "../lib/barcodeDecode";
 import { applyLight, readLightPrefs, writeLightPrefs } from "../lib/cameraLight";
 import { armScanAudio, scanBeep } from "../lib/scanFeedback";
 import {

@@ -1,8 +1,13 @@
 {
   "manifest": {
     "id": "cobblr.flagship.spice-rack",
-    "version": "0.2.5",
+    "version": "0.2.6",
     "releases": [
+      {
+        "version": "0.2.6",
+        "released_at": "2026-10-07",
+        "notes": "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed."
+      },
       {
         "version": "0.2.5",
         "released_at": "2026-10-02",
@@ -149,6 +154,7 @@
             "name": "net_weight_g",
             "display_label": "Net weight (g)",
             "type": "number",
+            "aggregate": "per_unit",
             "unit": "g",
             "position": 2,
             "help": "Grams in a full jar, off the label. Used to gauge how much is left in the open one, so you never type a capacity."

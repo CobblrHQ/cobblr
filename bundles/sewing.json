@@ -1,0 +1,378 @@
+{
+  "manifest": {
+    "id": "cobblr.flagship.sewing",
+    "version": "0.1.2",
+    "name": "Sewing",
+    "author": "Cobblr",
+    "released_at": "2026-10-07",
+    "description": "Maintain sewing machines, keep manuals and linked accessories, track thread and needle wear, and read sewing pattern supplies and sizes from PDFs.",
+    "changelog": "Keep sewing machines, thread spools, wearing needles and pattern PDFs together, with optional USB embroidery run tracking.",
+    "releases": [
+      {
+        "version": "0.1.2",
+        "released_at": "2026-10-07",
+        "notes": "A group of sewing machines totals its hours sewn and projects sewn."
+      },
+      {
+        "version": "0.1.1",
+        "released_at": "2026-10-07",
+        "notes": "Keep sewing machines, thread spools, wearing needles and pattern PDFs together, with optional USB embroidery run tracking."
+      }
+    ],
+    "requires": [
+      {
+        "module": "assets"
+      },
+      {
+        "module": "core-maintenance"
+      },
+      {
+        "module": "inventory"
+      },
+      {
+        "module": "projects"
+      }
+    ],
+    "provides_instances": [
+      {
+        "module": "assets",
+        "instance_name": "sewing-machines",
+        "display_name": "Sewing machines",
+        "item_noun": "sewing machine",
+        "glyph": "🧵",
+        "faces": {
+          "maintained": true
+        },
+        "service_tasks": [
+          "Change needle",
+          "Oil machine",
+          "Clean lint",
+          "Check tension",
+          "Service"
+        ],
+        "links": [
+          {
+            "kind": "uses-foot",
+            "label": "uses foot or accessory",
+            "inverse": "used on",
+            "to": [
+              "sewing-accessories:item"
+            ]
+          },
+          {
+            "kind": "uses-needle",
+            "label": "uses needle",
+            "inverse": "used on",
+            "to": [
+              "sewing-needles:item"
+            ]
+          }
+        ],
+        "field_defs": [
+          {
+            "entity_kind": "assets:asset",
+            "name": "sewing_type",
+            "display_label": "Machine type",
+            "type": "text",
+            "position": 1,
+            "learns": false,
+            "choices": [
+              "Sewing",
+              "Overlocker",
+              "Coverstitch",
+              "Embroidery"
+            ]
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "hours_run",
+            "display_label": "Hours sewn",
+            "type": "number",
+            "aggregate": "sum",
+            "field_role": "usage",
+            "position": 2,
+            "help": "Keep the cumulative hours here. Maintenance can schedule service by this counter."
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "projects_sewn",
+            "display_label": "Projects sewn",
+            "type": "number",
+            "aggregate": "sum",
+            "field_role": "usage",
+            "position": 3,
+            "help": "Cumulative finished projects. Record needle use separately on its wearing tool stock record."
+          }
+        ],
+        "saved_views": [
+          {
+            "entity_kind": "assets:asset",
+            "name": "My sewing machines",
+            "view_type": "table",
+            "pinned": true,
+            "config": {
+              "visible_fields": [
+                "title",
+                "sewing_type",
+                "hours_run",
+                "projects_sewn"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "module": "inventory",
+        "instance_name": "sewing-threads",
+        "display_name": "Thread",
+        "item_noun": "thread spool",
+        "glyph": "🧵",
+        "faces": {
+          "stock": true
+        },
+        "field_defs": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "thread_brand",
+            "display_label": "Brand chart",
+            "type": "text",
+            "position": 1,
+            "learns": true,
+            "choices": [
+              "Brother",
+              "Madeira Polyneon",
+              "Madeira Rayon",
+              "Isacord Polyester",
+              "Robison-Anton Polyester"
+            ]
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "thread_code",
+            "display_label": "Chart code",
+            "type": "text",
+            "position": 2,
+            "field_role": "identifier",
+            "help": "Copy the thread's catalogue number. The embroidery screen can look up its approximate chart colour."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "thread_color",
+            "display_label": "Thread colour",
+            "type": "text",
+            "renderer": "color-hex",
+            "position": 3,
+            "help": "Optional screen colour. Confirm the physical thread before sewing."
+          }
+        ],
+        "saved_views": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "Thread by brand",
+            "view_type": "table",
+            "pinned": true,
+            "config": {
+              "group_by": "thread_brand",
+              "visible_fields": [
+                "title",
+                "thread_code",
+                "thread_color",
+                "qty",
+                "unit"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "module": "inventory",
+        "instance_name": "sewing-needles",
+        "display_name": "Needles",
+        "item_noun": "sewing needle",
+        "glyph": "🪡",
+        "faces": {
+          "stock": true
+        },
+        "scan_keywords": [
+          "sewing needle",
+          "machine needle"
+        ],
+        "links": [
+          {
+            "kind": "installed-on",
+            "label": "installed on",
+            "inverse": "has needle",
+            "to": [
+              "sewing-machines:item"
+            ]
+          }
+        ],
+        "field_defs": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "needle_type",
+            "display_label": "Needle type",
+            "type": "text",
+            "position": 1,
+            "learns": true,
+            "choices": [
+              "Universal",
+              "Ballpoint",
+              "Stretch",
+              "Jeans",
+              "Embroidery",
+              "Leather"
+            ]
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "needle_size",
+            "display_label": "Size",
+            "type": "text",
+            "position": 2,
+            "help": "For example 80/12. Set Wearing tool stock in hours or uses for projects and a replacement limit. Each replacement gets a new stock record."
+          }
+        ],
+        "saved_views": []
+      },
+      {
+        "module": "inventory",
+        "instance_name": "sewing-accessories",
+        "display_name": "Feet and accessories",
+        "item_noun": "sewing accessory",
+        "glyph": "🧰",
+        "faces": {
+          "stock": true
+        },
+        "links": [
+          {
+            "kind": "fits-machine",
+            "label": "fits machine",
+            "inverse": "has accessory",
+            "to": [
+              "sewing-machines:item"
+            ]
+          }
+        ],
+        "field_defs": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "accessory_type",
+            "display_label": "Accessory type",
+            "type": "text",
+            "position": 1,
+            "learns": true,
+            "choices": [
+              "Presser foot",
+              "Bobbin",
+              "Plate",
+              "Hoop",
+              "Guide",
+              "Other"
+            ]
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "compatibility",
+            "display_label": "Compatibility",
+            "type": "text",
+            "position": 2
+          }
+        ],
+        "saved_views": []
+      },
+      {
+        "module": "projects",
+        "instance_name": "sewing-patterns",
+        "display_name": "Sewing patterns",
+        "item_noun": "sewing pattern",
+        "glyph": "📐",
+        "scan_keywords": [
+          "sewing pattern",
+          "dress pattern",
+          "bag pattern"
+        ],
+        "file_intake": {
+          "accept": [
+            "application/pdf"
+          ],
+          "role": "pattern",
+          "folder": "Sewing patterns",
+          "folder_field": "pattern_category",
+          "ask": [
+            "pattern_source"
+          ],
+          "label": "Import sewing patterns"
+        },
+        "field_defs": [
+          {
+            "entity_kind": "projects:project",
+            "name": "pattern_category",
+            "display_label": "Category",
+            "type": "text",
+            "position": 1,
+            "learns": true,
+            "choices": [
+              "Clothing",
+              "Bags",
+              "Home",
+              "Quilting"
+            ]
+          },
+          {
+            "entity_kind": "projects:project",
+            "name": "pattern_source",
+            "display_label": "Source",
+            "type": "text",
+            "position": 2,
+            "learns": true,
+            "choices": [
+              "Designer",
+              "Book",
+              "Magazine",
+              "My own"
+            ]
+          },
+          {
+            "entity_kind": "projects:project",
+            "name": "chosen_size",
+            "display_label": "Chosen size",
+            "type": "text",
+            "position": 3
+          },
+          {
+            "entity_kind": "projects:project",
+            "name": "supply_notes",
+            "display_label": "Supply notes",
+            "type": "text",
+            "position": 4,
+            "help": "Keep corrections and the fabric amount for your chosen size here. Check the PDF before cutting."
+          }
+        ],
+        "saved_views": []
+      }
+    ],
+    "features": [
+      {
+        "key": "embroidery",
+        "name": "Embroidery",
+        "question": "Track USB embroidery runs too?",
+        "description": "Preview PES, DST, EXP, JEF and VP3 designs, check hoops and owned threads, and record measured thread use at an authorized screen.",
+        "default": false,
+        "requires": [
+          {
+            "module": "digifab"
+          }
+        ],
+        "next_steps": [
+          {
+            "label": "Set up embroidery",
+            "module": "digifab",
+            "path": "/digifab/embroidery",
+            "hint": "Save the machine's hoops and formats, then authorize its station screen."
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -20,6 +20,7 @@ import { createHash } from "node:crypto";
 import { type Kysely } from "kysely";
 import type { CoreIntegrationsDB } from "../db.js";
 import { edgeRelayFetch } from "./edge-fetch.js";
+import { mapLimit } from "./map-limit.js";
 
 /** A resolved, decrypted handle to one sync connection. */
 export interface SyncConnectionRef {
@@ -613,6 +614,9 @@ async function attachTags(orgId: string, targetKind: string, id: string, tags: s
   return failed;
 }
 
+/** How many tombstones a reconcile runs at once. */
+const TOMBSTONE_CONCURRENCY = 4;
+
 /** Tombstone one external id: delete the mirror + mark the map row. */
 async function tombstoneOne(
   db: Kysely<CoreIntegrationsDB>,
@@ -749,12 +753,13 @@ async function reconcileOnce(
     .where("entity_type", "=", type.key)
     .where("deleted_at", "is", null)
     .execute();
-  let tombstoned = 0;
-  for (const m of mapped) {
-    if (!present.has(m.external_id) && (await tombstoneOne(db, ref, type, m.external_id))) {
-      tombstoned++;
-    }
-  }
+  // A few at a time: each is a writer delete (the record kept in Recently
+  // deleted, its events, its history), about 230 ms apiece, so a source that
+  // dropped 130 parts held the sync's lock for 20 s one by one, and past a
+  // minute on a busy box. Distinct records; the tenant pool holds five.
+  const gone = mapped.filter((m) => !present.has(m.external_id));
+  const done = await mapLimit(gone, TOMBSTONE_CONCURRENCY, (m) => tombstoneOne(db, ref, type, m.external_id));
+  const tombstoned = done.filter(Boolean).length;
   return { created, updated, linked, tombstoned, total: records.length, tagsFailed, unmapped, failed };
 }
 

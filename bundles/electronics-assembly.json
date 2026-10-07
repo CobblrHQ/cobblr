@@ -1,13 +1,18 @@
 {
   "manifest": {
     "id": "cobblr.flagship.electronics-assembly",
-    "version": "0.1.4",
+    "version": "0.1.5",
     "name": "Electronics assembly",
     "author": "Cobblr",
     "description": "Component packages and board revisions, with receiving, moisture clocks, BOM stock checks and fabrication purchases.",
     "released_at": "2026-10-06",
     "changelog": "Import board revisions to check component stock and track fabrication purchases and stencils.",
     "releases": [
+      {
+        "version": "0.1.5",
+        "released_at": "2026-10-07",
+        "notes": "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed."
+      },
       {
         "version": "0.1.4",
         "released_at": "2026-10-06",
@@ -269,6 +274,7 @@
             "name": "attrition_pct",
             "display_label": "Attrition (%)",
             "type": "number",
+            "aggregate": "none",
             "position": 5,
             "help": "Extra components consumed for setup and placement loss, rounded up to whole components."
           },
@@ -277,6 +283,7 @@
             "name": "msl_floor_hours",
             "display_label": "MSL 6 label floor life (hours)",
             "type": "number",
+            "aggregate": "none",
             "position": 6,
             "help": "For level 6, the label's deadline after a completed bake. Dry storage does not extend it."
           },

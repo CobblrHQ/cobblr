@@ -17,6 +17,8 @@ interface ListedRow {
   id: string;
   name?: string;
   title?: string;
+  /** The record's own short name, when its kind has one ("P1S"). */
+  short_name?: string | null;
   image_path?: string | null;
   location_id?: string | null;
   metadata?: Record<string, unknown>;
@@ -37,6 +39,8 @@ export interface PlaceableRecord {
   kind: string;
   id: string;
   name: string;
+  /** Its short name, when it has one: what a small drawing of it says. */
+  short_name: string | null;
   image_path: string | null;
   location_id: string | null;
   metadata: Record<string, unknown>;
@@ -111,6 +115,7 @@ export function usePlaceableRecords(slug: string, opts: { fresh?: boolean } = {}
           kind: k.id,
           id: row.id,
           name: row.name ?? row.title ?? "(unnamed)",
+          short_name: typeof row.short_name === "string" && row.short_name.trim() ? row.short_name.trim() : null,
           image_path: row.image_path ?? null,
           location_id: row.location_id ?? null,
           metadata: row.metadata ?? {},

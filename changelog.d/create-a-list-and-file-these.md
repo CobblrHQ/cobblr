@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-10-02
 docs_target: docs/USER_GUIDE.md#2. Core concepts
+docs_published: 2026-10-08
 ---
 **Ask Cobb to make a list and file your scans into it.** Tick items in the scan inbox and say "create Mugs and file these in it": Cobb offers one plan that makes the list, kept like a kind you already have, and files the ticked items into it, with one Confirm. Undo puts the items back in the inbox and removes the empty list, and an empty list's own page now offers Remove this list.
 

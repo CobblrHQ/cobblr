@@ -378,6 +378,7 @@ export function ProjectsListPage() {
         );
       })}
       <BulkActionBar
+        records={{ kind: entityKind, ids: Array.from(selected) }}
         onAskCobb={askCobb}
         count={selected.size}
         onClear={() => setSelected(new Set())}

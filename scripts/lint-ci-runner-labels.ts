@@ -43,7 +43,7 @@ const DIR = join(ROOT, ".forgejo", "workflows");
 // (This list is a copy of RELEASE_LANE_WORKFLOWS in scripts/lib/release-lane.mjs, which the
 // public export does not ship; a test keeps the two equal.)
 const RELEASE_LANE_WORKFLOWS = ["publish-selfhost-images.yml", "release-stable.yml"];
-const KNOWN = new Set(["release", "ubuntu-latest", "light", "ci-test", "ci-test-full", "ci-e2e", "bake-a6", "bake-aurora", "bake-z87", "bake-b550", "docker-build", "light-main", "ci-main"]);
+const KNOWN = new Set(["image-main", "image-pr", "release", "ubuntu-latest", "light", "ci-test", "ci-test-full", "ci-e2e", "bake-a6", "bake-aurora", "bake-z87", "bake-b550", "docker-build", "light-main", "ci-main", "fast-light", "fast-test", "pr-check"]);
 
 const errors: string[] = [];
 const seen = new Map<string, string[]>();
@@ -105,6 +105,34 @@ for (const f of readdirSync(DIR).filter((n) => n.endsWith(".yml") || n.endsWith(
 if (seen.size === 0) {
   console.error("[lint:ci-runner-labels] ✗ found no runs-on at all — did the workflow dir move?");
   process.exit(1);
+}
+
+// pr-check RUNS ON THE TEST-ONLY BOXES (b550 and z87 until memtest passes, the lent XPS: owner,
+// 2026-10-07), so a job asking for it must never publish, push or ship anything: a flipped bit there
+// may turn a check red, never reach something shared. A step that does must be guarded to a push to
+// main (which runs on main's own lane, never on pr-check).
+const PUBLISHES = /\b(docker (push|login)|git push|npm publish|pnpm publish|gh release|crane push|skopeo copy|oras push|buildx build[^\n]*--push)\b/;
+for (const f of readdirSync(DIR).filter((n) => n.endsWith(".yml") || n.endsWith(".yaml"))) {
+  const src = readFileSync(join(DIR, f), "utf8");
+  const lines = src.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^ {2}[\w-]+:\s*$/.test(lines[i] ?? "")) continue;
+    let end = i + 1;
+    while (end < lines.length && !/^ {2}[\w-]+:\s*$/.test(lines[end] ?? "") && !/^\S/.test(lines[end] ?? "")) end++;
+    const job = lines.slice(i, end);
+    if (!job.some((l) => /^ {4}runs-on:\s*pr-check\s*$/.test(l))) continue;
+    let s0: number;
+    const steps: number[] = [];
+    job.forEach((l, k) => { if (/^ {6}- (name|uses|run):/.test(l)) steps.push(k); });
+    steps.push(job.length);
+    for (let k = 0; k + 1 < steps.length; k++) {
+      const step = job.slice(steps[k], steps[k + 1]).join("\n");
+      s0 = i + (steps[k] ?? 0);
+      if (!PUBLISHES.test(step)) continue;
+      if (/^ {8}if:.*(refs\/heads\/main|event_name == 'push')/m.test(step)) continue;
+      errors.push(`.forgejo/workflows/${f}:${s0 + 1} a pr-check job's step publishes or pushes (${PUBLISHES.exec(step)![0]}) without a guard to main's pushes: pr-check runs on the test-only boxes, which must never ship anything. Guard it with \`if: github.event_name == 'push' && github.ref == 'refs/heads/main'\`, or move it to a job on light.`);
+    }
+  }
 }
 
 if (errors.length === 0) {

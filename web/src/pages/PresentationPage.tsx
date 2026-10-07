@@ -16,7 +16,8 @@ import {
   api,
   type EntityKindOverride,
 } from "../lib/api";
-import { pluralise, FACE_NAMES, FACE_LABELS, type FaceName } from "@cobblr/platform-contract";
+import { pluralise } from "@cobblr/platform-contract/plural";
+import { FACE_NAMES, FACE_LABELS, type FaceName } from "@cobblr/platform-contract/field-vocabulary";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { BASE_NATIVE_FIELDS } from "../lib/native-field-policy";
 import { HeadingsBuilder } from "../components/HeadingsBuilder";

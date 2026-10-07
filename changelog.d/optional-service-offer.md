@@ -3,6 +3,7 @@ type: feature
 scope: bundles
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#Install a bundle
+docs_published: 2026-10-08
 ---
 Adding Sets offered BrickLink as an optional service, with existing BrickLink data kept out of the sidebar.
 

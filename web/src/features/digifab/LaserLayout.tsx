@@ -1,6 +1,6 @@
 import { laserLayerLabel } from "../../lib/laser-layer-label";
-import { countOf } from "@cobblr/platform-contract";
-import { fabricationMachineName, fabricationBridgeName } from "../../lib/fabrication-display";
+import { countOf } from "@cobblr/platform-contract/plural";
+import { fabricationMachineName, fabricationBridgeName, fabricationFullName } from "../../lib/fabrication-display";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -8,6 +8,7 @@ import { Modal } from "@cobblr/platform-web";
 import { api, type DigifabLibraryItem, type LaserDesign, type LaserLayoutSheet, type LaserPlacement, type LaserPlanRecord, type LaserProfileRecord } from "../../lib/api";
 const control = "block min-h-11 w-full rounded border border-line bg-surface px-3 py-2";
 const button = "min-h-11 rounded border border-line px-4 py-2 disabled:opacity-50";
+
 export function LaserDrawing({ design, parts, width, height, free, used }: { design: LaserDesign; parts: LaserPlacement[]; width: number; height: number; free?: LaserLayoutSheet["free_rectangles"]; used?: LaserLayoutSheet["used_outlines"] }) {
  const path = (p: LaserDesign["paths"][number]) => {
   const first = p.points[0]; if (!first) return "";
@@ -42,7 +43,7 @@ export function LaserLayoutPlanner({ slug, item, onClose }: { slug: string; item
  const saved = useQuery({ queryKey: ["laser-saved-plans", slug, item.id, savedOffset], queryFn: () => api.savedLaserPlans(slug, item.id, savedOffset) });
  const fleet = useQuery({ queryKey: ["digifab-fleet", slug], queryFn: () => api.getDigifabFleet(slug) });
  const bridges = useQuery({ queryKey: ["edge-bridges", slug], queryFn: () => api.listEdgeBridges(slug) });
- const choices = fleet.data?.connections.flatMap(c => c.devices.filter(d => d.laser_backend != null || d.lightburn_readiness != null || d.id === "lightburn").map(d => ({ value: `${c.connection_id}/${d.id}`, connection: c.connection_id, device: d.id, direct: !!d.laser_backend, name: `${fabricationMachineName(c, d)} · ${fabricationBridgeName(c, bridges.data?.bridges ?? [])}` }))) ?? [];
+ const choices = fleet.data?.connections.flatMap(c => c.devices.filter(d => d.laser_backend != null || d.lightburn_readiness != null || d.id === "lightburn").map(d => ({ value: `${c.connection_id}/${d.id}`, connection: c.connection_id, device: d.id, direct: !!d.laser_backend, name: fabricationFullName(fabricationMachineName(c, d), fabricationBridgeName(c, bridges.data?.bridges ?? [])) }))) ?? [];
  const choice = choices.find(c => c.value === machine);
  const profiles = useQuery({ queryKey: ["laser-profiles", slug, machine], queryFn: () => api.laserProfiles(slug, choice!.connection, choice!.device), enabled: !!choice });
  const design = useQuery({ queryKey: ["laser-design", slug, item.id, units], queryFn: () => api.laserDesign(slug, item.id, units) });

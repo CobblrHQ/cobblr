@@ -50,8 +50,8 @@ export interface MockOptions {
 }
 
 const DEFAULT_PRINTERS: MockPrinter[] = [
-  { id: "p1", name: "Voron 2.4", enabled: true, state: "operational", tags: ["corexy", "pla"] },
-  { id: "p2", name: "Prusa MK4", enabled: true, state: "operational", tags: ["pla"] },
+  { id: "p1", name: "Voron 2.4", station_kind: "print", enabled: true, state: "operational", tags: ["corexy", "pla"] },
+  { id: "p2", name: "Prusa MK4", station_kind: "print", enabled: true, state: "operational", tags: ["pla"] },
 ];
 
 export class MockDriver implements MachineDriver {

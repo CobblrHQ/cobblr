@@ -23,25 +23,19 @@ import { meta } from "../db/meta.js";
 import { requireAuth } from "../auth/middleware.js";
 import { captchaEnabled, captchaSiteKey, captchaVerdict } from "../platform/captcha.js";
 import { tryFailure } from "./try-error-page.js";
-import { provisionOrgForUser } from "./auth.js";
-import { enableDefaultModulesForOrg } from "../modules/enable.js";
+import { startSandbox } from "./try-sandbox-start.js";
 import { hashPassword } from "../auth/password.js";
 import { signSession } from "../auth/jwt.js";
 import {
-  handOverSandbox,
   keepSandbox,
   keptSandboxForUser,
   ownSandboxForUser,
-  provisionSandboxWorkspace,
   sandboxDecisionMs,
   setKeptSandboxPassword,
   redeemSandboxToken,
-  sandboxCapacity,
   sandboxEnabled,
   sandboxLifetime,
-  type SandboxResult,
 } from "../platform/try-sandbox.js";
-import { seedSandbox } from "../platform/try-sandbox-seed.js";
 import { trialLedger } from "../platform/trial-ledger.js";
 import {
   carryPackage,
@@ -56,7 +50,6 @@ import {
 import { platform } from "@cobblr/platform-contract";
 import { lifetimeSentence } from "@cobblr/platform-contract/sandbox-lifetime";
 import { emptySandboxRecords } from "../platform/try-sandbox-records.js";
-import { takeFromPool } from "../platform/try-sandbox-pool.js";
 import { issueSignInLink } from "../platform/sign-in-link.js";
 import { createSandboxExport, fetchSandboxExport } from "../platform/try-sandbox-export.js";
 import { takeYourWorkEmail } from "../platform/try-sandbox-export-copy.js";
@@ -147,59 +140,17 @@ tryRouter.get(
         }
       }
 
-      // The population cap. Rate limits bound arrivals; only this bounds how many
-      // Postgres databases exist at once, which is the thing that actually falls
-      // over. Answering "busy" is the correct behaviour, not an error.
-      const cap = await sandboxCapacity();
-      if (!cap.ok) {
-        console.warn(`[try-sandbox] at capacity: ${cap.live}/${cap.max} live`);
+      const started = await startSandbox();
+      if (!started.ok) {
+        console.warn(`[try-sandbox] at capacity: ${started.live}/${started.max} live`);
         tryFailure(req, res, 503, "sandbox_busy", "A lot of people are trying Cobblr right now. Try again in a few minutes.");
         return;
       }
-
-      // A ready-made one if the pool has any: instant, and its book covers are
-      // already in place rather than filling in while somebody watches.
-      const pooled = await takeFromPool();
-      let sandbox: SandboxResult;
-      if (pooled) {
-        sandbox = pooled;
-        console.log(`[try-sandbox] handed over ${sandbox.slug} from the pool`);
-      } else {
-        const ws = await provisionSandboxWorkspace({
-          provisionOrg: async (userId, name) => {
-            const r = await provisionOrgForUser(userId, name);
-            return { orgId: r.orgId, slug: r.slug };
-          },
-          enableDefaults: (orgId, userId) => enableDefaultModulesForOrg(orgId, userId),
-        });
-        // An empty workspace is a poor first impression - the lesson the demo
-        // taught. Best-effort: a seed that fails leaves a usable empty sandbox
-        // rather than no sandbox. Seeded BEFORE the hand-over, as the pool
-        // does, so the stock sits on the platform's side of the ledger's
-        // starting line on both paths (trial-ledger.ts).
-        try {
-          const seed = await seedSandbox(ws.orgId, ws.userId, env.TRY_SANDBOX_SEED, ws.slug);
-          // Say what landed, not that it ran. "seeded" with nothing in it is the
-          // empty table this seed exists to prevent, and it should be legible in
-          // the log the first time it happens rather than found by a visitor.
-          const r = seed.contents;
-          console.log(
-            `[try-sandbox] seed ${seed.seeded ? seed.name : `skipped (${seed.reason})`}` +
-              (r ? `: ${r.created} records${r.failed ? `, ${r.failed} FAILED` : ""}` : ""),
-          );
-          // Covers are still arriving; say so when they have, rather than holding
-          // the visitor at a loading page for them.
-          // DETACHED: a log line when the covers land; the sandbox is handed over without them
-          void r?.images.then((n) => console.log(`[try-sandbox] covers landed: ${n}`));
-        } catch (err) {
-          console.error("[try-sandbox] seed failed (continuing empty):", (err as Error).message);
-        }
-        sandbox = await handOverSandbox(ws);
-      }
+      const { sandbox, live: liveBefore, max: cap } = started;
 
       const intent = startIntentOf(req.query as Record<string, unknown>);
       console.log(
-        `[try-sandbox] provisioned ${sandbox.slug} (${cap.live + 1}/${cap.max} live), expires ${sandbox.expiresAt.toISOString()}` +
+        `[try-sandbox] provisioned ${sandbox.slug} (${liveBefore + 1}/${cap} live), expires ${sandbox.expiresAt.toISOString()}` +
           (intent.source ? `, source ${intent.source}` : "") +
           (intent.start ? `, start ${intent.start}` : ""),
       );

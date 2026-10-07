@@ -1,3 +1,4 @@
+import { handedRecord } from "./handed-record.js";
 // A thing is no longer yours: sold, given away, parted out, lost, thrown out.
 // And the way back, when it comes home again.
 //
@@ -8,9 +9,8 @@
 // (DISPOSITION_KEY), so one banner, one search and one sentence read every
 // kind the same. History keeps it: the record is never deleted.
 
-import { sql } from "kysely";
 import type { BlockedAction } from "@cobblr/platform-contract/blocked-action";
-import { meta } from "../db/meta.js";
+
 import { platform } from "@cobblr/platform-contract";
 import {
   DISPOSITION_KEY,
@@ -121,29 +121,16 @@ export async function bringBack(
   // A thing handed over through a share is the receiver's: bringing it back
   // here would make one thing owned twice. Only their Send back returns it
   // (#4684); that path marks the hand-over returned before it gets here.
-  const handed = await meta
-    .selectFrom("share_offers as o")
-    .innerJoin("share_links as l", "l.id", "o.link_id")
-    .select(["o.title", "l.peer_name", sql<string>`o.source->>'id'`.as("source_id")])
-    .where("o.direction", "=", "out")
-    .where("o.status", "=", "taken")
-    .where(sql<string>`(o.source->>'org_id')`, "=", orgId)
-    .where(sql<string>`o.source->>'id'`, "in", found.map((e) => e.id))
-    .executeTakeFirst();
+  const handed = (await Promise.all(found.map((e) => handedRecord(orgId, e.id)))).find(Boolean);
   if (handed) {
-    const who = handed.peer_name ?? "the person you gave it to";
-    // Said in the app's refusal sheet, not a toast that is gone in a moment
-    // (#4736): who has it, and the one action that brings it back.
+    const who = handed.who ?? "the person you gave it to";
     return {
       ok: false,
-      error: `${handed.title} was given to ${who} and is theirs now. They can Send it back.`,
+      error: `${who} has ${handed.title} now. ${handed.target_org_id ? "Undo the send to bring it back." : "They can Send it back."}`,
       blocked: {
-        sentence: `${who} has ${handed.title} now: you gave it to them through your share.`,
-        remedies: [],
-        requestable: false,
-        reason: `Ask ${who} to press Send back. It then comes back here and leaves their things, both at once.`,
-        approvers: { count: 0, names: [] },
-        pending: null,
+        sentence: `${who} has ${handed.title} now.`, remedies: [], requestable: false,
+        reason: handed.target_org_id ? "Undo the send in Sharing to return both sides together." : `Ask ${who} to press Send back.`,
+        approvers: { count: 0, names: [] }, pending: null,
       },
     };
   }

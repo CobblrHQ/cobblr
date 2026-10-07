@@ -976,6 +976,7 @@ export function PartsListPage() {
         />
       )}
       <BulkActionBar
+        records={{ kind: instance && instance !== "inventory" ? `${instance}:item` : "inventory:part", ids: Array.from(selected) }}
         onAskCobb={askCobb}
         count={selected.size}
         onClear={() => setSelected(new Set())}

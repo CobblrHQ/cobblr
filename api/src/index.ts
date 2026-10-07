@@ -38,7 +38,8 @@ import { setPlatform, canContain, canBeContained, likeEscape, platform as platfo
 import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { describeBlock, describeCapabilityBlock } from "./platform/approvals.js";
 import { atVersion, mergeJsonb, rowVersion } from "./platform/jsonb-merge.js";
-import { deleteFieldDef, effectiveFieldDefsForKind } from "./platform/field-defs.js";
+import { selfFetch, setSelfHandler } from "./platform/self-fetch.js";
+import { deleteFieldDef, effectiveFieldDefsForKind, resolveFieldDefsForKind } from "./platform/field-defs.js";
 import { choiceLearns } from "@cobblr/platform-contract/field-choices";
 import { pairingResultMetadata } from "@cobblr/platform-contract/pairing-presentation";
 import { sql, type Kysely, type Generated } from "kysely";
@@ -56,6 +57,7 @@ import { syncTenantMigrations, reconcileDefaultModules } from "./modules/enable.
 import { registerWarrantyReminders } from "./platform/warranty-reminders.js";
 import { registerStationSweep } from "./platform/scan-stations.js";
 import { comparePlacementRemove, comparePlacementWrite } from "./platform/placement-compare.js";
+import { registerOwnSendRecovery } from "./platform/record-send.js";
 import { startDeliverySweeper } from "./platform/delivery-sweeper.js";
 import { registerShareLinkOps } from "./platform/share-links.js";
 import { addShareSyncPass, startShareSync } from "./platform/share-sync.js";
@@ -132,12 +134,12 @@ import { registerHostedMcp } from "./platform/hosted-mcp.js";
 import { syncInstalledModules } from "./platform/installed-modules.js";
 import { noteHealShim } from "./platform/heal-shim-log.js";
 import { notePassFailure } from "./platform/pass-failures.js";
-import { retireGroceriesBaseKindTwin } from "./platform/migrate-groceries-twin-to-instance.js";
 import { backfillPlacements } from "./platform/migrate-location-to-placement.js";
 import { registerDanglingPlacesHeal } from "./platform/heal-dangling-places.js";
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
 import { seedProviderFromEnv } from "./platform/oidc.js";
 import { reconcileContributedFields } from "./platform/reconcile-contributed-fields.js";
+import { reconcileBundleFieldAggregates } from "./platform/reconcile-bundle-field-aggregates.js";
 import { reconcileIntegrationNav } from "./platform/integration-nav.js";
 import { reconcileBundleUpdates, startBundleUpdateSweeper } from "./platform/bundle-updates.js";
 import { reconcileBundleFieldRoles } from "./platform/bundle-field-roles.js";
@@ -434,6 +436,7 @@ async function boot() {
       resolve: resolveValue,
     },
     db: { meta, mergeJsonb, rowVersion, atVersion },
+    selfFetch,
     entities: {
       registerResolver: entities.registerResolver,
       registerWriter: entities.registerEntityWriter,
@@ -1055,6 +1058,8 @@ async function boot() {
         for (const r of rows) await deleteFieldDef(orgId, r.id);
         return rows.length;
       },
+      withRole: async ({ orgId, kind, role }) =>
+        (await resolveFieldDefsForKind(orgId, kind)).filter((d) => d.field_role === role).map((d) => d.name),
     },
     // Tags — the in-process seam over core-tags' tables for writers that have
     // no request bearer (the sync engine). Same semantics as POST /attachments:
@@ -1847,17 +1852,6 @@ async function boot() {
   // (The two lens heal shims — lens modules → bundles, lens bundles →
   // instances — completed on every deployment and were retired 2026-07-17;
   // restoring a pre-2026-06 backup needs a build that still carries them.)
-  // The Groceries bundle planted a twin of its food fields on inventory:part;
-  // a specialisation is an instance, and the twin cost twice (#2787, #2849).
-  // Food rows in plain Inventory move into the Groceries table, announced in
-  // the activity log, and the twin defs go (#2860). Idempotent; opens no
-  // tenant pool for a workspace already past it.
-  const twinResult = await T("retireGroceriesBaseKindTwin", retireGroceriesBaseKindTwin());
-  if (twinResult.orgsTouched > 0) {
-    console.log(
-      `[cobblr-api] groceries base-kind twin retired: ${twinResult.orgsTouched} org(s), ${twinResult.rowsMoved} row(s) moved, ${twinResult.defsDropped} field(s) dropped`,
-    );
-  }
   // (Two more heal shims retired 2026-07-18 after their DONE WHEN read true on
   // every deployment: enable-digifab-for-machines — 0 machine-bundle orgs
   // lacking digifab on all 4 metas — and migrate-inventory-locations — 0
@@ -1910,6 +1904,9 @@ async function boot() {
   const contributed = await T("reconcileContributedFields", reconcileContributedFields());
   await T("reconcileIntegrationNav", reconcileIntegrationNav());
   if (contributed.added > 0) console.log(`[cobblr-api] contributed fields reconciled: ${contributed.added} added (${contributed.modules.join(", ")})`);
+  // A shipped bundle's number fields add up the way its manifest now says
+  // (reconcile-bundle-field-aggregates.ts).
+  await T("reconcileBundleFieldAggregates", reconcileBundleFieldAggregates());
   const seeded = await T("backfillDefaultBindings", backfillDefaultBindings());
   console.log(`[cobblr-api] default bindings backfilled: ${seeded} added`);
   // A first boot with no UI: COBBLR_OIDC_* sets up the instance's sign-in
@@ -1964,6 +1961,7 @@ async function boot() {
   registerShareComments();
   addShareSyncPass(sendDueShareNotices);
   startShareSync();
+  registerOwnSendRecovery();
   startBridgeOutageWatch();
   startPhotoRetentionSweeper();
   // Temporary upload files a crashed request left on disk.
@@ -2057,6 +2055,7 @@ async function boot() {
   // bundle, just mounted) may move them. See retireScanCategoryPlaceholders.
   await T("retireScanCategoryPlaceholders", retireScanCategoryPlaceholders());
   completeApp(app);
+  setSelfHandler(app as unknown as Parameters<typeof setSelfHandler>[0]);
 
   // Module-owned background work — core-recurrence starts its
   // scheduler here, future modules (core-queue, etc.) get their

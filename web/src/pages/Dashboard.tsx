@@ -1,4 +1,4 @@
-import { dedupeActivity, activityActor, ACTIVITY_VERBS } from "@cobblr/platform-contract/activity-summary";
+import { activityActor, ACTIVITY_VERBS } from "@cobblr/platform-contract/activity-summary";
 // Dashboard — landing page once authed. Shows what's actually IN
 // this workspace, not what could be in any workspace. Three bands:
 //
@@ -21,15 +21,15 @@ import { dedupeActivity, activityActor, ACTIVITY_VERBS } from "@cobblr/platform-
 import { getShareViewToken } from "../lib/share-view";
 import { isSandboxSession } from "../lib/sandbox-session";
 import { BringInBackup } from "../components/BringInBackup";
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { activityKind } from "../lib/activityKind";
-import { AUTOMATION_ACTIONS, activityVerb, actorWords, automationWords, hiddenFromDashboard } from "../lib/activity-words";
+import { AUTOMATION_ACTIONS, activityVerb, actorWords, automationWords, recentActivityRows } from "../lib/activity-words";
 import { useKindLabels } from "../lib/useKindLabels";
 import { ActivitySentence, ActivityThumbnail, ACTIVITY_FEED_LAYOUT, pickString, type KindLabels } from "../components/ActivitySentence";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, CheckCircle2, ChevronDown, Compass, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Pin, Sliders, X } from "lucide-react";
-import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract";
+import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract/plural";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { putAwayParts } from "../lib/scannerNags";
 import { ScannerQueue, useScannerQueue } from "../components/ScannerQueue";
@@ -61,12 +61,16 @@ import { foldedNames, useInstanceFamilies } from "../lib/instance-families";
 import { expandInstanceWidgets } from "../dashboard/expandInstanceWidgets";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
-import { WhatToDoPanel } from "../components/WhatToDoPanel";
-import { BundleDetailModal } from "../components/BundleDetailModal";
+// The "what do you want to do?" panel loads beside the dashboard rather than
+// with it: on an established workspace it is a collapsed bar below the data,
+// and on a blank one its place is held at its height until it arrives (#4945).
+const WhatToDoPanel = lazy(() => import("../components/WhatToDoPanel").then((m) => ({ default: m.WhatToDoPanel })));
+import { BundleDetailModal } from "../components/BundleDetailModalLazy";
+// Loaded with the dashboard only when it is drawn (#4945).
 import { PendingAiShareCallout } from "../components/PendingAiShareCallout";
 import { useNavModules, topDoor } from "../components/useNavModules";
-import { HeatmapRenderer } from "./ViewsPage";
-import { liveNextStepLabel } from "../lib/featured-bundles";
+const HeatmapRenderer = lazy(() => import("./ViewsPage").then((m) => ({ default: m.HeatmapRenderer })));
+import { useLiveNextStepLabel } from "../lib/useFeaturedBundles";
 import {
   api,
   getToken,
@@ -78,7 +82,7 @@ import {
   type SavedView,
   type CalendarEvent,
 } from "../lib/api";
-import { useWorkspaceContentProbe } from "../lib/workspaceContent";
+import { useWorkspaceContentProbe, useSettledOnce } from "../lib/workspaceContent";
 import { ParcelsInFlight } from "../components/ParcelsInFlight";
 import { AddPhotosTile } from "../components/AddPhotosTile";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
@@ -813,6 +817,7 @@ function AttentionRow({ slug, item: it, tone, glyph }: { slug: string; item: Att
 // Persisted "where to start" cards from recent bundle installs (the author's #3 — the
 // post-install guide that vanished). Each is dismissible once you're oriented.
 function SetupCardsPanel({ slug }: { slug: string }) {
+  const liveNextStepLabel = useLiveNextStepLabel();
   const cards = useSetupCards(slug);
   const navigate = useNavigate();
   // A setup card outlives its bundle: uninstall the bundle and the localStorage
@@ -910,6 +915,10 @@ function GettingStartedPanel({
   // Restoring fills the workspace, which only its owner or an admin may do.
   // Not in a sandbox: that is where the file comes from, not where it goes.
   const canBringIn = roleSatisfies(activeOrg?.role ?? "member", ["owner", "admin"]) && !isSandboxSession();
+  // Which slot the panel is in is decided once per visit: re-deciding it when
+  // the first capture is filed moved (remounted) the panel mid-task and shut
+  // the table setup it had open (useSettledOnce).
+  const userMade = useSettledOnce(contentProbe.ready, contentProbe.userMade);
 
   // Render once we know the workspace is empty. A brand-new workspace
   // with NO modules enabled (enabled.size === 0) leaves the probe
@@ -926,7 +935,7 @@ function GettingStartedPanel({
   // stays one click away without dominating an established dashboard.
   // Placement follows what the PERSON has made, not what is in the tables: a
   // sandbox arrives pre-filled, and that content is ours. See the probe.
-  const established = contentProbe.userMade;
+  const established = userMade;
   // The guided "What do you want to do?" panel PERSISTS - the guided add
   // (and the mini scan inbox) are useful for adding MORE, not just the
   // first thing. Established workspace: the panel is a growth affordance,
@@ -938,11 +947,17 @@ function GettingStartedPanel({
   // redesign, and the dead branch kept implying a wizard that no longer
   // exists: new-user-flow.md F4.)
   if (collapsedOnly)
-    return established ? <WhatToDoPanel slug={slug} startCollapsed /> : null;
+    return established ? (
+      <Suspense fallback={null}>
+        <WhatToDoPanel slug={slug} startCollapsed />
+      </Suspense>
+    ) : null;
   if (established) return null;
   return (
     <>
-      <WhatToDoPanel slug={slug} startCollapsed={false} />
+      <Suspense fallback={<div className="min-h-[18rem]" aria-busy="true" />}>
+        <WhatToDoPanel slug={slug} startCollapsed={false} />
+      </Suspense>
       {canBringIn && <BringInBackup slug={slug} />}
     </>
   );
@@ -2018,7 +2033,9 @@ function PinnedView({
             ))}
           </div>
         ) : isHeatmap ? (
-          <HeatmapRenderer items={allItems} cfg={view.config ?? {}} />
+          <Suspense fallback={<div className="h-24" aria-busy="true" />}>
+            <HeatmapRenderer items={allItems} cfg={view.config ?? {}} />
+          </Suspense>
         ) : (
           <>
             <ul className="space-y-1.5">
@@ -2072,8 +2089,6 @@ function PinnedView({
 // provisioned", "module enabled ×23", "joined user", workspace created). Hidden
 // from the dashboard summary so a fresh workspace doesn't lead with an audit
 // log of things it did to itself. The full /activity page still shows everything.
-const ACTIVITY_NOISE = new Set(["org_module", "org", "user", "tenant"]);
-
 function RecentActivity({ slug, editing = false }: { slug: string; editing?: boolean }) {
   const [visibleCount, setVisibleCount] = useState(5);
   const { ready, hasContent } = useWorkspaceContentProbe(slug);
@@ -2086,10 +2101,8 @@ function RecentActivity({ slug, editing = false }: { slug: string; editing?: boo
   // A row with no words a member can read (an automation row that carries
   // only ids, an action that found nothing to do) is not shown here; the
   // full /activity log keeps it (#3299).
-  const items = (q.data?.items ?? []).filter(
-    (e) => !ACTIVITY_NOISE.has(e.entity_type ?? "") && !e.hidden && !hiddenFromDashboard(e),
-  );
-  const groups = groupActivity(dedupeActivity(items));
+  const items = recentActivityRows(q.data?.items ?? []);
+  const groups = groupActivity(items);
   // A workspace with no content has no activity by definition: hide the whole
   // section rather than open the first dashboard with "no activity yet"
   // (new-user-flow.md F3). Arrange mode still shows it so it stays orderable.

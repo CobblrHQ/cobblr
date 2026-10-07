@@ -60,6 +60,7 @@ import { quickstartRouter } from "./routes/quickstart.js";
 import { tidyRouter } from "./routes/tidy-suggestions.js";
 import { attentionRouter } from "./routes/attention.js";
 import { edgePairRouter, edgeRouter } from "./routes/edge.js";
+import { recordSendRouter } from "./routes/record-send.js";
 import { shareLinksOrgRouter, shareLinksRouter } from "./routes/share-links.js";
 import { blueprintRouter } from "./routes/blueprint.js";
 import { backupRouter, backupGoogleCallbackRouter } from "./routes/backup.js";
@@ -529,6 +530,7 @@ export function createApp(): AppHandles {
   v1.use("/station", stationPublicRouter);
   // Sharing: a workspace's shares, and the doors another Cobblr knocks on.
   v1.use("/orgs", shareLinksOrgRouter);
+  v1.use("/orgs", recordSendRouter);
   v1.use(shareLinksRouter);
   // Blueprint (workspace setup snapshot) + Backup (setup + data + files).
   // Both sit at the workspace level above bundles. See

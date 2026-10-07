@@ -19,7 +19,8 @@
 //
 // `reached` THROWS when nothing arrives in time: a race test whose held
 // writer never went out has proven nothing, and must say so rather than pass.
-import { BASE } from "./helpers.js";
+import {} from "./helpers.js";
+import { testSupport, testSupportMounted } from "./test-support.js";
 
 export interface HoldStatus {
   id: string;
@@ -42,17 +43,12 @@ export interface Held {
   forget(): Promise<void>;
 }
 
-const json = (method: string, body?: unknown): RequestInit => ({
-  method,
-  headers: { "content-type": "application/json" },
-  ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-});
-
 /** Is the api one that opens test doors at all? (The router is mounted only
  *  under COBBLR_TEST_ORG_POOL.) A test skips, never passes, without it. */
 export async function holdsAvailable(): Promise<boolean> {
   try {
-    const r = await fetch(`${BASE}/api/v1/test-support/hold-outbound/none`);
+    if (!(await testSupportMounted())) return false;
+    const r = await testSupport("hold-outbound/none", { allow: [404] });
     return r.status === 404 && ((await r.json()) as { error?: { code?: string } }).error?.code === "not_found";
   } catch {
     return false;
@@ -76,15 +72,12 @@ export async function holdOutbound(spec: {
           ...(spec.respond.body !== undefined ? { body_base64: Buffer.from(spec.respond.body).toString("base64") } : {}),
         }
       : {};
-  const r = await fetch(
-    `${BASE}/api/v1/test-support/hold-outbound`,
-    json("POST", { includes: spec.includes, ...canned, ...(spec.auto_release_ms !== undefined ? { auto_release_ms: spec.auto_release_ms } : {}) }),
-  );
+  const r = await testSupport("hold-outbound", { body: { includes: spec.includes, ...canned, ...(spec.auto_release_ms !== undefined ? { auto_release_ms: spec.auto_release_ms } : {}) } });
   if (r.status !== 201) throw new Error(`hold-outbound refused (${r.status}): ${await r.text()}`);
   const { id } = (await r.json()) as HoldStatus;
-  const url = `${BASE}/api/v1/test-support/hold-outbound/${id}`;
+  const path = `hold-outbound/${id}`;
   const status = async (): Promise<HoldStatus> => {
-    const s = await fetch(url);
+    const s = await testSupport(path);
     if (s.status !== 200) throw new Error(`hold ${id} unreadable (${s.status})`);
     return (await s.json()) as HoldStatus;
   };
@@ -110,10 +103,10 @@ export async function holdOutbound(spec: {
     reached: (n, timeoutMs = 10_000) => until("reached", n, timeoutMs),
     returned: (n, timeoutMs = 10_000) => until("returned", n, timeoutMs),
     release: async () => {
-      await fetch(url, json("DELETE"));
+      await testSupport(path, { method: "DELETE" });
     },
     forget: async () => {
-      await fetch(`${url}?forget=1`, json("DELETE"));
+      await testSupport(`${path}?forget=1`, { method: "DELETE" });
     },
   };
 }

@@ -3,6 +3,7 @@ type: feature
 scope: labels
 date: 2026-10-04
 docs_target: docs/USER_GUIDE.md#3.2 Labels
+docs_published: 2026-10-08
 ---
 Added NFC tags for record labels, with Android writing, bulk writing from Labels, tap scanning and a tag-link copy option for other phones.
 

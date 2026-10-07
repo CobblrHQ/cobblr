@@ -3,6 +3,7 @@ type: feature
 scope: sharing
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#4.5g Sharing (`/configuration/sharing`)
+docs_published: 2026-10-08
 ---
 The label already on your things can now be a public door: turn on "Its things' labels open it" for a public page, and a stranger who scans the label sees that thing as the page shows it, while you and your members still get the full record. Booth mode makes a page, its links and its labels private again on their own at a time you choose.
 

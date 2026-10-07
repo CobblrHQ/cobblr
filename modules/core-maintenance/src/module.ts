@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-maintenance",
-  version: "0.2.10",
+  version: "0.2.13",
   displayName: "Maintenance",
   description:
     "Remember when things need servicing: log what was done and get a reminder when the next one is due.",
@@ -89,7 +89,7 @@ export default defineModule({
       {
         // UI-SCREEN: /instances/:name
         group: "service", id: "core-maintenance:update-term", label: "Edit renewal term", scope: "workspace", icon: "pencil",
-        invokeHandler: "core-maintenance.update-term", examples: ["the registration cost was actually $87"],
+        undoable: true, invokeHandler: "core-maintenance.update-term", examples: ["the registration cost was actually $87"],
         description: "Correct a paid term from list_maintenance with terms true. Dates cannot overlap another term. Cost keeps its currency.",
         argsSchema: { term_id: { label: "Term", type: "text", required: true }, term_start: { label: "Start", type: "date" }, term_end: { label: "End", type: "date" }, cost: { label: "Cost", type: "text", money: true }, currency: { label: "Currency", type: "text" }, reference: { label: "PO or invoice", type: "text" }, quantity: { label: "Seats or quantity", type: "number" }, file_id: { label: "Document", type: "text" } },
       },
@@ -172,7 +172,7 @@ export default defineModule({
         group: "service", id: "core-maintenance:renewal", label: "Add a renewal",
         description: "Keep a registration, inspection, licence, insurance or domain renewal on a fixed expiry. Enter the current expiry; the anchor defaults to that date every year. Choose a month-end anchor, interval, reminder and optional date field to bind it to.",
         examples: ["my passport expires next March", "remind me to renew this domain a month before it expires"],
-        appliesTo: { traits: ["unique"] }, undoable: true, icon: "calendar-clock", invokeHandler: "core-maintenance.renewal",
+        appliesTo: { traits: ["unique", "indefinite", "durable"] }, undoable: true, icon: "calendar-clock", invokeHandler: "core-maintenance.renewal",
         argsSchema: {
           name: { label: "What expires", type: "text", required: true },
           current_expiry: { label: "Current expiry", type: "date", required: true },
@@ -201,7 +201,7 @@ export default defineModule({
         // UI-SCREEN: /configuration/notification-audiences
         group: "service", id: "core-maintenance:reminder-default", label: "Set overdue reminder cadence",
         description: "Set the workspace default for overdue maintenance reminders to day, week, month or off. Each schedule can override it.",
-        examples: ["remind us weekly about overdue maintenance"], scope: "workspace", icon: "bell", invokeHandler: "core-maintenance.reminder-default",
+        examples: ["remind us weekly about overdue maintenance"], scope: "workspace", icon: "bell", undoable: true, invokeHandler: "core-maintenance.reminder-default",
         argsSchema: { overdue_every: { label: "Overdue reminders", type: "text", required: true, choices: [{ value: "day", label: "Daily" }, { value: "week", label: "Weekly" }, { value: "month", label: "Monthly" }, { value: "off", label: "Off" }] } },
       },
       {
@@ -225,7 +225,7 @@ export default defineModule({
         group: "service", id: "core-maintenance:update-schedule", label: "Change a service schedule",
         examples: ["remind me a month before the registration expires"],
         description: "Change a schedule by schedule_id from list_maintenance. Edit its interval, anchor, current_expiry or remind (before and unit, or on month_start).",
-        scope: "workspace" as const, icon: "pencil", invokeHandler: "core-maintenance.update-schedule",
+        scope: "workspace" as const, icon: "pencil", undoable: true, invokeHandler: "core-maintenance.update-schedule",
         argsSchema: {
           schedule_id: { label: "Schedule", type: "text", required: true },
           name: { label: "Name", type: "text" },
@@ -237,18 +237,22 @@ export default defineModule({
         },
       },
       {
-        // NO-PHRASING: the way back for another action, run only from Undo
+        // UI-SCREEN: /instances/:name
+        // The record page's remove, for the assistant too (UI = API = MCP),
+        // and the way back from setting a schedule. Not undoable, so every AI
+        // door holds it for a person's confirm.
         group: "service",
         id: "core-maintenance:remove-schedule",
-        internal: true,
         label: "Remove a service schedule",
-        description: "Internal, the inverse of setting a schedule: removes it and its open occurrence. Runs from Undo on the card; not for direct use.",
-        icon: "undo",
+        examples: ["stop tracking the oil change on the van", "remove the registration renewal"],
+        description: "Remove a schedule by schedule_id from list_maintenance. Its open occurrence goes with it; the history it already rolled stays. Asks the person first.",
+        icon: "trash-2",
         scope: "workspace" as const,
         userInvokable: false,
+        undoable: false,
         invokeHandler: "core-maintenance.remove-schedule",
         argsSchema: {
-          schedule_id: { label: "The schedule's id", type: "text" },
+          schedule_id: { label: "Schedule", type: "text", required: true },
         },
       },
       {
@@ -311,8 +315,12 @@ export default defineModule({
   contributes: {
     panels: [
       {
+        id: "core-maintenance:reminder-default", surface: "configuration-section", target: "notification-audiences", title: "Maintenance reminders",
+      },
+      {
         id: "core-maintenance:renewals", surface: "entity-detail-panel", target: "*", title: "Renewals", placement: "summary",
-        appliesTo: { traits: ["unique"] },
+        // a renewal is for a thing you keep: never a job, order or project that gets finished, nor a pruned record
+        appliesTo: { traits: ["unique", "indefinite", "durable"] },
       },
       {
         id: "core-maintenance:schedules",

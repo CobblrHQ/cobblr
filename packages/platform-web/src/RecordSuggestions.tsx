@@ -11,7 +11,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { MessageSquareDiff } from "lucide-react";
-import { countOf } from "@cobblr/platform-contract";
+import { countOf } from "@cobblr/platform-contract/plural";
 import { usePlatformWeb } from "./context";
 import { useRunAction } from "./run-action";
 import { useToast } from "./ToastContext";

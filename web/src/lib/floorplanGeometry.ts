@@ -8,6 +8,8 @@ import { fieldKindOf } from "@cobblr/platform-contract/kind-label";
 export interface FpOpening {
   at_mm: number;
   w_mm: number;
+  /** What it is, when somebody said: a door, a window, or just an opening. */
+  kind?: "door" | "window" | "opening";
 }
 
 export interface FpWall {
@@ -69,7 +71,8 @@ function boundFrom(fp: Record<string, unknown>): FpBound | null {
         for (const o of wl.openings) {
           const at = num((o as Record<string, unknown>).at_mm);
           const ow = num((o as Record<string, unknown>).w_mm);
-          if (at !== null && ow !== null && ow > 0) openings.push({ at_mm: at, w_mm: ow });
+          const kind = (o as Record<string, unknown>).kind;
+          if (at !== null && ow !== null && ow > 0) openings.push({ at_mm: at, w_mm: ow, ...(kind === "door" || kind === "window" || kind === "opening" ? { kind } : {}) });
         }
       }
       walls.push({ x1, y1, x2, y2, ...(openings.length ? { openings } : {}) });

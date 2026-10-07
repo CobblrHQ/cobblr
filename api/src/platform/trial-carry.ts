@@ -158,7 +158,7 @@ export async function carryPackage(orgId: string, userId: string): Promise<Carry
         continue;
       }
       try {
-        // lint-allow-detail-substitution: the kind's declared API endpoint, not a page route
+        // lint-allow-detail-substitution: the kind's declared API endpoint, not a page route; loopback-ok: #5153 moves this onto selfFetch
         const res = await fetch(`http://127.0.0.1:${env.API_PORT}${kindBase(org.slug, k)}${path.replace("{id}", encodeURIComponent(id))}`, {
           headers: { Authorization: `Bearer ${session}` },
         });

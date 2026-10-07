@@ -1,3 +1,4 @@
+import { handedRecord } from "./handed-record.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { sql, type Kysely } from "kysely";
@@ -112,6 +113,8 @@ export class DeletedRecordError extends Error {
 export async function restore(orgId: string, kind: string, id: string, expectedId?: string): Promise<boolean> {
   kind = await baseKindOf(orgId, kind);
   return locked(orgId, kind, id, async () => {
+    const sent = await handedRecord(orgId, id);
+    if (sent) throw new DeletedRecordError(409, "Undo the send before restoring this record here.");
     const row = (await sql<Kept>`select * from deleted_records where org_id = ${orgId} and entity_kind = ${kind} and entity_id = ${id} and deleted_at > ${cutoff()}`.execute(await dbOf())).rows[0];
     if (!row || (expectedId && row.id !== expectedId)) return false;
     const lifecycle = lifecycles.get(kind);

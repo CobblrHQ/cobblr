@@ -3,6 +3,7 @@ type: feature
 date: 2026-10-05
 scope: digifab
 docs_target: docs/USER_GUIDE.md#LightBurn job review
+docs_published: 2026-10-08
 ---
 Prepare SVG and DXF laser batches with material profiles, sheet layouts and station approval.
 

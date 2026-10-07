@@ -23,6 +23,7 @@ import { ContributedDetailPanels } from "../panels/registry";
 import { receiptGroupSummary } from "./receiptLabel";
 import { ReceiptAddressChip } from "../components/ReceiptAddressChip";
 import { UnconfirmedReceiptsBanner } from "./UnconfirmedReceipts";
+import { OrderReturns } from "./OrderReturns";
 import { AddOrderLine, AddToStockChoice, OrderLineControls } from "./OrderLines";
 
 function fmtOrderDate(d: string | null): string | null {
@@ -534,6 +535,7 @@ export function PurchasesPage() {
         />
       )}
       <BulkActionBar
+        records={{ kind: "purchases:order", ids: Array.from(selected) }}
         onAskCobb={askCobb}
         count={selected.size}
         onClear={() => setSelected(new Set())}
@@ -696,6 +698,8 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
     onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't delete."),
   });
   const [receiptView, setReceiptView] = useState<"none" | "render" | "original">("none");
+  // The line a return is being started for ("" = the form, no line chosen).
+  const [returnLine, setReturnLine] = useState<string | null>(null);
 
   const o = order.data;
   const items: OrderItem[] = o?.items ?? [];
@@ -818,7 +822,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
               the figure spend counts. Saying so beside the empty field. */}
           {o.total_cost == null && o.total != null && (
             <p className="text-xs text-muted" data-testid="total-from-lines">
-              No total entered, so it counts as {money(o.total, o.currency)}: its lines{shipping > 0 ? " plus shipping" : ""}.
+              No total entered, so it counts as {money(o.total, o.currency)}: its lines{shipping > 0 ? " plus shipping" : ""}{Number(o.refunded ?? 0) > 0 ? ", less refunds" : ""}.
             </p>
           )}
 
@@ -867,7 +871,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
               <>
                 <ul className="space-y-1.5">
                   {items.map((it) => (
-                    <OrderLineItem key={it.id} slug={activeSlug} item={it} routeFor={routeFor} controls={<OrderLineControls slug={activeSlug} order={o} item={it} />} />
+                    <OrderLineItem key={it.id} slug={activeSlug} item={it} routeFor={routeFor} controls={<OrderLineControls slug={activeSlug} order={o} item={it} onStartReturn={() => setReturnLine(it.id)} />} />
                   ))}
                 </ul>
                 <div className="mt-3 pt-2.5 border-t border-dashed border-line dark:border-slate-700 space-y-1 text-sm">
@@ -896,11 +900,19 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
                       <span className="font-mono">{money(totalNum)}</span>
                     </div>
                   )}
+                  {Number(o.refunded ?? 0) > 0 && (
+                    <div className="flex justify-between text-muted" data-testid="order-refunded">
+                      <span>Refunded</span>
+                      <span className="font-mono">−{money(o.refunded)}</span>
+                    </div>
+                  )}
                 </div>
               </>
             )}
             <AddOrderLine key={o.id} slug={activeSlug} order={o} />
           </div>
+
+          <OrderReturns key={`returns-${o.id}`} slug={activeSlug} order={o} items={items} startLine={returnLine} onStartLine={setReturnLine} />
 
           <div className="pt-3 border-t border-line dark:border-slate-700 flex items-center justify-between">
             {roleSatisfies(activeOrg?.role ?? null, ["owner", "admin"]) ? (

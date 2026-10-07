@@ -142,9 +142,10 @@ export async function acceptLaserPlan(db: Kysely<DigifabDB>, orgId: string, id: 
     const run = await trx.insertInto("digifab_production_runs").values({ name: plan.name, pool_id: pool.id, file_id: source.file_id, file_ref: plan.name, target_qty: plan.quantity, laser_plan_id: id, material_part_id: null, material_grams: null, linked_build_id: null }).returning("id").executeTakeFirstOrThrow();
     const jobs: string[] = [];
     for (const f of files) {
+     const displayName = `${plan.name} · Sheet ${files.indexOf(f) + 1}`;
      const metadata = { laser_material: { material: plan.material, thickness_mm: plan.thickness_mm, width_mm: f.sheet.width, height_mm: f.sheet.height }, laser_layout: f.layout, parts_per_plate: f.sheet.parts.length };
-     await trx.insertInto("digifab_library").values({ name: `${plan.name} · Sheet ${files.indexOf(f) + 1}`, file_id: f.fileId, thumbnail_file_id: null, kind: f.filename.endsWith(".laserplan") ? "laser-plan" : "lbrn2", size_bytes: f.size, plate_count: 1, notes: "Generated from a verified laser layout.", metadata }).execute();
-     const job = await trx.insertInto("digifab_jobs").values({ connection_id: saved.connection_id, target_device: saved.remote_device_id, file_id: f.fileId, file_ref: f.filename, run_id: run.id, metadata: {}, laser_layout: f.layout, max_attempts: 1 }).returning("id").executeTakeFirstOrThrow();
+     await trx.insertInto("digifab_library").values({ name: displayName, file_id: f.fileId, thumbnail_file_id: null, kind: f.filename.endsWith(".laserplan") ? "laser-plan" : "lbrn2", size_bytes: f.size, plate_count: 1, notes: "Generated from a verified laser layout.", metadata }).execute();
+     const job = await trx.insertInto("digifab_jobs").values({ connection_id: saved.connection_id, target_device: saved.remote_device_id, file_id: f.fileId, file_ref: f.filename, run_id: run.id, metadata: { display_name: displayName }, laser_layout: f.layout, max_attempts: 1 }).returning("id").executeTakeFirstOrThrow();
      jobs.push(job.id);
     }
     await trx.updateTable("digifab_laser_plans").set({ run_id: run.id }).where("id", "=", id).execute();

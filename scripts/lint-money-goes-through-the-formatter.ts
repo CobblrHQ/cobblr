@@ -26,8 +26,8 @@
 // never failed has never been verified.
 //
 //   npx tsx scripts/lint-money-goes-through-the-formatter.ts   (pnpm lint money-goes-through-the-formatter)
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 
 /** Where the rule bites. Keep it narrow: a lint over the whole repo judges
  *  files whose authors never heard of it. */
@@ -40,19 +40,18 @@ interface Violation {
   what: string;
 }
 
-function* walk(dir: string): Generator<string> {
-  let names: string[];
+function candidates(): string[] {
+  // Each rule requires one of these literals. Git selects files before Node
+  // reads them, including new files that have not yet been staged.
+  const needles = ["currency", "${", "_cents", "Math.round", "toFixed", "minimumFractionDigits", "editFieldItem"];
+  let paths: string;
   try {
-    names = readdirSync(dir);
-  } catch {
-    return;
+    paths = execFileSync("git", ["grep", "-l", "-z", "-F", "--untracked", "--exclude-standard", ...needles.flatMap(needle => ["-e", needle]), "--", ...ROOTS.flatMap(root => [`:(glob)${root}/**/*.ts`, `:(glob)${root}/**/*.tsx`])], {encoding: "utf8", maxBuffer: 4 * 1024 * 1024});
+  } catch (error) {
+    if ((error as {status?: number}).status === 1) return [];
+    throw error;
   }
-  for (const name of names) {
-    if (name === "node_modules" || name === "dist" || name.startsWith(".")) continue;
-    const p = join(dir, name);
-    if (statSync(p).isDirectory()) yield* walk(p);
-    else if (/\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name) && !/\/(tests|scripts)\//.test(p)) yield p;
-  }
+  return paths.split("\0").filter(file => file && !/\.test\.tsx?$/.test(file) && !/\/(tests|scripts)\//.test(file) && !file.split("/").some(part => part === "node_modules" || part === "dist" || part.startsWith(".")));
 }
 
 /** The check. Return every violation in one file; an empty array is a pass. */
@@ -90,7 +89,7 @@ function check(file: string, src: string): Violation[] {
 }
 
 const violations: Violation[] = [];
-for (const root of ROOTS) for (const file of walk(root)) violations.push(...check(file, readFileSync(file, "utf8")));
+for (const file of candidates()) violations.push(...check(file, readFileSync(file, "utf8")));
 
 if (violations.length) {
   console.error(`lint:money-goes-through-the-formatter - ${violations.length} violation(s):`);

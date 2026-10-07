@@ -3,6 +3,7 @@ type: feature
 scope: sharing
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#4.5g Sharing (`/configuration/sharing`)
+docs_published: 2026-10-08
 ---
 Make a public page of your things: choose which with the same rules as a share, then give it as many links as you like, each with its own detail and its own end. Anyone with a link sees only what that link allows, with no account; revoke a link or give it a new address at any time.
 

@@ -3,6 +3,7 @@ type: feature
 scope: inventory
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#3.1 Inventory
+docs_published: 2026-10-08
 ---
 Selected records can now have a built-in or custom field set or cleared together, with skipped rows named and one Undo for the batch.
 

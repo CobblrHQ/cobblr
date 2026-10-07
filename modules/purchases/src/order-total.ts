@@ -8,11 +8,26 @@
 // the stated total wins when there is one; otherwise the lines (a line's own
 // stated amount, else qty times price) plus shipping. An order with no priced
 // line and no shipping has no total at all, which is different from 0.
+//
+// A refund comes off it (#4250): what the order cost is what was paid less
+// what came back, so spend, its chart and a vendor's spend all net refunds
+// out. Each return holds its refund as one amount, set rather than added, so
+// a refund told twice (an email and a person) is taken off once.
 
 import { sql, type RawBuilder } from "kysely";
 
 export function orderTotal(alias: string): RawBuilder<string | null> {
   const o = sql.raw(alias);
+  return sql<string | null>`(${grossTotal(o)}) - (${orderRefunds(alias)})`;
+}
+
+/** What came back on an order: its refunded returns' amounts, 0 when none. */
+export function orderRefunds(alias: string): RawBuilder<string> {
+  const o = sql.raw(alias);
+  return sql<string>`coalesce((select sum(r.refund_amount) from purchases_returns r where r.order_id = ${o}.id and r.stage = 'refunded'), 0)`;
+}
+
+function grossTotal(o: RawBuilder<unknown>): RawBuilder<string | null> {
   return sql<string | null>`coalesce(${o}.total_cost, (
     select case
       when count(*) filter (where i.line_amount is not null or i.unit_cost is not null) > 0 or ${o}.shipping_cost is not null

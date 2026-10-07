@@ -3,6 +3,7 @@ type: feature
 scope: sharing
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#4.5g Sharing (`/configuration/sharing`)
+docs_published: 2026-10-08
 ---
 Something the person you share with adds to the shared workspace now reaches you: take it into your own collection or leave it. When you both changed the same thing, their copy tells them what yours says now. An edit they make right after you decide on the last one is no longer lost.
 

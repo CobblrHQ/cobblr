@@ -5,7 +5,7 @@ import { RecordFormModal, PresentationGate, useFaces } from "@cobblr/platform-we
 // location, custom-field bag), so the interesting columns all come from
 // each collection's declared field-defs.
 
-import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract";
+import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract/plural";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";

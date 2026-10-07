@@ -22,12 +22,14 @@ import type { ConnectionTestOutcome } from "./connection-verification.js";
 
 /** What a capability does to the world, which decides who has to say yes
  *  (§9). Cobblr may treat a capability as MORE than it declares, never less. */
-export const SERVICE_EFFECTS = ["none", "signal", "writes", "physical", "spends"] as const;
+export const SERVICE_EFFECTS = ["none", "signal", "stops", "writes", "physical", "spends"] as const;
 export type ServiceEffect = (typeof SERVICE_EFFECTS)[number];
 
 /** How strongly an effect needs a person: the order a declaration may only
- *  be raised along. */
-export const SERVICE_EFFECT_RANK: Record<ServiceEffect, number> = { none: 0, signal: 1, writes: 2, spends: 3, physical: 4 };
+ *  be raised along. `stops` only ever brings a machine toward stopped (stop,
+ *  abort, pause; never start, resume, move or heat), so it waits for nobody:
+ *  a stop that waits for a Confirm is a stop that comes late (#5091). */
+export const SERVICE_EFFECT_RANK: Record<ServiceEffect, number> = { none: 0, signal: 1, stops: 2, writes: 3, spends: 4, physical: 5 };
 
 /** The stronger of two effects (a person or the platform raising one). */
 export function strongerEffect(a: ServiceEffect, b: ServiceEffect): ServiceEffect {

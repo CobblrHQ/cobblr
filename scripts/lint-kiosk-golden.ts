@@ -442,6 +442,8 @@ for (const file of [...TOURS, ...CLIPS]) {
 const DEMO_VIEWS = "demo-sites/lego-collector/views.json";
 /** Chips the table renders by itself, which no views.json needs to define. */
 const BUILTIN_CHIPS = new Set(["All parts"]);
+/** The table's own first chip, "All <things>", in whatever noun it uses. */
+const BUILTIN_ALL = /^All [A-Za-z][A-Za-z ]*$/;
 for (const file of TOURS) {
   let src: string;
   try {
@@ -454,14 +456,17 @@ for (const file of TOURS) {
   let seeded: Set<string>;
   try {
     seeded = new Set((JSON.parse(read(DEMO_VIEWS)).views ?? []).map((v: { name: string }) => v.name));
+    // A tour that films a shipped bundle seeds its views inline:
+    // { name: "By state", entity_kind: SETS, ... } posted before it clicks them.
+    for (const m of src.matchAll(/\{\s*name:\s*"((?:[^"\\]|\\.)*)",\s*entity_kind:/g)) seeded.add(m[1]!);
   } catch {
     failures.push(`${file}: clicks saved-view chips but ${DEMO_VIEWS} could not be read.`);
     continue;
   }
   for (const name of clicked) {
-    if (BUILTIN_CHIPS.has(name) || seeded.has(name)) continue;
+    if (BUILTIN_CHIPS.has(name) || BUILTIN_ALL.test(name) || seeded.has(name)) continue;
     failures.push(
-      `${file}: clicks a "${name}" chip, but ${DEMO_VIEWS} seeds no view by that name ` +
+      `${file}: clicks a "${name}" chip, but neither the tour nor ${DEMO_VIEWS} seeds a view by that name ` +
         `(it has ${[...seeded].join(", ")}) - the click times out on camera while the caption says it worked.`,
     );
   }

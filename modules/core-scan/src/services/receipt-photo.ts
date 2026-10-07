@@ -132,6 +132,7 @@ export function looksLikeReceiptPhoto(id: ReceiptPhotoSignals, shape: ReceiptSha
 //
 // (email-inbound.ts is the precedent, verbatim: mintSession → INTERNAL_API POST.)
 
+// loopback-ok: #5153 moves this onto selfFetch
 const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
 
 /** The workspace slug, plus a member to attribute the capture to when the

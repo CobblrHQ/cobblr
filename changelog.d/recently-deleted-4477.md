@@ -3,6 +3,7 @@ type: feature
 scope: platform
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#4. The platform layer
+docs_published: 2026-10-08
 ---
 Deleted records can now be restored with their original details and contents from Recently deleted for 30 days.
 

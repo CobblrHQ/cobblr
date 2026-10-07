@@ -1,4 +1,7 @@
-import { z } from "zod";
+// The record-action groups and how a record's actions are laid out in them.
+// No schema library here: the browser groups actions on every record page,
+// and the zod schemas the api validates a layout with live in
+// action-groups-schema.ts so a page does not load them (#4945).
 
 export const ACTION_GROUPS = [
   { id: "share", label: "Share", icon: "share-2", order: 10, meaning: "Who can see or receive this record", synonyms: ["sharing"] },
@@ -25,17 +28,17 @@ export function actionGroupCollision(groups: readonly { id: string; label: strin
   }
   return undefined;
 }
-export const ActionGroupReference = z.string().refine((s) => ACTION_GROUPS.some((g) => g.id === s) || /^bundle:[a-z0-9-]+\/[a-z0-9-]+$/.test(s), "Use a registered group or a bundle:<bundle>/<group> id");
-export const ActionGroup = z.object({ id: z.string().min(1).max(160), label: z.string().min(1).max(80), icon: z.string().max(80).optional(), order: z.number().int(), meaning: z.string().max(300).optional() });
-export const RecordActionLayout = z.object({
-  groups: z.array(ActionGroup).max(40).default([]),
-  actions: z.record(z.object({ group: z.string().max(160).optional(), hidden: z.boolean().optional(), primary: z.boolean().optional() })).default({}),
-});
-export type RecordActionLayout = z.infer<typeof RecordActionLayout>;
+export interface ActionGroupDef { id: string; label: string; icon?: string; order: number; meaning?: string }
+/** A kind's action layout, as stored. Its validator is RecordActionLayout in
+ *  action-groups-schema.ts, which is checked to produce exactly this. */
+export interface RecordActionLayout {
+  groups: ActionGroupDef[];
+  actions: Record<string, { group?: string; hidden?: boolean; primary?: boolean }>;
+}
 export type RecordActionPins = Record<string, boolean>;
 export interface GroupableAction { id: string; group?: string | null; primary?: boolean }
 export function groupRecordActions<T extends GroupableAction>(items: T[], layout: RecordActionLayout = { groups: [], actions: {} }, pins: RecordActionPins = {}) {
-  const groups = new Map<string, z.infer<typeof ActionGroup>>(ACTION_GROUPS.map((g) => [g.id, { ...g }]));
+  const groups = new Map<string, ActionGroupDef>(ACTION_GROUPS.map((g) => [g.id, { ...g }]));
   for (const g of layout.groups) groups.set(g.id, g);
   const visible = items.filter((a) => !layout.actions[a.id]?.hidden);
   const primaries = visible.filter((a) => pins[a.id] ?? layout.actions[a.id]?.primary ?? a.primary ?? false).sort((a, b) => Number(pins[b.id] === true) - Number(pins[a.id] === true)).slice(0, 4);

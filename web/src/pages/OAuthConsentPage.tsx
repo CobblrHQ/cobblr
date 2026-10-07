@@ -6,7 +6,7 @@
 import { useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { usePageTitle } from "@cobblr/platform-web";
+import { usePageTitle, SegmentedChoice } from "@cobblr/platform-web";
 import { useAuth } from "../auth/AuthContext";
 import { ApiError, api } from "../lib/api";
 import { TOKEN_ACCESS_LABEL, TOKEN_ACCESS_MEANS } from "@cobblr/platform-contract/token-access";
@@ -86,24 +86,16 @@ export function OAuthConsentPage() {
           </select>
         </label>
 
-        <fieldset className="space-y-1.5">
-          <legend className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">What it can do</legend>
-          {(["look", "change"] as const).map((a) => (
-            <label
-              key={a}
-              className={
-                "flex items-start gap-2 rounded-md border p-2 cursor-pointer text-sm " +
-                (access === a ? "border-cobble-300 dark:border-cobble-700 bg-cobble-50/50 dark:bg-cobble-900/20" : "border-line dark:border-slate-700")
-              }
-            >
-              <input type="radio" name="oauth-access" checked={access === a} onChange={() => setAccess(a)} className="accent-cobble-500 mt-0.5 shrink-0" />
-              <span className="min-w-0">
-                <span className="font-medium text-content dark:text-mortar-100">{TOKEN_ACCESS_LABEL[a]}</span>
-                <span className="block text-xs text-muted dark:text-slate-400">{TOKEN_ACCESS_MEANS[a]}</span>
-              </span>
-            </label>
-          ))}
-        </fieldset>
+        <div className="space-y-1.5">
+          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">What it can do</span>
+          <SegmentedChoice
+            stack
+            label="What it can do"
+            value={access}
+            onChange={setAccess}
+            options={(["look", "change"] as const).map((a) => ({ value: a, label: TOKEN_ACCESS_LABEL[a], hint: TOKEN_ACCESS_MEANS[a] }))}
+          />
+        </div>
 
         <p className="text-xs text-muted dark:text-slate-400">
           You can disconnect it any time under Configuration → Connect an AI assistant.

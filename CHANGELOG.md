@@ -2,6 +2,43 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-10-07
+
+### Features
+- New item forms can scan a barcode to fill empty details and a photo, keep what you typed, and show when you already have the item.
+- Added logic analyser captures and Riden supply readings, with ESPHome connections and optional confirmed supply control.
+- Added embroidery previews, hoop and owned-thread checks, USB exports and measured thread use, plus a Sewing bundle for maintained machines, needles and pattern PDFs.
+- Added browser stations for large-format printers with reviewed PDF and image jobs, ink alerts and tracked roll media.
+- Every list now has a Share button to share the whole list or selected records, invite someone new and see who it is shared with.
+- Personal documents can now be read here or by your local AI, with missing values shown for checking and no cloud AI fallback. Identity, vehicle, insurance, tax, medical, bank and licence papers count as personal wherever they are uploaded, including a bill of sale; a photo of a thing is still identified as usual.
+- Added send files to copy or move items between Cobblrs with their photos and documents, a field preview and a separate source confirmation.
+- Added approved print batches with a printed count, a bed-clear press for each next copy and one-tap cancellation of the remaining prints.
+- Your assistant can change a service schedule, a renewal's term and the overdue reminder cadence, and each change has an Undo. Through Claude or another assistant connected to Cobblr, "change the oil change to every six months", "the inspection actually cost 50" and "remind us monthly about overdue maintenance" were refused, because none of them could be put back. Each now undoes to exactly what it was, so the assistant makes the change and you can take it back. Renewing and ending a renewal still ask you first.
+
+### Improvements
+- A Station shows something new at the size it shows what you have. Scanning something new at a Station used to open the scan inbox's whole card, with Add a small button partway down. It now shows the photo, the name it read and how many, with one big Add. Not this? Fix the name corrects the name, and More opens the full card for everything else.
+- A custom app block can mark a Lego set built in the Sets table: the Set status action can now set a table's own state field (the Sets table's State: sealed, built or taken apart) to one of its choices, as well as the older free-text status, so a member granted it can update the set from the club's app.
+
+### Fixes
+- A grocery scanned without AI files to Groceries, and its brand reads as the brand. A box of pasta could arrive with its name and brand but none of its food categories, and in a workspace whose food table is Groceries it was filed as an Inventory part. Cobblr now reads those categories when they are missing. A brand also drops the company's legal form, so Coca-Cola no longer reads "COCA-COLA SERVICES SA/NV".
+- A member can now take an order, plan a purchase, add to a list and do the rest of what the page lets them through Cobb and the API too, without asking for a grant. Anyone can answer their own service job, keep or delete a change the assistant held for them, and undo their own tap, whatever their role; somebody else's still needs a grant.
+- A USB or Bluetooth scanner can read a component reel's label. Digi-Key and Mouser reel labels carry separator characters that a keyboard-mode scanner sends as Ctrl key presses, and the scan was thrown away at the first one. A scanner now reads them the same way the camera does, and a Ctrl shortcut you press yourself still works as before.
+- Adding from the dashboard never makes a second copy of something you have. A capture of a thing already in your workspace, such as a printer an assistant added again, was offered Add, and Add made a duplicate record. It now sits under "Already in your workspace" and opens its card, where you can add to the one you have.
+- A laser batch now uses the free corner of a partly used offcut instead of leaving it empty and reporting room for fewer parts than the sheets hold.
+- The signup link now opens the account form, and signing in from a login or signup link takes you to your workspace dashboard.
+- Build notes are now available through shared record reads and connected assistants.
+- Cobb spent fewer steps finding actions and explained failed changes more clearly.
+- The dashboard no longer raises an uncaught error when a guest's record read is refused.
+- Laser sheets and prepared cuts now show their drawing names throughout fabrication, and idle laser fleet cards no longer show Pause or Stop controls.
+- A grouped table's totals now add up only what adds up: a length or a price per item is totalled as that value times how many you have and called a total, years, sizes and temperatures are no longer summed, and each row's count says its own word (2 balls, 1 skein).
+- A guest's pages no longer ask the workspace for things a guest is not allowed to read, so they load without refused requests.
+- Counts of words ending in "ss" read right: a laser station says "2 passes", not "2 pass", and the same holds for glasses, classes and the like everywhere a count is written.
+- What a member can do on a page they can now do through Cobb and the API too, without asking for a grant: adding a line to a purchase order, shipping or cancelling a sale, logging maintenance, tagging a record and the rest. Anything they cannot do on the page they are refused everywhere alike.
+- Prints check the loaded filament before sending, and bridge outages keep cached files visible with a reason.
+- Fixed shared suggestions closing before confirmation, missing clash details, and recorded AI turns reporting missing tool results as provider outages.
+- Machine stations now use their own machine kind in the title, with a clear fleet link when no station screen is available.
+- A drawing's curves keep their size on the way to the laser: a scored ring in an SVG no longer becomes a dot. Adding one capture from the dashboard keeps you there and names the table it went to, with Open; the table setup it opens no longer closes by itself. The activity log says "Robin joined the workspace", and a laser connected under its own name is named once.
+
 ## 2026-10-06
 
 ### Features

@@ -1,0 +1,10 @@
+{
+  "lint": "lint:imports-come-first",
+  "run": "node scripts/lint-imports-come-first.ts",
+  "rows": [
+    "generic-web-component"
+  ],
+  "ms": 1084,
+  "recorded": "2026-10-07",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

@@ -12,7 +12,7 @@
 
 import { MAIN_ID, SkipToContent } from "./a11y/shell-landmarks";
 import { useEffect, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import { MarkdownText } from "@cobblr/platform-web";
 import { EntityTile, TILE_GRID } from "@cobblr/platform-web";
 import { publicFrameDocUrl } from "../lib/frame-doc";
 import type { AppTheme, AppBlock, AppPage } from "../lib/api";
@@ -227,7 +227,7 @@ export function PublicAppPlayer({
           if (b.type === "markdown") {
             return (
               <div key={`b-${i}`} className="prose prose-sm max-w-none" style={proseStyle(theme)}>
-                <ReactMarkdown>{b.body}</ReactMarkdown>
+                <MarkdownText>{b.body}</MarkdownText>
               </div>
             );
           }

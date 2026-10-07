@@ -16,7 +16,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AtSign, CheckCircle2, RotateCcw } from "lucide-react";
-import { usePageTitle, useToast, relativeTime, SearchInput } from "@cobblr/platform-web";
+import { usePageTitle, useToast, relativeTime, SearchInput, walkPages } from "@cobblr/platform-web";
 import { api, ApiError, type DiscussionInboxItem } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { canResolveConversation } from "../lib/discussionPermissions";
@@ -150,7 +150,9 @@ export function DiscussionInboxPage() {
 
   const inbox = useQuery({
     queryKey: ["discussion-inbox", activeSlug, q],
-    queryFn: () => api.discussionInbox(activeSlug, q || undefined),
+    // Every page: the lanes and their counts are the whole inbox, never its
+    // newest page.
+    queryFn: () => walkPages((offset, limit) => api.discussionInbox(activeSlug, q || undefined, { offset, limit })),
     enabled: !!activeSlug,
     staleTime: 30_000,
   });

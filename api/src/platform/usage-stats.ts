@@ -16,6 +16,7 @@
 // stranger) and the CI test pool. Sandboxes are excluded from people and
 // signups, and are the whole point of the sandbox counts.
 
+import { operatorSandboxOrgIds } from "./operator-sandboxes.js";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { isPlatformAdmin } from "../auth/middleware.js";
@@ -53,6 +54,8 @@ async function excludedOrgs(): Promise<string[]> {
     .execute();
   const out = new Set(members.filter((m) => isPlatformAdmin(m.email)).map((m) => m.org_id));
   for (const r of await meta.selectFrom("test_org_pool").select("org_id").execute()) out.add(r.org_id);
+  // An operator's own sandbox walk is not a visitor (cli/try-sandbox.ts).
+  for (const id of await operatorSandboxOrgIds()) out.add(id);
   return [...out];
 }
 

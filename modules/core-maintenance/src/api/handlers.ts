@@ -21,7 +21,7 @@ import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { CoreMaintenanceDB } from "../db.js";
 import { completeEntry, rollForward, rolledFromOf, unroll } from "../schedules-store.js";
-import { createSchedule, ScheduleCreateBody, ScheduleUpdateBody, RenewBody, updateSchedule, renewSchedule } from "./schedules.js";
+import { createSchedule, ScheduleCreateBody, ScheduleUpdateBody, RenewBody, updateSchedule, renewSchedule, removeSchedule } from "./schedules.js";
 import { NagBody, CadenceBody, changeNag } from "./reminders.js";
 import { moneyForStorage } from "@cobblr/platform-contract/money";
 import { TermBody } from "../term-fields.js";
@@ -46,7 +46,20 @@ export function registerMaintenanceHandlers(): void {
     const d = TermBody.safeParse({ ...args, ...(args.cost != null ? { cost_cents: moneyForStorage(args.cost, "cents") } : {}) });
     if (!d.success) return { ok: false, error: d.error.message };
     const db = await platform().tenants.getDb(ctx.orgId) as Kysely<CoreMaintenanceDB>;
-    return { ok: true, result: await updateTerm(db, ctx.orgId, String(args.term_id ?? ""), d.data), summary: "Term updated." };
+    const id = String(args.term_id ?? "");
+    const prior = await db.selectFrom("core_maintenance_entries").selectAll().where("id", "=", id).where("is_term", "=", true).executeTakeFirst();
+    const result = await updateTerm(db, ctx.orgId, id, d.data);
+    // What Undo writes back: each field this edit set, as it was.
+    const before: Record<string, unknown> = { term_id: id };
+    if (prior) for (const k of Object.keys(d.data) as Array<keyof typeof d.data>) {
+      if (k === "file_id") continue;
+      const v = (prior as Record<string, unknown>)[k];
+      // A start, end or currency the term never had cannot be "set back" to
+      // nothing (the term keeps one); the rest go back as they were.
+      if (v == null && (k === "term_start" || k === "term_end" || k === "currency")) continue;
+      before[k] = v instanceof Date ? v.toISOString().slice(0, 10) : (k === "quantity" || k === "cost_cents") && v != null ? Number(v) : v ?? null;
+    }
+    return { ok: true, result, before, summary: "Term updated." };
   });
   platform().actions.registerHandler("core-maintenance.end-renewal", async (ctx) => {
     const db = await platform().tenants.getDb(ctx.orgId) as Kysely<CoreMaintenanceDB>;
@@ -105,8 +118,9 @@ export function registerMaintenanceHandlers(): void {
     const parsed = CadenceBody.safeParse(ctx.args);
     if (!parsed.success) return { ok: false, error: parsed.error.message };
     const db = await platform().tenants.getDb(ctx.orgId) as Kysely<CoreMaintenanceDB>;
+    const prior = await db.selectFrom("core_maintenance_preferences").select("overdue_every").executeTakeFirst();
     await db.insertInto("core_maintenance_preferences").values({ id: true, ...parsed.data }).onConflict((c) => c.column("id").doUpdateSet(parsed.data)).execute();
-    return { ok: true, summary: "Overdue reminder cadence saved.", result: parsed.data };
+    return { ok: true, summary: "Overdue reminder cadence saved.", result: parsed.data, before: { overdue_every: prior?.overdue_every ?? "week" } };
   });
   platform().actions.registerHandler("core-maintenance.update-schedule", async (ctx) => {
     const args = (ctx.args ?? {}) as Record<string, unknown>;
@@ -115,7 +129,14 @@ export function registerMaintenanceHandlers(): void {
     const db = await platform().tenants.getDb(ctx.orgId) as Kysely<CoreMaintenanceDB>;
     const before = await db.selectFrom("core_maintenance_schedules").selectAll().where("id", "=", String(args.schedule_id ?? "")).executeTakeFirst();
     if (!before) return { ok: false, error: "Schedule not found" };
-    return { ok: true, result: await updateSchedule(db, ctx.orgId, before, parsed.data) };
+    const result = await updateSchedule(db, ctx.orgId, before, parsed.data);
+    // What Undo writes back: each field this edit set, as the schedule had it.
+    const was: Record<string, unknown> = { schedule_id: before.id };
+    for (const k of Object.keys(parsed.data)) {
+      const v = (before as Record<string, unknown>)[k];
+      was[k] = v instanceof Date ? v.toISOString().slice(0, 10) : k === "counter_every" && v != null ? Number(v) : v ?? null;
+    }
+    return { ok: true, result, before: was };
   });
   platform().actions.registerHandler("core-maintenance.renew", async (ctx) => {
     const args = (ctx.args ?? {}) as Record<string, unknown>;
@@ -221,11 +242,19 @@ export function registerMaintenanceHandlers(): void {
     const id = String((ctx.args as { schedule_id?: unknown } | null)?.schedule_id ?? "").trim();
     if (!id) return { ok: false, error: "missing schedule_id" };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreMaintenanceDB>;
-    const row = await db.deleteFrom("core_maintenance_schedules").where("id", "=", id).returning(["id", "name"]).executeTakeFirst();
-    await db.deleteFrom("core_maintenance_entries").where("schedule_id", "=", id).where("performed_at", "is", null).execute();
+    const row = await removeSchedule(db, id);
     if (!row) return { ok: true, skipped: true, reason: "already gone" };
     return { ok: true, summary: `Removed the ${row.name} schedule.` };
   });
+  // An edit's undo writes back what it changed, so the assistant may run it
+  // without a person confirming (ai-action-door: undoable runs unasked).
+  const undoWith = (actionId: string) => (result: unknown) => {
+    const r = result as { ok?: unknown; before?: Record<string, unknown> } | null;
+    return r?.ok === true && r.before ? { action_id: actionId, args: r.before } : null;
+  };
+  platform().actions.registerUndo("core-maintenance.update-schedule", undoWith("core-maintenance:update-schedule"));
+  platform().actions.registerUndo("core-maintenance.update-term", undoWith("core-maintenance:update-term"));
+  platform().actions.registerUndo("core-maintenance.reminder-default", undoWith("core-maintenance:reminder-default"));
   platform().actions.registerUndo("core-maintenance.schedule", (result) => {
     const r = result as { ok?: unknown; result?: { schedule_id?: unknown } } | null;
     if (r?.ok !== true || typeof r.result?.schedule_id !== "string") return null;

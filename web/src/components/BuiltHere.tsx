@@ -5,7 +5,7 @@
 // it brings anything (CarryPage), so the two pages cannot disagree about it.
 import { useEffect, useState } from "react";
 import { api, type SandboxLedger } from "../lib/api";
-import { countOf } from "@cobblr/platform-contract";
+import { countOf } from "@cobblr/platform-contract/plural";
 
 /** Every line of the ledger as one sentence each, in the order a person would
  *  tell it: what they set up, then what they filled it with. */

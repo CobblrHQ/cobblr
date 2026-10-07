@@ -21,15 +21,24 @@
 // lets a push run of the same job answer for a skipped one).
 //
 // What differs from ci.yml, and nothing else:
-//   - on: push to main and train/**, with ci.yml's pull_request paths-ignore;
-//   - concurrency: one group per commit, never cancelled (every main commit
-//     gets its own verdict, as before);
-//   - runs-on: light -> light-main, ci-test -> ci-main.
+//   - on: push to main, train/** and bisect/** (one untested merge under a red
+//     tip, tested on its own: scripts/ci/red-main-culprit.mjs), with ci.yml's
+//     pull_request paths-ignore;
+//   - concurrency: one group per ref and commit, never cancelled. A main commit
+//     that is no longer the tip when its jobs start stands them down instead
+//     (scripts/ci/stand-down-if-superseded.sh), so only main's newest commit is
+//     tested, and a red tip names its culprit by testing the merges it skipped;
+//   - runs-on: pr-check -> light-main, ci-test -> ci-main.
 // `name: CI` stays, so the status contexts stay `CI / typecheck (push)` and
 // `CI / test (push)`, which the release, merge-pr and deploy read.
 //
-//   node scripts/gen-ci-main.mjs           write it
-//   node scripts/gen-ci-main.mjs --check   exit 1 if the committed file is stale
+// THE FAST LANE IS GENERATED HERE TOO (#4343): ci-fast.yml is the same CI for a push to
+// fast/<pr> (main plus one critical pull request, pushed by scripts/ci/fast-lane.mjs), on
+// labels only the reserved fast runner carries (pr-check -> fast-light, ci-test -> fast-test),
+// plus one last job that writes its verdicts onto the pull request's head.
+//
+//   node scripts/gen-ci-main.mjs           write both
+//   node scripts/gen-ci-main.mjs --check   exit 1 if either committed file is stale
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,11 +46,72 @@ import { fileURLToPath } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = join(ROOT, ".forgejo/workflows/ci.yml");
 const OUT = join(ROOT, ".forgejo/workflows/ci-main.yml");
+const OUT_FAST = join(ROOT, ".forgejo/workflows/ci-fast.yml");
 
-export const LANE = { light: "light-main", "ci-test": "ci-main" };
+export const LANE = { "pr-check": "light-main", "ci-test": "ci-main" };
+export const FAST_LANE = { "pr-check": "fast-light", "ci-test": "fast-test" };
 
-/** ci-main.yml's text, from ci.yml's. Throws when ci.yml no longer has the shape this relies on. */
-export function generate(ci) {
+const MAIN = {
+  lane: LANE,
+  branches: "[main, 'train/**', 'bisect/**']",
+  group: "ci-main-${{ github.ref }}-${{ github.sha }}",
+  header: [
+    "# The same CI as ci.yml, for pushes to main and merge-train branches, on",
+    "# runner labels only they use (light-main, ci-main), so the release's green",
+    "# candidate and the next train never wait behind the pull-request queue.",
+  ],
+  tail: [],
+};
+export const FAST = {
+  lane: FAST_LANE,
+  branches: "['fast/**']",
+  group: "ci-fast-${{ github.ref }}",
+  header: [
+    "# The same CI as ci.yml, for a push to fast/<pr>: main plus one critical pull",
+    "# request (scripts/ci/fast-lane.mjs), on labels only the reserved fast runner",
+    "# carries (fast-light, fast-test), so a critical fix never waits behind the",
+    "# queue it may be fixing. The last job writes its verdicts onto the PR's head.",
+  ],
+  tail: [
+    "",
+    "  # Each verdict above, written onto the pull request's head as its own check",
+    "  # (CI / <job> (pull_request)), so merge-pr and the merge queue read the fast",
+    "  # run like any other. scripts/ci/fast-lane.mjs report.",
+    "  fast-lane-report:",
+    "    runs-on: fast-light",
+    "    needs: [typecheck, test]",
+    "    if: always()",
+    "    timeout-minutes: 10",
+    "    steps:",
+    "      - uses: https://github.com/actions/checkout@v4",
+    "        with:",
+    "          fetch-depth: 2",
+    "      - name: Write the verdicts onto the pull request",
+    "        env:",
+    "          GATE_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
+    "        run: |",
+    "          set -o pipefail",
+    "          node scripts/ci/fast-lane.mjs report 2>&1 | tee /tmp/fast-report.out",
+    "      - name: Ship this job's log to the CI log sink (Forgejo has no log API)",
+    "        if: always()",
+    "        run: |",
+    "          [ -s /tmp/fast-report.out ] || echo \"(no report output: the job failed before the report step)\" > /tmp/fast-report.out",
+    "          curl -s --max-time 25 -X POST \\",
+    "            -H \"x-ci-run: ${{ github.run_number }}\" \\",
+    "            -H \"x-ci-sha: ${{ github.sha }}\" \\",
+    "            -H \"x-ci-workflow: ${{ github.workflow }}\" \\",
+    "            -H \"x-ci-job: fast-lane-report\" \\",
+    "            -H \"x-ci-status: ${{ job.status }}\" \\",
+    "            -H \"x-ci-ref: ${{ github.ref_name }}\" \\",
+    "            --data-binary @/tmp/fast-report.out \\",
+    "            http://workshop:8767/ci-log \\",
+    "            && echo \"shipped the report log to sink\" || echo \"(sink POST failed — non-fatal)\"",
+  ],
+};
+
+/** ci-main.yml's (or, with FAST, ci-fast.yml's) text, from ci.yml's. Throws when ci.yml no longer has the shape this relies on. */
+export function generate(ci, kind = MAIN) {
+  const LANE = kind.lane;
   const lines = ci.split("\n");
   const at = (re, from = 0) => {
     const i = lines.findIndex((l, n) => n >= from && re.test(l));
@@ -64,7 +134,7 @@ export function generate(ci) {
     const m = /^( {4}runs-on: )(\S+)\s*$/.exec(l);
     if (!m) return l;
     const to = LANE[m[2]];
-    if (!to) throw new Error(`ci.yml has a job on '${m[2]}', which has no main lane in gen-ci-main.mjs`);
+    if (!to) throw new Error(`ci.yml has a job on '${m[2]}', which has no ${kind === MAIN ? "main" : "fast"} lane in gen-ci-main.mjs`);
     return `${m[1]}${to}`;
   });
   for (const [from, to] of Object.entries(LANE)) {
@@ -75,9 +145,7 @@ export function generate(ci) {
     "# GENERATED from ci.yml by scripts/gen-ci-main.mjs. Do not edit: change",
     "# ci.yml and run `node scripts/gen-ci-main.mjs` (lint:ci-main-generated).",
     "#",
-    "# The same CI as ci.yml, for pushes to main and merge-train branches, on",
-    "# runner labels only they use (light-main, ci-main), so the release's green",
-    "# candidate and the next train never wait behind the pull-request queue.",
+    ...kind.header,
     "# Why, and what differs: the header of",
     "# scripts/gen-ci-main.mjs.",
     "",
@@ -85,31 +153,46 @@ export function generate(ci) {
     "",
     "on:",
     "  push:",
-    "    branches: [main, 'train/**']",
+    `    branches: ${kind.branches}`,
     ...(paths.length ? ["    paths-ignore:", ...paths] : []),
     "",
     "concurrency:",
-    "  group: ci-main-${{ github.sha }}",
+    `  group: ${kind.group}`,
     "  cancel-in-progress: false",
     "",
-    ...body,
+    ...(kind.tail.length ? trimEnd(body) : body),
+    ...kind.tail,
+    ...(kind.tail.length ? [""] : []),
   ].join("\n");
 }
 
+function trimEnd(lines) {
+  let e = lines.length;
+  while (e > 0 && lines[e - 1].trim() === "") e--;
+  return lines.slice(0, e);
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const want = generate(readFileSync(SRC, "utf8"));
+  const ci = readFileSync(SRC, "utf8");
+  const outs = [[OUT, generate(ci, MAIN)], [OUT_FAST, generate(ci, FAST)]];
   if (process.argv.includes("--check")) {
-    let have = "";
-    try {
-      have = readFileSync(OUT, "utf8");
-    } catch {}
-    if (have !== want) {
-      console.error("lint:ci-main-generated - .forgejo/workflows/ci-main.yml is not what ci.yml generates. Run: node scripts/gen-ci-main.mjs");
-      process.exit(1);
+    let bad = 0;
+    for (const [out, want] of outs) {
+      let have = "";
+      try {
+        have = readFileSync(out, "utf8");
+      } catch {}
+      if (have !== want) {
+        console.error(`lint:ci-main-generated - ${out.slice(ROOT.length + 1)} is not what ci.yml generates. Run: node scripts/gen-ci-main.mjs`);
+        bad = 1;
+      }
     }
-    console.log("lint:ci-main-generated OK (ci-main.yml is ci.yml on main's lane)");
+    if (bad) process.exit(1);
+    console.log("lint:ci-main-generated OK (ci-main.yml and ci-fast.yml are ci.yml on their lanes)");
   } else {
-    writeFileSync(OUT, want);
-    console.log("wrote .forgejo/workflows/ci-main.yml");
+    for (const [out, want] of outs) {
+      writeFileSync(out, want);
+      console.log(`wrote ${out.slice(ROOT.length + 1)}`);
+    }
   }
 }

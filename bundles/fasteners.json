@@ -2,8 +2,13 @@
   "manifest": {
     "id": "cobblr.flagship.fasteners",
     "changelog": "Says up front that it tracks stock, so counts and Use one or Used up are there from the first item rather than after one is counted. Earlier: First catalogued release: the fastener drawer skin (length, diameter, thread, head) on inventory.",
-    "version": "0.1.4",
+    "version": "0.1.5",
     "releases": [
+      {
+        "version": "0.1.5",
+        "released_at": "2026-10-07",
+        "notes": "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed."
+      },
       {
         "version": "0.1.4",
         "released_at": "2026-10-02",
@@ -90,6 +95,7 @@
             "name": "length_mm",
             "display_label": "Length (mm)",
             "type": "number",
+            "aggregate": "none",
             "unit": "mm",
             "position": 3,
             "help": "Shaft length, not counting the head. Leave blank for nuts/washers."

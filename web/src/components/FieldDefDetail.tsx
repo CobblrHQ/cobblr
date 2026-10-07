@@ -20,7 +20,7 @@ import { useNavigate } from "react-router-dom";
 import { Trash2, X } from "lucide-react";
 import { ApiError, api, type PlatformFieldDef } from "../lib/api";
 import { changeWorkspaceShape, useToast, useConfirm } from "@cobblr/platform-web";
-import { RETYPEABLE_FIELD_TYPES } from "@cobblr/platform-contract";
+import { RETYPEABLE_FIELD_TYPES } from "@cobblr/platform-contract/field-vocabulary";
 import { ChoicesInput, LearnsToggle } from "./ChoicesInput";
 
 interface Props {
@@ -282,6 +282,22 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
           </div>
         )}
 
+        {(fieldDef.type === "number" || fieldDef.type === "money") && (
+          <label className="block">
+            <span className="block font-mono uppercase tracking-widest text-[10px] text-faint mb-1">In group totals</span>
+            <select
+              aria-label="In group totals"
+              className="input"
+              value={fieldDef.aggregate ?? "sum"}
+              disabled={patch.isPending}
+              onChange={(e) => patch.mutate({ aggregate: e.target.value as "sum" | "per_unit" | "none" })}
+            >
+              <option value="sum">Add up (a count, an amount spent)</option>
+              <option value="per_unit">Per item, times the count (length per ball, price each)</option>
+              <option value="none">Don't total (a year, a size, a rating)</option>
+            </select>
+          </label>
+        )}
         {fieldDef.type === "text" && (
           <div>
             <div className="font-mono uppercase tracking-widest text-[10px] text-faint mb-1">

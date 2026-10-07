@@ -3,6 +3,7 @@ type: feature
 scope: core-documents
 date: 2026-10-01
 docs_target: docs/USER_GUIDE.md#3.4 Files (foundational)
+docs_published: 2026-10-08
 ---
 Your receipts, manuals and warranties in Paperless-ngx now show up on the things they belong to. Connect Paperless once under Your account → Connections → Add a service (directly, or through your bridge if it runs at home), and every record gets a panel with the documents that match it, already found by the time you open it. Link one with a tap and open it in Paperless from there; Cobb and assistants connected over MCP can find and link documents too.
 

@@ -87,6 +87,25 @@ export function healthVerdict(
   return "ahead";
 }
 
+export type PendingCause = "own" | "downgrade" | "peer_breaking";
+
+/** WHY healthVerdict said pending, null when it did not: a migration of this
+ *  build's own never applied, a newer ledger with no declared peer (a
+ *  downgrade), or a declared peer's breaking migration this build never
+ *  shipped. The gate refuses all three; the deploy reader names the one it
+ *  is, because it once listed "no declared peer" first for a refusal whose
+ *  peer was declared (canary's inventory 0019, 2026-10-06). Same branches as
+ *  healthVerdict, so the two cannot disagree. */
+export function pendingCause(row: OrgModuleMarker, files: ModuleMigrationFiles, sharedDbPeer: string | undefined): PendingCause | null {
+  const state = migrationState(row, files);
+  if (state === "current") return null;
+  if (state === "behind") return "own";
+  if (!sharedDbPeer?.trim()) return "downgrade";
+  const breaking = row.newest_breaking_migration;
+  if (breaking && !files.names.has(breaking)) return "peer_breaking";
+  return null;
+}
+
 /** The newer of two ledger names, null-aware (names sort in the order they run). */
 export function newerName(a: string | null | undefined, b: string | null | undefined): string | null {
   if (!a) return b ?? null;

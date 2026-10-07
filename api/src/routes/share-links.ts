@@ -263,7 +263,7 @@ shareLinksOrgRouter.post("/:slug/share-links/:id/view-as", requireAuth, withTena
 shareLinksOrgRouter.get("/:slug/share-offers", requireAuth, withTenant, async (req, res, next) => {
   try {
     const orgId = req.tenant!.org.id;
-    res.json({ items: await listOffers(orgId), targets: await offerTargets(orgId, req.session!.id) });
+    res.json({ items: await listOffers(orgId, req.session!.id), targets: await offerTargets(orgId, req.session!.id) });
   } catch (err) {
     next(err);
   }

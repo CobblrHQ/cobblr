@@ -118,7 +118,7 @@ export function EntityPhoto({
       data-testid={testId}
       title={title}
       style={{ ...box, ...(swatch ? { background: swatch } : null) }}
-      className={`relative overflow-hidden ${swatch ? "ring-1 ring-black/10 dark:ring-white/15" : "bg-subtle dark:bg-slate-800"} ${className}`}
+      className={`relative overflow-hidden ${swatch ? "ring-1 ring-black/10 dark:ring-white/15" : "bg-subtle"} ${className}`}
     >
       {showImg ? (
         <img
@@ -147,7 +147,7 @@ export function EntityPhoto({
       ) : (
         <span
           aria-label={swatch ? alt : undefined}
-          className={`absolute inset-0 flex items-center justify-center font-mono ${swatch ? "text-black/25 dark:text-black/30" : "text-faint dark:text-slate-600"} ${initialSize}`}
+          className={`absolute inset-0 flex items-center justify-center font-mono ${swatch ? "text-black/25 dark:text-black/30" : "text-faint"} ${initialSize}`}
         >
           {placeholder !== undefined ? placeholder : entityInitial(alt)}
         </span>

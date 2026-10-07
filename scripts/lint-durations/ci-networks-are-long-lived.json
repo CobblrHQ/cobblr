@@ -1,0 +1,10 @@
+{
+  "lint": "lint:ci-networks-are-long-lived",
+  "run": "node scripts/lint-ci-networks-are-long-lived.ts",
+  "rows": [
+    "ci-workflow"
+  ],
+  "ms": 7902,
+  "recorded": "2026-10-07",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

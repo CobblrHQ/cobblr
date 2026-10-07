@@ -1,5 +1,6 @@
 // Public exports for the shared web components package.
-export { JsonField, evaluateJson, type JsonFieldProps, type JsonEval } from "./JsonField";
+export { JsonField } from "./JsonFieldLazy";
+export type { JsonFieldProps, JsonEval } from "./JsonField";
 
 export { PickToLight, type LightPickLine } from "./PickToLight";
 export {
@@ -70,7 +71,9 @@ export { TableConnectorImport, importSummary, type SectionOutcome } from "./Tabl
 export { MutationError, errorSentence } from "./MutationError";
 export { PasswordInput, SecretInput, AddressInput, NOT_A_LOGIN, type PasswordInputProps } from "./PasswordInput";
 export { NounChoiceButtons, nounChoiceHeading } from "./NounChoice";
+export { SegmentedChoice, SEGMENTED_MAX, type SegmentedOption } from "./SegmentedChoice";
 export { BulkActionBar } from "./BulkActionBar";
+export { lazyOverlay } from "./lazy-overlay";
 export { useTickedRows, tickedRowsKey, type ClearForUndo } from "./ticked-rows";
 export { SelectableTile, SELECTED_TILE, type SelectableTileProps } from "./SelectableTile";
 export { PhotoSourceBadge, AiMark } from "./PhotoSourceBadge";
@@ -106,7 +109,7 @@ export {
   noteOf,
   valueWithNote,
 } from "./field-note";
-export { Markdown, stripMarkdown } from "./Markdown";
+export { Markdown, MarkdownText, stripMarkdown } from "./Markdown";
 export { MarkdownEditor } from "./MarkdownEditor";
 export { QrCode } from "./QrCode";
 export { DocThumb, docThumbFor } from "./DocThumb";
@@ -340,3 +343,6 @@ export { MoneyTotalNotice } from "./MoneyTotalNotice";
 export { NewItemMenu, NewFromTemplateButton, type TemplateCreateArgs } from "./NewItemMenu";
 
 export { ActionDescription, firstActionSentence } from "./ActionDescription";
+
+export { SendRecords } from "./SendRecords";
+export type { WorkspaceSendRequest, WorkspaceSendPreview, WorkspaceSendTargets } from "./SendRecords";

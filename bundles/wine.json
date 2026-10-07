@@ -1,8 +1,13 @@
 {
   "manifest": {
     "id": "cobblr.flagship.wine",
-    "version": "0.1.5",
+    "version": "0.1.6",
     "releases": [
+      {
+        "version": "0.1.6",
+        "released_at": "2026-10-07",
+        "notes": "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed."
+      },
       {
         "version": "0.1.5",
         "released_at": "2026-10-02",
@@ -123,6 +128,7 @@
             "name": "vintage",
             "display_label": "Vintage",
             "type": "number",
+            "aggregate": "none",
             "position": 2,
             "field_role": "year-made",
             "help": "The year on the label. Read off the {{noun}} when you scan it, and never shared as a fact about the barcode: one barcode covers every vintage."
@@ -186,6 +192,7 @@
             "name": "abv",
             "display_label": "ABV",
             "type": "number",
+            "aggregate": "none",
             "position": 8,
             "unit": "%",
             "help": "Alcohol by volume, off the label: 13.5"
@@ -221,6 +228,7 @@
             "name": "rating",
             "display_label": "Rating",
             "type": "number",
+            "aggregate": "none",
             "position": 12,
             "help": "Your score out of 100."
           },

@@ -14,6 +14,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { mayRead } from "../lib/acting-role";
 import {
   api,
   type EntityKindOverride,
@@ -21,7 +22,7 @@ import {
   type OrgModuleListItem,
 } from "../lib/api";
 import { applyNavOrder, readNavHidden, readNavOrder, readNavOverflow, readNavPinned, readNavPlacement, readNavRows, reconcileNavRows, type NavSplitRow, type NavPlacement } from "../lib/nav-order";
-import { FEATURED_BUNDLES } from "../lib/featured-bundles";
+import { useFeaturedBundles } from "../lib/useFeaturedBundles";
 import { inManagedAppSurface } from "../lib/managed-apps";
 
 /** Synthetic top-level name prefix for a user-defined heading group. */
@@ -352,10 +353,11 @@ export function useNavModules(activeSlug: string): NavModules {
   // Installed bundles with provides_lens contribute lens children
   // alongside real Pillar-E modules. Cheap because the existing
   // /bundles GET already returns the manifest blob.
+  const featured = useFeaturedBundles({ when: "idle" });
   const bundles = useQuery({
     queryKey: ["bundles", activeSlug],
     queryFn: () => api.listBundles(activeSlug),
-    enabled: !!activeSlug,
+    enabled: !!activeSlug && mayRead(`/orgs/${activeSlug}/bundles`),
     staleTime: 30_000,
   });
   // Workspace presentation overrides + non-default instances. The
@@ -626,7 +628,7 @@ export function useNavModules(activeSlug: string): NavModules {
   rawTops.push(...folded);
   const offers = new Map<string, NavSplitRow>();
   for (const b of bundles.data?.items ?? []) {
-    const embedded = FEATURED_BUNDLES.find((f) => f.manifest.id === b.external_id)?.manifest;
+    const embedded = featured?.find((f) => f.manifest.id === b.external_id)?.manifest;
     const manifest = b.manifest;
     const declarations = [...(manifest?.provides_instances ?? []), ...(manifest?.features ?? []).flatMap((f) => f.provides_instances ?? []), ...(embedded?.provides_instances ?? []), ...(embedded?.features ?? []).flatMap((f) => f.provides_instances ?? [])];
     for (const inst of declarations) {
@@ -644,9 +646,14 @@ export function useNavModules(activeSlug: string): NavModules {
   const availableKey = JSON.stringify(available);
   const movedKey = JSON.stringify(moved);
   useEffect(() => {
-    if (!instances.data || !overrides.data || !headings.data || !bundles.data) return;
+    // A bundle installed without a manifest of its own is read from the
+    // featured table, which loads after the page settles: wait for it then,
+    // or the reconcile would act on a partial list. A bundle that carries its
+    // manifest needs nothing more.
+    const needsFeatured = (bundles.data?.items ?? []).some((b) => !b.manifest);
+    if (!instances.data || !overrides.data || !headings.data || !bundles.data || (needsFeatured && !featured)) return;
     reconcileNavRows(activeSlug, JSON.parse(offerKey), JSON.parse(availableKey), JSON.parse(movedKey));
-  }, [activeSlug, offerKey, availableKey, movedKey, instances.data, overrides.data, headings.data, bundles.data]);
+  }, [activeSlug, offerKey, availableKey, movedKey, instances.data, overrides.data, headings.data, bundles.data, featured]);
   for (const name of rowPrefs.separated) groupOf.delete(name);
   for (const row of rowPrefs.rows) for (const name of row.members) groupOf.set(name, { key: row.key, label: row.label });
   const { tops: groupedTops, groups: instanceGroups } = collapseNavGroups(rawTops, groupOf);

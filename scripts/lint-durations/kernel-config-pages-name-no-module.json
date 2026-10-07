@@ -1,0 +1,10 @@
+{
+  "lint": "lint:kernel-config-pages-name-no-module",
+  "run": "node scripts/lint-kernel-config-pages-name-no-module.ts",
+  "rows": [
+    "generic-web-component"
+  ],
+  "ms": 2980,
+  "recorded": "2026-10-07",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

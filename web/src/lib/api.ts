@@ -2,6 +2,7 @@ import type { CutterProfile, CutterProgram } from "@cobblr/platform-contract/cut
 import type { StockView, StockDetail } from "@cobblr/inventory/ui";
 import type { LaserSetup, LaserCommission } from "@cobblr/platform-contract/laser-setup";
 import type { InvitableOrgRole } from "@cobblr/platform-contract/org-roles";
+import type { PlanDraftBody } from "@cobblr/platform-contract/plan-draft";
 import type { MoneyTotal } from "@cobblr/platform-contract/money";
 // Thin fetch wrapper. Reads the auth token from localStorage on every
 // call so the AuthProvider can update it without rewiring the client.
@@ -30,14 +31,12 @@ import type { TitleFormat } from "@cobblr/platform-contract/display-identity";
 import type { SourceConflict } from "@cobblr/platform-contract/acquisition-source";
 import type { ReceiptReadFailure } from "@cobblr/platform-contract/scan-session";
 import { getImpersonationToken } from "./impersonation";
+import { GUEST_NOT_SHARED, refusedForGuest } from "./acting-role";
+import { counted } from "./in-flight";
 import { bodyOf, type ImportRun, type SheetsBody, type SheetsPlan, type UndoReport } from "./sheet-import";
 import type { ResolveOutcome as RegistryResolveOutcome } from "@cobblr/platform-contract/resolvables";
-import type {
-  LiveControlPublic,
-  FieldRole,
-  FieldDefType,
-  AiConnectionTest,
-} from "@cobblr/platform-contract";
+import type { FieldRole, FieldDefType } from "@cobblr/platform-contract/field-vocabulary";
+import type { LiveControlPublic, AiConnectionTest } from "@cobblr/platform-contract";
 import { describeUnreadableBody, sendUpload, uploadErrorOf, UploadError } from "@cobblr/platform-web";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 import { walkPages } from "./list-pages";
@@ -96,6 +95,8 @@ export interface ShareOfferItem {
   taken_at: string | null;
   can_withdraw: boolean;
   can_send_back: boolean;
+  can_undo?: boolean;
+  send_mode?: "copy" | "move";
 }
 
 export interface ShareLinkItem {
@@ -204,7 +205,11 @@ export class ApiError extends Error {
 /** A multipart upload through the page's one upload door (sendUpload): a
  *  refusal thrown as an ApiError carrying the server's own sentence (which
  *  names the size and the limit), a dropped connection as one that says so. */
-async function upload<T>(url: string, form: FormData, file: File | null): Promise<T> {
+function upload<T>(url: string, form: FormData, file: File | null): Promise<T> {
+  return counted(() => sendUploadCounted<T>(url, form, file));
+}
+
+async function sendUploadCounted<T>(url: string, form: FormData, file: File | null): Promise<T> {
   let res: Response;
   try {
     res = await sendUpload(url, form, { token: getToken(), file });
@@ -361,12 +366,19 @@ async function lookupInBody<T>(postPath: string, body: unknown, olderGet: () => 
 
 export { subscribeDeletedRecord } from "@cobblr/platform-web";
 
-async function request<T>(
+/** Every request the app makes, counted while it is in flight (in-flight.ts). */
+function request<T>(method: string, path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
+  return counted(() => sendRequest<T>(method, path, body, extraHeaders));
+}
+
+async function sendRequest<T>(
   method: string,
   path: string,
   body?: unknown,
   extraHeaders?: Record<string, string>,
 ): Promise<T> {
+  // A guest's read the server would refuse is refused here, unsent (acting-role.ts).
+  if (refusedForGuest(method, path)) throw new ApiError(403, "guest_not_shared", GUEST_NOT_SHARED);
   const headers: Record<string, string> = { ...(extraHeaders ?? {}) };
   if (body !== undefined) headers["Content-Type"] = "application/json";
   // Kept for the blocked-action sheet: `body` is shadowed by the response
@@ -846,6 +858,25 @@ export interface EdgeDriverDeclaration {
   bridgeId?: string | null;
 }
 
+export type ReturnStage = "requested" | "dropped_off" | "received" | "refunded" | "cancelled";
+
+/** A return on an order (#4250): its furthest stage, the refund, and whether
+ *  its count has left the shelf. */
+export interface OrderReturn {
+  id: string;
+  order_id: string;
+  line_id: string | null;
+  item: string | null;
+  qty: number;
+  reason: string | null;
+  stage: ReturnStage;
+  refund_amount: number | null;
+  refunded_at: string | null;
+  off_shelf: boolean;
+  history: Array<{ stage: ReturnStage; at: string; source: "person" | "email" | "assistant"; ignored?: boolean }>;
+  created_at: string;
+}
+
 export interface Order {
   computed_total?: number;
   currency?: string;
@@ -865,6 +896,8 @@ export interface Order {
    *  Every spend figure reads this (order-total.ts); null when nothing on
    *  the order has a price. */
   total?: string | null;
+  /** What came back in refunds; already taken off `total`. Detail only. */
+  refunded?: number | null;
   shipping_cost: string | null;
   tracking_number: string | null;
   /** Where the parcel is, written by the arrival sweep. Null until something
@@ -1098,7 +1131,7 @@ export interface PurchasePriceHistory {
 export interface ContributedPanel {
   placement?: "summary" | "details";
   id: string;
-  surface: "module-page-tab" | "entity-detail-panel";
+  surface: "module-page-tab" | "entity-detail-panel" | "configuration-section";
   target: string;
   title: string;
 }
@@ -1878,6 +1911,14 @@ export const api = {
   /** "It's this one": an inbox card's paper belongs to a record already here. */
   inboxItemIsThisOne: (slug: string, itemId: string, body: { kind: string; id: string }) =>
     request<PaperworkResult>("POST", `/orgs/${slug}/modules/core-scan/inbox/${itemId}/its-this-one`, body),
+  listOrderReturns: (slug: string, orderId: string) =>
+    request<{ items: OrderReturn[] }>("GET", `/orgs/${slug}/modules/purchases/orders/${orderId}/returns`),
+  /** Start a return on one line: how many and why. */
+  startOrderReturn: (slug: string, orderId: string, body: { line_id: string; qty: number; reason?: string | null }) =>
+    request<{ return: OrderReturn | null; created: boolean }>("POST", `/orgs/${slug}/modules/purchases/orders/${orderId}/returns`, { ...body, stage: "requested" }),
+  /** Move a return to a stage; a refund carries its amount. */
+  advanceOrderReturn: (slug: string, returnId: string, body: { stage: ReturnStage; refund_amount?: number | null }) =>
+    request<{ return: OrderReturn | null; moved: boolean }>("POST", `/orgs/${slug}/modules/purchases/returns/${returnId}/stage`, body),
   removeOrderItem: (slug: string, orderId: string, itemId: string) =>
     request<{ deleted: string; items_remaining: number }>("DELETE", `/orgs/${slug}/modules/purchases/orders/${orderId}/items/${itemId}`),
 
@@ -1972,10 +2013,10 @@ export const api = {
   },
 
   // ── discussion ──────────────────────────────────────────────────────────
-  discussionInbox: (slug: string, q?: string) =>
-    request<{ items: DiscussionInboxItem[] }>(
+  discussionInbox: (slug: string, q?: string, page: { offset: number; limit: number } = { offset: 0, limit: 500 }) =>
+    request<{ items: DiscussionInboxItem[]; total?: number | null; complete?: boolean }>(
       "GET",
-      `/orgs/${slug}/modules/core-discussion/comments/inbox${q ? `?q=${encodeURIComponent(q)}` : ""}`,
+      `/orgs/${slug}/modules/core-discussion/comments/inbox?offset=${page.offset}&limit=${page.limit}${q ? `&q=${encodeURIComponent(q)}` : ""}`,
     ),
   markConversationRead: (
     slug: string,
@@ -2284,6 +2325,19 @@ export const api = {
 
   // Placement — containment (core-placement). "What's inside this container?"
   // and "what is this thing installed in?"
+  // Planning layouts (core-locations plan-drafts.ts): a room's drafts, which
+  // move nothing until applied.
+  planDrafts: (slug: string, locationId: string) =>
+    request<{ items: PlanDraft[] }>("GET", `/orgs/${slug}/modules/core-locations/locations/${locationId}/plan-drafts`),
+  planDraftCreate: (slug: string, locationId: string, body: { name?: string; from?: string }) =>
+    request<PlanDraft>("POST", `/orgs/${slug}/modules/core-locations/locations/${locationId}/plan-drafts`, body),
+  planDraftUpdate: (slug: string, id: string, body: { name?: string; body?: PlanDraftBody }) =>
+    request<PlanDraft>("PATCH", `/orgs/${slug}/modules/core-locations/locations/plan-drafts/${id}`, body),
+  planDraftDelete: (slug: string, id: string) => request<void>("DELETE", `/orgs/${slug}/modules/core-locations/locations/plan-drafts/${id}`),
+  planDraftApply: (slug: string, id: string) =>
+    request<{ note: string; things: unknown[]; moved: unknown[]; created: unknown[] }>("POST", `/orgs/${slug}/modules/core-locations/locations/plan-drafts/${id}/apply`),
+  planDraftUndo: (slug: string, id: string) =>
+    request<{ note: string }>("POST", `/orgs/${slug}/modules/core-locations/locations/plan-drafts/${id}/undo`),
   // A whole house as one file (cobblr-floorplan/1, core-locations floorplan-file.ts).
   floorplanImport: (slug: string, plan: unknown, dryRun: boolean) =>
     request<FloorplanImportResult>("POST", `/orgs/${slug}/modules/core-locations/locations/floorplan/import`, { plan, dry_run: dryRun }),
@@ -2922,6 +2976,14 @@ export const api = {
   requestMyData: () => request<{ id: string; status: "building" }>("POST", "/me/export", {}),
   myDataExports: () =>
     request<{ items: Array<{ id: string; status: "building" | "ready" | "failed"; created_at: string; ready_at: string | null; expires_at: string; size_bytes: number | null }>; days: number }>("GET", "/me/export"),
+  embroideryList: <T>(slug:string,path:string) => request<T>("GET",`/orgs/${slug}/modules/digifab/embroidery/${path}`),
+  enrollEmbroideryStation: (slug:string,id:string,label:string) => request<{id:string;label:string;token:string}>("POST",`/orgs/${slug}/modules/digifab/embroidery/machines/${id}/stations`,{label}),
+  revokeEmbroideryStation: (slug:string,id:string,stationId:string) => request<{ok:true}>("DELETE",`/orgs/${slug}/modules/digifab/embroidery/machines/${id}/stations/${stationId}`),
+  downloadEmbroidery: async(slug:string,id:string):Promise<Blob> => {
+    const headers:Record<string,string>={},token=getToken(),imp=getImpersonationToken();if(token)headers.Authorization=`Bearer ${token}`;if(imp)headers["X-Impersonation"]=imp;
+    const res=await fetch(`/api/v1/orgs/${slug}/modules/digifab/embroidery/runs/${id}/export`,{headers});
+    if(!res.ok)throw new ApiError(res.status,"embroidery_export_failed","This prepared embroidery file could not be downloaded.");return res.blob();
+  },
   downloadMyData: async (id: string): Promise<Blob> => {
     const token = getToken();
     const res = await fetch(`/api/v1/me/export/${encodeURIComponent(id)}/download`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
@@ -3720,6 +3782,8 @@ export const api = {
       `/orgs/${slug}/modules/digifab/printing-profiles/${encodeURIComponent(machineId)}`,
       body,
     ),
+  readBench: (slug:string,machineId:string,offset=0)=>request<BenchPage>("GET",`/orgs/${slug}/modules/digifab/bench/${machineId}?limit=20&offset=${offset}`),
+  operateBench: (slug:string,body:{machine_id:string;operation:"identify"|"read"|"log"|"output_off";record_kind?:string;record_id?:string})=>request<BenchReport | {identity:string;profile:string} | {off:boolean} | BenchReading>("POST",`/orgs/${slug}/modules/digifab/bench`,body),
   listDigifabLinks: (slug: string) =>
     request<{ items: DigifabLink[] }>("GET", `/orgs/${slug}/modules/digifab/links`),
   createDigifabLink: (
@@ -3890,6 +3954,12 @@ export const api = {
     request<{ ok: boolean }>("DELETE", `/orgs/${slug}/modules/digifab/stations/${id}`),
   finishResinPostprocess: (slug: string, jobId: string, step: "wash" | "cure") =>
     request<{ ok: boolean }>("POST", `/orgs/${slug}/modules/digifab/resin/jobs/${jobId}/postprocess`, { step }),
+  largeFormatStation:(slug:string,connection:string,device:string)=>request<LargeFormatView>("GET",`/orgs/${slug}/modules/digifab/large-format/station?connection_id=${connection}&device_id=${encodeURIComponent(device)}`),
+  largeFormatJobs:(slug:string,connection:string,device:string,offset=0)=>request<{items:LargeFormatHistory[];total:number}>("GET",`/orgs/${slug}/modules/digifab/large-format/jobs?connection_id=${connection}&device_id=${encodeURIComponent(device)}&limit=20&offset=${offset}`),
+  planLargeFormat:(slug:string,body:Record<string,unknown>)=>request<{job_id:string}>("POST",`/orgs/${slug}/modules/digifab/large-format/plans`,body),
+  refreshLargeFormat:(slug:string,body:{connection_id:string;device_id:string})=>request<{ok:boolean;device:{name:string;state:string;raw:Record<string,unknown>}}>("POST",`/orgs/${slug}/modules/digifab/large-format/refresh`,body),
+  stopLargeFormat:(slug:string,body:{connection_id:string;device_id:string})=>request<{ok:boolean;detail?:string}>("POST",`/orgs/${slug}/modules/digifab/large-format/stop`,body),
+  largeFormatOutcome:(slug:string,id:string,body:{station_token:string;verdict:"good"|"scrap";used_length_m:number;idle_confirmed:true;ink:Array<{stock_id:string;kind:string;amount_ml:number;estimated:boolean}>})=>request<{ok:boolean}>("POST",`/orgs/${slug}/modules/digifab/large-format/jobs/${id}/outcome`,body),
   digifabStation: (slug: string, connectionId: string, deviceId: string, q = "") =>
     request<MachineStationView>("GET", `/orgs/${slug}/modules/digifab/stations/${connectionId}/${encodeURIComponent(deviceId)}${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   saveLaserSheet: (slug: string, partId: string, material: LaserMaterialTag) =>
@@ -4109,6 +4179,10 @@ export const api = {
   revokeShareLink: (slug: string, id: string) => request<{ ok: true }>("POST", `/orgs/${slug}/share-links/${id}/revoke`, {}),
   /** What has been handed over through this workspace's shares, and who it
    *  can hand things to from here. */
+  sendTargets: (slug: string) => request<import("@cobblr/platform-web").WorkspaceSendTargets>("GET", `/orgs/${slug}/records/send-targets`),
+  previewSend: (slug: string, p: import("@cobblr/platform-web").WorkspaceSendRequest) => request<import("@cobblr/platform-web").WorkspaceSendPreview>("POST", `/orgs/${slug}/records/send`, { ...p, dry_run: true }),
+  sendRecords: (slug: string, p: import("@cobblr/platform-web").WorkspaceSendRequest) => request<{ summary: string; offer_ids: string[] }>("POST", `/orgs/${slug}/records/send`, p),
+  undoSend: (slug: string, id: string) => request("POST", `/orgs/${slug}/records/send/${id}/undo`, {}),
   listShareOffers: (slug: string) => request<{ items: ShareOfferItem[]; targets: Array<{ link_id: string; to: string }> }>("GET", `/orgs/${slug}/share-offers`),
   /** The shares of this workspace's own things, and which hold this record. */
   recordShares: (slug: string, kind?: string, id?: string) =>
@@ -4752,6 +4826,8 @@ export const api = {
     slug: string,
     id: string,
     body: {
+      send_drop_unmapped?: boolean;
+      send_unplaced?: boolean;
       quantity?: number;
       name?: string;
       target_location_id?: string | null;
@@ -5934,6 +6010,15 @@ export const api = {
     request<{
       turn: { id: string; prompt: string; status: "queued" | "running" | "done" | "failed"; result: AiChatResponse | null; error: string | null };
     }>("GET", `/orgs/${slug}/modules/core-ai/chat/turns/${turnId}`),
+  /** A turn's events as JSON: how a turn that finished before the panel
+   *  followed it gets its steps back (#5067). */
+  aiChatTurnEvents: (slug: string, turnId: string) =>
+    request<{ status: string; events: Array<{ seq: number; kind: string; payload: Record<string, unknown> }> }>(
+      "GET",
+      `/orgs/${slug}/modules/core-ai/chat/turns/${turnId}/events?after=0`,
+      undefined,
+      { Accept: "application/json" },
+    ),
   /** The URL the widget opens an EventSource on. */
   aiChatTurnEventsUrl: (slug: string, turnId: string, after = 0) =>
     `/api/v1/orgs/${slug}/modules/core-ai/chat/turns/${turnId}/events?after=${after}`,
@@ -8207,6 +8292,7 @@ export interface WorkspaceApp extends WorkspaceAppMeta {
 export interface ViewDataResponse {
   groups?: import("@cobblr/platform-contract").EntityGroup[];
   totals?: import("@cobblr/platform-contract").GroupedResult["totals"];
+  weighted_by?: import("@cobblr/platform-contract").GroupedResult["weighted_by"];
   group_total?: number;
   view: { id: string; name: string; entity_kind: string; view_type: string };
   items: Array<{
@@ -8423,6 +8509,9 @@ export interface AiChatOfferState {
 export interface AiChatResponse {
   type: "reply" | "proposal" | "proposals" | "build-proposal" | "error";
   text?: string;
+  /** Steps of the turn that did not happen, each with what would retry it.
+   *  The answer's `text` already says them (#5067). */
+  failed?: Array<{ step: string; error: string; ways?: Array<{ label: string; proposal: AiChatProposal }> }>;
   /** The plan the workspace worked out for this sentence without AI, as the
    *  same Do-it card the offer strip shows. Present whatever the model said. */
   command?: {
@@ -8575,7 +8664,7 @@ export interface DigifabHistory {
   series?: { date: string; completed: number; failed: number; filament_g: number }[];
   summary: { total: number; completed: number; failed: number; cancelled: number; filament_g: number; hours: number };
   by_device: { name: string; total: number; completed: number; failed: number; filament_g: number }[];
-  recent: { id: string; file_ref: string; sub_label?: string | null; cover?: string | null; device: string; connection_id?: string | null; device_id?: string | null; status: string; filament_g: number | null; at: string; duration_s?: number }[];
+  recent: { id: string; file_ref: string; metadata?: Record<string, unknown>; sub_label?: string | null; cover?: string | null; device: string; connection_id?: string | null; device_id?: string | null; status: string; filament_g: number | null; at: string; duration_s?: number }[];
 }
 
 export interface DigifabLibraryItem {
@@ -8733,9 +8822,9 @@ export interface DigifabFleetDevice {
   /** F-1: finished/failed a print — needs a human bed-clear before it's assignable. */
   /** plate_qty: how many the plate's job makes, when it produces a build. */
   needs_attention: { reason: string; since: string; plate_qty?: number | null } | null;
-  active_job: { id: string; file_ref: string; status: string; progress: number | null; priority: number; attempts: number; max_attempts: number; eta_sec: number | null } | null;
+  active_job: { id: string; file_ref: string; metadata?: Record<string, unknown>; status: string; progress: number | null; priority: number; attempts: number; max_attempts: number; eta_sec: number | null } | null;
   /** What this machine will do next — the top queued job aimed at it (or its pool). */
-  next_job: { id: string; file_ref: string; pooled: boolean } | null;
+  next_job: { id: string; file_ref: string; metadata?: Record<string, unknown>; pooled: boolean } | null;
   /** Spatial floor-grid cell (arrange mode); null = unplaced. */
   position: { x: number; y: number } | null;
   /** Free-form layout: order in the flow (null = unplaced, trails in its own
@@ -8886,8 +8975,9 @@ export interface DigifabJobReview {
 export interface LaserMaterialTag { material: string; thickness_mm: number; width_mm: number; height_mm: number }
 export interface ResinStockChoice { id: string; kind: string; name: string; shape: string; unit: string; remaining: number; used: number; revision: number; slot?: string; maintenance_due?: boolean; low?: boolean }
 export interface MachineStationView {
-  resin?: { station: string; loaded: ResinStockChoice[]; canStart: boolean; warning: string; stockError: string | null; postprocess: Array<{ job_id: string; file_ref: string; wash_done: boolean; cure_done: boolean }> };
-  kind?: "laser" | "print" | "cutter" | "resin";
+  resin?: { station: string; loaded: ResinStockChoice[]; canStart: boolean; warning: string; stockError: string | null; postprocess: Array<{ job_id: string; file_ref: string; metadata?: Record<string, unknown>; wash_done: boolean; cure_done: boolean }> };
+  kind?: string | null;
+  screen_kind?: "laser" | "print" | "cutter" | "resin" | "large-format" | null;
   job: (DigifabJob & { sent_at?: string | null }) | null;
   library: DigifabLibraryItem | null;
   attention: { job_id: string | null; reason: string } | null;
@@ -8895,6 +8985,7 @@ export interface MachineStationView {
 }
 
 export interface DigifabJob {
+  embroidery_run?: boolean;
   id: string;
   /** Custom fields a bundle or a person defines for this kind. */
   metadata?: Record<string, unknown>;
@@ -9603,6 +9694,17 @@ export interface PlatformResolvedEntity {
 
 /** A thing inside a container, with where in it: its slot, and the exact spot
  *  a floor plan pinned it at (in the container's plan's mm), or null. */
+/** A planning layout for a room: what would move, until it is applied. */
+export interface PlanDraft {
+  id: string;
+  location_id: string;
+  name: string;
+  body: PlanDraftBody;
+  created_at: string;
+  updated_at: string;
+  applied_at: string | null;
+}
+
 /** What a floor plan import did (or, on a dry run, would do). */
 export interface FloorplanImportResult {
   dry_run: boolean;
@@ -9875,6 +9977,8 @@ export interface PlatformFieldDef {
   field_role?: FieldRole | null;
   /** A person's new value is remembered as a choice (platform-contract field-choices). */
   learns?: boolean | null;
+  /** How it adds up in a group's summary (null: the default, sum). */
+  aggregate?: "sum" | "per_unit" | "none" | null;
   /** Kept out of shares and public pages unless they show private notes. */
   private?: boolean;
   name: string;
@@ -10028,6 +10132,9 @@ export interface PlatformBundleManifest {
     /** A text field with choices: is a value someone types remembered as a
      *  choice (lint:field-learns-declared requires the answer). */
     learns?: boolean;
+    /** A number or money field: how it adds up in a group's summary
+     *  (lint:bundle-number-fields-say-how-they-add-up requires the answer). */
+    aggregate?: "sum" | "per_unit" | "none";
   }[];
   /** Presentation overrides for a kind's native fields (relabel / hide). */
   field_overrides?: {
@@ -10378,7 +10485,7 @@ export interface LaserJobLayout { plan_id: string; sheet_id: string; quantity: n
 
 export interface MaterialDispatch { id: string; library_id: string; status: string; error: string | null; plan_ids: string[]; request: { quantity: number; material: string; thickness_mm: number } }
 export interface FabricationFloor {
- jobs: Array<{ id: string; connection_id: string | null; target_device: string | null; target_pool: string | null; file_ref: string; status: string; progress: number | null; eta_sec: number | null; blocked: string | null }>;
+ jobs: Array<{ id: string; connection_id: string | null; target_device: string | null; target_pool: string | null; file_ref: string; metadata?: Record<string, unknown>; status: string; progress: number | null; eta_sec: number | null; blocked: string | null }>;
  batches: MaterialDispatch[]; layouts: LaserPlanRecord[];
  reorders: Array<{ key: string; text: string; link: string }>;
  stock: Array<{ material: string; thickness_mm: number | null; sheets: number; offcuts: number; free_mm2: number; spools: number; grams: number }>;
@@ -10388,10 +10495,23 @@ export interface FabricationFloor {
  laser_devices: Array<{ connection_id: string; device_id: string }>;
 }
 
+export interface BenchReport {identity:string;profile:string;at:string;readings:{quantity:string;value:number;unit:string}[];screenshot?:{mime_type:"image/bmp";data_b64:string}}
+export interface BenchReading {id:string;machine_id:string;record_kind:string;record_id:string;report:BenchReport;screenshot_file_id:string|null}
+export interface BenchPage {items:BenchReading[];total:number;connection_error:string|null;instrument:{connection_id:string;device_id:string;name:string;profile:string;identity:string;output_off:boolean}|null}
 export interface CutterProfileRecord {id:string;profile:CutterProfile;connection_id:string;remote_device_id:string}
 export interface CutterRollView {id:string;name:string;kind:string;instance:string;remaining:number;revision:number;config:{width_mm:number;waste:number}}
 export interface CutterStationView {
  plan:{id:string;job_id:string;started_at:string|null;report:{verdict:"good"|"scrap";used_length_m:number}|null;plan:{program:CutterProgram;roll:CutterRollView;quantity:number;used_length_m:number;content_hash:string}}|null;
  job:DigifabJob|null;attention:{job_id:string|null;reason:string}|null;
  stock:{items:CutterRollView[];loaded:Array<{part_id:string;station:string;slot:string}>};station_key:string;
+}
+
+export interface LargeFormatHistory {
+ job_id:string;file_ref:string;status:string;created_at:string;consumed_at:string|null;
+ plan:{ink_stock:Array<{id:string;kind:string;name:string;slot:string}>;filename:string;width_mm:number;height_mm:number;pages:number;copies:number;margin_mm:number;media_type:string;used_length_m:number;roll:{id:string;name:string}};
+ report:{verdict:"good"|"scrap";used_length_m:number;ink:Array<{stock_id:string;amount_ml:number;estimated:boolean}>}|null;
+}
+export interface LargeFormatView {
+ station:string;plan:LargeFormatHistory|null;job:DigifabJob|null;
+ supplies:Array<{supply_id:string;low:boolean;updated_at:string;reading:{name:string;percent:number|null;remaining_ml:number|null}}>;
 }

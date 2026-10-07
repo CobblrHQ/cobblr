@@ -1,0 +1,10 @@
+{
+  "lint": "lint:no-loopback-to-self",
+  "run": "node scripts/lint-no-loopback-to-self.ts",
+  "rows": [
+    "kernel-platform-service"
+  ],
+  "ms": 7598,
+  "recorded": "2026-10-07",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

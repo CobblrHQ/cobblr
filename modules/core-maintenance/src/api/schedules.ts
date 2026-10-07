@@ -277,20 +277,26 @@ schedulesRouter.patch(
   }),
 );
 
-// AI-REACH: exempt removing a schedule is a person's call on the record; the assistant sets one, and its undo removes it
+/** Remove a schedule: its open occurrence goes with it, the history it rolled
+ *  stays. The one way, for the record's page and the assistant alike.
+ *  Returns the removed schedule's name, or null when there was none. */
+export async function removeSchedule(db: Kysely<CoreMaintenanceDB>, id: string): Promise<{ name: string } | null> {
+  const row = await db.deleteFrom("core_maintenance_schedules").where("id", "=", id).returning(["id", "name"]).executeTakeFirst();
+  if (!row) return null;
+  await db.deleteFrom("core_maintenance_entries").where("schedule_id", "=", id).where("performed_at", "is", null).execute();
+  return { name: row.name };
+}
+
+// AI-ACTION: core-maintenance:remove-schedule
 schedulesRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
-    const id = String(req.params.id ?? "");
-    const db = tenantDb(req);
-    const row = await db.deleteFrom("core_maintenance_schedules").where("id", "=", id).returning(["id"]).executeTakeFirst();
-    if (!row) {
+    const removed = await removeSchedule(tenantDb(req), String(req.params.id ?? ""));
+    if (!removed) {
       res.status(404).json({ error: { code: "not_found", message: "schedule not found" } });
       return;
     }
-    // Its open occurrence goes with it; the history it rolled stays.
-    await db.deleteFrom("core_maintenance_entries").where("schedule_id", "=", id).where("performed_at", "is", null).execute();
     res.status(204).end();
   }),
 );

@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-05
 docs_target: docs/USER_GUIDE.md#LightBurn job review
+docs_published: 2026-10-08
 ---
 Added a laser station that checks the loaded sheet, reviews prepared LightBurn files and approves Start beside the machine.
 

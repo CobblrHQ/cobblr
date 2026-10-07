@@ -27,7 +27,7 @@ import { FileSpreadsheet, Sparkles, ArrowRight, Loader2, Boxes, Wand2, Plus, Che
 import { api, type ScanInboxItem } from "../lib/api";
 import { useBundleCatalog, type CatalogBundle } from "../lib/useBundleCatalog";
 import { fuzzyMatch } from "../lib/fuzzy";
-import { BundleDetailModal } from "./BundleDetailModal";
+import { BundleDetailModal } from "./BundleDetailModalLazy";
 import { BundleSection, BundleTile, splitCatalog } from "./BundleBrowse";
 import { AiOffNotice, useAiStatus } from "./AiStatusNotice";
 import { FirstScanCard } from "./FirstScanCard";
@@ -40,6 +40,7 @@ import { itemEnriching } from "../pages/scan-status";
 import { useMaterializeCapture } from "../lib/useMaterializeCapture";
 import { openSheetImport } from "../lib/sheet-import";
 import { withArticle } from "@cobblr/platform-contract/plural";
+import { scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
 
 import { rowPictures, leadYours } from "../lib/rowPictures";
 
@@ -355,17 +356,20 @@ export function WhatToDoPanel({
   // File a captured item into a tracker — a matched existing instance, a matched
   // module's generic table, or (no body) the backend's generic default home.
   const confirmMut = useMutation({
-    mutationFn: (v: { id: string; body: { target_module?: string; target_kind?: string; instance?: string } }) =>
+    mutationFn: (v: { id: string; body: { target_module?: string; target_kind?: string; instance?: string }; label?: string }) =>
       api.confirmScanItem(slug, v.id, v.body),
     onSuccess: (r, v) => {
       void qc.invalidateQueries();
-      // ALWAYS say where it went — "Filed it." with no destination left users
-      // hunting (Inventory silently appeared in the navbar).
+      // ALWAYS say where it went, by the table's own name ("3D Printers", not
+      // the slug "Printers"): "Filed it." with no destination left users
+      // hunting (Inventory silently appeared in the navbar). And stay here: a
+      // row of the dashboard's captures is one of several to file, and Add all
+      // never left the page either. Open goes to the table.
       const dest = v.body.instance ?? r.item.target_module ?? v.body.target_module ?? "Inventory";
-      const destLabel = dest.charAt(0).toUpperCase() + dest.slice(1);
-      toast.success(`Saved to ${destLabel}. It's in your navbar.`);
-      if (v.body.instance) navigate(`/instances/${v.body.instance}`);
-      else if (v.body.target_module) navigate(`/${v.body.target_module}`);
+      const label = v.label ?? dest.charAt(0).toUpperCase() + dest.slice(1);
+      const to = v.body.instance ? `/instances/${v.body.instance}` : v.body.target_module ? `/${v.body.target_module}` : null;
+      if (to) toast.action(`Saved to ${label}.`, { actionLabel: "Open", onAction: () => navigate(to), duration: 6000 });
+      else toast.success(`Saved to ${label}.`);
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't file that"),
   });
@@ -387,7 +391,7 @@ export function WhatToDoPanel({
     const d = captures[0]?.resolved_destination;
     if (d?.bundle_external_id) materialize.start(d.bundle_external_id, captures.map(it => it.id));
     else if (captures.length > 1) batchMut.mutate(captures);
-    else if (captures[0]) confirmMut.mutate({ id: captures[0].id, body: captureTarget(captures[0]) });
+    else if (captures[0]) confirmMut.mutate({ id: captures[0].id, body: captureTarget(captures[0]), label: d?.label || undefined });
   };
   // Col 3 for a multi-instance kind: create a new CATEGORY (a named instance) and
   // drop the user in to add items — the kind → category → item model.
@@ -608,8 +612,14 @@ export function WhatToDoPanel({
     </Link>
   );
 
+  // A capture of something the workspace already has is never offered Add:
+  // Add creates a record, and a second MakerGear M2 is the mistake the
+  // inbox card prevents with "+1 more" (review of #4912). Those open their
+  // card instead; the groups, and Add all, hold only new things.
+  const known = typed.filter((it) => scanTrackedMatch(it as never));
+  const fresh = typed.filter((it) => !scanTrackedMatch(it as never));
   const groups = new Map<string, { label: string; captures: ScanInboxItem[]; rows: Map<string, ScanInboxItem[]> }>();
-  for (const it of typed) {
+  for (const it of fresh) {
     const d = it.resolved_destination;
     const key = JSON.stringify([d?.module, d?.kind, d?.instance, d?.bundle_external_id]);
     let group = groups.get(key);
@@ -888,6 +898,17 @@ export function WhatToDoPanel({
                   </section>;
                 })}
               </div>
+              {known.length > 0 && <section aria-label="Already in your workspace" data-testid="capture-known" className="min-w-0">
+                <h3 className="py-1 text-[10px] font-mono uppercase tracking-widest text-faint">Already in your workspace · {known.length}</h3>
+                <ul>{known.map((it) => <li key={it.id} className="flex min-w-0 items-center gap-2 rounded-lg bg-surface px-1 py-2 dark:bg-slate-900">
+                  <CaptureThumbnail slug={slug} item={it} name={captureName(it)} />
+                  <div className="min-w-0 flex-1 text-sm">
+                    <span className="line-clamp-1 font-medium text-content">{captureName(it)}</span>
+                    <span className="block truncate text-[11px] text-muted">You have {scanTrackedMatch(it as never)?.title}</span>
+                  </div>
+                  <Link to={`/scan?item=${it.id}`} aria-label={`Open ${captureName(it)} in the scan inbox`} className="shrink-0 rounded-md border border-line px-2 py-2 text-xs font-medium text-content hover:border-cobble-400 dark:border-slate-700 dark:text-mortar-100">Open</Link>
+                </li>)}</ul>
+              </section>}
             </div>
           )}
         </div>

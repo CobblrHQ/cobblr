@@ -20,7 +20,9 @@ import { dirname, join, relative } from "node:path";
 import { stripComments } from "./lib/source-scan.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const SOURCE = join(ROOT, "packages/platform-contract/src/index.ts");
+// The declaration lives in the vocabulary file (zod-free, so a browser page
+// can read it without the schemas); the index re-exports it.
+const SOURCE = join(ROOT, "packages/platform-contract/src/field-vocabulary.ts");
 const SCAN = ["api/src", "web/src", "modules", "packages"];
 const SKIP = /node_modules|dist|\.test\.|__tests__/;
 

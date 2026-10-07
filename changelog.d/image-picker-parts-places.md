@@ -3,6 +3,7 @@ type: feature
 scope: inventory
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#3.1 Inventory
+docs_published: 2026-10-08
 ---
 Parts and places now share the photo picker for pasted images, image links, web search and AI Pick.
 

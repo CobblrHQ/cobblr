@@ -18,7 +18,7 @@
 // "image sent, not stored" marker rather than the bare word "[image]".
 
 import { useMemo, useState, type ReactNode } from "react";
-import ReactMarkdown from "react-markdown";
+import { MarkdownText } from "@cobblr/platform-web";
 import { Braces, Image as ImageIcon, Text } from "lucide-react";
 import { Lightbox } from "@cobblr/platform-web";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
@@ -30,7 +30,7 @@ import { formatStoredMoney } from "@cobblr/platform-contract/money";
 export function Prose({ text }: { text: string }) {
   return (
     <div className="prose prose-sm dark:prose-invert max-w-none text-content dark:text-mortar-200 prose-p:my-1.5 prose-headings:my-2 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5 prose-pre:my-2 prose-pre:text-[11px] break-words">
-      <ReactMarkdown>{text}</ReactMarkdown>
+      <MarkdownText>{text}</MarkdownText>
     </div>
   );
 }

@@ -15,6 +15,9 @@ import { readFileSync } from "node:fs";
 import { globSync } from "node:fs";
 
 const CONTRACT = "packages/platform-contract/src/index.ts";
+// The values are declared in the vocabulary file; the schema over them in the
+// index (zod stays out of what a browser page loads).
+const VOCAB = "packages/platform-contract/src/field-vocabulary.ts";
 
 // A zod enum literal that lists the field-role values by hand. Matches
 // z.enum(["category", "pack"]) / z.enum(["category","pack","identifier"]) etc.,
@@ -26,7 +29,7 @@ const files = [
   ...globSync("web/src/**/*.{ts,tsx}"),
   ...globSync("modules/*/src/**/*.{ts,tsx}"),
   ...globSync("packages/*/src/**/*.ts"),
-].filter((f) => f !== CONTRACT);
+].filter((f) => f !== CONTRACT && f !== VOCAB);
 
 const offenders: Array<{ file: string; line: number; text: string }> = [];
 for (const file of files) {
@@ -53,8 +56,8 @@ if (offenders.length > 0) {
 // The canonical definition must actually exist and carry the shared const, so a
 // future rename can't leave this lint guarding nothing.
 const contract = readFileSync(CONTRACT, "utf8");
-if (!/export const FIELD_ROLE_VALUES = \[/.test(contract) || !/export const FieldRoleSchema = z\.enum\(FIELD_ROLE_VALUES\)/.test(contract)) {
-  console.error(`field-role-enum lint: FIELD_ROLE_VALUES / FieldRoleSchema not found in ${CONTRACT}.`);
+if (!/export const FIELD_ROLE_VALUES = \[/.test(readFileSync(VOCAB, "utf8")) || !/export const FieldRoleSchema = z\.enum\(FIELD_ROLE_VALUES\)/.test(contract)) {
+  console.error(`field-role-enum lint: FIELD_ROLE_VALUES (${VOCAB}) / FieldRoleSchema (${CONTRACT}) not found.`);
   console.error(`  If they were renamed, update this lint (and every importer) rather than deleting it.`);
   process.exit(1);
 }

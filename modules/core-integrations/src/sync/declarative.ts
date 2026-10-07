@@ -13,6 +13,7 @@ import type {
   SyncWebhookHit,
 } from "@cobblr/platform-contract";
 import type { FieldSpec, SyncEntityTypeManifest, SyncSourceManifest } from "./manifest.js";
+import { mapLimit } from "./map-limit.js";
 
 /** Resolve a "$.a.b" dot-path against a record; "='lit'" returns the literal.
  *  A `$.path|last` suffix takes the final segment of a URL/IRI value, so a
@@ -78,22 +79,6 @@ function flattenTree(nodes: unknown[], childrenKey: string, idField: string, par
       out.push(...flattenTree(kids, childrenKey, idField, myId != null ? String(myId) : null));
     }
   }
-  return out;
-}
-
-/** Bounded-concurrency map (hydrate fires N+1 detail fetches). */
-async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, async () => {
-      for (;;) {
-        const i = next++;
-        if (i >= items.length) return;
-        out[i] = await fn(items[i]!);
-      }
-    }),
-  );
   return out;
 }
 

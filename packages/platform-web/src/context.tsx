@@ -3,7 +3,7 @@
 // so shared components like <EntityActionsBar> can resolve their
 // dependencies.
 
-import { createContext, useCallback, useContext, useState, type ComponentType, type ReactNode } from "react";
+import { createContext, Suspense, useCallback, useContext, useState, type ComponentType, type ReactNode } from "react";
 import type { PlatformWebApi } from "./types";
 import { EntityPhoto } from "./EntityPhoto";
 
@@ -110,7 +110,14 @@ export function PlatformWebProvider({
     <Ctx.Provider value={{ api, orgSlug, role, appMode, cobbIcon, recordPhoto, decodeBarcodeImage }}>
       <FlowCtx.Provider value={{ openFlow }}>
         {children}
-        {active && Active && <Active args={active.args} onClose={() => setActive(null)} />}
+        {/* A flow may be a lazy component (the shell loads a flow's code when it
+            is opened, not with every page): its own boundary, so the page
+            behind it never falls back. */}
+        {active && Active && (
+          <Suspense fallback={null}>
+            <Active args={active.args} onClose={() => setActive(null)} />
+          </Suspense>
+        )}
       </FlowCtx.Provider>
     </Ctx.Provider>
   );

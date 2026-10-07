@@ -140,19 +140,4 @@ async function recordAndReturn(
   return { printed: true, deviceName, recordError };
 }
 
-/** Pull a directive out of an action result, if there is one. Shape-checked
- *  rather than trusted: an action can return anything. */
-export function printDirectiveOf(result: unknown): PrintDirective | null {
-  const ui = (result as { ui?: { print?: unknown } } | undefined)?.ui?.print;
-  if (!ui || typeof ui !== "object") return null;
-  const d = ui as Partial<PrintDirective>;
-  if (!d.content || typeof d.content !== "object") return null;
-  const c = d.content as Partial<LabelContent>;
-  if (typeof c.qrPayload !== "string" || c.qrPayload === "") return null;
-  const rec = d.record;
-  const record =
-    rec && typeof rec.path === "string" && Array.isArray(rec.ids)
-      ? { path: rec.path, ids: rec.ids.filter((i): i is string => typeof i === "string") }
-      : undefined;
-  return { content: { qrPayload: c.qrPayload, caption: c.caption }, record };
-}
+export { printDirectiveOf } from "./print-directive-of";

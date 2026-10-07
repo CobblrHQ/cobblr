@@ -10,7 +10,7 @@
 
 import { MAIN_ID, RouteAnnouncer, SkipToContent } from "./a11y/shell-landmarks";
 import { JustFiledNotice } from "./JustFiledNotice";
-import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { Moon, PanelLeft, PanelTop, Pin, PinOff, Sliders, Sun } from "lucide-react";
 import { ModuleOffGate } from "./ModuleOffGate";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
@@ -31,20 +31,25 @@ import { UserMenu } from "./UserMenu";
 import { MobileNav } from "./MobileNav";
 import { EmailVerifyBanner } from "./EmailVerifyBanner";
 import { SimpleModeNotice } from "./SimpleModeNotice";
-import { ChatLauncher, ChatPanel } from "./ChatWidget";
+import { ChatLauncher } from "./ChatLauncher";
+// Loaded with the shell so an Ask Cobb pressed before the panel arrives is kept.
+import "../lib/open-chat-buffer";
+// The conversation panels load after the page has drawn, not with it (#4945).
+// Each stays mounted once loaded, so a conversation survives close and reopen.
+const ChatPanel = lazy(() => import("./ChatWidget").then((m) => ({ default: m.ChatPanel })));
+const DiscussionTab = lazy(() => import("./DiscussionTab").then((m) => ({ default: m.DiscussionTab })));
 import { SideRail, useRailActiveTab } from "./SideRail";
-import { DiscussionTab } from "./DiscussionTab";
 import { PinnedTab } from "./PinnedTab";
 import { FeedbackWidget } from "./FeedbackWidget";
 import { GlobalScanWedge } from "./GlobalScanWedge";
 import { PhotoCaptureHost } from "./PhotoCaptureHost";
 import { SearchBar } from "./SearchBar";
 import { CommandPalette } from "./CommandPalette";
-import { SheetImportHost } from "./SheetImportSheet";
+import { SheetImportHost } from "./SheetImportHost";
 import { NewVersionNudge } from "./NewVersionNudge";
 import { QuickAccess } from "./QuickAccess";
 import { ErrorBoundary } from "./ErrorBoundary";
-import { LabelsBasket } from "@cobblr/labels/ui";
+import { LabelsBasket } from "./LabelsBasketLazy";
 import { useNavHasRow } from "./useNavModules";
 import { SearchButton } from "./FootSearch";
 import { api, getToken, isFocused } from "../lib/api";
@@ -57,7 +62,8 @@ import { adminHtmlVars, fontFaceCss } from "../lib/appTheme";
 import { useDeployEnv, DEFAULT_HEADER } from "../lib/deploy-env";
 import { useNavMode, useNavAutoHide, useNavTopBar, setNavMode, setNavAutoHide, setNavTopBar } from "../lib/nav-mode";
 import { SIDEBAR_FOOT_ORDER, type SidebarFootSlot } from "./sidebar-foot";
-import { GuidedTour } from "../tour/GuidedTour";
+// The tour runs once in a while; its code loads when it starts.
+const GuidedTour = lazy(() => import("../tour/GuidedTour").then((m) => ({ default: m.GuidedTour })));
 import { useTour } from "../tour/useTour";
 import { DASHBOARD_TOUR } from "../tour/tour.config";
 import { useTheme } from "../theme/ThemeContext";
@@ -78,6 +84,25 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
   // `/w/<handle>` basename is already gone and the same page in two workspaces
   // is one place. See lib/panel-memory.
   const [chatOpen, setChatOpen] = useState(() => restoresOn(readOpenOn(), location.pathname));
+  // The side panel's tabs (Cobb, Discussion) load once the page has settled,
+  // or at once when the panel is opened, so their code never competes with
+  // the page's own first load (#4945). Once loaded they stay mounted, which is
+  // what keeps a conversation alive across close and reopen.
+  const [panelsWanted, setPanelsWanted] = useState(chatOpen);
+  if (chatOpen && !panelsWanted) setPanelsWanted(true);
+  useEffect(() => {
+    if (panelsWanted) return;
+    const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void };
+    let idle: number | null = null;
+    const t = window.setTimeout(() => {
+      if (w.requestIdleCallback) idle = w.requestIdleCallback(() => setPanelsWanted(true), { timeout: 5000 });
+      else setPanelsWanted(true);
+    }, 2500);
+    return () => {
+      clearTimeout(t);
+      if (idle !== null) w.cancelIdleCallback?.(idle);
+    };
+  }, [panelsWanted]);
   // Read ONCE, at mount: this is the tab from before the refresh. Re-reading it
   // later would fight the person's own clicks, since the same key is what those
   // clicks write.
@@ -505,7 +530,11 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
         while scrolled; everywhere else the band must yield once content can
         pass beneath it. */}
     <DesktopDragStrip pinned={navMode === "side" && !navAutoHide} topBar={!fullSide} />
-    {tour.open && <GuidedTour steps={DASHBOARD_TOUR} onClose={tour.close} />}
+    {tour.open && (
+      <Suspense fallback={null}>
+        <GuidedTour steps={DASHBOARD_TOUR} onClose={tour.close} />
+      </Suspense>
+    )}
     <div className="min-h-screen grid grid-rows-[auto_1fr] grid-cols-1">
       {fontFace && <style dangerouslySetInnerHTML={{ __html: fontFace }} />}
       {/* Header + the email-verify nudge share the grid's auto row, so the
@@ -716,8 +745,16 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           Exactly one mount per tab: a second is a second conversation stacked
           over the first (ChatWidget.test.ts pins this). */}
       <SideRail open={chatOpen} setOpen={setChatOpen} initialTab={restoreTab}>
-        <ChatPanel open={chatOpen} setOpen={setChatOpen} />
-        <DiscussionTab />
+        {panelsWanted && (
+          <Suspense fallback={null}>
+            <ChatPanel open={chatOpen} setOpen={setChatOpen} />
+          </Suspense>
+        )}
+        {panelsWanted && (
+          <Suspense fallback={null}>
+            <DiscussionTab />
+          </Suspense>
+        )}
         <PinnedTab />
       </SideRail>
 

@@ -1,4 +1,5 @@
-import type { SaidChange } from "./api";
+import { dedupeActivity } from "@cobblr/platform-contract/activity-summary";
+import type { ActivityEntry, SaidChange } from "./api";
 // What a Recent-activity row says, in words a first-timer can read.
 //
 // The first screen a stranger met read "Automation ran an automation
@@ -185,6 +186,7 @@ export function activityVerb(a: string): string {
     record_scrapped: "disposed of",
     record_brought_back: "got back",
     // A thing handed over through a share, filed: the friend gave it (#4683).
+    record_sent: "sent from another workspace",
     record_handed_over: "gave you",
     sheet_import_undone: "undid the import of",
     sheet_import_partly_undone: "partly undid the import of",
@@ -253,7 +255,7 @@ const ONE_ACT_MS = 2 * 60_000;
  *  person about the same record within two minutes fold into one: the create,
  *  said as "scanned in" when a scan made it. The full activity log keeps
  *  every row; this is only what the dashboard shows. */
-export function foldOneThingsRows<T extends { action: string; entity_id: string; entity_type: string; diff: unknown; occurred_at: string; user_id: string | null }>(items: T[]): T[] {
+export function foldOneThingsRows<T extends { action: string; entity_id: string; entity_type: string; diff: unknown; occurred_at: string; user_id: string | null; summary?: string; template?: string }>(items: T[]): T[] {
   const out: T[] = [];
   let run: T[] = [];
   const flush = () => {
@@ -264,7 +266,10 @@ export function foldOneThingsRows<T extends { action: string; entity_id: string;
       const scanned = run.some((e) => e.action === "scan_committed");
       const made = run.find((e) => e.action === "created" || e.action.endsWith("_created"));
       const rep = made ?? run.find((e) => e.action !== "scan_committed") ?? run[0]!;
-      out.push(scanned && made ? { ...rep, action: "added_from_scan" } : rep);
+      // The row opens the record the scan made, in the scan's own words
+      // ("Sam scanned in Oat milk"), not the create's ("Sam created Oat milk").
+      const scan = run.find((e) => e.action === "scan_committed");
+      out.push(scanned && made ? { ...rep, action: "added_from_scan", template: "added_from_scan", summary: scan?.summary ?? rep.summary } : rep);
     }
     run = [];
   };
@@ -280,4 +285,17 @@ export function foldOneThingsRows<T extends { action: string; entity_id: string;
   }
   flush();
   return out;
+}
+
+/** Rows that are plumbing, not things a member did: a module switched on, the
+ *  workspace itself, a sign-in. The full /activity log keeps them. */
+const DASHBOARD_NOISE = new Set(["org_module", "org", "user", "tenant"]);
+
+/** What the dashboard's recent activity shows, in order: no plumbing or
+ *  wordless rows (#3299), one row per act (a scan's three rows are one,
+ *  #4147), and a repeat said once with its count. One function, so a rewrite
+ *  of the card cannot drop a step and leave its test green on a helper. */
+export function recentActivityRows(items: readonly ActivityEntry[]): ActivityEntry[] {
+  const shown = items.filter((e) => !DASHBOARD_NOISE.has(e.entity_type ?? "") && !e.hidden && !hiddenFromDashboard(e));
+  return dedupeActivity(foldOneThingsRows(shown));
 }

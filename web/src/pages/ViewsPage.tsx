@@ -1,3 +1,4 @@
+import { totalLabel } from "@cobblr/platform-contract/field-aggregate";
 import { normalizeGrouping, type GroupBy } from "@cobblr/platform-contract/grouped-list";
 import { centsFromAmount, formatMoney, formatStoredMoney, fieldCurrency, type MoneyStorage } from "@cobblr/platform-contract/money";
 // /views — list every saved view, open one to render its data
@@ -9,7 +10,8 @@ import { centsFromAmount, formatMoney, formatStoredMoney, fieldCurrency, type Mo
 
 import { useState, useMemo, useEffect, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { useKindLabels } from "../lib/useKindLabels";
-import { dayHere, daysUntilField, expiryPhrase, expiryState } from "@cobblr/platform-contract";
+import { dayHere, daysUntilField } from "@cobblr/platform-contract/day";
+import { expiryPhrase, expiryState } from "@cobblr/platform-contract/expiry-grace";
 import { tallyCadence, CADENCE_PRESETS } from "../lib/cadence";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useDetailRoute, useListRoute } from "../lib/useDetailRoute";
@@ -325,8 +327,8 @@ export function SavedViewBody({
           words a person uses (2026-09-12). */}
       <div className="text-xs text-muted dark:text-slate-400 flex flex-wrap items-center gap-2">
         <span>{labels.collection(view.entity_kind)}</span>
-        <span className="px-1.5 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300 text-[10px]">
-          {labels.viewType(view.view_type)}
+        <span className="px-1.5 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300 text-[10px]" data-testid="view-kind-word">
+          <ViewKindWord slug={activeSlug} view={view} fallback={labels.viewType(view.view_type)} />
         </span>
         <span data-testid="view-count">
           {total === null ? `${items.length}+` : total} {(total ?? items.length) === 1 ? noun : plural}
@@ -371,6 +373,7 @@ export function SavedViewBody({
       )}
       {view.view_type === "table" && selected.size > 0 && (
         <BulkActionBar
+        records={{ kind: view.entity_kind, ids: Array.from(selected) }}
           count={selected.size}
           onClear={() => setSelected(new Set())}
           onAskCobb={askCobb ?? undefined}
@@ -457,14 +460,38 @@ function TableGrouping({ fields, value, onChange }: { fields: import("../compone
   </div>;
 }
 
-function GroupTotals({ totals, fields }: { totals: NonNullable<ViewData["totals"]>; fields: import("../components/ViewBuilder").KindField[] }) {
-  return <span className="flex flex-wrap gap-x-3 gap-y-1 text-xs font-normal text-muted">
-    {Object.entries(totals).map(([name, amounts]) => <span key={name}>{fields.find((f) => f.name === name)?.label ?? humanize(name)}: {amounts.map((a) => a.currency ? formatMoney(centsFromAmount(a.value), { currency: a.currency }) : a.value.toLocaleString()).join(" · ")}</span>)}
+// A group's summary totals the columns the view shows, and only what adds up
+// (#5079): the server leaves out a field that does not, and a per-unit column
+// (length per ball, price each) comes back as value x quantity, named as the
+// total it is. Columns the view does not show (a stash's Spare and Installed
+// counts) are not summarised.
+// The word beside a view's count. A grouped table says what it is grouped by,
+// not "Table": beside a "By weight" tab, "Table" read as the other tab (#5079).
+function ViewKindWord({ slug, view, fallback }: { slug: string; view: SavedView; fallback: string }) {
+  const by = normalizeGrouping(view.config?.group_by);
+  return by.length ? <GroupedByWord slug={slug} kind={view.entity_kind} fields={by.map((g) => g.field)} /> : <>{fallback}</>;
+}
+
+function GroupedByWord({ slug, kind, fields: by }: { slug: string; kind: string; fields: string[] }) {
+  const fields = useKindFields(slug, kind);
+  return <>Grouped by {by.map((name) => fields.find((f) => f.name === name)?.label ?? humanize(name)).join(", then ")}</>;
+}
+
+function GroupTotals({ totals, fields, columns, weightedBy }: { totals: NonNullable<ViewData["totals"]>; fields: import("../components/ViewBuilder").KindField[]; columns: string[]; weightedBy?: ViewData["weightedBy"] }) {
+  const label = (name: string) => {
+    const own = fields.find((f) => f.name === name)?.label ?? humanize(name);
+    return weightedBy?.[name] ? totalLabel(own) : own;
+  };
+  return <span className="flex flex-wrap gap-x-3 gap-y-1 text-xs font-normal text-muted" data-testid="group-totals">
+    {Object.entries(totals).filter(([name]) => columns.includes(name)).map(([name, amounts]) => <span key={name}>{label(name)}: {amounts.map((a) => a.currency ? formatMoney(centsFromAmount(a.value), { currency: a.currency }) : a.value.toLocaleString()).join(" · ")}</span>)}
   </span>;
 }
 
 function GroupedTableRenderer({ view, data, slug, selection }: { view: SavedView; data: ViewData; slug: string; selection: { selected: Set<string>; toggle: (id: string) => void } }) {
   const fields = useKindFields(slug, view.entity_kind);
+  // A phone's row steps its count the way the desktop table does, so "2 balls"
+  // reads the same at both widths (#5079).
+  const stock = useRowStock();
   const by = normalizeGrouping(view.config?.group_by);
   const columns = (view.config?.visible_fields as string[] | undefined) ?? ["title", "subtitle"];
   const groups = data.groups ?? [];
@@ -486,7 +513,7 @@ function GroupedTableRenderer({ view, data, slug, selection }: { view: SavedView
     return <details key={key} open className="min-w-0 rounded border border-line dark:border-slate-700" data-testid="table-group">
       <summary className="cursor-pointer rounded bg-subtle px-3 py-2">
         <span className="font-medium">{title(g)}</span> <span className="text-xs text-muted">· {g.count}</span>
-        <GroupTotals totals={g.totals} fields={fields} />
+        <GroupTotals totals={g.totals} fields={fields} columns={columns} weightedBy={data.weightedBy} />
       </summary>
       <div className="min-w-0 space-y-2 p-2">
         {!leaf && children.map(render)}
@@ -495,7 +522,7 @@ function GroupedTableRenderer({ view, data, slug, selection }: { view: SavedView
           <div className="divide-y divide-line sm:hidden">{rows.map((r) => <div key={r.id} className="min-w-0 py-2">
             <div className="flex items-start gap-2"><input type="checkbox" className="mt-1" checked={selection.selected.has(r.id)} onChange={() => selection.toggle(r.id)} aria-label={`Select ${r.title}`} /><RecordLink row={r} className="min-w-0 break-words font-medium">{r.title}</RecordLink></div>
             {columns.includes("subtitle") && r.subtitle && <p className="ml-6 break-words text-xs text-muted">{r.subtitle}</p>}
-            <dl className="ml-6 space-y-1 text-xs">{columns.filter((c) => c !== "title" && c !== "subtitle").map((c) => <div key={c} className="flex min-w-0 flex-wrap gap-x-2"><dt className="text-muted">{fields.find((f) => f.name === c)?.label ?? humanize(c)}</dt><dd className="min-w-0 break-words">{formatCell(c, r, fields.find((f) => f.name === c)?.money)}</dd></div>)}</dl>
+            <dl className="ml-6 space-y-1 text-xs">{columns.filter((c) => c !== "title" && c !== "subtitle").map((c) => <div key={c} className="flex min-w-0 flex-wrap gap-x-2"><dt className="text-muted">{fields.find((f) => f.name === c)?.label ?? humanize(c)}</dt><dd className="min-w-0 break-words">{c === "qty" && stock.on ? stock.stepper(r) ?? formatCell(c, r, fields.find((f) => f.name === c)?.money) : formatCell(c, r, fields.find((f) => f.name === c)?.money)}</dd></div>)}</dl>
           </div>)}</div>
           {g.item_ids.length < g.count && <button className="rounded border border-line px-3 py-1 text-sm" disabled={!!data.loadingGroup} onClick={() => data.loadGroup?.(g.keys, g.item_ids.length)}>{data.loadingGroup === key ? "Loading…" : `Show more (${g.item_ids.length} of ${g.count})`}</button>}
         </>}
@@ -504,7 +531,7 @@ function GroupedTableRenderer({ view, data, slug, selection }: { view: SavedView
   };
   return <div className="min-w-0 space-y-2">
     {groups.filter((g) => g.keys.length === 1).map(render)}
-    <div className="rounded border border-line p-3" data-testid="table-grand-total"><strong className="text-sm">Grand total · {data.total}</strong><GroupTotals totals={data.totals ?? {}} fields={fields} /></div>
+    <div className="rounded border border-line p-3" data-testid="table-grand-total"><strong className="text-sm">Grand total · {data.total}</strong><GroupTotals totals={data.totals ?? {}} fields={fields} columns={columns} weightedBy={data.weightedBy} /></div>
   </div>;
 }
 

@@ -18,7 +18,7 @@ const PartId = z.string().uuid();
 const Revision = z.number().int().nonnegative();
 const Rect = z.object({ x: z.number().finite().nonnegative(), y: z.number().finite().nonnegative(), width: z.number().finite().positive(), height: z.number().finite().positive() });
 export const ConfigureStock = z.object({ config: StockConfig, revision: Revision, remaining: z.number().finite().nonnegative().max(999999999).optional(), used: z.number().finite().nonnegative().max(999999999).optional(), sheet: z.object({ material: z.string().trim().min(1).max(120), thickness_mm: z.number().finite().positive().max(100000), width_mm: z.number().finite().positive().max(100000), height_mm: z.number().finite().positive().max(100000) }).optional() });
-export const ConsumeStock = z.object({ revision: Revision, source: z.string().trim().min(1).max(160), verdict: z.enum(["good", "scrap"]), amount: z.number().finite().positive().max(999999999).optional(), unit: z.string().min(1).max(20).optional(), waste: z.number().finite().nonnegative().max(999999999).optional(), rectangles: z.array(Rect).min(1).max(128).optional(), kerf_mm: z.number().finite().nonnegative().max(1000).default(0), spacing_mm: z.number().finite().nonnegative().max(1000).default(0) });
+export const ConsumeStock = z.object({ revision: Revision.optional(), source: z.string().trim().min(1).max(160), verdict: z.enum(["good", "scrap"]), amount: z.number().finite().positive().max(999999999).optional(), unit: z.string().min(1).max(20).optional(), waste: z.number().finite().nonnegative().max(999999999).optional(), rectangles: z.array(Rect).min(1).max(128).optional(), kerf_mm: z.number().finite().nonnegative().max(1000).default(0), spacing_mm: z.number().finite().nonnegative().max(1000).default(0) });
 export const LoadStock = z.object({ station: z.string().trim().min(1).max(160), slot: z.string().trim().min(1).max(80).default("stock"), loaded: z.boolean().default(true) });
 
 export function stockView(row: Part, saved?: Saved, area?: { state: import("../sheet-area.js").SheetState; revision: number }) {
@@ -192,7 +192,11 @@ export function registerShapedStockActions() {
       const before = (await stockViews(trx, [row])).get(id)!;
       const duplicate = await trx.selectFrom("inventory_stock_uses").selectAll().where("part_id", "=", id).where("source", "=", p.source).executeTakeFirst();
       if (duplicate) return { before, view: before, duplicate: true };
-      if (p.revision !== before.revision) throw new ActionRefusal("This stock changed. Reload it before recording use.");
+      // A use is an amount off what the locked row holds now, so a reading
+      // another job moved since is no reason to refuse it: two jobs that read
+      // the roll before either finished both record their use. A sheet is
+      // different: its cut was placed against one used-area state.
+      if (p.revision !== undefined && before.config.shape === "sheet" && p.revision !== before.revision) throw new ActionRefusal("This sheet changed. Reload it before recording a cut.");
       let amount: number;
       if (before.config.shape === "sheet") {
         if (before.remaining <= 0) throw new ActionRefusal("This sheet has nothing usable left.");

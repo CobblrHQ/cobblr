@@ -17,7 +17,7 @@ import { useToast } from "@cobblr/platform-web";
 import { api } from "./api";
 import { useBundleCatalog, type CatalogBundle } from "./useBundleCatalog";
 import { materializeLanding, type MaterializeResult } from "./materializeLanding";
-import { BundleDetailModal } from "../components/BundleDetailModal";
+import { BundleDetailModal } from "../components/BundleDetailModalLazy";
 
 export function useMaterializeCapture(slug: string): {
   /** Press for a bundle id: opens the picker or runs the one-shot. `itemIds`

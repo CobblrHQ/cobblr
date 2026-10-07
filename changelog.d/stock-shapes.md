@@ -3,6 +3,7 @@ type: feature
 scope: inventory
 date: 2026-10-05
 docs_target: docs/USER_GUIDE.md#3.1 Inventory
+docs_published: 2026-10-08
 ---
 Added stock shapes for sheets, rolls, spools, liquids, wearing tools and counted supplies, with job use, replacement reminders and QR loading at a browser station.
 

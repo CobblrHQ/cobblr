@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { ChevronRight, type LucideIcon } from "lucide-react";
 import type { ModuleInstance } from "../lib/api";
-import { pluralise } from "@cobblr/platform-contract";
+import { pluralise } from "@cobblr/platform-contract/plural";
 
 /** An honest aggregate destination for an instanceability:multi module whose
  *  base list is empty. Instead of the tile diving into ONE instance (dropping

@@ -29,6 +29,7 @@ import { MCP_PATH, originOf, protectedResourceMetadataUrl } from "../auth/oauth.
 import { mcpProxyHeaders } from "../auth/mcp-proxy.js";
 import { actionRefusal } from "./ai-action-door.js";
 
+// loopback-ok: #5153 moves this onto selfFetch
 const SELF_BASE = `http://127.0.0.1:${process.env.API_PORT || "4000"}/api/v1`;
 const SERVER_INFO = { name: "cobblr", version: "0.1.0" };
 

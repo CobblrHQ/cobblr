@@ -18,7 +18,6 @@ import {
   fileToBase64,
   isFinished,
   looksLikeSheetsLink,
-  OPEN_SHEET_IMPORT_EVENT,
   ownershipLine,
   showFigure,
   showValue,
@@ -39,21 +38,6 @@ import {
 import { DISPOSITION_LABELS } from "@cobblr/platform-contract/disposition";
 
 const SHOWN_ROWS = 12;
-
-/** Mounted once in the shell: every door opens this one sheet. */
-export function SheetImportHost() {
-  const [open, setOpen] = useState(false);
-  const [runId, setRunId] = useState<string | null>(null);
-  useEffect(() => {
-    const on = (e: Event) => {
-      setRunId((e as CustomEvent<{ runId?: string }>).detail?.runId ?? null);
-      setOpen(true);
-    };
-    window.addEventListener(OPEN_SHEET_IMPORT_EVENT, on);
-    return () => window.removeEventListener(OPEN_SHEET_IMPORT_EVENT, on);
-  }, []);
-  return <SheetImportSheet open={open} runId={runId} onClose={() => setOpen(false)} />;
-}
 
 export function SheetImportSheet({ open, onClose, runId }: { open: boolean; onClose: () => void; runId?: string | null }) {
   const { activeSlug: slug } = useActiveOrg();

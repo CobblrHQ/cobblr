@@ -62,6 +62,14 @@ export interface PlacementRow {
 
 export const PLACEMENT: PlacementRow[] = [
   {
+    id: "workshop-job", what: "a machine-independent workshop job with stock and station checks",
+    keywords: ["embroidery", "hoop", "thread spool", "workshop", "machine independent", "job format", "station"],
+    dir: "modules/digifab/src/", exemplar: "modules/digifab/src/cutter-plans.ts",
+    why: "Workshop plans own immutable output and station review while Inventory owns consumption and Maintenance owns service schedules.",
+    lints: ["lint:ai-reach", "lint:ui-reach", "lint:isolation", "lint:migration-additive"],
+    notes: ["Sewing machines are Assets; author Sewing bundle tables in web/src/lib/featured-bundles.ts and reuse Projects for pattern PDFs."],
+  },
+  {
     id: "renewal-history",
     what: "renewal terms with dates, costs and documents",
     keywords: ["maintenance", "renewal", "renewal terms", "term history", "registration"],

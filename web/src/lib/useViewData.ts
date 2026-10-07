@@ -15,6 +15,8 @@ export interface ViewData {
   items: ViewDataResponse["items"];
   groups?: ViewDataResponse["groups"];
   totals?: ViewDataResponse["totals"];
+  /** Totals that are value x quantity (a per-unit column). */
+  weightedBy?: ViewDataResponse["weighted_by"];
   loadGroup?: (keys: Array<string | null>, offset: number) => void;
   loadingGroup?: string;
   /** The collection's count. Null only when it could not say. */
@@ -87,6 +89,7 @@ export function useViewData(
     items,
     groups: first?.groups ? [...groupMap.values()] : undefined,
     totals: first?.totals,
+    weightedBy: first?.weighted_by,
     loadingGroup,
     loadGroup: first?.groups ? async (keys, offset) => {
       if (loadingGroup) return;

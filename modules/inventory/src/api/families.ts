@@ -7,8 +7,8 @@
 //
 // The page reads the pair through GET /family on the TYPE collection, adds a
 // thing under a type (or a new type) through POST /family/children, and a
-// heal (heal-families.ts) repairs the two shapes a scan used to leave: a type
-// row that is really one physical thing, and a thing with no type.
+// heal on every read repairs the two shapes a scan used to leave: a type row
+// that is really one physical thing, and a thing with no type.
 // See docs/design-decisions/holdings-and-units.md ("One page for a type and
 // its things").
 
@@ -20,6 +20,7 @@ import { z } from "zod";
 import { sql, type Kysely } from "kysely";
 import { columnSet, placeNames, platform } from "@cobblr/platform-contract";
 import { coerceMetadata } from "@cobblr/platform-contract/entity-metadata";
+import { TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 import { instanceOf, sessionUser, tenantContext, tenantDb, type InventoryDB } from "../db.js";
 import { isLowStock } from "../on-hand.js";
 import { canonicalColour, coloursFromName, filamentFieldsFromName, formatColour, parseColour } from "@cobblr/platform-contract/colour";
@@ -159,7 +160,7 @@ export async function addType(db: Kysely<InventoryDB>, orgId: string, fam: Famil
   return row as unknown as Row;
 }
 
-// ── heal: the shapes a scan used to leave (heal-families.ts says which) ──
+// ── heal: the shapes a scan used to leave, repaired on every read ──
 
 /** One heal never makes more than this many things from one type row. */
 const MOST_FROM_ONE_ROW = 50;
@@ -350,6 +351,23 @@ async function familyFor(req: Request): Promise<Family | null> {
 
 export const familiesRouter = Router({ mergeParams: true });
 
+/** The most one read of a family carries, of each half. Past it the answer
+ *  still says how many there are and that it stopped short. */
+export const FAMILY_TYPES_MAX = 1000;
+export const FAMILY_THINGS_MAX = 5000;
+
+/** The family's counts are its totals, never what one read carried: the
+ *  header and the dashboard tile say how many there are, and `complete` says
+ *  whether the page shows them all. */
+export function familyCounts(o: { types: number; typesTotal: number; things: number; thingsTotal: number; low: number }) {
+  return {
+    counts: { types: Math.max(o.typesTotal, o.types), children: Math.max(o.thingsTotal, o.things), low: o.low },
+    shown: { types: o.types, children: o.things },
+    complete: o.types >= o.typesTotal && o.things >= o.thingsTotal,
+  };
+}
+const totalOf = (rows: ReadonlyArray<Record<string, unknown>>) => Number(rows[0]?.[TOTAL_COLUMN] ?? 0);
+
 // The whole family on the TYPE collection's page: every type with its things
 // under it, the things no type claims (shown, never hidden), and the counts
 // the header and the dashboard say.
@@ -367,9 +385,12 @@ familiesRouter.get(
     // the same reads it is about to make): a workspace sees one shape the
     // moment it looks, not after the next boot pass.
     await healFamily(orgId, db, fam).catch((err) => console.error(`[inventory] family heal on read failed: ${(err as Error).message}`));
-    // list-cap-ok: not paged yet, #4134
-    const types = await db.selectFrom("inventory_parts").selectAll().where("instance", "=", fam.parent as never).where("archived", "=", false).orderBy("name").limit(1000).execute();
-    const things = await db.selectFrom("inventory_parts").select([...THING_COLUMNS]).where("instance", "=", fam.child as never).where("archived", "=", false).orderBy("created_at").limit(5000).execute();
+    // One read of the whole family, so a thing is never shown as untyped
+    // because its type fell on another page. Each half counts its total in
+    // the same query, and the answer says when it stopped short.
+    // list-cap-ok: the whole family in one read; past the ceiling the counts are still the totals and complete is false
+    const types = await db.selectFrom("inventory_parts").selectAll().select(sql<string>`count(*) over()`.as(TOTAL_COLUMN)).where("instance", "=", fam.parent as never).where("archived", "=", false).orderBy("name").orderBy("id").limit(FAMILY_TYPES_MAX).execute();
+    const things = await db.selectFrom("inventory_parts").select([...THING_COLUMNS]).select(sql<string>`count(*) over()`.as(TOTAL_COLUMN)).where("instance", "=", fam.child as never).where("archived", "=", false).orderBy("created_at").orderBy("id").limit(FAMILY_THINGS_MAX).execute();
     const byType = await childrenOf(orgId, fam, types.map((t) => t.id));
     const places = await placeNames(orgId, PART, things);
     const sumById = await materialTotals(db, things.map((t) => t.id));
@@ -419,7 +440,13 @@ familiesRouter.get(
       package_receiving: ((await platform().instances.configOf(orgId, fam.child)) ?? {}).package_receiving ?? null,
       types: cards,
       unclaimed,
-      counts: { types: cards.length, children: thingById.size, low: cards.filter((c) => c.children.some((k) => k.low)).length },
+      ...familyCounts({
+        types: cards.length,
+        typesTotal: totalOf(types as unknown as Array<Record<string, unknown>>),
+        things: thingById.size,
+        thingsTotal: totalOf(things as unknown as Array<Record<string, unknown>>),
+        low: cards.filter((c) => c.children.some((k) => k.low)).length,
+      }),
     });
   }),
 );

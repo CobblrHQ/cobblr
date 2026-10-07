@@ -30,7 +30,8 @@ export interface Dimension {
 export const DIMENSIONS: Dimension[] = [
   { id: "390-light", label: "390 light" },
   { id: "390-dark", label: "390 dark" },
-  { id: "1440", label: "1440" },
+  { id: "1440", label: "1440 light" },
+  { id: "1440-dark", label: "1440 dark" },
   { id: "fresh", label: "fresh workspace" },
   { id: "volume", label: "volume workspace" },
   ...ORG_ROLES.map((r) => ({ id: r, label: r })),
@@ -38,7 +39,7 @@ export const DIMENSIONS: Dimension[] = [
   { id: "cobb", label: "Cobb/MCP parity" },
 ];
 
-const VIEWPORTS = ["390-light", "390-dark", "1440"];
+const VIEWPORTS = ["390-light", "390-dark", "1440", "1440-dark"];
 const SHAPES = ["fresh", "volume"];
 const PAGE_DIMS = [...VIEWPORTS, ...SHAPES, ...ORG_ROLES];
 const KIND_DIMS = [...PAGE_DIMS, "api", "cobb"];
@@ -58,6 +59,9 @@ export interface Surface {
   applicable: string[];
   /** The page's route pattern (":id", "{id}", "*"), for a row a browser visits; absent for an action. */
   path?: string;
+  /** The files that make the surface (a page component, a module's ui or
+   *  api), so the poster can stamp when it last changed. */
+  files?: string[];
 }
 
 export interface ManifestFacts {
@@ -72,20 +76,40 @@ export interface ManifestFacts {
 
 export interface Inputs {
   appRoutes: Array<{ path: string; redirect: boolean }>;
+  /** The page component file each app route renders, by route path, where it could be read. */
+  appRouteFiles?: Record<string, string>;
+  /** Whether a repository-relative folder exists (the generator passes the real check). */
+  hasDir?: (path: string) => boolean;
   appFile: string;
   moduleRoutes: Array<{ module: string; mount: string; path: string; redirect: boolean; file: string }>;
   manifests: ManifestFacts[];
   /** Module names every new workspace has (foundational allowlist + autoEnable). */
   defaultModules: Set<string>;
   /** Audit area -> the modules its walk covers. */
-  areas: Array<{ area: string; modules: string[] }>;
+  areas: Array<{ area: string; modules: string[]; paths?: string[] }>;
+  /** The kernel's own actions (platform:*), which no manifest declares. */
+  platformActions?: { file: string; actions: Array<{ id: string; label?: string; userInvokable?: boolean; wireOnly?: boolean }> };
 }
 
 const norm = (p: string) => ("/" + p.replace(/^\/+|\/+$/g, "")).replace(/\/{2,}/g, "/");
 
+/** A module's ui or api folder, from any file under its src. */
+const srcDir = (file: string) => file.replace(/\/src\/.*$/, "/src");
+const uiDir = (file: string) => `${srcDir(file)}/ui`;
+const apiDir = (file: string) => `${srcDir(file)}/api`;
+
 export function deriveSurfaces(i: Inputs): Surface[] {
+  // A module's page is its own ui when it has one, otherwise the web page its
+  // address renders (assets, purchases, records draw theirs in web/src/pages).
+  // Only folders that exist: a module without a ui or api folder claims none.
+  const real = (paths: string[]) => paths.filter((p) => /\.[a-z]+$/.test(p) || !i.hasDir || i.hasDir(p));
+  const modulePageFiles = (file: string, path: string): { files?: string[] } => {
+    if (i.hasDir?.(uiDir(file))) return { files: [uiDir(file)] };
+    const page = i.appRouteFiles?.[path] ?? i.appRouteFiles?.[path.slice(1)];
+    return page ? { files: [page] } : {};
+  };
   const byModule = new Map(i.manifests.map((m) => [m.name, m]));
-  const areaOf = (mod: string | null) => (mod ? (i.areas.find((a) => a.modules.includes(mod))?.area ?? null) : null);
+  const areaOf = (mod: string | null, path?: string) => i.areas.find(a => path && a.paths?.some(p => norm(p) === path))?.area ?? (mod ? (i.areas.find((a) => a.modules.includes(mod))?.area ?? null) : null);
   const navRoutes = new Set<string>();
   for (const m of i.manifests) {
     if (m.nav?.route) navRoutes.add(norm(m.nav.route));
@@ -102,12 +126,12 @@ export function deriveSurfaces(i: Inputs): Surface[] {
     if (r.redirect) continue;
     const path = norm(r.path);
     const mod = moduleForRoute(path, i.manifests);
-    add({ id: `route:${path}`, kind: "route", label: path, module: mod, area: areaOf(mod), nav: navRoutes.has(path), first_run: firstRun(mod), source: i.appFile, applicable: PAGE_DIMS, path });
+    add({ id: `route:${path}`, kind: "route", label: path, module: mod, area: areaOf(mod, path), nav: navRoutes.has(path), first_run: firstRun(mod), source: i.appFile, applicable: PAGE_DIMS, path, ...(i.appRouteFiles?.[r.path] ? { files: [i.appRouteFiles[r.path]!] } : {}) });
   }
   for (const r of i.moduleRoutes) {
     if (r.redirect) continue;
     const path = norm(`${r.mount}/${r.path}`);
-    add({ id: `route:${path}`, kind: "route", label: path, module: r.module, area: areaOf(r.module), nav: navRoutes.has(path), first_run: firstRun(r.module), source: r.file, applicable: PAGE_DIMS, path });
+    add({ id: `route:${path}`, kind: "route", label: path, module: r.module, area: areaOf(r.module, path), nav: navRoutes.has(path), first_run: firstRun(r.module), source: r.file, applicable: PAGE_DIMS, path, files: real([uiDir(r.file)]) });
   }
   for (const m of i.manifests) {
     const area = areaOf(m.name);
@@ -116,16 +140,24 @@ export function deriveSurfaces(i: Inputs): Surface[] {
       const detail = k.detailRoute.split("?")[0]!;
       const list = norm(detail.replace(/\/\{id\}.*$/, ""));
       const label = k.label ?? k.id;
-      add({ id: `kind:${k.id}:list`, kind: "entity-list", label: `${label} list`, module: m.name, area, nav: navRoutes.has(list), first_run: firstRun(m.name), source: m.file, applicable: KIND_DIMS, path: list });
+      add({ id: `kind:${k.id}:list`, kind: "entity-list", label: `${label} list`, module: m.name, area, nav: navRoutes.has(list), first_run: firstRun(m.name), source: m.file, applicable: KIND_DIMS, path: list, files: real([m.file, uiDir(m.file)]) });
       if (/\{id\}/.test(detail))
-        add({ id: `kind:${k.id}:detail`, kind: "entity-detail", label: `${label} page`, module: m.name, area, nav: false, first_run: firstRun(m.name), source: m.file, applicable: KIND_DIMS, path: norm(detail) });
+        add({ id: `kind:${k.id}:detail`, kind: "entity-detail", label: `${label} page`, module: m.name, area, nav: false, first_run: firstRun(m.name), source: m.file, applicable: KIND_DIMS, path: norm(detail), files: real([m.file, uiDir(m.file)]) });
     }
     for (const a of m.actions) {
       if (!a.userInvokable || a.internal || a.wireOnly) continue;
-      add({ id: `action:${a.id}`, kind: "action", label: a.label ?? a.id, module: m.name, area, nav: false, first_run: firstRun(m.name), source: m.file, applicable: ACTION_DIMS });
+      add({ id: `action:${a.id}`, kind: "action", label: a.label ?? a.id, module: m.name, area, nav: false, first_run: firstRun(m.name), source: m.file, applicable: ACTION_DIMS, files: real([m.file, apiDir(m.file)]) });
     }
     if (m.band !== "foundational" && !m.name.startsWith("core-"))
-      add({ id: `module:${m.name}`, kind: "module-page", label: m.nav?.label ?? m.name, module: m.name, area, nav: true, first_run: firstRun(m.name), source: m.file, applicable: PAGE_DIMS, path: `/${m.name}` });
+      add({ id: `module:${m.name}`, kind: "module-page", label: m.nav?.label ?? m.name, module: m.name, area, nav: true, first_run: firstRun(m.name), source: m.file, applicable: PAGE_DIMS, path: `/${m.name}`, ...modulePageFiles(m.file, `/${m.name}`) });
+  }
+  // The kernel's own actions: renaming the workspace, restoring a record,
+  // arranging record actions. Every workspace has them, so they are the
+  // platform's, not a module's.
+  for (const a of i.platformActions?.actions ?? []) {
+    if (!a.userInvokable || a.wireOnly) continue;
+    const file = i.platformActions!.file;
+    add({ id: `action:${a.id}`, kind: "action", label: a.label ?? a.id, module: null, area: null, nav: false, first_run: true, source: file, applicable: ACTION_DIMS, files: real([file]) });
   }
   // byModule kept for a reader that wants the manifest behind a row.
   void byModule;

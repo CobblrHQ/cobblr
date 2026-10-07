@@ -35,6 +35,7 @@ import {
   verifyReceiptToken,
 } from "../platform/receipt-email.js";
 
+// loopback-ok: #5153 moves this onto selfFetch
 const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
 
 // Attachments worth trying to parse as a receipt. The Worker pre-filters too,

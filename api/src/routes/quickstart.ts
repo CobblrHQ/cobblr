@@ -32,6 +32,7 @@ import { runSerialised } from "../platform/exclusive.js";
 
 export const quickstartRouter = Router({ mergeParams: true });
 
+// loopback-ok: #5153 moves this onto selfFetch
 const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
 
 function bearerOf(req: { headers: Record<string, unknown> }): string | null {

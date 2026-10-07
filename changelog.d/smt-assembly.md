@@ -3,6 +3,7 @@ type: feature
 scope: inventory
 date: 2026-10-05
 docs_target: docs/USER_GUIDE.md#3.1 Inventory
+docs_published: 2026-10-08
 ---
 Added component package receiving from distributor labels, moisture exposure tracking, bake timers and placement counts with attrition.
 

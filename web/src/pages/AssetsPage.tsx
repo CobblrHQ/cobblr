@@ -44,7 +44,7 @@ import { ContributedDetailPanels } from "../panels/registry";
 import { LocationTreePicker } from "../components/LocationTreePicker";
 import { ContentsPanel, useHoldsContents } from "../components/ContentsPanel";
 import { useDeclaredChoices } from "../components/ViewBuilder";
-import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract";
+import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract/plural";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 import { fieldCurrency, formatMoney, toCents } from "@cobblr/platform-contract/money";
 
@@ -384,6 +384,7 @@ export function AssetsPage({
       <NewAssetModal open={newOpen} onClose={() => setNewOpen(false)} instance={instance} noun={noun} />
 
       <BulkActionBar
+        records={{ kind: entityKind, ids: Array.from(selected) }}
         onAskCobb={askCobb}
         count={selected.size}
         onClear={() => setSelected(new Set())}

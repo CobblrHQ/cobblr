@@ -11,6 +11,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Minus, Plus } from "lucide-react";
 import { useUnits } from "./useUnits";
 import { usedInUnit } from "./units";
+import { countWordsFor, wordForCount, type CountWords } from "@cobblr/platform-contract/plural";
 
 function fmt(n: number, fractionDigits: number): string {
   return Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(fractionDigits)));
@@ -19,6 +20,7 @@ function fmt(n: number, fractionDigits: number): string {
 export function AmountControl({
   qty,
   unit,
+  countWords,
   onChange,
   label,
   size = "md",
@@ -28,6 +30,9 @@ export function AmountControl({
   fractionDigits?: number;
   /** The unit the record keeps its count in ("kg", "each", null). */
   unit: string | null;
+  /** The table's own words for what it counts in ("ball"/"balls"), so a
+   *  stored "skeins" still reads "1 skein". */
+  countWords?: readonly CountWords[];
   /** Apply a change to the count in the record's own unit; resolves with the
    *  count the ledger now holds. */
   onChange: (delta: number) => Promise<number>;
@@ -69,7 +74,9 @@ export function AmountControl({
   const btn =
     (size === "sm" ? "w-8 h-8" : "w-11 h-11") +
     " grid place-items-center rounded-lg border border-line dark:border-slate-700 text-content dark:text-mortar-100 active:bg-subtle dark:active:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition";
-  const shownUnit = unit && unit !== "each" ? ` ${units.suffix(unit) || unit}` : "";
+  // A counted unit agrees with the number ("2 balls", "1 skein"); a measured
+  // one reads as its symbol (#5079: the stepper said "2 ball").
+  const shownUnit = !unit || unit === "each" ? "" : used ? ` ${units.suffix(unit) || unit}` : ` ${wordForCount(value, countWordsFor(unit, countWords))}`;
   const number = (
     <span
       className={(size === "sm" ? "min-w-[2rem] text-sm" : "min-w-[2.5rem] text-base") + " text-center font-mono tabular-nums text-content dark:text-mortar-100"}

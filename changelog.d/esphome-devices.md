@@ -3,6 +3,7 @@ type: feature
 scope: devices
 date: 2026-10-04
 docs_target: docs/USER_GUIDE.md#3.19½ Edge bridges (Configuration → Edge bridges)
+docs_published: 2026-10-08
 ---
 Added ESPHome devices for bin lights, sensor readings and switches without Home Assistant.
 

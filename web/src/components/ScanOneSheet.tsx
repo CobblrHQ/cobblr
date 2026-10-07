@@ -9,7 +9,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Modal } from "@cobblr/platform-web";
-import { acquireScannerStream, createBarcodeReader, decodeCanvasSmart, SCAN_ATTEMPT_DELAY_MS } from "../lib/barcodeScanner";
+import { acquireScannerStream, SCAN_ATTEMPT_DELAY_MS } from "../lib/barcodeScanner";
 
 export function ScanOneSheet({ open, title, hint, onCode, onClose }: { open: boolean; title: string; hint?: string; onCode: (code: string) => void; onClose: () => void }) {
   const video = useRef<HTMLVideoElement | null>(null);
@@ -23,12 +23,14 @@ export function ScanOneSheet({ open, title, hint, onCode, onClose }: { open: boo
     let stopped = false;
     let stream: MediaStream | null = null;
     let timer: number | null = null;
-    const reader = createBarcodeReader();
     const frame = document.createElement("canvas");
     const rotated = document.createElement("canvas");
     void (async () => {
       try {
-        stream = (await acquireScannerStream()).stream;
+        // The decoder loads with the sheet, not with every page (#4945).
+        const [{ createBarcodeReader, decodeCanvasSmart }, acquired] = await Promise.all([import("../lib/barcodeDecode"), acquireScannerStream()]);
+        const reader = createBarcodeReader();
+        stream = acquired.stream;
         if (stopped) return;
         const v = video.current!;
         v.srcObject = stream;

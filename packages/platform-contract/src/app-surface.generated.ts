@@ -15,7 +15,7 @@ export const GENERATED_SURFACE: Capability[] = [
   },
   {
     "feature": "Activity log",
-    "does": "Every mutation, attributed to who (UI / api token / system) and when. Filterable.",
+    "does": "Everything that changed in this workspace: who did it, how, and when.",
     "where": "/activity",
     "also": [
       "audit",

@@ -1,0 +1,10 @@
+{
+  "lint": "lint:tracked-order-has-an-owner",
+  "run": "node scripts/lint-tracked-order-has-an-owner.ts",
+  "rows": [
+    "entity-action"
+  ],
+  "ms": 5720,
+  "recorded": "2026-10-07",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

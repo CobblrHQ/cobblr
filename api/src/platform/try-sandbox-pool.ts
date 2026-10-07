@@ -85,11 +85,11 @@ export async function claimPooledSandbox(now: number = Date.now()): Promise<Sand
 }
 
 /** A ready sandbox if there is one, otherwise null and the caller builds. */
-export async function takeFromPool(now: number = Date.now()): Promise<SandboxResult | null> {
+export async function takeFromPool(now: number = Date.now(), opts: { quiet?: boolean } = {}): Promise<SandboxResult | null> {
   if (poolTarget() <= 0) return null;
   const ws = await claimPooledSandbox(now);
   if (!ws) return null;
-  return handOverSandbox(ws, now);
+  return handOverSandbox(ws, now, opts);
 }
 
 export interface PoolDeps extends ProvisionDeps {

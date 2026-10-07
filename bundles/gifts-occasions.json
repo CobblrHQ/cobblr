@@ -2,12 +2,17 @@
   "manifest": {
     "id": "cobblr.flagship.gifts-occasions",
     "catalog": "disabled",
-    "version": "0.2.4",
+    "version": "0.2.5",
     "name": "Gifts & Occasions",
     "description": "Gift ideas as their own table: who, occasion + date (calendar-reminded), budget, and an idea→bought→wrapped→given pipeline.",
     "author": "Cobblr",
     "released_at": "2026-10-02",
     "releases": [
+      {
+        "version": "0.2.5",
+        "released_at": "2026-10-07",
+        "notes": "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed."
+      },
       {
         "version": "0.2.4",
         "released_at": "2026-10-02",
@@ -75,6 +80,7 @@
             "name": "budget",
             "display_label": "Budget",
             "type": "money",
+            "aggregate": "sum",
             "position": 4
           },
           {

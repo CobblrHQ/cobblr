@@ -64,7 +64,7 @@ export interface BulkOutcome {
   destination?: { kind: string; label: string };
   /** Every record the batch changed or an action in it touched, named once,
    *  so the panel draws the result's names as chips like a single write's. */
-  touched?: Array<{ kind: string; id: string; label: string }>;
+  touched?: Array<{ kind: string; id: string; label: string; href?: string }>;
 }
 
 export interface WriteOutcome {
@@ -78,8 +78,9 @@ export interface WriteOutcome {
   detail?: string;
   entity?: { kind: string; id?: string; label?: string };
   /** Records an action touched (a move names every record it moved), each
-   *  with what a person calls it, so the panel can draw them as chips. */
-  touched?: Array<{ kind: string; id: string; label: string }>;
+   *  with what a person calls it, so the panel can draw them as chips. A list
+   *  is not a record and says where it opens (`href`). */
+  touched?: Array<{ kind: string; id: string; label: string; href?: string }>;
   /** Where an action put things, so the card can offer to go there. */
   destination?: { kind: string; label: string };
   ledger_id?: string;
@@ -287,8 +288,8 @@ export async function performWrites(
 
 /** The records a set of outcomes name, once each: each write's own record and
  *  whatever its action reported touching. */
-export function touchedBy(done: readonly WriteOutcome[]): Array<{ kind: string; id: string; label: string }> {
-  const out: Array<{ kind: string; id: string; label: string }> = [];
+export function touchedBy(done: readonly WriteOutcome[]): Array<{ kind: string; id: string; label: string; href?: string }> {
+  const out: Array<{ kind: string; id: string; label: string; href?: string }> = [];
   const seen = new Set<string>();
   for (const d of done) {
     const refs = [
@@ -313,13 +314,18 @@ export function touchedBy(done: readonly WriteOutcome[]): Array<{ kind: string; 
 async function touchedByAction(
   wsApi: WorkspaceApi,
   result: unknown,
-): Promise<Array<{ kind: string; id: string; label: string }>> {
+): Promise<Array<{ kind: string; id: string; label: string; href?: string }>> {
   if (!result || typeof result !== "object") return [];
   const r = result as { touched?: unknown; data?: { touched?: unknown } };
   const raw = Array.isArray(r.touched) ? r.touched : Array.isArray(r.data?.touched) ? r.data!.touched : [];
-  const out: Array<{ kind: string; id: string; label: string }> = [];
-  for (const t of raw.slice(0, 50) as Array<{ kind?: unknown; id?: unknown; label?: unknown }>) {
+  const out: Array<{ kind: string; id: string; label: string; href?: string }> = [];
+  for (const t of raw.slice(0, 50) as Array<{ kind?: unknown; id?: unknown; label?: unknown; href?: unknown }>) {
     if (typeof t?.kind !== "string" || typeof t?.id !== "string") continue;
+    // A list opens at its own address and has no record to read a name from.
+    if (typeof t.href === "string" && t.href.startsWith("/") && typeof t.label === "string" && t.label.trim()) {
+      out.push({ kind: t.kind, id: t.id, label: t.label.trim(), href: t.href });
+      continue;
+    }
     const label =
       typeof t.label === "string" && t.label.trim()
         ? t.label.trim()

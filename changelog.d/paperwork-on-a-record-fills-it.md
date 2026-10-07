@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-10-02
 docs_target: docs/USER_GUIDE.md#3.4 Files (foundational)
+docs_published: 2026-10-08
 ---
 Drop or paste a bill of sale or a receipt on a record's files and Cobblr reads it onto that record. It files the document, links a purchase, and fills what you paid, when and where you bought it and the fields the paper names, such as a vehicle's VIN, make and model. It never writes over something you typed: where the paper disagrees it says so, with Use it beside the paper's value. Undo takes back what it filled. An inbox card for a bill of sale whose VIN matches a vehicle you already have offers It's this one, which does the same. Parts now have a Photos and files section of their own.
 

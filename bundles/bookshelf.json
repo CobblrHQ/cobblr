@@ -3,8 +3,13 @@
     "id": "cobblr.community.bookshelf",
     "released_at": "2026-06-28",
     "changelog": "Call them books or titles: pick the word when you install, or change it later in the table's settings, and every label says it. Earlier: The shelf opens on its covers rather than the table, and remembers the view you pick. A book is not stock: the shelf no longer offers Use one, Used up or a reorder point, and the parts-category picker is gone from the book form. An ISBN scan fills author, year and ISBN, and a book you already have is offered instead of a second copy.",
-    "version": "0.3.1",
+    "version": "0.3.2",
     "releases": [
+      {
+        "version": "0.3.2",
+        "released_at": "2026-10-07",
+        "notes": "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed."
+      },
       {
         "version": "0.3.1",
         "released_at": "2026-10-02",
@@ -93,6 +98,7 @@
             "name": "year",
             "display_label": "Year",
             "type": "number",
+            "aggregate": "none",
             "position": 3,
             "decode_role": "decode:year"
           },
@@ -115,6 +121,7 @@
             "name": "rating",
             "display_label": "Rating (1-5)",
             "type": "number",
+            "aggregate": "none",
             "position": 5
           }
         ],

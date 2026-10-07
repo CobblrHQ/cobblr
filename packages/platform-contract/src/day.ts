@@ -128,6 +128,17 @@ export function daysUntilField(value: unknown, today: Day): number | null {
  *   long   "today" · "tomorrow" · "in 5 days" · "in 3 weeks" · "2 months ago"
  * A surface picks a length; it never picks its own arithmetic.
  */
+/** A span of days as a person says it: "9 days", "3 weeks", "4 months",
+ *  "6 years". A count is never said in a smaller unit than reads naturally:
+ *  "due in 26657 days" told nobody anything. */
+export function spanWords(days: number): string {
+  const n = Math.abs(Math.round(days));
+  if (n < 14) return `${n} day${n === 1 ? "" : "s"}`;
+  if (n < 60) return `${Math.round(n / 7)} weeks`;
+  if (n < 548) return `${Math.round(n / 30)} months`;
+  return `${Math.round(n / 365.25)} years`;
+}
+
 export function countdownWords(target: Day, today: Day, style: "short" | "long" = "short"): string {
   const diff = daysUntil(target, today);
   if (diff === 0) return "today";
@@ -135,7 +146,5 @@ export function countdownWords(target: Day, today: Day, style: "short" | "long" 
   if (diff === -1) return "yesterday";
   const n = Math.abs(diff);
   if (style === "short") return diff < 0 ? `${n}d ago` : `in ${n}d`;
-  const unit = n < 14 ? "days" : n < 60 ? "weeks" : "months";
-  const size = n < 14 ? n : n < 60 ? Math.round(n / 7) : Math.round(n / 30);
-  return diff < 0 ? `${size} ${unit} ago` : `in ${size} ${unit}`; // count-unit-ok: size is always 2 or more here and unit is already plural
+  return diff < 0 ? `${spanWords(n)} ago` : `in ${spanWords(n)}`;
 }

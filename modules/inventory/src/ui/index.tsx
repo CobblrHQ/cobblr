@@ -140,6 +140,10 @@ function Header({ title, hint, listLabel: named }: { title: string; hint?: strin
   const dated = useQuery({ queryKey: ["inventory-expiring", 30], queryFn: () => api.stockExpiring(30), staleTime: 60_000 });
   const goingOff = (dated.data?.places ?? []).reduce((n, p) => n + p.lots.length, 0);
   const onExpiring = /\/expiring$/.test(pathname);
+  // "Find a sheet" only where the workspace holds sheet stock: a set collection
+  // has no question about laser sheets to ask.
+  const sheets = useQuery({ queryKey: ["inventory-sheet-any"], queryFn: () => api.findSheets({}), staleTime: 60_000 });
+  const hasSheets = (sheets.data?.total ?? 0) > 0;
   return (
     // The default inventory page reads "// parts // settings". On a skinned
     // instance (Yarn) "parts" is the wrong noun, but settings still has to be
@@ -156,7 +160,7 @@ function Header({ title, hint, listLabel: named }: { title: string; hint?: strin
               Going off{goingOff > 0 ? ` (${goingOff})` : ""}
             </NavLink>
           )}
-          <SheetSearch />
+          {hasSheets && <SheetSearch />}
           <NavLink to={`${base}/settings`} className={cls}>Settings</NavLink>
         </>
       }

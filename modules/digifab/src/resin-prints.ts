@@ -52,7 +52,7 @@ export async function consumeResinSnapshot(orgId: string, jobId: string, snapsho
     if (stock.shape !== (allocation.purpose === "resin" ? "liquid" : "wearing-tool") || stock.unit !== allocation.unit) throw new Error("The print's stock shape or unit changed. Check its original stock record.");
     const elapsed = lcdSeconds != null && snapshot.lcdSeconds != null ? lcdSeconds - snapshot.lcdSeconds : undefined;
     const amount = allocation.purpose === "lcd" && elapsed != null && Number.isFinite(elapsed) && elapsed > 0 ? Math.round(elapsed / 3600 * 1e9) / 1e9 : allocation.amount;
-    const result = normaliseActionResult(await platform().actions.invoke("inventory:consume-stock", resinActionContext(orgId, userId, { fields: { revision: stock.revision, source: `resin:${jobId}:${allocation.purpose}:${allocation.id}`, verdict, amount, unit: allocation.unit } }, { kind: allocation.kind, id: allocation.id })), "inventory.consume-stock");
+    const result = normaliseActionResult(await platform().actions.invoke("inventory:consume-stock", resinActionContext(orgId, userId, { fields: { source: `resin:${jobId}:${allocation.purpose}:${allocation.id}`, verdict, amount, unit: allocation.unit } }, { kind: allocation.kind, id: allocation.id })), "inventory.consume-stock");
     if (!result.ok) throw new Error(typeof result.error === "string" ? result.error : "The print's stock use could not be recorded. Check its stock record.");
   }
 }

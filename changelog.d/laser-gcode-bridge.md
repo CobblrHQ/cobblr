@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-05
 docs_target: docs/USER_GUIDE.md#Direct laser jobs
+docs_published: 2026-10-08
 ---
 Added shared USB and TCP laser connections with reviewed jobs and machine station controls.
 

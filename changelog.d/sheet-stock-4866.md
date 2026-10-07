@@ -3,6 +3,7 @@ type: feature
 scope: inventory
 date: 2026-10-05
 docs_target: docs/USER_GUIDE.md#Sheet stock
+docs_published: 2026-10-08
 ---
 Added sheet stock with cut outlines, undoable free-area edits, offcut search and QR labels for sheets and loaded spools.
 

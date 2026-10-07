@@ -3,6 +3,7 @@ type: feature
 scope: locations
 date: 2026-10-06
 docs_target: docs/USER_GUIDE.md#3.12 Locations (foundational)
+docs_published: 2026-10-08
 ---
 Bring a whole house into the floor plan from one file: ask any AI with the copied prompt, paste what it gives you, check the preview, and import it as one step you can undo. Export gives the same file back.
 

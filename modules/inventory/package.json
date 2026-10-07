@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/inventory",
-  "version": "0.9.36",
+  "version": "0.9.37",
   "private": true,
   "type": "module",
   "main": "dist/module.js",
@@ -12,6 +12,10 @@
     "./ui": {
       "types": "./src/ui/index.tsx",
       "import": "./src/ui/index.tsx"
+    },
+    "./stock-derived": {
+      "types": "./src/stock-derived.ts",
+      "import": "./src/stock-derived.ts"
     }
   },
   "scripts": {

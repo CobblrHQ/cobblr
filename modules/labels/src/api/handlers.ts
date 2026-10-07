@@ -69,6 +69,7 @@ export function registerLabelsHandlers(): void {
       // configured: the box itself. Production does not get this crutch —
       // a printed localhost QR would be a permanent dud.
       (process.env.NODE_ENV !== "production"
+        // loopback-ok: #5153 moves this onto selfFetch
         ? `http://localhost:${process.env.API_PORT || 4000}`
         : null);
     if (!base) {

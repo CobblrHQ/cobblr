@@ -4,7 +4,7 @@
 // workspace's own components (a Station tablet, #4640) give them the same
 // context; the Station mounted the scan inbox's card without it and the card
 // threw "usePlatformWeb called outside PlatformWebProvider".
-import type { ReactNode } from "react";
+import { lazy, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { KERNEL_PANELS, PlatformWebProvider, type FlowRegistry } from "@cobblr/platform-web";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
@@ -12,12 +12,12 @@ import { api } from "./lib/api";
 import { raiseBlockedAction } from "./lib/blocked-action";
 import { decodeBarcodeImage } from "./lib/decode-barcode-image";
 import { photoSuggestionsWhenOn } from "./lib/photoSuggestionsWhenOn";
-import { fileWaitingScan, waitingScans } from "./lib/waitingScans";
 import { RecordPhoto } from "./components/RecordPhoto";
-import { CobbHead } from "./components/Cobb";
-import { NewFromTemplateFlow } from "./flows/NewFromTemplateFlow";
-import { OrganizeFlow } from "./flows/OrganizeFlow";
-import { GroupTableFlow } from "./pages/ViewsPage";
+import { CobbHead } from "./components/CobbHead";
+// Flows load when one is opened (the flow host gives each a boundary).
+const NewFromTemplateFlow = lazy(() => import("./flows/NewFromTemplateFlow").then((m) => ({ default: m.NewFromTemplateFlow })));
+const OrganizeFlow = lazy(() => import("./flows/OrganizeFlow").then((m) => ({ default: m.OrganizeFlow })));
+const GroupTableFlow = lazy(() => import("./pages/ViewsPage").then((m) => ({ default: m.GroupTableFlow })));
 
 // First-party flow registry: id → overlay the shell can open from anywhere
 // (an action's `ui` directive, a view bulk-action, a nav entry). See
@@ -62,6 +62,7 @@ export function WorkspacePlatformWeb({ orgSlug, role, appMode, children }: { org
           invokeAction: (slug, body) => api.invokeAction(slug, body),
           requestLight: (slug, ref, reason) => api.requestLight(slug, ref, reason),
           lookupEntity: (slug, kind, id) => api.lookupEntity(slug, kind, id),
+          sendTargets: api.sendTargets, previewSend: api.previewSend, sendRecords: api.sendRecords, undoSend: api.undoSend,
           listShareOffers: (slug) => api.listShareOffers(slug),
           withdrawShareOffer: (slug, id) => api.withdrawShareOffer(slug, id),
           recordShares: (slug, kind, id) => api.recordShares(slug, kind, id),
@@ -116,8 +117,10 @@ export function WorkspacePlatformWeb({ orgSlug, role, appMode, children }: { org
           setUnitDisplayMode: (slug, mode) => api.setUnitDisplayMode(slug, mode),
           // A collection's search shows what is waiting in the scan inbox to
           // come to it, judged and filed the way the inbox card does.
-          waitingScans: (slug, q, destination) => waitingScans(qc, role ?? null, slug, q, destination),
-          fileWaitingScan: (slug, id) => fileWaitingScan(qc, role ?? null, slug, id),
+          // Loaded on first use: the inbox's judging rules are a page's worth of
+          // code, and only a search that finds something waiting needs them.
+          waitingScans: (slug, q, destination) => import("./lib/waitingScans").then((m) => m.waitingScans(qc, role ?? null, slug, q, destination)),
+          fileWaitingScan: (slug, id) => import("./lib/waitingScans").then((m) => m.fileWaitingScan(qc, role ?? null, slug, id)),
           raiseBlocked: (blocked) => raiseBlockedAction({ blocked, refused: null, subject: null }),
           recordPublicPages: (slug, id) => api.recordPublicPages(slug, id),
           receivedFrom: (slug, kind, id) => api.receivedFrom(slug, kind, id),

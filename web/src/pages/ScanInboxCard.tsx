@@ -13,7 +13,8 @@ import { RecordFormModal, NewFromTemplateButton, useLater, useImageSrc, EntityPh
 import { ScanOfferStrip } from "./ScanOfferStrip";
 import { readInboxOffer } from "@cobblr/platform-contract/share-offer";
 import { addedByCardWords, cardSaysAddedBy, codeSourceNote, codeSourceOf, type AddedBy } from "@cobblr/platform-contract/scan-source";
-import { ROLE_CLARIFIES, type FieldRole } from "@cobblr/platform-contract";
+import { type FieldRole } from "@cobblr/platform-contract/field-vocabulary";
+import { ROLE_CLARIFIES } from "@cobblr/platform-contract/field-vocabulary";
 import { createPortal } from "react-dom";
 import { SamePictureOffer, ScanTwinsContext, TWIN_SENTENCE } from "./scanTwins";
 import { useAwaitingWords, type AwaitingWords } from "./awaitingLookup";
@@ -26,6 +27,7 @@ import { } from "../components/SessionReadVerdict";
 import { Fragment, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { StationNewFace } from "./StationNewFace";
 import { Camera, CheckCircle, ChevronDown, Download, ExternalLink, Flag, Image as ImageIcon, ImagePlus, Library, Loader2, MapPin, MoreHorizontal, Pencil, RefreshCw, RotateCcw, ScanLine, Scissors, Sparkles, X, Database } from "lucide-react";
 import { } from "../components/ScanImportModal";
 import { suggestedPlace } from "../lib/sessionPlaceSuggestion";
@@ -224,11 +226,14 @@ function CorrectNameInline({
   itemId,
   initial,
   onDone,
+  large = false,
 }: {
   slug: string;
   itemId: string;
   initial: string;
   onDone: () => void;
+  /** A Station's size: a kiosk is read and tapped from arm's length. */
+  large?: boolean;
 }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -250,7 +255,7 @@ function CorrectNameInline({
         autoFocus
         onChange={(e) => setName(e.target.value)}
         aria-label="Correct the product name"
-        className="input !py-1 text-xs flex-1"
+        className={large ? "input flex-1 !py-3 text-xl" : "input !py-1 text-xs flex-1"}
         onKeyDown={(e) => {
           if (e.key === "Enter" && name.trim()) mut.mutate();
           if (e.key === "Escape") onDone();
@@ -260,11 +265,11 @@ function CorrectNameInline({
         type="button"
         disabled={!name.trim() || mut.isPending}
         onClick={() => mut.mutate()}
-        className="shrink-0 rounded bg-amber-600 text-white text-xs font-medium px-2.5 py-1 hover:bg-amber-700 transition disabled:opacity-50"
+        className={`shrink-0 rounded bg-amber-600 text-white font-medium hover:bg-amber-700 transition disabled:opacity-50 ${large ? "px-5 py-3 text-xl" : "text-xs px-2.5 py-1"}`}
       >
         Fix
       </button>
-      <button type="button" onClick={onDone} className="shrink-0 text-xs text-faint px-1.5 py-1">
+      <button type="button" onClick={onDone} className={large ? "shrink-0 px-3 py-3 text-xl text-muted" : "shrink-0 text-xs text-faint px-1.5 py-1"}>
         Cancel
       </button>
     </div>
@@ -410,6 +415,7 @@ export function InboxCard({
   onOpenSheet,
   defaultCand,
   selectionActive,
+  station,
 }: {
   item: ScanInboxItem;
   pageTarget: ScanTarget | null;
@@ -455,6 +461,10 @@ export function InboxCard({
   defaultCand?: ScanCandidate | null;
   /** Something in the list is selected, so the phone row shows its checkbox. */
   selectionActive?: boolean;
+  /** At a Station (#4640): the record card's scale first (photo, name, how
+   *  many, one big Add), with More for this whole card. `onFiled` runs once
+   *  the Add has filed it. */
+  station?: { onFiled: () => void };
 }) {
   const { activeSlug } = useActiveOrg();
   const handheld = useHandheld();
@@ -474,6 +484,8 @@ export function InboxCard({
   // into + the matchmaker's pre-filled fields. Keyed into ConfirmForm so
   // switching chips remounts (and so re-seeds) the form.
   const [expanded, setExpanded] = useState(false);
+  const [stationMore, setStationMore] = useState(false);
+  const [stationFixing, setStationFixing] = useState(false);
   // The list row on a phone: what decides whether to open the item, and the
   // one verb that files it. Everything else waits in the sheet, one tap away,
   // with the whole screen (scan-inbox-device-split.md §3.4).
@@ -2445,6 +2457,36 @@ export function InboxCard({
   const toolReceipt = phoneTool("receipt");
   const toolBin = phoneTool("bin");
   const toolBox = phoneTool("box_state");
+  if (station && !stationMore) {
+    const oneTap = rowState.action.kind === "add" || rowState.action.kind === "install-add" || rowState.action.kind === "merge";
+    const filed = { onSuccess: () => station.onFiled() };
+    return (
+      <>
+        <StationNewFace
+          photo={thumb}
+          name={shownName ?? ""}
+          working={phoneWorking}
+          quantity={receiptUnread || restockMatch || item.status !== "pending" ? null : { value: Math.max(1, item.quantity ?? 1), busy: qtyPatch.isPending, onChange: (n) => qtyPatch.mutate(Math.max(1, n)) }}
+          commit={
+            dest && item.status === "pending" && oneTap && !restockMatch
+              ? {
+                  label: rowState.action.label,
+                  destination: updating ? `${updating.title} in ${dest.label}` : dest.label,
+                  busy: commitBusy,
+                  onAdd: () => (rowState.action.kind === "merge" ? quickMerge.mutate(undefined, filed) : quickConfirm.mutate(undefined, filed)),
+                }
+              : null
+          }
+          reason={rowState.sentence ?? rowState.action.title ?? null}
+          fixing={stationFixing}
+          onFix={() => setStationFixing(true)}
+          fixName={<CorrectNameInline slug={activeSlug} itemId={item.id} initial={shownName ?? ""} large onDone={() => setStationFixing(false)} />}
+          onMore={() => setStationMore(true)}
+        />
+        {overlays}
+      </>
+    );
+  }
   if (sheet) {
     const actions: ScanItemScreenAction[] = [];
     if (item.status === "pending") {

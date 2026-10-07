@@ -18,6 +18,7 @@ function fmt(n: number): string {
 export function StockStepper({
   qty,
   unit = null,
+  countWords,
   onStep,
   label,
   size = "md",
@@ -29,6 +30,8 @@ export function StockStepper({
    *  none) goes to AmountControl, which steps a counted unit by one and has a
    *  measured one typed. */
   unit?: string | null;
+  /** The table's own words for what it counts in, so the word agrees. */
+  countWords?: readonly import("@cobblr/platform-contract/plural").CountWords[];
   /** One change: resolves with the count the ledger now holds. */
   onStep: (delta: number) => Promise<number>;
   /** What is being counted, for the buttons' names ("Toilet paper"). */
@@ -38,7 +41,7 @@ export function StockStepper({
   size?: "md" | "sm";
 }) {
   if (unit && unit.trim() && unit.trim().toLowerCase() !== "each") {
-    return <AmountControl fractionDigits={fractionDigits} qty={qty} unit={unit} onChange={onStep} label={label} size={size} />;
+    return <AmountControl fractionDigits={fractionDigits} qty={qty} unit={unit} {...(countWords ? { countWords } : {})} onChange={onStep} label={label} size={size} />;
   }
   return <CountStepper qty={qty} onStep={onStep} label={label} size={size} />;
 }

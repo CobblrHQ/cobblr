@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-06
 docs_target: docs/USER_GUIDE.md#Direct laser jobs
+docs_published: 2026-10-08
 ---
 Added direct Ruida laser jobs with station review, laser-off Frame and independent Stop.
 

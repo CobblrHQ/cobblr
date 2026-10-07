@@ -15,6 +15,7 @@ import { withStation } from "./scan-stations.js";
 import { emit } from "./events.js";
 import type { StationResult } from "@cobblr/platform-contract/scan-station";
 
+// loopback-ok: #5153 moves this onto selfFetch
 const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
 
 // Re-exported from the contract package, which is the ONE definition shared with

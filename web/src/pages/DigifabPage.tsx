@@ -1,8 +1,9 @@
+import { jobDisplayName } from "../features/digifab/jobDisplayName";
 import { bridgeDisplayName } from "../lib/bridge-choice";
 import { useJobStartReview } from "../features/digifab/startReview";
 import { LaserLayoutPlanner } from "../features/digifab/LaserLayout";
 import { LaserMaterialForm } from "../features/digifab/laserMaterial";
-import { ContributedDetailPanels, FieldPack, fieldNeed, RecordFormModal, changeWorkspaceShape, DragInput, Lightbox, Modal, useToast, useConfirm, usePageTitle, useImageSrc, SecretInput, EntityPhoto, FilePreview, AddressInput, SearchInput, CustomFieldsPanel } from "@cobblr/platform-web";
+import { ContributedDetailPanels, FieldPack, fieldNeed, RecordFormModal, changeWorkspaceShape, DragInput, Lightbox, Modal, useToast, useConfirm, usePageTitle, useImageSrc, SecretInput, EntityPhoto, FilePreview, AddressInput, SearchInput, CustomFieldsPanel, SegmentedChoice } from "@cobblr/platform-web";
 // /configuration/digifab — Digital Fabrication. Manage connections to the
 // software that runs your machines (FDM Monster, OctoPrint, …): add one,
 // test it, list its printers, link printers to machines, and run the job
@@ -175,6 +176,7 @@ export function DigifabPage({
       {/* ── FLOOR — the operate surface: what runs, what's queued, what to print. ── */}
       {!setupOnly && tab === "floor" && (
         <>
+          <Link to="/digifab/embroidery" className="inline-flex min-h-11 items-center rounded border border-line px-4 py-2">Embroidery</Link>
           <Link to="/digifab/manager" className="inline-flex min-h-11 items-center rounded border border-line px-4 py-2">Floor manager</Link>
           {items.length === 0 && !list.isLoading && (
             <div className="max-w-lg rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-6 text-center">
@@ -663,17 +665,17 @@ const JOB_STATUS_STYLE: Record<string, string> = {
 // A pool job is auto-assigned by the worker (it has no connection to send to),
 // so it's not manually sendable.
 const TERMINAL_JOB = (s: string) => s === "completed" || s === "failed" || s === "cancelled";
-const canSend = (j: DigifabJob) => j.status === "queued" && !j.remote_job_id && !j.target_pool && !j.external;
+const canSend = (j: DigifabJob) => !j.embroidery_run && j.status === "queued" && !j.remote_job_id && !j.target_pool && !j.external;
 const canPoll = (j: DigifabJob) => !!j.remote_job_id && !TERMINAL_JOB(j.status) && !j.external;
 // An external ("on printer") row is an observed print with no Cobblr job behind
 // it — offering Cancel just 404s. Read-only.
 const canCancel = canCancelJob;
 // Safe to delete from the queue only when it's not physically on a printer.
-const canDelete = (j: DigifabJob) => j.status !== "sent" && j.status !== "printing" && j.status !== "paused" && !j.external;
+const canDelete = (j: DigifabJob) => !j.embroidery_run && j.status !== "sent" && j.status !== "printing" && j.status !== "paused" && !j.external;
 // F-14: a job that matched 0 or many printers can be re-pointed at a specific one.
 const canAssign = (j: DigifabJob) => j.status === "awaiting-assignment" && !!j.connection_id;
 // A terminal failed/cancelled job (not an observed external print) can be retried.
-const canRetry = (j: DigifabJob) => (j.status === "failed" || j.status === "cancelled") && !j.external;
+const canRetry = (j: DigifabJob) => !j.embroidery_run && (j.status === "failed" || j.status === "cancelled") && !j.external;
 // A history row backed by a Cobblr job (plain uuid id) can be reprinted; Bambu
 // cloud-task rows ("task:…") have no job to clone.
 
@@ -1306,8 +1308,8 @@ function PrintHistorySection({ slug }: { slug: string }) {
                             </span>
                           )}
                           <span className="flex-1 min-w-0">
-                            <span className="block truncate text-content dark:text-mortar-100" title={r.file_ref}>{r.file_ref}</span>
-                            {r.sub_label && r.sub_label !== r.file_ref && <span className="block truncate text-faint text-[10px]" title={r.sub_label}>{r.sub_label}</span>}
+                            <span className="block truncate text-content dark:text-mortar-100" title={jobDisplayName(r)}>{jobDisplayName(r)}</span>
+                            {r.sub_label && r.sub_label !== jobDisplayName(r) && <span className="block truncate text-faint text-[10px]" title={r.sub_label}>{r.sub_label}</span>}
                           </span>
                           <span className="text-faint truncate max-w-[22%] shrink-0" title={r.device}>{r.device}</span>
                           {dur && <span className="text-faint shrink-0">{dur}</span>}
@@ -1597,7 +1599,7 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
                   build/material/priority) instead of squeezing it into the row. */}
               <button type="button" onClick={() => setDetailId(jb.id)} className="flex-1 min-w-0 text-left group">
                 <div className="flex items-center gap-2">
-                  <span className="font-mono text-[13px] text-content dark:text-mortar-100 truncate group-hover:text-accent transition">{jb.file_ref}</span>
+                  <span className="font-mono text-[13px] text-content dark:text-mortar-100 truncate group-hover:text-accent transition">{jobDisplayName(jb)}</span>
                   <span className={"text-[10px] px-1.5 py-0.5 rounded font-medium " + (JOB_STATUS_STYLE[jb.status] ?? "text-muted bg-subtle")}>
                     {jb.status === "printing" ? "Running" : jb.status}
                   </span>
@@ -1764,7 +1766,7 @@ function JobDetailModal({
       ) : (
         <div className="space-y-3">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-mono text-sm text-content dark:text-mortar-100 break-all">{j.file_ref}</span>
+            <span className="font-mono text-sm text-content dark:text-mortar-100 break-all">{jobDisplayName(j)}</span>
             <span className={"text-[10px] px-1.5 py-0.5 rounded font-medium " + (JOB_STATUS_STYLE[j.status] ?? "text-muted bg-subtle")}>{j.status === "printing" ? "Running" : j.status}</span>
             {j.status === "printing" && j.progress != null && <span className="text-[11px] text-accent">{Math.round(j.progress * 100)}%</span>}
           </div>
@@ -1805,8 +1807,9 @@ function JobDetailModal({
           </div>
           {/* The job's own fields, as a bundle or a person defines them. */}
           <CustomFieldsPanel entityKind="digifab:job" entityId={j.id} values={j.metadata ?? {}} onCommit={(name, value) => setField.mutate({ [name]: value })} />
-          <ContributedDetailPanels target="digifab:job" ctx={{ slug: activeSlug, entityId: j.id, entityTitle: j.file_ref }} />
+          <ContributedDetailPanels target="digifab:job" ctx={{ slug: activeSlug, entityId: j.id, entityTitle: jobDisplayName(j) }} />
           <div className="flex justify-end gap-2 pt-1">
+            {j.embroidery_run && <Link to="/digifab/embroidery" className="inline-flex min-h-11 items-center rounded border border-line px-4 py-2">Open embroidery run</Link>}
             {canSend(j) && (
               <button onClick={() => void startReview.beforeStart(jobId, async () => {
                 if (await confirm({ title: "Start this job?", message: "This physically starts the machine. Check it is ready before continuing.", confirmLabel: "Start job", destructive: true })) send.mutate();
@@ -1950,10 +1953,10 @@ function QueueTimeline({ slug, jobs, onOpenJob }: { slug: string; jobs: DigifabJ
                   type="button"
                   onClick={() => onOpenJob(job.id)}
                   className="relative shrink-0 w-56 rounded border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-950/40 px-2 py-1 text-left overflow-hidden"
-                  title={job.file_ref}
+                  title={jobDisplayName(job)}
                 >
                   {pct != null && <div className="absolute inset-y-0 left-0 bg-cobble-500/20" style={{ width: `${pct}%` }} />}
-                  <div className="relative text-[11px] text-content dark:text-mortar-100 truncate">{job.file_ref}</div>
+                  <div className="relative text-[11px] text-content dark:text-mortar-100 truncate">{jobDisplayName(job)}</div>
                   <div className="relative text-[10px] font-mono text-faint">
                     {job.status}{pct != null ? ` · ${pct}%` : ""}{done ? ` · ~done ${done}` : ""}
                   </div>
@@ -1967,9 +1970,9 @@ function QueueTimeline({ slug, jobs, onOpenJob }: { slug: string; jobs: DigifabJ
                   type="button"
                   onClick={() => onOpenJob(j.id)}
                   className="shrink-0 max-w-44 rounded border border-line dark:border-slate-600 bg-subtle dark:bg-slate-800/60 px-2 py-1 text-left"
-                  title={j.file_ref}
+                  title={jobDisplayName(j)}
                 >
-                  <div className="text-[11px] text-content dark:text-mortar-100 truncate">{i + 1}. {j.file_ref}</div>
+                  <div className="text-[11px] text-content dark:text-mortar-100 truncate">{i + 1}. {jobDisplayName(j)}</div>
                   <div className="text-[10px] font-mono text-faint">queued{j.target_pool ? " · pool" : ""}</div>
                 </button>
               ))}
@@ -1982,8 +1985,8 @@ function QueueTimeline({ slug, jobs, onOpenJob }: { slug: string; jobs: DigifabJ
           <div className="w-40 shrink-0 text-xs text-faint italic">pool (no free printer)</div>
           <div className="flex-1 flex items-center gap-1.5 overflow-x-auto">
             {unassignedPoolJobs.map((j) => (
-              <button key={j.id} type="button" onClick={() => onOpenJob(j.id)} className="shrink-0 max-w-44 rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-2 py-1 text-left" title={j.file_ref}>
-                <div className="text-[11px] text-content dark:text-mortar-100 truncate">{j.file_ref}</div>
+              <button key={j.id} type="button" onClick={() => onOpenJob(j.id)} className="shrink-0 max-w-44 rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-2 py-1 text-left" title={jobDisplayName(j)}>
+                <div className="text-[11px] text-content dark:text-mortar-100 truncate">{jobDisplayName(j)}</div>
                 <div className="text-[10px] font-mono text-amber-600">waiting</div>
               </button>
             ))}
@@ -1995,8 +1998,8 @@ function QueueTimeline({ slug, jobs, onOpenJob }: { slug: string; jobs: DigifabJ
           <div className="w-40 shrink-0 text-xs text-amber-600">needs a printer pick</div>
           <div className="flex-1 flex items-center gap-1.5 overflow-x-auto">
             {awaiting.map((j) => (
-              <button key={j.id} type="button" onClick={() => onOpenJob(j.id)} className="shrink-0 max-w-44 rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-2 py-1 text-left" title={j.file_ref}>
-                <div className="text-[11px] text-content dark:text-mortar-100 truncate">{j.file_ref}</div>
+              <button key={j.id} type="button" onClick={() => onOpenJob(j.id)} className="shrink-0 max-w-44 rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-2 py-1 text-left" title={jobDisplayName(j)}>
+                <div className="text-[11px] text-content dark:text-mortar-100 truncate">{jobDisplayName(j)}</div>
                 <div className="text-[10px] font-mono text-amber-600">awaiting assignment</div>
               </button>
             ))}
@@ -2933,23 +2936,27 @@ function FdmmImportModal({ slug, onClose, onDone }: { slug: string; onClose: () 
           <span className={lbl}>API key (optional)</span>
           <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="fdmm_api_…" className={field} />
         </label>
-        <fieldset className="space-y-1.5">
+        <div className="space-y-1.5">
           <span className={lbl}>How</span>
-          <label className="flex items-start gap-2 text-[13px] cursor-pointer">
-            <input type="radio" checked={mode === "direct"} onChange={() => setMode("direct")} className="mt-0.5" />
-            <span>
-              <b className="text-content dark:text-mortar-100">Connect to each printer directly</b>  - recreate every printer as its own Cobblr
-              connection (OctoPrint, Klipper, … matched per printer) and pool them. Drops FDM Monster from the path.
-            </span>
-          </label>
-          <label className="flex items-start gap-2 text-[13px] cursor-pointer">
-            <input type="radio" checked={mode === "mirror"} onChange={() => setMode("mirror")} className="mt-0.5" />
-            <span>
-              <b className="text-content dark:text-mortar-100">Keep FDM Monster, mirror its printers</b>  - add one FDM Monster connection and a
-              Cobblr pool over its printers. FDM Monster still does the comms.
-            </span>
-          </label>
-        </fieldset>
+          <SegmentedChoice
+            stack
+            label="How"
+            value={mode}
+            onChange={setMode}
+            options={[
+              {
+                value: "direct",
+                label: "Connect to each printer directly",
+                hint: "Recreate every printer as its own Cobblr connection (OctoPrint, Klipper, … matched per printer) and pool them. Drops FDM Monster from the path.",
+              },
+              {
+                value: "mirror",
+                label: "Keep FDM Monster, mirror its printers",
+                hint: "Add one FDM Monster connection and a Cobblr pool over its printers. FDM Monster still does the comms.",
+              },
+            ]}
+          />
+        </div>
         <label className="block">
           <span className={lbl}>Pool name</span>
           <input value={poolName} onChange={(e) => setPoolName(e.target.value)} className={field} />
@@ -3407,7 +3414,7 @@ function RunRow({
         {run.status === "paused" && (
           <span className="text-[10px] font-mono uppercase rounded-full px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300">paused</span>
         )}
-        <span className="text-xs text-muted dark:text-slate-400 flex-1 truncate">{run.file_ref}</span>
+        <span className="text-xs text-muted dark:text-slate-400 flex-1 truncate">{jobDisplayName(run)}</span>
         <span className="text-xs font-mono text-content dark:text-mortar-200">{run.completed_qty}/{run.target_qty}</span>
       </div>
       <div className="mt-1.5 h-1.5 rounded bg-subtle dark:bg-slate-800 overflow-hidden">

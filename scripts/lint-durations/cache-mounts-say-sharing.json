@@ -1,0 +1,10 @@
+{
+  "lint": "lint:cache-mounts-say-sharing",
+  "run": "node scripts/lint-cache-mounts-say-sharing.ts",
+  "rows": [
+    "ci-workflow"
+  ],
+  "ms": 5486,
+  "recorded": "2026-10-07",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

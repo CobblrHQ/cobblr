@@ -73,12 +73,15 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "item_created": "created",
   "item_deleted": "deleted",
   "job_created": "created",
+  "instrument-reading_created": "recorded",
   "join_link_paused": "paused joining for",
   "join_link_resumed": "reopened joining for",
   "join_link_rotated": "replaced the join link for",
   "library_item_copied": "copied into Cobblr",
   "library_item_linked": "linked",
   "library_item_unlinked": "unlinked",
+  "layout_applied": "applied a layout to",
+  "layout_undone": "undid a layout in",
   "list_created": "created",
   "list_deleted": "deleted",
   "list_item_updated": "updated",
@@ -93,6 +96,7 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "machine_deleted": "deleted",
   "machine_updated": "updated",
   "make_created": "created",
+  "firing_created": "created",
   "make_deleted": "deleted",
   "measurement_created": "created",
   "member_joined": "joined",
@@ -102,8 +106,8 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "metric_created": "created",
   "metric_deleted": "deleted",
   "metric_updated": "updated",
-  "module_disabled": "disabled",
-  "module_enabled": "enabled",
+  "module_disabled": "turned off",
+  "module_enabled": "turned on",
   "moved": "moved",
   "moved_by_upgrade": "moved into its own table by the upgrade:",
   "order_created": "created",
@@ -112,6 +116,7 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "order_emailed": "emailed the customer about",
   "order_item_added": "added",
   "order_item_claimed": "claimed an item on",
+  "order_item_received": "received an item on",
   "order_item_released": "released an item on",
   "order_item_removed": "removed",
   "order_item_updated": "updated",
@@ -120,6 +125,7 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "order_line_removed": "removed a line from",
   "order_make_started": "started making for",
   "order_return_recorded": "recorded a return for",
+  "order_return_started": "started a return on",
   "order_shipped": "shipped",
   "order_status_changed": "moved the status of",
   "order_stock_taken": "took stock for",
@@ -155,6 +161,7 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "record_created": "created",
   "record_deleted": "deleted",
   "record_given_away": "gave away",
+  "record_sent": "sent from another workspace",
   "record_handed_over": "gave you",
   "record_lost": "lost",
   "record_parted_out": "parted out",
@@ -252,7 +259,9 @@ export function activityActor(e: SummaryEntry, viewerId?: string): string {
 export function activityPresentation(e: SummaryEntry, slug: string, viewerId?: string, resolved?: ActivitySubject): ActivityPresentation {
   const d = bag(e.diff);
   const actor = activityActor(e, viewerId);
-  let title = named(d) ?? e.entity_title ?? e.entity_type.replaceAll("_", " ");
+  // A membership's subject is the workspace: the type's own name made "Robin
+  // joined membership" on the Activity page.
+  let title = named(d) ?? e.entity_title ?? (e.entity_type === "membership" ? "the workspace" : e.entity_type.replaceAll("_", " "));
   const kind = e.entity_kind ?? (e.module_name ? `${e.module_name}:${e.entity_type}` : null);
   let subject: ActivitySubject = resolved ?? { title, kind, id: e.entity_id, thumbnail: null,
     href: `/w/${encodeURIComponent(slug)}${kind ? openRecordPath(kind, e.entity_id) : "/activity"}` };
@@ -269,6 +278,9 @@ export function activityPresentation(e: SummaryEntry, slug: string, viewerId?: s
   } else if (e.action.startsWith("bundle_")) {
     summary = e.action === "bundle_installed" ? e.user_id || e.actor ? `${actor} added the ${title} collection` : `Set up for you: ${title}` : `${actor} ${ACTIVITY_VERBS[e.action] ?? "changed"} ${title}`;
     subject = { ...subject, href: `/w/${encodeURIComponent(slug)}/bundles` };
+  } else if (e.action === "record_sent") {
+    verb = "sent";
+    summary = `Sent from ${text(d.from) ?? "another workspace"} by ${actor}: ${title}`;
   } else if (e.action === "file_created") {
     const scan = bag(d.scan);
     const record = bag(d.record);
@@ -291,6 +303,12 @@ export function activityPresentation(e: SummaryEntry, slug: string, viewerId?: s
     title = named(d) ?? text(d.barcode) ?? e.entity_title ?? "a thing";
     summary = `${actor} scanned in ${title}`;
     if (!resolved) subject = { ...subject, title, href: `/w/${encodeURIComponent(slug)}/scan` };
+  } else if (e.action === "module_enabled" && !e.user_id && !e.actor) {
+    summary = `Set up for you: ${title}`;
+  } else if (e.action === "user_created" || e.action === "member_joined") {
+    // The subject is the workspace they joined, never the account record.
+    title = e.entity_title ?? "the workspace";
+    summary = `${actor} joined ${title}`;
   } else if (e.action === "updated" || e.action.endsWith("_updated")) {
     const fields = [...new Set((e.said ?? []).map(c => c.label.toLowerCase()))];
     const labels = fields.slice(0, 2).join(" and ") + (fields.length > 2 ? ` +${fields.length - 2} more` : "");

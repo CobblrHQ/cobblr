@@ -25,18 +25,25 @@ export interface EntityGroup {
 export interface GroupedResult {
   groups: EntityGroup[];
   totals: Record<string, GroupTotal[]>;
+  /** The fields whose total is value x this quantity field rather than a sum
+   *  of the value (a per-unit field: length per ball, price each). */
+  weighted_by?: Record<string, string>;
   total: number;
   group_total: number;
 }
 export interface GroupPlan {
   by: GroupBy[];
-  fields: Array<{ name: string; money?: "amount" | "cents" }>;
+  /** The fields to total. `times` names the quantity field a per-unit field
+   *  is multiplied by; a per-unit field without one is never totalled. */
+  fields: Array<{ name: string; money?: "amount" | "cents"; times?: string }>;
   currency: string;
   values?: Record<string, RawBuilder<unknown>>;
   numbers?: Record<string, RawBuilder<number>>;
   where?: RawBuilder<boolean>;
   search?: string;
   search_fields?: string[];
+  /** Carried onto the result: which totals are value x quantity. */
+  weighted_by?: Record<string, string>;
   result?: GroupedResult;
 }
 export interface GroupPage { group_offset?: number; group_limit?: number; group_keys?: Array<string | null>; offset?: number; limit?: number }
@@ -77,7 +84,8 @@ export function groupedListSql<O>(source: SelectQueryBuilder<any, any, O>, plan:
     const raw = jsonValue(f.name);
     const amount = f.money ? sql`coalesce(${raw}->>'amount', ${raw} #>> '{}')` : sql`(${raw} #>> '{}')`;
     // MONEY-OK: normalize native minor units into main units in the database aggregation, before the shared formatter reads the result.
-    const number = plan.numbers?.[f.name] ?? (f.money === "cents" ? sql`case when jsonb_typeof(${raw}) = 'object' then ${numeric(amount)} else ${numeric(amount)} / 100 end` : numeric(amount));
+    const one = plan.numbers?.[f.name] ?? (f.money === "cents" ? sql`case when jsonb_typeof(${raw}) = 'object' then ${numeric(amount)} else ${numeric(amount)} / 100 end` : numeric(amount));
+    const number = f.times ? sql`(${one}) * (${plan.numbers?.[f.times] ?? numeric(textValue(f.times))})` : one;
     const metadataCurrency = sql`coalesce(${sql.join(moneyCurrencyPaths(f.name).map((path) => sql`nullif(data->'metadata' #>> ${path}::text[], '')`))})`;
     const chosenCurrency = sql`coalesce(nullif(${raw}->>'currency', ''), ${metadataCurrency})`;
     const currency = f.money ? sql`case when ${chosenCurrency} ~ '^[A-Za-z]{3}$' then upper(${chosenCurrency}) else ${plan.currency} end` : sql`null::text`;
@@ -133,7 +141,7 @@ export async function groupListRows<DB, O>(db: Kysely<DB>, source: SelectQueryBu
   const plan = query.group_plan;
   if (!plan) return null;
   const result = (await groupedListSql(source, plan, query).execute(db)).rows[0]!;
-  plan.result = result;
+  plan.result = plan.weighted_by && Object.keys(plan.weighted_by).length ? { ...result, weighted_by: plan.weighted_by } : result;
   const ids = result.groups.flatMap((g) => g.item_ids);
   if (!ids.length) return [];
   return db.selectFrom(source.clearLimit().clearOffset().as("group_source")).selectAll().where(sql<boolean>`id::text = any(${ids}::text[])`).execute() as Promise<O[]>;

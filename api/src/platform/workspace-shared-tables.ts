@@ -73,6 +73,7 @@ export const SHARED_WORKSPACE_TABLES: Record<string, SharedTablePolicy> = {
   // An offer to reshape a kind's fields and its answer ("keep sellers as
   // notes"): a restored workspace is not asked again what it already said.
   field_upgrade_offers: { travels: "backup" },
+  operator_sandboxes: { travels: "never", why: "the operator's audit of a sandbox made from the box; it outlives the sandbox, and a backup of the sandbox is not that operator's record" },
   service_job_cards: { travels: "never", why: "cards a running job already sent to people; the jobs they belong to do not travel" },
   service_pending_confirms: { travels: "never", why: "a running job waiting for a yes; the job does not travel, so neither does its question" },
   service_confirm_triggers: { travels: "never", why: "a yes given to one waiting job ahead of its moment; the job does not travel, and a yes never becomes a standing permission somewhere else" },

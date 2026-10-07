@@ -3,6 +3,7 @@ type: feature
 scope: sharing
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#4.5g Sharing (`/configuration/sharing`)
+docs_published: 2026-10-08
 ---
 A thing on a public page now says so: a Public chip beside who it is shared with, or "Public until Sun 6 pm" in booth mode. Public pages wear your workspace's colours and logo, with an accent of their own if you like, and search engines are told not to list them unless you say they may. A public card with no links no longer shows a stray 0.
 

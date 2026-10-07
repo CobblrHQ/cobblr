@@ -32,7 +32,28 @@ export function looksNonEnglish(s: string | null | undefined): boolean {
 export function primaryBrand(brand: string | null | undefined): string | null {
   if (!brand) return null;
   const first = brand.split(",")[0]?.trim().replace(/\s+/g, " ") ?? "";
-  return first || null;
+  return withoutLegalForm(first) || null;
+}
+
+/** A company's legal form says who registered the brand, not the brand. Open
+ *  Food Facts lists Coca-Cola's maker as "COCA-COLA SERVICES SA/NV", and a
+ *  pantry printed GROCERIES · COCA-COLA SERVICES SA/NV beside Nutella (#5102).
+ *  A trailing legal form goes ("SA/NV", "GmbH", "Inc.", "S.p.A."), and with it
+ *  a corporate word it was attached to ("Services", "Holdings", "Group").
+ *  Without a legal form nothing is touched: "Celestial Seasonings" and
+ *  "Johnson Outdoors Group" with no suffix are the brand as written. */
+const LEGAL_FORM =
+  /[\s,]+(?:s\.?a\.?\/n\.?v\.?|n\.?v\.?\/s\.?a\.?|inc\.?|incorporated|llc|l\.l\.c\.|ltd\.?|limited|plc|gmbh(?:\s*&\s*co\.?\s*kg)?|ag|kg|s\.?a\.?s\.?|s\.?a\.?r\.?l\.?|s\.?p\.?a\.?|s\.?r\.?l\.?|s\.?a\.?|n\.?v\.?|b\.?v\.?|a\/s|ab|oy|pty\.?(?:\s+ltd\.?)?|corp\.?|corporation|company|co\.?)$/i;
+const CORPORATE_WORD = /\s+(?:services|holdings?|group|international|europe|company|brands|foods? company)$/i;
+
+export function withoutLegalForm(brand: string): string {
+  if (!LEGAL_FORM.test(brand)) return brand;
+  let out = brand.replace(LEGAL_FORM, "").trim();
+  // The corporate word only goes when a legal form showed this is a company
+  // name, and never when it would leave nothing.
+  const bare = out.replace(CORPORATE_WORD, "").trim();
+  if (bare) out = bare;
+  return out || brand;
 }
 
 /** The Open*Facts name to use, given that record's alternatives.

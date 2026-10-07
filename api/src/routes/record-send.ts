@@ -1,0 +1,40 @@
+import { Router } from "express";
+import { z } from "zod";
+import { requireAuth } from "../auth/middleware.js";
+import { requireRole } from "../auth/capability.js";
+import { withTenant } from "../middleware/tenant.js";
+import { SendError, previewSend, sendRecords, sendTargets, undoSend } from "../platform/record-send.js";
+
+export const SendBody = z.object({
+  entity_kind: z.string().min(1).max(120), ids: z.array(z.string().uuid()).min(1).max(200),
+  target_org: z.string().min(1).max(120), collection: z.string().max(120).nullable().optional(),
+  mode: z.enum(["copy", "move"]), field_map: z.record(z.string().nullable()).optional(),
+  placement: z.literal("unplaced").optional(),
+  include_secrets: z.boolean().optional(), location: z.string().uuid().nullable().optional(),
+  create_matching: z.boolean().optional(), add_fields: z.array(z.string().max(120)).max(100).optional(),
+  duplicate: z.enum(["update", "another"]).optional(), request_id: z.string().uuid().optional(), dry_run: z.boolean().optional(),
+});
+export const recordSendRouter = Router();
+recordSendRouter.get("/:slug/records/send-targets", requireAuth, withTenant, async (req, res, next) => {
+  try { res.json(await sendTargets(req.tenant!.org.id, req.session!.id)); } catch (err) { next(err); }
+});
+// UI-SCREEN: /machines
+// AI-ACTION: platform:send-records
+recordSendRouter.post("/:slug/records/send", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    const parsed = SendBody.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: { code: "bad_body", message: parsed.error.issues[0]?.message } }); return; }
+    if (!requireRole(req, res, parsed.data.mode === "move" ? "member" : "guest")) return;
+    res.json(parsed.data.dry_run ? await previewSend(req.tenant!.org.id, req.session!.id, parsed.data) : await sendRecords(req.tenant!.org.id, req.session!.id, parsed.data));
+  } catch (err) {
+    if (err instanceof SendError) { res.status(409).json({ error: { code: "send_refused", message: err.message } }); return; }
+    next(err);
+  }
+});
+// UI-SCREEN: /machines
+// AI-ACTION: platform:undo-send
+recordSendRouter.post("/:slug/records/send/:id/undo", requireAuth, withTenant, async (req, res, next) => {
+  if (!requireRole(req, res, "guest")) return;
+  try { res.json(await undoSend(req.tenant!.org.id, req.session!.id, String(req.params.id))); }
+  catch (err) { if (err instanceof SendError) { res.status(409).json({ error: { code: "undo_refused", message: err.message } }); return; } next(err); }
+});

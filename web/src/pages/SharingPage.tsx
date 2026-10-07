@@ -10,7 +10,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDownLeft, ArrowUpRight, Check, Copy, Plus, RefreshCw, Share2 } from "lucide-react";
-import { Modal, relativeTime, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
+import { Modal, relativeTime, useConfirm, usePageTitle, useToast, SegmentedChoice } from "@cobblr/platform-web";
 import { api, type ShareLinkItem, type ShareOfferItem } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
@@ -241,18 +241,16 @@ function InviteForm({ slug, onDone }: { slug: string; onDone: () => void }) {
     return (
       <div className="space-y-3">
         {made.links.length > 1 && (
-          <fieldset className="space-y-1" data-testid="share-invite-where">
-            <legend className="text-sm font-medium text-content">Where is their Cobblr?</legend>
-            {made.links.map((l, i) => (
-              <label key={l.url} className="flex items-start gap-2 text-sm text-content">
-                <input type="radio" name="share-where" checked={where === i} onChange={() => setWhere(i)} className="mt-1 accent-cobble-500" data-testid="share-invite-where-option" />
-                <span>
-                  {l.label}
-                  {l.note && <span className="block text-xs text-muted">{l.note}</span>}
-                </span>
-              </label>
-            ))}
-          </fieldset>
+          <div className="space-y-1" data-testid="share-invite-where">
+            <span className="text-sm font-medium text-content">Where is their Cobblr?</span>
+            <SegmentedChoice
+              stack
+              label="Where is their Cobblr?"
+              value={String(where)}
+              onChange={(v) => setWhere(Number(v))}
+              options={made.links.map((l, i) => ({ value: String(i), label: l.label, hint: l.note, testId: "share-invite-where-option" }))}
+            />
+          </div>
         )}
         <p className="text-sm text-content">
           Send this link to {label || "them"}. They open it signed in to their Cobblr there and accept; with no account there yet, they sign up first and come back to it. It works once, for a week.
@@ -322,9 +320,9 @@ function HandedOver({ slug }: { slug: string }) {
   const confirm = useConfirm();
   const list = useQuery({ queryKey: ["share-offers", slug], queryFn: () => api.listShareOffers(slug), enabled: !!slug });
   const act = useMutation({
-    mutationFn: ({ id, what }: { id: string; what: "withdraw" | "send-back" }) => (what === "withdraw" ? api.withdrawShareOffer(slug, id) : api.sendBackShareOffer(slug, id)),
+    mutationFn: ({ id, what }: { id: string; what: "withdraw" | "send-back" | "undo" }) => (what === "undo" ? api.undoSend(slug, id) : what === "withdraw" ? api.withdrawShareOffer(slug, id) : api.sendBackShareOffer(slug, id)),
     onSuccess: (_r, v) => {
-      toast.success(v.what === "withdraw" ? "Withdrawn." : "Sent back.");
+      toast.success(v.what === "undo" ? "Send undone." : v.what === "withdraw" ? "Withdrawn." : "Sent back.");
       void qc.invalidateQueries();
     },
     onError: (e) => toast.error((e as Error).message),
@@ -342,8 +340,9 @@ function HandedOver({ slug }: { slug: string }) {
               {o.direction === "out" ? <ArrowUpRight size={14} className="text-muted" aria-label="given" /> : <ArrowDownLeft size={14} className="text-muted" aria-label="received" />}
               <span className="min-w-0 flex-1 truncate text-content">{o.title}</span>
               <span className="text-xs text-muted">
-                {o.direction === "out" ? "to" : "from"} {o.peer_name ?? "them"} · {STATE_WORDS[o.status]} · {relativeTime(o.taken_at ?? o.created_at)}
+                {o.direction === "out" ? "to" : "from"} {o.peer_name ?? "them"} · {o.send_mode && o.status === "taken" ? (o.send_mode === "copy" ? "copied" : "sent") : STATE_WORDS[o.status]} · {relativeTime(o.taken_at ?? o.created_at)}
               </span>
+              {o.can_undo && <button type="button" disabled={act.isPending} onClick={() => act.mutate({ id: o.id, what: "undo" })} className="rounded border border-line px-2 py-1 text-xs">Undo send</button>}
               {o.can_withdraw && (
                 <button type="button" onClick={() => act.mutate({ id: o.id, what: "withdraw" })} disabled={act.isPending} className="rounded border border-line px-2 py-1 text-xs text-muted hover:text-accent dark:border-slate-600">
                   Withdraw

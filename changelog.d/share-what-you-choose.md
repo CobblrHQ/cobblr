@@ -3,6 +3,7 @@ type: feature
 scope: sharing
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#4.5g Sharing (`/configuration/sharing`)
+docs_published: 2026-10-08
 ---
 A share now holds the things you choose. **What's shared** picks whole collections, things whose field says something (loaned to Vince), or things one by one, and shows how many match as you build it. Their copies stay in step as you change them, and prices, private notes, real places and restricted fields stay out until you turn each on. Any field can now be marked **Private**.
 

@@ -3,6 +3,7 @@ type: feature
 scope: sales
 date: 2026-10-04
 docs_target: docs/USER_GUIDE.md#3.26 Sales (outbound orders)
+docs_published: 2026-10-08
 ---
 Sales orders gained invoice PDFs saved locally through your browser and CSV export for your accounting tool, both with recorded payment state.
 

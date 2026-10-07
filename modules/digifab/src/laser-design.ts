@@ -12,7 +12,11 @@ function normalise(paths: Design["paths"]): Design {
  return { width, height, paths: paths.map(p => ({ ...p, points: p.points.map(v => ({ ...shift(v), ...(v.c0 ? { c0: shift(v.c0) } : {}), ...(v.c1 ? { c1: shift(v.c1) } : {}) })) })) };
 }
 function pathGeometry(data: string, layer: string, transform: string): Design["paths"] {
- const p = svgpath(data).transform(transform).abs().unshort().unarc();
+ // Arcs become cubics BEFORE the flip into machine coordinates: a cubic is
+ // exact under any affine map, but svgpath's arc transform turns a mirrored
+ // near-full arc into the short one, and a coaster's scored ring came out as
+ // a dot (a-drawing-never-loses-geometry-on-the-way-to-a-laser.test.ts).
+ const p = svgpath(data).abs().unshort().unarc().transform(transform);
  const error = (p as unknown as { err?: string }).err;
  if (error) throw new Error(`This drawing has an invalid path: ${error}`);
  const paths: Design["paths"] = [];

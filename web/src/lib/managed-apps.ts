@@ -5,8 +5,6 @@
 // this adds the marketing headline/blurb for the signup screen.
 
 import type { AppTheme } from "./api";
-import { FEATURED_BUNDLES } from "./featured-bundles";
-import { fillNoun } from "@cobblr/platform-contract/kind-label";
 
 export interface ManagedAppMeta {
   id: string;
@@ -113,17 +111,4 @@ export const MANAGED_APP_SURFACE = ["/instances", "/scan", "/me"] as const;
 
 export function inManagedAppSurface(pathname: string): boolean {
   return MANAGED_APP_SURFACE.some((p) => pathname === p || pathname.startsWith(p + "/"));
-}
-
-
-/** The signup screen's words for an app, with the app bundle's own word for
- *  its things filled in (the default: nobody has chosen yet on this page). */
-export function managedAppCopy(meta: ManagedAppMeta): { headline: string; blurb: string } {
-  const bundle = FEATURED_BUNDLES.find((b) => b.manifest.id === meta.bundleId);
-  const noun = bundle?.manifest.provides_instances?.find((i) => i.noun)?.noun;
-  const word = noun ? { singular: noun.singular, plural: noun.plural } : null;
-  return {
-    headline: word ? fillNoun(meta.headline, word) : meta.headline,
-    blurb: word ? fillNoun(meta.blurb, word) : meta.blurb,
-  };
 }

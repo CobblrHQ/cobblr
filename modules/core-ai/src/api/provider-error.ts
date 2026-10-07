@@ -54,6 +54,12 @@ function providerName(raw: string): string {
  * (a TurnError already carries user-facing prose), minus any JSON tail.
  */
 export function humanizeProviderError(error: string, detail?: ProviderFailureDetail): HumanizedError {
+  // The replay provider (registered only where COBBLR_AI_REPLAY_DIR is set,
+  // never in production) says exactly which cassette step failed and what it
+  // read. Folded into a generic sentence, a red CI run said only "no_ai,
+  // unknown" and kept no api log to say more (#5119), so its words pass through.
+  const replayed = /\breplay: [\s\S]*/.exec(error);
+  if (replayed) return { code: "unknown", message: replayed[0] };
   const isProvider = PROVIDER_PREFIX.test(error);
   const raw = error.replace(PROVIDER_PREFIX, "");
   const who = detail?.provider ?? providerName(raw);

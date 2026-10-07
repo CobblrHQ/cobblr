@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/platform-web",
-  "version": "0.12.32",
+  "version": "0.12.33",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
@@ -10,7 +10,11 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     },
-    "./floating-chrome.css": "./src/floating-chrome.css"
+    "./floating-chrome.css": "./src/floating-chrome.css",
+    "./json-field": {
+      "types": "./src/JsonField.tsx",
+      "import": "./src/JsonField.tsx"
+    }
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
-import { useToast } from "@cobblr/platform-web";
+import { useToast, SegmentedChoice } from "@cobblr/platform-web";
 import { EMPTY_SCOPE, VISIBILITY_NONE, type ScopeDef, type ScopeRule, type VisibilityDef } from "@cobblr/platform-contract/share-scope";
 import { api, type ShareEditMode } from "../lib/api";
 
@@ -169,15 +169,13 @@ export function ScopeEditor({ slug, who, onDone, source }: { slug: string; who: 
       {source.editMode && (
         <section className="space-y-2">
           <h3 className="text-sm font-semibold text-content">When {who} changes something</h3>
-          {EDIT_MODES.map((m) => (
-            <label key={m.key} className="flex items-start gap-2 text-sm text-content">
-              <input type="radio" name="share-edit-mode" data-testid={`share-edit-${m.key}`} checked={mode === m.key} onChange={() => setMode(m.key)} className="mt-1 accent-cobble-500" />
-              <span>
-                {m.label}
-                <span className="block text-xs text-muted">{m.hint(who)}</span>
-              </span>
-            </label>
-          ))}
+          <SegmentedChoice
+            stack
+            label={`When ${who} changes something`}
+            value={mode}
+            onChange={setMode}
+            options={EDIT_MODES.map((m) => ({ value: m.key, label: m.label, hint: m.hint(who), testId: `share-edit-${m.key}` }))}
+          />
         </section>
       )}
 

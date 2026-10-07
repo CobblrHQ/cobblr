@@ -33,6 +33,9 @@ export interface StoredChatMessage {
   proposal?: unknown;
   sections?: Record<string, unknown>;
   resolved?: boolean;
+  /** The turn's steps under its answer, kept across a reload (#5067). */
+  steps?: Array<{ text: string; state: "doing" | "done" | "failed"; why?: string }>;
+  ways?: unknown;
   /** Where Save put this answer: the line under it says so, after a reload too. */
   savedTo?: { label: string; kind: string; id: string };
 }

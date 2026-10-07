@@ -17,7 +17,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { notificationRoute } from "../lib/deep-path";
 import { inviteTokenFrom, notificationAction } from "../lib/notification-action";
 import { NotificationActionButtons } from "./NotificationActionButtons";
-import ReactMarkdown from "react-markdown";
+import { MarkdownText } from "@cobblr/platform-web";
 import { api, ApiError, type CrossOrgNotificationEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { SidePanel } from "./SidePanel";
@@ -304,7 +304,7 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
                   {/* Render the message as markdown so a quoted report (Discord-style
                       "> …") shows as a block quote instead of a literal ">". */}
                   <div className="prose prose-sm dark:prose-invert max-w-none text-sm text-content dark:text-mortar-100 prose-p:my-1 prose-blockquote:my-1 break-words">
-                    <ReactMarkdown>{n.message}</ReactMarkdown>
+                    <MarkdownText>{n.message}</MarkdownText>
                   </div>
                   {/* The substance, when the notification carries any: the
                       comment you were mentioned in, not just the fact of it.

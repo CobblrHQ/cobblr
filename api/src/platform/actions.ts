@@ -13,6 +13,7 @@ import type {
 import { axisOfTrait, PLATFORM_OWNER, type AnyAxisName } from "@cobblr/platform-contract";
 import { requiredArgsRefusal } from "@cobblr/platform-contract/action-args";
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
+import { ActionRefusal } from "@cobblr/platform-contract/action-refusal";
 import { meta } from "../db/meta.js";
 import { listEntries } from "../modules/registry.js";
 import { facesForKind } from "./faces.js";
@@ -428,8 +429,20 @@ export async function invoke(
     // The handler is named here, once, where it is known; the caller (the
     // invoke route, the wire engine) answers in its own way.
     console.error(`[actions] ${actionId} handler ${row.invoke_handler} threw:`, err);
+    // An id that is not one is the caller's mistake, not a crash: said as a
+    // refusal, the model or the person can read the records and try again.
+    // It reached a handler's query as "$result..." and answered only
+    // "check the log for act-..." (main red, 2026-10-07).
+    if (isNotAnId(err)) throw new ActionRefusal("One of the ids given is not an id. Read the records first and pass their real ids.");
     throw err;
   }
+}
+
+/** Postgres refusing a value as a uuid (22P02, "invalid input syntax for
+ *  type uuid"): a handler was handed an id that is not one. */
+function isNotAnId(err: unknown): boolean {
+  const e = err as { code?: unknown; message?: unknown } | null;
+  return e?.code === "22P02" && typeof e.message === "string" && /type uuid/.test(e.message);
 }
 
 /** Why an action matched (or didn't) an entity kind. `via: null`

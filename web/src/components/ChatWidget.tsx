@@ -5,8 +5,10 @@
 // header's backdrop-blur can't trap its position:fixed (CLAUDE.md modal note).
 
 import { aiAvailabilityKeys } from "../lib/ai-availability-keys";
+import { mayRead } from "../lib/acting-role";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import { MarkdownText } from "@cobblr/platform-web";
+import { panelArrived, panelLeft, type OpenChatDetail } from "../lib/open-chat-buffer";
 import { appliedCards } from "../lib/applied-cards";
 import { linkifyMarkdown, mergeRefs, refsOfResponse, refOfProposal, refsLeftUnnamed, type ChatEntityRef } from "../lib/entity-chips";
 import { ChatRefChip, ChatRefName, PermanentTag } from "./ChatRefChip";
@@ -27,7 +29,7 @@ import { SaveAnswerSheet, type SavedAnswer } from "./SaveAnswerSheet";
 import { createPortal } from "react-dom";
 import { api, ApiError, type AiChatProposal, type AiChatResponse, type BasicCommandOffer, type BundleValidationPreview, type ChatModelMenu, type ChatModelOption, type ChatPrefsInput } from "../lib/api";
 import { readSse } from "../lib/sse";
-import { Cobb, CobbBust, CobbHead, COBB_POSES, type CobbPose } from "./Cobb";
+import { Cobb, CobbBust, COBB_POSES, type CobbPose } from "./Cobb";
 import { useNavigate } from "react-router-dom";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { getChatPageContext, getChatSelection, clearChatSelection, useChatSelection } from "../lib/chat-context";
@@ -35,7 +37,8 @@ import { useSelectionCapture } from "../lib/use-selection-capture";
 import { localAnswerFor } from "../lib/local-answers";
 import { runNavRowCommand } from "../lib/nav-row-command";
 import { useNavModules } from "./useNavModules";
-import { describeTool } from "../lib/chat-progress";
+import { foldStep, settledSteps, type TurnStep } from "../lib/chat-progress";
+import { TurnSteps } from "./TurnSteps";
 import {
   caretOnFirstLine,
   caretOnLastLine,
@@ -50,8 +53,8 @@ import {
 } from "../lib/input-history";
 import { useDetailRoute, useListRoute } from "../lib/useDetailRoute";
 import { useAiStatus, AiOffNotice, aiStatusLine } from "./AiStatusNotice";
-import { RailTabContent, openRail, useRailActiveTab, useRailTab } from "./SideRail";
-import { ContextChip, PopoverLayer, openDiscussion, useEscapeToClose } from "@cobblr/platform-web";
+import { RailTabContent, useRailTab } from "./SideRail";
+import { ContextChip, PopoverLayer, useEscapeToClose } from "@cobblr/platform-web";
 import { ServiceJobCard } from "./ServiceJobCard";
 
 // Shown only if the basic-mode endpoint itself is unreachable (network error) —
@@ -75,6 +78,10 @@ interface Msg {
    *  rather than borrowing whatever the composer holds now. */
   sentWith?: { label: string; kind?: string; ids?: string[]; text?: string };
   proposal?: AiChatProposal; // assistant proposed a write — needs confirm
+  /** What the turn did, kept under its answer: each step and how it went. */
+  steps?: TurnStep[];
+  /** The ways out of a step that did not happen, one button each (#5067). */
+  ways?: Array<{ label: string; proposal: AiChatProposal }>;
   /** The offer this card is, as the server keeps it (core_ai_offers): Confirm
    *  runs the kept plan, and a reload redraws the card from it. */
   offerId?: string;
@@ -401,120 +408,6 @@ function ConsentToggle({
   );
 }
 
-/** The Ask-Cobb button alone — safe to render in as many chrome spots as the
- *  layout needs (desktop header, mobile header, sidebar row). The conversation
- *  lives in the ONE <ChatPanel> AppLayout mounts; keeping the panel out of this
- *  component is the point. It used to be bundled in (one ChatWidget = button +
- *  panel), and because the panel PORTALS to <body>, the wrappers' hidden /
- *  md:hidden gating hid only the buttons — every mounted instance's panel
- *  rendered when the shared `open` flipped, stacked, each holding its own
- *  conversation. You typed into whichever was on top; a breakpoint resize
- *  changed which one that was. */
-export function ChatLauncher({ open, setOpen, asRow = false }: { open: boolean; setOpen: (v: boolean) => void; asRow?: boolean }) {
-  const { activeSlug } = useActiveOrg();
-  // ABOVE the guard. React identifies hooks by call order, so a hook below an
-  // early return runs only on some renders — the crash this repo already has a
-  // lint for, which is what caught it here.
-  const activeTab = useRailActiveTab();
-  if (!activeSlug) return null;
-
-  // OPENING goes through openRail so it lands on the tab the words name.
-  // Toggling the shared `open` flag alone reopens whatever tab was last used,
-  // so a control labelled "Ask Cobb" could open on Pinned — which is exactly
-  // what it did once the rail grew tabs.
-  // ONE RULE FOR EVERY SEGMENT:
-  //
-  //   closed                → open on my tab
-  //   open, showing my tab  → close
-  //   open, showing another → SWITCH to my tab
-  //
-  // The third case is the one that was missing, and it made the row feel
-  // broken in both directions: pressing Cobb while Discussion was showing
-  // closed the panel (because "open" was read as "mine"), and pressing
-  // Discussion while Discussion was showing did nothing (because it always
-  // called openRail).
-  const go = (tab: string) => () => {
-    if (open && activeTab === tab) setOpen(false);
-    // The header has no record of its own: Discussion shows the one in
-    // context, or the room.
-    else if (tab === "discussion") openDiscussion({ record: null });
-    else openRail(tab);
-  };
-  const openCobb = go("cobb");
-
-  // ── the header form: an icon, and Cobb is what it opens ─────────────
-  if (!asRow) {
-    return (
-      <button
-        type="button"
-        onClick={openCobb}
-        className="transition p-1.5 text-faint dark:text-slate-500 hover:text-accent"
-        title={open ? "Hide Cobb" : "Ask Cobb"}
-        aria-label={open ? "Hide Cobb" : "Ask Cobb"}
-      >
-        {/* A button labelled "Ask Cobb" should show Cobb, not a sparkle. The
-            head is the mark drawn for this size — full-body is unreadable at
-            18px, and it stays lit even when AI is off, because basic mode
-            still answers. */}
-        <CobbHead size={18} className="shrink-0" title="Cobb" />
-      </button>
-    );
-  }
-
-  // ── the menu form: ONE row, two ways in ─────────────────────────────
-  //
-  // Cobb and Discussion are two rooms behind the same door, so they share a
-  // row rather than taking one each — the menu is short, and a row apiece
-  // would teach that they are separate destinations when they are not. It also
-  // stops "Ask Cobb" having to cover for a panel that does more than Cobb,
-  // which is what made the name look wrong.
-  //
-  // A div of two buttons, not a button with two halves: a button inside a
-  // button is invalid, and each half genuinely does its own thing.
-  // gap-1.5, not 2.5: the sidebar column is 208px and "Ask Cobb | Discussion"
-  // only just fits. At 2.5, with the divider's own padding, it overran and
-  // "Ask Cobb" wrapped onto two lines — which reads as a mistake rather than a
-  // pair. whitespace-nowrap on both halves keeps that from coming back when a
-  // label changes.
-  return (
-    <div className="w-full flex items-center gap-1.5 px-3 py-1.5 rounded text-[13px] text-muted dark:text-slate-400 hover:bg-subtle/60 dark:hover:bg-slate-800/40 transition">
-      <CobbHead size={18} className="shrink-0" title="Cobb" />
-      <button
-        type="button"
-        onClick={openCobb}
-        className="whitespace-nowrap hover:text-accent transition"
-        title={open ? "Hide Cobb" : "Ask Cobb"}
-        aria-label={open ? "Hide Cobb" : "Ask Cobb"}
-      >
-        Ask Cobb
-      </button>
-      {/* The divider is a TARGET too: it opens the panel on whatever you had
-          last, which is what you want when you do not care which room — you
-          just want the thing back. Air on both sides so at 13px it reads as
-          the join between two controls rather than punctuation inside one
-          phrase. */}
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="px-1.5 text-faint/60 dark:text-slate-600 hover:text-accent select-none transition"
-        title={open ? "Hide the panel" : "Reopen the panel where you left it"}
-        aria-label={open ? "Hide the panel" : "Reopen the panel"}
-      >
-        |
-      </button>
-      <button
-        type="button"
-        onClick={go("discussion")}
-        className="whitespace-nowrap hover:text-accent transition"
-        title="What people are saying here"
-        aria-label="Open discussion"
-      >
-        Discussion
-      </button>
-    </div>
-  );
-}
-
 /** The conversation panel. Mounted ONCE (AppLayout), not per launcher: it stays
  *  mounted while closed so the conversation survives close/reopen, and being
  *  the only instance is what guarantees one conversation, one portal, one
@@ -589,7 +482,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   const modelsQ = useQuery({
     queryKey: aiAvailabilityKeys.chatModels(activeSlug),
     queryFn: () => api.aiChatModels(activeSlug),
-    enabled: !!activeSlug,
+    enabled: !!activeSlug && mayRead(`/orgs/${activeSlug}/modules/core-ai/chat/models`),
     staleTime: 60_000,
   });
   const setPrefs = useMutation({
@@ -648,8 +541,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   // where the next message is typed, and the conversation stays exactly where
   // it was.
   useEffect(() => {
-    const onOpen = (e: Event) => {
-      const d = (e as CustomEvent<{ seed?: string; prefill?: string; opener?: string }>).detail ?? {};
+    const apply = (d: OpenChatDetail) => {
       setOpen(true);
       if (d.seed) setSeedPlaceholder(d.seed);
       if (d.prefill) setInput((cur) => (cur.trim() ? cur : d.prefill!));
@@ -658,8 +550,15 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
       // grounds the model for your reply (it's part of the chat context).
       if (d.opener) setMessages((cur) => [...cur, { role: "assistant", content: d.opener! }]);
     };
+    const onOpen = (e: Event) => apply((e as CustomEvent<OpenChatDetail>).detail ?? {});
     window.addEventListener("cobblr:open-chat", onOpen);
-    return () => window.removeEventListener("cobblr:open-chat", onOpen);
+    // A request made before this panel's code arrived (open-chat-buffer.ts).
+    const early = panelArrived();
+    if (early) apply(early);
+    return () => {
+      window.removeEventListener("cobblr:open-chat", onOpen);
+      panelLeft();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [busy, setBusy] = useState(false);
@@ -769,7 +668,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   /** Turn one chat response into messages. Shared by the legacy blocking
    *  path and the persisted-turn path, so a reply renders identically
    *  however it arrived. */
-  function applyResponse(next: Msg[], r: AiChatResponse) {
+  function applyResponse(next: Msg[], r: AiChatResponse, turnSteps: TurnStep[] = []) {
     if (r.type === "build-proposal" && r.building && r.draft_id) {
       // The build runs async (~150s). Show a "designing…" message and poll
       // the draft until it's ready, then swap in the preview + confirm.
@@ -804,6 +703,14 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
       // in his prose is a chip too, not only the card's.
       const refs = refsOfResponse(r);
       const named = (m: Msg): Msg => (refs.length ? { ...m, refs } : m);
+      // The turn's steps stay under its words, and each step that did not
+      // happen comes back as its own card with Retry (#5067).
+      const withSteps = (m: Msg): Msg => (turnSteps.length ? { ...m, steps: turnSteps } : m);
+      // No chips on these: the list a turn made is not what a failed step is
+      // about, and "Mugs" beside "Filing into Cups" reads as where it goes.
+      const retryCards: Msg[] = (r.failed ?? [])
+        .filter((f) => f.ways?.length)
+        .map((f) => ({ role: "assistant" as const, content: `What next for “${f.step}”?`, ways: f.ways }));
       // The plan the workspace worked out in code rides as a Do-it card, right
       // after Cobb's sentence and before anything the model added: it is the
       // answer to that part of the message, whatever the model made of it.
@@ -814,9 +721,9 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
           ...doneCards.map(named),
           // The loop may say something useful before proposing ("found 3 skeins
           // that match — want me to add the pattern?"): keep that text.
-          ...(r.text ? [named({ role: "assistant" as const, content: r.text })] : []),
+          ...(r.text ? [withSteps(named({ role: "assistant" as const, content: r.text }))] : []),
           ...planCard,
-          named({ role: "assistant", content: r.summary ?? "I can do that. Confirm?", proposal: r.proposal, ...(r.offer_id ? { offerId: r.offer_id } : {}) }),
+          named({ role: "assistant", content: r.summary ?? "I can do that. Confirm?", proposal: r.proposal, ...(r.offer_id ? { offerId: r.offer_id } : {}), ...(!r.text && turnSteps.length ? { steps: turnSteps } : {}) }),
         ]);
       } else if (r.type === "proposals" && r.items?.length) {
         // Several writes from one turn — one confirmable card each, so the user
@@ -824,7 +731,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
         setMessages([
           ...next,
           ...doneCards.map(named),
-          ...(r.text ? [named({ role: "assistant" as const, content: r.text })] : []),
+          ...(r.text ? [withSteps(named({ role: "assistant" as const, content: r.text }))] : []),
           ...planCard,
           ...r.items.map((it) =>
             named({
@@ -839,7 +746,8 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
         setMessages([
           ...next,
           ...doneCards.map(named),
-          named({ role: "assistant", content: r.text?.trim() || (r.command ? "Here is what I can do." : "I didn't manage an answer for that. Try asking again, or in a different way."), ...(r.choices?.length ? { choices: r.choices } : {}) }),
+          withSteps((r.failed?.length ? (m: Msg) => m : named)({ role: "assistant", content: r.text?.trim() || (r.command ? "Here is what I can do." : "I didn't manage an answer for that. Try asking again, or in a different way."), ...(r.choices?.length ? { choices: r.choices } : {}) })),
+          ...retryCards,
           ...(r.command ? [named({ role: "assistant" as const, content: "", command: r.command })] : []),
         ]);
       }
@@ -1304,7 +1212,12 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
    *  read as the word "Thinking" for a minute and a half: every step scrolled
    *  past invisibly and the one thing left on screen was the least informative.
    *  Keeping them means the wait shows its work. */
-  const [steps, setSteps] = useState<Array<{ text: string; state: "doing" | "done" | "failed" }>>([]);
+  const [steps, setSteps] = useState<TurnStep[]>([]);
+  /** The same list, readable when the answer lands (the answer keeps it). */
+  const stepsRef = useRef<TurnStep[]>([]);
+  useEffect(() => {
+    stepsRef.current = steps;
+  }, [steps]);
   /** Ledgered writes a relayed assistant made during this turn, waiting for the
    *  answer they belong beside. Each one is an Undo the person can press. */
   const relayApplied = useRef<Msg[]>([]);
@@ -1358,23 +1271,9 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
     setSteps((prev) => {
       switch (kind) {
         case "thinking":
-          // Only the FIRST think is a step of its own; the later ones are the
-          // gap between tools and would otherwise fill the list with the word.
-          return (data.round as number) > 0 ? prev : [...prev, { text: "Thinking", state: "doing" as const }];
-        case "tool": {
-          const done = prev.map((x) => (x.state === "doing" ? { ...x, state: "done" as const } : x));
-          return [...done, { text: describeTool(String(data.name ?? ""), (data.args as Record<string, unknown>) ?? {}), state: "doing" as const }];
-        }
-        case "tool-result": {
-          const copy = [...prev];
-          for (let i = copy.length - 1; i >= 0; i--) {
-            if (copy[i]!.state === "doing") {
-              copy[i] = { ...copy[i]!, state: data.ok ? "done" : "failed" };
-              break;
-            }
-          }
-          return copy;
-        }
+        case "tool":
+        case "tool-result":
+          return foldStep(prev, kind, data);
         case "applied": {
           // A step that carries a ledger id is a change the person can put
           // back. The in-app path builds those cards from the turn's result;
@@ -1467,7 +1366,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
     try {
       const { turn } = await api.aiChatTurn(activeSlug, turnId);
       if (turn.status === "done" && turn.result) {
-        finishFollow(next, turn.result);
+        finishFollow(next, turn.result, await stepsOfTurn(turnId));
         return;
       }
       if (turn.status === "failed") {
@@ -1545,8 +1444,20 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
     })();
   }
 
-  function finishFollow(next: Msg[], r: AiChatResponse) {
+  /** A finished turn's steps, read back from its events, for a panel that
+   *  arrived after it ended. Nothing to show is the empty list. */
+  async function stepsOfTurn(turnId: string): Promise<TurnStep[]> {
+    try {
+      const { events } = await api.aiChatTurnEvents(activeSlug, turnId);
+      return events.reduce<TurnStep[]>((acc, e) => foldStep(acc, e.kind, e.payload ?? {}), []);
+    } catch {
+      // quiet: the answer itself still shows; only its step list is missing.
+      return [];
+    }
+  }
+  function finishFollow(next: Msg[], r: AiChatResponse, readBack?: TurnStep[]) {
     rememberOpenTurn(null);
+    const kept = settledSteps(readBack ?? stepsRef.current);
     setSteps([]);
     setStartedAt(null);
     setStreaming("");
@@ -1556,7 +1467,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
     // their cards in front of the answer, where the in-app ones go.
     const relayCards = relayApplied.current;
     relayApplied.current = [];
-    applyResponse(relayCards.length ? [...next, ...relayCards] : next, r);
+    applyResponse(relayCards.length ? [...next, ...relayCards] : next, r, kept);
   }
   function failFollow(msg: string) {
     rememberOpenTurn(null);
@@ -1687,12 +1598,13 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
     setMessages((prev) => prev.map((m, i) => (i === idx ? { ...m, resolved: true } : m)));
   }
 
-  async function confirm(idx: number) {
+  async function confirm(idx: number, way?: AiChatProposal) {
     const m = messages[idx];
-    if (!m?.proposal || busy) return;
+    const proposal = way ?? m?.proposal;
+    if (!m || !proposal || busy) return;
     setBusy(true);
     try {
-      const r = await api.aiChatExecute(activeSlug, m.proposal, undefined, m.offerId);
+      const r = await api.aiChatExecute(activeSlug, proposal, undefined, way ? undefined : m.offerId);
       markResolved(idx);
       setMessages((prev) => prev.map((x, i) => (i === idx ? { ...x, offerState: { status: r.ok ? "confirmed" : "failed", message: r.message } } : x)));
       if (r.ok) {
@@ -1710,7 +1622,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
         setMessages((prev) => [...prev, ...steps]);
         return;
       }
-      const refs = r.ok ? mergeRefs(refsOfResponse({ applied: [r] }), [refOfProposal(m.proposal)]) : [];
+      const refs = r.ok ? mergeRefs(refsOfResponse({ applied: [r] }), [refOfProposal(proposal)]) : [];
       setMessages((prev) => [
         ...prev,
         {
@@ -2040,9 +1952,9 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                         <PermanentTag />
                       </p>
                     ) : (
-                      <ReactMarkdown components={mdComponents}>
+                      <MarkdownText components={mdComponents}>
                         {linkifyMarkdown(m.content, mergeRefs(m.refs, [refOfProposal(m.proposal)]), detailRoute)}
-                      </ReactMarkdown>
+                      </MarkdownText>
                     )}
                     {/* A card about a record whose words do not say which
                         ("✓ Done." after adjusting its stock) still shows the
@@ -2146,6 +2058,29 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                   {/* Which one? The answer is a tap: it sends the person's own
                       sentence back with the record named, so the write runs
                       once, on the one they chose. Only until answered. */}
+                  {m.steps && m.steps.length > 0 && <TurnSteps steps={m.steps} />}
+                  {m.ways && m.ways.length > 0 && !m.resolved && (
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5" data-testid="chat-ways-out">
+                      {m.ways.map((w) => (
+                        <button
+                          key={w.label}
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void confirm(i, w.proposal)}
+                          className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          {w.label}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => markResolved(i)}
+                        className="inline-flex items-center rounded-full border border-line dark:border-slate-600 px-3 py-1 text-xs font-medium text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
                   {m.choices && !m.resolved && i === messages.length - 1 && (
                     <div className="mt-2 flex flex-wrap items-center gap-1.5" data-testid="chat-choices">
                       {m.choices.map((c) => (
@@ -2454,20 +2389,20 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                       would only cost them their crispness. */}
                   {peek.from === "guide" ? (
                     <div className="prose prose-sm dark:prose-invert max-w-none prose-p:my-1.5 prose-ul:my-1.5 prose-li:my-0.5 break-words text-emerald-800 dark:text-emerald-300 prose-strong:text-emerald-900 dark:prose-strong:text-emerald-200">
-                      <ReactMarkdown>{peek.answer}</ReactMarkdown>
+                      <MarkdownText>{peek.answer}</MarkdownText>
                     </div>
                   ) : peek.refs?.length ? (
                     // A name the workspace found ("where is my drill") is the
                     // record, and opens as one; the same chip his replies use.
                     <div className="text-sm font-medium text-emerald-800 dark:text-emerald-300 [&_p]:my-0">
-                      <ReactMarkdown components={mdComponents}>{linkifyMarkdown(peek.answer, peek.refs, detailRoute)}</ReactMarkdown>
+                      <MarkdownText components={mdComponents}>{linkifyMarkdown(peek.answer, peek.refs, detailRoute)}</MarkdownText>
                     </div>
                   ) : (
                     <div className="text-sm font-medium text-emerald-800 dark:text-emerald-300">{peek.answer}</div>
                   )}
                   {peek.detail && peek.refs?.length ? (
                     <div className="text-[11px] text-emerald-700/80 dark:text-emerald-400/70 [&_p]:my-0">
-                      <ReactMarkdown components={mdComponents}>{linkifyMarkdown(peek.detail, peek.refs, detailRoute)}</ReactMarkdown>
+                      <MarkdownText components={mdComponents}>{linkifyMarkdown(peek.detail, peek.refs, detailRoute)}</MarkdownText>
                     </div>
                   ) : peek.detail ? (
                     <div className="text-[11px] text-emerald-700/80 dark:text-emerald-400/70">{peek.detail}</div>

@@ -25,7 +25,7 @@ import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { useBundleCatalog } from "../lib/useBundleCatalog";
-import { BundleDetailModal } from "./BundleDetailModal";
+import { BundleDetailModal } from "./BundleDetailModalLazy";
 
 export function useBundleDetail(slug: string): {
   /** Open the modal for a bundle's external id, in place. */
@@ -34,7 +34,8 @@ export function useBundleDetail(slug: string): {
   element: ReactNode;
 } {
   const navigate = useNavigate();
-  const { catalog } = useBundleCatalog();
+  // Read when a card is opened, long after the page settled.
+  const { catalog } = useBundleCatalog(undefined, { when: "idle" });
   const [openId, setOpenId] = useState<string | null>(null);
   const installed = useQuery({
     queryKey: ["bundles", slug],

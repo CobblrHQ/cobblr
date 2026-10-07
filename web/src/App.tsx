@@ -1,4 +1,3 @@
-import { RecentlyDeletedPage } from "./pages/RecentlyDeletedPage";
 import { DeletedRecordUndo } from "./components/DeletedRecordUndo";
 // Top-level shell. AuthProvider hydrates from /me on mount; while
 // that's in flight we show nothing (a fast roundtrip avoids flash).
@@ -9,81 +8,90 @@ import { DeletedRecordUndo } from "./components/DeletedRecordUndo";
 // imports its UI from "@cobblr/<name>/ui"; the host wires it under
 // /<module>/* and the module's own internal routes take over.
 
+import { installRoutePrefetch } from "./lib/route-prefetch";
 import { OfflineScreen } from "./components/OfflineScreen";
 import { OPEN_RECORD_ROUTE } from "@cobblr/platform-contract/instance-detail";
 import { lazy, Suspense, useEffect, useState } from "react";
+const RecentlyDeletedPage = lazy(() => import("./pages/RecentlyDeletedPage").then((m) => ({ default: m.RecentlyDeletedPage })));
 import { ScanFiledRefresh } from "./lib/scanFiled";
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { Boxes, FolderKanban } from "lucide-react";
 import { ModuleOffGate } from "./components/ModuleOffGate";
 import { InstanceHubGate } from "./components/InstanceHubGate";
-import { InventoryUI } from "@cobblr/inventory/ui";
-import { LabelsBasket, LabelsUI } from "@cobblr/labels/ui";
+const InventoryUI = lazy(() => import("@cobblr/inventory/ui").then((m) => ({ default: m.InventoryUI })));
+import { LabelsBasket } from "./components/LabelsBasketLazy";
+const LabelsUI = lazy(() => import("@cobblr/labels/ui").then((m) => ({ default: m.LabelsUI })));
 import { useNavHasRow } from "./components/useNavModules";
-import { ProjectsUI } from "@cobblr/projects/ui";
-import { ListsUI } from "@cobblr/lists/ui";
-import { KnowledgeUI } from "@cobblr/knowledge/ui";
-import { BuildsUI } from "@cobblr/builds/ui";
-import { SalesUI } from "@cobblr/sales/ui";
-import { TrackingUI } from "@cobblr/tracking/ui";
+const ProjectsUI = lazy(() => import("@cobblr/projects/ui").then((m) => ({ default: m.ProjectsUI })));
+const ListsUI = lazy(() => import("@cobblr/lists/ui").then((m) => ({ default: m.ListsUI })));
+const KnowledgeUI = lazy(() => import("@cobblr/knowledge/ui").then((m) => ({ default: m.KnowledgeUI })));
+const BuildsUI = lazy(() => import("@cobblr/builds/ui").then((m) => ({ default: m.BuildsUI })));
+const SalesUI = lazy(() => import("@cobblr/sales/ui").then((m) => ({ default: m.SalesUI })));
+const TrackingUI = lazy(() => import("@cobblr/tracking/ui").then((m) => ({ default: m.TrackingUI })));
 // Side-effect import: registers the UNIVERSAL file renderers (svg, …).
 // The FABRICATION renderers (stl/gcode) are gated by FilePreviewGate.
 import "@cobblr/core-file-preview/ui";
 import { FilePreviewGate } from "./components/FilePreviewGate";
 import { InstalledRenderers } from "./components/InstalledRenderers";
-import { WorksWith } from "./components/WorksWith";
+const WorksWith = lazy(() => import("./components/WorksWith").then((m) => ({ default: m.WorksWith })));
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { useTheme } from "./theme/ThemeContext";
 import { themePrefToApply } from "./theme/pref-to-apply";
 import { ActiveOrgProvider, useActiveOrg, pickDefaultOrg, urlHandleFor } from "./auth/ActiveOrgContext";
 import { shellForRole } from "@cobblr/platform-contract/org-roles";
 import { deepPathAfterWorkspace } from "./lib/deep-path";
-import { AuthPage, MagicConsumePage, IdentityCallbackPage } from "./pages/AuthPage";
-import { OidcSignInPage } from "./pages/OidcSignInPage";
+import { AuthPage } from "./pages/AuthPage";
+const MagicConsumePage = lazy(() => import("./pages/AuthPage").then((m) => ({ default: m.MagicConsumePage })));
+const IdentityCallbackPage = lazy(() => import("./pages/AuthPage").then((m) => ({ default: m.IdentityCallbackPage })));
+const OidcSignInPage = lazy(() => import("./pages/OidcSignInPage").then((m) => ({ default: m.OidcSignInPage })));
 import { nextFromQuery } from "./lib/landing-path";
-import { PairPage } from "./pages/PairPage";
-import { SandboxLanding } from "./pages/SandboxLanding";
-import { TryJoinPage } from "./pages/TryJoinPage";
-import { SandboxEnded } from "./pages/SandboxEnded";
-import { CarryPage } from "./pages/CarryPage";
+const PairPage = lazy(() => import("./pages/PairPage").then((m) => ({ default: m.PairPage })));
+const SandboxLanding = lazy(() => import("./pages/SandboxLanding").then((m) => ({ default: m.SandboxLanding })));
+const TryJoinPage = lazy(() => import("./pages/TryJoinPage").then((m) => ({ default: m.TryJoinPage })));
+const SandboxEnded = lazy(() => import("./pages/SandboxEnded").then((m) => ({ default: m.SandboxEnded })));
+const CarryPage = lazy(() => import("./pages/CarryPage").then((m) => ({ default: m.CarryPage })));
 import { pendingCarry, takeCarryGrant } from "./lib/carry-pending";
 import { pendingBring, takeBringFile } from "./lib/bring-pending";
 import { pendingShareInvite } from "./lib/share-invite-pending";
-import { BringPage } from "./pages/BringPage";
-import { EndingPreview } from "./pages/EndingPreview";
+const BringPage = lazy(() => import("./pages/BringPage").then((m) => ({ default: m.BringPage })));
+const EndingPreview = lazy(() => import("./pages/EndingPreview").then((m) => ({ default: m.EndingPreview })));
 import { useSandboxEnded } from "./lib/sandbox-session";
-import { StartAppPage } from "./pages/StartAppPage";
+const StartAppPage = lazy(() => import("./pages/StartAppPage").then((m) => ({ default: m.StartAppPage })));
 import { FeedbackWidget } from "./components/FeedbackWidget";
-import { Dashboard } from "./pages/Dashboard";
-import { InviteAcceptPage } from "./pages/InviteAcceptPage";
-import { JoinPage } from "./pages/JoinPage";
-import { JoinMachinesPage } from "./pages/JoinMachinesPage";
-import { NamedPublicPage, PublicSurfacePage } from "./pages/PublicSurfacePage";
-import { ChangelogPage } from "./pages/ChangelogPage";
-import { QrResolvePage } from "./pages/QrResolvePage";
-import { ActionLabelPage } from "./pages/ActionLabelPage";
-import { ResetPasswordPage } from "./pages/ResetPasswordPage";
-import { VerifyEmailPage } from "./pages/VerifyEmailPage";
-import { EmailChangePage } from "./pages/EmailChangePage";
+const Dashboard = lazy(() => import("./pages/Dashboard").then((m) => ({ default: m.Dashboard })));
+const InviteAcceptPage = lazy(() => import("./pages/InviteAcceptPage").then((m) => ({ default: m.InviteAcceptPage })));
+const JoinPage = lazy(() => import("./pages/JoinPage").then((m) => ({ default: m.JoinPage })));
+const JoinMachinesPage = lazy(() => import("./pages/JoinMachinesPage").then((m) => ({ default: m.JoinMachinesPage })));
+const NamedPublicPage = lazy(() => import("./pages/PublicSurfacePage").then((m) => ({ default: m.NamedPublicPage })));
+const PublicSurfacePage = lazy(() => import("./pages/PublicSurfacePage").then((m) => ({ default: m.PublicSurfacePage })));
+const ChangelogPage = lazy(() => import("./pages/ChangelogPage").then((m) => ({ default: m.ChangelogPage })));
+const QrResolvePage = lazy(() => import("./pages/QrResolvePage").then((m) => ({ default: m.QrResolvePage })));
+const ActionLabelPage = lazy(() => import("./pages/ActionLabelPage").then((m) => ({ default: m.ActionLabelPage })));
+const ResetPasswordPage = lazy(() => import("./pages/ResetPasswordPage").then((m) => ({ default: m.ResetPasswordPage })));
+const VerifyEmailPage = lazy(() => import("./pages/VerifyEmailPage").then((m) => ({ default: m.VerifyEmailPage })));
+const EmailChangePage = lazy(() => import("./pages/EmailChangePage").then((m) => ({ default: m.EmailChangePage })));
 // Eager: nav-linked pages users hit from the dashboard frequently.
-import { MachinesPage } from "./pages/MachinesPage";
-import { AssetsPage } from "./pages/AssetsPage";
-import { PurchasesPage } from "./pages/PurchasesPage";
-import { SearchPage } from "./pages/SearchPage";
-import { TagsPage } from "./pages/TagsPage";
-import { TagDetailPage } from "./pages/TagDetailPage";
-import { DiscussionInboxPage } from "./pages/DiscussionInboxPage";
-import { FilesPage } from "./pages/FilesPage";
-import { FileDetailPage } from "./pages/FileDetailPage";
-import { ViewsPage } from "./pages/ViewsPage";
-import { SavedViewPage } from "./pages/SavedViewPage";
-import { TidySuggestionsPage } from "./pages/TidySuggestionsPage";
-import { ConfigurationPage } from "./pages/ConfigurationPage";
-import { ConfigurationLayout } from "./components/ConfigurationLayout";
-import { AccountLayout } from "./components/AccountLayout";
-import { ConfigInvitePage, ConfigMembersPage, ConfigModulesPage, ConfigNewThingPage } from "./pages/ConfigLauncherPages";
-import { PeoplePage } from "./pages/PeoplePage";
-import { PersonThingsPage } from "./pages/PersonThingsPage";
+const MachinesPage = lazy(() => import("./pages/MachinesPage").then((m) => ({ default: m.MachinesPage })));
+const AssetsPage = lazy(() => import("./pages/AssetsPage").then((m) => ({ default: m.AssetsPage })));
+const PurchasesPage = lazy(() => import("./pages/PurchasesPage").then((m) => ({ default: m.PurchasesPage })));
+const SearchPage = lazy(() => import("./pages/SearchPage").then((m) => ({ default: m.SearchPage })));
+const TagsPage = lazy(() => import("./pages/TagsPage").then((m) => ({ default: m.TagsPage })));
+const TagDetailPage = lazy(() => import("./pages/TagDetailPage").then((m) => ({ default: m.TagDetailPage })));
+const DiscussionInboxPage = lazy(() => import("./pages/DiscussionInboxPage").then((m) => ({ default: m.DiscussionInboxPage })));
+const FilesPage = lazy(() => import("./pages/FilesPage").then((m) => ({ default: m.FilesPage })));
+const FileDetailPage = lazy(() => import("./pages/FileDetailPage").then((m) => ({ default: m.FileDetailPage })));
+const ViewsPage = lazy(() => import("./pages/ViewsPage").then((m) => ({ default: m.ViewsPage })));
+const SavedViewPage = lazy(() => import("./pages/SavedViewPage").then((m) => ({ default: m.SavedViewPage })));
+const TidySuggestionsPage = lazy(() => import("./pages/TidySuggestionsPage").then((m) => ({ default: m.TidySuggestionsPage })));
+const ConfigurationPage = lazy(() => import("./pages/ConfigurationPage").then((m) => ({ default: m.ConfigurationPage })));
+const ConfigurationLayout = lazy(() => import("./components/ConfigurationLayout").then((m) => ({ default: m.ConfigurationLayout })));
+const AccountLayout = lazy(() => import("./components/AccountLayout").then((m) => ({ default: m.AccountLayout })));
+const ConfigInvitePage = lazy(() => import("./pages/ConfigLauncherPages").then((m) => ({ default: m.ConfigInvitePage })));
+const ConfigMembersPage = lazy(() => import("./pages/ConfigLauncherPages").then((m) => ({ default: m.ConfigMembersPage })));
+const ConfigModulesPage = lazy(() => import("./pages/ConfigLauncherPages").then((m) => ({ default: m.ConfigModulesPage })));
+const ConfigNewThingPage = lazy(() => import("./pages/ConfigLauncherPages").then((m) => ({ default: m.ConfigNewThingPage })));
+const PeoplePage = lazy(() => import("./pages/PeoplePage").then((m) => ({ default: m.PeoplePage })));
+const PersonThingsPage = lazy(() => import("./pages/PersonThingsPage").then((m) => ({ default: m.PersonThingsPage })));
 // Lazy: rarely-visited admin / drill-down pages. Splitting these
 // out keeps the dashboard's initial bundle smaller. Each becomes
 // its own chunk; the chunk loads on first navigation.
@@ -124,7 +132,9 @@ const ActivityPage = lazy(() => import("./pages/ActivityPage").then((m) => ({ de
 const SurfacesPage = lazy(() => import("./pages/SurfacesPage").then((m) => ({ default: m.SurfacesPage })));
 const DigifabPage = lazy(() => import("./pages/DigifabPage").then((m) => ({ default: m.DigifabPage })));
 const PrinterStationPage = lazy(() => import("./pages/PrinterStationPage").then((m) => ({ default: m.PrinterStationPage })));
+const EmbroideryPage = lazy(() => import("./pages/EmbroideryPage").then(m => ({ default: m.EmbroideryPage })));
 const FloorManagerPage = lazy(() => import("./pages/FloorManagerPage").then(m => ({ default: m.FloorManagerPage })));
+const KilnStationPage = lazy(() => import("./pages/KilnStationPage").then(m => ({ default: m.KilnStationPage })));
 const StockStationPage = lazy(() => import("./pages/StockStationPage").then((m) => ({ default: m.StockStationPage })));
 const MachineStationPage = lazy(() => import("./pages/MachineStationPage").then((m) => ({ default: m.MachineStationPage })));
 const MakesPage = lazy(() => import("./pages/MakesPage").then((m) => ({ default: m.MakesPage })));
@@ -150,6 +160,8 @@ const ShareJoinPage = lazy(() => import("./pages/ShareJoinPage").then((m) => ({ 
 const LocationsPage = lazy(() => import("./pages/LocationsPage").then((m) => ({ default: m.LocationsPage })));
 const PlaceItemsPage = lazy(() => import("./pages/PlaceItemsPage").then((m) => ({ default: m.PlaceItemsPage })));
 const LocationDetailPage = lazy(() => import("./pages/LocationDetailPage").then((m) => ({ default: m.LocationDetailPage })));
+const PlanLayoutPage = lazy(() => import("./pages/PlanLayoutPage").then((m) => ({ default: m.PlanLayoutPage })));
+const LayoutPrintPage = lazy(() => import("./pages/LayoutPrintPage").then((m) => ({ default: m.LayoutPrintPage })));
 const OpenRecordPage = lazy(() => import("./pages/OpenRecordPage").then((m) => ({ default: m.OpenRecordPage })));
 const TemplatesPage = lazy(() => import("./pages/TemplatesPage").then((m) => ({ default: m.TemplatesPage })));
 const AssistantSettingsPage = lazy(() => import("./pages/AssistantSettingsPage").then((m) => ({ default: m.AssistantSettingsPage })));
@@ -185,13 +197,13 @@ const AdminConsole = lazy(() => import("./pages/AdminConsole").then((m) => ({ de
 import { AppLayout } from "./components/AppLayout";
 import { WorkspaceStateBar } from "./components/WorkspaceStateBar";
 import { WorkspaceDeletionBar } from "./components/WorkspaceDeletionBar";
-import { BlockedActionSheet } from "./components/BlockedActionSheet";
+import { BlockedActionHost } from "./components/BlockedActionHost";
 import { ImpersonationBanner } from "./components/ImpersonationBanner";
 import { ShareViewBanner } from "./components/ShareViewBanner";
-import { AdminLayout } from "./components/AdminLayout";
+const AdminLayout = lazy(() => import("./components/AdminLayout").then((m) => ({ default: m.AdminLayout })));
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ConnectivityBanner } from "./components/ConnectivityBanner";
-import { PortalLayout } from "./components/PortalLayout";
+const PortalLayout = lazy(() => import("./components/PortalLayout").then((m) => ({ default: m.PortalLayout })));
 import { ToastProvider, ConfirmProvider } from "@cobblr/platform-web";
 import { BootScrim } from "./components/BootScrim";
 import { api, getToken } from "./lib/api";
@@ -200,7 +212,7 @@ import { useNavMode, useNavTopBar } from "./lib/nav-mode";
 import { isFullSidebar } from "./lib/nav-layout";
 import { useIsDesktopWidth } from "./lib/useIsDesktopWidth";
 import { useQuery } from "@tanstack/react-query";
-import { InstancePage } from "./pages/InstancePage";
+const InstancePage = lazy(() => import("./pages/InstancePage").then((m) => ({ default: m.InstancePage })));
 import { inManagedAppSurface } from "./lib/managed-apps";
 import { WorkspaceShapeRefresh } from "./lib/useWorkspaceShapeRefresh";
 import { hydrateNavPref } from "./lib/nav-mode";
@@ -208,7 +220,9 @@ import { hydrateNavPref } from "./lib/nav-mode";
 
 function RouteFallback() {
   return (
-    <div className="text-xs font-mono text-faint dark:text-slate-500 p-6">
+    // aria-busy: a page whose code is still arriving is not settled
+    // (scripts/lib/wait-settled.mjs), whatever the queries say.
+    <div aria-busy="true" className="text-xs font-mono text-faint dark:text-slate-500 p-6">
       loading…
     </div>
   );
@@ -535,6 +549,9 @@ function PortalSlugRedirect() {
 
 function WorkspaceRoutes({ urlHandle }: { urlHandle: string }) {
   const { user } = useAuth();
+  // A section's code is fetched on intent (a link pointed at, focused or
+  // touched) and, on a desktop, once the page has settled (#4945).
+  useEffect(() => installRoutePrefetch(`/w/${urlHandle}`), [urlHandle]);
   // A no-account sandbox past its hour is not a workspace with a notice on
   // it; it is gone. The whole shell goes with it: no cached dashboard, no
   // strip, no tour, no modal, nothing left to press but the doors out.
@@ -665,13 +682,14 @@ function ActiveOrgScopedRoutes() {
       <WorkspaceDeletionBar slug={activeSlug} />
       {/* The one sheet a refusal opens, from whichever surface made the call,
           and the one that finishes an approved ask (?resume=<id>). */}
-      <BlockedActionSheet />
+      <BlockedActionHost />
       {shouldRedirectToPortal && <Navigate to={`/portal/${activeSlug}`} replace />}
       {shouldRedirectToAppHome && <Navigate to={appMode!.home_path} replace />}
       <Routes>
         <Route path="/station/stock/:station" element={<StockStationPage />} />
         <Route element={<ModuleOffGate><Outlet /></ModuleOffGate>}>
           <Route path="/station/floor" element={<FloorManagerPage screen />} />
+          <Route path="/station/kiln/:machineId" element={<KilnStationPage />} />
           <Route path="/station/printer/:machineId" element={<PrinterStationPage />} />
           <Route path="/station/machine/:connectionId/:deviceId" element={<MachineStationPage />} />
         </Route>
@@ -907,6 +925,7 @@ function ActiveOrgScopedRoutes() {
           {/* digifab is a domain (bare module name) → the navbar links to its
               top path `/digifab`. Route it there as well as the Configuration
               deep-link, or the nav entry falls through to the home redirect. */}
+          <Route path="/digifab/embroidery" element={<EmbroideryPage />} />
           <Route path="/digifab/manager" element={<FloorManagerPage />} />
           <Route path="/digifab" element={<DigifabPage />} />
           <Route path="/makes" element={<MakesPage />} />
@@ -918,6 +937,7 @@ function ActiveOrgScopedRoutes() {
           <Route path="/locations" element={<LocationsPage />} />
           <Route path="/locations/place" element={<PlaceItemsPage />} />
           <Route path="/locations/:id" element={<LocationDetailPage />} />
+          <Route path="/locations/:id/plan" element={<PlanLayoutPage />} />
           <Route path={OPEN_RECORD_ROUTE} element={<OpenRecordPage />} />
           <Route path="/scan" element={<ScanPage />} />
           <Route path="/scan/stations" element={<ScanStationsPage />} />
@@ -1019,6 +1039,7 @@ function ActiveOrgScopedRoutes() {
         {/* Print-friendly floor plan — chrome-less like the portal; the page
             is deliberately paper-white regardless of theme. */}
         <Route path="/print/:slug/locations/:id" element={<PlanPrintPage />} />
+        <Route path="/print/:slug/locations/:id/layout/:draftId" element={<LayoutPrintPage />} />
         {/* The operator console now lives at TOP-LEVEL /admin (instance-wide,
             no workspace prefix — see Shell). Old workspace-nested URLs
             (/w/:slug/admin/…, /w/:slug/super-admin) escape with a full

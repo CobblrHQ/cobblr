@@ -3,6 +3,7 @@ type: feature
 scope: sales
 date: 2026-10-01
 docs_target: docs/USER_GUIDE.md#3.26 Sales (outbound orders)
+docs_published: 2026-10-08
 ---
 Sales can now follow the parcels you send: turn on **Follow parcels I send** in Sales settings and each shipped order is marked delivered when the carrier says so, using your own tracking connection, never a paid one of Cobblr's.
 

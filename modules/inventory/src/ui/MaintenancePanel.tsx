@@ -1,4 +1,4 @@
-import { fieldNeed, FieldPack, RecordFormModal, MoneyInput, useConfirm, useToast, MutationError, noteWorkspaceWrite } from "@cobblr/platform-web";
+import { SegmentedChoice, fieldNeed, FieldPack, RecordFormModal, MoneyInput, useConfirm, useToast, MutationError, noteWorkspaceWrite } from "@cobblr/platform-web";
 // Per-part maintenance panel — lists scheduled + history entries
 // from core-maintenance. Add an entry as "done now", "scheduled
 // later", or both (something done with a follow-up).
@@ -374,29 +374,16 @@ function AddEntryModal({
             need: { ...fieldNeed("type", { control: "choice", label: "Type" }), full: true },
             node: (
               <Field label="Type">
-                <div className="flex gap-2 text-xs">
-                  {(["done", "scheduled", "both"] as const).map((k) => (
-                    <label
-                      key={k}
-                      className={
-                        "px-2 py-1 rounded-md border cursor-pointer " +
-                        (kind === k
-                          ? "border-accent bg-cobble-50 dark:bg-cobble-950/30 text-accent dark:text-cobble-300"
-                          : "border-line dark:border-slate-700 text-muted")
-                      }
-                    >
-                      <input
-                        type="radio"
-                        name="kind"
-                        value={k}
-                        checked={kind === k}
-                        onChange={() => setKind(k)}
-                        className="sr-only"
-                      />
-                      {k === "done" ? "did it" : k === "scheduled" ? "upcoming" : "did it + schedule next"}
-                    </label>
-                  ))}
-                </div>
+                <SegmentedChoice
+                  label="Type"
+                  value={kind}
+                  onChange={setKind}
+                  options={[
+                    { value: "done", label: "did it" },
+                    { value: "scheduled", label: "upcoming" },
+                    { value: "both", label: "did it + schedule next" },
+                  ]}
+                />
               </Field>
             ),
           },

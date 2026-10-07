@@ -1,0 +1,10 @@
+{
+  "lint": "lint:test-support-through-the-helper",
+  "run": "node scripts/lint-test-support-through-the-helper.ts",
+  "rows": [
+    "integration-test"
+  ],
+  "ms": 630,
+  "recorded": "2026-10-07",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

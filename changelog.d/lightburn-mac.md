@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-04
 docs_target: docs/operations/edge-bridge-setup.md#macOS
+docs_published: 2026-10-08
 ---
 Added a native Mac bridge installer with automatic updates, LightBurn pairing, and checks that explain what the laser needs before a job.
 

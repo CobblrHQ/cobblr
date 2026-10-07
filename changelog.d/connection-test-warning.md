@@ -3,6 +3,7 @@ type: feature
 scope: connections
 date: 2026-10-03
 docs_target: docs/USER_GUIDE.md#Top nav
+docs_published: 2026-10-08
 ---
 Connection tests gained amber warnings that explain the limitations of a working connection.
 
