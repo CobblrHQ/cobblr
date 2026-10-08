@@ -3,7 +3,7 @@ import { bridgeDisplayName } from "../lib/bridge-choice";
 import { useJobStartReview } from "../features/digifab/startReview";
 import { LaserLayoutPlanner } from "../features/digifab/LaserLayout";
 import { LaserMaterialForm } from "../features/digifab/laserMaterial";
-import { ContributedDetailPanels, FieldPack, fieldNeed, RecordFormModal, changeWorkspaceShape, DragInput, Lightbox, Modal, useToast, useConfirm, usePageTitle, useImageSrc, SecretInput, EntityPhoto, FilePreview, AddressInput, SearchInput, CustomFieldsPanel, SegmentedChoice } from "@cobblr/platform-web";
+import { ContributedDetailPanels, FieldPack, fieldNeed, RecordFormModal, changeWorkspaceShape, DragInput, Lightbox, Modal, useToast, useConfirm, usePageTitle, useImageSrc, SecretInput, EntityPhoto, FilePreview, AddressInput, SearchInput, CustomFieldsPanel, NumberField, SegmentedChoice } from "@cobblr/platform-web";
 // /configuration/digifab — Digital Fabrication. Manage connections to the
 // software that runs your machines (FDM Monster, OctoPrint, …): add one,
 // test it, list its printers, link printers to machines, and run the job
@@ -2528,13 +2528,13 @@ function LibrarySection({ slug }: { slug: string }) {
         <h2 className="text-sm font-semibold text-content dark:text-mortar-100">Library</h2>
         <span className="text-xs text-faint">{itemsL.length} file{itemsL.length === 1 ? "" : "s"}</span>
         <div className="flex-1" />
-        <input ref={fileRef} type="file" accept=".3mf,.gcode,.gco,.g,.goo,.svg,.dxf,.ai,.pdf,.lbrn2" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload.mutate(f); e.target.value = ""; }} />
+        <input ref={fileRef} type="file" accept=".3mf,.gcode,.gco,.g,.goo,.nc,.tap,.svg,.dxf,.ai,.pdf,.lbrn2" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload.mutate(f); e.target.value = ""; }} />
         <button onClick={() => fileRef.current?.click()} disabled={upload.isPending} className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2.5 py-1 text-xs disabled:opacity-50">
           <Plus size={13} /> {upload.isPending ? "Uploading…" : "Upload file"}
         </button>
       </div>
       {itemsL.length === 0 ? (
-        <div className="text-xs text-muted dark:text-slate-400 italic">No files yet. Upload a drawing or prepared machine file: SVG, DXF, AI, PDF, .lbrn2, .3mf, .gcode or .goo.</div>
+        <div className="text-xs text-muted dark:text-slate-400 italic">No files yet. Upload a drawing or prepared machine file: SVG, DXF, AI, PDF, .lbrn2, .3mf, .gcode, .goo, .nc or .tap.</div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
           {itemsL.map((it) => <LibraryCard key={it.id} item={it} slug={slug} />)}
@@ -3359,7 +3359,7 @@ export function ProductionRunsSection({ slug }: { slug: string }) {
                 node: (
                   <label className="block flex-1">
                     <span className="text-xs text-muted dark:text-slate-400">Target quantity</span>
-                    <input type="number" min={1} value={target} onChange={(e) => setTarget(Math.max(1, Number(e.target.value)))}
+                    <NumberField min={1} value={target} onChange={(n) => setTarget(Math.max(1, n))}
                       className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5" />
                   </label>
                 ),
@@ -3369,7 +3369,7 @@ export function ProductionRunsSection({ slug }: { slug: string }) {
                 node: (
                   <label className="block flex-1">
                     <span className="text-xs text-muted dark:text-slate-400">Parts per plate</span>
-                    <input type="number" min={1} value={ppp} onChange={(e) => setPpp(Math.max(1, Number(e.target.value)))}
+                    <NumberField min={1} value={ppp} onChange={(n) => setPpp(Math.max(1, n))}
                       className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5" />
                   </label>
                 ),

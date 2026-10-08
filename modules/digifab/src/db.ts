@@ -1,5 +1,6 @@
 // Tenant-side DB types + request helpers for digifab.
 
+import type { CncUseSnapshot, CncStockUse } from "./cnc-runtime.js";
 import type { JobLayout } from "./laser-plans.js";
 import type { ColumnType, Generated, Kysely } from "kysely";
 import type { Request } from "express";
@@ -37,6 +38,12 @@ export interface DigifabConnectionsTable {
 }
 
 export interface DigifabJobsTable {
+  cnc_setup: Generated<CncUseSnapshot | null>;
+  cnc_tool_seconds: Generated<Record<string,number>>;
+  cnc_usage_report: Generated<CncStockUse[] | null>;
+  cnc_usage_recorded_at: Date | null;
+  make_id: Generated<string | null>;
+  make_ordinal: Generated<number | null>;
   embroidery_run: Generated<boolean>;
   resin_print: Generated<boolean>;
   laser_layout: Generated<JobLayout | null>;
@@ -56,7 +63,7 @@ export interface DigifabJobsTable {
   material_grams: string | null;
   material_type: string | null;
   /** The slicer's grams per filament, tool 1 first (0036). */
-  material_grams_by_tool: unknown | null;
+  material_grams_by_tool: ColumnType<number[] | null, string | null, string | null>;
   /** What a completed print took off which loaded spool (0036). */
   material_drawn: unknown | null;
   /** A build (bill-of-materials) this job produces. On send, a seeded wire fires
@@ -338,7 +345,7 @@ export interface DigifabDB {
   digifab_firings: { id: string; machine_id: string; name: string; recipe: ColumnType<import("./kilns/model.js").Firing, string, string>; status: Generated<string>; connection_id: string | null; device_id: string | null; peak_c: number | null; duration_hours: number | null; started_at: Date | null; ended_at: Date | null; created_at: Generated<Date> };
   digifab_large_prints: {job_id:string;connection_id:string;device_id:string;plan:import("./large-format/service.js").LargePrintPlan;started_at:Generated<Date|null>;report:Generated<import("./large-format/service.js").PrintOutcome|null>;consumed_at:Generated<Date|null>;created_at:Generated<Date>};
   digifab_printer_supplies: {connection_id:string;device_id:string;supply_id:string;reading:import("./large-format/supplies.js").SupplyReading;low:Generated<boolean>;updated_at:Generated<Date>};
-  digifab_bench_readings: { id: Generated<string>; connection_id:string; device_id:string; machine_id:string; record_kind:string; record_id:string; report:import("./bench-model.js").BenchReport; screenshot_file_id:string|null; created_at:Generated<Date> };
+  digifab_bench_readings: { id: Generated<string>; connection_id:string; device_id:string; machine_id:string; record_kind:string; record_id:string; report:import("./bench-model.js").BenchReport; screenshot_file_id:string|null; capture_file_id:Generated<string|null>; created_at:Generated<Date> };
   digifab_embroidery_machines: {id:Generated<string>;config:import("./embroidery-runs.js").EmbroideryMachine;created_at:Generated<Date>;updated_at:Generated<Date>};
   digifab_embroidery_designs: {id:Generated<string>;name:string;file_id:string;source_hash:string;design:import("./embroidery-design.js").EmbroideryDesign;summary:import("./embroidery-design.js").EmbroiderySummary;created_at:Generated<Date>};
   digifab_embroidery_runs: {job_id:string;machine_id:string;design_id:string;plan:import("./embroidery-runs.js").EmbroideryPlan;started_at:Generated<Date|null>;interrupted:Generated<boolean>;report:Generated<import("./embroidery-runs.js").EmbroideryReport|null>;stock_recorded_at:Generated<Date|null>;consumed_at:Generated<Date|null>;created_at:Generated<Date>};
@@ -355,7 +362,7 @@ export interface DigifabDB {
   digifab_cutter_roll_claims: DigifabCutterRollClaimsTable;
   digifab_laser_profiles: DigifabLaserProfilesTable;
   digifab_laser_plans: DigifabLaserPlansTable;
-  digifab_laser_sheet_claims: { part_id: string; plan_id: string };
+  digifab_laser_sheet_claims: { part_id: string; plan_id: string | null; job_id: Generated<string | null> };
   digifab_stations: {
     id: Generated<string>;
     connection_id: string;

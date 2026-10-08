@@ -6,6 +6,7 @@
 // record. Every signal is computed from history by the pure engine (../model.js),
 // so there is no cached state to invalidate and a recompute is always correct.
 
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
@@ -34,7 +35,7 @@ router.post("/events", async (req: Request, res: Response, next) => {
   try {
     // A read-only guest must not be able to rewrite the workspace's cadence:
     // a forged purchase moves the learned rate for everyone.
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-cadence:record-event"))) return;
     const parsed = RecordBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({

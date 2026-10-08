@@ -252,7 +252,7 @@ tagsRouter.post(
 tagsRouter.post(
   "/tags/deleted/:id/restore",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-tags:restore-tag"))) return;
     try {
       const back = await restoreTag(tenantDb(req), tenantContext(req).org.id, req.params.id!, sessionUser(req)?.id ?? null);
       if (!back) {
@@ -273,7 +273,7 @@ tagsRouter.post(
 tagsRouter.post(
   "/attachments",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-tags:tag-record"))) return;
     const parsed = AttachBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);

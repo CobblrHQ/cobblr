@@ -265,6 +265,7 @@ function ViewExportButton({ slug, viewId, grouped }: { slug: string; viewId: str
         try {
           const got = await api.exportViewCsv(slug, viewId, subtotals);
           downloadBlob(got.blob, got.filename);
+          if (got.secretsOmitted) toast.info("Secret fields were left out.");
           if (got.complete) toast.success("Spreadsheet downloaded.");
           else toast.info("Downloaded the first 5,000. Narrow the view to get the rest.");
         } catch (err) {

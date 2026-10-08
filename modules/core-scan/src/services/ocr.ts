@@ -276,8 +276,9 @@ function readLines(text: string): number {
  * or when it read nothing at all; the caller treats every null the same way
  * (ask the model), so none of them is an error worth throwing.
  */
-export async function ocrImageText(bytes: Buffer | Uint8Array): Promise<OcrResult | null> {
+export async function ocrImageText(bytes: Buffer | Uint8Array, options: { private?: boolean } = {}): Promise<OcrResult | null> {
   if (!(await ocrAvailable())) return null;
+  if (options.private) return readImageText(bytes).catch(() => null);
   const key = createHash("sha1").update(bytes).digest("hex");
   const now = Date.now();
   const kept = memo.get(key);

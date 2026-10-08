@@ -1,3 +1,6 @@
+import { trueType } from "@cobblr/platform-contract/sniff-type";
+import { readPersonalDocument } from "@cobblr/platform-contract/personal-documents";
+import { uploadedFile } from "@cobblr/platform-contract/upload";
 // The one upload door (platform().http.upload, @cobblr/platform-contract/upload).
 //
 // Every multipart route takes its file through here, and this is the only
@@ -22,7 +25,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream, mkdirSync } from "node:fs";
-import { readdir, rm, stat } from "node:fs/promises";
+import { open, readFile, readdir, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -197,7 +200,28 @@ export function uploadMiddleware(options: UploadOptions): UploadMiddleware {
       for (const p of rq[TEMP_PATHS] ?? []) void rm(p, { force: true });
     });
     parse(rq, rs, ((err?: unknown) => {
-      if (!err) return next();
+      if (!err) {
+        const file = uploadedFile(rq);
+        const orgId = rq.tenant?.org?.id;
+        if (!file || opts.personalDocument || !orgId) return next();
+        (async () => {
+          const handle = await open(file.path, "r");
+          const head = Buffer.alloc(4096);
+          let length: number;
+          try { length = (await handle.read(head, 0, head.length, 0)).bytesRead; } finally { await handle.close(); }
+          const mime = trueType(head.subarray(0, length), file.mimetype);
+          if (!/^(?:image\/|application\/pdf|text\/)/.test(mime)) return next();
+          if (file.size > 25 * 1024 * 1024 && mime !== "application/pdf") {
+            rs.status(409).json({ error: { code: "personal_document", message: "This document is too large to check privately here. Keep your copy and use a PDF or photo under 25 MB in Personal documents." } });
+            return;
+          }
+          const read = await readPersonalDocument({ bytes: mime === "application/pdf" ? head.subarray(0, length) : await readFile(file.path), mime, assist: { orgId, userId: rq.session?.id }, ...(mime === "application/pdf" ? { path: file.path } : {}) });
+          if (read.privacy === "normal") return next();
+          rs.setHeader("Cache-Control", "no-store");
+          rs.status(409).json({ error: { code: "personal_document", message: "This is a personal document. Read it with Personal documents in the scan inbox. It has not been saved to shared Files or sent to a cloud AI.", details: read } });
+        })().catch(next);
+        return;
+      }
       if (err instanceof multer.MulterError) {
         const { status, refusal } = refusalFor(err, rq, opts);
         logUploadRefused(rq, refusal);

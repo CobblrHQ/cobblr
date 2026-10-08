@@ -1,3 +1,4 @@
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { readListPage, pagedAnswer, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 import { canPurgeDeletedRecord } from "@cobblr/platform-contract";
 // /files — upload, list, get, delete, serve.
@@ -331,7 +332,7 @@ filesRouter.get(
 filesRouter.post(
   "/:id/restore",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-files:restore"))) return;
     const id = req.params.id!;
     const ctx = tenantContext(req);
     const r = await restoreFile(tenantDb(req), ctx.org.id, id);

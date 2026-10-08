@@ -1,3 +1,4 @@
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { insuranceCsv, insurancePdf, readInsuranceList } from "./insurance-list.js";
 import { csvDownloadHeaders } from "@cobblr/platform-contract/csv";
 // Default-exported Router, mounted at
@@ -210,7 +211,7 @@ const WordBody = z.object({ kind: z.string().min(1).max(120), word: z.string().m
 router.put(
   "/word",
   wrap(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "platform:rename-contents"))) return;
     const parsed = WordBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "bad_body", message: "kind and word (up to 40 characters, or null) required" } });
@@ -284,7 +285,7 @@ const HomeBody = z.object({ containee: Ref, via: z.string().trim().min(1).max(80
 router.post(
   "/return-home",
   wrap(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-placement:return-home"))) return;
     const parsed = HomeBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "bad_body", message: "containee required" } });

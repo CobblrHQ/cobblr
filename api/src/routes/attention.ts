@@ -26,11 +26,11 @@ import { countdownWords, fieldDay, fieldDayUnreadable, viewQuery } from "@cobblr
 import { dueState, todayFrom } from "../lib/due-day.js";
 import { listShareEdits } from "../platform/share-edits.js";
 import { listAdditions } from "../platform/share-additions.js";
+import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
 export const attentionRouter = Router({ mergeParams: true });
 
-// loopback-ok: #5153 moves this onto selfFetch
-const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
+const INTERNAL_API = selfOrigin();
 const DUE_RE = /(renew|expir|due|refill|return|service|maintain|deadline)/i;
 const WINDOW_DAYS = 30;
 const INSTANCE_CAP = 15;
@@ -97,7 +97,7 @@ interface AttentionRow {
 
 async function j<T>(path: string, token: string): Promise<T | null> {
   try {
-    const res = await fetch(`${INTERNAL_API}/api/v1${path}`, {
+    const res = await apiFetch(`${INTERNAL_API}/api/v1${path}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) return null;

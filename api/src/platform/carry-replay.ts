@@ -25,6 +25,7 @@ import { rawPathFor } from "./file-paths.js";
 import type { CarryPackage, CarryRecord } from "./trial-carry.js";
 import type { EntityKindRecord } from "@cobblr/platform-contract";
 import { platform } from "@cobblr/platform-contract";
+import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
 export const CARRY_REPLAYED = "carry_replayed";
 
@@ -373,8 +374,7 @@ async function replay(
       }
     }
     try {
-      // loopback-ok: #5153 moves this onto selfFetch
-      const res = await fetch(`http://127.0.0.1:${env.API_PORT}${kindBase(slug, k)}${create}`, {
+      const res = await apiFetch(`${selfOrigin()}${kindBase(slug, k)}${create}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${session}`, "Content-Type": "application/json" },
         body: JSON.stringify(body),

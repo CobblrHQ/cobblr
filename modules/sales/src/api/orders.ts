@@ -2,6 +2,7 @@
 // decrements the sold parts from inventory stock. customer_name is dual-written
 // from a linked customer's name so cross-module readers stay correct.
 
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 import { Router } from "express";
 import { sql } from "kysely";
@@ -304,7 +305,7 @@ const CancelBody = z.object({ returned: z.boolean().optional() });
 ordersRouter.post(
   "/:id/cancel",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "sales:cancel-order"))) return;
     const body = CancelBody.safeParse(req.body ?? {});
     if (!body.success) return badBody(res, body.error);
     if (!(await orderHere(req))) {
@@ -329,7 +330,7 @@ const Reinstate = z.object({
 ordersRouter.post(
   "/:id/reinstate",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "sales:reinstate-order"))) return;
     const body = Reinstate.safeParse(req.body ?? {});
     if (!body.success) return badBody(res, body.error);
     if (!(await orderHere(req))) {
@@ -350,7 +351,7 @@ ordersRouter.post(
 ordersRouter.post(
   "/:id/items",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "sales:add-line"))) return;
     const parsed = ItemCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
@@ -409,7 +410,7 @@ const MakeBody = z.object({ qty: z.number().int().positive().max(100_000) });
 ordersRouter.post(
   "/:id/items/:itemId/make",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "sales:make-line"))) return;
     const body = MakeBody.safeParse(req.body ?? {});
     if (!body.success) return badBody(res, body.error);
     const db = tenantDb(req);
@@ -454,7 +455,7 @@ const ShipBody = z.object({
 ordersRouter.post(
   "/:id/ship",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "sales:ship-order"))) return;
     const body = ShipBody.safeParse(req.body ?? {});
     if (!body.success) return badBody(res, body.error);
     const db = tenantDb(req);
@@ -505,7 +506,7 @@ const FulfilBody = z.object({ ship: z.enum(["all", "available"]).default("all") 
 ordersRouter.post(
   "/:id/fulfill",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "sales:fulfill-order"))) return;
     const body = FulfilBody.safeParse(req.body ?? {});
     if (!body.success) return badBody(res, body.error);
     const db = tenantDb(req);

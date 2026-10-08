@@ -1,3 +1,4 @@
+import type { ReceiptDraftConfig, RenewalReceiptDraft } from "@cobblr/platform-contract/record-creation";
 import type { StockView, ConfigureStock, ConsumeStock, LoadStock } from "../api/stock-shapes";
 import type { z } from "zod";
 export type StockDetail = StockView & { uses: Array<{ id: string; source: string; verdict: string; amount: string; unit: string; at: string }>; loaded: { station: string; slot: string } | null };
@@ -64,6 +65,7 @@ export interface InvFieldDef {
   entity_kind?: string;
   bundle_id?: string | null;
   source_module?: string | null;
+  decode_role?: string | null;
   field_role?: string | null;
   /** A person's new value is remembered as a choice (see field-choices). */
   learns?: boolean | null;
@@ -319,6 +321,19 @@ export interface InventoryApiOptions {
 }
 
 export class InventoryApi {
+  uploadReceipt = (file: File) => {
+    const form = new FormData(); form.set("file", file);
+    return this.requestAbs<{ id: string }>("POST", `/api/v1/orgs/${this.slug}/modules/core-files/files`, form);
+  };
+  receiptItems = () => this.requestAbs<{ items: Array<{ id: string; suggested_name: string | null; source_kind: string }> }>("GET", `/api/v1/orgs/${this.slug}/modules/core-scan/inbox?status=pending&limit=200`);
+  renewalDraft = async (source: { file_id?: string; inbox_id?: string }, target_kind: string, binding: ReceiptDraftConfig): Promise<RenewalReceiptDraft> => {
+    const answer = await this.requestAbs<{ result: { ok: boolean; error?: string; result: RenewalReceiptDraft } }>("POST", `/api/v1/orgs/${this.slug}/actions/invoke`, { actionId: "core-scan:renewal-draft", args: { ...source, target_kind, binding } });
+    if (!answer.result.ok) throw new Error(answer.result.error ?? "Couldn't draft from this receipt");
+    return answer.result.result;
+  };
+  createLinkedRecord = (kind: string, name: string) => this.requestAbs<{ id: string }>("POST", `/api/v1/orgs/${this.slug}/instances/${encodeURIComponent(kind.split(":")[0]!)}/items`, { name });
+  attachReceipt = (file_id: string, id: string) => this.requestAbs("POST", `/api/v1/orgs/${this.slug}/modules/core-files/attachments`, { file_id, source_module: "inventory", source_type: "part", source_id: id, role: "receipt" });
+  paste(id: string) { return this.partsRequest<import("../api/paste.js").PasteView>("GET", `/${id}/paste`); }
   storage = (id: string) => this.partsRequest<StorageView | null>("GET", `/${id}/storage`);
   constructor(private readonly slug: string, private readonly opts: InventoryApiOptions) {}
 
@@ -346,14 +361,14 @@ export class InventoryApi {
 
   private async requestAbs<T>(method: string, url: string, body?: unknown): Promise<T> {
     const headers: Record<string, string> = {};
-    if (body !== undefined) headers["Content-Type"] = "application/json";
+    if (body !== undefined && !(body instanceof FormData)) headers["Content-Type"] = "application/json";
     const token = this.opts.getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
 
     const res = await fetch(url, {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body),
     });
     const wrote = method.toUpperCase() !== "GET";
 
@@ -615,6 +630,7 @@ export class InventoryApi {
     // UTC-DAY OK: the download filename's stamp, not a claim about anybody's calendar.
     const date = new Date().toISOString().slice(0, 10);
     downloadBlob(blob, `inventory-${date}.csv`);
+    return { secretsOmitted: res.headers.get("x-export-secrets") === "omitted" };
   };
   getPart = (id: string) => this.partsRequest<Part>("GET", `/${id}`);
   /** A consumable's ledger — what drew it down and how much, newest first. */

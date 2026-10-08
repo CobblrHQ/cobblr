@@ -8,22 +8,10 @@
 // icon left of the wordmark flips top↔side; the pin in the sidebar
 // footer flips pinned↔auto-hide.
 
-import { VERTICAL_DRAG } from "../lib/vertical-drag";
 import type { ReactNode } from "react";
-import { useDragClickGuard } from "./useDragClickGuard";
 import { MoreAppsDoor } from "./MoreAppsDoor";
 import { NavLink, useLocation } from "react-router-dom";
-import {
-  DndContext,
-  MouseSensor,
-  TouchSensor,
-  closestCenter,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from "@dnd-kit/core";
-import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
+import { useSortKit } from "./sort-kit-static";
 import { dropOnSidebar } from "./navReorder";
 import { ArrowLeft } from "lucide-react";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -82,19 +70,10 @@ export function SidebarNav({
   // HOOKS STAY ABOVE the config-fold early return — a hook below it renders
   // in one branch but not the other, and React throws "Rendered more hooks
   // than during the previous render" the moment you navigate between them.
-  // Drag-to-reorder sensors. Two, because the two input devices need opposite
-  // rules and one sensor cannot serve both:
-  //   mouse  - MOVE 8px to drag. A click that does not travel still navigates.
-  //            A hold-to-start here is the thing that "feels very unnatural":
-  //            nobody presses and waits on a desktop.
-  //   touch  - HOLD 250ms to drag. A finger that moves at once is scrolling
-  //            the sidebar, and stealing that for a drag makes the list
-  //            unscrollable on a phone.
-  // The hold used to apply to both, borrowed from the touch case.
-  const sensors = useSensors(
-    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
-  );
+  // Drag-to-reorder arrives after the first paint (sort-kit.tsx): until then
+  // the same rows draw without it. The sensors (move 8px with a mouse, hold
+  // 250ms with a finger) live in the kit.
+  const K = useSortKit();
 
   // Configuration fold (the author, 2026-07-03): on a configuration-family route the
   // sidebar BECOMES the configuration panel — two sidebars never stack. A
@@ -144,16 +123,16 @@ export function SidebarNav({
                 >
                   {m.displayName}
                 </div>
-                <SortableContext items={kids.map((k) => k.name)} strategy={verticalListSortingStrategy}>
+                <K.Group ids={kids.map((k) => k.name)}>
                   {kids.map((k) => (
-                    <SortableChild key={k.name} id={k.name}>
+                    <K.Child key={k.name} id={k.name}>
                       <NavLink to={childTo(m.name, k)} className={childCls}>
                         <span className="w-1.5 h-1.5 rounded-full bg-moss-500 shrink-0" />
                         {k.displayName}
                       </NavLink>
-                    </SortableChild>
+                    </K.Child>
                   ))}
-                </SortableContext>
+                </K.Group>
               </div>
             );
           }
@@ -164,9 +143,9 @@ export function SidebarNav({
                 <span className="truncate">{m.displayName}</span>
                 <NavCountBadge count={badges.get(m.name)} label={m.displayName} className="ml-auto" />
               </NavLink>{m.name.startsWith(INSTANCE_PREFIX) && <NavRowMenu slug={activeSlug} label={m.displayName} members={[m]} candidates={rowCandidates} />}</div>
-              <SortableContext items={kids.map((k) => k.name)} strategy={verticalListSortingStrategy}>
+              <K.Group ids={kids.map((k) => k.name)}>
                 {kids.map((k) => (
-                  <SortableChild key={k.name} id={k.name}>
+                  <K.Child key={k.name} id={k.name}>
                     <NavLink to={childTo(m.name, k)} className={childCls}>
                       <span
                         className={
@@ -176,9 +155,9 @@ export function SidebarNav({
                       />
                       {k.displayName}
                     </NavLink>
-                  </SortableChild>
+                  </K.Child>
                 ))}
-              </SortableContext>
+              </K.Group>
             </div>
           );
   };
@@ -192,13 +171,9 @@ export function SidebarNav({
       : (children.get(t.name) ?? []).map((k) => k.name),
   }));
 
-  const onDragEnd = (e: DragEndEvent) => {
-    const over = e.over?.id;
-    if (!over) return;
-    // A row dropped among the other group's rows goes there: the manifest
-    // only decides where a row starts (dropOnSidebar).
-    dropOnSidebar(activeSlug, groups, branches, String(e.active.id), String(over));
-  };
+  // A row dropped among the other group's rows goes there: the manifest only
+  // decides where a row starts (dropOnSidebar).
+  const onDrop = (activeId: string, overId: string) => dropOnSidebar(activeSlug, groups, branches, activeId, overId);
 
   // The end of the collections: every app not in this sidebar, with how many
   // (#3883). A control of its own, not another row nobody reads as a door.
@@ -213,13 +188,13 @@ export function SidebarNav({
     </NavLink>
   );
   const sortable = (list: typeof tops) => (
-    <SortableContext items={list.map((t) => t.name)} strategy={verticalListSortingStrategy}>
+    <K.Group ids={list.map((t) => t.name)}>
       {list.map((m) => (
-        <SortableTop key={m.name} id={m.name}>
+        <K.Row key={m.name} id={m.name}>
           {(handle) => renderTop(m, handle)}
-        </SortableTop>
+        </K.Row>
       ))}
-    </SortableContext>
+    </K.Group>
   );
   // The same quiet stem an instance nav-group uses, so the grown sidebar reads
   // as one vocabulary: a small label, the rows under it.
@@ -230,7 +205,7 @@ export function SidebarNav({
       {head}
       {!head && controls && <div className="shrink-0 flex justify-end px-2 pt-1.5">{controls}</div>}
       <nav data-tour="nav" className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-2 py-3 space-y-0.5">
-        <DndContext {...VERTICAL_DRAG} sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+        <K.Root grip="hold" onDrop={onDrop}>
           {groups.grouped ? (
             <>
               <div data-nav-group="collections" className={stemCls}>
@@ -251,70 +226,9 @@ export function SidebarNav({
               {allAppsRow}
             </>
           )}
-        </DndContext>
+        </K.Root>
       </nav>
         {foot}
-    </div>
-  );
-}
-
-/** Whole-row drag (Notion-style) with an 8px activation distance so plain
- *  clicks still navigate. Persists through the SAME per-device nav order the
- *  top bar + Customize-navigation use (writeNavOrder → event → useNavModules
- *  re-reads), so the two nav modes never disagree. */
-function SortableTop({
-  id,
-  children,
-}: {
-  id: string;
-  /** Given the drag handle's props, so the caller can put them on the ROW that
-   *  drags rather than on everything inside it. */
-  children: (handle: Record<string, unknown>) => ReactNode;
-}) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
-  // A drag that reorders nothing still ends in a click. See useDragClickGuard.
-  useDragClickGuard(isDragging);
-
-  return (
-    <div
-      ref={setNodeRef}
-      // Every row here is an <a>, and a browser drags a link NATIVELY: the
-      // moment the pointer moves, the page starts a link-drag and the sortable
-      // never sees another pointer event. With the hold sensor that read as
-      // "the drag starts, then never lands" - dnd-kit had activated on the
-      // timer and lost the pointer to the native drag on the first move
-      // (2026-09-08). Refusing dragstart keeps the pointer with the sortable.
-      onDragStart={(e) => e.preventDefault()}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={isDragging ? "opacity-60 cursor-grabbing" : undefined}
-    >
-      {children({ ...attributes, ...listeners })}
-    </div>
-  );
-}
-
-/** One child row inside a group, draggable among its own siblings.
- *
- *  Children used to sit INSIDE the group's drag listeners, which is what a
- *  `{...listeners}` spread on a wrapper means: grabbing a child started a drag
- *  of the whole block, because the listener it reached first belonged to the
- *  parent. So a child could not be moved within its parent, and trying moved
- *  the parent instead (reported 2026-09-04). Each child now carries its own. */
-function SortableChild({ id, children }: { id: string; children: ReactNode }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
-  useDragClickGuard(isDragging);
-  return (
-    <div
-      ref={setNodeRef}
-      {...attributes}
-      {...listeners}
-      // Same reason as SortableTop: the child is a link, and a link drags
-      // natively unless told not to.
-      onDragStart={(e) => e.preventDefault()}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={isDragging ? "opacity-60 cursor-grabbing" : undefined}
-    >
-      {children}
     </div>
   );
 }

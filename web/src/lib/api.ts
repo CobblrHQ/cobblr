@@ -1,3 +1,4 @@
+import type { PersonalDocumentRead } from "@cobblr/platform-contract/personal-documents";
 import type { CutterProfile, CutterProgram } from "@cobblr/platform-contract/cutter-program";
 import type { StockView, StockDetail } from "@cobblr/inventory/ui";
 import type { LaserSetup, LaserCommission } from "@cobblr/platform-contract/laser-setup";
@@ -10,6 +11,7 @@ import type { MoneyTotal } from "@cobblr/platform-contract/money";
 
 import type { ScopeDef, VisibilityDef } from "@cobblr/platform-contract/share-scope";
 import type { FieldValuesUsedBody, TipState } from "@cobblr/platform-web";
+import { downloadBlob } from "@cobblr/platform-web";
 import { noteWorkspaceWrite } from "@cobblr/platform-web";
 import type { CancelResult } from "./digifab-cancel";
 import type { ScanCountReason } from "@cobblr/platform-contract/scan-count";
@@ -74,7 +76,7 @@ export async function fetchAuthBlobUrl(path: string): Promise<string | null> {
 /** A CSV the server writes for this reader, fetched with the session: the
  *  file, the name the server gave it, and whether it is the whole collection
  *  (a list past its cap says so in a header rather than passing as all of it). */
-export async function fetchCsv(path: string): Promise<{ blob: Blob; filename: string; complete: boolean }> {
+export async function fetchCsv(path: string): Promise<{ blob: Blob; filename: string; complete: boolean; secretsOmitted?: boolean }> {
   const token = getToken();
   const res = await fetch(`/api/v1${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
   if (!res.ok) {
@@ -82,10 +84,11 @@ export async function fetchCsv(path: string): Promise<{ blob: Blob; filename: st
     throw new ApiError(res.status, body?.error?.code ?? "export_failed", body?.error?.message ?? "The file could not be made. Try again.");
   }
   const named = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1];
-  return { blob: await res.blob(), filename: named ?? "export.csv", complete: res.headers.get("x-export-complete") !== "false" };
+  return { blob: await res.blob(), filename: named ?? "export.csv", complete: res.headers.get("x-export-complete") !== "false", secretsOmitted: res.headers.get("x-export-secrets") === "omitted" };
 }
 
 export interface ShareOfferItem {
+  send_file?: {id: string;transport: "file-export" | "file-import";state: string;can_download: boolean;can_undo: boolean};
   id: string;
   direction: "out" | "in";
   title: string;
@@ -119,7 +122,23 @@ export interface ShareLinkItem {
    *  it with View as. */
   last_viewed?: { at: string; by: string | null } | null;
   edit_mode?: ShareEditMode;
+  /** A pending invite's address, when it was made for one. */
+  invite_email?: string | null;
+  /** The collections a pending invite reaches. */
+  invite_kinds?: string[];
   created_at: string;
+}
+
+/** An invite just made: its link, and what happened to its email. */
+export interface ShareInviteMade {
+  id: string;
+  invite_url: string;
+  expires_at: string;
+  links?: Array<{ label: string; origin: string; url: string; note: string | null }>;
+  email?: string | null;
+  mail?: "sent" | "no_mail" | "rate_limited" | "failed" | null;
+  /** The sentence to show: "Invited sam@…: email sent." */
+  said?: string;
 }
 
 /** Whether a friend's edits apply at once ("direct") or wait ("suggest"). */
@@ -912,8 +931,23 @@ export interface Order {
   metadata: Record<string, unknown>;
   /** Line-item count — present on the list endpoint (GET /orders), absent on detail. */
   item_count?: number;
+  /** The parcels an order ships in when it ships in more than one (detail
+   *  only). A line names its own by shipment_id; a line with none travels
+   *  under the order's own tracking_number. */
+  shipments?: OrderShipment[];
   created_at: string;
   updated_at: string;
+}
+
+/** One parcel of an order: its own number, state and day. */
+export interface OrderShipment {
+  id: string;
+  tracking_number: string;
+  shipment_state: string | null;
+  shipment_checked_at: string | null;
+  expected_arrival: string | null;
+  description: string | null;
+  created_at: string;
 }
 
 /** A tracking number's carrier, identified from the number's own format.
@@ -1039,6 +1073,8 @@ export interface OrderItem {
   qty: string;
   unit_cost: string | null;
   received_at: string | null;
+  /** The parcel this line travels in, when the order ships in several. */
+  shipment_id?: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -2312,8 +2348,12 @@ export const api = {
   /** Generic entity list — the data source for relation-field pickers and any
    *  cross-module chooser. Projected through exposableFields like lookup. */
   /** A collection as a spreadsheet, read as the viewer. */
-  exportEntitiesCsv: (slug: string, kind: string, q?: string) =>
-    fetchCsv(`/orgs/${slug}/entities/${encodeURIComponent(kind)}/export.csv${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  exportEntitiesCsv: (slug: string, kind: string, q?: string, includeSecrets = false) => {
+    const query = new URLSearchParams();
+    if (q) query.set("q", q);
+    if (includeSecrets) query.set("include_secrets", "true");
+    return fetchCsv(`/orgs/${slug}/entities/${encodeURIComponent(kind)}/export.csv${query.size ? `?${query}` : ""}`);
+  },
   /** A saved view as a spreadsheet: its filter, sort and columns. */
   exportViewCsv: (slug: string, viewId: string, subtotals = false) =>
     fetchCsv(`/orgs/${slug}/modules/core-views/views/${encodeURIComponent(viewId)}/export.csv${subtotals ? "?subtotals=true" : ""}`),
@@ -2584,6 +2624,8 @@ export const api = {
   // Field defs (Pillar D-lite)
   // `effective` applies the user override layer (relabel / hide / reorder) — forms
   // + lists pass it; config surfaces (Fields, composer) read the raw defs.
+  revealSecretField: (slug: string, kind: string, id: string, field: string, operation: "reveal" | "copy") =>
+    request<{ value: string }>("POST", `/orgs/${slug}/entities/${encodeURIComponent(kind)}/${encodeURIComponent(id)}/fields/${encodeURIComponent(field)}/reveal`, { operation }),
   listFieldDefs: (slug: string, kind?: string, effective?: boolean) => {
     const params = new URLSearchParams();
     if (kind) params.set("kind", kind);
@@ -3078,6 +3120,15 @@ export const api = {
   setMeCommunicationPref: (body: { notification_type: string; channel: string; enabled: boolean }) =>
     request<{ ok: boolean }>("PUT", "/me/communication-prefs", body),
 
+  // Web Push (#5267): this person's devices, their push settings, and what
+  // quiet hours are holding.
+  mePush: () => request<MePush>("GET", "/me/push"),
+  addMePushDevice: (body: { endpoint: string; keys: { p256dh: string; auth: string }; label?: string; user_agent?: string; org_id?: string | null }) =>
+    request<{ id: string; label: string }>("POST", "/me/push/devices", body),
+  removeMePushDevice: (id: string) => request<void>("DELETE", `/me/push/devices/${encodeURIComponent(id)}`),
+  testMePushDevice: (id: string) =>
+    request<{ deviceId: string; label: string; outcome: "sent" | "gone" | "failed"; reason?: string }>("POST", `/me/push/devices/${encodeURIComponent(id)}/test`, {}),
+  setMePushSettings: (body: Partial<MePushSettings>) => request<MePushSettings>("PUT", "/me/push/settings", body),
   meDeliveryWindows: () =>
     request<{ items: DeliveryWindowRow[]; orphaned: { channel: string; pending_count: number }[] }>(
       "GET",
@@ -3189,6 +3240,10 @@ export const api = {
    *  already here when the same bytes are uploaded again (`duplicate: true`
    *  and the existing file come back); otherwise a second copy is stored and
    *  `duplicate_of` names the first. */
+  readPersonalDocument: (slug: string, file: File) => {
+    const form = new FormData(); form.set("file", file);
+    return upload<PersonalDocumentRead>(`/api/v1/orgs/${slug}/modules/core-scan/personal-documents/read`, form, file);
+  },
   uploadFile: async (slug: string, file: File, opts: { folderId?: string | null; onDuplicate?: "skip"; camera?: boolean } = {}): Promise<FileRecord> => {
     const form = new FormData();
     if (opts.folderId) form.set("folder_id", opts.folderId);
@@ -3450,6 +3505,7 @@ export const api = {
       "GET",
       `/orgs/${slug}/modules/digifab/connections`,
     ),
+  discoverBenchESPHome:(slug:string,bridge:string|null)=>request<{items:{name:string;host:string;port:number}[]}>("GET",`/orgs/${slug}/modules/digifab/bench/discover${bridge?`?bridge=${encodeURIComponent(bridge)}`:""}`),
   discoverSnapmakers: (slug: string, bridge: string | null) => request<{ items: { name: string; host: string; model: string; transport: "http" | "sacp" }[] }>("GET", `/orgs/${slug}/modules/digifab/snapmaker/discover${bridge ? `?bridge=${encodeURIComponent(bridge)}` : ""}`),
   pairSnapmaker: (slug: string, connectionId: string) => request<{ state: "waiting" | "paired" }>("POST", `/orgs/${slug}/modules/digifab/snapmaker/${connectionId}/pair`, {}),
   // The live fleet/floor view: every enabled connection's devices + state, with
@@ -3468,11 +3524,12 @@ export const api = {
     deviceId: string,
     outcome: "good" | "scrapped" = "good",
     counts?: { good: number; scrap: number },
+    machine?: { jobId: string; toolSeconds?: Record<string, number> },
   ) =>
     request<{ ok: boolean; outcome: string }>(
       "POST",
       `/orgs/${slug}/modules/digifab/fleet/${connectionId}/${encodeURIComponent(deviceId)}/ready`,
-      counts ? { outcome, good: counts.good, scrap: counts.scrap } : { outcome },
+      { outcome, ...(counts ? { good: counts.good, scrap: counts.scrap } : {}), ...(machine ? { job_id: machine.jobId, tool_seconds: machine.toolSeconds } : {}) },
     ),
   // Cockpit: set/clear a device's camera stream URL (manual override).
   setDigifabDevicePosition: (slug: string, connId: string, deviceId: string, pos: { x: number; y: number } | null) =>
@@ -3535,7 +3592,7 @@ export const api = {
   getDigifabControls: (slug: string, connId: string, deviceId: string) =>
     request<{ controls: DigifabControl[] }>("GET", `/orgs/${slug}/modules/digifab/fleet/${connId}/${encodeURIComponent(deviceId)}/controls`),
   getDigifabFiles: (slug: string, connId: string, deviceId: string, refresh = false) =>
-    request<{ files: { name: string; size?: number; modified?: string }[]; cached: boolean; stale?: boolean; at: string }>(
+    request<{ files: { name: string; size?: number; modified?: string }[]; cached: boolean; stale?: boolean; error?: string | null; at: string }>(
       "GET",
       `/orgs/${slug}/modules/digifab/fleet/${connId}/${encodeURIComponent(deviceId)}/files${refresh ? "?refresh=1" : ""}`,
     ),
@@ -3783,7 +3840,7 @@ export const api = {
       body,
     ),
   readBench: (slug:string,machineId:string,offset=0)=>request<BenchPage>("GET",`/orgs/${slug}/modules/digifab/bench/${machineId}?limit=20&offset=${offset}`),
-  operateBench: (slug:string,body:{machine_id:string;operation:"identify"|"read"|"log"|"output_off";record_kind?:string;record_id?:string})=>request<BenchReport | {identity:string;profile:string} | {off:boolean} | BenchReading>("POST",`/orgs/${slug}/modules/digifab/bench`,body),
+  operateBench: (slug:string,body:BenchOperation)=>request<BenchReport | {identity:string;profile:string} | {off:boolean} | {ok:boolean} | {control_enabled:boolean} | BenchReading>("POST",`/orgs/${slug}/modules/digifab/bench`,body),
   listDigifabLinks: (slug: string) =>
     request<{ items: DigifabLink[] }>("GET", `/orgs/${slug}/modules/digifab/links`),
   createDigifabLink: (
@@ -3861,10 +3918,24 @@ export const api = {
   listMakes: (slug: string, q?: string) =>
     request<{ items: MakeSummary[] }>("GET", `/orgs/${slug}/modules/digifab/makes${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   /** Print this: a Make for the model, the printer it fits, a slice. Sends nothing. */
-  printThis: (slug: string, body: { file_id?: string; make_id?: string; prompt?: string; source?: string; source_lang?: "build123d" | "openscad"; template?: string; params?: Record<string, unknown>; material: string; color?: string }) =>
+  printThis: (slug: string, body: { file_id?: string; make_id?: string; prompt?: string; source?: string; source_lang?: "build123d" | "openscad"; template?: string; params?: Record<string, unknown>; material: string; color?: string; quantity?: number }) =>
     request<PrintThisStarted>("POST", `/orgs/${slug}/modules/digifab/makes/print-this`, body),
   /** The one yes: start a Make's waiting print. */
   startMakePrint: (slug: string, makeId: string, confirmHash: string) => request<{ ok: true; status: string }>("POST", `/orgs/${slug}/modules/digifab/makes/${makeId}/print/start`, { confirm_hash: confirmHash }),
+  startNextMakePrint: (slug: string, makeId: string, confirmHash?: string) => request<{ ok: true; status: string }>("POST", `/orgs/${slug}/modules/digifab/makes/${makeId}/print/next`, { bed_clear: true, ...(confirmHash ? { confirm_hash: confirmHash } : {}) }),
+  reviewMakePrintBatch: (slug: string, makeId: string, quantity?: number) => request<{ ok: true; status: string }>("POST", `/orgs/${slug}/modules/digifab/makes/${makeId}/print/review`, { quantity }),
+  cancelMakePrintBatch: (slug: string, makeId: string) => request<{ ok: true; status: string }>("POST", `/orgs/${slug}/modules/digifab/makes/${makeId}/print/cancel`, {}),
+  listMakePrintBatches: async (slug: string) => {
+    const items: MakePrintBatchSummary[] = [];
+    let offset = 0;
+    for (;;) {
+      const page = await request<{ items: MakePrintBatchSummary[]; total: number | null; complete: boolean; next_offset: number | null }>("GET", `/orgs/${slug}/modules/digifab/makes/print-batches?offset=${offset}`);
+      items.push(...page.items);
+      if (page.complete) return { items };
+      if (page.next_offset == null || page.next_offset <= offset) throw new Error("The next batch page could not be read.");
+      offset = page.next_offset;
+    }
+  },
   getMake: (slug: string, id: string) => request<MakeDetail>("GET", `/orgs/${slug}/modules/digifab/makes/${id}`),
   createMake: (slug: string, body: MakeCreateBody) => request<MakeSummary>("POST", `/orgs/${slug}/modules/digifab/makes`, body),
   patchMake: (slug: string, id: string, body: { name?: string; outcome?: "pass" | "fail" | null; outcome_notes?: string; metadata?: Record<string, unknown> }) =>
@@ -3970,7 +4041,7 @@ export const api = {
   loadWorkshopStock: (slug: string, id: string, body: { station: string; slot: string; loaded: boolean }) => request<unknown>("POST", `/orgs/${slug}/modules/inventory/stock/shapes/${id}/load`, body),
   confirmLaserSheet: (slug: string, connectionId: string, deviceId: string, jobId: string, sheetId: string, stationToken: string) =>
     request<{ id: string; name: string }>("POST", `/orgs/${slug}/modules/digifab/stations/${connectionId}/${encodeURIComponent(deviceId)}/confirm`, { job_id: jobId, sheet_id: sheetId, station_token: stationToken }),
-  sendDigifabJob: (slug: string, id: string, approval?: Pick<DigifabJobReview, "fileId" | "projectHash"> & { stationToken?: string; sheetId?: string; cutterChecks?: {media_loaded:true;blade_depth_set:true;native_offset_zero:true;test_cut_checked:true;origin_checked:true} }) =>
+  sendDigifabJob: (slug: string, id: string, approval?: Pick<DigifabJobReview, "fileId" | "projectHash"> & { stationToken?: string; sheetId?: string; cnc?: import("@cobblr/platform-contract/cnc").CncApproval; cutterChecks?: {media_loaded:true;blade_depth_set:true;native_offset_zero:true;test_cut_checked:true;origin_checked:true} }) =>
     request<{ status: string; remote_job_id: string | null; placement: unknown; uploaded_bytes?: number }>(
       "POST",
       `/orgs/${slug}/modules/digifab/jobs/${id}/send`,
@@ -4173,22 +4244,34 @@ export const api = {
   /** This workspace's shares (Settings → Sharing). `kind` is "share" in a
    *  share space, where the one link is to whoever shared it. */
   listShareLinks: (slug: string) => request<{ items: ShareLinkItem[]; kind: "workspace" | "share" }>("GET", `/orgs/${slug}/share-links`),
-  createShareLink: (slug: string, label: string) =>
-    request<{ id: string; invite_url: string; expires_at: string; links?: Array<{ label: string; origin: string; url: string; note: string | null }> }>("POST", `/orgs/${slug}/share-links`, { label }),
+  /** Invite someone new: with an email the invite is bound to it and, when
+   *  this Cobblr has mail, sent there; `where` is the place their Cobblr is. */
+  createShareLink: (slug: string, p: { email?: string; where?: number; collection?: { kind: string; ids?: string[] } }) =>
+    request<ShareInviteMade>("POST", `/orgs/${slug}/share-links`, p),
+  /** Where an invite can open, and whether this Cobblr can email one. */
+  shareDestinations: (slug: string) => request<{ destinations: Array<{ label: string; note: string | null }>; can_email: boolean }>("GET", `/orgs/${slug}/share-links/destinations`),
   syncShareLink: (slug: string, id: string) => request<{ sent: number; error: string | null; waiting: number }>("POST", `/orgs/${slug}/share-links/${id}/sync`, {}),
   revokeShareLink: (slug: string, id: string) => request<{ ok: true }>("POST", `/orgs/${slug}/share-links/${id}/revoke`, {}),
   /** What has been handed over through this workspace's shares, and who it
    *  can hand things to from here. */
   sendTargets: (slug: string) => request<import("@cobblr/platform-web").WorkspaceSendTargets>("GET", `/orgs/${slug}/records/send-targets`),
+  previewSendFile: (slug: string,p: {entity_kind: string;ids: string[];mode: "copy" | "move"}) => request<import("@cobblr/platform-web").SendFileExportPreview>("POST",`/orgs/${slug}/records/send/file`,{...p,dry_run: true}),
+  exportSendFile: (slug: string,p: {entity_kind: string;ids: string[];mode: "copy" | "move";request_id?: string}) => request<{id: string;download_path: string;summary: string}>("POST",`/orgs/${slug}/records/send/file`,p),
+  downloadSendFile: async (slug: string,id: string) => {const data = await request<unknown>("GET",`/orgs/${slug}/records/send/file/${id}/download`); downloadBlob(new Blob([JSON.stringify(data)],{type: "application/json"}),`cobblr-send-${id}.json`);},
+  importSendFile: (slug: string,p: {packet: import("@cobblr/platform-contract/send-file").SendFile;collection?: string | null;field_map?: Record<string,string | null>;create_matching?: boolean;add_fields?: string[];placement?: "unplaced";location?: string | null;duplicate?: "update" | "another";request_id?: string;dry_run?: boolean}) => request<import("@cobblr/platform-web").WorkspaceSendPreview & {can_configure?: boolean;collections?: Array<{kind: string;label: string}>;version_warnings?: string[];import_id?: string;sent?: number;receipt?: import("@cobblr/platform-contract/send-file").SendReceipt;summary?: string}>("POST",`/orgs/${slug}/records/send/file/import`,p),
+  downloadSendFileReceipt: async (slug: string,id: string,phase: "imported" | "undone") => {const r = await request<unknown>("GET",`/orgs/${slug}/records/send/file/imports/${id}/receipt/${phase}`);downloadBlob(new Blob([JSON.stringify(r)],{type: "application/json"}),`cobblr-${phase === "undone" ? "return" : "confirmation"}-${id}.json`);},
+  undoSendFileImport: (slug: string,id: string) => request<{receipt: import("@cobblr/platform-contract/send-file").SendReceipt;summary: string}>("POST",`/orgs/${slug}/records/send/file/imports/${id}/undo`,{}),
+  confirmSendFile: (slug: string,receipt: import("@cobblr/platform-contract/send-file").SendReceipt,dry_run = false) => request<{summary: string;items?: number;mode?: string;target?: {name: string;instance: string;person: string}}>("POST",`/orgs/${slug}/records/send/file/confirm`,{receipt,dry_run}),
+  restoreSendFileSource: (slug: string,receipt: import("@cobblr/platform-contract/send-file").SendReceipt,dry_run = false) => request<{summary: string;items?: number;target?: {name: string;instance: string;person: string}}>("POST",`/orgs/${slug}/records/send/file/restore`,{receipt,dry_run}),
   previewSend: (slug: string, p: import("@cobblr/platform-web").WorkspaceSendRequest) => request<import("@cobblr/platform-web").WorkspaceSendPreview>("POST", `/orgs/${slug}/records/send`, { ...p, dry_run: true }),
   sendRecords: (slug: string, p: import("@cobblr/platform-web").WorkspaceSendRequest) => request<{ summary: string; offer_ids: string[] }>("POST", `/orgs/${slug}/records/send`, p),
   undoSend: (slug: string, id: string) => request("POST", `/orgs/${slug}/records/send/${id}/undo`, {}),
   listShareOffers: (slug: string) => request<{ items: ShareOfferItem[]; targets: Array<{ link_id: string; to: string }> }>("GET", `/orgs/${slug}/share-offers`),
   /** The shares of this workspace's own things, and which hold this record. */
   recordShares: (slug: string, kind?: string, id?: string) =>
-    request<{ targets: Array<{ link_id: string; to: string }>; shared_with: Array<{ link_id: string; to: string }> }>(
+    request<{ can_share?: boolean; targets: Array<{ link_id: string; to: string }>; shared_with: Array<{ link_id: string; to: string }> }>(
       "GET",
-      kind && id ? `/orgs/${slug}/record-shares?kind=${encodeURIComponent(kind)}&id=${encodeURIComponent(id)}` : `/orgs/${slug}/record-shares`,
+      kind ? `/orgs/${slug}/record-shares?kind=${encodeURIComponent(kind)}${id ? `&id=${encodeURIComponent(id)}` : ""}` : `/orgs/${slug}/record-shares`,
     ),
   withdrawShareOffer: (slug: string, id: string) => request<{ ok: true }>("POST", `/orgs/${slug}/share-offers/${id}/withdraw`, {}),
   sendBackShareOffer: (slug: string, id: string) => request<{ ok: true }>("POST", `/orgs/${slug}/share-offers/${id}/send-back`, {}),
@@ -4270,7 +4353,7 @@ export const api = {
     request<{ status: ShareEditItem["status"] }>("POST", `/orgs/${slug}/share-links/${id}/edits/${editId}/${decision}`),
   /** Who an invite is from, asked of the Cobblr that made it. */
   previewShareInvite: (invite: string) =>
-    request<{ owner_name: string | null; workspace_name: string; from_host: string | null }>("POST", "/share-links/preview", { invite }),
+    request<{ owner_name: string | null; workspace_name: string; for_email?: string | null; from_host: string | null }>("POST", "/share-links/preview", { invite }),
   /** Accept an invite on this Cobblr: makes the share space, returns its slug. */
   acceptShareInvite: (invite: string) => request<{ org_id: string; slug: string }>("POST", "/share-links/accept", { invite }),
   listWorkspaceLinks: () =>
@@ -4338,7 +4421,7 @@ export const api = {
   linkKinds: (slug: string, kind: string) =>
     request<{
       offered: Array<{ kind: string; label: string; to: string[]; reverse: boolean }>;
-      words: Record<string, { label: string; inverse: string }>;
+      words: Record<string, { label: string; inverse: string; date_summary?: import("@cobblr/platform-contract/link-date-summary").LinkDateSummary }>;
       /** Link kinds a record's Links do not remove (a thing's type). */
       fixed?: string[];
     }>("GET", `/orgs/${slug}/pairings/link-kinds?record_kind=${encodeURIComponent(kind)}`),
@@ -4644,6 +4727,8 @@ export const api = {
         : `/orgs/${slug}/modules/inventory/parts/${args.modelId}/units`,
       { serial_number: args.serial },
     ),
+  lookupBarcode: (slug: string, code: string) =>
+    request<import("@cobblr/platform-web").BarcodeLookup>("POST", `/orgs/${slug}/modules/core-scan/barcode-lookup`, { code }),
   scanBarcode: (
     slug: string,
     body: {
@@ -4791,6 +4876,13 @@ export const api = {
     request<StationMove & { replayed?: boolean }>("POST", `/orgs/${slug}/modules/core-scan/stations/screens/${address}/count`, body),
   stationUndo: (slug: string, address: string, requestId: string) =>
     request<{ ok: true; qty: number | null }>("POST", `/orgs/${slug}/modules/core-scan/stations/screens/${address}/undo`, { request_id: requestId }),
+  /** A known thing's own record actions a station offers (#4640): ones Undo can take back, on a record it keeps. */
+  stationActions: (slug: string, address: string, kind: string) =>
+    request<{ items: StationRecordAction[] }>("GET", `/orgs/${slug}/modules/core-scan/stations/screens/${address}/actions?kind=${encodeURIComponent(kind)}`),
+  stationActionRun: (slug: string, address: string, body: { request_id: string; action_id: string; kind: string; entity_id: string; args?: Record<string, unknown> }) =>
+    request<{ request_id: string; ok: boolean; summary?: string | null; undoable: boolean; replayed?: boolean }>("POST", `/orgs/${slug}/modules/core-scan/stations/screens/${address}/actions/run`, body),
+  stationActionUndo: (slug: string, address: string, requestId: string) =>
+    request<{ ok: true }>("POST", `/orgs/${slug}/modules/core-scan/stations/screens/${address}/actions/undo`, { request_id: requestId }),
   stationMove: (slug: string, address: string, body: { kind: string; entity_id: string; location_id: string }) =>
     request<{ ok: true }>("POST", `/orgs/${slug}/modules/core-scan/stations/screens/${address}/move`, body),
   stationNextScan: (slug: string, address: string) =>
@@ -6961,6 +7053,7 @@ export interface AiProvider {
 }
 
 export interface AiProviderDef {
+  locality?: "local" | "cloud";
   id: string;
   label: string;
   credentials: Record<string, { label: string; secret: boolean; format?: "uri"; choices?: Array<{ value: string; label: string }> }>;
@@ -8784,7 +8877,7 @@ export type BambuLoginResponse =
 export interface DigifabFleetDevice {
   monitor_only?: boolean;
   print_process?: "resin" | null;
-  station_kind?: "laser" | "print" | "cutter";
+  station_kind?: "laser" | "print" | "cnc" | "cutter";
   laser_backend?: "gcode" | "ruida" | "galvo" | null;
   laser_setup?: boolean;
   lightburn_readiness?: { api: { ready: boolean; fix: string }; paired: { ready: boolean; fix: string }; udp: { ready: boolean; fix: string } } | null;
@@ -8977,11 +9070,13 @@ export interface ResinStockChoice { id: string; kind: string; name: string; shap
 export interface MachineStationView {
   resin?: { station: string; loaded: ResinStockChoice[]; canStart: boolean; warning: string; stockError: string | null; postprocess: Array<{ job_id: string; file_ref: string; metadata?: Record<string, unknown>; wash_done: boolean; cure_done: boolean }> };
   kind?: string | null;
-  screen_kind?: "laser" | "print" | "cutter" | "resin" | "large-format" | null;
+  screen_kind?: "laser" | "print" | "cnc" | "cutter" | "resin" | "large-format" | "bench" | null;
+  machine_id?:string|null;
   job: (DigifabJob & { sent_at?: string | null }) | null;
   library: DigifabLibraryItem | null;
   attention: { job_id: string | null; reason: string } | null;
   sheets: Array<{ id: string; name: string; material: LaserMaterialTag | null }>;
+  cncStock?: import("@cobblr/platform-contract/cnc").CncStationStock[];
 }
 
 export interface DigifabJob {
@@ -9051,6 +9146,20 @@ export const MAKE_STEPS = ["request", "design", "model", "slice", "print", "outc
 export type MakeStepName = (typeof MAKE_STEPS)[number];
 export type MakeFileRole = "source" | "step" | "stl" | "3mf" | "preview" | "report" | "gcode" | "settings" | "snapshot" | "photo" | "other";
 
+export interface MakePrintBatch {
+  quantity: number;
+  completed: number;
+  state: "review" | "running" | "waiting_bed" | "changed" | "needs_approval" | "complete" | "cancelled" | "failed";
+  review_hash: string;
+  facts: Record<string, unknown>;
+  approvals: Array<{ hash: string; by: string; at: string }>;
+  starts: Array<{ job_id: string; ordinal: number; approval: string; by: string; at: string; status: string }>;
+  settled: Array<{ job_id: string; ordinal: number; status: string }>;
+}
+export interface MakePrintBatchSummary {
+  id: string; make_id: string; name: string; linked_machine_id: string | null;
+  status: MakeStepRecord["status"]; data: Record<string, unknown>; error: string | null;
+}
 export interface MakeSummary {
   id: string;
   /** Custom fields a bundle or a person defines for this kind. */
@@ -9214,6 +9323,8 @@ export interface MaintenanceTermTotals {
 }
 
 export interface MaintenanceSchedule {
+  cancel_by?: string | null;
+  initial_term?: { id: string; cost_cents?: number | null; currency?: string; quantity?: number | null } | null;
   ended_at: string | null;
   renewal_status: "active" | "lapsed" | "ended";
   latest_term: Pick<MaintenanceTerm, "id" | "term_start" | "term_end" | "cost_cents" | "currency" | "quantity"> | null;
@@ -9598,7 +9709,7 @@ export interface PlatformEntityKind {
   display_name: string;
   display_name_plural: string | null;
   icon: string | null;
-  fields: { name: string; type: string; role?: string; choices?: string[] }[];
+  fields: { name: string; type: string; label?: string; role?: string; choices?: string[] }[];
   detail_route: string | null;
   endpoints: { get?: string; list?: string; create?: string; update?: string; delete?: string } | null;
   /** Set on registry records synthesized for a workspace's named instances
@@ -10211,6 +10322,9 @@ export interface PlatformBundleApp {
 /** A module instance a bundle creates — its own nav entry, fields, views, and
  *  add flow, isolated to the instance kind `<instance_name>:item`. */
 export interface PlatformBundleInstance {
+  renewal_fields?: import("@cobblr/platform-contract/record-creation").RenewalFieldBinding;
+  record_templates?: import("@cobblr/platform-contract/record-creation").RecordTemplate[];
+  receipt_draft?: import("@cobblr/platform-contract/record-creation").ReceiptDraftConfig;
   module: string;
   instance_name: string;
   display_name: string;
@@ -10226,7 +10340,7 @@ export interface PlatformBundleInstance {
   /** One line under the table's title saying what goes in it. */
   hint?: string;
   /** The links a record in this table makes, in words (#3875). */
-  links?: Array<{ kind: string; label: string; inverse: string; to: string[] }>;
+  links?: Array<{ kind: string; label: string; inverse: string; to: string[]; date_summary?: import("@cobblr/platform-contract/link-date-summary").LinkDateSummary }>;
   /** Words the person may pick for what the table holds or counts (#3650). */
   noun?: import("@cobblr/platform-contract/kind-label").NounChoiceDecl;
   /** Each file dropped on the table becomes a record (FileIntakeDecl). */
@@ -10236,6 +10350,7 @@ export interface PlatformBundleInstance {
   /** When items belong to a parent "type" in another instance (Spool →
    *  Filament type), the forms show a parent picker + write an `instance-of`
    *  pairing. `instance` is the parent instance name. */
+  paste_tracking?: boolean;
   package_receiving?: { identity_field: string; storage_tracking?: boolean };
   board_revisions?: { package_kind: string; blank_kind: string; stencil_kind: string };
   parent?: {
@@ -10495,15 +10610,28 @@ export interface FabricationFloor {
  laser_devices: Array<{ connection_id: string; device_id: string }>;
 }
 
-export interface BenchReport {identity:string;profile:string;at:string;readings:{quantity:string;value:number;unit:string}[];screenshot?:{mime_type:"image/bmp";data_b64:string}}
-export interface BenchReading {id:string;machine_id:string;record_kind:string;record_id:string;report:BenchReport;screenshot_file_id:string|null}
-export interface BenchPage {items:BenchReading[];total:number;connection_error:string|null;instrument:{connection_id:string;device_id:string;name:string;profile:string;identity:string;output_off:boolean}|null}
+export interface BenchCapture {channels:string[];samplerate:number;duration_ms:number;trigger?:string;decoder?:"uart"|"i2c"|"spi"|"can"|"onewire_link";decoder_options?:Record<string,string>;data_b64?:string}
+export interface BenchOperation {machine_id:string;operation:"identify"|"read"|"log"|"output_off"|"capture"|"configure"|"output_on"|"set_voltage"|"set_current";record_kind?:string;record_id?:string;capture?:BenchCapture;confirmed?:boolean;control_enabled?:boolean;value?:number}
+export interface BenchReport {identity:string;profile:string;at:string;protection?:string;output_enabled?:boolean;capture?:{data_b64?:string;decoded:string};readings:{quantity:string;value:number;unit:string}[];screenshot?:{mime_type:"image/bmp";data_b64:string}}
+export interface BenchReading {id:string;machine_id:string;record_kind:string;record_id:string;report:BenchReport;screenshot_file_id:string|null;capture_file_id:string|null}
+export interface BenchPage {items:BenchReading[];total:number;connection_error:string|null;instrument:{connection_id:string;device_id:string;name:string;profile:string;identity:string;output_off:boolean;control_enabled?:boolean}|null}
 export interface CutterProfileRecord {id:string;profile:CutterProfile;connection_id:string;remote_device_id:string}
 export interface CutterRollView {id:string;name:string;kind:string;instance:string;remaining:number;revision:number;config:{width_mm:number;waste:number}}
 export interface CutterStationView {
  plan:{id:string;job_id:string;started_at:string|null;report:{verdict:"good"|"scrap";used_length_m:number}|null;plan:{program:CutterProgram;roll:CutterRollView;quantity:number;used_length_m:number;content_hash:string}}|null;
  job:DigifabJob|null;attention:{job_id:string|null;reason:string}|null;
  stock:{items:CutterRollView[];loaded:Array<{part_id:string;station:string;slot:string}>};station_key:string;
+}
+
+/** A record action a Station offers on a known thing (#4640). */
+export interface StationRecordAction {
+  id: string;
+  label: string;
+  icon: string | null;
+  description: string | null;
+  args_schema: Record<string, import("@cobblr/platform-contract/action-args").ActionArgSpec> | null;
+  group: string | null;
+  primary: boolean;
 }
 
 export interface LargeFormatHistory {
@@ -10514,4 +10642,33 @@ export interface LargeFormatHistory {
 export interface LargeFormatView {
  station:string;plan:LargeFormatHistory|null;job:DigifabJob|null;
  supplies:Array<{supply_id:string;low:boolean;updated_at:string;reading:{name:string;percent:number|null;remaining_ml:number|null}}>;
+}
+
+/** A person's push settings across their devices (#5267). */
+export interface MePushSettings {
+  min_priority: NotificationPriority;
+  quiet_start_minute: number | null;
+  quiet_end_minute: number | null;
+  timezone: string;
+}
+
+/** One device that takes Web Push for this person. */
+export interface MePushDevice {
+  id: string;
+  org_id: string | null;
+  label: string;
+  created_at: string;
+  last_success_at: string | null;
+  last_failure_at: string | null;
+  last_failure: string | null;
+  failures_in_a_row: number;
+}
+
+export interface MePush {
+  /** The key a browser subscribes with; null until the server has made it. */
+  public_key: string | null;
+  devices: MePushDevice[];
+  settings: MePushSettings;
+  quiet_now: boolean;
+  held: number;
 }

@@ -59,6 +59,12 @@ export function useSelectionCapture(active: boolean): void {
       // A selection inside the chat panel is someone reading Cobb's own words
       // back, not pointing at their workspace.
       if (el?.closest("[data-cobb-panel]")) return;
+      const range = sel.getRangeAt(0);
+      if ([...document.querySelectorAll("[data-secret-field]")].some((secret) => range.intersectsNode(secret))) {
+        clearTextSelection();
+        paint(null);
+        return;
+      }
       const text = sel.toString().trim().slice(0, MAX_CHARS);
       if (text.length < MIN_CHARS) return;
       paint(sel.getRangeAt(0).cloneRange());

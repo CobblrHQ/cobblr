@@ -26,11 +26,11 @@ import { understandWorkbook, type UnderstoodSheet } from "../services/sheet-unde
 import { planSheet, scoreTargets, chooseTarget, type Destination, type SheetOverrides, type SheetPlan } from "../services/sheet-plan.js";
 import { existingRecords, newCollectionTarget, workspacePicture } from "../services/sheet-workspace.js";
 import { nameColumnsWithAi } from "../services/sheet-ai-names.js";
+import { selfOrigin } from "@cobblr/platform-contract/self-api";
 
 export const sheetsRouter = Router({ mergeParams: true });
 
-// loopback-ok: #5153 moves this onto selfFetch
-const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT || 4000}`;
+const INTERNAL_API = selfOrigin();
 
 /** Rows shown back with the understanding; the whole sheet is re-read for
  *  the dry run and the import, never carried between requests. */

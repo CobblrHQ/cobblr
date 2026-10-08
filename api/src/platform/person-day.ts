@@ -12,30 +12,29 @@
 // zone does not change between two of them. A miss is one small meta read.
 import { arrivedEverywhere, dayIn, type Day } from "@cobblr/platform-contract/day";
 import { meta } from "../db/meta.js";
+import { ttlCache } from "../lib/ttl-cache.js";
 
 const TTL_MS = 60_000;
-const zones = new Map<string, { zone: string | null; at: number }>();
+const zones = ttlCache<string | null>(TTL_MS);
 
-/** The zone this person said they are in, or null when they never said. */
-export async function timeZoneOf(userId: string, now: Date = new Date()): Promise<string | null> {
-  const hit = zones.get(userId);
-  if (hit && now.getTime() - hit.at < TTL_MS) return hit.zone;
-  let zone: string | null = null;
-  try {
-    const row = await meta
-      .selectFrom("notification_delivery_windows")
-      .select("timezone")
-      .where("user_id", "=", userId)
-      .orderBy("updated_at", "desc")
-      .executeTakeFirst();
-    zone = row?.timezone ?? null;
-  } catch {
-    // A meta read that failed is not a zone, and not a reason to refuse the
-    // caller a day: it falls back like anybody who never said.
-    zone = null;
-  }
-  zones.set(userId, { zone, at: now.getTime() });
-  return zone;
+/** The zone this person said they are in, or null when they never said. A
+ *  filing door asks once per record, so the first asks share one read. */
+export async function timeZoneOf(userId: string, _now: Date = new Date()): Promise<string | null> {
+  return zones.get(userId, async () => {
+    try {
+      const row = await meta
+        .selectFrom("notification_delivery_windows")
+        .select("timezone")
+        .where("user_id", "=", userId)
+        .orderBy("updated_at", "desc")
+        .executeTakeFirst();
+      return row?.timezone ?? null;
+    } catch {
+      // A meta read that failed is not a zone, and not a reason to refuse the
+      // caller a day: it falls back like anybody who never said.
+      return null;
+    }
+  });
 }
 
 /** The day it is for this person. `said` (a day their client sent) wins. */

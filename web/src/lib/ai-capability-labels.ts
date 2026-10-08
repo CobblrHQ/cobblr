@@ -27,6 +27,7 @@ export const CAPABILITY_LABELS: Record<AiCapability, string> = {
   summarise: "Summarise text",
   chat: "Ask Cobb",
   "design-workspace": "Build a workspace from a description",
+  "personal-document-read": "Personal documents",
   "document-read": "Read a document (receipts, invoices, forms)",
   "plan-changes": "Plan a change Cobb offers (deletes, removals, new lists)",
 };

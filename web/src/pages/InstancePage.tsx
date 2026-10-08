@@ -121,10 +121,13 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
     qty_unit?: string;
     parent?: { instance: string; label?: string; relationship_kind?: string };
     file_intake?: import("@cobblr/platform-contract").FileIntakeDecl | null;
+    record_templates?: import("@cobblr/platform-contract/record-creation").RecordTemplate[];
+    receipt_draft?: import("@cobblr/platform-contract/record-creation").ReceiptDraftConfig;
     connector_import?: import("@cobblr/platform-contract").ConnectorImportDecl | null;
     noun?: NounChoiceDecl | null;
     hint?: string | null;
     package_receiving?: { storage_tracking?: boolean };
+    paste_tracking?: boolean;
   };
   // A type collection with a collection of its things (Filament Types →
   // Spools) opens as one page, titled with their shared nav group ("Filament").
@@ -167,7 +170,10 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
         countWords={countWords}
         parent={cfg.parent}
         storageTracking={cfg.package_receiving?.storage_tracking === true}
+        pasteTracking={cfg.paste_tracking === true}
         family={family}
+        recordTemplates={cfg.record_templates ?? undefined}
+        receiptDraft={cfg.receipt_draft ?? undefined}
         connectorImport={cfg.connector_import ?? undefined}
         hint={cfg.hint}
       />
@@ -311,7 +317,7 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
               floor plan's place mode for physical things) is not only on the
               Table: Groceries opens on its cards, and the door was missing
               there (#4147). */}
-          <CollectionHeader title={displayName} kind={shownView.entity_kind || undefined} />
+          <CollectionHeader title={displayName} kind={shownView.entity_kind || undefined} selectionList={shownView.id} />
           <SavedViewPage viewId={shownView.id} embedded />
         </div>
       ) : (

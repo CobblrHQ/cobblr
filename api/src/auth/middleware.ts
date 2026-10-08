@@ -14,6 +14,7 @@ import { resolveApiToken } from "./api-tokens.js";
 import { tokenAccessAllows, type TokenAccess } from "./token-access.js";
 import { isStationScope, tokenScopeAllows } from "./scopes.js";
 import { runWithActor, runVia, type Via } from "../lib/request-context.js";
+import { linkOrigin } from "../platform/link-origin.js";
 import { env } from "../env.js";
 
 // Parse SUPERADMIN_EMAILS once at module load. Comma-separated list
@@ -181,6 +182,9 @@ const MCP_READ_PATHS: Array<string | RegExp> = [
   "/attention",
   // edits and additions people sharing with this workspace suggested (list_suggestions)
   "/suggestions",
+  // the person's own push devices and why a notification did or did not reach
+  // them (get_my_notification_delivery, #5267)
+  "/my-push",
   "/activity",
   "/notifications",
   // list_notifications reports the true unread total, not the page's
@@ -555,7 +559,7 @@ export async function requireAuth(
             ? { kind: "surface", label: tokenName }
             : null;
     runWithActor(
-      { userId: user.id, authMethod, apiTokenId, titlePref: user.title_pref ?? null },
+      { userId: user.id, authMethod, apiTokenId, titlePref: user.title_pref ?? null, linkOrigin: linkOrigin(req) },
       () => (via ? runVia(via, () => next()) : next()),
     );
   } catch (err) {

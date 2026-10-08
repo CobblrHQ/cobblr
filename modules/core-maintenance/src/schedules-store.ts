@@ -14,6 +14,7 @@
 // counters through its writer, and any number field marked `usage` from the
 // record, so only the machines module reads machines_machines.
 
+import { refreshBoundRenewal } from "./bound-renewal.js";
 import { MaintenanceRefusal } from "./refusal.js";
 import { platform } from "@cobblr/platform-contract";
 import { sql, type Kysely, type Selectable } from "kysely";
@@ -238,13 +239,14 @@ async function rollForwardLocked(
 export async function reconcileSchedules(db: Db, orgId: string, now = new Date()): Promise<{ schedules: number; reasons: Map<string, string> }> {
   const rows = await db.selectFrom("core_maintenance_schedules").selectAll().execute();
   const reasons = new Map<string, string>();
-  for (const s of rows) {
+  for (const original of rows) {
     try {
+      const s = await refreshBoundRenewal(db, orgId, original);
       await ensureOccurrence(db, orgId, s, now);
       const due = await dueOf(orgId, s, now);
       reasons.set(s.id, due.reason);
     } catch (err) {
-      console.warn(`[core-maintenance] schedule ${s.id} not reconciled:`, (err as Error).message);
+      console.warn(`[core-maintenance] schedule ${original.id} not reconciled:`, (err as Error).message);
     }
   }
   return { schedules: rows.length, reasons };

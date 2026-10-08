@@ -1,4 +1,6 @@
+import { cncBridgeConfig, cncEnvelopeFields } from "./cncBridgeConfig";
 import { jobDisplayName } from "./jobDisplayName";
+import { MachinePrintBatches } from "./PrintBatchCard";
 import { LASER_FIRMWARES } from "@cobblr/platform-contract/laser-setup";
 import { laserState } from "../../lib/fabrication-display";
 import { DirectLaserControls } from "./DirectLaserControls";
@@ -20,6 +22,7 @@ import { bridgeDisplayName } from "../../lib/bridge-choice";
 import { BridgeInstallMethod } from "../../components/BridgeInstallMethod";
 import { ToolTemperatures } from "./ToolTemperatures";
 import { SnapmakerPairing } from "./SnapmakerPairing";
+import { ESPHomeBenchDiscovery } from "./ESPHomeBenchDiscovery";
 import { SnapmakerDiscovery } from "./SnapmakerDiscovery";
 import { FormlabsConnection } from "./FormlabsConnection";
 import { useState, useMemo, useEffect, useRef, Fragment, type ReactNode } from "react";
@@ -34,7 +37,7 @@ import { HomeNetworkHint } from "../../components/HomeNetworkHint";
 import { useHosted } from "../../lib/useHosted";
 import { needsBridge } from "@cobblr/platform-contract/address-reach";
 import { useActiveOrg } from "../../auth/ActiveOrgContext";
-import { useLater, Lightbox, Modal, useToast, useConfirm, useImageSrc, relativeTime, EntityPhoto, SecretInput, AddressInput } from "@cobblr/platform-web";
+import { useLater, Lightbox, Modal, useToast, useConfirm, useImageSrc, relativeTime, EntityPhoto, SecretInput, AddressInput, NumberField } from "@cobblr/platform-web";
 import { Combobox } from "../../components/Combobox";
 import type { ModulePageTabCtx, EntityDetailPanelCtx } from "../../panels/types";
 import { capitalise, machineWords, type MachineWords } from "../../lib/machine-words";
@@ -42,6 +45,7 @@ import { withArticle } from "@cobblr/platform-contract/plural";
 import { useJobStartReview } from "./startReview";
 import { useReprint } from "./useReprint";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 export type LinkableMachine = { id: string; name: string; instLabel: string | null; image: string | null };
 
 /** A print history row is reprintable unless it's the task-derived kind. */
@@ -246,9 +250,18 @@ const BRIDGE_DRIVERS: { key: string; label: string; driver?: string; config?: Re
   { key: "prusalink", label: "Prusa (PrusaLink)", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.213" }, { key: "apiKey", label: "PrusaLink API key" }] },
   { key: "duet", label: "Duet (RepRapFirmware)", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.50" }] },
   { key: "bambu", label: "Bambu Lab (LAN)", fields: [{ key: "host", label: "Printer IP" }, { key: "serial", label: "Serial" }, { key: "accessCode", label: "LAN access code" }] },
+  {key:"cnc-usb",driver:"cnc",config:{firmware:"grbl",transport:"serial"},label:"CNC: GRBL over USB",fields:[{key:"path",label:"Serial port (COM or /dev path)"},{key:"baud",label:"Baud rate",optional:true,placeholder:"115200"},...cncEnvelopeFields]},
+  {key:"cnc-grblhal",driver:"cnc",config:{firmware:"grblhal",transport:"tcp"},label:"CNC: grblHAL over network",fields:[{key:"host",label:"Controller host"},{key:"port",label:"TCP port",optional:true,placeholder:"23"},...cncEnvelopeFields]},
+  {key:"cnc-fluidnc",driver:"cnc",config:{firmware:"fluidnc",transport:"tcp"},label:"CNC: FluidNC over network",fields:[{key:"host",label:"Controller host"},{key:"port",label:"TCP port",optional:true,placeholder:"23"},...cncEnvelopeFields]},
+  {key:"cnc-buildbotics",driver:"cnc",config:{firmware:"buildbotics",transport:"tcp"},label:"CNC: Buildbotics / compatible Onefinity",fields:[{key:"host",label:"Controller HTTP address"},{key:"motors",label:"All motor numbers, comma separated",optional:true,placeholder:"0, 1, 2"},...cncEnvelopeFields]},
+  {key:"cnc-linuxcnc",driver:"cnc",config:{firmware:"linuxcnc",transport:"tcp"},label:"CNC: LinuxCNC (linuxcncrsh)",fields:[{key:"host",label:"LinuxCNC controller host"},{key:"port",label:"TCP port",optional:true,placeholder:"5007"},{key:"connectPasswordFile",label:"Connection password file on bridge"},{key:"enablePasswordFile",label:"Control password file on bridge"},{key:"programDirectory",label:"Shared program directory on bridge"},{key:"controllerProgramDirectory",label:"Same directory on LinuxCNC controller"},{key:"joints",label:"All joint numbers, comma separated",optional:true,placeholder:"0, 1, 2"},...cncEnvelopeFields]},
   { key: "kiln", label: "ESPHome kiln", fields: [{ key: "base_url", label: "Kiln controller URL", placeholder: "http://kiln.local" }] },
   { key: "lightburn", label: "LightBurn laser", fields: [{ key: "host", label: "LightBurn host" }] },
   { key: "gcode-laser", label: "G-code laser", fields: [] },
+  {key:"esphome-bench",label:"Riden via ESPHome (native API)",fields:[{key:"host",label:"ESPHome device host",placeholder:"supply.local"},{key:"port",label:"Native API port",placeholder:"6053",optional:true},{key:"encryption_key",label:"Native API encryption key",secret:true},{key:"max_current",label:"Maximum current (A)",placeholder:"6",optional:true}]},
+  {key:"riden-tcp",driver:"riden",config:{transport:"tcp"},label:"Riden supply (Modbus TCP)",fields:[{key:"host",label:"Supply IP / host"},{key:"port",label:"Modbus port",placeholder:"502",optional:true},{key:"unit",label:"Modbus unit",placeholder:"1",optional:true}]},
+  {key:"riden-rtu",driver:"riden",config:{transport:"rtu"},label:"Riden supply (USB serial)",fields:[{key:"path",label:"Serial port",placeholder:"/dev/ttyUSB0 or COM3"},{key:"baud",label:"Baud rate",placeholder:"115200",optional:true},{key:"unit",label:"Modbus unit",placeholder:"1",optional:true}]},
+  {key:"sigrok",label:"Logic analyser (sigrok)",fields:[{key:"device",label:"sigrok device",placeholder:"fx2lafw"},{key:"executable",label:"sigrok-cli executable",optional:true}]},
   {key:"scpi-psu-tcp",driver:"scpi",config:{profile:"psu",transport:"tcp"},label:"Power supply (LAN)",fields:[{ key: "host", label: "Instrument IP / host" }, { key: "port", label: "SCPI port", placeholder: "5025", optional: true }]},
   {key:"scpi-psu-usbtmc",driver:"scpi",config:{profile:"psu",transport:"usbtmc"},label:"Power supply (USB)",fields:[{key:"vendor_id",label:"USB vendor ID",placeholder:"0x1ab1"},{key:"product_id",label:"USB product ID",placeholder:"0x0588"},{key:"serial",label:"USB serial number",optional:true},{key:"libusb",label:"libusb library path",optional:true},{key:"python",label:"Python 3 executable",optional:true}]},
   {key:"scpi-dmm-tcp",driver:"scpi",config:{profile:"dmm",transport:"tcp"},label:"Digital multimeter (LAN)",fields:[{ key: "host", label: "Instrument IP / host" }, { key: "port", label: "SCPI port", placeholder: "5025", optional: true }]},
@@ -324,7 +337,7 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName }
       const pairs: { id: string; name: string; paired: boolean }[] = [];
       for (const { m, id } of withIds) {
         const def = defOf(m);
-        const config = { ...(m.driver === "snapmaker" && m.cfg.transport ? { transport: m.cfg.transport } : {}), driver: def.driver || m.driver, ...def.config, ...(bid ? { bridge: bid } : {}), ...(m.driver === "gcode-laser" ? {name:m.name.trim() || def.label,...gcodeBridgeValues(m), ...(gcodeBridgeValues(m).transport === "tcp" ? {port:m.cfg.port || "23"} : {baud:m.cfg.baud || "115200"})} : {}), ...Object.fromEntries(def.fields.map((f) => [f.key, m.cfg[f.key]?.trim()]).filter(([, v]) => v)) };
+        const config = { ...(m.driver === "snapmaker" && m.cfg.transport ? { transport: m.cfg.transport } : {}), driver: def.driver || m.driver, ...def.config, ...(bid ? { bridge: bid } : {}), ...(def.driver === "cnc" ? cncBridgeConfig({...m.cfg,name:m.name.trim()||def.label}) : { ...(m.driver === "gcode-laser" ? {name:m.name.trim() || def.label,...gcodeBridgeValues(m), ...(gcodeBridgeValues(m).transport === "tcp" ? {port:m.cfg.port || "23"} : {baud:m.cfg.baud || "115200"})} : {}), ...Object.fromEntries(def.fields.map((f) => [f.key, m.cfg[f.key]?.trim()]).filter(([, v]) => v)) }) };
         const c = await api.createDigifabConnection(activeSlug, { type: "edge_adapter", label: m.name.trim() || defOf(m).label, base_url: `cobblr-edge://${id}`, config });
         if (!firstId) firstId = c.id;
         if (m.driver === "snapmaker") pairs.push({ id: c.id, name: m.name.trim() || def.label, paired: false });
@@ -411,12 +424,14 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName }
                   <label key={f.key} className="block">
                     <span className={lbl}>{f.label}{f.optional ? "" : " *"}</span>
                     {f.secret || m.driver === "snapmaker-u1" && f.key === "apiKey"
-                      ? <SecretInput secret what={f.secret ? "panel read token" : "API key"} value={m.cfg[f.key] ?? ""} onChange={(e) => setField(m.key, f.key, e.target.value)} placeholder={f.placeholder} className={field} />
+                      ? <SecretInput secret what={f.key==="encryption_key"?"Native API encryption key":f.secret ? "panel read token" : "API key"} value={m.cfg[f.key] ?? ""} onChange={(e) => setField(m.key, f.key, e.target.value)} placeholder={f.placeholder} className={field} />
                       : <input value={m.cfg[f.key] ?? ""} onChange={(e) => setField(m.key, f.key, e.target.value)} placeholder={f.placeholder} className={field} />}
                     {m.driver === "lightburn" && f.key === "host" && <span className="block text-xs text-muted">127.0.0.1 when LightBurn runs on the bridge’s computer.</span>}
                   </label>
                 ))}
+                {m.driver === "esphome-bench" && connected && <ESPHomeBenchDiscovery slug={activeSlug} bridge={bid || null} onFound={found=>updateMachine(m.key,{name:found.name,cfg:{...m.cfg,host:found.host,port:String(found.port)}})}/>}
                 {m.driver === "snapmaker" && connected && <SnapmakerDiscovery slug={activeSlug} bridge={bid || null} onFound={found => updateMachine(m.key, { name: found.name, cfg: { ...m.cfg, host: found.host, transport: found.transport } })} />}
+                {def.driver === "cnc" && <p className="col-span-2 text-xs text-muted">One bridge can run several CNC machines. USB works on Linux, Windows and macOS. Use G54 with stock-top Z zero; enter the envelope in those work coordinates. LinuxCNC uses its documented remote interface and a shared program directory. Start is approved at the machine station.</p>}
                 {m.driver === "snapmaker-u1" && <p className="col-span-2 text-xs text-muted">Connect to Moonraker on port 7125. Enable local access on the printer if needed. Start is approved at its machine station.</p>}
                 {m.driver === "snapmaker" && <p className="col-span-2 text-xs text-muted">Approve pairing on the touchscreen after adding this machine. Only 3D printing heads are supported. The bridge detects HTTP or SACP firmware automatically.</p>}
                 {m.driver === "sdcp" && <p className="col-span-2 text-xs text-muted">The shared bridge reaches this resin printer over LAN. Upload a sliced GOO file, load its resin and approve Start at an authorized browser station.</p>}
@@ -529,6 +544,15 @@ function FleetBatchBar({
 const DEVICE_DRAG_MIME = "application/x-cobblr-fleet-device";
 
 export type FleetDev = DigifabFleetDevice & { connLabel: string; connBridge?: string; connId: string; connType: string };
+
+/** A printer waiting to be paired carries a short form (pair, approve on the
+ *  touchscreen, check), not a status line. In half a phone's width every word
+ *  of it wrapped, so its card takes the whole row on a phone and two columns
+ *  above. */
+export function pairsOnItsCard(d: Pick<DigifabFleetDevice, "state" | "station_kind">): boolean {
+  return d.state === "unpaired" && d.station_kind === "print";
+}
+export const WIDE_CARD = "col-span-full sm:col-span-2";
 const devKey = (d: { connId: string; id: string }) => `${d.connId}:${d.id}`;
 
 /** Free-form fleet layout — the tiles ARE the floor (no cell grid, no arrange
@@ -540,10 +564,12 @@ const devKey = (d: { connId: string; id: string }) => `${d.connId}:${d.id}`;
  *  strip swells into a full-height slot and stays stable under the cursor.
  *  Machines with no saved slot flow in a trailing row. Order + row starts
  *  persist per-workspace (PUT fleet/layout). */
-function ReorderableRows({ slug, devices, gridCls, canDrag, dataVersion, renderTile }: {
+function ReorderableRows({ slug, devices, gridCls, spanOf, canDrag, dataVersion, renderTile }: {
   slug: string;
   devices: FleetDev[];
   gridCls: string;
+  /** Extra grid classes for a tile that takes more than one cell. */
+  spanOf?: (d: FleetDev) => string;
   /** False while a bucket filter hides tiles or batch-select is on. */
   canDrag: boolean;
   /** Bumps when fresh fleet data lands — drops the optimistic post-drop layout. */
@@ -726,7 +752,7 @@ function ReorderableRows({ slug, devices, gridCls, canDrag, dataVersion, renderT
                         });
                       }}
                       onDragEnd={finishDrag}
-                      className={(canDrag ? "cursor-grab active:cursor-grabbing " : "") + (drag === k ? "hidden" : "")}
+                      className={(canDrag ? "cursor-grab active:cursor-grabbing " : "") + (drag === k ? "hidden " : "") + (spanOf?.(d) ?? "")}
                     >
                       {renderTile(d)}
                     </div>
@@ -1030,6 +1056,7 @@ export function FleetView({ slug, machineIds, scopeNoun }: {
                       slug={slug}
                       devices={sec.devices}
                       gridCls={gridCls}
+                      spanOf={(d) => (!dense && pairsOnItsCard(d) ? WIDE_CARD : "")}
                       canDrag={bucket === "all" && !selecting}
                       dataVersion={fleet.dataUpdatedAt}
                       renderTile={tile}
@@ -1373,7 +1400,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
     onDragLeave: () => setDropHover(false),
     onDrop: (e: React.DragEvent) => void onDrop(e),
   };
-  const rootCls = `relative rounded-lg border overflow-hidden ${dropHover ? "border-cobble-500 ring-2 ring-cobble-500/40" : att ? "border-amber-400 dark:border-amber-700" : st.ring} bg-subtle dark:bg-slate-800/50 ${d.enabled || d.state === "unpaired" && d.station_kind === "print" ? "" : "opacity-50"} ${selecting ? "cursor-pointer" : ""} ${selected ? "ring-2 ring-cobble-500" : ""}`;
+  const rootCls = `relative rounded-lg border overflow-hidden ${dropHover ? "border-cobble-500 ring-2 ring-cobble-500/40" : att ? "border-amber-400 dark:border-amber-700" : st.ring} bg-subtle dark:bg-slate-800/50 ${!dense && pairsOnItsCard(d) ? WIDE_CARD : ""} ${d.enabled || pairsOnItsCard(d) ? "" : "opacity-50"} ${selecting ? "cursor-pointer" : ""} ${selected ? "ring-2 ring-cobble-500" : ""}`;
 
   // Camera-wall tile — the feed is the card; status + progress ride as an
   // overlay strip. Streams/snapshots regardless of state (that's the point of
@@ -1556,6 +1583,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
         </div>
       ) : null}
       {d.lightburn_readiness && <div className="mt-2"><LightBurnReadiness readiness={d.lightburn_readiness} /></div>}
+      {!laser && !dense && !selecting && d.linked_machine_id && <MachinePrintBatches slug={slug} machineId={d.linked_machine_id} />}
       {(laser || d.station_kind) && <Link className="inline-flex min-h-11 items-center mt-2 text-sm underline" to={`/station/machine/${connId}/${encodeURIComponent(d.id)}`}>Open machine station</Link>}
       {d.laser_backend && <DirectLaserControls slug={slug} connectionId={connId} deviceId={d.id} status={job?.status} state={d.state} />}
       {laser && !d.laser_backend && job && <p className="mt-2 text-xs text-muted">{job.status === "sent" ? "Start sent, waiting for LightBurn to report running. " : ""}Stop in LightBurn or at the machine</p>}
@@ -1646,14 +1674,13 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
             {splitOpen && (att.plate_qty ?? 0) > 1 && (
               <div className="mt-1 flex items-center gap-1 text-[11px]" data-testid="plate-verdict-counts">
                 <label className="flex items-center gap-1">
-                  <input
-                    type="number"
+                  <NumberField
                     min={0}
                     max={att.plate_qty ?? 1}
                     value={goodCount}
-                    onChange={(e) => setGoodCount(Math.max(0, Math.min(att.plate_qty ?? 1, Math.floor(Number(e.target.value) || 0))))}
+                    onChange={(n) => setGoodCount(Math.max(0, Math.min(att.plate_qty ?? 1, Math.floor(n || 0))))}
                     className="w-12 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1 py-0.5 text-[11px]"
-                    aria-label="How many came out good"
+                    label="How many came out good"
                   />
                   good
                 </label>
@@ -1835,7 +1862,7 @@ function JogPad({
   );
 }
 
-function ControlsPanel({ slug, connId, deviceId, name, telemetry, lanActive }: { slug: string; connId: string; deviceId: string; name: string; telemetry?: DigifabDeviceDetail["telemetry"] | null; lanActive?: boolean }) {
+export function ControlsPanel({ slug, connId, deviceId, name, telemetry, lanActive }: { slug: string; connId: string; deviceId: string; name: string; telemetry?: DigifabDeviceDetail["telemetry"] | null; lanActive?: boolean }) {
   const toast = useToast();
   const confirm = useConfirm();
   const [jogStep, setJogStep] = useState(10);
@@ -1868,6 +1895,8 @@ function ControlsPanel({ slug, connId, deviceId, name, telemetry, lanActive }: {
     <>
       {ctrls.isLoading ? (
         <div className="text-sm text-muted">Loading…</div>
+      ) : ctrls.error ? (
+        <p role="alert" className="text-xs text-ember-600 dark:text-ember-400">{ctrls.error instanceof Error ? ctrls.error.message : "Could not read this printer's controls."}</p>
       ) : controls.length === 0 ? (
         <div className="text-sm text-muted dark:text-slate-400 italic">This printer reports no live controls.</div>
       ) : (
@@ -2098,7 +2127,7 @@ function FileRow({
             <span className="flex flex-wrap gap-x-3 gap-y-0.5">
               {fmtDuration(fi.printTimeSec) && <span>⏱ {fmtDuration(fi.printTimeSec)}</span>}
               {fi.filamentMm != null && <span>🧵 {(fi.filamentMm / 1000).toFixed(1)} m</span>}
-              {fi.numLayers != null && <span>{fi.numLayers} layers</span>}
+              {fi.numLayers != null && <span>{countOf(fi.numLayers, "layer")}</span>}
               {fi.height != null && <span>{fi.height} mm tall</span>}
               {fi.generatedBy && <span className="opacity-70">· {fi.generatedBy.split(/\s+/)[0]}</span>}
             </span>
@@ -2123,7 +2152,7 @@ function normPrintName(n: string): string {
     .toLowerCase();
 }
 
-function FilesPanel({ slug, connId, deviceId, onZoom, history, onOpenPrint, onReprint }: {
+export function FilesPanel({ slug, connId, deviceId, onZoom, history, onOpenPrint, onReprint }: {
   slug: string; connId: string; deviceId: string; onZoom?: (src: string) => void;
   /** Recent prints on THIS device — rolled into the same surface: matching SD
    *  files get a printed-on chip; prints with no SD file left get a tail row. */
@@ -2135,6 +2164,7 @@ function FilesPanel({ slug, connId, deviceId, onZoom, history, onOpenPrint, onRe
   const toast = useToast();
   const confirm = useConfirm();
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const [printing, setPrinting] = useState<string | null>(null);
   const q = useQuery({
     queryKey: ["digifab-files", slug, connId, deviceId],
@@ -2145,6 +2175,7 @@ function FilesPanel({ slug, connId, deviceId, onZoom, history, onOpenPrint, onRe
     refetchOnWindowFocus: false,
   });
   const files = q.data?.files ?? [];
+  const readError = refreshError || q.data?.error || (q.error instanceof Error ? q.error.message : null);
   const [sort, setSort] = useState<"recent" | "oldest" | "name" | "size">("recent");
   const sorted = useMemo(() => {
     const t = (m?: string) => (m ? new Date(m).getTime() || 0 : 0);
@@ -2208,16 +2239,20 @@ function FilesPanel({ slug, connId, deviceId, onZoom, history, onOpenPrint, onRe
   const refresh = async () => {
     setRefreshing(true);
     try {
-      qc.setQueryData(["digifab-files", slug, connId, deviceId], await api.getDigifabFiles(slug, connId, deviceId, true));
+      const result = await api.getDigifabFiles(slug, connId, deviceId, true);
+      setRefreshError(result.error ?? null);
+      qc.setQueryData(["digifab-files", slug, connId, deviceId], result);
     } catch (e) {
       // Pressed Refresh: the list stays as it was, and says why it did not change.
-      toast.error(`Could not refresh the files. ${e instanceof Error ? e.message : ""}`.trim());
+      const reason = `Could not refresh the files. ${e instanceof Error ? e.message : ""}`.trim();
+      setRefreshError(reason);
+      toast.error(reason);
     } finally {
       setRefreshing(false);
     }
   };
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1.5" aria-busy={refreshing}>
       <div className="flex items-center gap-2 text-[11px]">
         <span className="text-muted dark:text-slate-400">
           {q.isLoading ? "Loading…" : `${files.length} file${files.length === 1 ? "" : "s"}`}
@@ -2240,7 +2275,8 @@ function FilesPanel({ slug, connId, deviceId, onZoom, history, onOpenPrint, onRe
           </select>
         )}
       </div>
-      {!q.isLoading && files.length === 0 ? (
+      {readError && <p role="alert" className="text-xs text-ember-600 dark:text-ember-400">{readError}</p>}
+      {!q.isLoading && !readError && files.length === 0 ? (
         <div className="text-xs text-muted dark:text-slate-400 italic">No files reported (this printer may not list them).</div>
       ) : (
         <ul className="divide-y divide-line dark:divide-slate-800 border border-line dark:border-slate-700 rounded max-h-72 overflow-y-auto">

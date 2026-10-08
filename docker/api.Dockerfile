@@ -200,7 +200,7 @@ RUN apk add --no-cache fontconfig ttf-dejavu && fc-cache -f
 # deployment runs the strict egress policy, so language data fetched at
 # runtime would work on staging and fail there. Optional at runtime - the api
 # probes for it once and goes straight to the model without it.
-RUN apk add --no-cache tesseract-ocr tesseract-ocr-data-eng
+RUN apk add --no-cache tesseract-ocr tesseract-ocr-data-eng poppler-utils
 
 # Bring over what we need at runtime: built artifacts + the root node_modules
 # (the production-only install from the prod-deps stage above).

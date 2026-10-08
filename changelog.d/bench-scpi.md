@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-06
 docs_target: docs/USER_GUIDE.md#Electronics bench instruments
+docs_published: 2026-10-08
 ---
 Added bench instrument readings with units, saved results on boards and test runs, scope screenshots, and confirmed power supply output-off.
 

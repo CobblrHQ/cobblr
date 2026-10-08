@@ -229,6 +229,7 @@ export function toResolvedPart(row: {
   estimated_at?: Date | null;
   metadata: unknown;
   archived?: boolean;
+  state?: string;
   category_id?: string | null;
 }, categoryName: string | null = null, locationName: string | null = null, remaining: Remaining | null = null): ResolvedEntity {
   const qty = Number(row.qty);
@@ -259,6 +260,7 @@ export function toResolvedPart(row: {
     detailUrl,
     fields: {
       name: row.name,
+      state: row.state ?? "active",
       description: row.description,
       qty: Number.isFinite(qty) ? qty : 0,
       unit: row.unit,

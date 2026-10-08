@@ -114,6 +114,7 @@ export default defineModule({
       {
         group: "buy",
         id: "lists:clear-done",
+        runBy: "member",
         examples: ["clear the ticked ones", "tidy up this list"],
         label: "Clear done items",
         description:
@@ -125,6 +126,7 @@ export default defineModule({
       {
         group: "buy",
         id: "lists:add-item",
+        runBy: "member",
         examples: ["put milk on the shopping list", "add that to my list"],
         undoable: true,
         label: "Add to a list",
@@ -152,6 +154,7 @@ export default defineModule({
         // NO-PHRASING: a module taking back a line it put on a list itself
         group: "buy",
         id: "lists:withdraw-item",
+        runBy: "member",
         internal: true,
         label: "Take back a line a module added",
         description:

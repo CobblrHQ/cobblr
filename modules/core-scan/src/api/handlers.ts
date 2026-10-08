@@ -1,3 +1,4 @@
+import { registerRenewalDraftHandler } from "./renewal-draft.js";
 // Action handlers, registered at module load via api/index.ts's
 // side-effect call.
 //
@@ -8,6 +9,7 @@
 // other. (The barcode fast path stays inline in POST /scan — it needs
 // the request's ~12s budget for responsiveness.)
 
+import { barcodeFormLookup } from "../services/barcode-form-lookup.js";
 import { decodeIdentifier } from "../services/identifier-registry.js";
 import { registerBuiltinDecoders } from "../services/vin-decode.js";
 import type { Kysely } from "kysely";
@@ -24,9 +26,15 @@ import { landedFills, planKnownFill, sayFilled, writeKnownFill, type KnownFill }
 let registered = false;
 
 export function registerScanHandlers(): void {
+  registerRenewalDraftHandler();
   if (registered) return;
   registered = true;
   registerBuiltinDecoders();
+  platform().actions.registerHandler("core-scan.lookup-barcode", async ctx => {
+    const code = ctx.args?.code;
+    if (typeof code !== "string" || !code.trim() || code.length > 4096) return { ok: false, error: "Give a barcode up to 4096 characters." };
+    return { ok: true, data: await barcodeFormLookup(ctx.orgId, code.trim(), ctx.userId) };
+  });
   platform().actions.registerHandler("core-scan.decode-identifier", async ctx => {
     const code = ctx.args?.code;
     if (typeof code !== "string" || !code.trim() || code.length > 4096) return { ok: false, error: "Give a scanned identifier up to 4096 characters." };

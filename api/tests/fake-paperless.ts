@@ -6,6 +6,7 @@
 // answering the shared relay as that person, as a real bridge does. Every
 // request the Paperless sees, and the Authorization it came with, is kept.
 
+import { textPdf } from "./fixtures/ordinary-document.js";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { relayPoll, relayRespond, relayTouch } from "../src/platform/edge.js";
@@ -74,7 +75,7 @@ export async function startFakePaperless(token: string, docs: FakeDoc[], tags: R
         res.statusCode = 200;
         res.setHeader("content-type", "application/pdf");
         res.setHeader("content-disposition", `attachment; filename="${d.title}.pdf"`);
-        res.end(Buffer.from("%PDF-1.4\n% fake Paperless document\n"));
+        res.end(textPdf(`${d.title} ${d.content || ""}`));
         return;
       }
       if (u.pathname === "/api/tags/") {

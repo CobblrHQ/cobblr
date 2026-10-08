@@ -1,3 +1,4 @@
+import { PersonalDocumentReader } from "../components/PersonalDocumentReader";
 import { useScanOrigins } from "../lib/useScanOrigins";
 // /scan — the inbox review queue, photo-inbox-grade.
 import { createPortal } from "react-dom";
@@ -134,6 +135,7 @@ import { FiledRowView, FiledSummaryView } from "./ScanFiledRow";
 import { useFiledRows, withFiledRows } from "../lib/filedRows";
 import { type ScanTarget } from "./scanInboxShared";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
+import { countOf } from "@cobblr/platform-contract/plural";
 export type { ScanTarget } from "./scanInboxShared";
 
 interface ScanDrive {
@@ -907,7 +909,7 @@ export function ScanPage() {
               the combine was the longest thing on the card). What the tap
               does is on the button, beside it, and in full on hover. */}
           <span className="font-medium text-content dark:text-mortar-100">
-            Same {isUnique ? clusterNoun : "product"} {cluster.items.length === 2 ? "twice" : `${cluster.items.length} times`}
+            Same {isUnique ? clusterNoun : "product"} {cluster.items.length === 2 ? "twice" : `${countOf(cluster.items.length, "time")}`}
           </span>
           <span className="text-muted"> · {cluster.items.map((c) => displayName(c)).filter(Boolean).join(" · ")}</span>
         </div>
@@ -916,7 +918,7 @@ export function ScanPage() {
             type="button"
             disabled={combineMut.isPending}
             onClick={() => combineMut.mutate({ ids, ...(isUnique ? {} : { keepId: keep.id }) })}
-            title={`Combines these ${cluster.items.length} pending rows into one row in this inbox${isUnique ? " with all their details" : ` at ×${totalQty}`}. The other ${cluster.items.length > 2 ? "rows go" : "row goes"} to Recently deleted, where it can be restored. Nothing already filed changes.`}
+            title={`Combines these ${countOf(cluster.items.length, "pending row")} into one row in this inbox${isUnique ? " with all their details" : ` at ×${totalQty}`}. The other ${cluster.items.length > 2 ? "rows go" : "row goes"} to Recently deleted, where it can be restored. Nothing already filed changes.`}
             className="shrink-0 rounded bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50 min-h-9 sm:min-h-0"
           >
             {isUnique ? "Combine" : `Combine, ×${totalQty}`}
@@ -2337,6 +2339,7 @@ export function ScanPage() {
   return (
     <ScanTwinsContext.Provider value={twins}>
     <div className="space-y-3 max-w-4xl mx-auto">
+      <PersonalDocumentReader />
       {/* ── ONE header row ───────────────────────────────────────────────────
           It never WRAPS; it yields, in a declared order (the field collapses to
           a magnifier, labels drop to icons, the title goes, informational

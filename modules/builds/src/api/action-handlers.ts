@@ -210,7 +210,7 @@ export function registerBuildsActionHandlers(): void {
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<BuildsDB>;
     const builds = await db
       .selectFrom("builds_builds")
-      .select(["id", "name"])
+      .select(["id", "name", "metadata"])
       .where("output_part_id", "=", partId)
       .orderBy("updated_at", "desc")
       .execute();
@@ -219,6 +219,7 @@ export function registerBuildsActionHandlers(): void {
       return { ok: false, code: "no_build", error: `Nothing is set up to make ${part?.title ?? "this part"} yet. Add a build that makes it, then make it from here.` };
     }
     const build = builds[0]!;
+    if ((build.metadata as { assembly?: unknown } | null)?.assembly) return { ok: false, error: "Create this board revision through the assembly work order workflow." };
     const sourceKind = a.source_kind?.trim() || null;
     const sourceId = a.source_id?.trim() || null;
     const open = sourceKind && sourceId
@@ -236,6 +237,7 @@ export function registerBuildsActionHandlers(): void {
       await db.updateTable("builds_planned").set({ qty: String(qty), updated_at: new Date() }).where("id", "=", open.id).execute();
       plannedId = open.id;
     } else {
+      // check-then-insert: ordinary planned builds have no unique source key; board revisions refuse this path and use locked assembly request keys.
       const row = await db
         .insertInto("builds_planned")
         .values({ build_id: build.id, qty: String(qty), due_date: a.due_date ?? null, source_kind: sourceKind, source_id: sourceId })

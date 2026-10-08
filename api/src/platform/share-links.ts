@@ -16,6 +16,7 @@
 import { decodeBase64urlExact } from "@cobblr/platform-contract/base64url-exact";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
+import { listInviteScope, readScope } from "@cobblr/platform-contract/share-scope";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { encryptCreds } from "../db/crypto.js";
@@ -24,6 +25,8 @@ import { shapeShareSpace } from "./reconcile-share-spaces.js";
 import { sharePerson } from "./share-person.js";
 import { lastViews } from "./share-view.js";
 import { hardDeleteOrg } from "./delete-org.js";
+import { hasAuthEmailSender } from "./hosted-seams.js";
+import { currentActor } from "../lib/request-context.js";
 import {
   SHARE_ENVELOPE_VERSION,
   enqueueShareOp,
@@ -66,9 +69,10 @@ export function decodeInvite(s: string): InviteToken | null {
 }
 
 /** This Cobblr's own address: the configured one, else the one the request
- *  came in on (a dev box with none configured). */
+ *  came in on (a dev box with none configured), also when the caller is an
+ *  action the request ran (Cobb inviting by email). */
 export function hereUrl(requestOrigin?: string | null): string {
-  return (publicBaseUrl() || requestOrigin || "").replace(/\/+$/, "");
+  return (publicBaseUrl() || requestOrigin || currentActor()?.linkOrigin || "").replace(/\/+$/, "");
 }
 
 const sameInstance = (url: string, here: string) => !!here && url.replace(/\/+$/, "") === here;
@@ -83,12 +87,23 @@ async function userName(userId: string | null): Promise<string | null> {
   return u?.display_name || u?.email?.split("@")[0] || null;
 }
 
+/** The account's address, when this Cobblr has confirmed it, or when it
+ *  cannot confirm any (no outgoing mail, so nobody here is ever confirmed). */
+async function confirmedEmail(userId: string): Promise<string | null> {
+  const u = await meta.selectFrom("users").select(["email", "email_verified_at"]).where("id", "=", userId).executeTakeFirst();
+  if (!u?.email) return null;
+  return u.email_verified_at || !hasAuthEmailSender() ? u.email.toLowerCase() : null;
+}
+
 /** The owner starts a share: a pending link and the invite to send. */
 export async function createShareInvite(p: {
   orgId: string;
   userId: string;
   label: string;
+  /** Bind the invite to this address: only an account with it can pair. */
+  email?: string | null;
   here: string;
+  collection?: { kind: string; ids?: string[] };
 }): Promise<{ linkId: string; inviteUrl: string; expiresAt: Date; token: string }> {
   const org = await orgOf(p.orgId);
   if (!org) throw new Error("no such workspace");
@@ -105,7 +120,9 @@ export async function createShareInvite(p: {
       label: p.label.trim().slice(0, 120) || null,
       invite_code_hash: hash(code),
       invite_expires_at: expiresAt,
+      invite_email: p.email?.trim().toLowerCase() || null,
       created_by: p.userId,
+      ...(p.collection ? { settings: { scope: listInviteScope(p.collection.kind, p.collection.ids) } } : {}),
     })
     .returning("id")
     .executeTakeFirstOrThrow();
@@ -117,18 +134,35 @@ async function pendingInvite(code: string) {
   const row = await meta
     .selectFrom("share_links as l")
     .innerJoin("orgs as o", "o.id", "l.org_id")
-    .select(["l.id", "l.org_id", "l.created_by", "l.invite_expires_at", "l.status", "o.name as workspace_name"])
+    .select(["l.id", "l.org_id", "l.created_by", "l.invite_expires_at", "l.invite_email", "l.status", "o.name as workspace_name"])
     .where("l.invite_code_hash", "=", hash(code))
     .executeTakeFirst();
   if (!row || row.status !== "pending" || !row.invite_expires_at || row.invite_expires_at < new Date()) return null;
   return row;
 }
 
+/** "s•••@example.com": enough for the invite page to say which address an
+ *  invite is for, without handing a forwarded link the whole address. */
+export function maskEmail(email: string): string {
+  const [name = "", domain = ""] = email.split("@");
+  return `${name.slice(0, 1)}•••@${domain}`;
+}
+
 /** What an invite says, asked of the owner's Cobblr before anything is made. */
-export async function previewInvite(code: string): Promise<{ owner_name: string | null; workspace_name: string; v: number } | null> {
+export async function previewInvite(code: string): Promise<{ owner_name: string | null; workspace_name: string; for_email: string | null; v: number } | null> {
   const row = await pendingInvite(code);
   if (!row) return null;
-  return { owner_name: await userName(row.created_by), workspace_name: row.workspace_name, v: SHARE_ENVELOPE_VERSION };
+  return { owner_name: await userName(row.created_by), workspace_name: row.workspace_name, for_email: row.invite_email ? maskEmail(row.invite_email) : null, v: SHARE_ENVELOPE_VERSION };
+}
+
+/** An invite bound to an address pairs only with an account that has it. The
+ *  accepting Cobblr says the address, and only when it has checked it (or
+ *  cannot check any, having no mail), so the binding is as strong as that
+ *  Cobblr's own sign-up. */
+export function bindingRefusal(inviteEmail: string | null, personEmail: string | null | undefined): string | null {
+  if (!inviteEmail) return null;
+  if (!personEmail) return "This invite is for one email address, and this account's address is not confirmed yet. Confirm it, then open the invite again.";
+  return personEmail.trim().toLowerCase() === inviteEmail ? null : "This invite is for a different email address. Open it signed in with the address it was sent to, or ask for a new one.";
 }
 
 export interface ClaimRequest {
@@ -137,6 +171,8 @@ export interface ClaimRequest {
   share_url: string;
   share_link_id: string;
   person_name: string;
+  /** The accepting account's address, when its Cobblr has confirmed it. */
+  person_email?: string | null;
   share_workspace_name: string;
   /** The key the owner's side signs with (toward the share). */
   key_to_share: string;
@@ -150,6 +186,8 @@ export interface ClaimRequest {
 export async function claimShareInvite(req: ClaimRequest): Promise<{ owner_link_id: string; owner_name: string | null; workspace_name: string; v: number } | null> {
   const row = await pendingInvite(req.code);
   if (!row) return null;
+  const refused = bindingRefusal(row.invite_email, req.person_email);
+  if (refused) throw new ShareInviteError(403, refused);
   const toOwner = req.key_to_owner.split(".");
   const claimed = await meta
     .updateTable("share_links")
@@ -195,7 +233,7 @@ async function askOwner<T>(ownerUrl: string, path: string, init: RequestInit): P
   if (res.status === 404) return null;
   if (!res.ok) {
     const said = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-    throw new ShareInviteError(502, said?.error?.message ?? `${new URL(ownerUrl).host} answered ${res.status}`);
+    throw new ShareInviteError(res.status === 403 ? 403 : 502, said?.error?.message ?? `${new URL(ownerUrl).host} answered ${res.status}`);
   }
   return (await res.json()) as T;
 }
@@ -205,14 +243,14 @@ async function askOwner<T>(ownerUrl: string, path: string, init: RequestInit): P
 export async function readInvite(token: InviteToken, here: string): Promise<{
   ownerUrl: string;
   local: boolean;
-  preview: { owner_name: string | null; workspace_name: string; v: number };
+  preview: { owner_name: string | null; workspace_name: string; for_email?: string | null; v: number };
 }> {
   const ownerUrl = token.u.replace(/\/+$/, "");
   if (!/^https?:\/\//.test(ownerUrl)) throw new ShareInviteError(400, "That invite does not say which Cobblr it came from.");
   const local = sameInstance(ownerUrl, here);
   const preview = local
     ? await previewInvite(token.c)
-    : await askOwner<{ owner_name: string | null; workspace_name: string; v: number }>(ownerUrl, `/api/v1/share-links/invite/${encodeURIComponent(token.c)}`, { method: "GET" });
+    : await askOwner<{ owner_name: string | null; workspace_name: string; for_email?: string | null; v: number }>(ownerUrl, `/api/v1/share-links/invite/${encodeURIComponent(token.c)}`, { method: "GET" });
   if (!preview) throw new ShareInviteError(404, "That invite is used, expired or was withdrawn. Ask for a new one.");
   return { ownerUrl, local, preview };
 }
@@ -241,6 +279,7 @@ export async function acceptShareInvite(p: { userId: string; token: InviteToken;
       share_url: local ? "" : p.here,
       share_link_id: linkId,
       person_name: (await userName(p.userId)) ?? "",
+      person_email: await confirmedEmail(p.userId),
       share_workspace_name: shareName,
       key_to_share: toShare.text,
       key_to_owner: toOwner.text,
@@ -304,7 +343,17 @@ export interface ShareLinkView {
   edits_waiting: number;
   /** Whether the friend's edits apply at once ("direct") or wait ("suggest"). */
   edit_mode: "suggest" | "direct";
+  /** A pending invite's address, when it was made for one. */
+  invite_email: string | null;
+  /** The collections a pending invite reaches, so a list's share page lists
+   *  the invites made from it. */
+  invite_kinds: string[];
   created_at: Date;
+}
+
+function scopeKinds(raw: unknown): string[] {
+  const scope = readScope(raw);
+  return [...new Set([...scope.rules.map((r) => r.entity_kind), ...scope.picks.map((p) => p.entity_kind)])];
 }
 
 export async function listShareLinks(orgId: string): Promise<ShareLinkView[]> {
@@ -323,6 +372,8 @@ export async function listShareLinks(orgId: string): Promise<ShareLinkView[]> {
       "l.last_error",
       "l.last_error_at",
       "l.invite_expires_at",
+      "l.invite_email",
+      "l.settings",
       "l.created_at",
       eb.fn.count<string>("o.id").as("waiting"),
       eb
@@ -355,6 +406,8 @@ export async function listShareLinks(orgId: string): Promise<ShareLinkView[]> {
     waiting: Number(r.waiting ?? 0),
     edits_waiting: Number(r.edits_waiting ?? 0),
     edit_mode: r.edit_mode === "direct" ? "direct" : "suggest",
+    invite_email: r.status === "pending" ? r.invite_email : null,
+    invite_kinds: r.status === "pending" ? scopeKinds((r.settings as Record<string, unknown> | null)?.scope) : [],
     created_at: r.created_at,
   }));
 }

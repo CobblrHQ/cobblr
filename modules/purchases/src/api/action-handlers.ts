@@ -12,6 +12,7 @@
 // inventory's tables or imports its code.
 
 import { receiveOrderLines } from "../receive.js";
+import { receiveShipment } from "../shipments.js";
 import { arrivedEverywhere } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
@@ -170,11 +171,17 @@ export function registerPurchasesActionHandlers(): void {
   // plus a date picker, because it is asked of people who were interrupted to
   // answer it.
   platform().actions.registerHandler("purchases.mark-arrived", async (ctx) => {
-    const args = (ctx.args as { orderId?: string; arrivedOn?: string; add_to_stock?: unknown } | null) ?? {};
+    const args = (ctx.args as { orderId?: string; shipmentId?: string; arrivedOn?: string; add_to_stock?: unknown } | null) ?? {};
     const orderId = args.orderId ?? (ctx.entity?.id || undefined);
     if (!orderId) return { ok: true, skipped: "no order in scope" };
 
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<PurchasesDB>;
+    // One parcel of several turned up: its lines, and the order only once
+    // nothing else on it is still to come.
+    if (args.shipmentId) {
+      const out = await receiveShipment(db, ctx.orgId, orderId, args.shipmentId, args.arrivedOn ?? arrivedEverywhere(new Date()));
+      return { ok: true, order_id: orderId, shipment_id: args.shipmentId, lines_received: out.received, order_arrived: out.orderArrived };
+    }
     const before = await db
       .selectFrom("purchases_orders")
       .select(["id", "status", "arrived_at"])

@@ -1,3 +1,4 @@
+import { readRenewalPeriod } from "./renewal-draft.js";
 // Receipt / invoice parsing — turn an uploaded receipt into line items.
 //
 // Tiered, deterministic-first (mirrors the barcode path's heuristic-floor →
@@ -23,6 +24,7 @@
 // — a receipt becomes N parts without retyping. Mirrors the invoice-parse path.
 
 import { platform } from "@cobblr/platform-contract";
+import { readPersonalDocumentLocally } from "./personal-document.js";
 import { classifyAiFailure } from "@cobblr/platform-contract/ai-refusal";
 import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
 import { receiptReadWords } from "@cobblr/platform-contract/scan-session";
@@ -298,7 +300,7 @@ export function printedReceiptMeta(receipt: ParsedReceipt, text: string | null |
   // A document read by its own labels (a bill of sale) already took what it
   // prints; a till's header rules would read the form's title as the shop.
   if (receipt.document) return receipt;
-  const withRef = { ...receipt, order_ref: receipt.order_ref ?? detectOrderRef(text) };
+  const withRef = { ...receipt, renewal: { ...readRenewalPeriod(text), ...receipt.renewal }, order_ref: receipt.order_ref ?? detectOrderRef(text) };
   return enrichReceiptFromText(enrichReceiptMeta(withRef, text), text);
 }
 
@@ -329,6 +331,9 @@ export async function parseReceipt(
   if (!file) return { ok: false, reason: "Couldn't read that file.", code: "unreadable" };
   const bytes = Buffer.from(file.bytes);
   const mime = file.mimeType || "";
+  if ((await readPersonalDocumentLocally({ bytes, mime })).privacy === "personal") {
+    return { ok: false, code: "unreadable", reason: "This is a personal document. Read it with Personal documents in the scan inbox." };
+  }
   const isPdf = mime === "application/pdf" || bytes.subarray(0, 5).toString("latin1").startsWith("%PDF");
   const isImage = mime.startsWith("image/");
   const looksCsv = /csv|excel|spreadsheet/.test(mime) || (!isPdf && !isImage);

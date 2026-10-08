@@ -31,6 +31,8 @@ export interface PlateMetadata {
    *  multi-material plate draws on several spools; a slot that feeds none
    *  reads 0). Absent when the file states only a total. */
   filament_g_by_tool?: number[];
+  material_by_tool?: string[];
+  color_by_tool?: string[];
   /** How many discrete parts one plate yields (from the `Nx ` filename prefix). */
   parts_per_plate?: number;
   /** Which slicer wrote the file, when stated. */
@@ -69,7 +71,12 @@ function fromComments(text: string): PlateMetadata {
 
   // Material: `; filament_type = PLA` (Prusa/Orca; may be "PLA;PLA" multi-tool)
   const mat = grab(/;\s*filament_type\s*=\s*([^\r\n]+)/i);
-  if (mat) out.material = mat.split(";")[0]!.trim().toUpperCase();
+  if (mat) {
+    out.material_by_tool = mat.split(";").map(value => value.trim().toUpperCase());
+    out.material = out.material_by_tool[0];
+  }
+  const colors = grab(/;\s*filament_colou?r\s*=\s*([^\r\n]+)/i);
+  if (colors) out.color_by_tool = colors.split(";").map(value => value.trim());
 
   const layer = grab(/;\s*layer_height\s*=\s*([\d.]+)/i);
   if (layer && Number(layer) > 0) out.layer_height_mm = Number(layer);
@@ -130,6 +137,7 @@ function from3mf(bytes: Buffer): PlateMetadata {
   const out: PlateMetadata = {};
   let g = 0;
   const types: string[] = [];
+  const colors: string[] = [];
   // Each <filament> names its slot (id="1" is the first filament / AMS lane).
   const byTool: number[] = [];
   const re = /<filament\b[^>]*\/?>/gi;
@@ -143,13 +151,17 @@ function from3mf(bytes: Buffer): PlateMetadata {
       while (byTool.length < id) byTool.push(0);
       byTool[id - 1] = round2((byTool[id - 1] ?? 0) + used);
     }
-    const tm = /type\s*=\s*"([^"]+)"/i.exec(m[0]); if (tm) types.push(tm[1]!.trim().toUpperCase());
+    if (id >= 1 && id <= 64) {
+      types[id - 1] = /\btype\s*=\s*"([^"]+)"/i.exec(m[0])?.[1]?.trim().toUpperCase() ?? "";
+      colors[id - 1] = /\bcolou?r\s*=\s*"([^"]+)"/i.exec(m[0])?.[1]?.trim() ?? "";
+    }
   }
   if (g > 0) {
     out.filament_g = round2(g);
     out.filament_g_by_tool = byTool;
   }
-  if (types.length) out.material = types[0];
+  if (types.length) { out.material = types.find(Boolean); out.material_by_tool = Array.from(types, value => value ?? ""); }
+  if (colors.some(Boolean)) out.color_by_tool = Array.from(colors, value => value ?? "");
   const pred = /<metadata\s+key="prediction"\s+value="([\d.]+)"/i.exec(xml);
   if (pred && Number(pred[1]) > 0) out.estimated_sec = Math.round(Number(pred[1]));
   return out;

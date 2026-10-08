@@ -17,7 +17,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "builds",
-  version: "0.1.16",
+  version: "0.1.17",
   displayName: "Builds",
   description:
     "Describe what you make as a recipe of parts, see how many you could build right now and what runs out first, and take the parts from stock when you build one.",
@@ -37,6 +37,11 @@ export default defineModule({
 
   provides: {
     entityKinds: [
+      {
+        // AI-CRUD: native assembly actions create and advance work orders; deleting a work order would orphan its material reservations.
+        id: "builds:work-order", displayName: "Assembly work order", displayNamePlural: "Assembly work orders", icon: "clipboard-list", profile: "digital-record", getEndpoint: "/assembly-orders/{id}",
+        fields: [{ name: "name", type: "text", role: "title", required: true }, { name: "state", type: "text" }], exposableFields: ["name", "state"],
+      },
       {
         id: "builds:build",
         createEndpoint: "/builds",
@@ -92,6 +97,7 @@ export default defineModule({
       {
         // UI-SCREEN: /instances/board-projects/:id reads through GET board-project to avoid refreshing its own query.
         id: "builds:board-project", group: "make", label: "Board revisions", description: "Read the board revisions belonging to a project. Changes nothing.",
+        runBy: "member",
         examples: ["show this board\u2019s revisions"], scope: "workspace" as const, invokeHandler: "builds.board-project", userInvokable: true,
         argsSchema: {
           project_id: { label: "Project id", type: "text", required: true },
@@ -100,6 +106,7 @@ export default defineModule({
       },
       {
         id: "builds:save-board-revision", group: "make", label: "Import a board revision", description: "Import populated BOM and centroid CSV or KiCad position data as an immutable board revision. Units and bottom mirroring are confirmed explicitly. A changed file needs a new revision name.",
+        runBy: "member",
         examples: ["import this KiCad board", "add rev B to this board"], scope: "workspace" as const, invokeHandler: "builds.save-board-revision", userInvokable: true,
         argsSchema: {
           project_id: { label: "Project id", type: "text", required: true },
@@ -115,7 +122,42 @@ export default defineModule({
         },
       },
       {
+        id: "builds:create-assembly-order", group: "make", label: "Create assembly work order", description: "Plan a whole board quantity for an immutable revision. A request key makes retries safe. Reserve its kit and check fresh stock and moisture before release.",
+        runBy: "member",
+        scope: "workspace" as const, invokeHandler: "builds.create-assembly-order", userInvokable: true,
+        argsSchema: {
+          build_id: { label: "Board revision id", type: "text", required: true },
+          boards: { label: "Whole board quantity", type: "number", required: true },
+          request_key: { label: "Stable request key", type: "text", required: true },
+          notes: { label: "Order notes", type: "text" },
+        },
+      },
+      {
+        // UI-SCREEN: /builds/<revision> lists work orders through the shared GET assembly-orders reader.
+        id: "builds:assembly-orders", group: "make", label: "List assembly work orders", description: "List a board revision's native assembly work orders, quantities and current kit states. Changes nothing.",
+        runBy: "member",
+        scope: "workspace" as const, invokeHandler: "builds.assembly-orders", userInvokable: true,
+        argsSchema: { build_id: { label: "Board revision id", type: "text", required: true } },
+      },
+      {
+        // UI-SCREEN: /builds/<revision> reads this order and its kit through GET assembly-orders/:id.
+        id: "builds:assembly-order", group: "make", label: "Read assembly kit", description: "Read a work order and its kit sorted by location, with fresh quantity and moisture readiness. Changes nothing.",
+        runBy: "member",
+        scope: "workspace" as const, invokeHandler: "builds.assembly-order", userInvokable: true,
+        argsSchema: { order_id: { label: "Assembly work order id", type: "text", required: true } },
+      },
+      {
+        id: "builds:change-assembly-order", group: "make", label: "Kit or release assembly order", description: "Reserve the entire component and blank-board kit, recheck stock and moisture before release, or cancel an unused order and return all reservations. Release does not start a machine.",
+        runBy: "member",
+        scope: "workspace" as const, invokeHandler: "builds.change-assembly-order", userInvokable: true,
+        argsSchema: {
+          order_id: { label: "Assembly work order id", type: "text", required: true },
+          operation: { label: "kit, release or cancel", type: "text", required: true },
+        },
+      },
+      {
         id: "builds:check-board-stock", group: "make", label: "Check board stock", description: "Check N boards against usable package stock, reservations, moisture clocks and placement attrition. Return a shortage and picks by location. Changes nothing.",
+        runBy: "member",
         examples: ["do we have parts for fifty boards"], scope: "workspace" as const, invokeHandler: "builds.check-board-stock", userInvokable: true,
         argsSchema: {
           build_id: { label: "Board revision id", type: "text", required: true },
@@ -124,6 +166,7 @@ export default defineModule({
       },
       {
         id: "builds:board-cart", group: "make", label: "Export shortage cart", description: "Export the current component shortage as a distributor BOM-upload CSV. Upload and confirm the column mapping at the distributor. No order is submitted.",
+        runBy: "member",
         examples: ["export these shortages for Mouser"], scope: "workspace" as const, invokeHandler: "builds.board-cart", userInvokable: true,
         argsSchema: {
           build_id: { label: "Board revision id", type: "text", required: true },
@@ -133,6 +176,7 @@ export default defineModule({
       },
       {
         id: "builds:order-blank-boards", group: "make", label: "Track a fabrication order", description: "Record a planned JLCPCB, PCBWay or OSH Park purchase, attached fab zip, expected date and tracking. On arrival the blank board count increases through normal purchase receiving. Place the order on the fab\u2019s site.",
+        grantedAs: "inventory:create-part",
         examples: ["track this blank PCB order"], scope: "workspace" as const, invokeHandler: "builds.order-blank-boards", userInvokable: true,
         argsSchema: {
           build_id: { label: "Board revision id", type: "text", required: true },
@@ -146,6 +190,7 @@ export default defineModule({
       },
       {
         id: "builds:link-board-stencil", group: "make", label: "Record revision stencil", description: "Link stock of a framed or frameless stencil to a board revision, or create its stock record. Keep its received count on the stock page.",
+        grantedAs: "inventory:create-part",
         examples: ["link this framed stencil to rev B"], scope: "workspace" as const, invokeHandler: "builds.link-board-stencil", userInvokable: true,
         argsSchema: {
           build_id: { label: "Board revision id", type: "text", required: true },
@@ -156,6 +201,7 @@ export default defineModule({
       {
         group: "make",
         id: "builds:build-one",
+        runBy: "member",
         examples: ["built one of those", "make two of these"],
         undoable: true,
         label: "Build one",
@@ -173,6 +219,7 @@ export default defineModule({
         // NO-PHRASING: a wire target the good print verdict fires; nobody asks for it by name
         group: "make",
         id: "builds:credit-output",
+        runBy: "member",
         label: "Count a build's output as made",
         description:
           "Add a build's output part to stock for N builds that came out good. The second half of builds:build-one when a fabrication job defers its output to the good verdict (a failed or scrapped print adds nothing). Args: { build_id, qty? }.",
@@ -188,6 +235,7 @@ export default defineModule({
         // NO-PHRASING: a wire target the print verdict fires; nobody asks for it by name
         group: "make",
         id: "builds:record-yield",
+        runBy: "member",
         label: "Record a print's good and scrap",
         description:
           "Write a judged print's counts (good, scrap) into the build's quantity log, so the build and its work orders read one yield. Fired by digifab.job.outcome; counts once per job. Args: none (reads the event).",
@@ -202,6 +250,7 @@ export default defineModule({
         // UI-REACH: a sales order line's "Make this" button plans it (sales POST /orders/:id/items/:itemId/make)
         group: "make",
         id: "builds:plan-for",
+        runBy: "member",
         label: "Plan a work order for a part",
         description:
           "Plan the build that makes a part, for a record in another module (a sales order): a work order of qty, which closes by itself when that many good ones have been counted. Refuses when no build makes the part. Asking again for the same record sets the qty. Args: { part_id, qty, source_kind?, source_id?, due_date? }.",
@@ -221,6 +270,7 @@ export default defineModule({
         // UI-REACH: a sales order's lines show what is being made for them and how many are made (sales GET /orders/:id)
         group: "make",
         id: "builds:work-orders-for",
+        runBy: "member",
         label: "Work orders made for a record",
         description:
           "The work orders planned for one record, each with its build, qty, how many are made (good parts, handed out oldest order first) and whether it is done. Changes nothing. Args: { source_kind, source_id }.",
@@ -235,6 +285,7 @@ export default defineModule({
       {
         group: "make",
         id: "builds:reverse-one",
+        runBy: "member",
         examples: ["that build failed", "undo the last build"],
         undoable: true,
         label: "Reverse a build",

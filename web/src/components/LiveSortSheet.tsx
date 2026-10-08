@@ -22,7 +22,7 @@ import {
   SkipForward,
   X,
 } from "lucide-react";
-import { useToast, OverlayLayer } from "@cobblr/platform-web";
+import { useToast, OverlayLayer, NumberField } from "@cobblr/platform-web";
 import { api, ApiError, type LiveSortEntry } from "../lib/api";
 import { classifyScanPayload } from "../lib/scanPayload";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
@@ -416,12 +416,11 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
           </span>
           <label className="inline-flex items-center gap-2 text-muted">
             bins:
-            <input
-              type="number"
+            <NumberField
               min={1}
               max={20}
               value={binCount}
-              onChange={(e) => setBinCount(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
+              onChange={(n) => setBinCount(Math.max(1, Math.min(20, n || 1)))}
               className="w-16 rounded border border-line dark:border-slate-700 bg-transparent px-2 py-1 text-content"
             />
           </label>

@@ -1,3 +1,4 @@
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { finishOwnSend } from "../services/offer-intake.js";
 import { mapOfferedFields, type OfferedThing } from "@cobblr/platform-contract/share-offer";
 // /api/v1/orgs/:slug/modules/core-scan
@@ -81,8 +82,7 @@ import {
   traitAxisValue,
   type DecodeFillTarget,
   isActionStep,
-  type ActionUndoStep,
-} from "@cobblr/platform-contract";
+  type ActionUndoStep, countOf } from "@cobblr/platform-contract";
 import { decodeKeysetCursor, encodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
 import { splitEntityKind, entityKindOf } from "@cobblr/platform-contract/entity-kind";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
@@ -208,6 +208,7 @@ import { doubtedChecks, priceDoubted, receiptFacts, sellerDoubted, type ReceiptM
 import { receiptRecord, type ReceiptLineMeta } from "../services/receipt-record.js";
 import { runReceiptBackfill } from "../services/receipt-backfill.js";
 import { withArticle } from "@cobblr/platform-contract/plural";
+import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
 /** A table's own category word for a row ("Dairy" on Groceries), which says
  *  how a thing keeps when the catalog's word is in another language. */
@@ -258,8 +259,7 @@ registerMatchRunners({
 /** Exported so the import path reaches the api by THIS url rather than its own
  *  copy. A second spelling of a base url does not fail loudly - the caller still
  *  runs, just against nothing. */
-// loopback-ok: #5153 moves this onto selfFetch
-export const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
+export const INTERNAL_API = selfOrigin();
 
 /** Run tasks at most `width` at a time, in order. For work that talks to an
  *  outside service with opinions about bursts. */
@@ -1344,6 +1344,7 @@ async function materializeReceiptLines(opts: {
     receipt_group_id: groupId,
     receipt_vendor: opts.receipt.vendor,
     receipt_date: opts.receipt.date,
+    ...(opts.receipt.renewal ? { receipt_renewal: opts.receipt.renewal } : {}),
     receipt_currency: opts.receipt.currency,
     parse_method: opts.method,
     ...(opts.source ? { receipt_source: opts.source } : {}),
@@ -1587,7 +1588,7 @@ function paperworkHttp(req: Parameters<Parameters<typeof asyncHandler>[0]>[0], s
 inboxRouter.post(
   "/scan/paperwork",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-scan:attach-paperwork"))) return;
     const parsed = PaperworkBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const ctx = tenantContext(req);
@@ -2344,7 +2345,7 @@ inboxRouter.patch(
       const ctx = tenantContext(req);
       const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
       try {
-        await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/purchases/orders/${batch.purchases_order_id}`, {
+        await apiFetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/purchases/orders/${batch.purchases_order_id}`, {
           method: "PATCH",
           headers: { Authorization: `Bearer ${bearer(req)}`, "Content-Type": "application/json" },
           // jsonb-replace-ok: an HTTP request body, not a jsonb column - the
@@ -2718,7 +2719,7 @@ async function sessionTheme(req: Request, res: Response, batchId: string, asked:
       const r = await platform().ai.invoke({
         orgId: ctx.org.id,
         capability: "chat",
-        input: { messages: [{ role: "system", content: system }, { role: "user", content: `The ${items.length} pending items:\n${list}` }] },
+        input: { messages: [{ role: "system", content: system }, { role: "user", content: `The ${countOf(items.length, "pending item")}:\n${list}` }] },
         source: { kind: "core-scan:session-theme", id: ctx.org.id },
         userId: sessionUser(req).id,
       });
@@ -3217,7 +3218,7 @@ inboxRouter.post("/inbox/file-selected", asyncHandler(async (req, res) => {
   const result = await fileSelected(ids, target.instance ? `${target.instance}:item` : target.target_kind ?? "", async (id) => {
     const held = already.get(id);
     if (held) throw new Error(held);
-    const response = await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-scan/inbox/${encodeURIComponent(id)}/confirm`, {
+    const response = await apiFetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-scan/inbox/${encodeURIComponent(id)}/confirm`, {
       method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(target),
     });
     const body = await response.json() as { error?: { message?: string }; item?: { target_kind?: string | null }; created?: { id?: string; name?: unknown; title?: unknown } };
@@ -3842,7 +3843,7 @@ inboxRouter.post(
     // read is filed as it came.
     try {
       const base = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
-      const defsRes = await fetch(`${base}/api/v1/orgs/${ctx.org.slug}/field-defs?kind=${encodeURIComponent(fieldKind)}`, {
+      const defsRes = await apiFetch(`${base}/api/v1/orgs/${ctx.org.slug}/field-defs?kind=${encodeURIComponent(fieldKind)}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (defsRes.ok && body.metadata && typeof body.metadata === "object") {
@@ -3865,7 +3866,7 @@ inboxRouter.post(
           const carried = new Set(
             [parentCfg.key_fields, parentCfg.copy_fields].flatMap((v) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [])),
           );
-          const pRes = await fetch(`${base}/api/v1/orgs/${ctx.org.slug}/field-defs?kind=${encodeURIComponent(`${parentCfg.instance}:item`)}`, {
+          const pRes = await apiFetch(`${base}/api/v1/orgs/${ctx.org.slug}/field-defs?kind=${encodeURIComponent(`${parentCfg.instance}:item`)}`, {
             headers: { Authorization: `Bearer ${token}` },
           });
           if (pRes.ok) {
@@ -3887,7 +3888,7 @@ inboxRouter.post(
     }
 
     const doCreate = () =>
-      fetch(createUrl, {
+      apiFetch(createUrl, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -3925,7 +3926,7 @@ inboxRouter.post(
     if (createRes.status === 409) {
       const peek = await createRes.clone().text();
       if (/module_not_enabled/.test(peek)) {
-        await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${target.module}/enable`, {
+        await apiFetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${target.module}/enable`, {
           method: "POST",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
           body: "{}",
@@ -4106,7 +4107,7 @@ inboxRouter.post(
           const patchUrl = instance
             ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/instances/${instance}/items/${created.id}`
             : `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${createPath}/${created.id}`;
-          await fetch(patchUrl, {
+          await apiFetch(patchUrl, {
             method: "PATCH",
             headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
             body: JSON.stringify({ image_path: thumbPath }),
@@ -4137,7 +4138,7 @@ inboxRouter.post(
                   source_id: recordId,
                   role: "gallery",
                 });
-                await fetch(patchUrl, {
+                await apiFetch(patchUrl, {
                   method: "PATCH",
                   headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
                   body: JSON.stringify({
@@ -4596,7 +4597,7 @@ inboxRouter.post(
 inboxRouter.post(
   "/receipts/backfill-fields",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "core-scan:fill-fields-from-receipts"))) return;
     const result = await runReceiptBackfill(tenantContext(req).org.id, {
       dryRun: req.query.dry_run === "true",
     });
@@ -4865,7 +4866,7 @@ async function scanViewerFor(req: Request): Promise<ScanRowStateContext> {
     let modules: Array<{ name: string; enabled?: boolean }> | null = null;
     if (token) {
       try {
-        const r = await fetch(`${INTERNAL_API}/api/v1/orgs/${tenantContext(req).org.slug}/modules`, { headers: { Authorization: `Bearer ${token}` } });
+        const r = await apiFetch(`${INTERNAL_API}/api/v1/orgs/${tenantContext(req).org.slug}/modules`, { headers: { Authorization: `Bearer ${token}` } });
         if (r.ok) modules = ((await r.json()) as { items: Array<{ name: string; enabled?: boolean }> }).items;
       } catch {
         /* unknown: nothing is excluded on its account */
@@ -7035,7 +7036,7 @@ inboxRouter.post(
           ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${target.scannable.createEndpoint}/${attached.id}`
           : null;
       const gone = path
-        ? await fetch(path, { method: "DELETE", headers: { Authorization: `Bearer ${bearer(req) ?? ""}` } }).then((r) => r.ok || r.status === 404).catch(() => false)
+        ? await apiFetch(path, { method: "DELETE", headers: { Authorization: `Bearer ${bearer(req) ?? ""}` } }).then((r) => r.ok || r.status === 404).catch(() => false)
         : false;
       if (gone) entityDeleted = true;
       else note = "The place it added couldn't be removed automatically. Remove that place from the item's page.";
@@ -7413,7 +7414,7 @@ inboxRouter.post(
 
     // Read the CURRENT entity through its own module (authoritative + fresh —
     // qty for the bump, metadata for the barcode merge, location for undo).
-    const getRes = await fetch(entityPath, { headers: authHeaders });
+    const getRes = await apiFetch(entityPath, { headers: authHeaders });
     if (!getRes.ok) {
       res.status(getRes.status === 404 ? 404 : 502).json({
         error: { code: "entity_unreachable", message: `Target entity read returned ${getRes.status}` },
@@ -7546,7 +7547,7 @@ inboxRouter.post(
     // merge-fields with nothing new to add still counts as "yes, same one" —
     // the item resolves as attached, we just skip an empty PATCH.
     if (Object.keys(patch).length > 0) {
-      const patchRes = await fetch(entityPath, {
+      const patchRes = await apiFetch(entityPath, {
         method: "PATCH",
         headers: authHeaders,
         body: JSON.stringify(patch),
@@ -7668,7 +7669,7 @@ inboxRouter.post(
             role: "gallery",
           })
           .then(() =>
-            fetch(entityPath, {
+            apiFetch(entityPath, {
               method: "PATCH",
               headers: authHeaders,
               body: JSON.stringify({
@@ -7828,7 +7829,7 @@ inboxRouter.post(
       ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/instances/${instance}/items/${parsed.data.entity_id}`
       : `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${scannable.createEndpoint}/${parsed.data.entity_id}`;
     const authHeaders = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-    const getRes = await fetch(entityPath, { headers: authHeaders });
+    const getRes = await apiFetch(entityPath, { headers: authHeaders });
     if (!getRes.ok) {
       res.status(getRes.status === 404 ? 404 : 502).json({
         error: { code: "entity_unreachable", message: `Entity read returned ${getRes.status}` },
@@ -8312,13 +8313,13 @@ inboxRouter.post(
           split_into: children.map((c) => (c as { id: string }).id),
           split_prior_notes: row.ai_notes ?? null,
         }) as never,
-        ai_notes: `Split into ${children.length} items.`,
+        ai_notes: `Split into ${countOf(children.length, "item")}.`,
         resolved_at: new Date(),
         updated_at: new Date(),
       })
       .where("id", "=", id ?? "")
       .execute();
-    await appendScanHistory(db, id ?? "", { action: "split", note: `${children.length} items; crops: ${cropReport.join(", ")}` });
+    await appendScanHistory(db, id ?? "", { action: "split", note: `${countOf(children.length, "item")}; crops: ${cropReport.join(", ")}` });
     res.json({ children });
   }),
 );
@@ -8665,7 +8666,7 @@ inboxRouter.post(
         if (plan.action === "attach") {
           const restock = seenById.get(plan.itemId)?.restock;
           const replacing = restock === "replaced" || restock === "went_bad";
-          const r = await fetch(
+          const r = await apiFetch(
             `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-scan/inbox/${plan.itemId}/attach`,
             {
               method: "POST",
@@ -9039,7 +9040,7 @@ inboxRouter.post(
         others.map((o) => o.id),
       )
       .execute();
-    await appendScanHistory(db, primary.id, { action: "combine", note: `${rows.length} items` });
+    await appendScanHistory(db, primary.id, { action: "combine", note: `${countOf(rows.length, "item")}` });
     res.json(await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", primary.id).executeTakeFirst());
   }),
 );
@@ -10230,7 +10231,7 @@ inboxRouter.post(
     }
     const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
     const headers = { Authorization: `Bearer ${bearer(req)}`, "Content-Type": "application/json" };
-    const enabled = await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/purchases/enable`, { method: "POST", headers, body: "{}" });
+    const enabled = await apiFetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/purchases/enable`, { method: "POST", headers, body: "{}" });
     if (!enabled.ok && enabled.status !== 409) {
       const text = await enabled.text();
       let message = "Couldn't turn on Purchases.";

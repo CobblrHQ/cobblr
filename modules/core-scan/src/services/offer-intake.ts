@@ -17,6 +17,7 @@ import type { CoreScanDB } from "../db.js";
 import { intakeRow } from "./intake.js";
 import { assembleScanMenu, heuristicMatch, perceiveRow, type ScanMenuEntry } from "./matchmaker.js";
 import { INTERNAL_API } from "../api/inbox.js";
+import { apiFetch } from "@cobblr/platform-contract/self-api";
 
 /** What a row offered FROM here carries: offered to someone, and how it stands. */
 const GIVEN_KEY = "share_offered";
@@ -104,7 +105,7 @@ export const offerIntake: OfferIntake = {
     if (!records.allow) blocked.push(records.reason ?? "This send exceeds this workspace's record limit.");
     if (p.bytes) {
       const token = await platform().auth.mintSession({ userId: as.userId });
-      const res = await fetch(`${INTERNAL_API}/api/v1/orgs/${as.orgSlug}/modules/core-files/files/usage`, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await apiFetch(`${INTERNAL_API}/api/v1/orgs/${as.orgSlug}/modules/core-files/files/usage`, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error("The target's file storage could not be checked.");
       const usage = await res.json() as { bytes_used: number; quota_bytes: number | null };
       const files = await platform().entitlements.check({ orgId, userId: as.userId, feature: "files.upload", quantity: p.bytes, used: usage.bytes_used });
@@ -335,5 +336,7 @@ export async function finishOwnSend(orgId: string, inboxId: string, record: { ki
   const got = await platform().entities.lookup(orgId, record.kind, record.id);
   const old = (got?.fields?.metadata as Record<string, unknown> | undefined)?.send_origin;
   if (JSON.stringify(old) !== JSON.stringify(sent.origin)) await platform().entities.mergeMetadata(orgId, record.kind, record.id, { send_origin: sent.origin });
+  const offer = readInboxOffer(metadata);
+  if (offer?.own) await platform().shares.recordOwnSendFiling?.(orgId, offer.offer_id, inboxId, record);
   return added;
 }

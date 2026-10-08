@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-07
 docs_target: docs/USER_GUIDE.md#Embroidery and sewing
+docs_published: 2026-10-08
 ---
 Added embroidery previews, hoop and owned-thread checks, USB exports and measured thread use, plus a Sewing bundle for maintained machines, needles and pattern PDFs.
 

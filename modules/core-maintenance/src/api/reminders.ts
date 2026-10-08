@@ -1,9 +1,10 @@
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { MaintenanceRefusal } from "../refusal.js";
 import { Router } from "express";
 import { z } from "zod";
 import type { Kysely } from "kysely";
 import { tenantDb, type CoreMaintenanceDB } from "../db.js";
-import { asyncHandler, badBody, requireRole } from "./util.js";
+import { asyncHandler, badBody } from "./util.js";
 
 export const remindersRouter = Router({ mergeParams: true });
 export const CadenceBody = z.object({ overdue_every: z.enum(["day", "week", "month", "off"]) });
@@ -40,7 +41,7 @@ remindersRouter.get("/preferences", asyncHandler(async (req, res) => {
 
 // AI-REACH: action core-maintenance:reminder-default
 remindersRouter.put("/preferences", asyncHandler(async (req, res) => {
-  if (!requireRole(req, res, "owner", "admin")) return;
+  if (!(await requireCapability(req, res, "core-maintenance:reminder-default"))) return;
   const parsed = CadenceBody.safeParse(req.body);
   if (!parsed.success) return badBody(res, parsed.error);
   await tenantDb(req).insertInto("core_maintenance_preferences").values({ id: true, ...parsed.data }).onConflict((c) => c.column("id").doUpdateSet(parsed.data)).execute();
@@ -49,7 +50,7 @@ remindersRouter.put("/preferences", asyncHandler(async (req, res) => {
 
 // AI-REACH: action core-maintenance:reminders
 remindersRouter.patch("/:id", asyncHandler(async (req, res) => {
-  if (!requireRole(req, res, "owner", "admin", "member")) return;
+  if (!(await requireCapability(req, res, "core-maintenance:reminders"))) return;
   const parsed = NagBody.safeParse(req.body);
   if (!parsed.success) return badBody(res, parsed.error);
   res.json(await changeNag(tenantDb(req), String(req.params.id), parsed.data));

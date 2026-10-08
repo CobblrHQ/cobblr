@@ -1529,6 +1529,19 @@ export interface AiHeldChangesTable {
   decided_at: Date | null;
 }
 
+/** An undo step handed back to the person who ran its run (20261007-204). */
+export interface IssuedUndosTable {
+  id: Generated<string>;
+  org_id: string;
+  user_id: string;
+  action_id: string;
+  args: Generated<Record<string, unknown>>;
+  entity_kind: string | null;
+  entity_id: string | null;
+  created_at: Generated<Date>;
+  used_at: Date | null;
+}
+
 /** The cards a service job sent to people, by kind (20260929-155). */
 export interface ServiceJobCardsTable {
   org_id: string;
@@ -1566,6 +1579,11 @@ export interface ShareLinksTable {
   mirror_due_at: Date | null;
   mirrored_at: Date | null;
   edits_due_at: Date | null;
+  /** The one address this invite pairs with (20261008-206); null when anyone
+   *  holding the link may use it. */
+  invite_email: string | null;
+  /** When this invite was emailed, for the per-workspace send limit. */
+  invite_emailed_at: Date | null;
 }
 
 /** A copy in a share space as the mirror last left it (20261003-186). */
@@ -1766,6 +1784,7 @@ export interface MetaDB {
   service_manifests: ServiceManifestsTable;
   service_capability_policies: ServiceCapabilityPoliciesTable;
   ai_held_changes: AiHeldChangesTable;
+  issued_undos: IssuedUndosTable;
   service_job_cards: ServiceJobCardsTable;
   service_pending_confirms: { org_id: string; job_id: string; since: Generated<Date> };
   service_confirm_triggers: {
@@ -1804,6 +1823,9 @@ export interface MetaDB {
   notification_delivery_windows: NotificationDeliveryWindowsTable;
   heal_shim_runs: HealShimRunsTable;
   notification_deferred: NotificationDeferredTable;
+  push_vapid_keys: PushVapidKeysTable;
+  push_subscriptions: PushSubscriptionsTable;
+  push_settings: PushSettingsTable;
   discord_connections: DiscordConnectionsTable;
   browser_drive_grants: BrowserDriveGrantsTable;
   entity_kinds: EntityKindsTable;
@@ -2210,6 +2232,47 @@ export interface NotificationDeliveryWindowsTable {
   schedule_deliver_at_minute: Generated<number>;
   /** Its own stamp: the two windows open at different times of day. */
   schedule_last_delivered_at: ColumnType<Date | null, Date | null | undefined, Date | null>;
+  updated_at: Generated<Date>;
+}
+
+/** The instance's VAPID key pair (one row): every browser subscription is
+ *  bound to the public key, so it is made once and kept. */
+export interface PushVapidKeysTable {
+  id: Generated<number>;
+  /** base64url of the uncompressed P-256 public point, as a browser takes it. */
+  public_key: string;
+  /** The private key's 32 bytes, base64url, encrypted with encryptCreds. */
+  private_key_enc: string;
+  /** "generated" on first boot, "operator" when given through the env. */
+  source: Generated<string>;
+  created_at: Generated<Date>;
+}
+
+/** One browser on one device that takes Web Push for a person. */
+export interface PushSubscriptionsTable {
+  id: Generated<string>;
+  user_id: string;
+  /** NULL: every workspace the person is in. */
+  org_id: string | null;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  label: Generated<string>;
+  user_agent: string | null;
+  created_at: Generated<Date>;
+  last_success_at: ColumnType<Date | null, Date | null | undefined, Date | null>;
+  last_failure_at: ColumnType<Date | null, Date | null | undefined, Date | null>;
+  last_failure: ColumnType<string | null, string | null | undefined, string | null>;
+  failures_in_a_row: Generated<number>;
+}
+
+/** A person's push settings across their devices. */
+export interface PushSettingsTable {
+  user_id: string;
+  min_priority: Generated<NotificationPriority>;
+  quiet_start_minute: ColumnType<number | null, number | null | undefined, number | null>;
+  quiet_end_minute: ColumnType<number | null, number | null | undefined, number | null>;
+  timezone: Generated<string>;
   updated_at: Generated<Date>;
 }
 

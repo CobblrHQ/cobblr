@@ -107,7 +107,7 @@ export function AiPage() {
   // dead-end modal - so the row shows an inline hint instead (reported 2026-07-31).
   const canPin = (cap: string): boolean =>
     (providersQ.data?.items ?? []).some(
-      (p) => p.enabled && defByPid.get(p.provider_id)?.capabilities[cap as never] !== undefined,
+      (p) => p.enabled && defByPid.get(p.provider_id)?.capabilities[cap as never] !== undefined && (cap !== "personal-document-read" || defByPid.get(p.provider_id)?.locality === "local"),
     );
 
   return (
@@ -159,7 +159,7 @@ export function AiPage() {
         </h2>
         <p className="text-xs text-faint mt-0.5 mb-1">
           Pin a job to a particular provider and model. Anything left on
-          automatic uses whatever AI is available.
+          automatic uses whatever AI is available. Personal documents use local AI only.
         </p>
         <div className="divide-y divide-line dark:divide-slate-700">
           {capDefaultsQ.data?.all_capabilities.map((cap) => {
@@ -674,13 +674,13 @@ function CapabilityDefaultModal({
   // Providers that actually support this capability.
   const eligible = providers.filter((p) => {
     const def = catalogue.find((d) => d.id === p.provider_id);
-    return def && def.capabilities[capability as never] !== undefined && p.enabled;
+    return def && (def.capabilities[capability as never] !== undefined) && (capability !== "personal-document-read" || def.locality === "local") && p.enabled;
   });
   // A routed connection this workspace has accepted. Its provider is only
   // visible for your own connections (somebody else's setup is not this
   // workspace's business), so when we cannot see it we let the server derive
   // the provider and its default model from the connection itself.
-  const usable = connections.filter((c) => c.status === "approved");
+  const usable = connections.filter((c) => c.status === "approved" && (capability !== "personal-document-read" || catalogue.find((d) => d.id === c.provider_id)?.locality === "local"));
   // One value for both sources, so the select is one list and the save knows
   // which it is: "connection:<id>" or "provider:<id>".
   const [choice, setChoice] = useState(

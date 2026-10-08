@@ -28,9 +28,9 @@ import { resolveApiToken } from "../auth/api-tokens.js";
 import { MCP_PATH, originOf, protectedResourceMetadataUrl } from "../auth/oauth.js";
 import { mcpProxyHeaders } from "../auth/mcp-proxy.js";
 import { actionRefusal } from "./ai-action-door.js";
+import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
-// loopback-ok: #5153 moves this onto selfFetch
-const SELF_BASE = `http://127.0.0.1:${process.env.API_PORT || "4000"}/api/v1`;
+const SELF_BASE = `${selfOrigin()}/api/v1`;
 const SERVER_INFO = { name: "cobblr", version: "0.1.0" };
 
 type Json = Record<string, unknown>;
@@ -84,7 +84,7 @@ export const HOSTED_MCP_TOOLS = [
 
 // ── REST proxy (caller's Bearer reused → all auth/permissions enforced) ──────
 async function rest(token: string, method: string, path: string, body?: unknown): Promise<unknown> {
-  const res = await fetch(`${SELF_BASE}${path}`, {
+  const res = await apiFetch(`${SELF_BASE}${path}`, {
     method,
     headers: { authorization: `Bearer ${token}`, ...mcpProxyHeaders(), ...(body !== undefined ? { "content-type": "application/json" } : {}) },
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -127,7 +127,7 @@ function workspaceApiFor(token: string, slug: string): WorkspaceApi {
   return {
     link: workspaceLinks({ apiBase: origin ? `${origin}/api/v1` : null, appOrigin: origin || null }, slug),
     async request(method, path, body) {
-      const res = await fetch(`${SELF_BASE}/orgs/${slug}${path}`, {
+      const res = await apiFetch(`${SELF_BASE}/orgs/${slug}${path}`, {
         method,
         headers: {
           authorization: `Bearer ${token}`,

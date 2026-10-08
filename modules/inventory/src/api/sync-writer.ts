@@ -52,6 +52,7 @@ export function registerInventoryWriter(): void {
         return { stock_used: row ? Number(row.used) : null };
       },
     },
+    table: "inventory_parts",
     snapshotDeletion: async (orgId, id) => snapshotRowTree(await platform().tenants.getDb(orgId), "inventory_parts", id, "inventory_"),
     restoreDeletion: async (orgId, snapshot) => restoreRowTree(await platform().tenants.getDb(orgId), "inventory_parts", snapshot, "inventory_"),
     // A record that already carries the source's key is adopted by a sync, never

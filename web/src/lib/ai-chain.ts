@@ -38,7 +38,7 @@ export interface AiChainAnswer {
 }
 
 export interface AiJobGroup {
-  id: "photos" | "chat" | "text" | "search";
+  id: "photos" | "chat" | "text" | "search" | "personal";
   title: string;
   /** The job whose chain the group shows. */
   shows: AiCapability;
@@ -51,6 +51,7 @@ export interface AiJobGroup {
 /** Every capability sits in exactly one group (ai-chain.test.ts), so a job
  *  added to the contract cannot fall off the page. */
 export const AI_JOB_GROUPS: AiJobGroup[] = [
+  { id: "personal", title: "Personal documents", shows: "personal-document-read", capabilities: ["personal-document-read"], waits: "documents are read by code only" },
   {
     id: "photos",
     title: "Reading photos",
@@ -93,6 +94,7 @@ export function chainWarnings(group: AiJobGroup, answer: AiChainAnswer): string[
   const out: string[] = [];
   const asked = answer.you.steps.filter((s) => s.asked);
   const first = asked[0];
+  if (group.id === "personal") return ["Personal documents are read here or by your local AI. They never go to a cloud AI. If no local AI is connected, code reads what it can and you check the missing values."];
   if (!first) return [`Nothing here can do this, so ${group.waits}.`];
   if (group.id === "photos") {
     for (const s of asked) {

@@ -5,5 +5,5 @@
 # This file is the source of truth for every box.
 FROM catthehacker/ubuntu:act-22.04
 RUN apt-get update -qq \
- && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends postgresql postgresql-client psmisc \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends postgresql postgresql-client psmisc tesseract-ocr poppler-utils \
  && rm -rf /var/lib/apt/lists/*

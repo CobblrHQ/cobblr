@@ -345,6 +345,7 @@ function toJob(r: JobsTable, files: JobFilesTable[]): ServiceJob {
 const EPHEMERAL_PREFIX = "reading:";
 const EPHEMERAL_KEEP_MS = 10 * 60_000;
 const EPHEMERAL_MAX = 1000;
+// single-flight: a store of finished readings kept a few minutes for a poll to read back, not a cache; nothing loads on a miss
 const readings = new Map<string, { orgId: string; at: number; job: ServiceJob }>();
 
 export interface ReadingStat {
@@ -1233,6 +1234,7 @@ async function capabilities(orgId: string, userId: string | null): Promise<Servi
 }
 
 const OPTIONS_TTL_MS = 10 * 60_000;
+// single-flight: an outside service call per connection (10 minute TTL), asked once per capability a person opens; not a per-row lookup
 const optionsCache = new Map<string, { at: number; options: unknown }>();
 
 /** One capability as this person sees it here, with the live choices its

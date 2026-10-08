@@ -133,6 +133,7 @@ export function describeRule(r: ScheduleRule, counterLabel = "use"): string {
 export function nextRenewalExpiry(s: ScheduleState): Date | null {
   if (!s.anchor || !s.current_expiry || !hasCalendar(s)) return null;
   const step = addInterval(s.current_expiry, s.every_n, s.every_unit);
+  if (s.every_unit === "week" || s.every_unit === "day") return step;
   const year = step.getUTCFullYear();
   const [month, day] = typeof s.anchor === "string" ? s.anchor.split("-").map(Number) : [s.anchor.month, null];
   const m = s.every_unit === "year" ? month! - 1 : step.getUTCMonth();
@@ -169,4 +170,12 @@ export function nextReminderAt(due: Date, remind: Reminder | null, last: Date | 
   else next = nag.overdue_every === "off" ? null : addInterval(last, 1, nag.overdue_every ?? "week");
   if (next && nag.nag_snoozed_until && next < nag.nag_snoozed_until) next = nag.nag_snoozed_until;
   return next && next < now ? now : next;
+}
+
+export function cancellationReminder(noticeDays: number): Reminder {
+  return { before: Math.max(0, Math.min(3650, Math.trunc(noticeDays))) + 1, unit: "day" };
+}
+
+export function cancelBy(expiry: Date, noticeDays: number): Date {
+  return addInterval(expiry, -Math.max(0, Math.min(3650, Math.trunc(noticeDays))), "day");
 }

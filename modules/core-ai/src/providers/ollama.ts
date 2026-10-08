@@ -7,6 +7,7 @@
 // set the optional `bearer_token` credential and it's sent as
 // `Authorization: Bearer …`.
 
+import { assertLocalAiEndpoint, assertLocalAiPin, assertLocalModelName } from "./local-endpoint.js";
 import { platform, type AiCapability } from "@cobblr/platform-contract";
 import { providerError, providerSentence, reasonFromResponse, reasonFromTransportError, redactSecrets } from "@cobblr/platform-contract/provider-reason";
 import { assertSafeAiEndpoint, pinnedFetch, type PinnedResponse } from "../ssrf.js";
@@ -69,6 +70,7 @@ export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; default
   "split-image": { models: ["qwen2.5vl", "minicpm-v", "granite3.2-vision"], defaultModel: "qwen2.5vl" },
   "rank-images": { models: ["qwen2.5vl", "minicpm-v"], defaultModel: "qwen2.5vl" },
   // The strongest vision model on the bench (6/6), not the 2B one.
+  "personal-document-read": { models: ["qwen2.5vl", "minicpm-v"], defaultModel: "qwen2.5vl" },
   "document-read": { models: ["qwen2.5vl", "minicpm-v"], defaultModel: "qwen2.5vl" },
   // Reading text off a photo: minicpm-v is built for it and scores level with
   // qwen on the label cases, so it leads here and follows elsewhere.
@@ -98,6 +100,7 @@ function emptyReply(model: unknown): Error {
 export function register(): void {
   platform().ai.registerProvider({
     id: "ollama",
+    locality: "local",
     freeBackground: true,
     freeBackgroundModel: "llama3.2",
     label: "Ollama (local)",
@@ -158,6 +161,7 @@ export function register(): void {
         return providerError("ollama", reasonFromResponse(res.status, body), redactSecrets(`ollama: ${res.status} ${body}`, Object.values(ctx.credentials)), res.status);
       };
       const base = String(ctx.credentials.base_url ?? "http://ollama:11434").replace(/\/$/, "");
+      if (ctx.privacy === "personal") assertLocalAiEndpoint(base, ctx.credentials, ctx.model);
       // Transit: direct = SSRF-guarded fetch (block internal/loopback/metadata
       // per deployment policy, pin the connection — see ../ssrf.ts). Bridge =
       // the request rides the user's dial-out edge relay and the bridge does
@@ -165,11 +169,17 @@ export function register(): void {
       // address). See ./edge-transit.ts.
       const bridged = viaBridge(ctx.credentials);
       const pin = bridged ? null : await assertSafeAiEndpoint(base, platform().ai.getEndpointPolicy());
+      if (ctx.privacy === "personal") assertLocalAiPin(pin);
       const authHeaders = authHeadersFor(ctx.credentials);
-      const call = (path: string, init: { method?: "GET" | "POST"; headers?: Record<string, string>; body?: string }): Promise<PinnedResponse> =>
-        bridged
-          ? edgeFetch(edgeKeyFor(ctx.credentials, ctx.orgId), base, path, init)
+      const call = (path: string, init: { method?: "GET" | "POST"; headers?: Record<string, string>; body?: string }): Promise<PinnedResponse> => {
+        if (ctx.privacy === "personal" && init.body) {
+          const model = String((JSON.parse(init.body) as { model?: unknown }).model || "");
+          assertLocalModelName(model);
+        }
+        return bridged
+          ? edgeFetch(edgeKeyFor(ctx.credentials, ctx.orgId), base, path, { ...init, ...(ctx.privacy === "personal" ? { privacy: ctx.privacy, requiredFeatures: ["no-redirects"] } : {}) })
           : pinnedFetch(`${base}${path}`, pin!, init);
+      };
 
       /** The model we were told to use is not on this box. Rather than fail with
        *  "model not found" — which reads as the app being broken — ask what IS
@@ -347,6 +357,7 @@ export function register(): void {
         }
         case "split-image":
         case "identify-glance":
+        case "personal-document-read":
         case "document-read":
         case "identify-image":
         case "rank-images":
@@ -362,7 +373,7 @@ export function register(): void {
           // through the SAME shared function the OpenAI/Anthropic adapters use, so
           // all three send byte-identical text and the cache fingerprint agrees.
           const prompt =
-            (ctx.capability === "identify-image" || ctx.capability === "document-read" || ctx.capability === "split-image" || ctx.capability === "identify-glance")
+            (ctx.capability === "identify-image" || ctx.capability === "document-read" || ctx.capability === "personal-document-read" || ctx.capability === "split-image" || ctx.capability === "identify-glance")
               ? visionPromptFor(ctx.capability, ctx.input)
               : ctx.capability === "rank-images"
                 ? rankImagesPromptFor(ctx.input)

@@ -66,9 +66,25 @@ function routePreload(): Plugin {
         const ix = (list: string[]) => list.map((f) => (files.includes(f) ? files.indexOf(f) : files.push(f) - 1));
         const map: Array<[string, number[]]> = rows.map((r) => [r.prefix, ix(filesFor(r.specs))]);
         const instance = instanceSpec ? ix(filesFor([instanceSpec])) : [];
-        const script = `<script>(function(){var m=/^\\/w\\/[^/]+(\\/[^?#]*)?/.exec(location.pathname);if(!m)return;var p=m[1]||"/";var F=${JSON.stringify(files)},T=${JSON.stringify(map)},I=${JSON.stringify(instance)},best=null;for(var i=0;i<T.length;i++){var x=T[i][0];var hit=x==="/"?p==="/"||p===""
-:p===x||p.indexOf(x+"/")===0;if(hit&&(!best||x.length>best[0].length))best=T[i];}var files=best?best[1]:(/^\\/[^/]+\\/?$/.test(p)?I:[]);for(var j=0;j<files.length;j++){var l=document.createElement("link");l.rel="modulepreload";l.crossOrigin="";l.href=F[files[j]];document.head.appendChild(l);}})();</script>`;
-        return html.replace("</head>", `${script}\n</head>`);
+        // A FILE, never an inline <script>: the shell's policy is script-src 'self', and an inline
+        // script is refused the day that is enforced. This one was inline (2026-10-05) and every page
+        // load on try reported it (#3300); its content changes with every build, so neither a hash
+        // nor a nonce would hold. The csp-shell CI check loads the built shell under the enforced
+        // policy, so the next inline script fails a pull request instead of a promotion.
+        const source = `(function(){var m=/^\\/w\\/[^/]+(\\/[^?#]*)?/.exec(location.pathname);if(!m)return;var p=m[1]||"/";var F=${JSON.stringify(files)},T=${JSON.stringify(map)},I=${JSON.stringify(instance)},best=null;for(var i=0;i<T.length;i++){var x=T[i][0];var hit=x==="/"?p==="/"||p===""
+:p===x||p.indexOf(x+"/")===0;if(hit&&(!best||x.length>best[0].length))best=T[i];}var files=best?best[1]:(/^\\/[^/]+\\/?$/.test(p)?I:[]);for(var j=0;j<files.length;j++){var l=document.createElement("link");l.rel="modulepreload";l.crossOrigin="";l.href=F[files[j]];document.head.appendChild(l);}})();`;
+        const fileName = `static/route-preload-${createHash("sha256").update(source).digest("hex").slice(0, 10)}.js`;
+        bundle[fileName] = {
+          type: "asset",
+          fileName,
+          name: "route-preload.js",
+          names: ["route-preload.js"],
+          originalFileName: null,
+          originalFileNames: [],
+          source,
+          needsCodeReference: false,
+        } as (typeof bundle)[string];
+        return html.replace("</head>", `<script src="/${fileName}"></script>\n</head>`);
       },
     },
   };

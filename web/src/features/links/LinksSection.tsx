@@ -1,3 +1,4 @@
+import { linkDateSummary, type LinkDateSummary } from "@cobblr/platform-contract/link-date-summary";
 // A record's links, both ways round, in words, and the door to add one.
 //
 // One component for every page: the web app's own pages mount it through
@@ -24,7 +25,7 @@ import { SearchIncomplete } from "../../components/SearchIncomplete";
 import { LIBRARY_LINK_REL } from "@cobblr/platform-contract/library";
 
 type Offered = { kind: string; label: string; to: string[]; reverse: boolean };
-type Words = Record<string, { label: string; inverse: string }>;
+type Words = Record<string, { label: string; inverse: string; date_summary?: LinkDateSummary }>;
 
 /** How a link reads from this record. Declared words when there are any;
  *  otherwise the stored key as words ("related-to" → "related to"). */
@@ -124,7 +125,7 @@ export function LinksSection({
             return (
               <li key={p.id} className="flex items-center gap-2 px-2 py-1.5 text-xs border border-line dark:border-slate-700 rounded group" data-testid="link-row">
                 {phrase.before && <span className="text-muted shrink-0">{phrase.before}</span>}
-                <LinkedName kind={otherKind} id={otherId} />
+                <LinkedName kind={otherKind} id={otherId} summary={p.direction === "in" ? words[p.relationship_kind]?.date_summary : undefined} />
                 {phrase.after && <span className="text-muted shrink-0">{phrase.after}</span>}
                 <div className="flex-1" />
                 {p.notes && (
@@ -158,7 +159,7 @@ export function LinksSection({
 
 /** The other end of a link, by name, opening it. A link can outlive what it
  *  points at, and says so. */
-function LinkedName({ kind, id }: { kind: string; id: string }) {
+function LinkedName({ kind, id, summary }: { kind: string; id: string; summary?: LinkDateSummary }) {
   const { activeSlug } = useActiveOrg();
   const detailRoute = useDetailRoute(activeSlug ?? "");
   const q = useQuery({
@@ -169,11 +170,12 @@ function LinkedName({ kind, id }: { kind: string; id: string }) {
     retry: false,
   });
   const to = detailRoute(kind, id);
+  const dateSummary = summary && q.data?.fields ? linkDateSummary(summary, q.data.fields) : null;
   const label = q.isError ? "(deleted)" : (q.data?.title ?? "…");
   const cls = "font-medium text-content dark:text-mortar-100 truncate";
   return to && !q.isError ? (
     <RouterLink to={to} className={cls + " hover:underline"}>
-      {label}
+      {label}{dateSummary && <span className="block text-xs text-muted">{dateSummary}</span>}
     </RouterLink>
   ) : (
     <span className={cls}>{label}</span>

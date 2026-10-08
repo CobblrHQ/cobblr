@@ -128,7 +128,7 @@ locationsRouter.get(
 locationsRouter.post(
   "/reorder",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "core-locations:reorder"))) return;
     const parsed = z.object({ ids: ReorderIds }).safeParse(req.body);
     if (!parsed.success) return void badBody(res, parsed.error);
     await applyOrder(tenantDb(req), parsed.data.ids);
@@ -506,7 +506,7 @@ const MoveEverythingBody = z.object({
 locationsRouter.post(
   "/:id/move-everything",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-locations:move-everything"))) return;
     const parsed = MoveEverythingBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     try {
@@ -534,7 +534,7 @@ locationsRouter.post(
 locationsRouter.post(
   "/move-everything/undo",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-locations:put-back-everything"))) return;
     const move = readMoveResult((req.body as { move?: unknown } | null)?.move);
     if (!move) {
       res.status(400).json({ error: { code: "invalid_body", message: "Send the move to put back, as the move answered it." } });

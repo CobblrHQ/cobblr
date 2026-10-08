@@ -35,6 +35,8 @@ export interface CoreMaintenanceEntriesTable {
 }
 
 export interface CoreMaintenanceSchedulesTable {
+  renewal_fields: Generated<import("./bound-renewal.js").RenewalFieldBinding | null>;
+  cancel_notice_days: Generated<number | null>;
   ended_at: Generated<Date | null>;
   ended_by: Generated<string | null>;
   overdue_every: import("./schedule.js").OverdueCadence | null;

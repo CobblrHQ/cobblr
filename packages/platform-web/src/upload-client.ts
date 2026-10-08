@@ -14,6 +14,8 @@
 //     CONNECTION_LOST_MESSAGE instead, and reports the drop to the server log
 //     (the server never had the file, so it could not log it otherwise).
 
+import { raisePersonalDocument } from "./personal-documents";
+import type { PersonalDocumentRead } from "@cobblr/platform-contract/personal-documents";
 import { noteWorkspaceWrite } from "./workspace-writes";
 import { CONNECTION_LOST_MESSAGE, megabytes } from "@cobblr/platform-contract/upload";
 
@@ -61,6 +63,14 @@ export async function sendUpload(url: string, form: FormData, opts: SendUploadOp
     const res = await fetch(url, { method, headers: opts.token ? { Authorization: `Bearer ${opts.token}` } : {}, body: form });
     // Every upload is a write: told at the one door, like any other.
     if (res.ok) noteWorkspaceWrite(url);
+    if (res.status === 409) {
+      const body = await res.clone().json().catch(() => null) as { error?: { code?: string; details?: PersonalDocumentRead } } | null;
+      const read = body?.error?.details, orgSlug = slugOf(url);
+      if (orgSlug && body?.error?.code === "personal_document" && read?.privacy === "personal" && read.fields && read.sources && Array.isArray(read.missing) && typeof read.message === "string") {
+        const original = opts.file || form.get("file");
+        raisePersonalDocument({ orgSlug, read, file: original instanceof Blob ? original : null });
+      }
+    }
     return res;
   } catch (err) {
     if ((err as Error)?.name === "AbortError") throw err;

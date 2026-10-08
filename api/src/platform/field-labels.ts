@@ -27,6 +27,7 @@ import { lookupMany } from "./entities.js";
 import { memberNamesFor } from "./member-fields.js";
 import { personNamesFor } from "./people.js";
 import { withServedTitle } from "./served-title.js";
+import { ttlCache } from "../lib/ttl-cache.js";
 
 interface LabelDef {
   name: string;
@@ -35,7 +36,7 @@ interface LabelDef {
 }
 
 const TTL_MS = 5_000;
-const defsCache = new Map<string, { at: number; defs: LabelDef[] }>();
+const defsCache = ttlCache<LabelDef[]>(TTL_MS);
 
 export function clearFieldLabelDefsCache(): void {
   defsCache.clear();
@@ -43,20 +44,19 @@ export function clearFieldLabelDefsCache(): void {
 
 async function labelDefsFor(orgId: string, kind: string): Promise<LabelDef[]> {
   const key = `${orgId}:${kind}`;
-  const hit = defsCache.get(key);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.defs;
-  let defs: LabelDef[] = [];
-  try {
-    // Through the one resolver, so a field scoped to this kind by its traits
-    // is named too, not only one keyed to the kind.
-    defs = (await resolveFieldDefsForKind(orgId, kind))
-      .filter((d) => d.type === "relation" || d.type === "member" || d.type === "person")
-      .map((d) => ({ name: d.name, type: d.type, ref_kind: d.ref_kind ?? null }));
-  } catch {
-    defs = []; // a label is never worth failing a read over
-  }
-  defsCache.set(key, { at: Date.now(), defs });
-  return defs;
+  return defsCache.get(key, async () => {
+    let defs: LabelDef[] = [];
+    try {
+      // Through the one resolver, so a field scoped to this kind by its traits
+      // is named too, not only one keyed to the kind.
+      defs = (await resolveFieldDefsForKind(orgId, kind))
+        .filter((d) => d.type === "relation" || d.type === "member" || d.type === "person")
+        .map((d) => ({ name: d.name, type: d.type, ref_kind: d.ref_kind ?? null }));
+    } catch {
+      defs = []; // a label is never worth failing a read over
+    }
+    return defs;
+  });
 }
 
 function valueOf(row: Record<string, unknown>, name: string): string | null {

@@ -1,3 +1,5 @@
+import { pasteRouter, registerPasteActions } from "./paste.js";
+import { registerKitActions } from "./kits.js";
 // Default-exported Router. The platform mounts this at
 // /api/v1/orgs/:slug/modules/inventory/ with requireAuth +
 // withTenant pre-applied, so handlers can rely on req.session +
@@ -42,6 +44,8 @@ registerMaterialActions();
 registerSheetActions();
 registerShapedStockActions();
 registerStorageActions();
+registerPasteActions();
+registerKitActions();
 registerPackageReceiving();
 registerPlacementConsumption();
 registerSpoolmanWriteBack();
@@ -144,6 +148,7 @@ partsRouter.use(holdingsRouter);
 partsRouter.use(materialRouter);
 partsRouter.use(sheetRouter);
 partsRouter.use(storageRouter);
+partsRouter.use(pasteRouter);
 partsRouter.use(packageReceivingRouter);
 // A type collection read with its things under each type (Filament).
 partsRouter.use(familiesRouter);

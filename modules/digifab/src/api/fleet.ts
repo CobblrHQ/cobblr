@@ -1,3 +1,6 @@
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
+import { plainDriverError } from "../job-truth.js";
+import { runBench } from "../bench.js";
 import { settleResinPrint } from "../resin-prints.js";
 // /api/v1/orgs/:slug/modules/digifab/fleet — the live floor view.
 //
@@ -22,7 +25,11 @@ import { tenantDb, tenantContext, sessionUser } from "../db.js";
 import { asyncHandler, requireRole } from "./util.js";
 import { putSnapshot, getSnapshot, freshSnapshotKeys } from "../snapshot-store.js";
 import { getBambuStatusMap } from "../bambu-status-store.js";
-import { buildDriverById, bambuLanDriverFor, runControlWithCloudFallback, parseBambuLan, bambuLanMode, recordJobOutcome, type BambuLan } from "../jobs-core.js";
+import { managerName, buildDriverById, bambuLanDriverFor, runControlWithCloudFallback, parseBambuLan, bambuLanMode, recordJobOutcome, type BambuLan } from "../jobs-core.js";
+import { controlCnc } from "../cnc-controls.js";
+import { CncOutcomeBody, recordCncOutcome } from "../cnc-outcome-recording.js";
+import { CncOutcomeRefusal } from "../cnc-outcomes.js";
+import { ReviewRequired } from "../drivers/job-review.js";
 import { controlResinPrinter } from "../resin-controls.js";
 import { controlDirectLaser } from "../laser-controls.js";
 import { LaserPlanRefusal, recordFinishedLayout } from "../laser-plans.js";
@@ -447,27 +454,32 @@ const ReadyBody = z.object({
   good: z.number().int().min(0).optional(),
   scrap: z.number().int().min(0).optional(),
 });
-// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+// AI-REACH: action digifab:machine-outcome for CNC stock and bit use; print outcomes use digifab:record-outcome.
 fleetRouter.post(
   "/:connectionId/:deviceId/ready",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    // ADMIN-ONLY: recording a machine's outcome consumes stock and bit hours; it stays with the admin tier, at every door (#5170)
+    if (!(await requireCapability(req, res, "digifab:machine-outcome"))) return;
     const orgId = tenantContext(req).org.id;
     const db = tenantDb(req);
+    const connectionId = req.params.connectionId!;
+    const deviceId = req.params.deviceId!;
+    const att = await db.selectFrom("digifab_device_attention").select(["job_id", "reason"]).where("connection_id", "=", connectionId).where("remote_device_id", "=", deviceId).executeTakeFirst();
+    const requested = CncOutcomeBody.safeParse(req.body);
+    const outcomeJobIds = [...new Set([att?.job_id, requested.success ? requested.data.job_id : undefined].filter((id): id is string => !!id))];
+    const outcomeJobs = outcomeJobIds.length ? await db.selectFrom("digifab_jobs").select("cnc_setup").where("id", "in", outcomeJobIds).where("connection_id", "=", connectionId).where("target_device", "=", deviceId).execute() : [];
+    if (outcomeJobs.some(job => job.cnc_setup)) {
+      const cnc = CncOutcomeBody.safeParse(req.body);
+      if (!cnc.success) return void res.status(400).json({ error: { code: "bad_body", message: "Choose this CNC job's outcome and actual tool seconds when requested." } });
+      try { await recordCncOutcome(db, orgId, connectionId, deviceId, cnc.data, sessionUser(req)?.id ?? null); res.json({ ok: true }); }
+      catch (e) { if (!(e instanceof CncOutcomeRefusal) && !(e instanceof ReviewRequired)) throw e; res.status(409).json({ error: { code: e instanceof CncOutcomeRefusal ? e.code : "stock_not_recorded", message: e.message, ...(e instanceof CncOutcomeRefusal && e.details ? { details: e.details } : {}) } }); }
+      return;
+    }
     const body = ReadyBody.safeParse(req.body ?? {});
     if (!body.success) return void res.status(400).json({ error: { code: "bad_body", message: "outcome is good or scrapped; good and scrap are whole numbers" } });
     const counts = body.data.good != null || body.data.scrap != null ? { good: body.data.good ?? 0, scrap: body.data.scrap ?? 0 } : undefined;
     // Counts decide the outcome when given: any good part makes the plate good.
     const outcome: "good" | "scrapped" = counts ? (counts.good > 0 ? "good" : "scrapped") : body.data.outcome;
-    const connectionId = req.params.connectionId!;
-    const deviceId = req.params.deviceId!;
-
-    const att = await db
-      .selectFrom("digifab_device_attention")
-      .select(["job_id", "reason"])
-      .where("connection_id", "=", connectionId)
-      .where("remote_device_id", "=", deviceId)
-      .executeTakeFirst();
 
     if (att?.job_id && await db.selectFrom("digifab_cutter_plans").select("id").where("job_id", "=", att.job_id).executeTakeFirst()) return void res.status(409).json({ error: { code: "cutter_outcome_required", message: "Record the measured roll use and cutter outcome at its station." } });
 
@@ -744,9 +756,13 @@ fleetRouter.get(
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const orgId = tenantContext(req).org.id;
-    const driver = await buildDriverById(tenantDb(req), orgId, req.params.connectionId!);
-    const controls = driver?.listControls ? await driver.listControls(req.params.deviceId!) : [];
-    res.json({ controls });
+    try {
+      const driver = await buildDriverById(tenantDb(req), orgId, req.params.connectionId!);
+      const controls = driver?.listControls ? await driver.listControls(req.params.deviceId!) : [];
+      res.json({ controls });
+    } catch (error) {
+      res.status(502).json({ error: { code: "controls_unavailable", message: plainDriverError(error, await managerName(orgId, req.params.connectionId!), "reading the printer's controls") } });
+    }
   }),
 );
 
@@ -767,19 +783,20 @@ fleetRouter.get(
     const cached = await readCachedList(db, connId, deviceId);
     let files = cached.files;
     let live = false;
+    let error: string | null = null;
     if (refresh || cached.listFetchedAt == null) {
-      const driver = await fileDriverFor(db, orgId, connId, deviceId);
-      if (driver?.listFiles) {
-        try {
+      try {
+        const driver = await fileDriverFor(db, orgId, connId, deviceId);
+        if (driver?.listFiles) {
           files = await withTimeout(refreshList(db, driver, connId, deviceId), 15_000, "listFiles timed out");
           live = true;
-        } catch {
-          /* printer unreachable → serve whatever's cached (possibly empty) */
         }
+      } catch (e) {
+        error = plainDriverError(e, await managerName(orgId, connId), "reading the printer's files");
       }
     }
     await ensureWarming(db, orgId, connId, deviceId).catch(() => {});
-    res.json({ files, cached: !live, at: (cached.listFetchedAt ?? new Date()).toISOString() });
+    res.json({ files, cached: !live, error, at: (cached.listFetchedAt ?? new Date()).toISOString() });
   }),
 );
 
@@ -825,8 +842,20 @@ fleetRouter.post(
     // block a command the cloud broker can also send (light / pause / temps).
     const lan = await bambuLanDriverFor(orgId, req.params.connectionId!, req.params.deviceId!);
     const driver = lan ?? (await buildDriverById(tenantDb(req), orgId, req.params.connectionId!));
+    if (driver?.benchInstrument===true) {
+      if(parsed.data.id!=="output-off")return void res.status(409).json({error:{code:"bench_control_required",message:"Use the bench panel to confirm and log supply changes."}});
+      const link=await tenantDb(req).selectFrom("digifab_device_links").select("machine_id").where("connection_id","=",req.params.connectionId!).where("remote_device_id","=",req.params.deviceId!).executeTakeFirst();
+      if(!link)return void res.status(409).json({error:{code:"bench_link_required",message:"Link the instrument to a machine first."}});
+      const result=await runBench(tenantDb(req),orgId,{machine_id:link.machine_id,operation:"output_off"},sessionUser(req)?.id || null);
+      return void res.json({ok:"off" in result && result.off===true});
+    }
     if (driver?.laserBackend && ["stop", "pause", "resume", "frame"].includes(parsed.data.id)) {
       const result = await controlDirectLaser(tenantDb(req), orgId, driver, req.params.deviceId!, parsed.data.id, parsed.data.params ?? {}, req.params.connectionId!);
+      if (!result.ok) return void res.status(502).json({ error: { code: "control_failed", message: result.detail } });
+      return void res.json(result);
+    }
+    if (await driver?.jobReviewKind?.() === "cnc" && ["stop", "pause", "resume", "frame"].includes(parsed.data.id)) {
+      const result = await controlCnc(tenantDb(req), orgId, driver!, req.params.deviceId!, parsed.data.id, parsed.data.params ?? {}, req.params.connectionId!);
       if (!result.ok) return void res.status(502).json({ error: { code: "control_failed", message: result.detail } });
       return void res.json(result);
     }

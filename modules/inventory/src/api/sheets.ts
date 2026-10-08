@@ -37,7 +37,7 @@ sheetRouter.get("/:id/sheet", asyncHandler(async (req, res) => {
 
 // AI-REACH: action inventory:change-sheet-area
 sheetRouter.post("/:id/sheet", asyncHandler(async (req, res) => {
-  if (!await requireCapability(req, res, "inventory:update-part")) return;
+  if (!await requireCapability(req, res, "inventory:change-sheet-area")) return;
   const body = Change.safeParse(req.body);
   if (!body.success) return void badBody(res, body.error);
   const row = await tenantDb(req).selectFrom("inventory_parts").select("id").where("id", "=", String(req.params.id)).where("instance", "=", instanceOf(req)).executeTakeFirst();

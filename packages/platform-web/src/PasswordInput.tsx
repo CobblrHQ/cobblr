@@ -127,7 +127,7 @@ export const SecretInput = forwardRef<HTMLInputElement, PasswordInputProps & { s
   );
   if (!secret) return field;
   return (
-    <div className={"relative " + (wrapperClassName ?? "")}>
+    <div data-secret-field="" className={"relative " + (wrapperClassName ?? "")}>
       {field}
       <button
         type="button"

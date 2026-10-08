@@ -7,6 +7,8 @@
 // the implementation prefixes /orgs/<slug>. Implementations must NOT throw on
 // HTTP error statuses — tools turn a status into an honest result.
 
+import { maskSecretValues } from "@cobblr/platform-contract/secret-field";
+
 export interface WorkspaceApiResponse {
   status: number;
   body: Record<string, unknown>;
@@ -47,7 +49,7 @@ export interface ToolResult {
 }
 
 export function toolOk(data: unknown): ToolResult {
-  return { ok: true, data };
+  return { ok: true, data: maskSecretValues(data) };
 }
 
 export function toolFail(error: string): ToolResult {

@@ -23,7 +23,7 @@
 //
 // THE BOUNDARY. The same shapes are also API paths (`/orgs/${slug}/...`,
 // `this.request(..., `/projects/${id}/extract-pattern`)`); a line in a call
-// passes. Purchases has no collections, so its one address is not judged.
+// passes, the api's in-process doors (apiFetch, selfFetch) as much as fetch. Purchases has no collections, so its one address is not judged.
 //
 //   npx tsx scripts/lint-record-links-from-the-map.ts   (pnpm lint record-links-from-the-map)
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -67,7 +67,7 @@ const HAND_BUILT = [
   /\/instances\/\$\{[^}]+\}\/items\/\$\{/,
 ];
 /** The same shapes are also the module's own API paths; a call is not a link. */
-const API_CALL = /\/api\/v1|\/orgs\/\$\{|\brequest\s*[(<]|\bfetch\s*\(|\bpostToModulePath\b/;
+const API_CALL = /\/api\/v1|\/orgs\/\$\{|\brequest\s*[(<]|\b(?:fetch|apiFetch|selfFetch)\s*\(|\bpostToModulePath\b/;
 
 function check(file: string, src: string): Violation[] {
   if (file === HOME) return [];

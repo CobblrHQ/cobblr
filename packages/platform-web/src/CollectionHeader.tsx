@@ -1,4 +1,5 @@
 import { useFlowHost, useViewerRole } from "./context";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { Link } from "react-router-dom";
 // The strip at the top of every collection: its name and count, then its
 // filters, then the search and the actions on the right (#4014). One layout,
@@ -13,6 +14,7 @@ import { Link } from "react-router-dom";
 // e2e/collection-header-one-line.mjs checks the centre line at 1440 and 390.
 import { useId, type ReactNode } from "react";
 import { PlaceOnPlan } from "./PlaceOnPlan";
+import { CollectionShare } from "./CollectionShare";
 import { ExportCsvButton } from "./ExportCsvButton";
 
 /** The one height every control in the strip takes (36px), with its content
@@ -39,6 +41,8 @@ export function CollectionHeader({
   actions,
   hint,
   kind,
+  selectedIds,
+  selectionList,
   exportCsv = true,
   exportQuery,
   below,
@@ -61,6 +65,8 @@ export function CollectionHeader({
   kind?: string;
   /** With a kind, the strip offers Export (the collection as a spreadsheet,
    *  read as the viewer). False only where the page offers its own. */
+  selectedIds?: readonly string[];
+  selectionList?: string;
   exportCsv?: boolean;
   /** The search the list is showing, so the file is what is on screen. */
   exportQuery?: string;
@@ -95,6 +101,7 @@ export function CollectionHeader({
             {search}
             {kind && ["owner", "admin", "member"].includes(role ?? "") && <button type="button" className={headerButton()} onClick={() => openFlow("core-views:group-table", { kind })}>Group by</button>}
             {kind && exportCsv ? <ExportCsvButton kind={kind} q={exportQuery} /> : null}
+            {kind && roleSatisfies(role, ["owner", "admin"]) ? <CollectionShare kind={kind} title={title} ids={selectedIds} selectionList={selectionList} /> : null}
             {actions}
           </div>
         )}

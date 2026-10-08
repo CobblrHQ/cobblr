@@ -4,10 +4,6 @@
     "why": "The kind here is a CAD file format (step, iges, brep), and a file format's name is its acronym in capitals; STEP is the word, not a routing key."
   },
   {
-    "key": "modules/inventory/src/ui/ImportDialog.tsx::{commit.isPending ? \"…\" : `Import ${preview.rows.length} rows`}",
-    "why": "A CSV import's rows are rows of the file the person just pasted, counted before anything becomes an item; the noun of the table they will become is not known until the import commits."
-  },
-  {
     "key": "modules/knowledge/src/ui/index.tsx::{e.kind}",
     "why": "A knowledge entry's kind is a word the person picked from the vault's own chips (note, reference, SOP, prompt, paper), never a module:kind id; the lint cannot tell a plain word called kind from a routing key by its name."
   },

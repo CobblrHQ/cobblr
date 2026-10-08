@@ -32,6 +32,7 @@ import type { KindFields } from "../services/corroborate.js";
 import { kindFieldsOf, modulesOf, shapeCandidate } from "../services/shape.js";
 import { listTemplates, getTemplate } from "../services/templates.js";
 import { matchTemplateHosted } from "../services/match-template.js";
+import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
 /** Tell the workspace a design draft was made or applied, for the wires
  *  that listen (manifest `exposes.events`). */
@@ -65,10 +66,9 @@ async function callBundles(
   path: "validate" | "install",
   body: Record<string, unknown>,
 ): Promise<BundlesResponse> {
-  const port = process.env.API_PORT ?? "4000";
   const slug = tenantContext(req).org.slug;
   const auth = req.headers.authorization ?? "";
-  const r = await fetch(`http://127.0.0.1:${port}/api/v1/orgs/${slug}/bundles/${path}`, {
+  const r = await apiFetch(`${selfOrigin()}/api/v1/orgs/${slug}/bundles/${path}`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: auth },
     body: JSON.stringify(body),
@@ -85,11 +85,10 @@ async function callApps(
   path: "validate" | "",
   body: Record<string, unknown>,
 ): Promise<BundlesResponse> {
-  const port = process.env.API_PORT ?? "4000";
   const slug = tenantContext(req).org.slug;
   const auth = req.headers.authorization ?? "";
-  const url = `http://127.0.0.1:${port}/api/v1/orgs/${slug}/modules/core-apps/apps${path ? `/${path}` : ""}`;
-  const r = await fetch(url, {
+  const url = `${selfOrigin()}/api/v1/orgs/${slug}/modules/core-apps/apps${path ? `/${path}` : ""}`;
+  const r = await apiFetch(url, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: auth },
     body: JSON.stringify(body),
@@ -143,10 +142,9 @@ async function callCreate(
   modulePath: string,
   body: Record<string, unknown>,
 ): Promise<number> {
-  const port = process.env.API_PORT ?? "4000";
   const slug = tenantContext(req).org.slug;
   const auth = req.headers.authorization ?? "";
-  const r = await fetch(`http://127.0.0.1:${port}/api/v1/orgs/${slug}/modules/${modulePath}`, {
+  const r = await apiFetch(`${selfOrigin()}/api/v1/orgs/${slug}/modules/${modulePath}`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: auth },
     body: JSON.stringify(body),

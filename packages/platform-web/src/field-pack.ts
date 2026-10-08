@@ -160,6 +160,7 @@ export interface FieldSpace {
 /** The narrowest usable column per control, in CSS px, at a 16px input font
  *  (the phone rule): the control's chrome plus room for a short value. */
 const CONTROL_MIN_PX: Record<FieldSpace["control"], number> = {
+  secret: 240,
   checkbox: 120,
   number: 110,
   money: 220,

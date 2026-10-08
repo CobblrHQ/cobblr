@@ -21,7 +21,7 @@
 import { createHash } from "node:crypto";
 import { canonicalJson } from "@cobblr/platform-contract/service-consent";
 import type { Kysely } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, type ActionHandler } from "@cobblr/platform-contract";
 import type { DigifabDB } from "./db.js";
 import { gatherCandidates } from "./api/printing-profiles.js";
 import { rankPrinters, type PickedPrinter } from "./pick-printer.js";
@@ -29,6 +29,7 @@ import { reportedSize, stlSize, type Size } from "./model-size.js";
 import { MAKE_KIND, SLICE_CAPABILITY, DESIGN_CAPABILITY, folderFor, recordMakeStep, type MakeFileRole } from "./makes-core.js";
 import { extractPlateMetadata } from "./library/extract-metadata.js";
 import { sendAndWatch } from "./api/jobs.js";
+import { prepareBatch, startBatchPrint, recoverBatches } from "./print-batch.js";
 
 export interface PrintThisAsk {
   /** A model (STL or 3MF) or G-code in the workspace's files. */
@@ -89,7 +90,7 @@ async function modelOf(orgId: string, db: Kysely<DigifabDB>, makeId: string): Pr
 
 /** Start Print this: a Make, a printer, a slice. Sends nothing. */
 export async function startPrintThis(orgId: string, userId: string | null, ask: PrintThisAsk): Promise<PrintThisResult> {
-  if (ask.quantity != null && ask.quantity !== 1) return { ok: false, code: "batch_confirmation_required", error: "Print this prepares one print at a time. Batch printing needs a confirmation policy before it can start." };
+  if (ask.quantity != null && (!Number.isSafeInteger(ask.quantity) || ask.quantity < 1 || ask.quantity > 10000)) return { ok: false, code: "bad_quantity", error: "Choose a whole number of prints from 1 to 10000." };
   const material = ask.material?.trim();
   if (!material) return { ok: false, code: "no_material", error: "Say which material to print in (PLA, PETG, ...)." };
   const db = await tenantDb(orgId);
@@ -170,7 +171,10 @@ async function preparePrintThis(db: Kysely<DigifabDB>, orgId: string, userId: st
     spool: best.loaded ? { id: best.loaded.spool.id, kind: best.loaded.spool.kind, name: best.loaded.spool.name, slot: best.loaded.slot } : null,
     size_mm: size,
   };
-  const choice = { material, color: ask.color ?? null, printer, others: ranked.filter((p) => p !== best).slice(0, 4).map(brief) };
+  const modelStep = await db.selectFrom("digifab_make_steps").select("data").where("make_id", "=", make.id).where("step", "=", "model").executeTakeFirst();
+  const quantity = ask.quantity ?? Number((modelStep?.data as Record<string, unknown> | undefined)?.quantity ?? 1);
+  if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 10000) return fail("bad_quantity", "Choose a whole number of prints from 1 to 10000.");
+  const choice = { material, color: ask.color ?? null, quantity, printer, others: ranked.filter((p) => p !== best).slice(0, 4).map(brief) };
 
   // A G-code is already sliced: straight to the one yes.
   if (model.role === "gcode") {
@@ -228,7 +232,7 @@ async function startDesign(db: Kysely<DigifabDB>, orgId: string, userId: string 
   const request = await db.selectFrom("digifab_make_steps").select("data").where("make_id", "=", make.id).where("step", "=", "request").executeTakeFirst();
   const prompt = ask.prompt ?? (request?.data as Record<string, unknown> | undefined)?.prompt;
   const input = { ...(typeof prompt === "string" ? { prompt } : {}), ...(ask.source ? { source: ask.source, source_lang: ask.source_lang ?? "build123d" } : {}), ...(ask.template ? { template: ask.template } : {}), params: ask.params ?? {}, material: ask.material, units: "mm" };
-  const id = await recordMakeStep(db, orgId, userId, make, "design", { status: "running", data: { input, invocation: { input }, material: ask.material, color: ask.color ?? null }, produced_by: { kind: "service", capability: DESIGN_CAPABILITY } });
+  const id = await recordMakeStep(db, orgId, userId, make, "design", { status: "running", data: { input, invocation: { input }, material: ask.material, color: ask.color ?? null, quantity: ask.quantity ?? 1 }, produced_by: { kind: "service", capability: DESIGN_CAPABILITY } });
   try {
     const job = await platform().services.invoke({ orgId, capability: DESIGN_CAPABILITY, input, attachTo: { kind: "digifab:make-step", id }, idempotencyKey: `make-design:${make.id}:${id}` });
     await db.updateTable("digifab_make_steps").set({ service_job_id: job.id }).where("id", "=", id).execute();
@@ -263,7 +267,7 @@ export async function onDesignSettled(orgId: string, jobId: string): Promise<voi
       return;
     }
     await recordMakeStep(tx, orgId, null, make, "design", { data: { ...prior, ...output, parameters: output.params }, produced_by: by, service_job_id: jobId, files: files.filter((f) => f.role === "source" || f.role === "other") });
-    await recordMakeStep(tx, orgId, null, make, "model", { data: { report: output.report, material: prior.material, color: prior.color }, produced_by: by, service_job_id: jobId, files: files.filter((f) => f.role !== "source" && f.role !== "other") });
+    await recordMakeStep(tx, orgId, null, make, "model", { data: { report: output.report, material: prior.material, color: prior.color, quantity: prior.quantity ?? 1 }, produced_by: by, service_job_id: jobId, files: files.filter((f) => f.role !== "source" && f.role !== "other") });
   });
 }
 
@@ -345,7 +349,7 @@ async function settleSlice(db: Kysely<DigifabDB>, orgId: string, jobId: string):
     produced_by: producedBy,
     service_job_id: jobId,
   });
-  const choice = prior as { printer?: Record<string, unknown>; material?: string };
+  const choice = prior as { printer?: Record<string, unknown>; material?: string; quantity?: number };
   await readyToPrint(db, orgId, make, { gcodeFileId: gcode.file_id, choice, grams: total, gramsByTool: grams, seconds, previewFileId: preview?.file_id ?? null });
 }
 
@@ -372,7 +376,7 @@ async function readyToPrint(
   db: Kysely<DigifabDB>,
   orgId: string,
   make: MakeRow,
-  o: { gcodeFileId: string; choice: { printer?: Record<string, unknown>; material?: string | null }; grams: number | null; gramsByTool?: number[] | null; seconds: number | null; previewFileId: string | null },
+  o: { gcodeFileId: string; choice: { printer?: Record<string, unknown>; material?: string | null; quantity?: number }; grams: number | null; gramsByTool?: number[] | null; seconds: number | null; previewFileId: string | null },
 ): Promise<{ ok: true; jobId: string } | { ok: false; code: string; error: string }> {
   const p = (o.choice.printer ?? {}) as { machine_id?: string; machine?: string | null; connection_id?: string; remote_device_id?: string; device?: string | null; spool?: { id?: string; name?: string | null; slot?: string | null } | null };
   if (!p.connection_id || !p.remote_device_id) return { ok: false, code: "no_printer", error: "The chosen printer is no longer known." };
@@ -389,6 +393,8 @@ async function readyToPrint(
       material_grams: o.grams != null ? String(o.grams) : null,
       material_type: o.choice.material ?? null,
       material_grams_by_tool: o.gramsByTool ? JSON.stringify(o.gramsByTool) : null,
+      make_id: make.id,
+      make_ordinal: (o.choice.quantity ?? 1) > 1 ? 1 : null,
     })
     .returningAll()
     .executeTakeFirstOrThrow();
@@ -403,9 +409,10 @@ async function readyToPrint(
       preview_file_id: o.previewFileId,
       spool_id: p.spool?.id ?? null,
   };
+  const batch = (o.choice.quantity ?? 1) > 1 ? await prepareBatch(db, orgId, job, card, o.choice.quantity!) : null;
   await recordMakeStep(db, orgId, null, make, "print", {
     status: "awaiting_confirm", job_id: job.id,
-    data: { ...card, confirm_hash: printHash(job, card, file?.bytes) },
+    data: batch ? { ...card, batch, confirm_hash: batch.review_hash } : { ...card, confirm_hash: printHash(job, card, file?.bytes) },
     produced_by: { kind: "digifab" },
   });
   await announceReady(orgId, make, p.machine ?? p.device ?? null);
@@ -435,6 +442,7 @@ function printHash(job: Record<string, unknown>, data: Record<string, unknown>, 
 }
 
 export async function recoverPrintThis(orgId: string, db: Kysely<DigifabDB>): Promise<void> {
+  await recoverBatches(db, orgId);
   for (const [stage, next] of [["design", "model"], ["slice", "print"]] as const) {
     const pending = await db.selectFrom("digifab_make_steps as pending").select(["pending.id", "pending.make_id", "pending.step", "pending.status", "pending.data", "pending.service_job_id"])
       .where("pending.step", "=", stage).where("pending.status", "in", ["running", "done"])
@@ -471,6 +479,7 @@ export async function startPrint(orgId: string, userId: string | null, makeId: s
   if (!step?.job_id) return { ok: false, code: "nothing_waiting", error: "This Make has no print waiting to start." };
   if (step.status !== "awaiting_confirm") return { ok: false, code: "already_started", error: "This print has already been started." };
   const card = (step.data ?? {}) as Record<string, unknown>;
+  if (card.batch) return startBatchPrint(db, orgId, userId, makeId, confirmHash);
   const job = await db.selectFrom("digifab_jobs").selectAll().where("id", "=", step.job_id).executeTakeFirst();
   const file = job?.file_id ? await platform().files.read(orgId, job.file_id, "original") : null;
   if (!job || !file || !confirmHash || card.confirm_hash !== confirmHash || printHash(job, card, file.bytes) !== confirmHash) {
@@ -504,6 +513,19 @@ export async function startPrint(orgId: string, userId: string | null, makeId: s
 
 /** Wire it: the slice's completion, and the action Cobb and MCP reach it by. */
 export function registerPrintThis(): void {
+  const batchHandler = (operation: "next" | "review" | "cancel"): ActionHandler => async ctx => {
+    if (!ctx.userId || !await platform().auth.userHasRole({ orgId: ctx.orgId, userId: ctx.userId, minRole: operation === "cancel" ? "member" : "admin" })) return { ok: false, error: operation === "cancel" ? "A workspace member cancels the remaining prints." : "An owner or admin manages this batch." };
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const makeId = typeof args.make_id === "string" ? args.make_id : ctx.entity?.kind === MAKE_KIND ? ctx.entity.id : null;
+    if (!makeId) return { ok: false, error: "Say which Make's batch to use." };
+    const db = await tenantDb(ctx.orgId);
+    if (operation === "next") return startBatchPrint(db, ctx.orgId, ctx.userId, makeId, undefined, true);
+    const { reviewBatch, cancelBatch } = await import("./print-batch.js");
+    return operation === "review" ? reviewBatch(db, ctx.orgId, makeId, typeof args.quantity === "number" ? args.quantity : undefined) : cancelBatch(db, makeId);
+  };
+  platform().actions.registerHandler("digifab.start-next-print", batchHandler("next"));
+  platform().actions.registerHandler("digifab.review-print-batch", batchHandler("review"));
+  platform().actions.registerHandler("digifab.cancel-print-batch", batchHandler("cancel"));
   const settled = async (payload: unknown) => {
     const p = payload as { orgId?: string; jobId?: string; capability?: string };
     if (!p.orgId || !p.jobId || ![SLICE_CAPABILITY, DESIGN_CAPABILITY].includes(p.capability ?? "")) return;

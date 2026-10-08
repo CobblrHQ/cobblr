@@ -14,6 +14,12 @@ export function setPlatform(p: Platform): void {
   _platform = p;
 }
 
+/** Whether the api has set the platform yet: false in a unit test or a CLI
+ *  that never booted it. For a caller with a plain fallback (apiFetch). */
+export function isPlatformSet(): boolean {
+  return _platform !== null;
+}
+
 /** Called by modules. Throws if setPlatform hasn't run yet. */
 export function platform(): Platform {
   if (!_platform) {

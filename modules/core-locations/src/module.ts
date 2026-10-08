@@ -181,7 +181,7 @@ export default defineModule({
     actions: [
       {
         group: "stock",
-        id: "core-locations:show-me", label: "Where is it?", icon: "lightbulb", effect: "signal",
+        id: "core-locations:show-me", runBy: "member", label: "Where is it?", icon: "lightbulb", effect: "signal",
         description: "Find this thing's place, including inside containers, and light its bin or nearest lit ancestor. Use this when asked where something is. The light turns off automatically.",
         examples: ["where are my M3 screws?", "show me this bin", "light up the shelf"],
         appliesTo: { traits: ["physical"] }, invokeHandler: "core-locations.show-me",
@@ -189,19 +189,20 @@ export default defineModule({
       {
         group: "stock",
         id: "core-locations:indicate", label: "Light up this place", icon: "lightbulb", effect: "signal",
+        runBy: "member",
         description: "Run place.indicate on this place's mapped connection. Signals need no confirmation and are rate limited. Default color is the workspace accent; another request uses a second color.",
         appliesTo: { kinds: ["core-locations:location"] }, invokeHandler: "core-locations.indicate", userInvokable: false,
         argsSchema: { color: { label: "Color (RRGGBB)", type: "text" }, duration: { label: "Seconds (1 to 300)", type: "number" } },
       },
       {
         group: "stock",
-        id: "core-locations:set-light", label: "Set this place's light", description: "Set mapping: {connection_id, driver: wled, pixels: [{segment, led, count}]} or {connection_id, driver: home-assistant, entity: light.name}. Null removes it. Share the connection with this workspace first.",
+        id: "core-locations:set-light", runBy: "member", label: "Set this place's light", description: "Set mapping: {connection_id, driver: wled, pixels: [{segment, led, count}]} or {connection_id, driver: home-assistant, entity: light.name}. Null removes it. Share the connection with this workspace first.",
         appliesTo: { kinds: ["core-locations:location"] }, invokeHandler: "core-locations.set-light", userInvokable: false,
         argsSchema: { mapping: { label: "Light mapping", type: "json" } },
       },
       {
         group: "stock",
-        id: "core-locations:map-light-grid", label: "Map this grid's lights", description: "Map every child bin from its floor plan position. grid: {connection_id, mode: strip|xy, segment, start, per_bin, order: row-major|serpentine, column_segment?, column_start?}. All bins must form a complete grid.",
+        id: "core-locations:map-light-grid", runBy: "member", label: "Map this grid's lights", description: "Map every child bin from its floor plan position. grid: {connection_id, mode: strip|xy, segment, start, per_bin, order: row-major|serpentine, column_segment?, column_start?}. All bins must form a complete grid.",
         appliesTo: { kinds: ["core-locations:location"] }, invokeHandler: "core-locations.map-light-grid", userInvokable: false,
         argsSchema: { grid: { label: "Grid light settings", type: "json", required: true } },
       },
@@ -210,6 +211,8 @@ export default defineModule({
         // there is no single entity for it to hang off.
         group: "stock",
         id: "core-locations:reorder",
+        // ADMIN-ONLY: the page's own route POST /locations/reorder gates on this action's own id, owner or admin (locations.ts)
+        runBy: "admin",
         examples: ["put the racks in order", "sort the shelves under Den"],
         undoable: true,
         label: "Reorder locations",
@@ -227,6 +230,7 @@ export default defineModule({
         // page (a picker for the destination); this is the assistant's.
         group: "stock",
         id: "core-locations:move-everything",
+        runBy: "member",
         examples: ["move everything from Bin 3 to Bin 7", "empty the old shelf into the new one", "merge the two Bin 3s"],
         label: "Move everything to another place",
         description:
@@ -246,6 +250,7 @@ export default defineModule({
         // floor plan; this is the assistant's.
         group: "stock",
         id: "core-locations:set-plan-colour",
+        runBy: "member",
         examples: ["make the red chest's drawers red", "colour Shelf 3 blue on the plan", "take the colour off Bin 4"],
         undoable: true,
         label: "Set its colour on the plan",
@@ -266,6 +271,7 @@ export default defineModule({
       {
         group: "stock",
         id: "core-locations:plan-layout",
+        runBy: "member",
         examples: ["plan a layout for the printer room", "start a new layout option for the garage"],
         label: "Plan a layout",
         description:
@@ -283,6 +289,7 @@ export default defineModule({
         group: "stock",
         // UI-SCREEN: /locations/:id/plan
         id: "core-locations:plan-put",
+        runBy: "member",
         examples: ["in the draft, put the Prusa MK4 on rack 1's bottom shelf", "lay out the 3D printers on Rack 1 and Rack 2, biggest on the bottom shelf"],
         label: "Put things somewhere in a layout",
         description:
@@ -300,6 +307,7 @@ export default defineModule({
         group: "stock",
         // UI-SCREEN: /locations/:id/plan
         id: "core-locations:plan-add-rack",
+        runBy: "member",
         examples: ["plan a second 48 inch rack with 5 shelves against the back wall"],
         label: "Plan a rack in a layout",
         description:
@@ -321,6 +329,7 @@ export default defineModule({
         group: "stock",
         // UI-SCREEN: /locations/:id/plan
         id: "core-locations:plan-read",
+        runBy: "member",
         examples: ["does option A fit", "what is on each shelf in the draft"],
         label: "Read a layout",
         description:
@@ -335,6 +344,7 @@ export default defineModule({
         group: "stock",
         // UI-SCREEN: /locations/:id/plan
         id: "core-locations:plan-apply",
+        runBy: "member",
         examples: ["apply option A", "move everything the way the layout says"],
         // Not undoable on purpose, so it always asks first: the assistant
         // proposes a layout, the person applies it (an undoable action may
@@ -352,6 +362,7 @@ export default defineModule({
       {
         group: "stock",
         id: "core-locations:plan-undo",
+        runBy: "member",
         label: "Undo an applied layout",
         description: "The way back for Apply a layout: puts each thing and place back where the apply found it, and takes away the racks it made.",
         scope: "workspace" as const,
@@ -364,6 +375,7 @@ export default defineModule({
         group: "stock",
         // UI-SCREEN: /locations/:id/plan
         id: "core-locations:plan-discard",
+        runBy: "member",
         examples: ["throw away option B"],
         label: "Discard a layout",
         description: "Throw a planning layout away. Nothing real had moved, so nothing changes.",
@@ -379,6 +391,7 @@ export default defineModule({
         group: "stock",
         // UI-SCREEN: /locations
         id: "core-locations:import-floorplan",
+        runBy: "member",
         examples: ["import this floor plan", "bring in the plan another AI made of my house"],
         undoable: true,
         label: "Import a floor plan",
@@ -396,6 +409,7 @@ export default defineModule({
       {
         group: "stock",
         id: "core-locations:export-floorplan",
+        runBy: "member",
         examples: ["export my house plan", "give me the floor plan as JSON"],
         label: "Export a floor plan",
         description:
@@ -410,6 +424,7 @@ export default defineModule({
       {
         group: "stock",
         id: "core-locations:undo-floorplan-import",
+        runBy: "member",
         label: "Undo a floor plan import",
         description: "The way back for Import a floor plan: puts each place it updated back as it was and deletes the ones it made.",
         scope: "workspace" as const,
@@ -422,6 +437,7 @@ export default defineModule({
       {
         group: "stock",
         id: "core-locations:put-back-everything",
+        runBy: "member",
         label: "Put back what was moved",
         description: "The way back for Move everything: puts each thing and place back where the move found it.",
         scope: "workspace" as const,

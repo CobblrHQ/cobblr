@@ -1,6 +1,6 @@
 // The driver registry. Two kinds of driver, one interface, both tables.
 //
-//   CARRIER drivers      speak ONE carrier's own API (fedex)
+//   CARRIER drivers      speak ONE carrier's own API (fedex, amazon)
 //   AGGREGATOR drivers   speak one tracking-API WIRE FORMAT and serve any
 //                        carrier (easypost-compat)
 //
@@ -19,9 +19,10 @@
 import type { CarrierDriver } from "../status.js";
 import { fedexDriver } from "./fedex.js";
 import { easypostCompatDriver } from "./easypost-compat.js";
+import { amazonLogisticsDriver } from "./amazon-logistics.js";
 
 /** One carrier each. */
-const CARRIER_DRIVERS: CarrierDriver[] = [fedexDriver];
+const CARRIER_DRIVERS: CarrierDriver[] = [fedexDriver, amazonLogisticsDriver];
 
 /** One wire format each, any carrier. Keyed by the name COBBLR_TRACKING_API
  *  takes, so adding AfterShip's format later is a file and a row. */

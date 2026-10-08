@@ -396,6 +396,7 @@ export interface OfferView {
   can_send_back: boolean;
   can_undo?: boolean;
   send_mode?: "copy" | "move";
+  send_file?: {id: string; transport: "file-export" | "file-import"; state: string; can_download: boolean; can_undo: boolean};
 }
 
 /** What has been handed over through this workspace's shares, newest first. */
@@ -403,23 +404,24 @@ export async function listOffers(orgId: string, userId?: string): Promise<OfferV
   const rows = await meta
     .selectFrom("share_offers as o")
     .leftJoin("share_links as l", "l.id", "o.link_id")
-    .select(["o.id", "o.direction", "o.title", "o.status", "o.created_at", "o.taken_at", "l.peer_name", "o.transfer", "o.target_org_id", "o.created_by"])
+    .select(["o.id", "o.direction", "o.title", "o.status", "o.created_at", "o.taken_at", "l.peer_name", "o.transfer", "o.target_org_id", "o.created_by", "o.batch"])
     .where((eb) => eb.or([eb("l.org_id", "=", orgId), eb(sql<string>`o.source->>'org_id'`, "=", orgId), eb("o.target_org_id", "=", orgId)]))
     .orderBy("o.created_at", "desc")
     .limit(200)
     .execute();
   const now = Date.now();
   return rows.map((r) => ({
+    ...(r.transfer && ["file-export", "file-import"].includes((r.transfer as {transport?: string}).transport ?? "") ? {send_file: {id: r.batch!, transport: (r.transfer as {transport: "file-export" | "file-import"}).transport, state: (r.transfer as {state: string}).state, can_download: r.created_by === userId, can_undo: r.created_by === userId && r.target_org_id === orgId && (r.transfer as {state: string}).state === "complete"}} : {}),
     id: r.id,
     direction: r.target_org_id === orgId ? "in" : r.direction,
     title: r.title,
     status: r.status as OfferState,
-    peer_name: r.target_org_id ? String((r.transfer as { target_name?: string; source_name?: string })[r.target_org_id === orgId ? "source_name" : "target_name"] ?? "your workspace") : r.peer_name,
+    peer_name: r.target_org_id ? String((r.transfer as { target_name?: string; source_name?: string })[r.target_org_id === orgId ? "source_name" : "target_name"] ?? "your workspace") : (r.transfer as {transport?: string;target_name?: string} | null)?.transport === "file-export" ? (r.transfer as {target_name?: string}).target_name ?? "another Cobblr" : r.peer_name,
     ...(r.target_org_id ? { can_undo: r.target_org_id !== orgId && r.created_by === userId && ["complete", "undoing"].includes((r.transfer as { state?: string }).state ?? ""), send_mode: (r.transfer as { mode: "copy" | "move" }).mode } : {}),
     created_at: r.created_at,
     taken_at: r.taken_at,
-    can_withdraw: !r.target_org_id && r.direction === "out" && open(r.status),
-    can_send_back: !r.target_org_id && r.direction === "in" && r.status === "taken" && !!r.taken_at && now - r.taken_at.getTime() <= SEND_BACK_DAYS * 86_400_000,
+    can_withdraw: !r.transfer && !r.target_org_id && r.direction === "out" && open(r.status),
+    can_send_back: !r.transfer && !r.target_org_id && r.direction === "in" && r.status === "taken" && !!r.taken_at && now - r.taken_at.getTime() <= SEND_BACK_DAYS * 86_400_000,
   }));
 }
 

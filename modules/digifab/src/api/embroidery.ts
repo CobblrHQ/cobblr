@@ -1,3 +1,4 @@
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { randomBytes, createHash } from "node:crypto";
 import { Router } from "express";
 import { sql } from "kysely";
@@ -146,7 +147,8 @@ embroideryRouter.get(
 embroideryRouter.post(
   "/actions",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    // ADMIN-ONLY: starting, stopping and setting up a machine stays with the admin tier, at every door (#5170)
+    if (!(await requireCapability(req, res, "digifab:embroidery-job"))) return;
     try {
       res.json(
         await embroideryMutation(
@@ -261,7 +263,8 @@ embroideryRouter.get(
 embroideryRouter.delete(
   "/machines/:id/stations/:stationId",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    // ADMIN-ONLY: starting, stopping and setting up a machine stays with the admin tier, at every door (#5170)
+    if (!(await requireCapability(req, res, "digifab:revoke-station"))) return;
     const db = tenantDb(req);
     const station = await db
       .selectFrom("digifab_stations")

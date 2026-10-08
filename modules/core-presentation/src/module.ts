@@ -33,6 +33,8 @@ export default defineModule({
       // NO-PHRASING: the way back for another action, run only from Undo
       group: "more",
       id: "core-presentation:remove-heading",
+      // ADMIN-ONLY: the tail of undoing group-nav, which is admin
+      runBy: "admin",
       internal: true,
       label: "Remove an empty heading",
       description: "Internal, the tail of undoing a grouping: removes a navigation heading nothing sits under. Runs from Undo on the card; not for direct use.",
@@ -48,6 +50,8 @@ export default defineModule({
       // UI-SCREEN: /configuration/presentation
       group: "organise",
       id: "core-presentation:group-nav",
+      // ADMIN-ONLY: the page's own route POST /nav-headings gates on this action's own id, owner or admin (nav-headings.ts)
+      runBy: "admin",
       label: "Group nav sections",
       description:
         'Put existing SIDEBAR sections (the workspace\'s lists, as they appear in the navigation) under one navigation heading, creating the heading if it does not exist. Pass `heading` (what the group is called) and `sections` (a comma-separated list of the section names as they appear in the nav, e.g. "Spices, Tea"). A section belongs to one heading at a time, so this moves it out of any other. This is the sidebar only: a heading over a kind\'s FIELDS on its form (grouping or renaming one) is platform:group-fields, not this.',
@@ -71,6 +75,8 @@ export default defineModule({
       // UI-SCREEN: /configuration/presentation
       group: "organise",
       id: "core-presentation:ungroup-nav",
+      // ADMIN-ONLY: DELETE /nav-headings/members gates on this action's own id, owner or admin
+      runBy: "admin",
       label: "Ungroup nav sections",
       description:
         'Take sections back out of their heading, so they sit at the top level again. Pass `sections` as a comma-separated list of names.',

@@ -20,9 +20,10 @@ import { perReadRequest } from "../lib/request-context.js";
 
 import type { ResolvedEntity } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
+import { ttlCache } from "../lib/ttl-cache.js";
 
 const TTL_MS = 5_000;
-const cache = new Map<string, { at: number; names: string[] }>();
+const cache = ttlCache<string[]>(TTL_MS);
 
 export function clearCustomFieldNamesCache(): void {
   cache.clear();
@@ -34,25 +35,24 @@ async function customFieldNames(orgId: string, kind: string): Promise<string[]> 
 
 async function loadCustomFieldNames(orgId: string, kind: string): Promise<string[]> {
   const key = `${orgId}:${kind}`;
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.names;
-  let names: string[] = [];
-  try {
-    const rows = await meta
-      .selectFrom("module_field_defs")
-      .select("name")
-      .where("org_id", "=", orgId)
-      .where("entity_kind", "=", kind)
-      // A computed field is lifted by applyComputedFields, from its template.
-      .where("type", "!=", "computed")
-      .execute();
-    names = rows.map((r) => r.name);
-  } catch (err) {
-    console.error(`[custom-field-values] defs query for ${key} failed:`, (err as Error).message);
-    names = [];
-  }
-  cache.set(key, { at: Date.now(), names });
-  return names;
+  return cache.get(key, async () => {
+    let names: string[] = [];
+    try {
+      const rows = await meta
+        .selectFrom("module_field_defs")
+        .select("name")
+        .where("org_id", "=", orgId)
+        .where("entity_kind", "=", kind)
+        // A computed field is lifted by applyComputedFields, from its template.
+        .where("type", "!=", "computed")
+        .execute();
+      names = rows.map((r) => r.name);
+    } catch (err) {
+      console.error(`[custom-field-values] defs query for ${key} failed:`, (err as Error).message);
+      names = [];
+    }
+    return names;
+  });
 }
 
 /** Pure half, for the test: which values a record gains at the top level. */

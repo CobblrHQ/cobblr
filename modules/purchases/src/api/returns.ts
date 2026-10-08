@@ -14,11 +14,12 @@
 // the step they just took.
 
 import { Router } from "express";
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { sql, type Kysely } from "kysely";
 import { z } from "zod";
 import { ActionRefusal, platform, parcelAudience } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb, type PurchasesDB } from "../db.js";
-import { asyncHandler, badBody, requireRole } from "./util.js";
+import { asyncHandler, badBody } from "./util.js";
 import { fieldCurrency, formatStoredMoney } from "@cobblr/platform-contract/money";
 import { RETURN_STAGES, RETURN_WORDS, listReturns, recordReturnStep, type ReturnRow, type ReturnSource, type StepOutcome } from "../returns.js";
 
@@ -156,7 +157,7 @@ returnsRouter.get(
 returnsRouter.post(
   "/orders/:id/returns",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "purchases:start-return"))) return;
     const id = req.params.id!;
     const parsed = Step.safeParse(req.body ?? {});
     if (!parsed.success) return badBody(res, parsed.error);
@@ -176,7 +177,7 @@ returnsRouter.post(
 returnsRouter.post(
   "/returns/:returnId/stage",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "purchases:advance-return"))) return;
     const parsed = Step.safeParse({ ...(req.body ?? {}), return_id: req.params.returnId });
     if (!parsed.success) return badBody(res, parsed.error);
     const row = await tenantDb(req).selectFrom("purchases_returns").select(["order_id"]).where("id", "=", req.params.returnId!).executeTakeFirst();

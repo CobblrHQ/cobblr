@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-07
 docs_target: docs/USER_GUIDE.md#Large-format printers
+docs_published: 2026-10-08
 ---
 Added browser stations for large-format printers with reviewed PDF and image jobs, ink alerts and tracked roll media.
 

@@ -19,6 +19,7 @@ import { perReadRequest } from "../lib/request-context.js";
 import type { ResolvedEntity } from "@cobblr/platform-contract";
 import { personNamesFor } from "./people.js";
 import { resolveFieldDefsForKind } from "./field-defs.js";
+import { ttlCache } from "../lib/ttl-cache.js";
 
 // `person` fields (#3787) resolve here too: the same problem (an id nobody
 // should see) and the same answer, from the workspace's People list.
@@ -28,8 +29,8 @@ interface MemberDef {
 }
 
 const TTL_MS = 5_000;
-const defsCache = new Map<string, { at: number; defs: MemberDef[] }>();
-const namesCache = new Map<string, { at: number; names: Map<string, string> }>();
+const defsCache = ttlCache<MemberDef[]>(TTL_MS);
+const namesCache = ttlCache<Map<string, string>>(TTL_MS);
 
 export function clearMemberFieldCaches(): void {
   defsCache.clear();
@@ -42,41 +43,39 @@ async function memberDefsFor(orgId: string, kind: string): Promise<MemberDef[]> 
 
 async function loadMemberDefs(orgId: string, kind: string): Promise<MemberDef[]> {
   const key = `${orgId}:${kind}`;
-  const hit = defsCache.get(key);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.defs;
-  let defs: MemberDef[] = [];
-  try {
-    // Through the one resolver, so a person field scoped to a kind by its
-    // traits is named too, not only one keyed to the kind.
-    defs = (await resolveFieldDefsForKind(orgId, kind))
-      .filter((d) => d.type === "member" || d.type === "person")
-      .map((d) => ({ name: d.name, type: d.type }));
-  } catch {
-    defs = []; // never fail a read over a label
-  }
-  defsCache.set(key, { at: Date.now(), defs });
-  return defs;
+  return defsCache.get(key, async () => {
+    let defs: MemberDef[] = [];
+    try {
+      // Through the one resolver, so a person field scoped to a kind by its
+      // traits is named too, not only one keyed to the kind.
+      defs = (await resolveFieldDefsForKind(orgId, kind))
+        .filter((d) => d.type === "member" || d.type === "person")
+        .map((d) => ({ name: d.name, type: d.type }));
+    } catch {
+      defs = []; // never fail a read over a label
+    }
+    return defs;
+  });
 }
 
 /** Display names for everyone in the org, by user id. One query per org per
  *  TTL, not one per record: a list of 200 rows must not become 200 lookups. */
 export async function memberNamesFor(orgId: string): Promise<Map<string, string>> {
-  const hit = namesCache.get(orgId);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.names;
-  let names = new Map<string, string>();
-  try {
-    const rows = await meta
-      .selectFrom("org_memberships as m")
-      .innerJoin("users as u", "u.id", "m.user_id")
-      .select(["u.id as id", "u.display_name as display_name", "u.email as email"])
-      .where("m.org_id", "=", orgId)
-      .execute();
-    names = new Map(rows.map((r) => [r.id, r.display_name || r.email]));
-  } catch {
-    names = new Map();
-  }
-  namesCache.set(orgId, { at: Date.now(), names });
-  return names;
+  return namesCache.get(orgId, async () => {
+    let names = new Map<string, string>();
+    try {
+      const rows = await meta
+        .selectFrom("org_memberships as m")
+        .innerJoin("users as u", "u.id", "m.user_id")
+        .select(["u.id as id", "u.display_name as display_name", "u.email as email"])
+        .where("m.org_id", "=", orgId)
+        .execute();
+      names = new Map(rows.map((r) => [r.id, r.display_name || r.email]));
+    } catch {
+      names = new Map();
+    }
+    return names;
+  });
 }
 
 /**

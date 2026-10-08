@@ -79,6 +79,7 @@ export function publicProvider(p: ProviderRow) {
 export const sealSecret = (secret: string): string => encryptCreds(secret);
 
 // ── Discovery, cached per provider version ──────────────────────────────────
+// single-flight: one discovery fetch per provider per sign-in (10 minute TTL); a duplicate concurrent fetch is harmless and is not a list row
 const configs = new Map<string, { at: number; config: client.Configuration }>();
 const CONFIG_TTL_MS = 10 * 60_000;
 

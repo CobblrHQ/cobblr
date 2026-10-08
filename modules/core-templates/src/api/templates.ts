@@ -10,6 +10,7 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { bearer, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
 export const templatesRouter = Router({ mergeParams: true });
 
@@ -241,8 +242,7 @@ templatesRouter.post(
     // points at this same host.
     const baseUrl =
       (req.headers["x-cobblr-base-url"] as string | undefined) ??
-      // loopback-ok: #5153 moves this onto selfFetch
-      `http://127.0.0.1:${process.env.API_PORT || 4000}`;
+      selfOrigin();
     const [sourceModule, sourceType] = tmpl.target_kind.split(":");
     const instance = parsed.data.instance;
     if (instance) {
@@ -269,7 +269,7 @@ templatesRouter.post(
       extras: body,
     } : body;
 
-    const createRes = await fetch(createUrl, {
+    const createRes = await apiFetch(createUrl, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -297,7 +297,7 @@ templatesRouter.post(
     if (created.id && sourceModule && sourceType && tags.length > 0) {
       for (const tagName of tags) {
         try {
-          await fetch(
+          await apiFetch(
             `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-tags/attachments`,
             {
               method: "POST",

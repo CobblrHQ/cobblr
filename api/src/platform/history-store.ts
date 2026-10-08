@@ -5,11 +5,16 @@ import { recordHistoryWrite } from "./history-writes.js";
 const writers = new Map<string, HistoryWriter>();
 export function registerHistoryWriter(kind: string, writer: HistoryWriter): void {
   writers.set(kind, {
+    table: writer.table,
     snapshotDeletion: writer.snapshotDeletion?.bind(writer),
     restoreDeletion: writer.restoreDeletion?.bind(writer),
     snapshot: (orgId, id) => writer.snapshot(orgId, id),
     restore: (orgId, image) => recordHistoryWrite(orgId, kind, String(image.id), () => writer.snapshot(orgId, String(image.id)), () => writer.restore(orgId, image), true),
   });
+}
+
+export async function historyTableFor(orgId: string, kind: string): Promise<string | undefined> {
+  return (await getEntityWriterFor(orgId, kind))?.table ?? writers.get(await baseKindOf(orgId, kind))?.table;
 }
 
 export async function getHistoryWriterFor(orgId: string, kind: string): Promise<HistoryWriter | null> {

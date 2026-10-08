@@ -23,10 +23,11 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { tenantContext, tenantDb, sessionUser, bearer } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { receiptSessionLabel, cleanOrderRef, sameOrder, cancellationEndsSession } from "../services/receipt-shared.js";
+import { receiptSessionLabel, cleanOrderRef, sameOrder, vendorsAgree, cancellationEndsSession } from "../services/receipt-shared.js";
 import { receiptTrackingTick } from "../services/receipt-tracking-sweeper.js";
 import { INTERNAL_API } from "./inbox.js";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
+import { apiFetch } from "@cobblr/platform-contract/self-api";
 
 export const shipmentEventRouter = Router({ mergeParams: true });
 
@@ -44,6 +45,10 @@ const Body = z.object({
   expected_arrival_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   /** When the email was sent, for the record; defaults to now. */
   observed_at: z.string().datetime().optional(),
+  /** The lines this parcel carries, as the store listed them ("Items in this
+   *  shipment"). A store that ships an order in several boxes sends one
+   *  notice per box; the order's other lines are not in this one. */
+  items: z.array(z.object({ description: z.string().max(500), qty: z.number().nullable().optional() })).max(50).optional(),
 });
 
 function isoDate(d: Date): string {
@@ -82,19 +87,24 @@ shipmentEventRouter.post(
         .orderBy("created_at", "desc")
         .executeTakeFirst();
     }
-    // 2. By store + order number, the way the receipt route dedups.
-    if (!batch && orderRef && vendor) {
-      batch = sameOrder(
-        await db
-          .selectFrom("core_scan_batches")
-          .select(["id", "vendor", "purchases_order_id", "tracking_number", "shipment_state"])
-          .where("order_ref", "=", orderRef)
-          .orderBy("created_at", "desc")
-          .limit(10)
-          .execute(),
-        vendor,
-        orderRef,
-      );
+    // 2. By store + order number, the way the receipt route dedups. A notice
+    //    that names no store (a forwarded one whose header we could not read)
+    //    still finds its order when every session holding that number is the
+    //    same store's: a short "#36772" recurs across shops, so two stores'
+    //    sessions with it are never guessed between.
+    if (!batch && orderRef) {
+      const holding = await db
+        .selectFrom("core_scan_batches")
+        .select(["id", "vendor", "purchases_order_id", "tracking_number", "shipment_state"])
+        .where("order_ref", "=", orderRef)
+        .orderBy("created_at", "desc")
+        .limit(10)
+        .execute();
+      batch = vendor
+        ? sameOrder(holding, vendor, orderRef)
+        : holding.length > 0 && holding.every((h) => vendorsAgree(h.vendor, holding[0]!.vendor))
+          ? holding[0]
+          : undefined;
     }
 
     let created = false;
@@ -129,11 +139,57 @@ shipmentEventRouter.post(
       created = true;
     }
 
+    // The receipt's promised date lives on its lines; an awaiting session has
+    // none, so "arriving today" goes on the session where the sweep's
+    // arrival-day rule reads it through the same max() as the lines.
+    let promised = (() => {
+      if (ev.expected_arrival_date) return ev.expected_arrival_date;
+      if (!ev.expected_arrival) return null;
+      const when = new Date(now);
+      if (ev.expected_arrival === "tomorrow") when.setDate(when.getDate() + 1);
+      return isoDate(when);
+    })();
+
+    // A FILED order hears about a numbered parcel through purchases' own
+    // door, which decides whether this box is the whole order or one of
+    // several (#5351: a store that ships each bundle separately sends a notice
+    // per box, listing its lines). The carrier is asked once, now, so the
+    // parcel starts with its real state and day and the reply can say them.
+    const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+    let parcel: ParcelOutcome | null = null;
+    let carrier: { name: string | null; state: string | null; eta: string | null } = { name: null, state: null, eta: null };
+    if (batch.purchases_order_id && tracking && ev.state !== "ordered") {
+      carrier = await askCarrierOnce(ctx.org.id, session.id, tracking, promised, now);
+      if (carrier.eta) promised = carrier.eta;
+      try {
+        const r = await apiFetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/purchases/orders/${batch.purchases_order_id}/shipments`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${bearer(req)}`, "Content-Type": "application/json" },
+          // jsonb-replace-ok: an HTTP request body, not a jsonb column.
+          body: JSON.stringify({
+            tracking_number: tracking,
+            items: ev.items ?? [],
+            shipment_state: carrier.state ?? ev.state,
+            expected_arrival: promised,
+            description: ev.description ?? null,
+          }),
+        });
+        if (r.ok) parcel = (await r.json()) as ParcelOutcome;
+        else console.warn(`[core-scan] the parcel did not reach the order: HTTP ${r.status}`);
+      } catch (err) {
+        console.warn("[core-scan] the parcel did not reach the order:", (err as Error).message);
+      }
+    }
+    // One box of several: it is the order's, line by line. The receipt's own
+    // single number and state stay as they were, so the receipt never says
+    // the whole order is on its way when a third of it is.
+    const oneOfSeveral = parcel?.mode === "shipment";
+
     // A number the email carries and the record lacks is the handover from
     // "the emails are the carrier" to "the carrier is the carrier": from here
     // the cadence polls it for real. Whoever forwarded the email owns the
     // parcel, same as typing the number would.
-    const gainedTracking = Boolean(tracking && !batch.tracking_number);
+    const gainedTracking = Boolean(tracking && !batch.tracking_number && !oneOfSeveral);
 
     // Delivered is terminal for an email-driven parcel; a later "shipped"
     // recap (a return label, a second box under one order) must not walk a
@@ -143,7 +199,7 @@ shipmentEventRouter.post(
     const regress = batch.shipment_state === "delivered" && ev.state !== "delivered";
     const state = ev.state === "ordered" ? batch.shipment_state : regress ? "delivered" : ev.state;
 
-    if (ev.state !== "ordered") {
+    if (ev.state !== "ordered" && !oneOfSeveral) {
       await db
         .updateTable("core_scan_batches")
         .set({
@@ -156,17 +212,7 @@ shipmentEventRouter.post(
         .execute();
     }
 
-    // The receipt's promised date lives on its lines; an awaiting session has
-    // none, so "arriving today" goes on the session where the sweep's
-    // arrival-day rule reads it through the same max() as the lines.
-    const promised = (() => {
-      if (ev.expected_arrival_date) return ev.expected_arrival_date;
-      if (!ev.expected_arrival) return null;
-      const when = new Date(now);
-      if (ev.expected_arrival === "tomorrow") when.setDate(when.getDate() + 1);
-      return isoDate(when);
-    })();
-    if (promised) {
+    if (promised && !oneOfSeveral) {
       // A later email's day replaces an earlier one: the store's newest
       // estimate is the estimate.
       await db.executeQuery(
@@ -176,22 +222,24 @@ shipmentEventRouter.post(
 
     // The order, if the receipt already made one, hears the same thing —
     // through its own door (module isolation), the way the tracking PATCH
-    // already does. The purchases sweep announces order-owned parcels.
+    // already does. The purchases sweep announces order-owned parcels. A
+    // parcel purchases already took needs no second write.
     if (batch.purchases_order_id) {
-      const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
-      try {
-        await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/purchases/orders/${batch.purchases_order_id}`, {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${bearer(req)}`, "Content-Type": "application/json" },
-          // jsonb-replace-ok: an HTTP request body, not a jsonb column.
-          body: JSON.stringify({
-            ...(ev.state !== "ordered" && state ? { shipment_state: state, shipment_checked_at: now.toISOString() } : {}),
-            ...(promised ? { expected_arrival: promised, eta_source: "receipt" } : {}),
-            ...(gainedTracking ? { tracking_number: tracking, status: "in-transit", arrived_at: null } : {}),
-          }),
-        });
-      } catch (err) {
-        console.warn("[core-scan] shipment event did not reach the order:", (err as Error).message);
+      if (!parcel) {
+        try {
+          await apiFetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/purchases/orders/${batch.purchases_order_id}`, {
+            method: "PATCH",
+            headers: { Authorization: `Bearer ${bearer(req)}`, "Content-Type": "application/json" },
+            // jsonb-replace-ok: an HTTP request body, not a jsonb column.
+            body: JSON.stringify({
+              ...(ev.state !== "ordered" && state ? { shipment_state: state, shipment_checked_at: now.toISOString() } : {}),
+              ...(promised ? { expected_arrival: promised, eta_source: "receipt" } : {}),
+              ...(gainedTracking ? { tracking_number: tracking, status: "in-transit", arrived_at: null } : {}),
+            }),
+          });
+        } catch (err) {
+          console.warn("[core-scan] shipment event did not reach the order:", (err as Error).message);
+        }
       }
       // So purchases can announce THIS order now rather than at its next tick.
       void platform().events.emit("core-scan.shipment.observed", {
@@ -204,13 +252,15 @@ shipmentEventRouter.post(
 
     // Announce now. The sweep decides against everything known and never
     // repeats itself (announceFor), so this is the hourly tick for one parcel,
-    // not a second notifier.
+    // not a second notifier. One box of several is the order's to announce.
     let notified = 0;
-    try {
-      const r = await receiptTrackingTick({ orgId: ctx.org.id, batchId: batch.id, force: true, now });
-      notified = r.notified;
-    } catch (err) {
-      console.warn("[core-scan] shipment event announce failed:", (err as Error).message);
+    if (!oneOfSeveral) {
+      try {
+        const r = await receiptTrackingTick({ orgId: ctx.org.id, batchId: batch.id, force: true, now });
+        notified = r.notified;
+      } catch (err) {
+        console.warn("[core-scan] shipment event announce failed:", (err as Error).message);
+      }
     }
 
     res.status(created ? 201 : 200).json({
@@ -219,11 +269,75 @@ shipmentEventRouter.post(
       created,
       state,
       regressed: regress,
-      gained_tracking: gainedTracking,
+      gained_tracking: gainedTracking || Boolean(parcel?.created),
       notified,
+      // What the email's reply says: which order, which lines, which number,
+      // which day. Null when the receipt has no order yet.
+      parcel: parcel
+        ? {
+            mode: parcel.mode,
+            vendor: parcel.vendor ?? vendor,
+            order_number: parcel.order_number ?? orderRef,
+            tracking_number: parcel.tracking_number,
+            carrier: carrier.name,
+            lines: parcel.lines.map((l) => l.description ?? "an item"),
+            not_shipped: parcel.not_shipped.map((l) => l.description ?? "an item"),
+            expected_arrival: parcel.expected_arrival ?? promised,
+            added: parcel.created,
+          }
+        : null,
     });
   }),
 );
+
+/** What purchases answers for a parcel (its POST /orders/:id/shipments). */
+interface ParcelOutcome {
+  mode: "order" | "shipment";
+  shipment_id: string | null;
+  tracking_number: string;
+  lines: Array<{ id: string; description: string | null }>;
+  not_shipped: Array<{ id: string; description: string | null }>;
+  vendor: string | null;
+  order_number: string | null;
+  expected_arrival: string | null;
+  created: boolean;
+}
+
+/** The carrier, asked once for a parcel an email just named: its name, its
+ *  state and its day. Nothing when it cannot be followed or did not answer;
+ *  the email's own word stands then, and the cadence asks again later. */
+async function askCarrierOnce(
+  orgId: string,
+  userId: string,
+  number: string,
+  currentEta: string | null,
+  now: Date,
+): Promise<{ name: string | null; state: string | null; eta: string | null }> {
+  const event = {
+    name: "core-scan.shipment-event",
+    payload: {},
+    actor: { user_id: userId, display_name: null, auth_method: "system" as const },
+    timestamp: now.toISOString(),
+    trigger_type: "event" as const,
+  };
+  let name: string | null = null;
+  try {
+    const id = (await platform().actions.invoke("core-shipments:identify", { orgId, userId, event, args: { number } })) as { carrier?: { name?: string } | null } | null;
+    name = id?.carrier?.name ?? null;
+    const res = (await platform().actions.invoke("core-shipments:track", {
+      orgId,
+      userId,
+      event,
+      args: { number, currentEta, currentEtaSource: currentEta ? "receipt" : "none", force: true },
+    })) as { followed?: boolean; status?: { state?: string }; eta?: { date: string | null } } | null;
+    if (res?.followed && res.status?.state && res.status.state !== "unknown") {
+      return { name, state: res.status.state, eta: res.eta?.date ?? null };
+    }
+  } catch (err) {
+    console.warn("[core-scan] the carrier was not asked about a new parcel:", (err as Error).message);
+  }
+  return { name, state: null, eta: null };
+}
 
 // ── returns ────────────────────────────────────────────────────────────────
 //
@@ -287,7 +401,7 @@ shipmentEventRouter.post(
     if (orderId) {
       const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
       try {
-        const r = await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/purchases/orders/${orderId}/returns`, {
+        const r = await apiFetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/purchases/orders/${orderId}/returns`, {
           method: "POST",
           headers: { Authorization: `Bearer ${bearer(req)}`, "Content-Type": "application/json" },
           // jsonb-replace-ok: an HTTP request body, not a jsonb column.

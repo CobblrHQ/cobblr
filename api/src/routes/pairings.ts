@@ -83,6 +83,7 @@ interface DeclaredLink {
   kind: string;
   label: string;
   inverse: string;
+  date_summary?: import("@cobblr/platform-contract/link-date-summary").LinkDateSummary;
   to: string[];
 }
 
@@ -113,8 +114,8 @@ pairingsRouter.get("/link-kinds", requireAuth, withTenant, async (req, res, next
       if (!name || !Array.isArray(links)) continue;
       for (const link of links) declared.push({ collection: `${name}:item`, link });
     }
-    const words: Record<string, { label: string; inverse: string }> = {};
-    for (const { link } of declared) words[link.kind] ??= { label: link.label, inverse: link.inverse };
+    const words: Record<string, { label: string; inverse: string; date_summary?: import("@cobblr/platform-contract/link-date-summary").LinkDateSummary }> = {};
+    for (const { link } of declared) words[link.kind] ??= { label: link.label, inverse: link.inverse, ...(link.date_summary ? { date_summary: link.date_summary } : {}) };
     // A thing's link to its type (a spool to its filament type) is declared
     // as the family's `parent`, not as a link: it reads "type" from the thing
     // and "spool" from the type, and is not removed from here (`fixed`), since

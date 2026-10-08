@@ -18,10 +18,10 @@
 
 import type { NotificationAction, NotificationCardRow } from "@cobblr/platform-contract";
 import { Kysely, sql } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, countOf } from "@cobblr/platform-contract";
 import type { CoreMaintenanceDB } from "./db.js";
 import { reconcileSchedules } from "./schedules-store.js";
-import { calendarDue, shouldNotify, type Reminder } from "./schedule.js";
+import { calendarDue, shouldNotify, cancelBy, type Reminder } from "./schedule.js";
 
 const TICK_MS = 60 * 60 * 1000; // 1 hour
 export const MAINTENANCE_PASS = "core-maintenance.sweep";
@@ -59,6 +59,7 @@ interface DueRow {
   nag_stopped_at: Date | null;
   nag_snoozed_until: Date | null;
   anchor: unknown;
+  cancel_notice_days: number | null;
 }
 
 /** Single sweep — exported so tests can fire it deterministically.
@@ -112,7 +113,7 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
     let due: DueRow[];
     try {
       const compiled = sql<DueRow>`
-        select e.id, e.entity_module, e.entity_type, e.entity_id, e.name, e.scheduled_at, e.schedule_id, e.last_notified_at, s.remind, s.overdue_every, s.anchor, e.nag_stopped_at, e.nag_snoozed_until
+        select e.id, e.entity_module, e.entity_type, e.entity_id, e.name, e.scheduled_at, e.schedule_id, e.last_notified_at, s.remind, s.overdue_every, s.anchor, s.cancel_notice_days, e.nag_stopped_at, e.nag_snoozed_until
         from core_maintenance_entries e
         left join core_maintenance_schedules s on s.id = e.schedule_id
         where e.scheduled_at is not null
@@ -162,7 +163,7 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
       // the schedule's own reason uses.
       const { reason: tone, days: daysUntil } = calendarDue(new Date(row.scheduled_at), new Date(), null);
       const record = await platform().entities.lookup(org.id, `${row.entity_module}:${row.entity_type}`, row.entity_id);
-      const message = `${row.name}${record?.title ? ` on ${record.title}` : ""}: ${(row.schedule_id && reasons.get(row.schedule_id)) || tone}`;
+      const message = row.cancel_notice_days != null ? `Cancel ${record?.title ?? row.name} by ${cancelBy(new Date(row.scheduled_at), row.cancel_notice_days).toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric" })} or it renews` : `${row.name}${record?.title ? ` on ${record.title}` : ""}: ${(row.schedule_id && reasons.get(row.schedule_id)) || tone}`;
 
       // Event for user-authored wires.
       void platform().events.emit("core-maintenance.entry.due-soon", {
@@ -211,7 +212,7 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
       const message =
         lines.length === 1
           ? lines[0]!
-          : `${lines.length} things need maintenance:\n${lines.join("\n")}`;
+          : `${countOf(lines.length, "thing")} need maintenance:\n${lines.join("\n")}`;
       // WHERE IT TAKES YOU. One entry → the thing that needs servicing, which
       // is where you would go to deal with it; several → the maintenance page,
       // which lists exactly what is due. It used to carry no link at all, so

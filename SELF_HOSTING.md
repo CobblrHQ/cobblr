@@ -259,7 +259,7 @@ morning list of what is due. That needs two things on the server, and without
 both nobody can connect Discord, so it is not offered anywhere: no Connect
 Discord button, no Discord schedule, no Discord DM binding. Notifications reach
 people in the app and by email instead. A server admin sees one note saying so
-on **Your account → Notifications → Discord, email & in-app**.
+on **Your account → Notifications → Phone, Discord, email & in-app**.
 
 | Variable | What it is |
 |---|---|
@@ -269,6 +269,29 @@ on **Your account → Notifications → Discord, email & in-app**.
 
 Set all of them and restart the api: the doors come back, and connecting sends
 a test message to prove a message reaches the person.
+
+## Push notifications
+
+Notifications on people's phones and computers, the iPhone and iPad Home
+Screen app included, work out of the box: no account, no key to get, no cost.
+On first start the server makes its own push key pair (VAPID) and keeps it in
+the database, so it survives restarts and backups, and every device that turns
+notifications on stays subscribed to it. Restoring a backup restores the keys;
+an instance started fresh makes new ones, and each device turns notifications
+on again.
+
+The server sends each notification straight to the push service of the
+person's browser: Apple (`*.push.apple.com`), Google (`fcm.googleapis.com`),
+Mozilla (`*.push.services.mozilla.com`) or Microsoft (`*.notify.windows.com`),
+over https. There is no Cobblr relay in between, so the server needs outbound
+https to those hosts; a box behind a firewall that allows only some hosts
+should allow these. The message is encrypted to the person's device, so the
+push service cannot read it.
+
+| Variable | What it is |
+|---|---|
+| `VAPID_SUBJECT` | Who the push services may contact about your server's pushes: `mailto:you@example.com` or an https address. Defaults to `PUBLIC_BASE_URL` when that is https. |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY_FILE` | Optional: your own key pair instead of the one the server makes. The private key goes in a file (never the variable itself). Set both or neither. Changing the pair later means every device turns notifications on again. |
 
 ## Backups
 
@@ -315,6 +338,7 @@ outbound surface and how to turn each off.
 | **AI features** | your chosen LLM provider (OpenAI/Anthropic/…) | needs *your* key - nothing without one | `COBBLR_AI_ENABLED=false` |
 | **Module registry** | `raw.githubusercontent.com/CobblrHQ/registry` (the catalog of modules published outside a release) | only when an admin opens the module marketplace | `COBBLR_REGISTRY_URL=` your own, or don't open it |
 | **TLS certificate** | Let's Encrypt / your DNS provider | on (unless the offline `tls internal` option) | use the offline option |
+| **Push notifications** | the push service of each person's browser (Apple, Google, Mozilla, Microsoft), carrying a notification encrypted to their device | only for people who turned notifications on for a device | they turn it off, or a workspace binding turns push off |
 
 Everything else - Google-Drive backups, Discord/Slack notifications, an external
 barcode resolver - is **off unless you configure it**.

@@ -33,6 +33,7 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 import { looksLikeSameThing, mergePlan } from "../services/merge-records.js";
 import { identifierFieldsByKind } from "../services/entity-match.js";
 import { identifierCanonical } from "../services/identifier-equals.js";
+import { apiFetch } from "@cobblr/platform-contract/self-api";
 
 export const duplicatesRouter = Router({ mergeParams: true });
 
@@ -271,8 +272,8 @@ duplicatesRouter.post(
     const authHeaders = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
     const [keepRes, dropRes] = await Promise.all([
-      fetch(keepPath, { headers: authHeaders }),
-      fetch(dropPath, { headers: authHeaders }),
+      apiFetch(keepPath, { headers: authHeaders }),
+      apiFetch(dropPath, { headers: authHeaders }),
     ]);
     if (!keepRes.ok || !dropRes.ok) {
       res.status(502).json({
@@ -293,7 +294,7 @@ duplicatesRouter.post(
     // was. Deleting first would risk losing the duplicate's quantity to a
     // failed update, which is the one outcome with no way back.
     if (Object.keys(plan.patch).length > 0) {
-      const up = await fetch(keepPath, {
+      const up = await apiFetch(keepPath, {
         method: "PATCH",
         headers: authHeaders,
         body: JSON.stringify(plan.patch),
@@ -309,7 +310,7 @@ duplicatesRouter.post(
       }
     }
 
-    const del = await fetch(dropPath, { method: "DELETE", headers: authHeaders });
+    const del = await apiFetch(dropPath, { method: "DELETE", headers: authHeaders });
     if (!del.ok) {
       // The survivor now carries both quantities and the duplicate still
       // exists, which double-counts. Put the survivor back before reporting,
@@ -317,7 +318,7 @@ duplicatesRouter.post(
       if (Object.keys(plan.patch).length > 0) {
         const undo: Record<string, unknown> = {};
         for (const k of Object.keys(plan.patch)) undo[k] = keepRow[k] ?? null;
-        await fetch(keepPath, {
+        await apiFetch(keepPath, {
           method: "PATCH",
           headers: authHeaders,
           body: JSON.stringify(undo),

@@ -239,6 +239,8 @@ export async function withTenant(
       role: row.role,
       db,
     };
+    const { protectSecretResponses } = await import("../platform/secret-field-responses.js");
+    await protectSecretResponses(req, res, next);
     // A person touching their workspace today is the retention fact the
     // activation funnel is built on. Sessions only: an API token is an
     // integration or an edge device polling, not someone coming back.
@@ -347,6 +349,8 @@ async function resolveImpersonatedTenant(
     serveShapeVersion(res, row.org_id, row.shape_version);
     req.tenant = { org: { id: row.org_id, name: row.org_name, slug: row.org_slug }, role: row.role, db };
     req.impersonation = { operatorId: claims.sub, targetId: claims.act, sessionId: sess.id, mode: sess.mode };
+    const { protectSecretResponses } = await import("../platform/secret-field-responses.js");
+    await protectSecretResponses(req, res, next);
     next();
   } catch (err) {
     if (err instanceof WorkspaceDeletingError) {

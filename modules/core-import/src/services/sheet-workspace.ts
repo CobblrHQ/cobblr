@@ -12,6 +12,7 @@
 import { platform } from "@cobblr/platform-contract";
 import { columnLabel, isWritableCustomField, isWritableNativeField } from "@cobblr/platform-contract/record-columns";
 import type { ExistingRecord, KnownLocation, Target, TargetField } from "./sheet-plan.js";
+import { apiFetch } from "@cobblr/platform-contract/self-api";
 
 interface KindField {
   name: string;
@@ -64,7 +65,7 @@ export interface LoopbackAuth {
 
 async function bundleMenu(auth: LoopbackAuth | null): Promise<MenuEntry[]> {
   if (!auth?.token) return [];
-  const res = await fetch(`${auth.base}/api/v1/orgs/${auth.slug}/quickstart/bundle-menu`, {
+  const res = await apiFetch(`${auth.base}/api/v1/orgs/${auth.slug}/quickstart/bundle-menu`, {
     headers: { Authorization: `Bearer ${auth.token}` },
   });
   // A member-less or app-mode workspace has no menu; that is an empty list,
@@ -76,7 +77,7 @@ async function bundleMenu(auth: LoopbackAuth | null): Promise<MenuEntry[]> {
 
 async function moduleLabel(auth: LoopbackAuth | null, name: string): Promise<string | null> {
   if (!auth?.token) return null;
-  const res = await fetch(`${auth.base}/api/v1/orgs/${auth.slug}/modules`, { headers: { Authorization: `Bearer ${auth.token}` } });
+  const res = await apiFetch(`${auth.base}/api/v1/orgs/${auth.slug}/modules`, { headers: { Authorization: `Bearer ${auth.token}` } });
   if (!res.ok) return null;
   const body = (await res.json()) as { items?: Array<{ name: string; displayName?: string }> };
   return body.items?.find((m) => m.name === name)?.displayName ?? null;

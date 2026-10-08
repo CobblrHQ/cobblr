@@ -3,7 +3,7 @@ import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { SearchInput, usePageTitle, useRunAction } from "@cobblr/platform-web";
+import { NumberField, SearchInput, usePageTitle, useRunAction } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api } from "../lib/api";
 const button =
@@ -139,7 +139,7 @@ function SummaryView({ summary }: { summary: Summary }) {
       <p>
         {summary.width_mm.toFixed(1)} × {summary.height_mm.toFixed(1)} mm ·{" "}
         {summary.stitch_count.toLocaleString()} stitches ·{" "}
-        {summary.colour_changes} colour changes
+        {countOf(summary.colour_changes, "colour change")}
       </p>
       <p className="text-sm text-muted">
         About {summary.estimated_minutes} minutes at the saved stitch speed.
@@ -601,21 +601,17 @@ export function EmbroideryPage() {
                   {(["width_mm", "height_mm"] as const).map((field) => (
                     <label key={field}>
                       {field === "width_mm" ? "Width (mm)" : "Height (mm)"}
-                      <input
+                      <NumberField
                         className={control}
-                        type="number"
                         required
                         min={0.1}
                         max={1000}
-                        step="any"
                         value={h[field]}
-                        onChange={(e) =>
+                        onChange={(n) =>
                           setConfig({
                             ...config,
                             hoops: config.hoops.map((v, j) =>
-                              j === i
-                                ? { ...v, [field]: Number(e.target.value) }
-                                : v,
+                              j === i ? { ...v, [field]: n } : v,
                             ),
                           })
                         }
@@ -683,19 +679,14 @@ export function EmbroideryPage() {
             <div className="grid gap-4 sm:grid-cols-2">
               <label>
                 Stitches per minute
-                <input
+                <NumberField
                   className={control}
-                  type="number"
+                  integer
                   min={1}
                   max={3000}
                   required
                   value={config.stitches_per_minute}
-                  onChange={(e) =>
-                    setConfig({
-                      ...config,
-                      stitches_per_minute: Number(e.target.value),
-                    })
-                  }
+                  onChange={(n) => setConfig({ ...config, stitches_per_minute: n })}
                 />
               </label>
               <label>

@@ -1,3 +1,4 @@
+import type { RecordTemplate, ReceiptDraftConfig } from "@cobblr/platform-contract/record-creation";
 // Inventory UI context. Exposes the typed InventoryApi to all
 // pages + the raw orgSlug + getToken so cross-module calls (e.g.
 // building a LabelsApi client) can share the same auth context.
@@ -38,8 +39,11 @@ interface InventoryCtx {
    *  picker and write an `instance-of` pairing. Seeded by the bundle. */
   parent?: ParentConfig;
   /** The table's "Import from <service>" button, when its bundle declares one. */
+  recordTemplates?: RecordTemplate[];
+  receiptDraft?: ReceiptDraftConfig;
   connectorImport?: ConnectorImportDecl;
   storageTracking?: boolean;
+  pasteTracking?: boolean;
   /** Route base for this UI — `/instances/<instance>` when scoped, else
    *  "/inventory". Row links + detail-close + create-navigate use it so the
    *  detail modal opens within the instance (and shows its fields). */
@@ -67,7 +71,10 @@ export function InventoryProvider({
   countWords,
   parent,
   connectorImport,
+  recordTemplates,
+  receiptDraft,
   storageTracking,
+  pasteTracking,
   children,
 }: {
   orgSlug: string;
@@ -78,8 +85,11 @@ export function InventoryProvider({
   qtyUnit?: string;
   countWords?: readonly CountWords[];
   parent?: ParentConfig;
+  recordTemplates?: RecordTemplate[];
+  receiptDraft?: ReceiptDraftConfig;
   connectorImport?: ConnectorImportDecl;
   storageTracking?: boolean;
+  pasteTracking?: boolean;
   children: ReactNode;
 }) {
   const api = useMemo(
@@ -95,7 +105,7 @@ export function InventoryProvider({
   const nounPlural = itemNounPlural ?? pluralise(noun);
   return (
     <Ctx.Provider
-      value={{ orgSlug, getToken, api, instance, entityKind, itemNoun: noun, itemNounPlural: nounPlural, qtyUnit, countWords: countWords ?? [], parent, connectorImport, storageTracking, basePath }}
+      value={{ orgSlug, getToken, api, instance, entityKind, itemNoun: noun, itemNounPlural: nounPlural, qtyUnit, countWords: countWords ?? [], parent, connectorImport, recordTemplates, receiptDraft, storageTracking, pasteTracking, basePath }}
     >
       {children}
     </Ctx.Provider>

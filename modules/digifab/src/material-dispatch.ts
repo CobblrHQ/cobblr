@@ -1,17 +1,51 @@
 import { gramsByTool, planDraw } from "./loaded-spools.js";
-import type { LoadedSpool } from "./pick-printer.js";
+import { sameColour, type LoadedSpool } from "./pick-printer.js";
 import { nestParts, type Design, type Sheet, type Profile } from "./laser-layout.js";
+import { countOf } from "@cobblr/platform-contract/plural";
 const norm = (v: string | null | undefined) => (v ?? "").trim().toLowerCase();
-export function printerMaterialRefusal(job: { material_type?: string | null; material_part_id?: string | null; material_grams?: unknown; material_grams_by_tool?: unknown }, loaded: LoadedSpool[]): string | null {
+export interface PrinterMaterial {
+ material_type?: string | null;
+ material_part_id?: string | null;
+ material_grams?: unknown;
+ material_grams_by_tool?: unknown;
+ material_by_tool?: string[];
+ color_by_tool?: string[];
+}
+export function printerMaterialRefusal(job: PrinterMaterial, loaded: LoadedSpool[]): string | null {
  const tools = gramsByTool(job.material_grams_by_tool);
- if (!job.material_type && !job.material_part_id && !(Number(job.material_grams) > 0) && !tools) return null;
  const grams = Number(job.material_grams) > 0 ? Number(job.material_grams) : tools?.reduce((n, g) => n + g, 0) ?? 0;
- const matches = loaded.filter(s => (!job.material_type || norm(s.material) === norm(job.material_type)) && (!job.material_part_id || s.spool.id === job.material_part_id));
- if (tools && !job.material_part_id) {
-  const draw = planDraw(loaded.filter(s => s.slot).map(s => ({ slot: s.slot!, partId: s.spool.id })), tools, grams);
-  if (!draw.unfed.length && draw.draws.length && draw.draws.every(d => matches.some(s => s.spool.id === d.part_id && s.grams_left !== null && s.grams_left >= d.grams))) return null;
- } else if (matches.some(s => grams ? s.grams_left !== null && s.grams_left >= grams : s.grams_left !== null && s.grams_left > 0)) return null;
- return `Waiting for material: load ${grams ? `at least ${grams} g of ` : ""}${job.material_type || "the chosen spool"}.`;
+ const material = job.material_type?.trim() || null;
+ const hasTraits = material || job.material_part_id || job.material_by_tool?.some(Boolean) || job.color_by_tool?.some(Boolean);
+ if (!hasTraits && !grams && !tools) return null;
+ if (job.material_part_id && tools && tools.filter(g => g > 0).length > 1) return "Waiting for material: use the loaded spools for a plate with more than one filament.";
+ const matches = (spool: LoadedSpool, tool: number, needed: number) => {
+  const type = job.material_by_tool?.[tool] || material;
+  const color = job.color_by_tool?.[tool];
+  return (!type || norm(spool.material) === norm(type)) && (!color || sameColour(spool.color, color)) &&
+   (!job.material_part_id || spool.spool.id === job.material_part_id) &&
+   spool.grams_left !== null && (needed > 0 ? spool.grams_left >= needed : spool.grams_left > 0);
+ };
+ const color = job.color_by_tool?.find(Boolean);
+ const need = `${color ? `${color} ` : ""}${material || "the chosen spool"}`;
+ const refusal = `Waiting for material: load ${grams ? `at least ${grams} g of ` : ""}${need}.`;
+ const slotRefusal = (slot: string, tool: number, needed: number) => {
+  const type = job.material_by_tool?.[tool] || material || "the chosen spool";
+  const color = job.color_by_tool?.[tool];
+  return `Waiting for material: slot ${slot} needs at least ${needed} g of ${color ? `${color} ` : ""}${type}.`;
+ };
+ const slotted = loaded.filter(spool => spool.slot);
+ if (job.material_part_id) return slotted.some(spool => matches(spool, tools?.findIndex(g => g > 0) ?? 0, grams)) ? null : refusal;
+ if (!grams) return slotted.some(spool => matches(spool, 0, 0)) ? null : refusal;
+ const draw = planDraw(slotted.map(spool => ({ slot: spool.slot!, partId: spool.spool.id })), tools, grams);
+ const missing = draw.unfed[0];
+ if (missing) return slotRefusal(missing.slot, Number(missing.slot) - 1, missing.grams);
+ if (!draw.draws.length) return refusal;
+ for (const d of draw.draws) {
+  const spool = slotted.find(spool => spool.spool.id === d.part_id && spool.slot === d.slot);
+  const tool = slotted.length === 1 && tools ? tools.findIndex(g => g > 0) : Number(d.slot) - 1;
+  if (!spool || !matches(spool, Math.max(0, tool), d.grams)) return slotRefusal(d.slot, Math.max(0, tool), d.grams);
+ }
+ return null;
 }
 export type FloorSheet = Sheet & { name: string; material: string; thickness_mm: number };
 export type LaserCandidate = { connection_id: string; device_id: string; name: string; bed: { width: number; height: number }; profiles: Record<string, { id: string; profile: Profile }> };
@@ -42,7 +76,7 @@ export function allocateLaserBatch(design: Design, ask: BatchAsk, candidates: La
     used.add(sheet.id); left -= lo; moved = true; break;
    }
   }
-  if (!moved) throw new Error(`Restock ${ask.thickness_mm} mm ${ask.material}: room for ${ask.quantity - left} of ${ask.quantity} parts on the available sheets.`);
+  if (!moved) throw new Error(`Restock ${ask.thickness_mm} mm ${ask.material}: room for ${ask.quantity - left} of ${countOf(ask.quantity, "part")} on the available sheets.`);
  }
  if (used.size > 50) throw new Error("Split this batch into at most 50 physical sheets at a time.");
  return [...groups.values()];
@@ -72,5 +106,5 @@ export async function allocateOutlineLaserBatch(design: Design, ask: BatchAsk, c
   if(!left)return groups;
   if(performance.now()-started>=3000)break;
  }
- throw new Error(`Restock ${ask.thickness_mm} mm ${ask.material}: room for ${ask.quantity-left} of ${ask.quantity} parts on the available sheets.`);
+ throw new Error(`Restock ${ask.thickness_mm} mm ${ask.material}: room for ${ask.quantity-left} of ${countOf(ask.quantity, "part")} on the available sheets.`);
 }

@@ -34,6 +34,7 @@
 import { platform } from "@cobblr/platform-contract";
 import { sql } from "kysely";
 import { HOSTED_RECEIPT_QUEUED_WORDS } from "./hosted-identify.js";
+import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
 /** The fields this decision reads. A structural subset of PhotoIdentity, so the
  *  rule can be tested against a recorded reply or a stored row without building
@@ -132,8 +133,7 @@ export function looksLikeReceiptPhoto(id: ReceiptPhotoSignals, shape: ReceiptSha
 //
 // (email-inbound.ts is the precedent, verbatim: mintSession → INTERNAL_API POST.)
 
-// loopback-ok: #5153 moves this onto selfFetch
-const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
+const INTERNAL_API = selfOrigin();
 
 /** The workspace slug, plus a member to attribute the capture to when the
  *  scanning user is not in scope (a detached run). Highest role wins. */
@@ -335,7 +335,7 @@ export async function routeScannedReceiptPhoto(opts: {
 
   let answer: ReceiptAnswer;
   try {
-    const r = await fetch(
+    const r = await apiFetch(
       `${INTERNAL_API}/api/v1/orgs/${who.slug}/modules/core-scan/scan/receipt`,
       {
         method: "POST",

@@ -1,3 +1,4 @@
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import {Router} from "express";
 import {z} from "zod";
 import {sql} from "kysely";
@@ -17,11 +18,14 @@ cutterRouter.get("/profiles",asyncHandler(async(req,res)=>{
  const page=readListPage(req.query,20),rows=await tenantDb(req).selectFrom("digifab_cutter_profiles").selectAll().select(sql<string>`count(*) over()`.as(TOTAL_COLUMN)).where("connection_id","=",b.data.connection_id).where("remote_device_id","=",b.data.device_id).orderBy("created_at").orderBy("id").limit(page.limit).offset(page.offset).execute();res.json(pagedAnswer(rows,page));
 }));
 // AI-ACTION: digifab:cutter-batch
-cutterRouter.post("/profiles",asyncHandler(async(req,res)=>{if(!requireRole(req,res,"owner","admin"))return;const b=NewCutterProfile.safeParse(req.body);if(!b.success)return badBody(res,b.error);try{res.status(201).json(await createCutterProfile(tenantDb(req),tenantContext(req).org.id,b.data));}catch(error){refuse(res,error);}}));
+// ADMIN-ONLY: starting, stopping and setting up a machine stays with the admin tier, at every door (#5170)
+cutterRouter.post("/profiles",asyncHandler(async(req,res)=>{if(!(await requireCapability(req, res, "digifab:cutter-batch")))return;const b=NewCutterProfile.safeParse(req.body);if(!b.success)return badBody(res,b.error);try{res.status(201).json(await createCutterProfile(tenantDb(req),tenantContext(req).org.id,b.data));}catch(error){refuse(res,error);}}));
 // AI-ACTION: digifab:cutter-batch
-cutterRouter.put("/profiles/:id",asyncHandler(async(req,res)=>{if(!requireRole(req,res,"owner","admin"))return;const b=CutterProfileSchema.safeParse(req.body);if(!b.success)return badBody(res,b.error);const row=await tenantDb(req).updateTable("digifab_cutter_profiles").set({profile:b.data,updated_at:new Date()}).where("id","=",req.params.id!).returningAll().executeTakeFirst();if(!row)return void res.status(404).json({error:{code:"not_found",message:"No such cutter profile."}});res.json(row);}));
+// ADMIN-ONLY: starting, stopping and setting up a machine stays with the admin tier, at every door (#5170)
+cutterRouter.put("/profiles/:id",asyncHandler(async(req,res)=>{if(!(await requireCapability(req, res, "digifab:cutter-batch")))return;const b=CutterProfileSchema.safeParse(req.body);if(!b.success)return badBody(res,b.error);const row=await tenantDb(req).updateTable("digifab_cutter_profiles").set({profile:b.data,updated_at:new Date()}).where("id","=",req.params.id!).returningAll().executeTakeFirst();if(!row)return void res.status(404).json({error:{code:"not_found",message:"No such cutter profile."}});res.json(row);}));
 // AI-ACTION: digifab:cutter-batch
-cutterRouter.post("/plans",asyncHandler(async(req,res)=>{if(!requireRole(req,res,"owner","admin"))return;const b=NewCutterPlan.safeParse(req.body);if(!b.success)return badBody(res,b.error);try{res.status(201).json(await createCutterPlan(tenantDb(req),tenantContext(req).org.id,b.data));}catch(error){refuse(res,error);}}));
+// ADMIN-ONLY: starting, stopping and setting up a machine stays with the admin tier, at every door (#5170)
+cutterRouter.post("/plans",asyncHandler(async(req,res)=>{if(!(await requireCapability(req, res, "digifab:cutter-batch")))return;const b=NewCutterPlan.safeParse(req.body);if(!b.success)return badBody(res,b.error);try{res.status(201).json(await createCutterPlan(tenantDb(req),tenantContext(req).org.id,b.data));}catch(error){refuse(res,error);}}));
 cutterRouter.get("/station",asyncHandler(async(req,res)=>{
  if(!requireRole(req,res,"owner","admin"))return;
  const b=CutterMachine.safeParse(req.query);if(!b.success)return badBody(res,b.error);
@@ -34,10 +38,11 @@ cutterRouter.get("/station",asyncHandler(async(req,res)=>{
 }));
 // AI-ACTION: digifab:cutter-batch
 cutterRouter.post("/jobs/:id/outcome",asyncHandler(async(req,res)=>{
- if(!requireRole(req,res,"owner","admin"))return;
+ // ADMIN-ONLY: starting, stopping and setting up a machine stays with the admin tier, at every door (#5170)
+ if(!(await requireCapability(req, res, "digifab:cutter-batch")))return;
  const body=CutterReportSchema.extend({station_token:z.string().min(32).max(128)}).safeParse(req.body);if(!body.success)return badBody(res,body.error);
  const db=tenantDb(req),orgId=tenantContext(req).org.id;
  try{const saved=await db.selectFrom("digifab_cutter_plans").selectAll().where("job_id","=",req.params.id!).executeTakeFirst();if(!saved)throw new ReviewRequired("Choose a prepared cutter job.");await requireCutterStation(db,saved.connection_id,saved.remote_device_id,body.data.station_token);res.json(await recordCutterUse(db,orgId,saved.job_id,sessionUser(req)?.id ?? "",CutterReportSchema.parse(body.data)));}catch(error){refuse(res,error);}
 }));
 // AI-ACTION: digifab:cutter-control
-cutterRouter.post("/control",asyncHandler(async(req,res)=>{if(!requireRole(req,res,"owner","admin","member"))return;const b=CutterControlSchema.safeParse(req.body);if(!b.success)return badBody(res,b.error);try{res.json(await cutterControl(tenantDb(req),tenantContext(req).org.id,b.data));}catch(error){refuse(res,error);}}));
+cutterRouter.post("/control",asyncHandler(async(req,res)=>{if(!(await requireCapability(req, res, "digifab:cutter-control")))return;const b=CutterControlSchema.safeParse(req.body);if(!b.success)return badBody(res,b.error);try{res.json(await cutterControl(tenantDb(req),tenantContext(req).org.id,b.data));}catch(error){refuse(res,error);}}));

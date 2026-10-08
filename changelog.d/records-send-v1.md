@@ -3,6 +3,7 @@ type: feature
 scope: records
 date: 2026-10-06
 docs_target: docs/USER_GUIDE.md#4.5h Send to another workspace
+docs_published: 2026-10-08
 ---
 Added copy and move between your workspaces, with a field preview and undo.
 

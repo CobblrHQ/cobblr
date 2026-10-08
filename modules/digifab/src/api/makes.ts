@@ -6,14 +6,17 @@
 // door) comes from makes-core.ts.
 
 import { Router, type Request } from "express";
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { z } from "zod";
 import { likeEscape, platform } from "@cobblr/platform-contract";
 import { readGramsByTool } from "@cobblr/platform-contract/filament-draw";
+import { pagedAnswer, readListPage, TOTAL_COLUMN, MAX_PAGE } from "@cobblr/platform-contract/list-page";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import type { DigifabDB } from "../db.js";
-import type { Kysely } from "kysely";
+import { sql, type Kysely } from "kysely";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import {
+  BatchPrintStepOwnedError,
   FILE_ROLES,
   MAKE_KIND,
   MAKE_STEPS,
@@ -33,6 +36,7 @@ import {
   type StepWrite,
 } from "../makes-core.js";
 import { startPrint, startPrintThis } from "../print-this.js";
+import { startBatchPrint, reviewBatch, cancelBatch } from "../print-batch.js";
 
 export const makesRouter = Router({ mergeParams: true });
 
@@ -281,7 +285,7 @@ const PrintThisBody = z
     source_lang: z.enum(["build123d", "openscad"]).optional(),
     template: z.string().trim().min(1).max(200).optional(),
     params: z.record(z.unknown()).optional(),
-    quantity: z.number().int().positive().optional(),
+    quantity: z.number().int().positive().max(10000).optional(),
     material: z.string().trim().min(1).max(60),
     color: z.string().trim().max(60).optional(),
     name: z.string().trim().min(1).max(200).optional(),
@@ -322,6 +326,47 @@ makesRouter.post(
 );
 
 // ── one Make, its steps, its files and what comes next ────────────────────
+
+makesRouter.get("/print-batches", asyncHandler(async (req, res) => {
+  const query = z.object({ offset: z.coerce.number().int().nonnegative().default(0), limit: z.coerce.number().int().min(1).max(MAX_PAGE).default(100) }).safeParse(req.query);
+  if (!query.success) return badBody(res, query.error);
+  const page = readListPage(query.data, 100);
+  const rows = await tenantDb(req).selectFrom("digifab_make_steps as s")
+    .innerJoin("digifab_jobs as j", "j.id", "s.job_id").innerJoin("digifab_makes as m", "m.id", "s.make_id")
+    .select(["s.id", "s.make_id", "s.step", "s.status", "s.data", "s.job_id", "s.error", "j.linked_machine_id", "m.name"])
+    .select(sql<string>`count(*) over()`.as(TOTAL_COLUMN))
+    .where("s.step", "=", "print").where("s.status", "in", ["awaiting_confirm", "running"])
+    .where("j.make_ordinal", "is not", null).orderBy("m.created_at", "asc").orderBy("s.id", "asc").limit(page.limit).offset(page.offset).execute();
+  const answer = pagedAnswer(rows, page);
+  res.json({ ...answer, next_offset: answer.complete ? null : page.offset + answer.items.length });
+}));
+
+// AI-ACTION: digifab:start-next-print
+// GATE: starts a physical printer, so it stays owner or admin and is not grantable; the action says runBy admin, so the API and Cobb give the same answer
+makesRouter.post("/:id/print/next", asyncHandler(async (req, res) => {
+  if (!requireRole(req, res, "owner", "admin")) return;
+  const body = z.object({ bed_clear: z.literal(true), confirm_hash: z.string().regex(/^[a-f0-9]{64}$/).optional() }).safeParse(req.body);
+  if (!body.success) return badBody(res, body.error);
+  const r = await startBatchPrint(tenantDb(req), tenantContext(req).org.id, sessionUser(req)?.id ?? null, String(req.params.id), body.data.confirm_hash, true);
+  res.status(r.ok ? 200 : 409).json(r.ok ? r : { error: { code: r.code, message: r.error } });
+}));
+
+// AI-ACTION: digifab:review-print-batch
+// GATE: re-approves what a batch will physically print, so it stays owner or admin and is not grantable; the action says runBy admin, so the API and Cobb give the same answer
+makesRouter.post("/:id/print/review", asyncHandler(async (req, res) => {
+  if (!requireRole(req, res, "owner", "admin")) return;
+  const body = z.object({ quantity: z.number().int().positive().max(10000).optional() }).safeParse(req.body ?? {});
+  if (!body.success) return badBody(res, body.error);
+  const r = await reviewBatch(tenantDb(req), tenantContext(req).org.id, String(req.params.id), body.data.quantity);
+  res.status(r.ok ? 200 : 409).json(r.ok ? r : { error: { code: r.code, message: r.error } });
+}));
+
+// AI-ACTION: digifab:cancel-print-batch
+makesRouter.post("/:id/print/cancel", asyncHandler(async (req, res) => {
+  if (!(await requireCapability(req, res, "digifab:cancel-print-batch"))) return;
+  const r = await cancelBatch(tenantDb(req), String(req.params.id));
+  res.status(r.ok ? 200 : 409).json(r.ok ? r : { error: { code: r.code, message: r.error } });
+}));
 
 makesRouter.get(
   "/:id",
@@ -505,6 +550,10 @@ makesRouter.post(
     const parsed = StepRecord.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
+    if (step.data === "print") {
+      const current = await db.selectFrom("digifab_make_steps").select("data").where("make_id", "=", String(req.params.id)).where("step", "=", "print").executeTakeFirst();
+      if (current?.data.batch || parsed.data.data?.batch) return void res.status(409).json({ error: { code: "batch_control_required", message: "Use the batch's review, start and cancel controls to change its approval or history." } });
+    }
     const make = await loadMake(db, String(req.params.id));
     if (!make) {
       res.status(404).json({ error: { code: "not_found", message: "Make not found." } });
@@ -515,8 +564,13 @@ makesRouter.post(
       res.status(400).json({ error: { code: "before_start", message: `This Make starts at ${start}.` } });
       return;
     }
-    const id = await recordStep(ctxOf(req), make, step.data, parsed.data);
-    res.status(201).json({ id });
+    try {
+      const id = await recordStep(ctxOf(req), make, step.data, parsed.data);
+      res.status(201).json({ id });
+    } catch (error) {
+      if (error instanceof BatchPrintStepOwnedError) return void res.status(409).json({ error: { code: "batch_control_required", message: error.message } });
+      throw error;
+    }
   }),
 );
 

@@ -6,7 +6,7 @@ import type { LaserSetup, LaserCommission } from "@cobblr/platform-contract/lase
 // (resolve → queue, or explicit printer) rather than "submit to printer N".
 
 export interface RemoteDevice {
-  station_kind?: "laser" | "print" | "cutter";
+  station_kind?: "laser" | "print" | "cnc" | "cutter";
   camera_available?: boolean;
   /** The id inside the farm system (stored locally as remote_device_id). */
   id: string;
@@ -131,7 +131,7 @@ export interface JobReview {
   cuts: Record<string, unknown>[];
   materialLibrary: Record<string, unknown>;
 }
-export type JobApproval = Pick<JobReview, "fileId" | "projectHash"> & { stationToken?: string; sheetId?: string; cutterChecks?: import("zod").infer<typeof import("../cutter-checks.js").CutterChecksSchema> };
+export type JobApproval = Pick<JobReview, "fileId" | "projectHash"> & { stationToken?: string; sheetId?: string; cnc?: import("@cobblr/platform-contract/cnc").CncApproval; cutterChecks?: import("zod").infer<typeof import("../cutter-checks.js").CutterChecksSchema> };
 
 export interface SubmitArgs {
   checkStartAllowed?: () => Promise<void>;
@@ -150,9 +150,10 @@ export interface SubmitArgs {
 export interface MachineDriver {
   readonly benchInstrument?:boolean;
   identifyBench?():Promise<{identity:string;profile:string}>;
+  captureBench?(input:import("../bench-model.js").CaptureInput):Promise<import("../bench-model.js").BenchReport>;
   readBench?():Promise<import("../bench-model.js").BenchReport>;
   readonly printProcess?: "fdm" | "resin" | "large-format";
-  jobReviewKind?(): Promise<"laser" | "print" | "cutter">;
+  jobReviewKind?(): Promise<"laser" | "print" | "cnc" | "cutter">;
   laserBackend?: "gcode" | "ruida" | "galvo";
   getLaserSetup?(): Promise<LaserSetup>;
   homeLaser?(checkMotionAllowed?: () => Promise<void>): Promise<LaserSetup>;

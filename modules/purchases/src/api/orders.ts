@@ -1,3 +1,4 @@
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { fieldCurrency, isCurrency } from "@cobblr/platform-contract/money";
 import { orderFigures, combineOrderTotals } from "../order-money.js";
 // /orders — REST for purchases orders + the nested /items collection.
@@ -16,6 +17,7 @@ import { routeUnknownToMetadata, refuseUnknownFields, withMetadataMerged } from 
 import { claimLine, stampLine } from "./line-subject.js";
 import { orderTotal } from "../order-total.js";
 import { editOrderLine } from "../line-edit.js";
+import { listShipments } from "../shipments.js";
 
 export const ordersRouter = Router({ mergeParams: true });
 
@@ -281,7 +283,10 @@ ordersRouter.get(
       .orderBy("created_at")
       .execute();
     const [priced] = await orderFigures(tenantContext(req).org.id, db, [order]);
-    res.json({ ...priced, items: items.map((i) => ({ ...i, currency: fieldCurrency(i.metadata, "unit_cost", priced!.currency) })) });
+    // The parcels it ships in, when more than one (#5351); a line names its
+    // own by shipment_id.
+    const shipments = await listShipments(db, id);
+    res.json({ ...priced, shipments, items: items.map((i) => ({ ...i, currency: fieldCurrency(i.metadata, "unit_cost", priced!.currency) })) });
   }),
 );
 
@@ -450,6 +455,7 @@ ordersRouter.delete(
 ordersRouter.post(
   "/:id/items",
   asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "purchases:add-line"))) return;
     const orderId = req.params.id;
     if (!orderId) {
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });

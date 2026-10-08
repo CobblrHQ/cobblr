@@ -1,3 +1,4 @@
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { requireRole } from "../auth/capability.js";
 import { Router } from "express";
 import { z } from "zod";
@@ -15,6 +16,7 @@ deletedRecordsRouter.get("/", async (req, res, next) => {
 });
 // AI-REACH: action platform:restore-deleted-record
 deletedRecordsRouter.post("/:id/restore", async (req, res, next) => {
+  if (!(await requireCapability(req, res, "platform:restore-deleted-record"))) return;
   try {
     if (!await restoreEntry(req.tenant!.org.id, z.string().uuid().parse(req.params.id))) throw new DeletedRecordError(404, "That record is no longer in Recently deleted.");
     res.json({ ok: true });

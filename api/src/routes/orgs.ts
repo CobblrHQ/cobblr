@@ -1,3 +1,4 @@
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { activityPresentation, type ActivitySubject } from "@cobblr/platform-contract/activity-summary";
 import { openRecordPath } from "@cobblr/platform-contract/instance-detail";
 import { activityFileContexts } from "../platform/activity-context.js";
@@ -199,7 +200,7 @@ orgsRouter.post(
   async (req, res, next) => {
     try {
       // Turning a module on is builder work: the admin tier, by rank.
-      if (!requireRole(req, res, "owner", "admin")) return;
+      if (!(await requireCapability(req, res, "platform:enable-module"))) return;
       const name = req.params.moduleName;
       if (!name) {
         res.status(400).json({ error: { code: "missing_id", message: "module name required" } });
@@ -245,7 +246,7 @@ orgsRouter.post(
   withTenant,
   async (req, res, next) => {
     try {
-      if (!requireRole(req, res, "owner", "admin")) return;
+      if (!(await requireCapability(req, res, "platform:disable-module"))) return;
       const name = req.params.moduleName;
       if (!name) {
         res.status(400).json({ error: { code: "missing_id", message: "module name required" } });
@@ -506,7 +507,7 @@ const FocusedBody = z.object({ focused: z.boolean() });
 // AI-ACTION: platform:set-simple-mode
 orgsRouter.patch("/:slug/focused", requireAuth, withTenant, async (req, res, next) => {
   try {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "platform:set-simple-mode"))) return;
     const parsed = FocusedBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
@@ -545,6 +546,9 @@ const RenameBody = z
 // AI-ACTION: platform:rename-workspace
 orgsRouter.patch("/:slug", requireAuth, withTenant, async (req, res, next) => {
   try {
+    // The action's declaration first (the same door Cobb's rename reads, #5170),
+    // then its owner floor, which platform:rename-workspace's min_role holds too.
+    if (!(await requireCapability(req, res, "platform:rename-workspace"))) return;
     if (req.tenant!.role !== "owner") {
       res.status(403).json({ error: { code: "forbidden", message: "Only the workspace owner can rename it." } });
       return;
@@ -838,7 +842,7 @@ orgsRouter.get("/:slug/queue/jobs", requireAuth, withTenant, async (req, res, ne
 // AI-ACTION: platform:restore-record-version
 orgsRouter.post("/:slug/activity/:entryId/restore", requireAuth, withTenant, async (req, res, next) => {
   try {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "platform:restore-record-version"))) return;
     const body = z.object({ kind: z.string().min(1), entity_id: z.string().min(1), expected_latest_id: z.number().int().positive() }).safeParse(req.body);
     const entryId = Number(req.params.entryId);
     if (!body.success || !Number.isSafeInteger(entryId) || entryId < 1) {

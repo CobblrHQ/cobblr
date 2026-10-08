@@ -9,6 +9,7 @@ import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { ordersRouter } from "./orders.js";
 import { returnsRouter, registerReturnActions } from "./returns.js";
+import { shipmentsRouter, registerShipmentActions } from "./shipments.js";
 import { itemsRouter } from "./items.js";
 import { vendorsRouter } from "./vendors.js";
 import { registerPurchasesResolvers } from "./resolvers.js";
@@ -18,6 +19,7 @@ import { startArrivalSweeper } from "../arrival-sweeper.js";
 
 registerPlannedOrderAction();
 registerReturnActions();
+registerShipmentActions();
 registerPackageArrivals();
 registerPurchasesResolvers();
 registerPurchasesActionHandlers();
@@ -37,6 +39,7 @@ platform().instances.registerItemCounter("purchases", async (orgId, instance) =>
 const router = Router({ mergeParams: true });
 
 router.use("/", returnsRouter);
+router.use("/", shipmentsRouter);
 router.use("/orders", ordersRouter);
 router.use("/items", itemsRouter);
 router.use("/vendors", vendorsRouter);

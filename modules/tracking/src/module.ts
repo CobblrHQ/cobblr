@@ -87,6 +87,7 @@ export default defineModule({
         // NO-PHRASING: the way back for another action, run only from Undo
         group: "more",
         id: "tracking:remove-measurement",
+        runBy: "member",
         internal: true,
         label: "Remove a measurement",
         description: "Internal, the inverse of logging a measurement: removes it again. Runs from Undo on the card; not for direct use.",
@@ -101,6 +102,7 @@ export default defineModule({
       {
         group: "more",
         id: "tracking:log-measurement",
+        runBy: "member",
         examples: ["weighed in at 82", "record 15 for today"],
         undoable: true,
         label: "Log a measurement",

@@ -1,5 +1,7 @@
 import { markRequestReadOnly } from "../lib/request-context.js";
 import { readGroupKeys } from "@cobblr/platform-contract/grouped-list";
+import { makeSlidingWindowLimiter } from "@cobblr/platform-contract/rate-limit";
+import { revealSecretField } from "../platform/secret-fields.js";
 import { readRecordActionLayout, setRecordActionPin } from "../platform/record-action-layout.js";
 import { commonBulkFields } from "../platform/bulk-set-field.js";
 // Platform-level routes for the registries + wires.
@@ -35,9 +37,12 @@ import { hostedIdentifyReach } from "@cobblr/platform-contract/hosted-identify";
 import { ocrAvailable } from "@cobblr/core-scan/services/ocr";
 import { AiCapabilities, type AiCapability } from "@cobblr/platform-contract";
 import { clearComputedDefsCache } from "../platform/computed-fields.js";
-import { actionRecordOptional, effectiveAppliesTo, enabledActionOwners, listDormant, matchAction, getActionScope, planFor, undoFor, hasUndo } from "../platform/actions.js";
+import { actionGateOf } from "../platform/action-gates.js";
+import { issueUndos, issuedUndoFor, spendIssuedUndo } from "../platform/issued-undos.js";
+import { actionRecordOptional, effectiveAppliesTo, enabledActionOwners, listDormant, matchAction, getActionScope, planFor, undoFor, hasUndo, isRequester } from "../platform/actions.js";
 import { facesForKind } from "../platform/faces.js";
 import { platformActionMinRole } from "../platform/platform-actions.js";
+import { argChoicesFor } from "../platform/action-arg-choices.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { templateDataOf } from "@cobblr/platform-contract/entity-metadata";
 import { namePeopleForTemplate } from "../platform/member-fields.js";
@@ -65,7 +70,6 @@ import { upsertNativeFieldOverride } from "../platform/native-field-overrides.js
 import { getScannableForModule } from "../platform/scan-registry.js";
 import { FIELD_PRESETS, presetState } from "../platform/field-presets.js";
 import { presetFieldStates, turnPresetOff, turnPresetOn } from "../platform/field-preset-switch.js";
-import { listPeople } from "../platform/people.js";
 import { fieldValuesUsed } from "../platform/field-values-used.js";
 
 /** The person's own assistant reading for them: an MCP client or the relay
@@ -77,7 +81,34 @@ function readsAsAssistant(req: { session?: { ai_door?: string | null }; headers:
   return !!req.session?.ai_door || String(req.headers["x-cobblr-reader"] ?? "").toLowerCase() === "assistant";
 }
 
+function secretPresenceQuery(raw: unknown): import("@cobblr/platform-contract").FilterPredicate[] | undefined {
+  if (raw === undefined) return undefined;
+  const values = z.record(z.enum(["empty", "has_value"])).parse(raw);
+  return Object.entries(values).map(([col, value]) => ({ col, op: value === "empty" ? "empty" : "not_empty" }));
+}
+
 export const platformOrgRouter = Router({ mergeParams: true });
+const allowSecretRead = makeSlidingWindowLimiter(60_000, 20);
+
+// ROLE: any member (revealSecretField checks the field grant before decrypting or auditing).
+// AI-REACH: exempt: secret values must never reach model context; only a person's explicit reveal or copy may read them.
+platformOrgRouter.post("/:slug/entities/:kind/:id/fields/:field/reveal", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (readsAsAssistant(req)) {
+      res.status(403).json({ error: { code: "secret_hidden", message: "A person must reveal this value themselves." } });
+      return;
+    }
+    const operation = z.object({ operation: z.enum(["reveal", "copy"]) }).parse(req.body).operation;
+    const userId = req.session!.id;
+    if (!allowSecretRead(`${req.tenant!.org.id}:${userId}`)) {
+      res.set("Retry-After", "60").status(429).json({ error: { code: "secret_read_limit", message: "Wait a minute before reading another secret." } });
+      return;
+    }
+    const { kind, id, field } = req.params;
+    const result = await revealSecretField(req.tenant!.org.id, kind!, id!, field!, { userId, role: req.tenant!.role }, operation);
+    res.set("Cache-Control", "no-store").json(result);
+  } catch (err) { next(err); }
+});
 
 // ──────────────────────── kinds + lookups ──────────────────────────
 
@@ -195,7 +226,7 @@ platformOrgRouter.get(
 // Any collection as a spreadsheet, read as the viewer: fields their role may
 // not read are neither a column nor a value. Registered before /:kind/:id,
 // which would otherwise take "export.csv" for a record id.
-// AI-REACH: exempt (a file download for a person; the assistant reads the same rows through the entity list)
+// AI-REACH: exempt (a file download for a person; secret values require an explicit audited owner/admin choice and never reach the assistant)
 platformOrgRouter.get(
   "/:slug/entities/:kind/export.csv",
   requireAuth,
@@ -208,6 +239,11 @@ platformOrgRouter.get(
         return;
       }
       const filter: Record<string, unknown> = {};
+      const includeSecrets = req.query.include_secrets === "true" || req.query.include_secrets === "1";
+      if (includeSecrets && readsAsAssistant(req)) {
+        res.status(403).json({ error: { code: "secret_hidden", message: "A person must export secrets themselves." } });
+        return;
+      }
       const raw = req.query.filter;
       if (raw && typeof raw === "object" && !Array.isArray(raw)) {
         for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
@@ -220,14 +256,19 @@ platformOrgRouter.get(
         {
           q: typeof req.query.q === "string" && req.query.q ? req.query.q : undefined,
           filter: Object.keys(filter).length ? filter : undefined,
+          where: secretPresenceQuery(req.query.presence),
           ...(req.query.include_retired === "1" || req.query.include_retired === "true" ? { include_retired: true } : {}),
         },
         { userId: req.session?.id, role: req.tenant!.role },
+        undefined,
+        { includeSecrets },
       );
       if (!out) {
         res.status(404).json({ error: { code: "unknown_kind", message: "There is no collection of that kind here." } });
         return;
       }
+      res.locals.secretExport = includeSecrets;
+      if (includeSecrets) res.set("Cache-Control", "no-store");
       res.set(csvDownloadHeaders(out.filename, out.complete)).send(out.csv);
     } catch (err) {
       next(err);
@@ -248,6 +289,7 @@ platformOrgRouter.get(
       }
       const found = await platform().entities.lookup(req.tenant!.org.id, kind, id, {
         userId: req.session?.id,
+        role: req.tenant!.role,
         ...(readsAsAssistant(req) ? { assistant: true } : {}),
       });
       if (!found) {
@@ -333,6 +375,7 @@ platformOrgRouter.get(
           limit: Math.min(Number(req.query.limit) || 50, 200),
           offset: Number(req.query.offset) || 0,
           filter: Object.keys(filter).length ? filter : undefined,
+          where: secretPresenceQuery(req.query.presence),
           ...(req.query.include_retired === "1" || req.query.include_retired === "true" ? { include_retired: true } : {}),
         },
         { userId: req.session?.id, role: req.tenant!.role, ...(readsAsAssistant(req) ? { assistant: true } : {}) },
@@ -585,33 +628,6 @@ platformOrgRouter.get(
   },
 );
 
-/** The kind's own choices put into its actions' argument schemas: an
- *  argument whose choices depend on the kind (`choicesFrom: "counters"`)
- *  gets the counters this kind keeps, so the form offers "Print hours" and
- *  never asks for a field name (#3991). A kind that keeps none gets an empty
- *  list, and the form leaves that pair unasked. */
-async function argChoicesFor(orgId: string, kind: string, schemas: readonly unknown[]): Promise<(schema: unknown) => unknown> {
-  type Spec = { choicesFrom?: string } & Record<string, unknown>;
-  const specsOf = (schema: unknown): [string, Spec][] =>
-    schema && typeof schema === "object" ? Object.entries(schema as Record<string, Spec>) : [];
-  const wants = (from: string) => schemas.some((schema) => specsOf(schema).some(([, spec]) => spec?.choicesFrom === from));
-  let counters: { value: string; label: string }[] = [];
-  if (wants("counters")) {
-    counters = (await platform().entities.countersFor(orgId, kind).catch(() => [])).map((d) => ({ value: d.key, label: d.label }));
-  }
-  // The workspace's People (members and anyone listed by name): what a
-  // "who" argument picks from, so "lend it to" is a list of names, never an id.
-  let people: { value: string; label: string }[] = [];
-  if (wants("people")) {
-    people = (await listPeople(orgId).catch(() => [])).map((p) => ({ value: p.id, label: p.name }));
-  }
-  const choicesOf = (from: unknown) => (from === "counters" ? counters : from === "people" ? people : null);
-  return (schema) => {
-    const entries = specsOf(schema);
-    if (!entries.some(([, spec]) => spec?.choicesFrom)) return schema;
-    return Object.fromEntries(entries.map(([name, spec]) => [name, choicesOf(spec?.choicesFrom) ? { ...spec, choices: choicesOf(spec?.choicesFrom) } : spec]));
-  };
-}
 
 const InvokeBody = z.object({
   // Not merely a string: "" matched no action, read as record-scoped, and was
@@ -802,7 +818,22 @@ platformOrgRouter.post(
       // grant for this specific action. Closes the hole where any
       // authenticated member (incl. a read-only guest) could invoke any
       // action — e.g. hand-firing inventory:adjust-stock to move stock.
-      if (!(await requireCapability(req, res, parsed.data.actionId))) return;
+      // An undo the platform handed this person for their own run is theirs
+      // to run, whatever their role (#5193): exactly that step, once.
+      const ownUndo = await issuedUndoFor(req.tenant!.org.id, req.session!.id, {
+        action_id: parsed.data.actionId,
+        args: parsed.data.args ?? {},
+        entity_kind: parsed.data.entityKind ?? null,
+        entity_id: parsed.data.entityId ?? null,
+      });
+      // And what a person started is theirs to answer, cancel or confirm,
+      // whatever their role (#5192): the action names who started its target.
+      const asRequester = (ownUndo ? await spendIssuedUndo(ownUndo) : false) || actionGateOf(parsed.data.actionId).runBy === "requester" && await isRequester(parsed.data.actionId, req.session!.id, {
+        orgId: req.tenant!.org.id,
+        args: parsed.data.args ?? {},
+        ...(parsed.data.entityKind && parsed.data.entityId ? { entity: { kind: parsed.data.entityKind, id: parsed.data.entityId } } : {}),
+      });
+      if (!asRequester && !(await requireCapability(req, res, parsed.data.actionId))) return;
 
       // Per-action role FLOOR — parity with the REST twin (audit
       // M-ACTION-PARITY). requireCapability lets any admin through, but some
@@ -966,6 +997,8 @@ platformOrgRouter.post(
         orgId: req.tenant!.org.id,
         ...(parsed.data.entityKind && parsed.data.entityId ? { entity: { kind: parsed.data.entityKind, id: parsed.data.entityId } } : {}),
       }).catch(() => null);
+      const issued = (undo ?? []).flatMap((u) => ("action_id" in u ? [u] : []));
+      if (issued.length) await issueUndos(req.tenant!.org.id, req.session!.id, issued);
       // What the client should refresh, said once here: the record's kind
       // under both its spellings (an instance kind and the module's base
       // kind name the same rows), so every surface showing it can re-read
@@ -1610,7 +1643,7 @@ const SectionCreate = z.object({ entity_kind: z.string().min(1), name: z.string(
 // AI-ACTION: platform:group-fields
 platformOrgRouter.post("/:slug/field-sections", requireAuth, withTenant, async (req, res, next) => {
   try {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "platform:group-fields"))) return;
     const p = SectionCreate.safeParse(req.body);
     if (!p.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "Bad section", details: p.error.issues } });
@@ -1640,7 +1673,7 @@ const SectionPatch = z.object({ name: z.string().min(1).max(120).optional(), pos
 // AI-ACTION: platform:group-fields
 platformOrgRouter.patch("/:slug/field-sections/:id", requireAuth, withTenant, async (req, res, next) => {
   try {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "platform:group-fields"))) return;
     const p = SectionPatch.safeParse(req.body);
     if (!p.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "Bad patch", details: p.error.issues } });
@@ -1669,7 +1702,7 @@ platformOrgRouter.patch("/:slug/field-sections/:id", requireAuth, withTenant, as
 // AI-ACTION: platform:ungroup-fields
 platformOrgRouter.delete("/:slug/field-sections/:id", requireAuth, withTenant, async (req, res, next) => {
   try {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "platform:ungroup-fields"))) return;
     // Fields fall back to ungrouped (section_id ON DELETE SET NULL).
     await meta
       .deleteFrom("field_sections")
@@ -1692,7 +1725,7 @@ const FieldReorder = z.object({
 // AI-ACTION: platform:group-fields
 platformOrgRouter.post("/:slug/field-defs/reorder", requireAuth, withTenant, async (req, res, next) => {
   try {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "platform:group-fields"))) return;
     const p = FieldReorder.safeParse(req.body);
     if (!p.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "Bad reorder", details: p.error.issues } });
@@ -1980,7 +2013,7 @@ platformOrgRouter.put(
   withTenant,
   async (req, res, next) => {
     try {
-      if (!requireRole(req, res, "owner", "admin")) return;
+      if (!(await requireCapability(req, res, "platform:edit-field"))) return;
       const parsed = NativeFieldOverrideBody.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({ error: { code: "invalid_body", message: "Bad override", details: parsed.error.issues } });
@@ -2052,7 +2085,7 @@ platformOrgRouter.post(
   withTenant,
   async (req, res, next) => {
     try {
-      if (!requireRole(req, res, "owner", "admin")) return;
+      if (!(await requireCapability(req, res, "platform:set-field-preset"))) return;
       const result = await turnPresetOn(req.tenant!.org.id, req.params.key ?? "");
       if (!result.ok) {
         res.status(404).json({ error: { code: result.code, message: result.message } });
@@ -2076,7 +2109,7 @@ platformOrgRouter.delete(
   withTenant,
   async (req, res, next) => {
     try {
-      if (!requireRole(req, res, "owner", "admin")) return;
+      if (!(await requireCapability(req, res, "platform:set-field-preset"))) return;
       const result = await turnPresetOff(req.tenant!.org.id, req.params.key ?? "");
       if (!result.ok) {
         res.status(404).json({ error: { code: result.code, message: result.message } });
@@ -2186,7 +2219,7 @@ platformOrgRouter.post(
       // Defining fields is workspace configuration: the same bar as the
       // Configuration screen that edits them (owner or admin), like every
       // sibling write here (#2982).
-      if (!requireRole(req, res, "owner", "admin")) return;
+      if (!(await requireCapability(req, res, "platform:add-field"))) return;
       const parsed = FieldDefCreate.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
@@ -2219,6 +2252,7 @@ platformOrgRouter.post(
 );
 
 // AI-ACTION: platform:edit-field
+// GATE: two bars on one route (#2982), a member may grow a dropdown's choices and the rest needs the admin tier; one runBy cannot say both. Through Cobb a member is refused even the choices (#5170 lists it).
 platformOrgRouter.patch(
   "/:slug/field-defs/:id",
   requireAuth,
@@ -2326,7 +2360,7 @@ platformOrgRouter.delete(
       // Defining fields is workspace configuration: the same bar as the
       // Configuration screen that edits them (owner or admin), like every
       // sibling write here (#2982).
-      if (!requireRole(req, res, "owner", "admin")) return;
+      if (!(await requireCapability(req, res, "platform:remove-field"))) return;
       const id = req.params.id;
       if (!id) {
         res.status(400).json({ error: { code: "missing_id", message: "id required" } });

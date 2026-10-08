@@ -1,6 +1,7 @@
 // core-maintenance router. Mounted at
 //   /api/v1/orgs/:slug/modules/core-maintenance/.
 
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { remindersRouter } from "./reminders.js";
 import { entriesRouter } from "./entries.js";
@@ -16,7 +17,10 @@ router.use("/reminders", remindersRouter);
 router.use("/schedules", schedulesRouter);
 router.use("/terms", termsRouter);
 // AI-ACTION: core-maintenance:end-renewal
-router.post("/schedules/:id/end", asyncHandler(endRenewalRoute));
+router.post("/schedules/:id/end", asyncHandler(async (req, res) => {
+  if (!(await requireCapability(req, res, "core-maintenance:end-renewal"))) return;
+  await endRenewalRoute(req, res);
+}));
 
 // Synchronous tick endpoint — fires the due-soon sweeper for THIS
 // workspace only. Used by tests + ops; the background interval

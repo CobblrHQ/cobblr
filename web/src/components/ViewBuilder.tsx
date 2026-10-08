@@ -64,7 +64,7 @@ export function useKindFields(slug: string, entityKind: string): KindField[] {
     // Native declared fields for the kind.
     const kind = (kinds.data?.items ?? []).find((k) => k.id === entityKind);
     for (const f of kind?.fields ?? []) {
-      push({ name: f.name, label: presentation.label(f.name, humanize(f.name)), type: f.type, choices: f.choices, money: moneyStorageOf(f) ?? undefined });
+      push({ name: f.name, label: presentation.label(f.name, f.label || humanize(f.name)), type: f.type, choices: f.choices, money: moneyStorageOf(f) ?? undefined });
     }
     // Custom / bundle field-defs (carry display_label + choices).
     for (const f of customs.data?.items ?? []) {
@@ -109,7 +109,7 @@ export function humanize(name: string): string {
 // A filter row is one predicate. `is` / `is any of` map to config.filter
 // (equality / IN); everything else maps to a config.where comparison.
 
-export type FilterOp = "is" | "is any of" | "is not" | ">=" | "<=" | ">" | "<";
+export type FilterOp = "has a value" | "is empty" | "is" | "is any of" | "is not" | ">=" | "<=" | ">" | "<";
 
 export interface FilterRow {
   field: string;
@@ -144,7 +144,7 @@ export function configToFilterRows(cfg: Record<string, unknown>): FilterRow[] {
     [];
   for (const w of where) {
     if (!w || w.ref_col) continue; // column-to-column comparisons stay raw-only
-    const op: FilterOp = w.op === "!=" ? "is not" : (w.op as FilterOp);
+    const op: FilterOp = w.op === "empty" ? "is empty" : w.op === "not_empty" ? "has a value" : w.op === "!=" ? "is not" : (w.op as FilterOp);
     rows.push({ field: w.col, op, value: String(w.value ?? ""), values: [] });
   }
   return rows;
@@ -153,13 +153,15 @@ export function configToFilterRows(cfg: Record<string, unknown>): FilterRow[] {
 /** filter rows → { filter, where } config fragments. Empty rows are dropped. */
 export function filterRowsToConfig(rows: FilterRow[]): {
   filter?: Record<string, string | string[]>;
-  where?: Array<{ col: string; op: string; value: string | number }>;
+  where?: Array<{ col: string; op: string; value?: string | number }>;
 } {
   const filter: Record<string, string | string[]> = {};
-  const where: Array<{ col: string; op: string; value: string | number }> = [];
+  const where: Array<{ col: string; op: string; value?: string | number }> = [];
   for (const r of rows) {
     if (!r.field) continue;
-    if (r.op === "is") {
+    if (r.op === "has a value" || r.op === "is empty") {
+      where.push({ col: r.field, op: r.op === "has a value" ? "not_empty" : "empty" });
+    } else if (r.op === "is") {
       if (r.value.trim()) filter[r.field] = r.value.trim();
     } else if (r.op === "is any of") {
       const vals = r.values.filter((v) => v.trim());
@@ -237,7 +239,7 @@ export function SortBuilder({
       {rows.map((r, i) => (
         <div key={i} className="flex items-center gap-1.5">
           <FieldSelect
-            fields={fields}
+            fields={fields.filter((f) => f.type !== "secret")}
             value={r.field}
             onChange={(v) => set(i, { field: v })}
             allowBlank
@@ -298,7 +300,7 @@ export function FilterBuilder({
             <FieldSelect
               fields={fields}
               value={r.field}
-              onChange={(v) => set(i, { field: v })}
+              onChange={(v) => set(i, { field: v, op: fields.find((f) => f.name === v)?.type === "secret" ? "has a value" : "is", value: "", values: [] })}
               allowBlank
               blankLabel="Pick a field…"
               testid="filter-field"
@@ -309,13 +311,13 @@ export function FilterBuilder({
               value={r.op}
               onChange={(e) => set(i, { op: e.target.value as FilterOp })}
             >
-              {OPS.map((o) => (
+              {(field?.type === "secret" ? ["has a value", "is empty"] : OPS).map((o) => (
                 <option key={o} value={o}>
                   {o}
                 </option>
               ))}
             </select>
-            {r.op === "is any of" ? (
+            {field?.type === "secret" || r.op === "has a value" || r.op === "is empty" ? null : r.op === "is any of" ? (
               <select
                 multiple
                 data-testid="filter-value"
@@ -351,7 +353,7 @@ export function FilterBuilder({
                 className={smallCls}
                 data-testid="filter-value"
                 value={r.value}
-                placeholder="value"
+                placeholder={field?.type === "date" ? "Date, today+60 or year-start" : "value"}
                 onChange={(e) => set(i, { value: e.target.value })}
               />
             )}

@@ -21,6 +21,7 @@ import { gtinChecksumOk, isbn10ChecksumOk } from "@cobblr/platform-contract/iden
 import { STORE_CODE_NOTE } from "@cobblr/platform-contract/scan-copy";
 import { preferredFactsName, primaryBrand } from "./catalog-normalize.js";
 import { isBookSource, replayMiss, writeCatalogCassette } from "./catalog-replay.js";
+import { apiFetch } from "@cobblr/platform-contract/self-api";
 
 export interface BarcodeHit {
   source: "upcitemdb" | "openproductsfacts" | "go-upc" | string;
@@ -434,7 +435,7 @@ async function tryResolver(upc: string): Promise<ProviderResult> {
   // take ~20s; the scan route's own inline deadline owns responsiveness.
   const timer = setTimeout(() => controller.abort(), 25_000);
   try {
-    const res = await fetch(`${base}/lookup?upc=${encodeURIComponent(upc)}`, {
+    const res = await apiFetch(`${base}/lookup?upc=${encodeURIComponent(upc)}`, {
       headers: {
         accept: "application/json",
         authorization: `Bearer ${process.env.COBBLR_BARCODE_RESOLVER_TOKEN ?? ""}`,

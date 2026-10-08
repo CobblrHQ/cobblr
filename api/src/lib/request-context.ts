@@ -20,6 +20,9 @@ export interface RequestActor {
    *  is asking (served-title.ts, #3061). Absent for a token or an actor
    *  with no preference: the default format. */
   titlePref?: string | null;
+  /** Where a link this request makes starts (link-origin.ts), for a deep
+   *  helper with no request to hand: an invite Cobb makes through an action. */
+  linkOrigin?: string;
 }
 
 const storage = new AsyncLocalStorage<RequestActor>();

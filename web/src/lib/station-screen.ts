@@ -3,6 +3,7 @@
 // Pure where it can be, so the tests read the rule rather than the page.
 import { classifyScanPayload } from "./scanPayload";
 import { REPEAT_WINDOW_MS, type StationStockOp } from "@cobblr/platform-contract/station-screen";
+import { randomId } from "@cobblr/platform-contract/random-id";
 
 /** What one scan on a station is: a Cobblr label (its record opens), a code
  *  (looked up, then handed to the intake when nobody has it), or nothing a
@@ -94,5 +95,5 @@ export async function flushQueue(
 
 /** A request id the server's journal keys a move by. */
 export function newRequestId(): string {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return randomId();
 }

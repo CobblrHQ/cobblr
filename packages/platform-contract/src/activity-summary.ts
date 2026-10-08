@@ -50,6 +50,9 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "entry_created": "created",
   "entry_deleted": "deleted",
   "entry_updated": "updated",
+  "secret_field_revealed": "revealed",
+  "secret_field_copied": "copied",
+  "secrets_exported": "exported secrets from",
   "field_def_created": "created",
   "field_def_deleted": "deleted",
   "field_def_updated": "updated",
@@ -74,6 +77,10 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "item_deleted": "deleted",
   "job_created": "created",
   "instrument-reading_created": "recorded",
+  "instrument-control_configured": "configured control for",
+  "instrument-control_requested": "requested a supply change for",
+  "instrument-control_finished": "recorded a supply change result for",
+  "instrument-output_stopped": "turned off",
   "join_link_paused": "paused joining for",
   "join_link_resumed": "reopened joining for",
   "join_link_rotated": "replaced the join link for",
@@ -126,6 +133,7 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "order_make_started": "started making for",
   "order_return_recorded": "recorded a return for",
   "order_return_started": "started a return on",
+  "order_shipment_added": "added a parcel to",
   "order_shipped": "shipped",
   "order_status_changed": "moved the status of",
   "order_stock_taken": "took stock for",
@@ -174,6 +182,9 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "sandbox_carried": "brought into a real account",
   "sandbox_handed_over": "started a trial in",
   "scan_committed": "scanned in",
+  "send_file_confirmed": "confirmed receipt of",
+  "send_file_downloaded": "downloaded a send file for",
+  "send_file_imported": "imported a send file containing",
   "sessions_revoked": "signed out all sessions for",
   "sheet_import_partly_undone": "partly undid the import of",
   "sheet_import_undone": "undid the import of",
@@ -212,6 +223,7 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "wire_failed": "automation failed",
   "wire_fired": "ran an automation",
   "wire_updated": "updated",
+  "work-order_created": "created",
   "workspace_deletion_cancelled": "cancelled removal of",
   "workspace_deletion_scheduled": "scheduled removal of"
 };
@@ -269,7 +281,9 @@ export function activityPresentation(e: SummaryEntry, slug: string, viewerId?: s
   let template = e.action;
   let verb = ACTIVITY_VERBS[e.action] ?? "changed";
   let hidden = false;
-  if (e.action === "wire_fired" || e.action === "wire_failed") {
+  if (e.action === "secret_field_revealed" || e.action === "secret_field_copied") {
+    summary = `${actor} ${verb} the ${(text(d.field_label) ?? "secret").toLowerCase()}`;
+  } else if (e.action === "wire_fired" || e.action === "wire_failed") {
     const said = text(d.said);
     const label = text(d.action_label) ?? "An automation";
     hidden = e.action === "wire_fired" && (d.declined === true || d.changed === 0 || !said);
@@ -278,6 +292,10 @@ export function activityPresentation(e: SummaryEntry, slug: string, viewerId?: s
   } else if (e.action.startsWith("bundle_")) {
     summary = e.action === "bundle_installed" ? e.user_id || e.actor ? `${actor} added the ${title} collection` : `Set up for you: ${title}` : `${actor} ${ACTIVITY_VERBS[e.action] ?? "changed"} ${title}`;
     subject = { ...subject, href: `/w/${encodeURIComponent(slug)}/bundles` };
+  } else if (e.action === "send_file_downloaded" || e.action === "send_file_imported" || e.action === "send_file_confirmed") {
+    title = typeof d.items === "number" && Number.isInteger(d.items) && d.items > 0 ? `${d.items} ${d.items === 1 ? "item" : "items"}` : "items";
+    summary = `${actor} ${verb} ${title}`;
+    subject = {...subject, kind: null, href: `/w/${encodeURIComponent(slug)}/configuration/sharing`};
   } else if (e.action === "record_sent") {
     verb = "sent";
     summary = `Sent from ${text(d.from) ?? "another workspace"} by ${actor}: ${title}`;

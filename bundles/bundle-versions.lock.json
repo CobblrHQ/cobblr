@@ -72,8 +72,8 @@
     "hash": "fbefad65f76fd344c2f93b79f8895d65584825b1a277c54cd3d28417b457aa4e"
   },
   "cobblr.flagship.electronics-assembly": {
-    "version": "0.1.5",
-    "hash": "8327854a006ba213cd0080b8867aeb14b101f72c887cfb0b573ff9858d2354b8"
+    "version": "0.1.6",
+    "hash": "db82e6ba94a2fa842c63698f383b92db1bdb22f7134b681cf0544f62ea18b19e"
   },
   "cobblr.flagship.fasteners": {
     "version": "0.1.5",
@@ -136,8 +136,8 @@
     "hash": "16a0b4efe6e44e4ac8a88415f6036947e053d6d05a18aed9464385de91822e87"
   },
   "cobblr.flagship.subscriptions": {
-    "version": "0.2.7",
-    "hash": "cad1ae16b75e1ea81168567efa9bd3e2eee9736d6f68a047ae594639c738ea78"
+    "version": "0.3.3",
+    "hash": "5bcb698a0e5cad59b649fbe8b9e7c2853c957d00005c0cfef07b4345ad134b7a"
   },
   "cobblr.flagship.tea": {
     "version": "0.2.6",

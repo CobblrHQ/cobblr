@@ -16,7 +16,6 @@
 // three groceries with nowhere to live is not what they asked to bring.
 import { randomBytes } from "node:crypto";
 import { meta } from "../db/meta.js";
-import { env } from "../env.js";
 import { signSession } from "../auth/jwt.js";
 import { hashToken } from "./try-sandbox-token.js";
 import * as activity from "./activity.js";
@@ -25,6 +24,7 @@ import { captureBlueprint, type BlueprintManifestT } from "../routes/blueprint.j
 import { listKindsForOrg } from "./entities.js";
 import { fileIdFromRawPath } from "./file-paths.js";
 import { platform, type EntityKindRecord } from "@cobblr/platform-contract";
+import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
 /** Long enough to sign up on the other side and come back to a retry; short
  *  enough that a link found in a browser history a month later opens nothing. */
@@ -158,8 +158,8 @@ export async function carryPackage(orgId: string, userId: string): Promise<Carry
         continue;
       }
       try {
-        // lint-allow-detail-substitution: the kind's declared API endpoint, not a page route; loopback-ok: #5153 moves this onto selfFetch
-        const res = await fetch(`http://127.0.0.1:${env.API_PORT}${kindBase(org.slug, k)}${path.replace("{id}", encodeURIComponent(id))}`, {
+        // lint-allow-detail-substitution: the kind's declared API endpoint, not a page route
+        const res = await apiFetch(`${selfOrigin()}${kindBase(org.slug, k)}${path.replace("{id}", encodeURIComponent(id))}`, {
           headers: { Authorization: `Bearer ${session}` },
         });
         if (!res.ok) {

@@ -1,3 +1,5 @@
+import { SecretField } from "./SecretField";
+import { isMaskedSecret, isStoredSecret } from "@cobblr/platform-contract/secret-field";
 import { useMoneyCurrency } from "./MoneyCurrency";
 // FieldRenderer — renders an arbitrary field value using one of a
 // fixed set of built-in renderers, selected by the consumer (a
@@ -25,6 +27,7 @@ import { Markdown, stripMarkdown } from "./Markdown";
 import { QrCode } from "./QrCode";
 import { useUnits } from "./useUnits";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 interface Props {
   fieldName: string;
   value: unknown;
@@ -98,6 +101,10 @@ export function FieldRenderer({
   const clarifier = note?.trim() ? (
     <span className="text-muted dark:text-slate-400"> · {note.trim()}</span>
   ) : null;
+
+  if (type === "secret" || isMaskedSecret(value) || isStoredSecret(value)) {
+    return <SecretField value={value} field={fieldName} />;
+  }
 
   if (value === null || value === undefined || value === "") {
     // A clarifier with no value is worth showing: "· detroitaxle" tells you
@@ -198,7 +205,7 @@ function ColorSwatch({ value, size }: { value: unknown; size: "inline" | "block"
   // (Swatch.tsx); a value that names no colour shows as text.
   const spec = parseColour(value);
   if (!spec) return <span>{String(value)}</span>;
-  const text = spec.style === "solid" ? spec.colours[0]!.toUpperCase() : `${spec.style === "gradient" ? "Gradient" : "Segments"} · ${spec.colours.length} colours`;
+  const text = spec.style === "solid" ? spec.colours[0]!.toUpperCase() : `${spec.style === "gradient" ? "Gradient" : "Segments"} · ${countOf(spec.colours.length, "colour")}`;
   if (size === "block") {
     // Stacked over its code so it fills the card's image slot the way a
     // thumbnail would (~128×128 grid cell).

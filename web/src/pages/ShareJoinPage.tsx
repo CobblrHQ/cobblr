@@ -129,6 +129,7 @@ export function ShareJoinPage() {
         {preview.data?.from_host ? <> from <strong>{preview.data.from_host}</strong></> : null}. Accepting makes{" "}
         <strong>{who}'s workspace (shared)</strong> for you here: you can scan into it, see what is offered to you, and offer {who} things of yours.
       </p>
+      {preview.data?.for_email && <p className="mt-2 text-sm text-muted" data-testid="share-join-for">This invite is for {preview.data.for_email}. Accept it signed in with that address.</p>}
       <button
         type="button"
         data-testid="share-join-accept"

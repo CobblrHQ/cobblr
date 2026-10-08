@@ -6,6 +6,7 @@
 // `ai.registerEntitlementGuard` / `ai.registerProvider` pattern.
 
 import { featureOff } from "./features.js";
+import { noteRefusal } from "./guard-refusals.js";
 import type { RequestHandler } from "express";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import type {
@@ -153,7 +154,14 @@ export interface RequestGuardCtx {
 }
 export type RequestGuard = (
   ctx: RequestGuardCtx,
-) => Promise<{ allow: boolean; retryAfterSec?: number; reason?: string }>;
+) => Promise<{
+  allow: boolean;
+  retryAfterSec?: number;
+  reason?: string;
+  /** Which rule refused, and what its bucket is keyed on: logged and counted (guard-refusals.ts), never the address. */
+  rule?: string;
+  key?: "address" | "global";
+}>;
 
 let requestGuard: RequestGuard | null = null;
 export function registerRequestGuard(g: RequestGuard): void {
@@ -192,6 +200,14 @@ export function requestGuardMiddleware(): RequestHandler {
       userId: (req as { session?: { id?: string } }).session?.id,
     }).then((v) => {
       if (v.allow) return next();
+      // Every refusal is a log line and a count (/healthz rate_limited): the rule, what its
+      // bucket is keyed on, and the route's first segment, never the address or the rest of
+      // the path (a public route carries its token there). A guard that answered 429 silently
+      // made "no one was refused" a guess (2026-10-07).
+      const rule = ("rule" in v && v.rule) || "overlay";
+      const key = ("key" in v && v.key) || "unknown";
+      noteRefusal({ rule, key });
+      console.warn(`[request-guard] 429 rule=${rule} key=${key} route=${req.method} /${req.path.split("/")[1] ?? ""}`);
       if ("retryAfterSec" in v && v.retryAfterSec) res.setHeader("Retry-After", String(v.retryAfterSec));
       res.status(429).json({
         error: { code: "rate_limited", message: ("reason" in v && v.reason) || "Too many requests." },

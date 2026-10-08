@@ -17,6 +17,7 @@
 
 import { meta } from "../db/meta.js";
 import { resolveAudience, type AudienceRule, type MemberRow } from "./notification-audience-rule.js";
+import { ttlCache } from "../lib/ttl-cache.js";
 
 export { resolveAudience, type AudienceRule, type MemberRow };
 
@@ -25,27 +26,26 @@ export { resolveAudience, type AudienceRule, type MemberRow };
  *  and the page itself reads through the same cache so it never shows a
  *  stale value after its own save. */
 const RULES_TTL_MS = 60_000;
-const rulesCache = new Map<string, { at: number; rules: Map<string, AudienceRule> }>();
+const rulesCache = ttlCache<Map<string, AudienceRule>>(RULES_TTL_MS);
 
 export function forgetAudienceRules(orgId: string): void {
   rulesCache.delete(orgId);
 }
 
 export async function audienceRules(orgId: string): Promise<Map<string, AudienceRule>> {
-  const hit = rulesCache.get(orgId);
-  if (hit && Date.now() - hit.at < RULES_TTL_MS) return hit.rules;
-  const rows = await meta
-    .selectFrom("notification_audiences")
-    .select(["event_type", "mode", "user_ids"])
-    .where("org_id", "=", orgId)
-    .execute();
-  const rules = new Map<string, AudienceRule>();
-  for (const r of rows) {
-    const ids = Array.isArray(r.user_ids) ? (r.user_ids as unknown[]).filter((v): v is string => typeof v === "string") : [];
-    rules.set(r.event_type, { mode: r.mode, userIds: ids });
-  }
-  rulesCache.set(orgId, { at: Date.now(), rules });
-  return rules;
+  return rulesCache.get(orgId, async () => {
+    const rows = await meta
+      .selectFrom("notification_audiences")
+      .select(["event_type", "mode", "user_ids"])
+      .where("org_id", "=", orgId)
+      .execute();
+    const rules = new Map<string, AudienceRule>();
+    for (const r of rows) {
+      const ids = Array.isArray(r.user_ids) ? (r.user_ids as unknown[]).filter((v): v is string => typeof v === "string") : [];
+      rules.set(r.event_type, { mode: r.mode, userIds: ids });
+    }
+    return rules;
+  });
 }
 
 async function membersOf(orgId: string): Promise<MemberRow[]> {

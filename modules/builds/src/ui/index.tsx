@@ -2,7 +2,7 @@ import { BoardRevisionCard } from "./BoardRevisions.js";
 import type { BoardRevision } from "../api/board-revisions.js";
 export { BuildsApi } from "./api.js";
 export { BoardProjectPanel } from "./BoardRevisions.js";
-import { fieldNeed, FieldPack, RecordFormModal, CollectionHeader, ContributedDetailPanels, CustomFieldsPanel, useRecordInPath, headerButton, useToast, useConfirm, usePageTitle, SearchInput } from "@cobblr/platform-web";
+import { fieldNeed, FieldPack, RecordFormModal, CollectionHeader, ContributedDetailPanels, CustomFieldsPanel, useRecordInPath, headerButton, useToast, useConfirm, usePageTitle, SearchInput, NumberField } from "@cobblr/platform-web";
 // builds UI — the host mounts <BuildsUI /> at /builds. A grid of builds;
 // clicking one opens a detail MODAL with its bill-of-materials, a live
 // "can I build N right now / limiting component" readout, and a Build button
@@ -299,11 +299,10 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
                   aria-label="Output serial or lot number"
                   title="Tag this build's output with a serial/lot for traceability"
                 />
-                <input
-                  type="number"
+                <NumberField
                   min={1}
                   value={qty}
-                  onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))}
+                  onChange={(n) => setQty(Math.max(1, n || 1))}
                   className="w-16 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm"
                 />
                 <button
@@ -662,13 +661,12 @@ function AddComponentRow({
       {picked ? (
         <div className="flex items-center gap-2">
           <span className="flex-1 text-sm text-content dark:text-mortar-100">{picked.title}</span>
-          <input
-            type="number"
+          <NumberField
             min={1}
             value={qty}
-            onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))}
+            onChange={(n) => setQty(Math.max(1, n || 1))}
             className="w-16 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm"
-            aria-label="Quantity per build"
+            label="Quantity per build"
           />
           <span className="text-xs text-muted">per build</span>
           <button
@@ -936,6 +934,7 @@ function SchedulePanel({ api, builds }: { api: BuildsApi; builds: BuildSummary[]
   const lanes = sched.data?.lanes ?? [];
   const totalItems = lanes.reduce((n, l) => n + l.items.length, 0);
   const totalLate = lanes.reduce((n, l) => n + l.late_count, 0);
+  const ordinaryBuilds = builds.filter(b => !b.metadata?.assembly);
 
   return (
     <div className="rounded-lg border border-line dark:border-slate-700">
@@ -951,14 +950,14 @@ function SchedulePanel({ api, builds }: { api: BuildsApi; builds: BuildSummary[]
           </span>
         )}
         <div className="flex-1" />
-        <button type="button" onClick={() => setAdding((a) => !a)} className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-cobble-600 text-white">
+        {ordinaryBuilds.length > 0 && <button type="button" onClick={() => setAdding((a) => !a)} className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-cobble-600 text-white">
           <Plus size={12} /> Plan a build
-        </button>
+        </button>}
       </div>
 
       {!collapsed && (
         <div className="p-3 space-y-3">
-          {adding && <AddPlannedRow builds={builds} onAdd={(v) => addPlanned.mutate(v)} onCancel={() => setAdding(false)} />}
+          {adding && <AddPlannedRow builds={ordinaryBuilds} onAdd={(v) => addPlanned.mutate(v)} onCancel={() => setAdding(false)} />}
           {sched.isLoading && <div className="text-sm text-muted">Loading…</div>}
           {!sched.isLoading && totalItems === 0 && (
             <div className="text-sm text-muted italic">Nothing planned. Add est-minutes to a build's routing steps, then plan one here to see a projected timeline.</div>
@@ -997,10 +996,10 @@ function SchedulePanel({ api, builds }: { api: BuildsApi; builds: BuildSummary[]
                         <AlertTriangle size={10} /> late
                       </span>
                     )}
-                    <div className="flex items-center hover-reveal">
+                    {it.assembly_state ? <Link className="text-accent underline text-xs" to={`/builds/${it.build_id}`}>Assembly kit · {it.assembly_state}</Link> : <div className="flex items-center hover-reveal">
                       <button type="button" onClick={() => completePlanned.mutate(it.id)} className="text-slate-300 hover:text-green-600" title="Mark done" aria-label="Mark done"><Check size={14} /></button>
                       <button type="button" onClick={() => removePlanned.mutate(it.id)} className="text-slate-300 hover:text-red-500 ml-1" title="Remove" aria-label="Remove"><X size={14} /></button>
-                    </div>
+                    </div>}
                   </li>
                 ))}
               </ul>
@@ -1027,7 +1026,7 @@ function AddPlannedRow({ builds, onAdd, onCancel }: { builds: BuildSummary[]; on
       <select value={buildId} onChange={(e) => setBuildId(e.target.value)} className={`${inCls} flex-1 min-w-32`} aria-label="Build">
         {builds.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
       </select>
-      <input type="number" min={1} value={qty} onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))} className={`${inCls} w-14`} aria-label="Quantity" />
+      <NumberField min={1} value={qty} onChange={(n) => setQty(Math.max(1, n || 1))} className={`${inCls} w-14`} label="Quantity" />
       <label className="text-[11px] text-muted">due <input type="date" value={due} onChange={(e) => setDue(e.target.value)} className={`${inCls} ml-1`} aria-label="Due date" /></label>
       <input value={lane} onChange={(e) => setLane(e.target.value)} placeholder="lane (e.g. Laser)" className={`${inCls} w-28`} aria-label="Lane" />
       <button type="submit" disabled={!buildId} className="px-2 py-1 text-[11px] rounded bg-cobble-600 text-white disabled:opacity-50">Add</button>

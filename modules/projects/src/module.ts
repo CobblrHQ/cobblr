@@ -12,7 +12,7 @@ import { ENERGIES, PRIORITIES, PROJECT_STATUSES, TASK_STATUSES } from "./vocab.j
 
 export default defineModule({
   name: "projects",
-  version: "0.3.30",
+  version: "0.3.31",
   displayName: "Projects",
   description:
     "Projects and their tasks, with what each task is waiting for.",
@@ -122,6 +122,7 @@ export default defineModule({
       {
         group: "plan",
         id: "projects:blocked-by",
+        runBy: "member",
         examples: ["this is waiting on that", "cannot start until the part arrives"],
         undoable: true,
         label: "Mark as waiting on something",
@@ -139,6 +140,7 @@ export default defineModule({
       {
         group: "plan",
         id: "projects:unblock",
+        runBy: "member",
         examples: ["it is not waiting on that any more", "remove that dependency"],
         undoable: true,
         label: "Remove a dependency",
@@ -152,6 +154,7 @@ export default defineModule({
       {
         group: "plan",
         id: "projects:move-task",
+        runBy: "member",
         examples: ["put this task first", "move that one down", "do this one last"],
         undoable: true,
         label: "Move in the list",
@@ -179,6 +182,7 @@ export default defineModule({
         // NO-PHRASING: flips flags for whatever entity triggered it, so without an event there is nothing to act on
         group: "plan",
         id: "projects:set-dep-satisfied",
+        runBy: "member",
         label: "Mark task dependencies satisfied",
         description:
           "For every task dep referencing the triggering entity, flip satisfied = true",
@@ -196,6 +200,7 @@ export default defineModule({
         // NO-PHRASING: the way back for another action, run only from Undo
         group: "plan",
         id: "projects:reopen-task",
+        runBy: "member",
         internal: true,
         label: "Put a task back",
         description: "Internal, the inverse of marking a task done: puts its status and completion back to what they were. Runs from Undo on the card; not for direct use.",
@@ -213,6 +218,7 @@ export default defineModule({
         // NO-PHRASING: acts on the task named by the event; asked without one there is no task to mark
         group: "plan",
         id: "projects:mark-task-done",
+        runBy: "member",
         undoable: true,
         wireOnly: true,
         label: "Mark linked task done",

@@ -16,7 +16,9 @@ import { normalizeGrouping } from "@cobblr/platform-contract/grouped-list";
 
 import { toCsv } from "@cobblr/platform-contract/csv";
 import { columnLabel, isWritableCustomField, isWritableNativeField } from "@cobblr/platform-contract/record-columns";
-import { quantityWithUnit, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
+import { quantityWithUnit, SYSTEM_VIEWER, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
+import { currentVia } from "../lib/request-context.js";
+import { SecretFieldError, secretValuesForExport } from "./secret-fields.js";
 import { meta } from "../db/meta.js";
 import { hiddenFieldsFor, list, listAll, listKindsForOrg } from "./entities.js";
 import { resolveFieldDefsForKind } from "./field-defs.js";
@@ -67,6 +69,7 @@ export async function exportColumns(
   kind: string,
   viewer: { userId?: string; role?: string },
   only?: string[],
+  includeSecrets = false,
 ): Promise<ExportColumn[] | null> {
   const record = (await listKindsForOrg(orgId)).find((k) => k.id === kind);
   if (!record) return null;
@@ -104,7 +107,7 @@ export async function exportColumns(
     all.push({ label: byName.get(f.name)?.display_label || columnLabel(f.name), field: f.name, cell: money ? moneyCell(f.name, money) : field(f.name) });
   }
   for (const d of await resolveFieldDefsForKind(orgId, kind)) {
-    if (seen.has(d.name) || !isWritableCustomField(d) || !shown(d.name)) continue;
+    if ((!includeSecrets && d.type === "secret") || seen.has(d.name) || !isWritableCustomField(d) || !shown(d.name)) continue;
     seen.add(d.name);
     const money = moneyStorageOf(d);
     all.push({ label: d.display_label || columnLabel(d.name), field: d.name, cell: money ? moneyCell(d.name, money) : field(d.name) });
@@ -129,11 +132,23 @@ export async function exportEntitiesCsv(
   query: EntityListQuery,
   viewer: { userId?: string; role?: string },
   only?: string[],
+  options?: { includeSecrets?: boolean },
 ): Promise<EntityExport | null> {
-  const columns = await exportColumns(orgId, kind, viewer, only);
+  const includeSecrets = options?.includeSecrets === true;
+  // role-gate: exact: secret access is explicitly limited to owner/admin, creator or the configured field capability.
+  if (includeSecrets && ((viewer.role !== "owner" && viewer.role !== "admin") || currentVia()?.kind === "assistant" || currentVia()?.kind === "mcp")) throw new SecretFieldError(403, "secret_hidden", "Only an owner or admin can export secrets themselves.");
+  const columns = await exportColumns(orgId, kind, viewer, only, includeSecrets);
   if (!columns) return null;
   const record = (await listKindsForOrg(orgId)).find((k) => k.id === kind)!;
   const rows: unknown[][] = [];
+  const exported = new Set<string>();
+  // SYSTEM-READ: an explicitly requested owner/admin export reads encrypted values internally before writing its audited CSV.
+  const readViewer = includeSecrets ? SYSTEM_VIEWER : viewer;
+  const values = async (items: ResolvedEntity[]) => {
+    if (!includeSecrets) return items;
+    for (const row of items) exported.add(row.id);
+    return secretValuesForExport(orgId, kind, items, viewer);
+  };
   let complete = true;
   if (query.group_by && query.group_subtotals) {
     const cap = 5000;
@@ -152,7 +167,7 @@ export async function exportEntitiesCsv(
       return cell && weighted[c.field] ? `${cell} (total)` : cell;
     });
     while (rowCount < cap) {
-      const page = await list(orgId, kind, { ...query, group_offset: groupOffset, limit: 50 }, viewer);
+      const page = await list(orgId, kind, { ...query, group_offset: groupOffset, limit: 50 }, readViewer);
       grand = page.totals ?? {};
       weighted = page.weighted_by ?? {};
       const depth = Math.max(0, ...(page.groups ?? []).map((g) => g.keys.length));
@@ -172,14 +187,14 @@ export async function exportEntitiesCsv(
         if (depth === 2 && header) { parent = header; parentLabel = labels[0]!; }
         let offset = 0;
         while (items.length && rowCount < cap) {
-          for (const item of items) {
+          for (const item of await values(items.slice(0, cap - rowCount))) {
             if (rowCount >= cap) break;
             rows.push(columns.map((c) => c.cell(item)));
             rowCount++;
           }
           offset += items.length;
           if (offset >= group.count || rowCount >= cap) break;
-          const next = await list(orgId, kind, { ...query, group_keys: group.keys, offset, limit: 50 }, viewer);
+          const next = await list(orgId, kind, { ...query, group_keys: group.keys, offset, limit: 50 }, readViewer);
           items = next.items;
         }
         rows.push(subtotal(`Subtotal: ${labels.join(" / ")} (${group.count})`, group.totals));
@@ -192,11 +207,16 @@ export async function exportEntitiesCsv(
     if (parent) rows.push(subtotal(`Subtotal: ${parentLabel} (${parent.count})`, parent.totals));
     rows.push(subtotal("Grand total", grand));
   } else {
-    const got = await listAll(orgId, kind, query, viewer);
-    rows.push(...got.items.map((row) => columns.map((c) => c.cell(row))));
+    const got = await listAll(orgId, kind, query, readViewer);
+    rows.push(...(await values(got.items)).map((row) => columns.map((c) => c.cell(row))));
     complete = got.complete;
   }
   const noun = (record.display_name_plural || record.display_name || kind).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  if (includeSecrets) {
+    const { log } = await import("./activity.js");
+    const defs = await resolveFieldDefsForKind(orgId, kind);
+    await log({ orgId, userId: viewer.userId, action: "secrets_exported", ref: { module: null, entityType: "org", entityId: orgId }, diff: { name: record.display_name_plural || record.display_name, kind, fields: defs.filter((def) => def.type === "secret" && columns.some((column) => column.field === def.name)).map((def) => def.name), record_ids: [...exported], record_count: exported.size } });
+  }
   return {
     csv: toCsv(
       columns.map((c) => c.label),

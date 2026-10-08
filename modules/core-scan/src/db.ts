@@ -292,6 +292,7 @@ export interface CoreScanDB {
   core_scan_station_screens: CoreScanStationScreensTable;
   core_scan_station_moves: CoreScanStationMovesTable;
   core_scan_station_scans: CoreScanStationScansTable;
+  core_scan_station_actions: CoreScanStationActionsTable;
 }
 
 /** A Station's settings (#4640, migrations/0037). */
@@ -313,6 +314,20 @@ export interface CoreScanStationMovesTable {
   delta: ColumnType<string, number, number>;
   qty: ColumnType<string | null, number | null, number | null>;
   note: string | null;
+  undone_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
+  created_at: Generated<Date>;
+}
+
+/** A record action a Station ran, with its way back (#4640, migrations/0038). */
+export interface CoreScanStationActionsTable {
+  address: string;
+  request_id: string;
+  action_id: string;
+  kind: string;
+  entity_id: string;
+  label: string;
+  ok: boolean | null;
+  undo: ColumnType<unknown, string | null, string | null>;
   undone_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
   created_at: Generated<Date>;
 }

@@ -154,17 +154,28 @@ async function deliver(link: ShareLinkRow, ops: ShareOp[]): Promise<void> {
   throw new ShareDeliveryError(said?.error?.message ?? `the other Cobblr answered ${res.status}`);
 }
 
+/** Links a flush was asked for while one was running, in this process. The
+ *  running flush looks here before it lets go: an op enqueued after it last
+ *  read the outbox, whose own flush found the link busy and skipped, waited
+ *  for the next loop tick (a minute and more on a loaded box: #5340, #5391). */
+const flushAgain = new Set<string>();
+
 /** Send everything waiting for one link, oldest first, in batches, stopping at
  *  the first failure. Safe to call any time from any process: one flush per
  *  link at a time. */
 export async function flushShareLink(linkId: string): Promise<{ sent: number; error: string | null; busy: boolean }> {
   let sent = 0;
   let error: string | null = null;
+  // Asked for BEFORE trying the lock: a holder about to let go then sees it.
+  flushAgain.add(linkId);
   const run = await runExclusive(`share.flush.${linkId}`, async () => {
     const link = await getShareLink(linkId);
-    if (!link || link.status === "pending") return;
+    if (!link || link.status === "pending") {
+      flushAgain.delete(linkId);
+      return;
+    }
     const ended = link.status === "revoked";
-    for (;;) {
+    while (flushAgain.delete(linkId)) for (;;) {
       const due = await meta
         .selectFrom("share_outbox")
         .select(["id", "key", "op", "payload", "attempts", "next_at"])
@@ -200,10 +211,20 @@ export async function flushShareLink(linkId: string): Promise<{ sent: number; er
           await meta.updateTable("share_links").set({ status: "revoked", revoked_at: new Date() }).where("id", "=", linkId).execute();
           await meta.updateTable("share_outbox").set({ sent_at: new Date() }).where("link_id", "=", linkId).where("sent_at", "is", null).execute();
         }
+        // A failure stops this flush; what is left retries on its own schedule.
+        flushAgain.delete(linkId);
         break;
       }
     }
   });
+  // The holder may have made its last check just before this asked: one
+  // look a moment later, only if nobody has answered the ask since.
+  if (!run.ran) {
+    const later = setTimeout(() => {
+      if (flushAgain.has(linkId)) void flushShareLink(linkId).catch((err) => console.error(`[share] flush of ${linkId} failed:`, err));
+    }, 1_000);
+    later.unref?.();
+  }
   return { sent, error, busy: !run.ran };
 }
 

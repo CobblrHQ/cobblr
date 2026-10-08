@@ -24,6 +24,7 @@ import { meta } from "../db/meta.js";
 import { render } from "./templates.js";
 import type { ResolvedEntity } from "@cobblr/platform-contract";
 import { coerceMetadata, templateDataOf } from "@cobblr/platform-contract/entity-metadata";
+import { ttlCache } from "../lib/ttl-cache.js";
 
 /** A provider returns a namespaced bag of related/aggregated data for one
  *  entity. Referenced in templates as {{<name>.<key>}}. Resolution is
@@ -58,7 +59,7 @@ interface ComputedDef {
 // reflecting a field-def edit within a few seconds. clearComputedDefsCache
 // is called on field-def writes for immediate freshness.
 const TTL_MS = 5_000;
-const cache = new Map<string, { at: number; defs: ComputedDef[] }>();
+const cache = ttlCache<ComputedDef[]>(TTL_MS);
 
 export function clearComputedDefsCache(): void {
   cache.clear();
@@ -83,31 +84,30 @@ async function computedDefsFor(orgId: string, kind: string): Promise<ComputedDef
 
 async function loadComputedDefsFor(orgId: string, kind: string): Promise<ComputedDef[]> {
   const key = `${orgId}:${kind}`;
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.defs;
-  let defs: ComputedDef[] = [];
-  try {
-    const rows = await meta
-      .selectFrom("module_field_defs")
-      .select(["name", "template"])
-      .where("org_id", "=", orgId)
-      .where("entity_kind", "=", kind)
-      .where("type", "=", "computed")
-      .where("template", "is not", null)
-      .execute();
-    defs = rows
-      .filter((r) => r.template)
-      .map((r) => ({
-        name: r.name,
-        template: r.template as string,
-        refs: topRefs(r.template as string),
-      }));
-  } catch (err) {
-    console.error(`[computed-fields] defs query for ${key} failed:`, (err as Error).message);
-    defs = [];
-  }
-  cache.set(key, { at: Date.now(), defs });
-  return defs;
+  return cache.get(key, async () => {
+    let defs: ComputedDef[] = [];
+    try {
+      const rows = await meta
+        .selectFrom("module_field_defs")
+        .select(["name", "template"])
+        .where("org_id", "=", orgId)
+        .where("entity_kind", "=", kind)
+        .where("type", "=", "computed")
+        .where("template", "is not", null)
+        .execute();
+      defs = rows
+        .filter((r) => r.template)
+        .map((r) => ({
+          name: r.name,
+          template: r.template as string,
+          refs: topRefs(r.template as string),
+        }));
+    } catch (err) {
+      console.error(`[computed-fields] defs query for ${key} failed:`, (err as Error).message);
+      defs = [];
+    }
+    return defs;
+  });
 }
 
 /** Inject computed-field values into a resolved entity. No-op (and no DB

@@ -18,6 +18,7 @@ import { displayName } from "@cobblr/platform-contract/display-identity";
 import { filedQuantityOf } from "./filed-quantity.js";
 import type { ScanResolverTable } from "@cobblr/platform-contract/scan-triage";
 import { filingDestination, type DestinationRow } from "./destination.js";
+import { apiFetch } from "@cobblr/platform-contract/self-api";
 
 export interface FilingCandidate {
   module?: string;
@@ -77,7 +78,7 @@ export class BundleInstaller {
       out = { ok: false, reason: `needs the ${label} table, which an owner or admin can install` };
     } else {
       try {
-        const r = await fetch(`${this.door.baseUrl}/api/v1/orgs/${this.door.slug}/quickstart/materialize`, {
+        const r = await apiFetch(`${this.door.baseUrl}/api/v1/orgs/${this.door.slug}/quickstart/materialize`, {
           method: "POST",
           headers: this.door.authHeaders,
           // Filing implies this install; it never brings back an app the
@@ -106,7 +107,7 @@ export class BundleInstaller {
    *  deployment; null when the list could not be read (then nothing is
    *  refused on its account). */
   async moduleState(module: string): Promise<{ state: "enabled" | "available" | "absent"; label: string } | null> {
-    this.modules ??= fetch(`${this.door.baseUrl}/api/v1/orgs/${this.door.slug}/modules`, { headers: this.door.authHeaders })
+    this.modules ??= apiFetch(`${this.door.baseUrl}/api/v1/orgs/${this.door.slug}/modules`, { headers: this.door.authHeaders })
       .then(async (r) => (r.ok ? ((await r.json()) as { items: Array<{ name: string; displayName?: string; enabled?: boolean }> }).items : null))
       .catch(() => null);
     const list = await this.modules;
@@ -120,7 +121,7 @@ export class BundleInstaller {
   async enableModule(module: string, label: string): Promise<{ ok: true } | { ok: false; reason: string }> {
     if (!this.door.canInstall) return { ok: false, reason: `goes to ${label}, which an owner or admin can turn on` };
     try {
-      const r = await fetch(`${this.door.baseUrl}/api/v1/orgs/${this.door.slug}/modules/${module}/enable`, { method: "POST", headers: this.door.authHeaders, body: "{}" });
+      const r = await apiFetch(`${this.door.baseUrl}/api/v1/orgs/${this.door.slug}/modules/${module}/enable`, { method: "POST", headers: this.door.authHeaders, body: "{}" });
       if (!r.ok) throw new Error(`enable ${r.status}`);
       this.modules = null;
       this.enabled.push({ module, label });
@@ -217,7 +218,7 @@ export async function fileThroughConfirm(
     instance = got.instance ?? undefined;
   }
   try {
-    const r = await fetch(`${door.baseUrl}/api/v1/orgs/${door.slug}/modules/core-scan/inbox/${row.id}/confirm`, {
+    const r = await apiFetch(`${door.baseUrl}/api/v1/orgs/${door.slug}/modules/core-scan/inbox/${row.id}/confirm`, {
       method: "POST",
       headers: door.authHeaders,
       body: JSON.stringify({
@@ -256,7 +257,7 @@ export async function fileThroughConfirm(
 
 async function addToRecord(door: FilingDoor, row: FilingRow, to: { kind: string; id: string; instance: string | null }, qty: number): Promise<FilingOutcome> {
   try {
-    const r = await fetch(`${door.baseUrl}/api/v1/orgs/${door.slug}/modules/core-scan/inbox/${row.id}/attach`, {
+    const r = await apiFetch(`${door.baseUrl}/api/v1/orgs/${door.slug}/modules/core-scan/inbox/${row.id}/attach`, {
       method: "POST",
       headers: door.authHeaders,
       body: JSON.stringify({ kind: to.kind, entity_id: to.id, ...(to.instance ? { instance: to.instance } : {}), mode: "add-qty", qty }),

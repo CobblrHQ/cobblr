@@ -8,6 +8,8 @@
 // Tool `mode` is what encodes that difference; descriptions are written for
 // the MODEL (guidance on when to reach for each tool lives here, not in
 // per-consumer prompts).
+// Secret reveal and copy stay outside this registry: only a person's explicit
+// audited action may read them, and their values must never enter model context.
 //
 // Adding a capability = one entry here → both surfaces get it. Never add a
 // tool to a consumer directly.
@@ -28,6 +30,7 @@ import { asMeasure, measureMatches, measureTokens, type Measure } from "@cobblr/
 import { CURSOR_PARAM, decodeCursor, pageEnd, type Paging } from "./paging.js";
 import { pairingResultPresentation } from "@cobblr/platform-contract/pairing-presentation";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 export type ToolMode = "read" | "write";
 
 interface WorkspaceToolBase {
@@ -169,7 +172,7 @@ function severalMatch(items: unknown[], q: string): { several_match: string } | 
     return String(r.title ?? f.name ?? r.name ?? "");
   });
   return {
-    several_match: `${named.length} records match "${q}" by name (${names.join("; ")}). Before stating a quantity, place or detail, ask which one the person means, or answer about each by name; never report on one as if it were the only one.`,
+    several_match: `${countOf(named.length, "record")} match "${q}" by name (${names.join("; ")}). Before stating a quantity, place or detail, ask which one the person means, or answer about each by name; never report on one as if it were the only one.`,
   };
 }
 
@@ -304,7 +307,7 @@ async function scanByText(
   const end = offset + items.length;
   const notes: string[] = [];
   if (end < hits.length) notes.push(`PARTIAL: records ${offset + 1}-${end} of ${hits.length}. Do not count, rank, or say "none" from this page; call again with cursor = next_cursor for the rest, or use count_records for exact totals.`);
-  if (!walked.complete) notes.push(`scanned the first ${walked.items.length} of ${walked.total} records only`);
+  if (!walked.complete) notes.push(`scanned the first ${walked.items.length} of ${countOf(walked.total, "record")} only`);
   const body = {
     shown: items.length,
     total: hits.length,
@@ -341,7 +344,7 @@ export function pageWithTruth(body: unknown, limit: number, offset = 0): unknown
   const partial = offset > 0 || (known ? shown < (total as number) : shown === limit);
   const range = `records ${offset + 1}-${offset + shown}`;
   const extent = known
-    ? offset > 0 ? `${range} of ${total}` : `${shown} of ${total} records`
+    ? offset > 0 ? `${range} of ${total}` : `${shown} of ${countOf(total ?? 0, "record")}`
     : offset > 0 ? `${range}, there may be more` : `the first ${shown} records, there may be more`;
   return {
     shown,
@@ -986,13 +989,14 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_records",
     description:
-      "List one kind, optionally by text. Read the user’s actual records before answering questions about their data.",
+      "List one kind before answering what the person has. Filter by text or secret presence.",
     mode: "read",
     paging: { by: "cursor" },
     params: {
       kind: z.string().describe("Entity kind id, e.g. inventory:part (see list_record_kinds)"),
       q: z.string().optional().describe(LIST_Q_MEANS),
-      group_by: z.union([z.string(), z.array(z.object({ field: z.string(), bucket: z.enum(["month", "quarter", "year"]).optional() })).max(2)]).optional().describe("Group by one or two fields: full counts, currency-separated subtotals and totals, plus bounded record pages."),
+      presence: z.record(z.enum(["empty", "has_value"])).optional().describe("Secret field keys: empty or has_value. Never values."),
+      group_by: z.union([z.string(), z.array(z.object({ field: z.string(), bucket: z.enum(["month", "quarter", "year"]).optional() })).max(2)]).optional().describe("Group by one or two fields with full counts, numeric totals by currency and a bounded page per group."),
       group_offset: z.number().int().min(0).optional().describe("Skip this many groups, default 0."),
       group_keys: z.array(z.string().nullable()).optional().describe("Read a page of one exact group using the keys returned by grouping."),
       offset: z.number().int().min(0).optional().describe("With group_keys, skip this many records within that group."),
@@ -1009,12 +1013,13 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         if (args.q) qs.set("q", String(args.q));
         if (args.group_keys) qs.set("group_keys", JSON.stringify(args.group_keys));
         if (args.include_retired) qs.set("include_retired", "1");
+        for (const [field, value] of Object.entries((args.presence ?? {}) as Record<string, string>)) qs.set(`presence[${field}]`, value);
         const grouped = await api.request("GET", `/entities/${encodeURIComponent(String(args.kind))}?${qs}`);
         if (grouped.status >= 400) return toolFail(apiErrorMessage(grouped, "Couldn't group this collection."));
         const refusedGroup = listRefusal(grouped.body, String(args.kind));
         return refusedGroup ? toolFail(refusedGroup) : toolOk(grouped.body);
       }
-      const cur = decodeCursor<{ k: string; o: number; q?: string; r?: boolean; s?: boolean }>("list_records", args.cursor);
+      const cur = decodeCursor<{ k: string; o: number; q?: string; r?: boolean; s?: boolean; p?: Record<string, "empty" | "has_value"> }>("list_records", args.cursor);
       if (!cur.ok) return toolFail(cur.error);
       const st = cur.state;
       const kind = st?.k ?? String(args.kind ?? "");
@@ -1025,18 +1030,21 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       const qText = st ? (st.q ?? "") : typeof args.q === "string" ? args.q.trim() : "";
       const includeRetired = st ? st.r === true : args.include_retired === true;
       const offset = st?.o ?? 0;
-      const state = (o: number, s?: boolean) => ({ k: kind, o, ...(qText ? { q: qText } : {}), ...(includeRetired ? { r: true } : {}), ...(s ? { s: true } : {}) });
+      const presence = st ? st.p ?? {} : (args.presence ?? {}) as Record<string, "empty" | "has_value">;
+      const presenceQuery = new URLSearchParams();
+      for (const [field, value] of Object.entries(presence)) presenceQuery.set(`presence[${field}]`, value);
+      const state = (o: number, s?: boolean) => ({ k: kind, o, ...(Object.keys(presence).length ? { p: presence } : {}), ...(qText ? { q: qText } : {}), ...(includeRetired ? { r: true } : {}), ...(s ? { s: true } : {}) });
       const kinds = () => fetchKinds(api).catch(() => []);
       if (!st?.s) {
         const q = qText ? `&q=${encodeURIComponent(qText)}` : "";
         const retired = includeRetired ? "&include_retired=1" : "";
-        const res = await api.request("GET", `/entities/${encodeURIComponent(kind)}?limit=${limit}&offset=${offset}${q}${retired}`);
+        const res = await api.request("GET", `/entities/${encodeURIComponent(kind)}?limit=${limit}&offset=${offset}${q}${retired}${presenceQuery.size ? "&" + presenceQuery : ""}`);
         if (res.status >= 400) return toolFail(apiErrorMessage(res, `couldn't list ${kind}`));
         const refused = listRefusal(res.body, kind);
         if (refused) return toolFail(refused);
         const page = pageWithTruth(res.body, limit, offset) as { items?: unknown[]; total?: number };
         const shown = Array.isArray(page.items) ? page.items.length : 0;
-        if (!(qText && offset === 0 && shown === 0)) {
+        if (presenceQuery.size || !(qText && offset === 0 && shown === 0)) {
           const end = offset + shown;
           const more = typeof page.total === "number" ? end < page.total : shown === limit;
           const shownPage = qText && Array.isArray(page.items) ? { ...page, items: labelMatches(page.items, qText) } : page;
@@ -1163,7 +1171,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   },
   {
     name: "get_record",
-    description: "Fetch one record by kind + id (fields are projected by the caller's read permissions).",
+    description: "Fetch one record by kind + id. Secrets report presence only; the person must use Reveal on the record.",
     mode: "read",
     paging: { by: "one-call", why: "one record by its id, with all its fields" },
     params: {
@@ -1536,6 +1544,19 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     },
   },
   {
+    name: "get_my_notification_delivery",
+    description:
+      "Why a notification did or did not reach the person's phone or computer: their push devices with each one's last delivery or failure, what is worth a push (threshold), quiet hours and what they hold, and what this workspace's latest notifications were sent by. Test or remove a device with invoke_action: platform:test-push-device, platform:remove-push-device.",
+    mode: "read",
+    paging: { by: "one-call", why: "one person's few devices and the last ten notifications, a fixed-size answer" },
+    params: {},
+    execute: async (api) => {
+      const res = await api.request("GET", "/my-push");
+      if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't read your notification delivery"));
+      return toolOk(res.body);
+    },
+  },
+  {
     name: "list_activity",
     description:
       "History, newest first: who changed what and when. Filter entity_kind and entity_id for one record; history_entry_id selects an edit for platform:restore-record-version.",
@@ -1871,7 +1892,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         items: page.map((it) => summarizeScanItem(it, batches)),
         ...(typeof total === "number" ? { total_in_facet: total } : {}),
         matched: matched.length,
-        ...(scannedAll ? {} : { note: `searched the newest ${all.length} captures only; narrow the facet to reach older ones` }),
+        ...(scannedAll ? {} : { note: `searched the newest ${countOf(all.length, "capture")} only; narrow the facet to reach older ones` }),
         ...pageEnd("list_scan_inbox", end < matched.length ? { f: facet, l: limit, q, o: end } : null),
       });
     },

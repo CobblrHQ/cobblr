@@ -11,6 +11,8 @@
 import { Kysely } from "kysely";
 import { meta } from "../db/meta.js";
 import { runExclusive } from "./exclusive.js";
+import { pushSettingsFor } from "./push-delivery.js";
+import { inQuietHours } from "./push-policy.js";
 import { REGISTRY } from "./notifications.js";
 import {
   composeDigest,
@@ -189,6 +191,17 @@ export async function deliveryTick(
     // A null window means the row was removed while mail was queued: everything
     // is due now. Turning a window off must not strand a backlog.
     const groups = planDeliveryGroups((win as DeliveryWindow | undefined) ?? null, classes, now);
+
+    // Pushes held for quiet hours (#5267) wait for them to end, whatever the
+    // window says; then they go as one push.
+    if (channel === "browser_push") {
+      try {
+        if (inQuietHours(await pushSettingsFor(user_id), now)) continue;
+      } catch (err) {
+        console.error(`[notify] push settings read for ${user_id} failed:`, (err as Error).message);
+        continue;
+      }
+    }
 
     for (const group of groups) {
       if (!group.due) continue;

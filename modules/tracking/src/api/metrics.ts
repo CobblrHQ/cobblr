@@ -8,6 +8,7 @@
 //   GET    /measurements/:id         one data point
 //   DELETE /measurements/:id         remove a data point
 
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
@@ -196,7 +197,7 @@ const MeasurementCreate = z.object({
 metricsRouter.post(
   "/metrics/:id/measurements",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "member")) return;
+    if (!(await requireCapability(req, res, "tracking:log-measurement"))) return;
     const parsed = MeasurementCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);

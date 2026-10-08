@@ -71,6 +71,9 @@ export interface PlatformActionDecl {
    * owner-only action whose prose omits "owner only" can no longer slip through.
    */
   min_role: OrgRoleName | "grantable";
+  /** Who runs it without a grant, when a route does the same thing for them
+   *  (#5170, action-gates.ts). min_role stays the floor below which nobody may. */
+  run_by?: Exclude<OrgRoleName, "guest"> | "requester";
   // "list" is a JSON array of values, the way core-locations:reorder takes its
   // ids. The kernel's own actions had never needed one, so this local type had
   // never grown it.
@@ -103,7 +106,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /configuration/recently-deleted
     group: "lifecycle",
-    id: "platform:restore-deleted-record", label: "Restore a deleted record", icon: "history",
+    id: "platform:restore-deleted-record", run_by: "member", label: "Restore a deleted record", icon: "history",
     description: "Bring a record from Recently deleted back with its original id and contents. Deleted records are kept for 30 days. Args: kind and entity_id.",
     scope: "workspace", min_role: "member", invoke_handler: "platform.restore-deleted-record", user_invokable: true, undoable: false,
     args_schema: { kind: { label: "Record kind", type: "text", required: true }, entity_id: { label: "Record id", type: "text", required: true } },
@@ -337,7 +340,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /assets (any record's choice field: typing a new value)
     group: "more",
-    id: "platform:learn-choice",
+    id: "platform:learn-choice", run_by: "member",
     min_role: "member",
     label: "Remember a new choice",
     description:
@@ -359,7 +362,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /assets (the Undo on "remembered as a choice")
     group: "more",
-    id: "platform:forget-choice",
+    id: "platform:forget-choice", run_by: "member",
     min_role: "member",
     label: "Forget a choice",
     description: "Take a value back off a field's choices: the undo of remembering one. Values already recorded stay as they are.",
@@ -604,7 +607,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /machines
-    group: "share", id: "platform:send-records", min_role: "guest",
+    group: "share", id: "platform:send-records", run_by: "member", min_role: "guest",
     label: "Send to another workspace", description: "Copy or move records into another workspace of your own. Preview the mapping first; complete items file directly and items needing a decision wait in the inbox. Read the records and send their real ids.",
     icon: "send", scope: "workspace", invoke_handler: "platform.send-records", user_invokable: true, undoable: false,
     args_schema: {
@@ -626,10 +629,71 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /machines
-    group: "share", id: "platform:undo-send", min_role: "guest", label: "Undo a workspace send",
+    group: "share", id: "platform:undo-send", run_by: "member", min_role: "guest", label: "Undo a workspace send",
     description: "Remove a received copy and restore the source of your own workspace send.",
     icon: "undo", scope: "workspace", invoke_handler: "platform.undo-send", user_invokable: true, undoable: false,
     args_schema: { id: { label: "Send id, from list_actions send_targets (sends)", type: "text", required: true } }, version: "0.1.1",
+  },
+  {
+    // UI-SCREEN: /scan
+    group: "share", id: "platform:export-send-file", run_by: "member", min_role: "guest",
+    label: 'Download a send file', description: 'Prepare a versioned send file with original documents for another Cobblr. Download the returned link. A Move keeps its source until import confirmation.',
+    icon: "send", scope: "workspace", invoke_handler: "platform.export-send-file", user_invokable: true, undoable: false,
+    args_schema: {
+      entity_kind: {label: 'Record kind',type: 'text',required: true},
+      ids: {label: 'Record ids',type: 'list',required: true},
+      mode: {label: 'Copy or move',type: 'text',required: true},
+      request_id: {label: 'Stable file request id',type: 'text'},
+      dry_run: {label: 'Preview only',type: 'boolean'}
+    }, version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /scan
+    group: "share", id: "platform:import-send-file", run_by: "member", min_role: "member",
+    label: 'Import a send file', description: 'Preview the receiving collection and every field before importing an uploaded send file. Complete items file directly; decisions stay in the scan inbox. Returns a confirmation file.',
+    icon: "send", scope: "workspace", invoke_handler: "platform.import-send-file", user_invokable: true, undoable: false,
+    args_schema: {
+      file_id: {label: 'Uploaded send file id',type: 'text',required: true},
+      collection: {label: 'Receiving collection kind',type: 'text'},
+      field_map: {label: 'Field label to target field name, null to drop',type: 'json'},
+      create_matching: {label: 'Create a matching collection',type: 'boolean'},
+      add_fields: {label: 'Source field labels to add',type: 'list'},
+      placement: {label: 'Use unplaced or choose a location',type: 'text'},
+      location: {label: 'Receiving location id',type: 'text'},
+      duplicate: {label: 'Update or another copy',type: 'text'},
+      request_id: {label: 'Stable import request id',type: 'text'},
+      dry_run: {label: 'Preview only',type: 'boolean'}
+    }, version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /scan
+    group: "share", id: "platform:confirm-send-file", run_by: "member", min_role: "guest",
+    label: 'Confirm an imported send file', description: 'Apply an import confirmation on the source Cobblr. A Move removes only unchanged source items after the complete import is confirmed.',
+    icon: "send", scope: "workspace", invoke_handler: "platform.confirm-send-file", user_invokable: true, undoable: false,
+    args_schema: {
+      file_id: {label: 'Uploaded import confirmation file id',type: 'text',required: true},
+      dry_run: {label: 'Preview only',type: 'boolean'}
+    }, version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /scan
+    group: "share", id: "platform:undo-send-file-import", run_by: "member", min_role: "member",
+    label: 'Undo a send file import', description: 'Remove imported items here, keeping later edits safe. Returns a return file offering a separate source restore for a Move.',
+    icon: "send", scope: "workspace", invoke_handler: "platform.undo-send-file-import", user_invokable: true, undoable: false,
+    args_schema: {
+      id: {label: 'Import id',type: 'text',required: true},
+      dry_run: {label: 'Preview only',type: 'boolean'}
+    }, version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /scan
+    group: "share", id: "platform:restore-send-file-source", run_by: "member", min_role: "member",
+    label: 'Restore the source of a file Move', description: 'Apply a return file on the source Cobblr after the target import was undone. Restores only the source of that confirmed Move.',
+    icon: "send", scope: "workspace", invoke_handler: "platform.restore-send-file-source", user_invokable: true, undoable: false,
+    args_schema: {
+      file_id: {label: 'Uploaded return file id',type: 'text',required: true},
+      dry_run: {label: 'Preview only',type: 'boolean'}
+    }, version: "0.1.0",
   },
   {
     // UI-SCREEN: /configuration/sharing (and every record page: "Give to…")
@@ -660,7 +724,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     min_role: "grantable",
     label: "Share with someone",
     description:
-      "Put records in a share with a person this workspace is shared with, so a copy of each appears in their shared workspace and keeps in step. Records already shared with them are left as they are. Name the person (with) as their name or the share's id. Read the records first and pass their real ids and their kind.",
+      "Put records in a share with a person, so a copy of each appears in their shared workspace and keeps in step. Records already shared with them are left as they are. Name the person (with) as their name or the share's id, or as an email address to invite someone new (owner or admin): the invite is emailed when this Cobblr can send mail, works only for that address, and the summary says whether it was emailed or gives the link to send. For a whole list, pass collection: true and entity_kind from list_record_kinds, without ids. Otherwise read the records first and pass their real ids and their kind.",
     icon: "share-2",
     scope: "workspace",
     invoke_handler: "platform.share-with",
@@ -668,13 +732,14 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     // it reaches another person's workspace, who may already have seen it:
     // platform:stop-sharing takes the copies back, but an assistant asks first
     undoable: false,
-    examples: ["share the Voron with Vince", "let Sam see these three drills"],
+    examples: ["share the Voron with Vince", "let Sam see these three drills", "share 3D Printers with sam@example.com"],
     args_schema: {
       entity_kind: { label: "The kind of record", type: "text", required: true },
-      ids: { label: "The records, by id (read them first)", type: "list", required: true },
-      with: { label: "Who to share them with: the person's name, or the share's id", type: "text", required: true },
+      ids: { label: "The records, by id (read them first)", type: "list" },
+      collection: { label: "Share the whole collection, including future records (owner or admin)", type: "boolean" },
+      with: { label: "Who to share them with: the person's name, the share's id, or an email address to invite someone new", type: "text", required: true },
     },
-    version: "0.1.0",
+    version: "0.3.0",
   },
   {
     // UI-SCREEN: /machines (and every record page: "Shared with <them>", Stop)
@@ -683,7 +748,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     min_role: "grantable",
     label: "Stop sharing with someone",
     description:
-      "Take records out of a share with a person: their copies leave that person's shared workspace. A record a share brings in by a rule (a whole collection, or lent to them) is kept out by name. Name the person (with) as their name or the share's id. Read the records first and pass their real ids and their kind.",
+      "Take records out of a share with a person: their copies leave that person's shared workspace. A record a share brings in by a rule (a whole collection, or lent to them) is kept out by name. Name the person (with) as their name or the share's id. For a whole list, pass collection: true and entity_kind from list_record_kinds, without ids, to remove only its whole-collection rule; records shared by other rules or picks stay shared. Otherwise read the records first and pass their real ids and their kind.",
     icon: "share-2",
     scope: "workspace",
     invoke_handler: "platform.stop-sharing",
@@ -694,8 +759,54 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     examples: ["stop sharing the Voron with Vince"],
     args_schema: {
       entity_kind: { label: "The kind of record", type: "text", required: true },
-      ids: { label: "The records, by id (read them first)", type: "list", required: true },
+      ids: { label: "The records, by id (read them first)", type: "list" },
+      collection: { label: "Remove the whole-collection rule (owner or admin)", type: "boolean" },
       with: { label: "Who to stop sharing them with: the person's name, or the share's id", type: "text", required: true },
+    },
+    version: "0.2.0",
+  },
+  {
+    // UI-SCREEN: /me/communication (the device list's Send a test)
+    group: "more",
+    id: "platform:test-push-device",
+    // Anyone, on their own device only: the handler finds the device by the caller.
+    min_role: "guest",
+    label: "Send a test notification to a device",
+    description:
+      "Send a test push to one of your own phones or computers, which proves the whole path: this server's key, the push service, the device and its permission. Says whether it arrived and, if not, why. Device ids come from the notification delivery read.",
+    icon: "bell",
+    scope: "workspace",
+    invoke_handler: "platform.test-push-device",
+    // Anyone in the workspace, on their own devices: the page gates it the same way.
+    run_by: "member",
+    user_invokable: true,
+    // A push, once sent, is not taken back; the assistant asks the person first.
+    undoable: false,
+    examples: ["send a test notification to my iPhone", "check my phone gets Cobblr notifications"],
+    args_schema: {
+      device_id: { label: "The device, by id", type: "text", required: true },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /me/communication (the device list's Remove)
+    group: "more",
+    id: "platform:remove-push-device",
+    min_role: "guest",
+    label: "Stop notifications on a device",
+    description:
+      "Remove one of your own phones or computers from the devices Cobblr sends notifications to. It is turned on again on the device itself. Device ids come from the notification delivery read.",
+    icon: "bell-off",
+    scope: "workspace",
+    invoke_handler: "platform.remove-push-device",
+    // Anyone in the workspace, on their own devices: the page gates it the same way.
+    run_by: "member",
+    user_invokable: true,
+    // Only the device can subscribe itself again.
+    undoable: false,
+    examples: ["stop notifications on my old laptop"],
+    args_schema: {
+      device_id: { label: "The device, by id", type: "text", required: true },
     },
     version: "0.1.0",
   },
@@ -1045,7 +1156,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /me/notifications   the job's card, and the bell; a missed one waits there
     group: "more",
-    id: "platform:confirm-service-job",
+    id: "platform:confirm-service-job", run_by: "requester",
     min_role: "member",
     label: "Start a service job",
     description:
@@ -1066,7 +1177,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   // for a run an automation started. Never the assistant's to press.
   {
     group: "more",
-    id: "platform:retry-service-job",
+    id: "platform:retry-service-job", run_by: "requester",
     min_role: "member",
     label: "Retry a service step",
     description:
@@ -1082,7 +1193,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     group: "more",
-    id: "platform:skip-service-job",
+    id: "platform:skip-service-job", run_by: "requester",
     min_role: "member",
     label: "Skip a service step",
     description:
@@ -1098,7 +1209,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     group: "more",
-    id: "platform:cancel-service-run",
+    id: "platform:cancel-service-run", run_by: "requester",
     min_role: "member",
     label: "Cancel a service run",
     description: "Stop a service run: every step still waiting or running is cancelled, and nothing more starts from it.",
@@ -1167,7 +1278,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /me/notifications   the held change's card, and the bell; a missed one waits there
     group: "more",
-    id: "platform:confirm-held-change",
+    id: "platform:confirm-held-change", run_by: "requester",
     min_role: "member",
     label: "Delete what an assistant asked to delete",
     description:
@@ -1184,7 +1295,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /me/notifications   the held change's card, and the bell; a missed one waits there
     group: "more",
-    id: "platform:keep-held-change",
+    id: "platform:keep-held-change", run_by: "requester",
     min_role: "member",
     label: "Keep what an assistant asked to delete",
     description: "Say no to a delete an assistant asked for over MCP. Nothing is deleted and the card stops asking.",

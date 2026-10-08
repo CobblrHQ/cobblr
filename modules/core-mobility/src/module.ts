@@ -96,6 +96,7 @@ export default defineModule({
         // after a move, not something anybody asks for
         group: "more",
         id: "core-mobility:recompute-away",
+        runBy: "member",
         undoable: true,
         label: "Recompute away-from-home",
         description:
@@ -109,6 +110,7 @@ export default defineModule({
         // NO-PHRASING: the way back for another action, run only from Undo
         group: "more",
         id: "core-mobility:set-away-since",
+        runBy: "member",
         internal: true,
         label: "Set the away stamp",
         description: "Internal, the inverse of returning a thing home or recomputing whether it is away: puts the away stamp back to what it was. Runs from Undo on the card; not for direct use.",
@@ -126,6 +128,7 @@ export default defineModule({
       {
         group: "more",
         id: "core-mobility:return-home",
+        runBy: "member",
         examples: ["it is back home", "put it back where it lives"],
         undoable: true,
         label: "Return home",

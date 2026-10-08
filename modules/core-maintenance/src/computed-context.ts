@@ -100,3 +100,18 @@ export function registerMaintenanceContext(): void {
     },
   );
 }
+
+export function registerRenewalContext(): void {
+  platform().entities.registerComputedContext("renewal", async (orgId, kind, id) => {
+    const db = await platform().tenants.getDb(orgId) as Kysely<import("./db.js").CoreMaintenanceDB>;
+    const s = await db.selectFrom("core_maintenance_schedules").selectAll().where("entity_id", "=", id).where("anchor", "is not", null).where("ended_at", "is", null).orderBy("created_at", "desc").executeTakeFirst();
+    if (!s) return {};
+    const { boundRenewalValues } = await import("./bound-renewal.js");
+    const { cancelBy } = await import("./schedule.js");
+    const row = s.expiry_field ? await platform().entities.snapshot(orgId, kind, id) : null;
+    const value = s.expiry_field ? (row?.metadata as Record<string, unknown> | undefined)?.[s.expiry_field] ?? row?.[s.expiry_field] : s.current_expiry;
+    const expiry = value instanceof Date ? value : typeof value === "string" ? new Date(value.slice(0, 10) + "T12:00:00Z") : null;
+    const notice = s.renewal_fields ? (await boundRenewalValues(orgId, kind, id, s.renewal_fields)).cancel_notice_days : s.cancel_notice_days;
+    return { cancel_by: notice != null && expiry && Number.isFinite(expiry.getTime()) ? cancelBy(expiry, notice).toISOString().slice(0, 10) : "" };
+  });
+}

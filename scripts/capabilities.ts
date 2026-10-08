@@ -114,6 +114,18 @@ export const CAPABILITIES: Capability[] = [
   },
   {
     kind: "owns",
+    id: "browser:random-id",
+    what: "a random id made in the browser: randomId() from @cobblr/platform-contract/random-id (packages/platform-contract/src/random-id.ts)",
+    why:
+      "crypto.randomUUID exists only on HTTPS or localhost, so a record page that called it on mount crashed with " +
+      "\"crypto.randomUUID is not a function\" for anyone opening Cobblr over plain http on a LAN address (#5293)",
+    owner: "packages/platform-contract/src/random-id.ts",
+    scope: ["web/src/**/*.tsx", "web/src/**/*.ts", "packages/platform-web/src/**/*.tsx", "packages/platform-web/src/**/*.ts", "modules/*/src/ui/**/*.tsx", "modules/*/src/ui/**/*.ts"],
+    detect: /crypto\.randomUUID\b/,
+    use: "randomId() from @cobblr/platform-contract/random-id: the same v4 UUID, backed by crypto.getRandomValues where randomUUID is missing.",
+  },
+  {
+    kind: "owns",
     id: "fields:choice-picker",
     what: "a field's list of values that grows when someone types a new one: ChoiceCombobox in packages/platform-web/src/ChoiceCombobox.tsx (bound to a field by ChoiceField)",
     why:

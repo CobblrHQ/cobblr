@@ -150,9 +150,28 @@ export interface ScannerStream {
  *      initial stream and re-acquire LOCKED to that exact deviceId.
  * Pass `preferredDeviceId` on a re-arm to skip the dance and reuse the lens.
  */
+/** A browser that offers no camera at all, as opposed to one that refused:
+ *  an http address (no secure context, so no `navigator.mediaDevices`) or a
+ *  browser without one. Said in words, never as the TypeError reading
+ *  `getUserMedia` of undefined, which a person was shown (#4286 role walk).
+ *  The fix is not a permission, so the page does not suggest one. */
+export class NoCameraHere extends Error {
+  readonly noCamera = true;
+}
+
+export function noCameraReason(ctx: { isSecureContext?: boolean; mediaDevices?: unknown }): string | null {
+  const md = ctx.mediaDevices as { getUserMedia?: unknown } | undefined;
+  if (md && typeof md.getUserMedia === "function") return null;
+  return ctx.isSecureContext === false
+    ? "This address is not secure (http), so the browser offers no camera here. Open Cobblr at its https address, or scan an image file instead."
+    : "This browser offers no camera here. Scan an image file instead, or open Cobblr in a browser that has one.";
+}
+
 export async function acquireScannerStream(
   preferredDeviceId?: string | null,
 ): Promise<ScannerStream> {
+  const none = noCameraReason({ isSecureContext: window.isSecureContext, mediaDevices: navigator.mediaDevices });
+  if (none) throw new NoCameraHere(none);
   const finalize = (stream: MediaStream, deviceId: string | null): ScannerStream => {
     const track = stream.getVideoTracks()[0] ?? null;
     enableContinuousAutofocus(track);

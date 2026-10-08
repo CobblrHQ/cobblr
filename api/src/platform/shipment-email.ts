@@ -34,6 +34,16 @@ export interface ShipmentEmail {
   expectedArrival: "today" | "tomorrow" | null;
   /** The promised day as a date, when the email names one. */
   expectedArrivalDate: string | null;
+  /** The lines THIS parcel carries, when the email lists them ("Items in
+   *  this shipment"). A store that ships an order in several boxes sends one
+   *  notice per box; empty means the email did not say, not "nothing". */
+  items: ShippedItem[];
+}
+
+export interface ShippedItem {
+  /** The product and its variant, as the email words them. */
+  description: string;
+  qty: number | null;
 }
 
 export interface OrderNotice {
@@ -57,7 +67,7 @@ export function classifyOrderNotice(email: EmailInput, now: Date = new Date()): 
   const orderRef = AMAZON_ORDER.exec(haystack)?.[1] ?? orderRefsInHtml(email.html ?? "")[0] ?? GENERIC_ORDER.exec(haystack)?.[1] ?? null;
   return {
     kind: "order",
-    vendor: vendorOf(from, subject),
+    vendor: vendorOf(from, subject, body),
     orderRef,
     expectedArrivalDate: promisedDateIn(haystack, now) ?? promisedDateIn(stripTags(email.html ?? ""), now),
   };
@@ -149,18 +159,75 @@ export function isForwardingVerification(email: EmailInput): ForwardingVerificat
 
 /** Amazon's order numbers are 3-7-7 digits; everything else is "Order #X". */
 const AMAZON_ORDER = /\b(\d{3}-\d{7}-\d{7})\b/;
-const GENERIC_ORDER = /\border\s*(?:#|no\.?|number|id)?[:\s]*#?\s*([A-Z0-9][A-Z0-9-]{3,})\b/i;
+// An order number has a digit in it. Without that, "Order Summary" or "order
+// status" read as order "Summary", and the notice matched nothing.
+const GENERIC_ORDER = /\border\s*(?:#|no\.?|number|id)?[:\s]*#?\s*((?=[A-Z0-9-]*\d)[A-Z0-9][A-Z0-9-]{3,})\b/i;
 
 /** Vendor from the sender, for the senders that ARE a store. A carrier's own
  *  notification (ups.com, fedex.com) names no store, so vendor stays null and
  *  the parcel is matched by its tracking number instead. */
-function vendorOf(from: string, subject: string): string | null {
+function vendorOf(from: string, subject: string, body = ""): string | null {
   if (/@(?:[a-z0-9-]+\.)?amazon\.(?:com|ca|co\.uk|de|fr|es|it|co\.jp|com\.au|in)$/.test(from)) return "Amazon";
   // Shopify-hosted stores mail from their own domain but the subject often
   // carries the store name: "A shipment from Bambu Lab is on the way".
   const m = /(?:shipment|order) from ([A-Z][\w&' .-]{1,40}?) (?:is|has|was)\b/.exec(subject);
   if (m) return m[1]!.trim();
+  // FORWARDED, the sender is the person who forwarded it, and the store is
+  // in the forwarded header: "From: KINGROON 3D <store+…@t.shopifyemail.com>".
+  const fwd = forwardedSender(body);
+  if (fwd && fwd.address !== from) {
+    if (isCarrierAddress(fwd.address)) return null;
+    const viaStore = vendorOf(fwd.address, "");
+    if (viaStore) return viaStore;
+    if (fwd.name) return fwd.name;
+  }
   return null;
+}
+
+/** The first "From:" a forwarded email carries, as name and address. Mail
+ *  clients write it in their own language; these are the common ones. */
+export function forwardedSender(body: string): { name: string | null; address: string } | null {
+  const m = /^\s*(?:from|de|von|da|van)\s*:\s*(?:"?([^"<\n]*?)"?\s*)?<([^>\s]+@[^>\s]+)>/im.exec(body.slice(0, 6000)) ??
+    /^\s*(?:from|de|von|da|van)\s*:\s*([^\s<>]+@[^\s<>]+)\s*$/im.exec(body.slice(0, 6000));
+  if (!m) return null;
+  const address = (m[2] ?? m[1] ?? "").toLowerCase();
+  const name = m[2] ? (m[1] ?? "").trim().replace(/\s+/g, " ") : "";
+  // A store's name, not "no-reply" or the address again.
+  const usable = name && !/@/.test(name) && !/^(?:no[ -]?reply|notifications?|orders?|shop|store|support)$/i.test(name);
+  return { name: usable ? name : null, address };
+}
+
+/** A carrier's own notification names no store. */
+function isCarrierAddress(address: string): boolean {
+  const host = address.slice(address.lastIndexOf("@") + 1);
+  return ["ups.com", "fedex.com", "usps.com", "dhl.com", "ontrac.com"].some((d) => host === d || host.endsWith(`.${d}`));
+}
+
+/** The lines a shipping notice says are in THIS parcel. Shopify's notice
+ *  lists them under "Items in this shipment", one product per line with its
+ *  quantity ("KINGROON PETG Filament 1.75mm × 1") and the variant on the
+ *  next ("US / 10KG / Multicolor"). Empty when the email lists none. */
+export function shippedItemsIn(body: string): ShippedItem[] {
+  const lines = body.split(/\r?\n/).map((l) => l.replace(/^[>\s]+/, "").trim());
+  const start = lines.findIndex((l) => /^(?:items? (?:in|included in) this (?:shipment|package|parcel)|items? shipped|shipped items?|in this (?:shipment|package))\b:?$/i.test(l));
+  if (start < 0) return [];
+  const STOP = /^(?:if you have any questions|questions\?|subtotal|shipping\b|total\b|taxes|track (?:your|this)|view (?:your )?order|visit (?:our )?store|contact us|customer information|shipping address|thank you|unsubscribe|items? (?:not yet|still to be) shipped|remaining items?)/i;
+  const block: string[] = [];
+  for (const l of lines.slice(start + 1, start + 60)) {
+    if (STOP.test(l)) break;
+    if (l) block.push(l);
+  }
+  const QTY = /\s*(?:[×x✕]|qty:?|quantity:?)\s*(\d{1,4})\s*$/i;
+  const items: ShippedItem[] = [];
+  if (!block.some((l) => QTY.test(l))) {
+    return block.slice(0, 20).map((l) => ({ description: l, qty: null }));
+  }
+  for (const l of block) {
+    const q = QTY.exec(l);
+    if (q) items.push({ description: l.slice(0, q.index).trim(), qty: Number(q[1]) });
+    else if (items.length) items[items.length - 1]!.description += ` (${l})`;
+  }
+  return items.filter((i) => i.description).slice(0, 20);
 }
 
 /** The state a subject line announces. Order matters: "Delivered" beats
@@ -251,7 +318,7 @@ export function classifyShipmentEmail(email: EmailInput): ShipmentEmail | null {
     orderRefsInHtml(html)[0] ??
     GENERIC_ORDER.exec(haystack)?.[1] ??
     null;
-  const vendor = vendorOf(from, subject);
+  const vendor = vendorOf(from, subject, body);
   // Prefer a real carrier's number over Amazon's own: a parcel Amazon hands to
   // UPS is tracked at UPS, and the TBA number is only the label Amazon printed.
   const numbers = trackingNumbersIn(haystack);
@@ -274,6 +341,7 @@ export function classifyShipmentEmail(email: EmailInput): ShipmentEmail | null {
     description: subject.slice(0, 200) || `Parcel ${state.replace("_", " ")}`,
     expectedArrival,
     expectedArrivalDate: promisedDateIn(haystack) ?? promisedDateIn(stripTags(html)),
+    items: shippedItemsIn(body || stripTags(html).replace(/ {2,}/g, "\n")),
   };
 }
 
@@ -326,7 +394,7 @@ export function classifyReturnEmail(email: EmailInput): ReturnEmail | null {
   return {
     kind: "return",
     stage,
-    vendor: vendorOf(from, subject),
+    vendor: vendorOf(from, subject, body),
     orderRef,
     item,
     refundAmount: Number.isFinite(refundAmount as number) ? refundAmount : null,
@@ -334,3 +402,32 @@ export function classifyReturnEmail(email: EmailInput): ReturnEmail | null {
   };
 }
 
+
+/** What a parcel's notice did, as the forwarding reply says it back:
+ *  "Tracking added to order #36772 (KINGROON 3D): KINGROON PETG Filament
+ *  1.75mm US / 10KG / Multicolor, Amazon Logistics TBA335321582286, expected
+ *  Oct 11." The lines still to ship are named after it, so a partial box
+ *  never reads as the whole order. */
+export function trackingAddedReply(p: {
+  vendor: string | null;
+  order_number: string | null;
+  tracking_number: string;
+  carrier: string | null;
+  lines: readonly string[];
+  not_shipped: readonly string[];
+  expected_arrival: string | null;
+  mode: "order" | "shipment";
+}): string {
+  const order = p.order_number ? `order #${p.order_number}` : "your order";
+  const store = p.vendor ? ` (${p.vendor})` : "";
+  const what = p.mode === "order" || !p.lines.length ? (p.mode === "order" ? "the whole order" : "a parcel") : p.lines.join("; ");
+  const number = [p.carrier, p.tracking_number].filter(Boolean).join(" ");
+  const day = p.expected_arrival ? `, expected ${shortDay(p.expected_arrival)}` : "";
+  const rest = p.not_shipped.length ? ` Not shipped yet: ${p.not_shipped.join("; ")}.` : "";
+  return `Tracking added to ${order}${store}: ${what}, ${number}${day}.${rest}`;
+}
+
+function shortDay(iso: string): string {
+  const d = new Date(`${iso.slice(0, 10)}T12:00:00Z`);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+}

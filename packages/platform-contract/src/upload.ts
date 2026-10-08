@@ -122,6 +122,7 @@ export function uploadSizeRowFor(
 }
 
 export interface UploadOptions {
+  personalDocument?: true;
   /** A route's own cap, in bytes (a backup, an image). "largest": the most
    *  any one file may be on this deployment (a zip of files). Absent: each
    *  file's limit comes from this deployment's size policy by its kind. Never

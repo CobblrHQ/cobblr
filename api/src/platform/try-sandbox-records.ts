@@ -24,8 +24,8 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { env } from "../env.js";
 import { resolveNamedLocations, resolveLocations } from "./try-sandbox-places.js";
+import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -84,8 +84,7 @@ export interface RecordSeedOutcome {
 const IMAGE_TIMEOUT_MS = 8_000;
 
 function base(): string {
-  // loopback-ok: #5153 moves this onto selfFetch
-  return `http://127.0.0.1:${env.API_PORT}`;
+  return selfOrigin();
 }
 
 /** Apply the contents that go with a blueprint, if there are any.
@@ -151,7 +150,7 @@ export async function seedSandboxRecords(
       continue;
     }
     try {
-      const res = await fetch(`${base()}/api/v1/orgs/${encodeURIComponent(slug)}/instances/${encodeURIComponent(r.instance)}/items`, {
+      const res = await apiFetch(`${base()}/api/v1/orgs/${encodeURIComponent(slug)}/instances/${encodeURIComponent(r.instance)}/items`, {
         method: "POST",
         headers: auth,
         body: JSON.stringify(resolveLocations(resolveDates(r.body ?? {}, now), locationIds)),
@@ -194,7 +193,7 @@ export async function seedSandboxRecords(
       try {
         const ctl = new AbortController();
         const timer = setTimeout(() => ctl.abort(), IMAGE_TIMEOUT_MS);
-        const res = await fetch(`${base()}/api/v1/orgs/${encodeURIComponent(slug)}/modules/core-scan/entity-image`, {
+        const res = await apiFetch(`${base()}/api/v1/orgs/${encodeURIComponent(slug)}/modules/core-scan/entity-image`, {
           method: "POST",
           headers: auth,
           body: JSON.stringify({
@@ -242,7 +241,7 @@ export async function emptySandboxRecords(
 
   let instances: Array<{ instance_name?: string }> = [];
   try {
-    const res = await fetch(`${base()}/api/v1/orgs/${org}/instances`, { headers: auth });
+    const res = await apiFetch(`${base()}/api/v1/orgs/${org}/instances`, { headers: auth });
     if (!res.ok) return { deleted: 0, failed: 1 };
     instances = ((await res.json()) as { items?: Array<{ instance_name?: string }> }).items ?? [];
   } catch {
@@ -259,7 +258,7 @@ export async function emptySandboxRecords(
     for (let guard = 0; guard < 200; guard++) {
       let rows: Array<{ id?: string }> = [];
       try {
-        const res = await fetch(`${items}?limit=100`, { headers: auth });
+        const res = await apiFetch(`${items}?limit=100`, { headers: auth });
         if (!res.ok) { failed++; break; }
         rows = ((await res.json()) as { items?: Array<{ id?: string }> }).items ?? [];
       } catch {
@@ -271,7 +270,7 @@ export async function emptySandboxRecords(
       for (const row of rows) {
         if (!row.id) continue;
         try {
-          const res = await fetch(`${items}/${encodeURIComponent(row.id)}`, { method: "DELETE", headers: auth });
+          const res = await apiFetch(`${items}/${encodeURIComponent(row.id)}`, { method: "DELETE", headers: auth });
           if (res.ok) { deleted++; progressed = true; } else failed++;
         } catch {
           failed++;

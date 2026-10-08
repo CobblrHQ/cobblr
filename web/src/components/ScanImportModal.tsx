@@ -2,11 +2,14 @@
 // Flow: pick file → preview (detected columns, first 5 rows, per-row parse
 // errors, a column mapper when a CSV has unmapped headers) → options
 // (duplicate policy, fetch photos, dry-run) → import → summary card.
+import { SendFileImport } from "../features/sharing/SendFileImport";
+import { SendFileSchema, SendReceiptSchema, type SendFile, type SendReceipt } from "@cobblr/platform-contract/send-file";
 import { useState } from "react";
 import { FileUp, CheckCircle2, AlertTriangle } from "lucide-react";
 import { Modal, useToast } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 type Preview = Awaited<ReturnType<typeof api.scanImportPreview>>;
 type Summary = Awaited<ReturnType<typeof api.scanImport>>;
 
@@ -27,6 +30,7 @@ export function ScanImportModal({ slug, open, onClose, onImported }: {
   onImported: () => void;
 }) {
   const toast = useToast();
+  const [sendFile,setSendFile] = useState<SendFile | SendReceipt | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [mapping, setMapping] = useState<Record<string, string>>({});
@@ -37,12 +41,16 @@ export function ScanImportModal({ slug, open, onClose, onImported }: {
   const [summary, setSummary] = useState<Summary | null>(null);
 
   const reset = () => {
-    setFile(null); setPreview(null); setMapping({}); setSummary(null); setBusy(false);
+    setSendFile(null); setFile(null); setPreview(null); setMapping({}); setSummary(null); setBusy(false);
   };
 
   const runPreview = async (f: File, m?: Record<string, string>) => {
     setBusy(true);
     try {
+      if (f.name.toLowerCase().endsWith(".json")) {
+        const raw = JSON.parse(await f.text());
+        if (raw?.format === "cobblr-send" || raw?.format === "cobblr-send-receipt") {setSendFile((raw.format === "cobblr-send" ? SendFileSchema : SendReceiptSchema).parse(raw)); return;}
+      }
       setPreview(await api.scanImportPreview(slug, f, m && Object.keys(m).length ? m : undefined));
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Couldn't read that file.");
@@ -74,12 +82,13 @@ export function ScanImportModal({ slug, open, onClose, onImported }: {
   const unmapped = (preview?.columns ?? []).filter((c) => !c.field && !mapping[c.header]);
 
   return (
-    <Modal open={open} onClose={() => { reset(); onClose(); }} title="Import scans from a file" size="lg">
+    <Modal open={open} onClose={() => { reset(); onClose(); }} title="Import from a file" size="lg">
       <div className="space-y-3 text-sm">
+        {sendFile && <SendFileImport slug={slug} file={sendFile} onImported={onImported} onReset={reset} />}
         {!file && (
           <>
             <p className="text-muted dark:text-slate-400">
-              Bring a batch of scans from another system - an <strong>inbox export</strong> (JSON or CSV)
+              Bring a send file from another Cobblr, its confirmation or return file, or a batch of scans from another system - an <strong>inbox export</strong> (JSON or CSV)
               works as-is; any other CSV works with a quick column mapping. Items land in this inbox as ordinary
               pending scans and go through Cobblr's own matching.
             </p>
@@ -98,7 +107,7 @@ export function ScanImportModal({ slug, open, onClose, onImported }: {
           </>
         )}
 
-        {busy && !summary && <p className="text-xs text-faint animate-pulse">Working…</p>}
+        {busy && !summary && !sendFile && <p className="text-xs text-faint animate-pulse">Working…</p>}
 
         {file && preview && !summary && (
           <>
@@ -197,7 +206,7 @@ export function ScanImportModal({ slug, open, onClose, onImported }: {
                 onClick={() => void runImport()}
                 className="px-3 py-1.5 rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
               >
-                {busy ? "Importing…" : dryRun ? `Dry-run ${preview.count} items` : `Import ${preview.count} items`}
+                {busy ? "Importing…" : dryRun ? `Dry-run ${countOf(preview.count, "item")}` : `Import ${countOf(preview.count, "item")}`}
               </button>
             </div>
           </>

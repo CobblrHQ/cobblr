@@ -1,3 +1,4 @@
+import { ensureBoundRenewal, RenewalFields } from "../bound-renewal.js";
 import { ensureUsageSchedule } from "../usage-schedule.js";
 import { z } from "zod";
 // core-maintenance action handlers — the AI-reachable form of the service log.
@@ -41,6 +42,13 @@ function when(v: unknown): Date | null {
 
 export function registerMaintenanceHandlers(): void {
   registerUndos();
+  platform().actions.registerHandler("core-maintenance.ensure-renewal", async ctx => {
+    if (!ctx.entity) return { ok: false, error: "Choose the record that renews." };
+    const parsed = RenewalFields.safeParse(ctx.args);
+    if (!parsed.success) return { ok: false, error: "Choose the renewal fields on this collection." };
+    const db = await platform().tenants.getDb(ctx.orgId) as Kysely<CoreMaintenanceDB>;
+    return { ok: true, result: await ensureBoundRenewal(db, ctx.orgId, ctx.entity.kind, ctx.entity.id, parsed.data) };
+  });
   platform().actions.registerHandler("core-maintenance.update-term", async (ctx) => {
     const args = (ctx.args ?? {}) as Record<string, unknown>;
     const d = TermBody.safeParse({ ...args, ...(args.cost != null ? { cost_cents: moneyForStorage(args.cost, "cents") } : {}) });

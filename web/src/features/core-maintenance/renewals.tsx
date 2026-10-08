@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RecordFormModal, MoneyInput, useMoneyCurrency, usePhotoPick, useToast, usePasteImage } from "@cobblr/platform-web";
+import { RecordFormModal, MoneyInput, useMoneyCurrency, usePhotoPick, useToast, usePasteImage, NumberField } from "@cobblr/platform-web";
 import { TermHistory, TermReferenceQuantity } from "./terms";
 import { api, type MaintenanceSchedule, type MaintenanceReminder, type OverdueCadence } from "../../lib/api";
 import type { EntityDetailPanelCtx } from "../../panels/types";
@@ -25,7 +25,7 @@ export function ReminderPicker({ value, onChange }: { value: MaintenanceReminder
     setCustom(e.target.value === "custom");
     onChange(e.target.value === "month_start" ? { on: "month_start" } : e.target.value === "month" ? { before: 1, unit: "month" } : e.target.value === "fortnight" ? { before: 2, unit: "week" } : { before: 7, unit: "day" });
   }}><option value="month">1 month before</option><option value="month_start">First day of that month</option><option value="fortnight">2 weeks before</option><option value="custom">Custom</option></select></label>
-    {(custom || selected === "custom") && <div className="flex gap-2"><input className={input} aria-label="Reminder lead time" type="number" min="0" max="3650" value={value && "before" in value ? value.before : 7} onChange={(e) => onChange({ before: Number(e.target.value), unit: value && "unit" in value ? value.unit : "day" })} /><select className={input} aria-label="Reminder unit" value={value && "unit" in value ? value.unit : "day"} onChange={(e) => onChange({ before: value && "before" in value ? value.before : 7, unit: e.target.value as "day" | "week" | "month" })}><option value="day">Days before</option><option value="week">Weeks before</option><option value="month">Months before</option></select></div>}
+    {(custom || selected === "custom") && <div className="flex gap-2"><NumberField className={input} label="Reminder lead time" min={0} max={3651} value={value && "before" in value ? value.before : 7} onChange={(n) => onChange({ before: n, unit: value && "unit" in value ? value.unit : "day" })} /><select className={input} aria-label="Reminder unit" value={value && "unit" in value ? value.unit : "day"} onChange={(e) => onChange({ before: value && "before" in value ? value.before : 7, unit: e.target.value as "day" | "week" | "month" })}><option value="day">Days before</option><option value="week">Weeks before</option><option value="month">Months before</option></select></div>}
   </div>;
 }
 
@@ -67,7 +67,7 @@ export function Renewals({ ctx, schedules }: { ctx: EntityDetailPanelCtx; schedu
   return <div className="space-y-3" data-testid="renewals">
     {cards.map((c) => <section key={c.field || c.schedule?.id} className="rounded-xl border border-line p-3 space-y-2">
       <h3 className="text-sm font-semibold">{c.label}</h3>
-      {c.schedule ? <><p className="text-sm">{c.schedule.ended_at ? "Didn't renew. Term ends" : c.schedule.renewal_status === "lapsed" ? "Lapsed on" : "Expires"} {c.schedule.current_expiry ? renewalDate(c.schedule.current_expiry) : "date needed"}</p>{!c.schedule.ended_at && <p className={`text-sm ${c.schedule.due.state === "overdue" ? "text-ember-700 dark:text-ember-400 font-medium" : "text-muted"}`}>{c.schedule.due.reason}</p>}<p className="text-xs text-muted">Next reminder: {c.schedule.next_reminder_at ? renewalDate(c.schedule.next_reminder_at, true) : "reminders off"}</p><div className="flex flex-wrap gap-3">{!c.schedule.ended_at && <><button type="button" className={button} onClick={() => setRenewing(c.schedule!)}>Renewed</button><button type="button" className="text-sm text-accent" disabled={end.isPending} onClick={() => end.mutate(c.schedule!.id)}>Didn't renew</button></>}<button type="button" className="text-sm text-accent" onClick={() => setEditing(c)}>Change renewal</button></div>{!c.schedule.ended_at && c.schedule.occurrence && c.schedule.due.state === "overdue" && <ReminderControls slug={ctx.slug} occurrence={c.schedule.occurrence} refresh={refresh} />}</> : <><p className="text-sm text-muted">{c.value ? `Expires ${renewalDate(c.value)}` : "No expiry set"}</p><button type="button" className={button} onClick={() => setEditing(c)}>Add {c.label.toLowerCase()}</button></>}
+      {c.schedule ? <><p className="text-sm">{c.schedule.ended_at ? "Didn't renew. Term ends" : c.schedule.renewal_status === "lapsed" ? "Lapsed on" : "Expires"} {c.schedule.current_expiry ? renewalDate(c.schedule.current_expiry) : "date needed"}</p>{!c.schedule.ended_at && <p className={`text-sm ${c.schedule.due.state === "overdue" ? "text-ember-700 dark:text-ember-400 font-medium" : "text-muted"}`}>{c.schedule.due.reason}</p>}{c.schedule.cancel_by && !c.schedule.ended_at && <p className="text-sm font-medium">Cancel by {renewalDate(c.schedule.cancel_by)} or it renews</p>}<p className="text-xs text-muted">Next reminder: {c.schedule.next_reminder_at ? renewalDate(c.schedule.next_reminder_at, true) : "reminders off"}</p><div className="flex flex-wrap gap-3">{!c.schedule.ended_at && <><button type="button" className={button} onClick={() => setRenewing(c.schedule!)}>Renewed</button><button type="button" className="text-sm text-accent" disabled={end.isPending} onClick={() => end.mutate(c.schedule!.id)}>Didn't renew</button></>}<button type="button" className="text-sm text-accent" onClick={() => setEditing(c)}>Change renewal</button></div>{!c.schedule.ended_at && c.schedule.occurrence && c.schedule.due.state === "overdue" && <ReminderControls slug={ctx.slug} occurrence={c.schedule.occurrence} refresh={refresh} />}</> : <><p className="text-sm text-muted">{c.value ? `Expires ${renewalDate(c.value)}` : "No expiry set"}</p><button type="button" className={button} onClick={() => setEditing(c)}>Add {c.label.toLowerCase()}</button></>}
     </section>)}
     <TermHistory slug={ctx.slug} entityId={ctx.entityId} refresh={refresh} />
     <button type="button" className="text-sm text-accent" onClick={() => setEditing({ label: "Renewal" })}>Add a renewal</button>
@@ -84,7 +84,7 @@ function RenewalSetup({ ctx, initial, close, refresh }: { ctx: EntityDetailPanel
   const [repeat, setRepeat] = useState(s && (s.every_n !== 1 || s.every_unit !== "year") ? "custom" : s?.anchor && typeof s.anchor !== "string" ? "last" : "same");
   const [lastDay, setLastDay] = useState(!!s?.anchor && typeof s.anchor !== "string");
   const [n, setN] = useState(s?.every_n ?? 1);
-  const [unit, setUnit] = useState<"year" | "month">(s?.every_unit === "month" ? "month" : "year");
+  const [unit, setUnit] = useState<"year" | "month" | "week" | "day">(s?.every_unit ?? "year");
   const [remind, setRemind] = useState<MaintenanceReminder>(s?.remind ?? { before: 1, unit: "month" });
   const [cadence, setCadence] = useState<OverdueCadence | null>(s?.overdue_every ?? null);
   const save = useMutation({ mutationFn: async () => {
@@ -97,7 +97,7 @@ function RenewalSetup({ ctx, initial, close, refresh }: { ctx: EntityDetailPanel
     {!initial.field && <label className="block text-sm">Name<input className={input} aria-label="Renewal name" value={name} required onChange={(e) => setName(e.target.value)} /></label>}
     <label className="block text-sm">Expiry date<input className={input} aria-label="Expiry date" type="date" required value={expiry} onChange={(e) => setExpiry(e.target.value)} /></label>
     <label className="block text-sm">Repeats<select className={input} aria-label="Repeats" value={repeat} onChange={(e) => setRepeat(e.target.value)}><option value="same">Same date every year</option><option value="last">Last day of the month every year</option><option value="custom">Custom</option></select></label>
-    {repeat === "custom" && <div className="flex gap-2"><input className={input} type="number" min="1" max="1000" aria-label="Renewal interval" value={n} onChange={(e) => setN(Number(e.target.value))} /><select className={input} aria-label="Renewal unit" value={unit} onChange={(e) => setUnit(e.target.value as "year" | "month")}><option value="year">Years</option><option value="month">Months</option></select></div>}
+    {repeat === "custom" && <div className="flex gap-2"><NumberField className={input} min={1} max={1000} label="Renewal interval" value={n} onChange={(n) => setN(n)} /><select className={input} aria-label="Renewal unit" value={unit} onChange={(e) => setUnit(e.target.value as "year" | "month" | "week" | "day")}><option value="year">Years</option><option value="month">Months</option><option value="week">Weeks</option><option value="day">Days</option></select></div>}
     {repeat === "custom" && <label className="flex gap-2 text-sm"><input type="checkbox" checked={lastDay} onChange={(e) => setLastDay(e.target.checked)} />Use the last day of the month</label>}
     <ReminderPicker value={remind} onChange={setRemind} /><CadencePicker value={cadence} onChange={setCadence} />
     <div className="flex gap-3"><button className={button} type="submit" disabled={save.isPending || !expiry || !name.trim()}>Save</button><button type="button" onClick={close}>Cancel</button></div>
@@ -108,14 +108,14 @@ function RenewalDialog({ slug, schedule, close, refresh }: { slug: string; sched
   const main = useMoneyCurrency();
   const toast = useToast();
   const [expiry, setExpiry] = useState(schedule.next_expiry?.slice(0, 10) ?? "");
-  const last = schedule.latest_term;
+  const last = schedule.latest_term ?? schedule.initial_term;
   const moneyHidden = !!last && (!Object.hasOwn(last, "cost_cents") || !Object.hasOwn(last, "currency"));
-  const [cost, setCost] = useState<number | null>(moneyHidden ? null : last?.cost_cents ?? null);
+  const [cost, setCost] = useState<number | null>(moneyHidden ? null : last?.cost_cents ?? schedule.initial_term?.cost_cents ?? null);
   const [currencyChanged, setCurrencyChanged] = useState(false);
   const [start, setStart] = useState(schedule.current_expiry?.slice(0, 10) ?? "");
-  const [currency, setCurrency] = useState(schedule.latest_term?.currency ?? main);
+  const [currency, setCurrency] = useState(schedule.latest_term?.currency ?? schedule.initial_term?.currency ?? main);
   const [reference, setReference] = useState("");
-  const [quantity, setQuantity] = useState<number | null>(schedule.latest_term?.quantity == null ? null : Number(schedule.latest_term.quantity));
+  const [quantity, setQuantity] = useState<number | null>((schedule.latest_term?.quantity ?? schedule.initial_term?.quantity) == null ? null : Number(schedule.latest_term?.quantity ?? schedule.initial_term?.quantity));
   const [file, setFile] = useState<File | null>(null);
   const photo = usePhotoPick((files) => setFile(files[0] ?? null), { title: `${schedule.name} document`, label: "Choose document photo" });
   const receiptRef = useRef<HTMLInputElement>(null);

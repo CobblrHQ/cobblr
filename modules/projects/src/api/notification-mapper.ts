@@ -7,7 +7,7 @@
 // know about specific modules — so the mapper lives here now and
 // registers itself when the projects module loads.
 
-import { NotificationBatcher, platform, type ComposedBurst } from "@cobblr/platform-contract";
+import { NotificationBatcher, platform, type ComposedBurst, countOf } from "@cobblr/platform-contract";
 
 interface TaskUnblockedPayload {
   orgId: string;
@@ -47,7 +47,7 @@ export function composeUnblocked(items: readonly Unblocked[]): ComposedBurst | n
   const rest = items.length > 3 ? ` and ${items.length - 3} more` : "";
   const projects = new Set(items.map((u) => u.projectId));
   return {
-    message: `${items.length} tasks are unblocked: ${shown}${rest}`,
+    message: `${countOf(items.length, "task")} are unblocked: ${shown}${rest}`,
     count: items.length,
     // All in one project is still somewhere honest to point.
     // One project → that project. Several → the list of them, which is where

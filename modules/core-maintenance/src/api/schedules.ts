@@ -1,3 +1,6 @@
+import { refreshBoundRenewal } from "../bound-renewal.js";
+import { moneyForStorage, readMoney } from "@cobblr/platform-contract/money";
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { MaintenanceRefusal } from "../refusal.js";
 // /api/v1/orgs/:slug/modules/core-maintenance/schedules (#3876)
 //
@@ -10,9 +13,9 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { tenantContext, tenantDb, sessionUser, type CoreMaintenanceDB } from "../db.js";
 import type { Kysely } from "kysely";
-import { asyncHandler, badBody, requireRole } from "./util.js";
+import { asyncHandler, badBody } from "./util.js";
 import { counterDefs, dueOf, ensureOccurrence, readCounter, renewalState, writeExpiry, rollForward, type ScheduleRow } from "../schedules-store.js";
-import { INTERVAL_UNITS, describeRule, hasCalendar, hasCounter, nextRenewalExpiry, nextReminderAt } from "../schedule.js";
+import { INTERVAL_UNITS, describeRule, hasCalendar, hasCounter, nextRenewalExpiry, nextReminderAt, cancelBy } from "../schedule.js";
 import { sql } from "kysely";
 import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 import { TermFields, termValues } from "../term-fields.js";
@@ -28,7 +31,7 @@ const Anchor = z.union([
   z.object({ month: z.number().int().min(1).max(12), last_day: z.literal(true) }),
 ]);
 const Remind = z.union([
-  z.object({ before: z.number().int().min(0).max(3650), unit: z.enum(["day", "week", "month"]) }),
+  z.object({ before: z.number().int().min(0).max(3651), unit: z.enum(["day", "week", "month"]) }),
   z.object({ on: z.literal("month_start") }),
 ]);
 const RenewalRule = {
@@ -56,7 +59,7 @@ const ScheduleCreate = z
     entity_id: z.string().uuid(),
     ...Rule,
   })
-  .refine((d) => (d.anchor && d.current_expiry && (!d.every_unit || ["year", "month"].includes(d.every_unit)) && !d.counter_field) || (!d.anchor && !d.expiry_field && ((d.every_n && d.every_unit) || (d.counter_field && d.counter_every))), {
+  .refine((d) => (d.anchor && d.current_expiry && (!d.every_unit || INTERVAL_UNITS.includes(d.every_unit as never)) && !d.counter_field) || (!d.anchor && !d.expiry_field && ((d.every_n && d.every_unit) || (d.counter_field && d.counter_every))), {
     message: "A schedule needs a calendar interval (every_n + every_unit) or a counter interval (counter_field + counter_every)",
     path: ["every_n"],
   });
@@ -73,6 +76,8 @@ export const ScheduleUpdateBody = z.object({
 
 /** A schedule as a record page shows it: the rule in words and where it stands. */
 export async function present(orgId: string, s: ScheduleRow, timeZone?: string | null) {
+  const store = await platform().tenants.getDb(orgId) as Kysely<CoreMaintenanceDB>;
+  s = await refreshBoundRenewal(store, orgId, s);
   const state = await renewalState(orgId, s);
   const due = await dueOf(orgId, s, new Date(), timeZone);
   const db = await platform().tenants.getDb(orgId) as Kysely<CoreMaintenanceDB>;
@@ -80,8 +85,17 @@ export async function present(orgId: string, s: ScheduleRow, timeZone?: string |
   const preferences = await db.selectFrom("core_maintenance_preferences").selectAll().executeTakeFirst();
   const latestTerm = s.anchor ? await db.selectFrom("core_maintenance_entries").select(["id", "term_start", "term_end", "cost_cents", "currency", "quantity"]).where("schedule_id", "=", s.id).where("is_term", "=", true).orderBy(sql`term_end desc nulls last`).orderBy("performed_at", "desc").orderBy("id").executeTakeFirst() : undefined;
   const nextReminder = !s.ended_at && due.next_due_at ? nextReminderAt(due.next_due_at, s.remind, occurrence?.last_notified_at ?? null, new Date(), { ...occurrence, overdue_every: s.overdue_every ?? preferences?.overdue_every ?? "week" }) : null;
+  const record = s.renewal_fields ? await platform().entities.lookup(orgId, `${s.entity_module}:${s.entity_type}`, s.entity_id) : null;
+  const visible = { ...record?.fields, ...(record?.fields.metadata as Record<string, unknown> | undefined) };
+  const workspaceCurrency = await platform().money.currency(orgId);
+  const firstMoney = s.renewal_fields ? readMoney(visible[s.renewal_fields.cost], "amount", workspaceCurrency) : null;
   return {
     ...s,
+    cancel_by: s.cancel_notice_days != null && state.current_expiry ? cancelBy(state.current_expiry, s.cancel_notice_days) : null,
+    initial_term: s.renewal_fields ? { id: s.id,
+      ...(Object.hasOwn(visible, s.renewal_fields.cost) ? { cost_cents: moneyForStorage(visible[s.renewal_fields.cost], "cents"), currency: firstMoney?.currency ?? workspaceCurrency } : {}),
+      ...(Object.hasOwn(visible, s.renewal_fields.quantity) ? { quantity: Number(visible[s.renewal_fields.quantity]) || null } : {}),
+    } : null,
     latest_term: latestTerm ?? null,
     renewal_status: s.ended_at ? "ended" : s.anchor && state.current_expiry && state.current_expiry < new Date() ? "lapsed" : "active",
     next_reminder_at: nextReminder,
@@ -247,7 +261,7 @@ schedulesRouter.get(
 schedulesRouter.post(
   "/",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-maintenance:schedule"))) return;
     const parsed = ScheduleCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const ctx = tenantContext(req);
@@ -261,7 +275,7 @@ schedulesRouter.post(
 schedulesRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-maintenance:update-schedule"))) return;
     const parsed = ScheduleUpdateBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const id = String(req.params.id ?? "");
@@ -291,7 +305,7 @@ export async function removeSchedule(db: Kysely<CoreMaintenanceDB>, id: string):
 schedulesRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-maintenance:remove-schedule"))) return;
     const removed = await removeSchedule(tenantDb(req), String(req.params.id ?? ""));
     if (!removed) {
       res.status(404).json({ error: { code: "not_found", message: "schedule not found" } });
@@ -319,7 +333,7 @@ export async function updateSchedule(db: Kysely<CoreMaintenanceDB>, orgId: strin
     if (!hasCalendar(next) && !hasCounter(next)) {
       throw new MaintenanceRefusal("A schedule needs a calendar interval or a counter interval");
     }
-    if (next.anchor && (!hasCalendar(next) || !["month", "year"].includes(next.every_unit!) || hasCounter(next))) throw new MaintenanceRefusal("Renewals need a month or year interval");
+    if (next.anchor && (!hasCalendar(next) || !INTERVAL_UNITS.includes(next.every_unit!) || hasCounter(next))) throw new MaintenanceRefusal("Renewals need a calendar interval");
     if (next.expiry_field && !next.anchor) throw new MaintenanceRefusal("An expiry field needs a renewal anchor");
     if (next.anchor && !next.expiry_field && !next.current_expiry) throw new MaintenanceRefusal("Enter the current expiry");
     if (next.expiry_field && next.expiry_field !== before.expiry_field) {
@@ -388,7 +402,7 @@ export async function renewSchedule(db: Kysely<CoreMaintenanceDB>, orgId: string
 
 // AI-REACH: action core-maintenance:renew
 schedulesRouter.post("/:id/renew", asyncHandler(async (req, res) => {
-  if (!requireRole(req, res, "owner", "admin", "member")) return;
+  if (!(await requireCapability(req, res, "core-maintenance:renew"))) return;
   const parsed = RenewBody.safeParse(req.body);
   if (!parsed.success) return badBody(res, parsed.error);
   const db = tenantDb(req);

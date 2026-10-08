@@ -18,6 +18,7 @@ import { platform } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { signSession } from "../auth/jwt.js";
 import { dispatch } from "./notifications.js";
+import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
 export const CONFIRM_HELD_CHANGE_ACTION = "platform:confirm-held-change";
 export const KEEP_HELD_CHANGE_ACTION = "platform:keep-held-change";
@@ -117,6 +118,13 @@ async function settleCard(notificationId: string | null): Promise<void> {
 
 /** Claim a waiting change for its own person, once. Null when it is not
  *  theirs, not waiting, or too old (which it then records). */
+/** The person the assistant was working for when it held this change. */
+export async function heldChangeRequester(changeId: string): Promise<string | null> {
+  if (!/^[0-9a-f-]{36}$/i.test(changeId)) return null;
+  const row = await meta.selectFrom("ai_held_changes").select("user_id").where("id", "=", changeId).executeTakeFirst();
+  return row?.user_id ?? null;
+}
+
 async function claim(changeId: string, userId: string, to: "done" | "kept") {
   const row = await meta.selectFrom("ai_held_changes").selectAll().where("id", "=", changeId).executeTakeFirst();
   if (!row) return { refusal: "That request is not here any more." } as const;
@@ -150,8 +158,7 @@ export async function confirmHeldChange(changeId: string, userId: string): Promi
     // The person's own session: no AI door, so it runs as if they had pressed
     // delete themselves, under their own role and capability checks.
     const token = await signSession(userId);
-    // loopback-ok: #5153 moves this onto selfFetch
-    const r = await fetch(`http://127.0.0.1:${process.env.API_PORT || "4000"}/api/v1/orgs/${org?.slug ?? ""}${row.path}`, {
+    const r = await apiFetch(`${selfOrigin()}/api/v1/orgs/${org?.slug ?? ""}${row.path}`, {
       method: row.method,
       headers: { authorization: `Bearer ${token}` },
     });

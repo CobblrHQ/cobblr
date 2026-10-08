@@ -22,6 +22,7 @@ export const FIELD_TYPE_VALUES = [
   "date",
   "url",
   "richtext",
+  "secret",
   "computed",
   "relation",
   // A person. Stored as a user id; rendered as their display name, resolved at
@@ -50,7 +51,7 @@ export type FieldDefType = (typeof FIELD_TYPE_VALUES)[number];
  *  value in the record's metadata, so a change of type moves nothing; a
  *  computed, relation, member or person field holds a template or a reference
  *  and is made again rather than retyped. */
-export const NOT_RETYPEABLE_FIELD_TYPES = ["computed", "relation", "member", "person"] as const;
+export const NOT_RETYPEABLE_FIELD_TYPES = ["computed", "relation", "member", "person", "secret"] as const;
 export const RETYPEABLE_FIELD_TYPES: readonly FieldDefType[] = FIELD_TYPE_VALUES.filter(
   (t) => !(NOT_RETYPEABLE_FIELD_TYPES as readonly string[]).includes(t),
 );
@@ -126,6 +127,7 @@ export const FIELD_ROLE_VALUES = [
   "belongs-to",
   "usage",
   "outer-size",
+  "payment-method",
 ] as const;
 export type FieldRole = (typeof FIELD_ROLE_VALUES)[number];
 
@@ -153,6 +155,7 @@ export const FIELD_ROLE_LABELS: Record<
   FieldRole,
   { label: string; pickable: boolean; ownedBy?: string; type?: "number" | "date" | "text" }
 > = {
+  "payment-method": { label: "How it is paid (last four digits only)", pickable: true, type: "text" },
   category: { label: "Its grouping axis", pickable: false },
   pack: { label: "How many in a pack", pickable: true },
   identifier: { label: "Its identifier (serial, VIN)", pickable: true },

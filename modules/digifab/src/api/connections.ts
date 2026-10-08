@@ -9,11 +9,12 @@
 // fetch the connection (with creds) from the store and build a driver via digifab's
 // registry. See docs/architecture/core-devices-extraction.md §6.
 
+import { BenchConnectionConfig } from "../bench-config.js";
 import { readBridgeConfig, publicBridgeConfig } from "../bridge-identity.js";
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
-import { tenantDb, tenantContext } from "../db.js";
+import { tenantDb, tenantContext, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { resolveDriver, availableDriverKeys } from "../drivers/registry.js";
 import { buildEdgeRelay, reverseBuildIfCommitted, markJobTerminal } from "../jobs-core.js";
@@ -34,7 +35,7 @@ const ConnectionCreate = z.object({
   api_key: z.string().max(500).optional(),
   username: z.string().max(200).optional(),
   password: z.string().max(500).optional(),
-  config: z.record(z.unknown()).optional(),
+  config: BenchConnectionConfig.optional(),
 });
 
 const ConnectionUpdate = z.object({
@@ -44,7 +45,7 @@ const ConnectionUpdate = z.object({
   username: z.string().max(200).nullable().optional(),
   password: z.string().max(500).nullable().optional(),
   enabled: z.boolean().optional(),
-  config: z.record(z.unknown()).optional(),
+  config: BenchConnectionConfig.optional(),
 });
 
 /** Raw create-creds blob from the provided fields (omit empties). */
@@ -116,6 +117,8 @@ connectionsRouter.post(
     const parsed = ConnectionCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const ctx = tenantContext(req);
+    const control=(parsed.data.config?.config || parsed.data.config) as {control_enabled?:boolean}|undefined;
+    if(control?.control_enabled===true&&!await platform().auth.userHasRole({orgId:ctx.org.id,userId:sessionUser(req)?.id || "",minRole:"owner"}))return void res.status(403).json({error:{code:"owner_required",message:"Only the owner can enable instrument control."}});
     if (!(await availableDriverKeys(tenantDb(req))).includes(parsed.data.type)) {
       return void res.status(400).json({ error: { code: "unknown_driver", message: `no driver "${parsed.data.type}" installed` } });
     }
@@ -157,6 +160,8 @@ connectionsRouter.patch(
     if (parsed.data.base_url !== undefined && !(await safeUrl(res, parsed.data.base_url))) return;
     const existing = await store().get(ctx.org.id, req.params.id!);
     if (!existing) return void res.status(404).json({ error: { code: "not_found", message: "no such connection" } });
+    const control=(parsed.data.config?.config || parsed.data.config) as {control_enabled?:boolean}|undefined;
+    if(control?.control_enabled===true&&!await platform().auth.userHasRole({orgId:ctx.org.id,userId:sessionUser(req)?.id || "",minRole:"owner"}))return void res.status(403).json({error:{code:"owner_required",message:"Only the owner can enable instrument control."}});
     const creds: Record<string, unknown> = {};
     if (parsed.data.api_key !== undefined) creds.apiKey = parsed.data.api_key;
     if (parsed.data.username !== undefined) creds.username = parsed.data.username;

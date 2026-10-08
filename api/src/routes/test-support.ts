@@ -23,6 +23,7 @@ import { getTenantDb, tenantPoolStats } from "../db/tenant.js";
 import { poolCounts } from "../db/pool-stats.js";
 import { readProbe } from "../platform/meta-probe.js";
 import { poolHolders, poolPeak } from "../db/client-error-guard.js";
+import { forgetOrgInTtlCaches } from "../lib/ttl-cache.js";
 import { sql } from "kysely";
 import {
   forgetOutboundHold,
@@ -320,8 +321,24 @@ testSupportRouter.post("/test-support/mirror-apply-hold", async (req, res, next)
   }
 });
 
-testSupportRouter.get("/test-support/mirror-apply-hold", (_req, res) => {
-  res.json({ reached: mirrorApplyHoldReached() });
+// ?slug=<workspace> reads that workspace's count: holds are per workspace, so
+// a test reads its own and never another file's (#5396).
+testSupportRouter.get("/test-support/mirror-apply-hold", async (req, res, next) => {
+  try {
+    const slug = typeof req.query.slug === "string" ? req.query.slug : null;
+    if (!slug) {
+      res.json({ reached: mirrorApplyHoldReached() });
+      return;
+    }
+    const o = await meta.selectFrom("orgs").select("id").where("slug", "=", slug).executeTakeFirst();
+    if (!o) {
+      res.status(404).json({ error: { code: "not_found", message: "no such workspace" } });
+      return;
+    }
+    res.json({ reached: mirrorApplyHoldReached(o.id) });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // Hold every outbound fetch whose URL contains a substring until the test
@@ -478,6 +495,20 @@ testSupportRouter.get("/test-support/meta-probe/:id", (req, res) => {
   res.json(p);
 });
 
+// Make one workspace's short-lived caches cold, so a test measures what a read
+// costs from cold every time instead of whatever warmth it happened to find
+// (a cache that lapses mid-list is what made the bounded-meta test pass only on
+// a retry, #4917). Only that workspace's entries: nobody else's test notices.
+testSupportRouter.post("/test-support/forget-org-caches", (req, res) => {
+  const orgId = typeof req.body?.org_id === "string" ? req.body.org_id : "";
+  if (!/^[0-9a-f-]{36}$/i.test(orgId)) {
+    res.status(400).json({ error: { code: "bad_request", message: "org_id is the workspace's id" } });
+    return;
+  }
+  forgetOrgInTtlCaches(orgId);
+  res.json({ ok: true });
+});
+
 testSupportRouter.get("/test-support/pool-stats", (_req, res) => {
   const meta = poolCounts(metaPool);
   res.json({ meta, tenants: tenantPoolStats(), meta_holders: meta.waiting > 0 ? poolHolders(metaPool).slice(0, 12) : [], meta_peak: poolPeak(metaPool) });
@@ -621,4 +652,54 @@ testSupportRouter.post("/test-support/exchange-rate-fixture", async (_req, res, 
     invalidateRateCache();
     res.json({ ok: true });
   } catch (err) { next(err); }
+});
+
+// A push service for CI (#5267): Web Push sends here when a test subscribed a
+// "device" at this address, and the test reads back exactly what a browser
+// would have been handed, to decrypt it with the device's own key. A box whose
+// name starts with "gone-" answers 410, as a push service does for a
+// subscription that no longer exists.
+const pushBoxes = new Map<string, Array<{ body: string; headers: Record<string, string> }>>();
+// The body is read as it came: a push is Content-Encoding aes128gcm, which a
+// body parser would try to inflate and refuse; a push service keeps it sealed.
+testSupportRouter.post("/test-support/push-service/:box", async (req, res) => {
+  const box = String(req.params.box);
+  const chunks: Buffer[] = [];
+  for await (const c of req) chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c));
+  const list = pushBoxes.get(box) ?? [];
+  list.push({
+    body: Buffer.concat(chunks).toString("base64"),
+    headers: Object.fromEntries(["authorization", "content-encoding", "ttl", "urgency"].map((h) => [h, String(req.get(h) ?? "")])),
+  });
+  pushBoxes.set(box, list);
+  res.status(box.startsWith("gone-") ? 410 : 201).end();
+});
+testSupportRouter.get("/test-support/push-service/:box", (req, res) => {
+  res.json({ items: pushBoxes.get(String(req.params.box)) ?? [] });
+});
+
+// One notification through the real dispatcher, with the priority and privacy
+// a test chooses (#5267): every channel's routing, windows and quiet hours run
+// as for any module's notification.
+testSupportRouter.post("/test-support/dispatch", async (req, res, next) => {
+  try {
+    const b = (req.body ?? {}) as { org_id?: string; user_id?: string; message?: string; link_url?: string; priority?: string; private?: boolean };
+    if (!b.org_id || !b.user_id || !b.message) {
+      res.status(400).json({ error: { code: "bad_body", message: "org_id, user_id and message required" } });
+      return;
+    }
+    const priority = (["low", "normal", "high", "urgent"] as const).find((p) => p === b.priority) ?? "normal";
+    const out = await notifications.dispatch({
+      orgId: b.org_id,
+      userId: b.user_id,
+      eventType: "test.notification",
+      message: b.message,
+      ...(b.link_url ? { link_url: b.link_url } : { no_link_reason: "a test notification" }),
+      priority,
+      private: b.private === true,
+    });
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
 });

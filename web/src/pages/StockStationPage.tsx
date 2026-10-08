@@ -6,6 +6,7 @@ import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { QueryError, SearchInput, usePageTitle, useRunAction } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api } from "../lib/api";
+import { useEnabledModules } from "../lib/useEnabledModules";
 import { resolveScannedThing, useScanTarget } from "../lib/scanTarget";
 import { GlobalScanWedge } from "../components/GlobalScanWedge";
 import { ScanOneSheet } from "../components/ScanOneSheet";
@@ -25,7 +26,10 @@ export function StockStationPage() {
   const working = useRef(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const query = useQuery({ queryKey: ["workshop-stock", slug, station, q, offset], queryFn: () => api.listWorkshopStock(slug, { q, station, offset }), refetchInterval: 10_000 });
+  // Stock is Inventory's: a workspace without it has none to load, and asking would be refused.
+  const on = useEnabledModules(slug);
+  const stockOff = on !== null && !on.has("inventory");
+  const query = useQuery({ queryKey: ["workshop-stock", slug, station, q, offset], queryFn: () => api.listWorkshopStock(slug, { q, station, offset }), refetchInterval: 10_000, enabled: !!slug && !!on?.has("inventory") });
   const kinds = useQuery({ queryKey: ["entity-kinds", slug], queryFn: () => api.listEntityKinds(slug), staleTime: 300_000 });
   const loaded = useQueries({ queries: (query.data?.loaded ?? []).map(l => ({ queryKey: ["stock-shape", slug, l.part_id], queryFn: () => api.workshopStock(slug, l.part_id) })) });
   // PRESS-ARGS: a loaded stock record supplies its collection's existing QR label target.
@@ -69,7 +73,8 @@ export function StockStationPage() {
   };
   return <main id={MAIN_ID} className="p-4 sm:p-6 max-w-5xl mx-auto space-y-5">
     <SkipToContent /><GlobalScanWedge activeSlug={slug} />
-    <header className="space-y-2"><h1 className="text-2xl font-semibold">Stock station</h1><p className="text-muted break-words">{station}</p><Link to="/inventory" className="inline-flex min-h-11 items-center underline">Back to inventory</Link></header>
+    <header className="space-y-2"><h1 className="text-2xl font-semibold">Stock station</h1><p className="text-muted break-words">{station}</p>{!stockOff && <Link to="/inventory" className="inline-flex min-h-11 items-center underline">Back to inventory</Link>}</header>
+    {stockOff ? <p data-testid="stock-station-inventory-off" className="rounded border border-dashed border-line p-6 text-center text-muted">Stock is kept in Inventory, which is not on in this workspace. <Link to="/configuration/modules" className="text-accent hover:underline">Turn it on in Modules</Link></p> : <>
     <p>Scan the QR label on the sheet, roll, spool, bottle or tool you have loaded. Stock confirmation does not start a machine.</p>
     <div className="flex flex-wrap items-end gap-3"><label className="text-sm flex-1 min-w-0">Slot or colour<input aria-label="Slot or colour" className="input min-h-12 w-full" required maxLength={80} value={slot} onChange={e => setSlot(e.target.value)} /></label><button className={button} disabled={busy || !slot.trim()} onClick={() => setScanning(true)}>Scan stock QR</button></div>
     {error && <p role="alert" className="text-red-700 dark:text-red-300">{error}</p>}{message && <p role="status">{message}</p>}
@@ -86,6 +91,7 @@ export function StockStationPage() {
       {query.data?.items.map(stock => <article key={stock.id} className="rounded border border-line p-3 flex flex-wrap items-center justify-between gap-3"><div className="min-w-0 break-words"><strong>{stock.name}</strong><p className="text-sm text-muted">{stock.shape} · {formatStockAmount(stock.remaining, stock.unit)} remaining{stock.low ? " · Low stock" : ""}</p></div><button className={button} disabled={busy || stock.remaining <= 0 || !slot.trim()} onClick={() => void load(stock.id).catch(() => {})}>Load {stock.name}</button></article>)}
       {query.data && <div className="flex flex-wrap items-center gap-3"><button className={button} disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 500))}>Previous stock</button><span className="text-sm">{query.data.total == null ? "Stock count unavailable" : countOf(query.data.total, "stock record")}</span><button className={button} disabled={query.data.total != null && offset + query.data.items.length >= query.data.total} onClick={() => setOffset(offset + 500)}>Next stock</button></div>}
     </section>
+    </>}
     {scanning && <ScanOneSheet open title="Scan stock QR" hint="Scan the label on what is loaded in this slot." onCode={code => void scanned(code)} onClose={() => setScanning(false)} />}
   </main>;
 }

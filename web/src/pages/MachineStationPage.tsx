@@ -1,3 +1,4 @@
+import { BenchInstrument } from "../features/digifab/bench";
 import {LargeFormatStation} from "../features/digifab/LargeFormatStation";
 import { jobDisplayName } from "../features/digifab/jobDisplayName";
 import { countOf } from "@cobblr/platform-contract/plural";
@@ -20,10 +21,11 @@ import { DirectLaserControls } from "../features/digifab/DirectLaserControls";
 import { LightBurnReview } from "../features/digifab/startReview";
 import { LaserMaterialForm } from "../features/digifab/laserMaterial";
 
+import { CncStation } from "../features/digifab/CncStation";
 import { ResinStation } from "../features/digifab/ResinStation";
 import { PrintStation } from "../features/digifab/PrintStation";
 
-const button = "min-h-12 rounded border border-line px-4 py-3 text-base disabled:opacity-50";
+const button = "inline-flex items-center justify-center min-h-12 rounded border border-line px-4 py-3 text-base disabled:opacity-50";
 const errorText = (e: unknown) => e instanceof ApiError ? e.message : String(e);
 
 export function MachineStationPage() {
@@ -34,7 +36,9 @@ export function MachineStationPage() {
   if (q.error && !q.data) return <UnavailableMachineStation error={q.error} />;
   const screenKind = q.data?.screen_kind === undefined ? q.data?.kind : q.data.screen_kind;
   switch (screenKind === q.data?.kind ? screenKind : null) {
+    case "bench": return <BenchMachineStation slug={slug} machineId={q.data?.machine_id} />;
     case "laser": return <LaserMachineStationPage />;
+    case "cnc": return <CncStation slug={slug} connectionId={connectionId} deviceId={deviceId} />;
     case "cutter": return <CutterStation slug={slug} connectionId={connectionId} deviceId={deviceId} />;
     case "resin": return <ResinStation slug={slug} connectionId={connectionId} deviceId={deviceId} />;
     case "print": return <PrintStation slug={slug} connectionId={connectionId} deviceId={deviceId} />;
@@ -44,7 +48,7 @@ export function MachineStationPage() {
 }
 
 const stationTitles: Readonly<Record<string, string>> = {
-  laser: "Laser station", print: "Printer station", cutter: "Cutter station", resin: "Resin station",
+  bench: "Bench station", laser: "Laser station", print: "Printer station", cutter: "Cutter station", resin: "Resin station",
   kiln: "Kiln station", cnc: "CNC station", embroidery: "Embroidery station", "large-format": "Large format station",
 };
 function UnavailableMachineStation({ kind, error }: { kind?: string | null; error?: unknown }) {
@@ -55,6 +59,11 @@ function UnavailableMachineStation({ kind, error }: { kind?: string | null; erro
     {error ? <p role="alert">{errorText(error)}</p> : <p>This machine has no station screen yet.</p>}
     <Link className={button} to="/digifab">Exit to the fleet</Link>
   </main></>;
+}
+
+function BenchMachineStation({slug,machineId}:{slug:string;machineId?:string|null}) {
+  usePageTitle("Bench station");
+  return <><SkipToContent/><main id={MAIN_ID} className="mx-auto max-w-3xl p-4 space-y-4"><h1 className="text-xl font-semibold">Bench station</h1>{machineId?<BenchInstrument slug={slug} machineId={machineId}/>:<p>Link this instrument to a machine record in Configuration → Devices before collecting readings.</p>}</main></>;
 }
 
 function LaserMachineStationPage() {

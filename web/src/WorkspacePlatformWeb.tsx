@@ -12,17 +12,20 @@ import { api } from "./lib/api";
 import { raiseBlockedAction } from "./lib/blocked-action";
 import { decodeBarcodeImage } from "./lib/decode-barcode-image";
 import { photoSuggestionsWhenOn } from "./lib/photoSuggestionsWhenOn";
+import { FormBarcodeCapture } from "./components/FormBarcodeCapture";
 import { RecordPhoto } from "./components/RecordPhoto";
 import { CobbHead } from "./components/CobbHead";
 // Flows load when one is opened (the flow host gives each a boundary).
 const NewFromTemplateFlow = lazy(() => import("./flows/NewFromTemplateFlow").then((m) => ({ default: m.NewFromTemplateFlow })));
 const OrganizeFlow = lazy(() => import("./flows/OrganizeFlow").then((m) => ({ default: m.OrganizeFlow })));
+const ListShareFlow = lazy(() => import("./flows/ListShareFlow").then((m) => ({ default: m.ListShareFlow })));
 const GroupTableFlow = lazy(() => import("./pages/ViewsPage").then((m) => ({ default: m.GroupTableFlow })));
 
 // First-party flow registry: id → overlay the shell can open from anywhere
 // (an action's `ui` directive, a view bulk-action, a nav entry). See
 // docs/architecture/invokable-flows-and-lego-redesign.md.
 const WORKSPACE_FLOWS: FlowRegistry = {
+  "platform:share-list": ListShareFlow,
   "core-scan:organize": OrganizeFlow,
   "core-views:group-table": GroupTableFlow,
   "core-templates:create": NewFromTemplateFlow,
@@ -42,11 +45,13 @@ export function WorkspacePlatformWeb({ orgSlug, role, appMode, children }: { org
         appMode={!!appMode}
         flows={WORKSPACE_FLOWS}
         recordPhoto={RecordPhoto}
+        barcodeCapture={FormBarcodeCapture}
         decodeBarcodeImage={decodeBarcodeImage}
         // The app owns what Cobb looks like; the package owns the button that
         // hands him a record.
         cobbIcon={CobbHead}
         api={{
+          lookupBarcode: api.lookupBarcode,
           listActions: (slug, kind) => api.listActions(slug, kind),
           setRecordActionPin: (slug, kind, action, pinned) => api.setRecordActionPin(slug, kind, action, pinned),
           // A record's door to a module that is off (#3883): turning it on is an
@@ -62,7 +67,7 @@ export function WorkspacePlatformWeb({ orgSlug, role, appMode, children }: { org
           invokeAction: (slug, body) => api.invokeAction(slug, body),
           requestLight: (slug, ref, reason) => api.requestLight(slug, ref, reason),
           lookupEntity: (slug, kind, id) => api.lookupEntity(slug, kind, id),
-          sendTargets: api.sendTargets, previewSend: api.previewSend, sendRecords: api.sendRecords, undoSend: api.undoSend,
+          previewSendFile: api.previewSendFile, exportSendFile: api.exportSendFile, downloadSendFile: api.downloadSendFile, sendTargets: api.sendTargets, previewSend: api.previewSend, sendRecords: api.sendRecords, undoSend: api.undoSend,
           listShareOffers: (slug) => api.listShareOffers(slug),
           withdrawShareOffer: (slug, id) => api.withdrawShareOffer(slug, id),
           recordShares: (slug, kind, id) => api.recordShares(slug, kind, id),
@@ -74,7 +79,7 @@ export function WorkspacePlatformWeb({ orgSlug, role, appMode, children }: { org
           listPrinters: (slug) => api.listPrinters(slug),
           postToModulePath: (slug, path, body) => api.postToModulePath(slug, path, body),
           listEntities: (slug, kind, q) => api.listEntities(slug, kind, q),
-          exportEntitiesCsv: (slug, kind, q) => api.exportEntitiesCsv(slug, kind, q),
+          exportEntitiesCsv: (slug, kind, q, includeSecrets) => api.exportEntitiesCsv(slug, kind, q, includeSecrets),
           // Mapped down to {user_id, display_name}: platform-web has no business
           // knowing roles or join dates to draw a name in a picker.
           listMembers: async (slug) => ({
@@ -93,6 +98,7 @@ export function WorkspacePlatformWeb({ orgSlug, role, appMode, children }: { org
           // The resolved read: a record shows its fields as the workspace
           // arranged them (relabelled, hidden, filed under sections).
           listBulkFieldOptions: api.listBulkFieldOptions,
+          revealSecretField: api.revealSecretField,
           listFieldDefs: (slug, kind) => api.listFieldDefs(slug, kind, true),
           // Wires, through the same door as the Wires page: a module's offer to
           // make one ("add running-low items to a list") on a person's say-so.

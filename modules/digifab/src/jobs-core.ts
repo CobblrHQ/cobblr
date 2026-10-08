@@ -1,3 +1,5 @@
+import { persistCncRuntime } from "./cnc-runtime.js";
+import { releaseUnstartedCncStock, validateCncStock } from "./cnc-start.js";
 import {verifyLargePrint} from "./large-format/service.js";
 import { authorizeCutterStart, requireCutterStation } from "./cutter-station.js";
 import { verifyCutterPlan } from "./cutter-plans.js";
@@ -9,15 +11,19 @@ import { reserveResinPrint, checkResinStart, setResinPhase, settleResinPrint } f
 import { interpretReport, plainDriverError, unreachablePlan, POLL_MS } from "./job-truth.js";
 import { persistResinStart } from "./resin-start.js";
 import { enqueuePoll } from "./poll-worker.js";
+import { extractPlateMetadata } from "./library/extract-metadata.js";
+import { printerMaterialRefusal } from "./material-dispatch.js";
+import { machineOfJob } from "./loaded-spools.js";
 import { drawForCompletedJob } from "./loaded-spools.js";
 import { settleMakeForJob } from "./makes-core.js";
 import { platform } from "@cobblr/platform-contract";
+import { takeBatchStartPermit, type BatchStartPermit } from "./batch-start-permit.js";
 import { isEdgeManagerUrl, edgeInstanceOf } from "@cobblr/platform-contract/edge-bridge-client";
 import type { Kysely, Selectable } from "kysely";
 import type { DigifabDB } from "./db.js";
-import { submitReviewedJob, ReviewRequired } from "./drivers/job-review.js";
+import { submitReviewedJob, ReviewRequired, InterruptedStart } from "./drivers/job-review.js";
 import { verifyLaserOutput } from "./laser-layout.js";
-import { authorizeLaserStart } from "./laser-station.js";
+import { authorizeLaserStart, stationTokenHash } from "./laser-station.js";
 import type { JobApproval } from "./drivers/types.js";
 import { resolveDriver } from "./drivers/registry.js";
 import { EdgeAdapterDriver, type EdgeRelay } from "./drivers/edge-adapter.js";
@@ -421,6 +427,7 @@ export async function pollJob(
   const manager = await managerName(orgId, job.connection_id);
   try {
     const st = await driver.getJobStatus(job.remote_job_id);
+    if(job.cnc_setup) await persistCncRuntime(db,jobId,st.raw&&typeof st.raw==="object"?(st.raw as Record<string,unknown>).toolSeconds:undefined);
     progress = st.progress ?? null;
     etaSec = st.timeRemainingSec ?? null;
     elapsedSec = st.elapsedSec ?? null;
@@ -438,6 +445,7 @@ export async function pollJob(
     });
     status = truth.status;
     error = truth.note;
+    if(job.cnc_setup && (status === "paused"||st.state === "unknown") && !job.cancel_requested_at) error=st.message?.trim().slice(0,300)||"Paused at the CNC controller.";
     if (status === "failed" && !error) {
       const said = st.message?.trim();
       error = said ? `${manager} reported: ${said.slice(0, 240)}` : `${manager} reported an error and didn't say which.`;
@@ -470,7 +478,7 @@ export async function pollJob(
   // Out of attempts → fall through to the terminal path below.
   if (status === "failed") {
     const att = (job.attempts ?? 0) + 1;
-    const max = job.max_attempts ?? 1;
+    const max = job.cnc_setup ? 1 : job.max_attempts ?? 1;
     if (att < max) {
       const note = `auto-retry ${att}/${max} waiting for bed clear: ${error ?? "failed"}`.slice(0, 300);
       const base = { status: "queued", attempts: att, remote_job_id: null, remote_file_id: null, progress: 0, error: note, poll_errors: 0, unreachable_since: null, last_polled_at: new Date(), updated_at: new Date() };
@@ -509,11 +517,16 @@ export async function pollJob(
       return { status: now?.status ?? status, terminal: true, intervalMs };
     }
   } else {
-    await db
+    const updated=await db
       .updateTable("digifab_jobs")
       .set({ status, ...fields, updated_at: new Date() })
       .where("id", "=", jobId)
-      .execute();
+      .where("status", "not in", [...TERMINAL])
+      .executeTakeFirst();
+    if(Number(updated.numUpdatedRows??0)===0){
+      const current=await db.selectFrom("digifab_jobs").select("status").where("id","=",jobId).executeTakeFirst();
+      return {status:current?.status??status,terminal:TERMINAL.has(current?.status??status),intervalMs:0};
+    }
   }
 
   // ── Print-lifecycle notifications (the "post updates to Discord" flow) ──
@@ -812,10 +825,10 @@ export async function recordJobOutcome(
 
 export type SendJobResult =
   | { ok: true; status: string; remoteJobId: string | null; placement: SubmitResult; uploadedBytes: number; shouldPoll: boolean }
-  | { ok: false; code: "not_found" | "already_sent" | "already_sending" | "already_terminal" | "no_connection" | "unknown_device" | "file_missing" | "review_required" }
+  | { ok: false; code: "not_found" | "already_sent" | "already_sending" | "already_terminal" | "no_connection" | "unknown_device" | "file_missing" | "review_required" | "batch_approval_required" }
   /** The manager refused or could not be reached: the job is failed with this
    *  sentence on it, and the sentence is what the person sees. */
-  | { ok: false; code: "send_failed"; message: string };
+  | { ok: false; code: "send_failed" | "material_not_ready"; message: string; shouldPoll?: boolean };
 
 /** Claim a job for ONE send, in a single conditional UPDATE: the job still
  *  unsent, in one of `statuses`, and not already claimed. Two sends of one job
@@ -852,9 +865,11 @@ export async function sendJob(
   orgId: string,
   jobId: string,
   approval?: JobApproval,
+  batchPermit?: BatchStartPermit,
 ): Promise<SendJobResult> {
   const job = await db.selectFrom("digifab_jobs").selectAll().where("id", "=", jobId).executeTakeFirst();
   if (!job) return { ok: false, code: "not_found" };
+  if (job.make_ordinal && !takeBatchStartPermit(batchPermit, job.id)) return { ok: false, code: "batch_approval_required" };
   if (job.embroidery_run) return { ok: false, code: "review_required" };
   if (job.remote_job_id) return { ok: false, code: "already_sent" };
   // A finished/cancelled job can't be quietly re-sent (a cancelled-before-send or
@@ -867,14 +882,21 @@ export async function sendJob(
   // runs twice for one job at the same time.
   const token = await claimSend(db, jobId, SENDABLE);
   if (!token) return { ok: false, code: "already_sending" };
-  const driver = await buildDriverById(db, orgId, job.connection_id);
   let r: SendJobResult = { ok: false, code: "already_sending" };
-  if (await driver?.jobReviewRequired?.()) {
-    const run = await platform().exclusive.run(`laser-start:${orgId}:${job.connection_id}:${job.target_device}`, async () => { r = await sendClaimed(db, orgId, jobId, job, token, approval); });
-    if (!run.ran) r = { ok: false, code: "already_sending" };
-  } else r = await sendClaimed(db, orgId, jobId, job, token, approval);
-  if (!r.ok) await releaseSend(db, jobId, token);
-  return r;
+  try {
+    const driver = await buildDriverById(db, orgId, job.connection_id);
+    if (await driver?.jobReviewRequired?.()) {
+      const run = await platform().exclusive.run(`laser-start:${orgId}:${job.connection_id}:${job.target_device}`, async () => { r = await sendClaimed(db, orgId, jobId, job, token, approval); });
+      if (!run.ran) r = { ok: false, code: "already_sending" };
+    } else r = await sendClaimed(db, orgId, jobId, job, token, approval);
+    return r;
+  } catch (error) {
+    const message = plainDriverError(error, await managerName(orgId, job.connection_id), "preparing the job").slice(0, 300);
+    await db.updateTable("digifab_jobs").set({ error: message, updated_at: new Date() }).where("id", "=", jobId).execute();
+    return { ok: false, code: "send_failed", message };
+  } finally {
+    await releaseSend(db, jobId, token);
+  }
 }
 
 async function sendClaimed(
@@ -957,6 +979,11 @@ async function sendClaimed(
     uploadName = f.filename;
   }
 
+  if (!job.resin_print && driver.printProcess !== "resin" && !driver.laserBackend && !job.laser_layout) {
+    const refusal = await checkJobMaterial(db, orgId, job, deviceId, uploadName, fileBytes);
+    if (refusal) return { ok: false, code: "material_not_ready", message: refusal };
+  }
+
   // HYBRID Bambu LAN: the cloud can't accept an arbitrary file, but the on-site
   // bridge can push it over the printer's LAN. If this Bambu printer has LAN
   // configured, route the upload + submit through the bridge's `bambu` driver
@@ -975,6 +1002,7 @@ async function sendClaimed(
   let sub: SubmitResult;
   let doing = "uploading the file";
   let cutter = false;
+  let cnc = false;
   let resinAccepted = false;
   let largeMayHaveStarted = false;
   let resinChecks = 0;
@@ -986,7 +1014,9 @@ async function sendClaimed(
     if (plannedCut && kind !== "cutter") throw new ReviewRequired("This prepared cut needs its original cutter driver. Restore that connection before Start.");
     const plannedPrint = await db.selectFrom("digifab_large_prints").select("job_id").where("job_id", "=", jobId).executeTakeFirst();
     if (!!plannedPrint !== (sendDriver.printProcess === "large-format")) throw new ReviewRequired("Prepare this document for its original large-format printer.");
-    const printReview = approval && kind === "print" ? await sendDriver.getJobReview?.(approval.fileId) : undefined;
+    const printReview = approval && (kind === "print" || kind === "cnc") ? await sendDriver.getJobReview?.(approval.fileId) : undefined;
+    cnc = kind === "cnc";
+    if (cnc && printReview?.project.kind !== "cnc") throw new ReviewRequired("Review this posted program at its CNC station before Start.");
     cutter = kind === "cutter";
     const stationPermit = reviewRequired ? cutter ? await authorizeCutterStart(db, orgId, { ...job, target_device: deviceId }, approval) : await authorizeLaserStart(db, orgId, { ...job, target_device: deviceId }, approval, printReview) : undefined;
     if (sendDriver.printProcess === "resin") {
@@ -998,14 +1028,18 @@ async function sendClaimed(
       try { const review = await sendDriver.getJobReview(approval.fileId); verifyLaserOutput(layout.expected, review); if (review.contentHash !== layout.content_hash) throw new Error("The queued layout file changed. Make a new plan."); } catch (e) { throw new ReviewRequired(e instanceof Error ? e.message : "The generated settings changed."); }
     }
     let cutterMayHaveStarted = false;
-
-    const checkStartAllowed = sendDriver.laserBackend || cutter || ["resin", "large-format"].includes(sendDriver.printProcess ?? "") ? async () => {
+    const checkStartAllowed = sendDriver.laserBackend || cnc || cutter || ["resin", "large-format"].includes(sendDriver.printProcess ?? "") ? async () => {
       if (sendDriver.printProcess === "resin" && resinChecks++ > 0) {
         resinAccepted = true;
         await setResinPhase(db, jobId, "started");
       }
       const current = await db.selectFrom("digifab_jobs").select(["cancel_requested_at", "status"]).where("id", "=", jobId).executeTakeFirst();
       if (!current || current.cancel_requested_at || TERMINAL.has(current.status)) throw new ReviewRequired("Stop was requested. Review this job again before Start.");
+      if (cnc && approval && printReview) {
+        const station = await db.selectFrom("digifab_stations").select("id").where("token_hash", "=", stationTokenHash(approval.stationToken ?? "")).where("connection_id", "=", connectionId).where("remote_device_id", "=", deviceId!).where("revoked_at", "is", null).executeTakeFirst();
+        if (!station) throw new ReviewRequired("This screen's Start permission was revoked. Stop and authorize the machine station again.");
+        await validateCncStock(orgId, { ...job, target_device: deviceId }, approval, printReview, station.id);
+      }
       if (sendDriver.printProcess === "large-format" && deviceId) {
         await authorizeLaserStart(db, orgId, { ...job, target_device: deviceId }, approval, printReview);
         await verifyLargePrint(db, orgId, jobId, connectionId, deviceId, largeMayHaveStarted);
@@ -1029,6 +1063,11 @@ async function sendClaimed(
     } : undefined;
     ({ up, sub } = await submitReviewedJob(sendDriver, fileBytes, uploadName, { deviceId, tag: job.target_tag, idempotencyKey: token, approval, checkStartAllowed }, stationPermit));
   } catch (e) {
+    if(e instanceof InterruptedStart){
+      await db.updateTable("digifab_jobs").set({remote_file_id:approval?.fileId??null,remote_job_id:e.remoteJobId,status:"sent",sent_at:new Date(),cancel_requested_at:new Date(),send_token:null,send_claimed_at:null,error:e.message,updated_at:new Date()}).where("id","=",jobId).execute();
+      return {ok:false,code:"send_failed",message:e.message,shouldPoll:true};
+    }
+    if (cnc) await releaseUnstartedCncStock(db, jobId);
     if (sendDriver.printProcess === "resin") {
       if (resinAccepted && approval) {
         const remote = `cobblr-${approval.fileId}.goo`;
@@ -1055,7 +1094,7 @@ async function sendClaimed(
       target_device: sub.deviceId ?? deviceId,
       status,
       sent_at: new Date(),
-      ...(sendDriver.laserBackend || cutter || ["resin", "large-format"].includes(sendDriver.printProcess ?? "") ? {} : { cancel_requested_at: null }),
+      ...(sendDriver.laserBackend || cnc || cutter || ["resin", "large-format"].includes(sendDriver.printProcess ?? "") ? {} : { cancel_requested_at: null }),
       send_token: null,
       send_claimed_at: null,
       // A note from before the send (a stopped send, a retry waiting on the
@@ -1095,9 +1134,38 @@ async function sendClaimed(
   };
 }
 
+async function checkJobMaterial(
+  db: Kysely<DigifabDB>, orgId: string, job: Selectable<DigifabDB["digifab_jobs"]>,
+  deviceId: string | null, filename: string, bytes?: Uint8Array,
+): Promise<string | null> {
+  const machine = await machineOfJob(db, { ...job, target_device: deviceId });
+  if (!machine) return null;
+  const metadata = bytes ? extractPlateMetadata(filename, Buffer.from(bytes)) : {};
+  const requirements = {
+    ...job,
+    material_type: metadata.material ?? job.material_type,
+    material_grams: metadata.filament_g ?? job.material_grams,
+    material_grams_by_tool: metadata.filament_g_by_tool ?? job.material_grams_by_tool,
+    material_by_tool: metadata.material_by_tool,
+    color_by_tool: metadata.color_by_tool,
+  };
+  if (printerMaterialRefusal(requirements, []) === null) return null;
+  const { loadedSpoolsForMachine } = await import("./api/printing-profiles.js");
+  const refusal = printerMaterialRefusal(requirements, await loadedSpoolsForMachine(orgId, machine));
+  const fields = {
+    material_type: requirements.material_type,
+    material_grams: requirements.material_grams == null ? null : String(requirements.material_grams),
+    material_grams_by_tool: requirements.material_grams_by_tool,
+  };
+  Object.assign(job, fields);
+  await db.updateTable("digifab_jobs").set({ ...fields, material_grams_by_tool: fields.material_grams_by_tool == null ? null : JSON.stringify(fields.material_grams_by_tool), ...(refusal ? { error: refusal } : {}), updated_at: new Date() }).where("id", "=", job.id).execute();
+  return refusal;
+}
+
 export type AssignJobResult =
   | { ok: true; status: string; remoteJobId: string | null; placement: SubmitResult; shouldPoll: boolean }
-  | { ok: false; code: "not_found" | "not_awaiting" | "no_connection" | "no_file" | "unknown_device" | "already_sending" };
+  | { ok: false; code: "not_found" | "batch_approval_required" | "not_awaiting" | "no_connection" | "no_file" | "unknown_device" | "already_sending" }
+  | { ok: false; code: "material_not_ready"; message: string };
 
 /** F-14 — re-pick a printer for a job stuck in `awaiting-assignment` (its target
  *  matched 0 or many printers). The file is ALREADY on the farm (remote_file_id),
@@ -1112,6 +1180,7 @@ export async function assignJob(
 ): Promise<AssignJobResult> {
   const job = await db.selectFrom("digifab_jobs").selectAll().where("id", "=", jobId).executeTakeFirst();
   if (!job) return { ok: false, code: "not_found" };
+  if (job.make_ordinal) return { ok: false, code: "batch_approval_required" };
   if (job.status !== "awaiting-assignment") return { ok: false, code: "not_awaiting" };
   if (!job.connection_id) return { ok: false, code: "no_connection" };
   if (!job.remote_file_id) return { ok: false, code: "no_file" };
@@ -1136,6 +1205,14 @@ export async function assignJob(
   if (!token) return { ok: false, code: "already_sending" };
   let sub: SubmitResult;
   try {
+    if (driver.printProcess !== "resin" && !driver.laserBackend && !job.resin_print && !job.laser_layout) {
+      const file = job.file_id ? await platform().files.read(orgId, job.file_id) : null;
+      const refusal = await checkJobMaterial(db, orgId, job, deviceId, file?.filename ?? job.file_ref, file?.bytes);
+      if (refusal) {
+        await releaseSend(db, jobId, token);
+        return { ok: false, code: "material_not_ready", message: refusal };
+      }
+    }
     sub = await driver.submitJob({ fileId: job.remote_file_id, deviceId, idempotencyKey: token });
   } catch (e) {
     await releaseSend(db, jobId, token);

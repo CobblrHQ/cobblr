@@ -17,9 +17,9 @@ import { browserImageHeaders } from "./image-fetch-headers.js";
 import { deriveImageQuery } from "./ddg-images.js";
 import { fileIdOfImagePath } from "./record-photo-searches.js";
 import type { PhotoSource } from "@cobblr/platform-contract/photo-source";
+import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
-// loopback-ok: #5153 moves this onto selfFetch
-const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
+const INTERNAL_API = selfOrigin();
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 /** Why a picture could not be kept, in words for the person who picked it. */
@@ -159,7 +159,7 @@ export async function setEntityImagePath(
     const route = opts.instance
       ? `/api/v1/orgs/${opts.orgSlug}/instances/${opts.instance}/items/${opts.entityId}`
       : `/api/v1/orgs/${opts.orgSlug}/modules/${moduleName}/${type}s/${opts.entityId}`;
-    const patch = await fetch(`${INTERNAL_API}${route}`, {
+    const patch = await apiFetch(`${INTERNAL_API}${route}`, {
       method: "PATCH",
       headers: { Authorization: `Bearer ${opts.bearer}`, "Content-Type": "application/json" },
       body: JSON.stringify({ image_path: imagePath }),

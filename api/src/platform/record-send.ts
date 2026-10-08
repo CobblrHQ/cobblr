@@ -1,12 +1,11 @@
 import { handedRecord } from "./handed-record.js";
 import { randomUUID } from "node:crypto";
 import { sql } from "kysely";
-import { platform, type DefinedField, type EntityViewer, type EntityWriter } from "@cobblr/platform-contract";
+import { platform, type DefinedField, type EntityViewer, type EntityWriter, countOf } from "@cobblr/platform-contract";
 import { canUndoOwnMove, sameSendSnapshot, mapOfferedFields, type OfferedThing } from "@cobblr/platform-contract/share-offer";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { createCapabilityForModule } from "@cobblr/platform-contract/create-capability";
 import { meta } from "../db/meta.js";
-import { env } from "../env.js";
 import { getHistoryWriterFor } from "./history-store.js";
 import { baseKindOf, listKindsForOrg, lookup, resolveKind } from "./entities.js";
 import { markGone, bringBack } from "./dispositions.js";
@@ -22,6 +21,7 @@ import { restore as restoreDeletedSource, forget as forgetDeletedTarget, get as 
 import { currentActor } from "../lib/request-context.js";
 import { hereUrl } from "./share-links.js";
 import { humanFieldLabel } from "@cobblr/platform-contract/display-identity";
+import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
 export interface SendRequest {
   entity_kind: string;
@@ -179,8 +179,7 @@ async function prepare(orgId: string, userId: string, p: SendRequest) {
       const replacements = [];
       for (const id of ids) {
         if (typeof id !== "string") break;
-        const previous = await meta.selectFrom("share_offers").select("landed").where("target_org_id", "=", target.id).where("status", "=", "taken")
-          .where(sql<string>`(source->>'org_id')`, "=", source.id).where(sql<string>`source->>'id'`, "=", id).orderBy("created_at", "desc").executeTakeFirst();
+        const previous = await findSendArrival(target.id, {instance: s.origin.instance, org: source.id, id}, {userId, role: target.role});
         const landed = object(previous?.landed);
         const state = typeof landed.inbox_id === "string" ? await platform().scan.offerIntake()?.state(target.id, landed.inbox_id) : null;
         if (state?.status !== "filed" || !state.record || !await lookup(target.id, state.record.kind, state.record.id, {userId, role: target.role})) break;
@@ -211,9 +210,7 @@ async function prepare(orgId: string, userId: string, p: SendRequest) {
     if (s.location && !p.location && p.placement !== "unplaced") needs.push("Choose a placement in this workspace");
     s.location = p.location ?? null;
     s.needs = [...s.needs, ...needs];
-    const previous = await meta.selectFrom("share_offers").select(["id", "landed", "transfer"]).where("target_org_id", "=", target.id)
-      .where(sql<string>`(source->>'org_id')`, "=", source.id).where(sql<string>`source->>'kind'`, "=", p.entity_kind).where(sql<string>`source->>'id'`, "=", id)
-      .where("status", "!=", "returned").where("status", "!=", "withdrawn").orderBy("created_at", "desc").executeTakeFirst();
+    const previous = await findSendArrival(target.id, s.origin, {userId, role: target.role});
     const preview: SendItemPreview = { id, name: thing.name, collection: collectionName, mappings: mapped.mappings, missing: mapped.missing, dropped: [...mapped.dropped, ...s.needs.filter((n) => !needs.includes(n))], needs, duplicate: previous?.id ?? null, files: s.files.length, arrival: needs.length ? "inbox" : "collection" };
     things.push({ thing, preview, defs });
   }
@@ -232,6 +229,21 @@ async function save(id: string, transfer: Transfer, landed?: unknown) {
   await meta.updateTable("share_offers").set({ transfer: JSON.stringify(transfer) as never, ...(landed ? { landed: JSON.stringify(landed) as never } : {}), ...(transfer.state === "complete" ? { status: "taken" as const, taken_at: new Date(), decided_at: new Date() } : {}) }).where("id", "=", id).execute();
 }
 
+export async function recordOwnSendFiling(orgId: string, offerId: string, inboxId: string, record: { kind: string; id: string }): Promise<void> {
+  const row = await meta.selectFrom("share_offers").selectAll().where("id", "=", offerId).where("target_org_id", "=", orgId).executeTakeFirst();
+  if (!row || object(row.landed).inbox_id !== inboxId) return;
+  const transfer = object(row.transfer);
+  if (transfer.target_after || transfer.state === "undone") return;
+  const state = await platform().scan.offerIntake()?.state(orgId, inboxId);
+  if (state?.status !== "filed" || state.record?.id !== record.id || state.record.kind !== record.kind) return;
+  const writer = await platform().entities.getWriter(orgId, record.kind) ?? await getHistoryWriterFor(orgId, record.kind);
+  const after = await writer?.snapshot?.(orgId, record.id);
+  if (!after) throw new SendError("The filed item could not be checked for Undo.");
+  const baseline = { target_after: after, target_related: (await writer?.snapshotDeletion?.(orgId, record.id))?.related, target_record: record };
+  await meta.updateTable("share_offers").set({transfer: sql`transfer || ${JSON.stringify(baseline)}::jsonb` as never})
+    .where("id", "=", offerId).where(sql<boolean>`transfer->'target_after' IS NULL`).execute();
+}
+
 export async function sendRecords(orgId: string, userId: string, p: SendRequest) {
   if (p.dry_run) return previewSend(orgId, userId, p);
   return runSerialised(`record-send:${orgId}`, async () => {
@@ -244,7 +256,7 @@ export async function sendRecords(orgId: string, userId: string, p: SendRequest)
         const target = await membership(p.target_org, userId);
         if (!roleSatisfies(target.role, ["member"])) throw new SendError("You cannot create records in the target workspace.");
         if (done.length !== p.ids.length || done.some((r) => r.target_org_id !== target.id || object(r.source).org_id !== orgId || object(r.source).kind !== p.entity_kind || !p.ids.includes(String(object(r.source).id)) || object(r.transfer).mode !== p.mode)) throw new SendError("That request id belongs to a different send.");
-        return { ok: true, sent: done.length, offer_ids: p.ids.map((id) => done.find((r) => object(r.source).id === id)!.id), summary: `${done.length} items ${p.mode === "copy" ? "copied" : "sent"} to ${target.name}.` };
+        return { ok: true, sent: done.length, offer_ids: p.ids.map((id) => done.find((r) => object(r.source).id === id)!.id), summary: `${countOf(done.length, "item")} ${p.mode === "copy" ? "copied" : "sent"} to ${target.name}.` };
       }
     }
     const first = await prepare(orgId, userId, p);
@@ -259,7 +271,7 @@ export async function sendRecords(orgId: string, userId: string, p: SendRequest)
     try {
     for (const { thing, preview } of plan.things) {
       const src = { org_id: orgId, kind: p.entity_kind, id: preview.id };
-      let row = await meta.selectFrom("share_offers").selectAll().where("batch", "=", batch).where(sql<string>`source->>'id'`, "=", preview.id).where("created_by", "=", userId).executeTakeFirst();
+      let row = await meta.selectFrom("share_offers").selectAll().where("batch", "=", batch).where(sql<string>`(source->>'id')`, "=", preview.id).where("created_by", "=", userId).executeTakeFirst();
       if (row && object(row.transfer).state === "undone") throw new SendError("This send was undone. Preview again before sending it anew.");
       if (row && object(row.transfer).state === "complete") { made.push(row.id); continue; }
       if (!row && preview.duplicate && !p.duplicate) throw new SendError("These records were sent before. Update the earlier copy or make another.");
@@ -339,11 +351,17 @@ export async function sendRecords(orgId: string, userId: string, p: SendRequest)
 export async function undoSend(orgId: string, userId: string, offerId: string) {
   return runSerialised(`record-send:${orgId}`, () => undoSendUnlocked(orgId, userId, offerId));
 }
-async function undoSendUnlocked(orgId: string, userId: string, offerId: string, onlyIncomplete = false, sourceLocked = false): Promise<{ok: true}> {
+export async function undoFileArrival(orgId: string, userId: string, offerId: string, checkOnly = false, locked = false) {
+  const work = () => undoSendUnlocked(orgId, userId, offerId, false, false, true, checkOnly);
+  return locked ? work() : runSerialised(`record-send:${orgId}`, work);
+}
+async function undoSendUnlocked(orgId: string, userId: string, offerId: string, onlyIncomplete = false, sourceLocked = false, targetOnly = false, checkOnly = false): Promise<{ok: true}> {
   const row = await meta.selectFrom("share_offers").selectAll().where("id", "=", offerId).where("target_org_id", "is not", null).executeTakeFirst();
-  if (!row || object(row.source).org_id !== orgId || row.created_by !== userId) throw new SendError("That is not a send you made here.");
+  const incoming = object(row?.transfer).transport === "file-import";
+  if (!row || (incoming ? row.target_org_id : object(row.source).org_id) !== orgId || row.created_by !== userId) throw new SendError("That is not a send you made here.");
+  if ((incoming && !targetOnly && !onlyIncomplete) || (targetOnly && !incoming)) throw new SendError("Undo this file import in the receiving workspace.");
   const source = await membership(orgId, userId);
-  if (object(row.transfer).mode === "move" && !roleSatisfies(source.role, ["member"])) throw new SendError("You no longer have permission to undo in the source workspace.");
+  if (!incoming && object(row.transfer).mode === "move" && !roleSatisfies(source.role, ["member"])) throw new SendError("You no longer have permission to undo in the source workspace.");
   await unrestrictedToken();
   const target = await membership(row.target_org_id!, userId);
   if (!roleSatisfies(target.role, ["member"])) throw new SendError("You no longer have permission to undo in the target workspace.");
@@ -352,7 +370,7 @@ async function undoSendUnlocked(orgId: string, userId: string, offerId: string, 
   if (t.state === "undone") return { ok: true };
   const src = object(row.source);
   let restoreSource = false;
-  if (t.mode === "move" && t.source_changed) {
+  if (!incoming && t.mode === "move" && t.source_changed) {
     if (!sourceLocked) return lockDeletedSource(orgId, String(src.kind), String(src.id), () => undoSendUnlocked(orgId, userId, offerId, onlyIncomplete, true));
     const writer = await sendWriter(orgId, String(src.kind), userId);
     if (!writer) throw new SendError("The source collection needs to be enabled to undo.");
@@ -361,11 +379,10 @@ async function undoSendUnlocked(orgId: string, userId: string, offerId: string, 
     restoreSource = !current || !!current.deleted_at;
     if (restoreSource && !await getDeletedSource(orgId, String(src.kind), String(src.id))) throw new SendError("The source restore is no longer available. Keep the received record.");
   }
-  t.state = "undoing";
-  await save(row.id, t);
+  if (!checkOnly) { t.state = "undoing"; await save(row.id, t); }
   const landed = object(row.landed);
   const intake = platform().scan.offerIntake();
-  if (!landed.inbox_id && intake) {
+  if (!landed.inbox_id && intake && !checkOnly) {
     const [arrival] = await intake.receive(target.id, { own: true, session: { key: `send:${row.batch}`, label: `Sent from ${t.source_name}`, from: t.source_name }, things: [{offer_id: row.id, thing: t.thing}], acquiredFrom: t.source_name, acquiredOn: await platform().accounts.dayFor(userId), as: {userId, orgSlug: target.slug} });
     if (arrival) { landed.org_id = target.id; landed.inbox_id = arrival.inbox_id; await save(row.id, t, landed); }
   }
@@ -374,9 +391,11 @@ async function undoSendUnlocked(orgId: string, userId: string, offerId: string, 
     const read = writer?.snapshot ?? writer?.read;
     if (!writer || !read) throw new SendError("Enable the earlier copy's collection to undo.");
     if (t.target_after && !sameSendSnapshot(await read(target.id, t.previous_id), t.target_after)) throw new SendError("The earlier copy changed since the send. Undo would overwrite those changes.");
-    for (const id of t.added_attachments ?? []) await platform().files.detach(target.id, id);
-    if (writer.restore) await writer.restore(target.id, t.previous);
-    else await writer.update(target.id, t.previous_id, t.previous);
+    if (!checkOnly) {
+      for (const id of t.added_attachments ?? []) await platform().files.detach(target.id, id);
+      if (writer.restore) await writer.restore(target.id, t.previous);
+      else await writer.update(target.id, t.previous_id, t.previous);
+    }
   }
   if (typeof landed.inbox_id === "string" && intake) {
     const state = await intake.state(target.id, landed.inbox_id);
@@ -384,14 +403,18 @@ async function undoSendUnlocked(orgId: string, userId: string, offerId: string, 
       const writer = await sendWriter(target.id, state.record.kind, userId);
       if (!writer) throw new SendError("The receiving collection needs to be enabled to undo.");
       const current = await writer.snapshot?.(target.id, state.record.id);
+      if (current && !t.target_after) throw new SendError("This item was filed after it arrived. Remove it here before undoing the send.");
       if (current && t.target_after && !sameSendSnapshot(current, t.target_after)) throw new SendError("The received record changed since the send. Keep those changes or remove it before undoing.");
       if (current && t.target_related !== undefined && !sameSendSnapshot((await writer.snapshotDeletion?.(target.id, state.record.id))?.related, t.target_related)) throw new SendError("The received record's related records changed since the send. Keep them or remove the arrival before undoing.");
-      await writer.delete(target.id, state.record.id);
-      await forgetDeletedTarget(target.id, state.record.kind, state.record.id);
-    } else if (state.status === "waiting") await intake.remove(target.id, landed.inbox_id);
+      if (!checkOnly) {
+        await writer.delete(target.id, state.record.id);
+        await forgetDeletedTarget(target.id, state.record.kind, state.record.id);
+      }
+    } else if (state.status === "waiting" && !checkOnly) await intake.remove(target.id, landed.inbox_id);
   }
+  if (checkOnly) return {ok: true};
   await meta.updateTable("share_offers").set({ status: "returned", decided_at: new Date() }).where("id", "=", row.id).execute();
-  if (t.mode === "move" && t.source_changed) {
+  if (!incoming && t.mode === "move" && t.source_changed) {
     if (restoreSource && !await restoreDeletedSource(orgId, String(src.kind), String(src.id))) throw new SendError("The source restore is no longer available.");
     if (!t.source_deleted) {
       const r = await bringBack(orgId, userId, String(src.kind), [String(src.id)]);
@@ -440,12 +463,12 @@ export function registerOwnSendRecovery(): void {
   platform().sweeps.register({
     name: "platform.own-workspace-send-recovery", everyMs: 60_000,
     async candidates() {
-      const rows = await meta.selectFrom("share_offers").select(sql<string>`(source->>'org_id')`.as("org_id")).where("target_org_id", "is not", null).where(sql<boolean>`(transfer->>'state' <> 'undone' and (transfer->>'state' <> 'complete' or transfer->>'batch_complete' is distinct from 'true'))`).execute();
+      const rows = await meta.selectFrom("share_offers").select(sql<string>`case when transfer->>'transport' = 'file-import' then target_org_id::text else source->>'org_id' end`.as("org_id")).where("target_org_id", "is not", null).where(sql<boolean>`(transfer->>'state' <> 'undone' and (transfer->>'state' <> 'complete' or transfer->>'batch_complete' is distinct from 'true'))`).execute();
       return [...new Set(rows.map((r) => r.org_id))];
     },
     async visit({ orgId }) {
       const rows = await meta.selectFrom("share_offers").select(["id", "created_by"]).where("target_org_id", "is not", null)
-        .where(sql<string>`(source->>'org_id')`, "=", orgId).where(sql<boolean>`(transfer->>'state' <> 'undone' and (transfer->>'state' <> 'complete' or transfer->>'batch_complete' is distinct from 'true'))`)
+        .where(sql<string>`(case when transfer->>'transport' = 'file-import' then target_org_id::text else source->>'org_id' end)`, "=", orgId).where(sql<boolean>`(transfer->>'state' <> 'undone' and (transfer->>'state' <> 'complete' or transfer->>'batch_complete' is distinct from 'true'))`)
         .where("created_at", "<", new Date(Date.now() - 5 * 60_000)).limit(200).execute();
       for (const row of rows) if (row.created_by) await runSerialised(`record-send:${orgId}`, () => undoSendUnlocked(orgId, row.created_by!, row.id, true));
     },
@@ -471,8 +494,7 @@ async function sendWriter(orgId: string, kind: string, userId: string): Promise<
   const token = await platform().auth.mintSession({userId});
   const call = async (method: string, endpoint: string, id?: string, fields?: Record<string, unknown>) => {
     const path = endpoint.replace(/\{id\}/g, id ?? "");
-    // loopback-ok: #5153 moves this onto selfFetch
-    const response = await fetch(`http://127.0.0.1:${env.API_PORT}/api/v1/orgs/${org.slug}/modules/${shape.module_name}${path}`, {
+    const response = await apiFetch(`${selfOrigin()}/api/v1/orgs/${org.slug}/modules/${shape.module_name}${path}`, {
       method, headers: {Authorization: `Bearer ${token}`, "Content-Type": "application/json"},
       ...(fields ? {body: JSON.stringify(fields)} : {}), signal: AbortSignal.timeout(30_000),
     });
@@ -498,4 +520,27 @@ async function refuseUnsentDependents(orgId: string, kind: string, id: string, u
   if (writer?.retire && writer.unretire) return;
   const related = object((await writer?.snapshotDeletion?.(orgId, id))?.related);
   if ([related.rows, related.cleared].some((rows) => Array.isArray(rows) && rows.length)) throw new SendError("This record has related records that are not travelling. Copy it instead, or move those records first.");
+}
+
+export { sendThing, sendFieldDefs, sendWriter, refuseUnsentDependents, membership as sendMembership, mayCreate as mayCreateSend, unrestrictedToken as requireSendToken };
+export type { Transfer as SendTransfer };
+
+export async function findSendArrival(targetId: string, origin: {instance: string; org: string; id: string; kind?: string}, viewer: EntityViewer) {
+  let query = meta.selectFrom("share_offers").selectAll().where("target_org_id", "=", targetId)
+    .where(sql<string>`(transfer->'thing'->'send'->'origin'->>'instance')`, "=", origin.instance)
+    .where(sql<string>`(transfer->'thing'->'send'->'origin'->>'org')`, "=", origin.org)
+    .where(sql<string>`(transfer->'thing'->'send'->'origin'->>'id')`, "=", origin.id)
+    .where("status", "!=", "returned").where("status", "!=", "withdrawn");
+  if (origin.kind) query = query.where(sql<string>`(transfer->'thing'->'send'->'origin'->>'kind')`, "=", origin.kind);
+  const rows = await query.orderBy("created_at", "desc").execute();
+  const intake = platform().scan.offerIntake();
+  const alive = [];
+  for (const row of rows) {
+    const landed = object(row.landed);
+    if (!intake || typeof landed.inbox_id !== "string") continue;
+    const state = await intake.state(targetId, landed.inbox_id);
+    if (state.status === "waiting" || (state.status === "filed" && state.record && await lookup(targetId, state.record.kind, state.record.id, viewer))) alive.push(row);
+  }
+  if (!origin.kind && new Set(alive.map((r) => (r.transfer as Transfer).thing.send?.origin.kind)).size > 1) return null;
+  return alive[0] ?? null;
 }

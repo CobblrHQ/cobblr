@@ -13,6 +13,7 @@ export interface ActivityChange {
   field: string;
   /** A custom field (a key of the record's metadata bag). */
   custom?: true;
+  secret?: true;
   from: unknown;
   to: unknown;
 }

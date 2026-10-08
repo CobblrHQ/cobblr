@@ -5,17 +5,22 @@
 // under /share-links: an invite is read and claimed with its code, and once
 // paired every change arrives signed with the link's key.
 
-import { inviteLinks } from "../platform/cloud.js";
+import { inviteDestinations } from "../platform/cloud.js";
+import { hasAuthEmailSender } from "../platform/hosted-seams.js";
+import { inviteToShare } from "../platform/share-invite.js";
+import { inviteSaid } from "../platform/share-invite-email.js";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware.js";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { readScope, readVisibility } from "@cobblr/platform-contract/share-scope";
+import { listKindsForOrg } from "../platform/entities.js";
 import { gatedFields, previewScope } from "../platform/scope-eval.js";
-import { mirrorShareNow } from "../platform/share-mirror.js";
+import { mirrorAndDeliverNow } from "../platform/share-mirror.js";
 import { sharePerson } from "../platform/share-person.js";
-import { shareTargets, sharesOfRecord } from "../platform/share-picks.js";
+import { shareTargets, sharesOfRecord, sharesOfCollection } from "../platform/share-picks.js";
 import { listAdditions } from "../platform/share-additions.js";
 import { publicPageFieldChoices, recordPublicPages } from "../platform/public-page.js";
 import { copyNotes } from "../platform/share-edits.js";
@@ -29,7 +34,6 @@ import {
   ShareInviteError,
   acceptShareInvite,
   claimShareInvite,
-  createShareInvite,
   decodeInvite,
   hereUrl,
   listShareLinks,
@@ -57,23 +61,41 @@ shareLinksOrgRouter.get("/:slug/share-links", requireAuth, withTenant, async (re
   }
 });
 
-const CreateBody = z.object({ label: z.string().max(120).default("") });
+const CreateBody = z.object({
+  label: z.string().max(120).default(""),
+  /** Their email: the invite is bound to it and, with outgoing mail, sent there. */
+  email: z.union([z.string().trim().toLowerCase().email().max(254), z.literal("")]).optional(),
+  /** Which of the places an invite can open the owner chose (destinations). */
+  where: z.number().int().min(0).max(50).optional(),
+  collection: z.object({ kind: z.string().min(1), ids: z.array(z.string().uuid()).max(5000).optional() }).optional(),
+});
 
-// UI-REACH: Settings → Sharing
-// AI-REACH: exempt — inviting a person into a share is a person's decision, never an assistant's.
+// UI-REACH: the share page (a list's, a selection's or a record's Share) and Settings → Sharing
+// AI-REACH: platform:share-with — Cobb invites by email through the share action
 shareLinksOrgRouter.post("/:slug/share-links", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (!requireRole(req, res, "owner", "admin")) return;
     const body = CreateBody.safeParse(req.body ?? {});
     if (!body.success) return bad(res, 400, "bad_body", body.error.issues[0]?.message ?? "bad body");
-    const here = hereUrl(publicOrigin(req));
-    const made = await createShareInvite({ orgId: req.tenant!.org.id, userId: req.session!.id, label: body.data.label, here });
-    // "Where is their Cobblr?": the same token, opened wherever they are
-    // (#4737); the first is the default.
-    const links = inviteLinks(here, made.token);
-    res.status(201).json({ id: made.linkId, invite_url: links[0]?.url ?? made.inviteUrl, expires_at: made.expiresAt, links });
+    if (body.data.collection && !(await listKindsForOrg(req.tenant!.org.id)).some((k) => k.id === body.data.collection!.kind)) return bad(res, 400, "bad_collection", "That collection is not in this workspace.");
+    const made = await inviteToShare({ orgId: req.tenant!.org.id, userId: req.session!.id, here: hereUrl(publicOrigin(req)), email: body.data.email || null, label: body.data.label, where: body.data.where, collection: body.data.collection });
+    res.status(201).json({ id: made.linkId, invite_url: made.url, expires_at: made.expiresAt, links: made.links, email: made.email, mail: made.mail, said: inviteSaid(made) });
   } catch (err) {
     if (err instanceof Error && /cannot be shared|does not know its own address/.test(err.message)) return bad(res, 409, "cannot_share", err.message);
+    next(err);
+  }
+});
+
+// Where an invite can open ("Where is their Cobblr?") and whether this Cobblr
+// can email one, so the share page shows both before anything is made.
+// UI-REACH: the share page and Settings → Sharing
+// AI-REACH: exempt — a form's choices; the share action reads the same places itself.
+shareLinksOrgRouter.get("/:slug/share-links/destinations", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const here = hereUrl(publicOrigin(req));
+    res.json({ destinations: here ? inviteDestinations(here).map((d) => ({ label: d.label, note: d.note })) : [], can_email: hasAuthEmailSender() });
+  } catch (err) {
     next(err);
   }
 });
@@ -85,7 +107,10 @@ shareLinksOrgRouter.post("/:slug/share-links/:id/sync", requireAuth, withTenant,
     if (!requireRole(req, res, "owner", "admin")) return;
     const link = await getShareLink(String(req.params.id));
     if (!link || link.org_id !== req.tenant!.org.id) return bad(res, 404, "not_found", "No such share.");
-    const r = await flushShareLinkNow(link.id);
+    // Sync now sends what the owner has now: a mirror pass first (waiting
+    // out one already running), then the outbox, rather than only what an
+    // earlier pass already queued.
+    const r = link.side === "owner" ? await mirrorAndDeliverNow(link.id) : await flushShareLinkNow(link.id);
     const left = await meta.selectFrom("share_outbox").select((eb) => eb.fn.countAll<string>().as("n")).where("link_id", "=", link.id).where("sent_at", "is", null).executeTakeFirst();
     res.json({ sent: r.sent, error: r.error, waiting: Number(left?.n ?? 0) });
   } catch (err) {
@@ -117,7 +142,7 @@ shareLinksRouter.post("/share-links/preview", requireAuth, async (req, res, next
     const token = decodeInvite(body.data.invite);
     if (!token) return bad(res, 400, "bad_invite", "That invite link is damaged. Ask for a new one.");
     const r = await readInvite(token, hereUrl(publicOrigin(req)));
-    res.json({ owner_name: r.preview.owner_name, workspace_name: r.preview.workspace_name, from_host: r.local ? null : new URL(r.ownerUrl).host });
+    res.json({ owner_name: r.preview.owner_name, workspace_name: r.preview.workspace_name, for_email: r.preview.for_email ?? null, from_host: r.local ? null : new URL(r.ownerUrl).host });
   } catch (err) {
     if (err instanceof ShareInviteError) return bad(res, err.status, "invite_refused", err.message);
     next(err);
@@ -164,6 +189,7 @@ const ClaimBody = z.object({
   share_workspace_name: z.string().max(300),
   key_to_share: z.string().min(20).max(300),
   key_to_owner: z.string().min(20).max(300),
+  person_email: z.string().max(320).nullish(),
   v: z.number().int().min(1),
 });
 
@@ -179,6 +205,7 @@ shareLinksRouter.post("/share-links/claim", async (req, res, next) => {
     if (!got) return bad(res, 404, "invite_unusable", "That invite is used, expired or was withdrawn.");
     res.json(got);
   } catch (err) {
+    if (err instanceof ShareInviteError) return bad(res, err.status, "invite_refused", err.message);
     next(err);
   }
 });
@@ -335,7 +362,9 @@ shareLinksOrgRouter.get("/:slug/record-shares", requireAuth, withTenant, async (
     const kind = String(req.query.kind ?? "");
     const id = String(req.query.id ?? "");
     const targets = await shareTargets(req.tenant!.org.id);
-    res.json({ targets, shared_with: targets.length && kind && id ? await sharesOfRecord(req.tenant!.org.id, kind, id) : [] });
+    const org = await meta.selectFrom("orgs").select("kind").where("id", "=", req.tenant!.org.id).executeTakeFirst();
+    const can_share = !!org && org.kind !== "share" && roleSatisfies(req.tenant!.role, ["owner", "admin"]);
+    res.json({ targets, can_share, shared_with: targets.length && kind ? (id ? await sharesOfRecord(req.tenant!.org.id, kind, id) : await sharesOfCollection(req.tenant!.org.id, kind)) : [] });
   } catch (err) {
     next(err);
   }
@@ -439,11 +468,15 @@ shareLinksOrgRouter.put("/:slug/share-links/:id/what", requireAuth, withTenant, 
       .set({ settings: sql`coalesce(settings, '{}'::jsonb) || ${JSON.stringify({ scope, visibility, edit_mode })}::jsonb` as never })
       .where("id", "=", l.id)
       .execute();
-    // What is shared changed: the mirror runs now.
+    // What is shared changed: mirrored and delivered before the owner is
+    // answered, so a price turned off or a record taken out is out of the
+    // friend's copy when this says so (share-mirror.ts mirrorAndDeliverNow).
     await meta.updateTable("share_links").set({ mirror_due_at: new Date() }).where("id", "=", l.id).execute();
-    // DETACHED: the mirror run; mirror_due_at is set above, so the sweep runs it if this does not finish
-    void mirrorShareNow(l.id).catch((err) => console.error(`[share] mirror of ${l.id} failed:`, err));
-    res.json({ scope, visibility, edit_mode, preview: await previewScope(req.tenant!.org.id, scope, (await sharePerson(l.id))?.id ?? null) });
+    const sync = await mirrorAndDeliverNow(l.id).catch((err) => {
+      console.error(`[share] mirror of ${l.id} failed:`, err);
+      return { delivered: false, error: err instanceof Error ? err.message : String(err) };
+    });
+    res.json({ scope, visibility, edit_mode, delivered: sync.delivered, preview: await previewScope(req.tenant!.org.id, scope, (await sharePerson(l.id))?.id ?? null) });
   } catch (err) {
     next(err);
   }

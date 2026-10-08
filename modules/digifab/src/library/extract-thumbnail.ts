@@ -117,5 +117,5 @@ export function extractThumbnail(filename: string, bytes: Buffer): ExtractedThum
 
 /** The library accepts these (a .bgcode binary has no extractable PNG here). */
 export function isLibraryFile(filename: string): boolean {
-  return /\.(3mf|gcode|gco|g|goo|svg|dxf|ai|pdf|png|jpg|jpeg|lbrn2)$/i.test(filename);
+  return /\.(3mf|gcode|gco|g|goo|nc|tap|svg|dxf|ai|pdf|png|jpg|jpeg|lbrn2)$/i.test(filename);
 }

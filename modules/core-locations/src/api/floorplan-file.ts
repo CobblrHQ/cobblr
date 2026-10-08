@@ -12,6 +12,7 @@
 // said so. The whole import is one step: what it made and what each updated
 // place's layout was are returned, and Undo is a function of that.
 // See docs/design-decisions/location-floor-plan.md, "A whole house as one file".
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { platform } from "@cobblr/platform-contract";
 import { Router } from "express";
 import { FLOORPLAN_FORMAT, problemSentence, readFloorplanFile, type FloorplanContainerT, type FloorplanFileT } from "@cobblr/platform-contract/floorplan-format";
@@ -336,7 +337,7 @@ export function readPlanInput(raw: unknown): { plan: FloorplanFileT } | { proble
 floorplanFileRouter.post(
   "/floorplan/import",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-locations:import-floorplan"))) return;
     const body = (req.body ?? {}) as { plan?: unknown; dry_run?: unknown };
     const read = readPlanInput(body.plan);
     if ("problems" in read) {
@@ -352,7 +353,7 @@ floorplanFileRouter.post(
 floorplanFileRouter.post(
   "/floorplan/import/undo",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-locations:undo-floorplan-import"))) return;
     const imp = readImportResult((req.body as { import?: unknown } | null)?.import);
     if (!imp) {
       res.status(400).json({ error: { code: "invalid_body", message: "Send the import to undo, as the import answered it." } });

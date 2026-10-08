@@ -4,7 +4,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Check } from "lucide-react";
-import { SegmentedChoice, useToast } from "@cobblr/platform-web";
+import { useToast, NumberField, SegmentedChoice } from "@cobblr/platform-web";
 import { ApiError, api, WORKSPACE_SOURCE_KIND, type ActionArgSpec, type PlatformBinding } from "../lib/api";
 import {
   TRIGGER_OPTIONS,
@@ -682,11 +682,10 @@ function RecurrenceBuilder({ value, onChange }: { value: Recurrence; onChange: (
     <div className="mt-2 space-y-2 rounded-lg border border-line dark:border-slate-700 p-3">
       <div className="flex items-center gap-2 text-xs">
         <span className="text-faint">every</span>
-        <input
-          type="number"
+        <NumberField
           min={1}
           value={value.interval}
-          onChange={(e) => onChange({ ...value, interval: Math.max(1, Number(e.target.value) || 1) })}
+          onChange={(n) => onChange({ ...value, interval: Math.max(1, n || 1) })}
           className="input !w-16 text-xs"
         />
         <select

@@ -22,6 +22,7 @@ import { TRANSIT_FIELD, viaBridge, edgeKeyFor, edgeFetch } from "./edge-transit.
 import { buildMessages } from "./openai.js";
 import { toolsOf, openAiToolsOf, parseOpenAiToolCalls, looksLikeNoToolSupport, stripLeakedReasoning } from "./tool-wire.js";
 import { promptFingerprint } from "./prompt-fingerprint.js";
+import { assertLocalAiEndpoint, assertLocalAiPin } from "./local-endpoint.js";
 
 export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
   chat: { models: ["default"], defaultModel: "default" },
@@ -109,6 +110,7 @@ export function retryDelayMs(status: number, retryAfter: string | null, attempt:
 }
 
 export interface CompatPresetOpts {
+  localOnly?: boolean;
   freeBackground?: boolean;
   freeBackgroundModel?: string;
   id: string;
@@ -158,12 +160,13 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
   return {
     id,
     label: opts.label,
+    ...(opts.localOnly ? { locality: "local" as const } : {}),
     describeCredentials: opts.describeCredentials,
     setup: opts.setup,
     rank: opts.rank,
     freeBackground: opts.freeBackground,
     freeBackgroundModel: opts.freeBackgroundModel,
-    capabilities: opts.modelsFor
+    capabilities: { ...(opts.modelsFor
       ? Object.fromEntries(
           Object.entries(SUPPORTED).map(([cap, def]) => {
             const menu = opts.modelsFor?.[cap as AiCapability];
@@ -175,7 +178,7 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
             ];
           }),
         )
-      : SUPPORTED,
+      : SUPPORTED), ...(opts.localOnly ? { "personal-document-read": SUPPORTED["document-read"]! } : {}) },
     ...(opts.modelNotes ? { modelNotes: opts.modelNotes } : {}),
     // The prompt this adapter INJECTS (absent from `input` for the image
     // capabilities) joins the cache key — so editing a prompt actually invalidates
@@ -206,11 +209,14 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
       if (opts.requireModel && (!model || model === "default")) {
         throw new Error(`${id}: set a model on the connection (e.g. anthropic/claude-sonnet-5)`);
       }
+      if (ctx.privacy === "personal" && !opts.localOnly) throw new Error("Personal documents require a local provider.");
+      if (opts.localOnly) assertLocalAiEndpoint(base, ctx.credentials, model);
       // Transit: direct = SSRF-guarded pinned fetch; bridge = the request rides
       // the user's dial-out edge relay and the bridge does the LAN call (e.g.
       // LM Studio on their desk). See ./edge-transit.ts.
       const bridged = viaBridge(ctx.credentials);
       const pin = bridged ? null : await assertSafeAiEndpoint(base, platform().ai.getEndpointPolicy());
+      if (opts.localOnly) assertLocalAiPin(pin);
       const headers = { "content-type": "application/json", ...extraHeaders, ...authHeadersFor(ctx.credentials) };
       // Every failure leaves as a ProviderError: the reason the provider gave
       // (provider-reason.ts), the status, and a message with every credential
@@ -222,7 +228,7 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
       const once = async (path: string, init: { method?: "GET" | "POST"; headers?: Record<string, string>; body?: string }): Promise<PinnedResponse> => {
         try {
           return bridged
-            ? await edgeFetch(edgeKeyFor(ctx.credentials, ctx.orgId), base, path, init)
+            ? await edgeFetch(edgeKeyFor(ctx.credentials, ctx.orgId), base, path, { ...init, ...(ctx.privacy === "personal" ? { privacy: ctx.privacy, requiredFeatures: ["no-redirects"] } : {}) })
             : await pinnedFetch(`${base}${path}`, pin!, init);
         } catch (err) {
           throw providerError(id, reasonFromTransportError(err), redactSecrets(`${id}: ${(err as Error)?.message ?? String(err)}`, secrets));
@@ -276,6 +282,7 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
         case "classify-image":
         case "split-image":
         case "identify-glance":
+        case "personal-document-read":
         case "document-read":
         case "identify-image":
         case "rank-images":
@@ -283,7 +290,7 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
         case "match-to-catalog": {
           const body: Record<string, unknown> = {
             model,
-            messages: buildMessages(ctx.capability, ctx.input),
+            messages: buildMessages(ctx.capability === "personal-document-read" ? "document-read" : ctx.capability, ctx.input),
           };
           // Native tool-calling for chat: forward the neutral tool defs. A
           // server that doesn't support tools 4xxes on the field — retried
@@ -403,12 +410,14 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
     // has loaded, which is the menu, not a guess about it.
     ...(opts.liveModels ? { listModels: async (credentials: Record<string, unknown>) => {
       const base = resolveBase(credentials);
+      if (opts.localOnly) assertLocalAiEndpoint(base, credentials, String(credentials.model || ""));
       const headers = { ...extraHeaders, ...authHeadersFor(credentials) };
       let res: PinnedResponse;
       if (viaBridge(credentials)) {
         res = await edgeFetch(edgeKeyFor(credentials), base, "/models", { headers });
       } else {
         const pin = await assertSafeAiEndpoint(base, platform().ai.getEndpointPolicy());
+        if (opts.localOnly) assertLocalAiPin(pin);
         res = await pinnedFetch(`${base}/models`, pin, { headers });
       }
       if (!res.ok) throw new Error(providerSentence(reasonFromResponse(res.status, await res.text().catch(() => "")), { provider: id }));
@@ -419,12 +428,14 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
       const secrets = Object.values(credentials);
       try {
         const base = resolveBase(credentials);
+        if (opts.localOnly) assertLocalAiEndpoint(base, credentials, String(credentials.model || ""));
         const headers = { ...extraHeaders, ...authHeadersFor(credentials) };
         let res: PinnedResponse;
         if (viaBridge(credentials)) {
           res = await edgeFetch(edgeKeyFor(credentials), base, "/models", { headers });
         } else {
           const pin = await assertSafeAiEndpoint(base, platform().ai.getEndpointPolicy());
+          if (opts.localOnly) assertLocalAiPin(pin);
           res = await pinnedFetch(`${base}/models`, pin, { headers });
         }
         if (!res.ok) {

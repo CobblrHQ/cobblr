@@ -63,6 +63,12 @@ export interface PurchasesOrderItemsTable {
   /** Received before a line's stock was reliably added; a person settles it
    *  (0010, heal-unreceived-arrivals.ts). */
   receipt_unconfirmed: Generated<boolean>;
+  /** The parcel this line travels in, when the order shipped in more than
+   *  one (0012). Null: it travels under the order's own tracking number. */
+  shipment_id: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  /** Its receive was taken back because a shipping notice showed it was not
+   *  in hand (0012); its next receive adds stock but no cost. */
+  stock_withdrawn_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null | undefined>;
   metadata: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown> | undefined>;
   instance: Generated<string>;
   created_at: Generated<Date>;
@@ -91,8 +97,27 @@ export interface PurchasesReturnsTable {
   updated_at: ColumnType<Date, Date | undefined, Date>;
 }
 
+/** One parcel of an order (0012). */
+export interface PurchasesOrderShipmentsTable {
+  id: Generated<string>;
+  order_id: string;
+  tracking_number: string;
+  shipment_state: string | null;
+  shipment_checked_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null | undefined>;
+  shipment_next_poll_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null | undefined>;
+  expected_arrival: ColumnType<Date | string | null, string | null | undefined, string | null | undefined>;
+  eta_source: string | null;
+  description: string | null;
+  asked_state: string | null;
+  tracking_added_by_user_id: string | null;
+  received_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null | undefined>;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
 export interface PurchasesDB {
   purchases_vendors: PurchasesVendorsTable;
+  purchases_order_shipments: PurchasesOrderShipmentsTable;
   purchases_returns: PurchasesReturnsTable;
   purchases_orders: PurchasesOrdersTable;
   purchases_order_items: PurchasesOrderItemsTable;

@@ -26,7 +26,7 @@ import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, type ActionInvokeActor } from "@cobblr/platform-contract";
 import {
   DEFAULT_STATION_SETTINGS,
   isStationAddress,
@@ -44,6 +44,7 @@ import { INTERNAL_API } from "./inbox.js";
 import { findTracked } from "../services/entity-match.js";
 import { matchQuery, trackedMatchStampAt } from "../services/tracked-stamp.js";
 import { moveQuantity, scanTargetOf } from "../services/scan-target.js";
+import { isActionStep, type ActionUndoStep } from "@cobblr/platform-contract/action-undo";
 
 export const stationsRouter = Router({ mergeParams: true });
 
@@ -395,6 +396,187 @@ stationsRouter.post(
       });
     } catch (e) {
       return void res.status(409).json({ error: { code: "move_refused", message: e instanceof Error ? e.message : "That could not be moved there." } });
+    }
+    res.json({ ok: true });
+  }),
+);
+
+// ── A known thing's own record actions (#4640) ──────────────────────────
+//
+// The owner: "the buttons on a known thing are that record's own actions"
+// (Log service, Lend, Mark service done), not a grocery set. A kiosk token
+// runs them only here, never at the general invoke door, and only what this
+// door offers: an entity action a person may press whose every effect stays
+// in this workspace and can be put back (`undoable`, the same line Cobb's
+// auto mode and a label's one tap draw), on a record this station keeps. The
+// way back is kept here by the run's request id, so the tablet's Undo runs
+// exactly what the action handed over and never steps of its own.
+
+type StationAction = { id: string; label: string; icon: string | null; description: string | null; args_schema: unknown; group: string | null; primary: boolean };
+
+/** The actions a station offers on a record of this kind. */
+export async function stationActionsFor(orgId: string, kind: string) {
+  const all = await platform().actions.listApplicable(kind, orgId);
+  return all.filter((a) => a.scope === "entity" && a.user_invokable && !a.internal && !a.wire_only && a.undoable === true && !!a.invoke_handler);
+}
+
+// AI-REACH: exempt, the tablet's list of a record's buttons; the assistant lists a record's actions through list_actions.
+stationsRouter.get(
+  "/stations/screens/:address/actions",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const address = addressOf(req);
+    if (!address) return void res.status(404).json({ error: { code: "not_found", message: "No such station." } });
+    const kind = typeof req.query.kind === "string" ? req.query.kind : "";
+    if (!kind) return void res.status(400).json({ error: { code: "kind_required", message: "Say which kind of record." } });
+    const { org } = tenantContext(req);
+    const { settings, label } = await screenOf(tenantDb(req), address);
+    if (!stationReaches(settings, kind)) {
+      return void res.status(403).json({ error: { code: "outside_station", message: `${label} does not keep that.` } });
+    }
+    const offered = await stationActionsFor(org.id, kind);
+    // The same picker a record page offers: "who has it" is the workspace's
+    // People by name, never an id box a kiosk cannot fill.
+    const choose = await platform().actions.argChoices(org.id, kind, offered.map((a) => a.args_schema));
+    const items: StationAction[] = offered.map((a) => ({
+      id: a.id,
+      label: a.label,
+      icon: a.icon,
+      description: a.description,
+      args_schema: choose(a.args_schema),
+      group: a.group ?? null,
+      primary: !!a.primary,
+    }));
+    res.json({ items });
+  }),
+);
+
+const ActionRunBody = z.object({
+  request_id: z.string().min(8).max(80),
+  action_id: z.string().min(1),
+  kind: z.string().min(1),
+  entity_id: z.string().min(1),
+  args: z.record(z.unknown()).optional(),
+});
+
+function actorOf(req: Request): ActionInvokeActor {
+  const s = sessionUser(req) as { id: string; display_name?: string | null; auth_method?: string; api_token_id?: string | null };
+  const auth_method = s.auth_method === "session" ? "session" : "api_token";
+  return { user_id: s.id, display_name: s.display_name ?? null, auth_method, api_token_id: s.api_token_id ?? null, api_token_name: null };
+}
+
+// AI-REACH: exempt, the tablet's press of a record's own action; the assistant runs the same action through invoke_action.
+stationsRouter.post(
+  "/stations/screens/:address/actions/run",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const address = addressOf(req);
+    if (!address) return void res.status(404).json({ error: { code: "not_found", message: "No such station." } });
+    const parsed = ActionRunBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const b = parsed.data;
+    const { org } = tenantContext(req);
+    const db = tenantDb(req);
+    const { settings, label } = await screenOf(db, address);
+    if (!stationReaches(settings, b.kind)) {
+      return void res.status(403).json({ error: { code: "outside_station", message: `${label} does not keep that.` } });
+    }
+    const action = (await stationActionsFor(org.id, b.kind)).find((a) => a.id === b.action_id);
+    if (!action) {
+      return void res.status(403).json({ error: { code: "not_offered", message: `${label} does not offer that here.` } });
+    }
+    const claimed = await db
+      .insertInto("core_scan_station_actions")
+      .values({ address, request_id: b.request_id, action_id: action.id, kind: b.kind, entity_id: b.entity_id, label: action.label, ok: null, undo: null })
+      .onConflict((oc) => oc.columns(["address", "request_id"]).doNothing())
+      .returning(["request_id"])
+      .executeTakeFirst();
+    if (!claimed) {
+      const prior = await db.selectFrom("core_scan_station_actions").selectAll().where("address", "=", address).where("request_id", "=", b.request_id).executeTakeFirstOrThrow();
+      return void res.json({ request_id: b.request_id, ok: prior.ok === true, undoable: Array.isArray(prior.undo) && prior.undo.length > 0, replayed: true });
+    }
+    const forget = () => db.deleteFrom("core_scan_station_actions").where("address", "=", address).where("request_id", "=", b.request_id).execute();
+    const e = await platform().entities.lookup(org.id, b.kind, b.entity_id);
+    if (!e) {
+      await forget();
+      return void res.status(404).json({ error: { code: "not_found", message: "That record is gone." } });
+    }
+    let result: unknown;
+    try {
+      result = await platform().actions.invoke(action.id, {
+        orgId: org.id,
+        userId: sessionUser(req).id,
+        scope: "entity",
+        entity: { kind: b.kind, id: b.entity_id, fields: e.fields },
+        event: { name: null, payload: b.args ?? {}, actor: actorOf(req), timestamp: new Date().toISOString(), trigger_type: "user-invoked" },
+        args: b.args ?? {},
+      });
+    } catch (err) {
+      await forget();
+      const refusal = (err as { name?: string; message?: string } | null)?.name === "ActionRefusal" ? (err as Error).message : null;
+      console.error(`[core-scan] station ${address} ${action.id} failed:`, err);
+      return void res.status(409).json({ error: { code: "action_refused", message: refusal ?? `${action.label} could not run.` } });
+    }
+    const r = result as { ok?: unknown; error?: unknown; summary?: unknown } | null;
+    if (r?.ok !== true) {
+      await forget();
+      return void res.status(409).json({ error: { code: "action_refused", message: typeof r?.error === "string" && r.error ? r.error : `${action.label} could not run.` } });
+    }
+    const raw = await platform().actions.undoFor(action.id, result, { orgId: org.id, entity: { kind: b.kind, id: b.entity_id } }).catch(() => null);
+    const undo: ActionUndoStep[] = raw ? (Array.isArray(raw) ? raw : [raw]) : [];
+    await db
+      .updateTable("core_scan_station_actions")
+      .set({ ok: true, undo: undo.length ? JSON.stringify(undo) : null })
+      .where("address", "=", address)
+      .where("request_id", "=", b.request_id)
+      .execute();
+    res.json({ request_id: b.request_id, ok: true, summary: typeof r.summary === "string" ? r.summary : null, undoable: undo.length > 0 });
+  }),
+);
+
+// AI-REACH: exempt, the tablet's Undo for its own last action run.
+stationsRouter.post(
+  "/stations/screens/:address/actions/undo",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const address = addressOf(req);
+    if (!address) return void res.status(404).json({ error: { code: "not_found", message: "No such station." } });
+    const requestId = typeof req.body?.request_id === "string" ? req.body.request_id : "";
+    const { org } = tenantContext(req);
+    const db = tenantDb(req);
+    const run = await db
+      .updateTable("core_scan_station_actions")
+      .set({ undone_at: new Date() })
+      .where("address", "=", address)
+      .where("request_id", "=", requestId)
+      .where("undone_at", "is", null)
+      .where("ok", "=", true)
+      .returning(["kind", "entity_id", "undo", "label"])
+      .executeTakeFirst();
+    if (!run) return void res.status(404).json({ error: { code: "nothing_to_undo", message: "Nothing to undo." } });
+    const steps = (Array.isArray(run.undo) ? run.undo : []) as ActionUndoStep[];
+    const putBack = () => db.updateTable("core_scan_station_actions").set({ undone_at: null }).where("address", "=", address).where("request_id", "=", requestId).execute();
+    if (!steps.length || steps.some((s) => !isActionStep(s))) {
+      await putBack();
+      return void res.status(409).json({ error: { code: "undo_refused", message: `${run.label} can't be undone here. Open the record to change it.` } });
+    }
+    for (const step of steps) {
+      if (!isActionStep(step)) continue;
+      const kind = step.entity_kind ?? run.kind;
+      const id = step.entity_id ?? run.entity_id;
+      const r = (await platform()
+        .actions.invoke(step.action_id, {
+          orgId: org.id,
+          userId: sessionUser(req).id,
+          entity: { kind, id },
+          event: { name: null, payload: step.args, actor: actorOf(req), timestamp: new Date().toISOString(), trigger_type: "user-invoked" },
+          args: step.args,
+        })
+        .catch((err: unknown) => ({ ok: false, error: (err as Error)?.message ?? String(err) }))) as { ok?: boolean; error?: string } | null;
+      if (r?.ok !== true) {
+        await putBack();
+        return void res.status(409).json({ error: { code: "undo_refused", message: r?.error ?? `${run.label} could not be undone.` } });
+      }
     }
     res.json({ ok: true });
   }),

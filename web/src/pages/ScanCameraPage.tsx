@@ -55,6 +55,7 @@ import {
   numericOverride,
   NATIVE_FORMATS,
   acquireScannerStream,
+  NoCameraHere,
   cameraHasTorch,
   captureFrame,
   setTorch,
@@ -195,6 +196,7 @@ export function ScanCameraPage() {
   const [diagOpen, setDiagOpen] = useState(scanDiagEnabled);
   const [supported, setSupported] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [noCamera, setNoCamera] = useState(false);
   // The camera could not be acquired (no device, permission refused). A
   // result that arrives another way (the typed field, the image door, the
   // wedge) still moves the phase to "result", and until this flag existed
@@ -1475,6 +1477,7 @@ export function ScanCameraPage() {
         }
       } catch (err) {
         setError((err as Error).message);
+        setNoCamera(err instanceof NoCameraHere);
         cameraDeadRef.current = true;
         setCameraDead(true);
         setPhase("idle");
@@ -2477,7 +2480,7 @@ export function ScanCameraPage() {
           <div className="text-sm font-medium">Camera unavailable</div>
           {error && (
             <div className="text-xs text-white/70 max-w-xs">
-              {error}  - check the browser&apos;s camera permission for this site.
+              {noCamera ? error : <>{error} - check the browser&apos;s camera permission for this site.</>}
             </div>
           )}
           <button

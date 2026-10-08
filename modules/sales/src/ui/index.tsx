@@ -1,4 +1,4 @@
-import { downloadBlob, useMoneyCurrency, RecordFormModal, CollectionHeader, ContributedDetailPanels, MoneyInput, useRecordInPath, CustomFieldsPanel, FieldPack, fieldNeed, fieldPackControlClass, Modal, headerButton, useFieldDraft, useToast, useConfirm, usePageTitle, SearchInput } from "@cobblr/platform-web";
+import { downloadBlob, useMoneyCurrency, RecordFormModal, CollectionHeader, ContributedDetailPanels, MoneyInput, useRecordInPath, CustomFieldsPanel, FieldPack, fieldNeed, fieldPackControlClass, Modal, headerButton, useFieldDraft, useToast, useConfirm, usePageTitle, SearchInput, NumberField } from "@cobblr/platform-web";
 // sales UI — the host mounts <SalesUI /> at /sales. A list of sales orders; the
 // detail modal carries the customer, line items (each an inventory part + qty +
 // price), a running total, and the **Fulfill** button that decrements the sold
@@ -704,11 +704,10 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
           >
             <label className="block">
               <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">How many</span>
-              <input
-                type="number"
+              <NumberField
                 min={1}
                 value={making.qty}
-                onChange={(e) => setMaking({ ...making, qty: Math.max(1, Math.floor(Number(e.target.value) || 1)) })}
+                onChange={(n) => setMaking({ ...making, qty: Math.max(1, Math.floor(n || 1)) })}
                 className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm"
               />
             </label>
@@ -1061,7 +1060,7 @@ function AddLineRow({ api, currency, onAdd }: { api: SalesApi; currency: string;
         )}
       </div>
       <div className="flex items-center gap-2">
-        <label className="text-xs text-muted">Qty <input type="number" min={1} value={qty} onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))} className="w-16 ml-1 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm" /></label>
+        <label className="text-xs text-muted">Qty <NumberField min={1} value={qty} onChange={(n) => setQty(Math.max(1, n || 1))} className="w-16 ml-1 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm" /></label>
         <label className="text-xs text-muted flex items-center gap-1">Each <MoneyInput value={price} currency={currency} storage="amount" live onCommit={setPrice} ariaLabel="Price each" className="w-28 text-sm" /></label>
         <div className="flex-1" />
         <button type="button" disabled={!picked && !desc.trim()} onClick={submit} className="px-3 py-1.5 text-xs rounded bg-cobble-600 text-white disabled:opacity-50">Add</button>

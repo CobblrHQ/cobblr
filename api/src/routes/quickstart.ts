@@ -29,11 +29,11 @@ import { meta } from "../db/meta.js";
 import { resolveFieldDefsForKind } from "../platform/field-defs.js";
 import { currentBundleId, humaniseBundleId } from "../lib/bundle-aliases.js";
 import { runSerialised } from "../platform/exclusive.js";
+import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
 export const quickstartRouter = Router({ mergeParams: true });
 
-// loopback-ok: #5153 moves this onto selfFetch
-const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
+const INTERNAL_API = selfOrigin();
 
 function bearerOf(req: { headers: Record<string, unknown> }): string | null {
   const h = req.headers["authorization"];
@@ -68,7 +68,7 @@ async function fetchPendingInbox(baseUrl: string, slug: string, token: string): 
   let cursor: string | null = null;
   for (let page = 0; page < 100; page++) {
     const q: string = `status=pending&limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
-    const res = await fetch(`${baseUrl}/api/v1/orgs/${slug}/modules/core-scan/inbox?${q}`, {
+    const res = await apiFetch(`${baseUrl}/api/v1/orgs/${slug}/modules/core-scan/inbox?${q}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) break;
@@ -372,7 +372,7 @@ quickstartRouter.post("/materialize", requireAuth, withTenant, async (req, res, 
       const dest = it.resolved_destination ?? top ?? undefined;
       if (!onlyIds && !fits(dest ?? undefined)) continue;
       const target = pickTarget(dest?.kind ?? top?.kind ?? undefined);
-      const confirmRes = await fetch(`${baseUrl}/api/v1/orgs/${slug}/modules/core-scan/inbox/${it.id}/confirm`, {
+      const confirmRes = await apiFetch(`${baseUrl}/api/v1/orgs/${slug}/modules/core-scan/inbox/${it.id}/confirm`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({

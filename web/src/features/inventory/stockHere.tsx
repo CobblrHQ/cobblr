@@ -23,6 +23,7 @@ import { StockStepper } from "@cobblr/platform-web";
 import { useKindLabels } from "../../lib/useKindLabels";
 import type { EntityDetailPanelCtx } from "../../panels/types";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 function fmt(n: number): string {
   return Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3)));
 }
@@ -66,7 +67,7 @@ function Row({ r, today, slug, here }: { r: StockPlaceRow; today: string; slug: 
         {off && <span className="font-mono text-[11px] text-muted dark:text-slate-400">{off}</span>}
         {r.lots.length > 1 && (
           <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="text-[11px] text-accent hover:underline">
-            {open ? "Hide" : "Show"} {r.lots.length} lots
+            {open ? "Hide" : "Show"} {countOf(r.lots.length, "lot")}
           </button>
         )}
       </div>

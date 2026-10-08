@@ -1,4 +1,6 @@
-import { RecordFormModal, useToast, useMoneyCurrency, ColourInput, MoneyInput, fieldInputText, missingRequired } from "@cobblr/platform-web";
+import type { RenewalReceiptDraft } from "@cobblr/platform-contract/record-creation";
+import { moneyStorageOf } from "@cobblr/platform-contract/money";
+import { EntityThumb, useNewRecordBarcode, RecordFormModal, useToast, useMoneyCurrency, ColourInput, MoneyInput, fieldInputText, missingRequired, usePasteImage } from "@cobblr/platform-web";
 // Modal to create a new part. Minimum fields only — name + qty +
 // optional category/location.
 //
@@ -28,6 +30,10 @@ import {
   usePlatformWeb,
   ChoiceField,
   UsedValueInput,
+  SecretInput,
+  MemberSelect,
+  PersonSelect,
+  MoneyValueInput,
 } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { useFieldPresentation } from "./useFieldPresentation";
@@ -68,7 +74,7 @@ const UNIT_SUGGESTIONS = [
 ];
 
 export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) {
-  const { api, instance, entityKind, itemNoun, qtyUnit, parent, basePath, orgSlug } = useInventory();
+  const { api, instance, entityKind, itemNoun, qtyUnit, parent, basePath, orgSlug, recordTemplates, receiptDraft } = useInventory();
   const toast = useToast();
   // Native-field presentation: a bundle/config relabels + hides natives on the
   // create form too (the Yarn instance hides category/location/etc.). Scoped to
@@ -134,12 +140,36 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
   // once on blur (not on every keystroke while typing "kg"). (e55169b1)
   const unitAtFocus = useRef(unit);
   const [categoryId, setCategoryId] = useState(seed?.category_id ?? "");
+  const [barcodeCategory, setBarcodeCategory] = useState("");
   const [locationId, setLocationId] = useState(seed?.location_id ?? "");
   const [manufacturer, setManufacturer] = useState(seed?.manufacturer ?? "");
   const mainCurrency = useMoneyCurrency();
   const [costCurrency, setCostCurrency] = useState(mainCurrency);
   const [cost, setCost] = useState<number | null>(seed?.cost != null && Number.isFinite(Number(seed.cost)) ? Number(seed.cost) : null);
+  const receiptArea = useRef<HTMLDetailsElement>(null);
+  const [selectedTemplate, setSelectedTemplate] = useState("");
+  const [selectedReceipt, setSelectedReceipt] = useState("");
+  const [receipt, setReceipt] = useState<RenewalReceiptDraft | null>(null);
+  const [readingReceipt, setReadingReceipt] = useState(false);
+  const receiptItems = useQuery({ queryKey: ["receipt-draft-inbox", orgSlug], queryFn: () => api.receiptItems(), enabled: !!receiptDraft });
+  async function readReceipt(source: { file_id?: string; inbox_id?: string }) {
+    if (!receiptDraft) return;
+    setReadingReceipt(true); setError(null);
+    try {
+      const draft = await api.renewalDraft(source, entityKind, receiptDraft);
+      setReceipt(draft); setName(draft.name); setMeta(m => ({ ...m, ...draft.fields }));
+    } catch (e) { setError(e instanceof Error ? e.message : "Couldn't draft from this receipt"); }
+    finally { setReadingReceipt(false); }
+  }
+  async function uploadAndDraft(file: File) {
+    setReadingReceipt(true); setError(null);
+    try { const uploaded = await api.uploadReceipt(file); await readReceipt({ file_id: uploaded.id }); }
+    catch (err) { setError(err instanceof Error ? err.message : "Couldn't read the receipt"); }
+    finally { setReadingReceipt(false); }
+  }
+  usePasteImage(receiptArea, { enabled: !!receiptDraft && !readingReceipt, accept: "image/*,application/pdf,text/plain,text/csv", onFiles: files => { if (files[0]) void uploadAndDraft(files[0]); } });
   const [meta, setMeta] = useState<Record<string, unknown>>(seed?.fields ?? {});
+  const [barcodeImage, setBarcodeImage] = useState("");
   const [parentRef, setParentRef] = useState<ParentRef | null>(seed?.parent ?? null);
   const [printLabel, setPrintLabel] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -148,6 +178,19 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
   // person says so. A create is never refused for them (capture first).
   const [askedMissing, setAskedMissing] = useState<string[] | null>(null);
   const { appMode } = usePlatformWeb();
+
+  const barcode = useNewRecordBarcode({ kind: entityKind, fields: customFields, metadata: meta, setMetadata: setMeta, showFields: false, natives: [
+    { name: "name", label: "Name", key: "title", value: name, setValue: setName },
+    { name: "manufacturer", label: fp.label("manufacturer", "Brand"), key: "brand", value: manufacturer, setValue: setManufacturer },
+    { name: "image_path", label: "Photo", key: "image_url", value: barcodeImage || (matched ? pickImageFromPayload(matched.payload) ?? "" : ""), setValue: setBarcodeImage },
+    { name: "category", label: fp.label("category", "Category"), key: "category", value: categoryId || barcodeCategory, setValue: (change) => {
+      if (categoryId || barcodeCategory) return;
+      const candidate = typeof change === "function" ? change("") : change;
+      const existing = cats.data?.items.find((c) => c.name.toLowerCase() === candidate.toLowerCase());
+      if (existing) setCategoryId(existing.id);
+      else setBarcodeCategory(candidate);
+    } },
+  ] });
 
   function pickImageFromPayload(payload: Record<string, unknown>): string | null {
     for (const k of ["img_url", "image_url", "image", "thumbnail"]) {
@@ -213,6 +256,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
 
   async function submit(e: FormEvent, anyway = false) {
     e.preventDefault();
+    if (barcode.blocked) return;
     const missing = missingRequired(customFields, meta).map((d) => d.display_label);
     if (missing.length > 0 && !anyway) {
       setAskedMissing(missing);
@@ -222,7 +266,10 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
     setBusy(true);
     setError(null);
     try {
-      const imageFromMatch = matched ? pickImageFromPayload(matched.payload) : null;
+      const imageFromMatch = barcodeImage || (matched ? pickImageFromPayload(matched.payload) : null);
+      const category = categoryId || cats.data?.items.find((c) => c.name.toLowerCase() === barcodeCategory.toLowerCase())?.id || (barcodeCategory ? (await api.createCategory({ name: barcodeCategory })).id : null);
+      const metadata = { ...meta };
+      if (receipt?.vendor && !metadata[receipt.vendor_field]) metadata[receipt.vendor_field] = (await api.createLinkedRecord(receipt.vendor_kind, receipt.vendor)).id;
       const part = await api.createPart({
         name: name.trim(),
         // An estimate is NOT a quantity. Writing the guess into qty would make
@@ -231,7 +278,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
         qty: estimated ? 0 : Number(qty) || 0,
         ...(estimated ? { approximate_qty: Number(qty) || 0 } : {}),
         unit: unit.trim() || "each",
-        category_id: categoryId || null,
+        category_id: category,
         location_id: locationId || null,
         manufacturer: manufacturer.trim() || null,
         // `cost` is number-or-omitted on the server (not nullable) — only
@@ -239,12 +286,19 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
         ...(cost == null ? {} : { cost }),
         // The instance's custom fields (colour, fibre, weight, …) filled in
         // the form go straight onto the new item.
-        metadata: Object.assign({}, meta, cost == null ? {} : { money_currency_cost: costCurrency }),
+        metadata: Object.assign({}, metadata, cost == null ? {} : { money_currency_cost: costCurrency }),
         // Stamp the matched catalog's image so the list row shows it
         // immediately. (Hydration would still find it via the pairing,
         // but this avoids the join cost on every list render.)
         image_path: imageFromMatch,
       });
+      if (receipt?.file_id) {
+        try {
+          await api.attachReceipt(receipt.file_id, part.id);
+        } catch (e) {
+          toast.error(`Created, but the receipt did not attach. ${e instanceof Error ? e.message : ""} Attach it from the record's page.`.replace(/\s+/g, " ").trim());
+        }
+      }
       // Write the pairing AFTER create — needs the part id. Failure
       // here is non-fatal: the part exists, only the binding is
       // missing. The user can still hit "Match to catalog" from the
@@ -294,6 +348,22 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
   return (
     <RecordFormModal open onClose={() => onClose(false)} title={`new ${itemNoun.toLowerCase()}`} dismissOnBackdrop={false}>
       <form onSubmit={submit} className="space-y-3">
+        {!!recordTemplates?.length && <label className="block text-sm">Starter template<select aria-label="Starter template" className={"input " + fieldPackControlClass} value={selectedTemplate} onChange={e => {
+          setSelectedTemplate(e.target.value);
+          const template = recordTemplates[Number(e.target.value)];
+          if (template) setMeta(m => ({ ...m, ...template.fields }));
+        }}><option value="">Choose a template (optional)</option>{recordTemplates.map((t, i) => <option key={t.label} value={i}>{t.label}</option>)}</select></label>}
+        {receiptDraft && <details ref={receiptArea} className="rounded-lg border border-line p-3"><summary className="cursor-pointer text-sm text-accent">Draft from a receipt or invoice</summary><div className="space-y-3 mt-3">
+          <label className="block text-sm">Scan or choose a receipt<input aria-label="Receipt or invoice" type="file" accept="image/*,application/pdf,text/plain,text/csv" disabled={readingReceipt} onChange={async e => {
+            const file = e.target.files?.[0]; if (!file) return;
+            await uploadAndDraft(file);
+          }} /></label>
+          <label className="block text-sm">Forwarded receipt<select aria-label="Forwarded receipt" disabled={readingReceipt} value={selectedReceipt} className={"input " + fieldPackControlClass} onChange={e => { setSelectedReceipt(e.target.value); if (e.target.value) void readReceipt({ inbox_id: e.target.value }); }}><option value="">Choose from the scan inbox</option>{(receiptItems.data?.items ?? []).filter(r => r.source_kind === "receipt").map(r => <option key={r.id} value={r.id}>{r.suggested_name ?? "Receipt"}</option>)}</select></label>
+          {readingReceipt && <p role="status" className="text-sm">Reading receipt...</p>}
+          {receipt && <p className="text-sm">Draft ready. Check the vendor, amount, billing cycle and renewal date before saving.{receipt.vendor && !meta[receipt.vendor_field] ? ` Vendor: ${receipt.vendor}. Saving will add it to the linked vendors.` : ""}</p>}
+        </div></details>}
+        {barcode.controls}
+        {barcodeImage && <div className="flex items-center gap-2"><EntityThumb src={barcodeImage} alt="Photo from barcode" size={96} /><button type="button" className="text-sm text-accent underline" onClick={() => setBarcodeImage("")}>Remove photo</button></div>}
         {/* Catalog matching: always on the base inventory; on a skinned
             instance only when a catalog actually binds to inventory:part (Lego
             Sets → Rebrickable). Instances with nothing to match against stay
@@ -389,7 +459,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
             // The instance's own fields, promoted into create (the whole point
             // of a skinned instance: fill yarn fields here, not after). Each
             // asks the packer for what its control needs.
-            ...customFields.map((f) => ({
+            ...customFields.filter((f) => f.name !== barcode.barcodeName).map((f) => ({
                 need: fieldNeed(f.name, {
                   control: fieldControl({ type: f.type as FieldType, renderer: f.renderer as FieldRendererId | null, choices: f.choices, server_managed: f.server_managed }),
                   label: f.display_label,
@@ -427,8 +497,9 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
                   need: fieldNeed("native:category", { control: "choice", label: fp.label("category", "Category"), choices: (cats.data?.items ?? []).map((c) => c.name) }),
                   node: (
                     <Field label={fp.label("category", "Category")}>
-                      <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className={"input " + fieldPackControlClass}>
+                      <select value={categoryId || (barcodeCategory ? "barcode-category" : "")} onChange={(e) => { setCategoryId(e.target.value === "barcode-category" ? "" : e.target.value); if (e.target.value !== "barcode-category") setBarcodeCategory(""); }} className={"input " + fieldPackControlClass}>
                         <option value=""> - none - </option>
+                        {barcodeCategory && <option value="barcode-category">{barcodeCategory}</option>}
                         {cats.data?.items.map((c) => (
                           <option key={c.id} value={c.id}>
                             {c.name}
@@ -500,7 +571,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
           </button>
           <button
             type="submit"
-            disabled={busy || !name.trim()}
+            disabled={busy || barcode.blocked || !name.trim()}
             className="flex-1 rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium py-2 transition disabled:opacity-50"
           >
             {busy ? "…" : "Create"}
@@ -518,7 +589,7 @@ const Field = LabeledField;
 /** Renders one custom-field input on the create form, by the field def's type:
  *  a colour-swatch picker for `color-hex`, an add-as-you-go dropdown for
  *  `choices`, then number/date/checkbox/text. */
-function CustomFieldInput({
+export function CustomFieldInput({
   def,
   value,
   onChange,
@@ -543,6 +614,7 @@ function CustomFieldInput({
   // Shared control decision (see fieldControl) so this create form and the
   // detail-page edit panel can't pick different controls for the same field.
   const control = fieldControl({
+    ...def,
     type: def.type as FieldType,
     renderer: def.renderer as FieldRendererId | null,
     choices: def.choices,
@@ -552,7 +624,18 @@ function CustomFieldInput({
 
   // Server-managed: nothing to set at creation (also filtered upstream —
   // belt-and-braces so a future caller can't render a lying input).
-  if (control === "server-managed") return null;
+  if (control === "server-managed" || control === "computed") return null;
+  const label = def.required ? `${def.display_label} *` : def.display_label;
+  if (control === "secret") {
+    return <Field label={label}><SecretInput secret what={def.display_label} value={s} onChange={(e) => onChange(e.target.value || null)} />{help}</Field>;
+  }
+  if (control === "member" || control === "person") {
+    const Picker = control === "member" ? MemberSelect : PersonSelect;
+    return <Field label={label}><Picker value={value} onChange={onChange} />{help}</Field>;
+  }
+  if (control === "money") {
+    return <Field label={label}><MoneyValueInput value={value} storage={moneyStorageOf(def) ?? "amount"} live onCommit={onChange} ariaLabel={def.display_label} />{help}</Field>;
+  }
   // Relation: the same shared picker the detail panel uses.
   if (control === "relation") {
     return (
@@ -615,7 +698,8 @@ function CustomFieldInput({
     );
   }
   // number / date / url / text (computed fields are filtered out upstream)
-  const inputType = control === "number" ? "number" : control === "date" ? "date" : control === "url" ? "url" : "text";
+  const inputTypes: Record<typeof control, string> = { number: "number", date: "date", url: "url", text: "text" };
+  const inputType = inputTypes[control];
   return (
     <Field label={def.required ? `${def.display_label} *` : def.display_label}>
       <input

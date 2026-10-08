@@ -1,3 +1,4 @@
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { LaserSetupRequestSchema } from "@cobblr/platform-contract/laser-setup";
 import { runLaserSetup } from "../laser-setup.js";
 import { ReviewRequired } from "../drivers/job-review.js";
@@ -26,19 +27,22 @@ laserRouter.get("/profiles", asyncHandler(async (req, res) => {
 }));
 // AI-ACTION: digifab:laser-batch
 laserRouter.post("/profiles", asyncHandler(async (req, res) => {
- if (!requireRole(req, res, "owner", "admin")) return;
+ // ADMIN-ONLY: starting, stopping and setting up a machine stays with the admin tier, at every door (#5170)
+ if (!(await requireCapability(req, res, "digifab:laser-batch"))) return;
  const p = NewProfile.safeParse(req.body); if (!p.success) return badBody(res, p.error);
  try { res.status(201).json(await createLaserProfile(tenantDb(req), tenantContext(req).org.id, p.data)); } catch (e) { refuse(res, e); }
 }));
 // AI-ACTION: digifab:laser-batch
 laserRouter.post("/profiles/import", asyncHandler(async (req, res) => {
- if (!requireRole(req, res, "owner", "admin")) return;
+ // ADMIN-ONLY: starting, stopping and setting up a machine stays with the admin tier, at every door (#5170)
+ if (!(await requireCapability(req, res, "digifab:laser-batch"))) return;
  const p = Machine.safeParse(req.body); if (!p.success) return badBody(res, p.error);
  try { res.json(await importLaserProfiles(tenantDb(req), tenantContext(req).org.id, p.data)); } catch (e) { refuse(res, e); }
 }));
 // AI-ACTION: digifab:laser-batch
 laserRouter.put("/profiles/:id", asyncHandler(async (req, res) => {
- if (!requireRole(req, res, "owner", "admin")) return;
+ // ADMIN-ONLY: starting, stopping and setting up a machine stays with the admin tier, at every door (#5170)
+ if (!(await requireCapability(req, res, "digifab:laser-batch"))) return;
  const p = ProfileSchema.safeParse(req.body); if (!p.success) return badBody(res, p.error);
  const db = tenantDb(req);
  if (!await db.selectFrom("digifab_laser_profiles").select("id").where("id", "=", req.params.id!).executeTakeFirst()) return void res.status(404).json({ error: { code: "not_found", message: "No such material profile." } });
@@ -52,7 +56,8 @@ laserRouter.get("/plans", asyncHandler(async (req, res) => {
 }));
 // AI-ACTION: digifab:laser-batch
 laserRouter.post("/plans", asyncHandler(async (req, res) => {
- if (!requireRole(req, res, "owner", "admin")) return;
+ // ADMIN-ONLY: starting, stopping and setting up a machine stays with the admin tier, at every door (#5170)
+ if (!(await requireCapability(req, res, "digifab:laser-batch"))) return;
  const p = Plan.safeParse(req.body); if (!p.success) return badBody(res, p.error);
  try { res.status(201).json(await createLaserPlan(tenantDb(req), tenantContext(req).org.id, p.data)); } catch (e) { refuse(res, e); }
 }));
@@ -64,12 +69,14 @@ laserRouter.get("/design/:id", asyncHandler(async (req, res) => {
 }));
 // AI-ACTION: digifab:laser-batch
 laserRouter.post("/plans/:id/accept", asyncHandler(async (req, res) => {
- if (!requireRole(req, res, "owner", "admin")) return;
+ // ADMIN-ONLY: starting, stopping and setting up a machine stays with the admin tier, at every door (#5170)
+ if (!(await requireCapability(req, res, "digifab:laser-batch"))) return;
  try { res.json(await acceptLaserPlan(tenantDb(req), tenantContext(req).org.id, req.params.id!)); } catch (e) { refuse(res, e); }
 }));
 // AI-ACTION: digifab:laser-batch
 laserRouter.delete("/plans/:id", asyncHandler(async (req, res) => {
- if (!requireRole(req, res, "owner", "admin")) return;
+ // ADMIN-ONLY: starting, stopping and setting up a machine stays with the admin tier, at every door (#5170)
+ if (!(await requireCapability(req, res, "digifab:laser-batch"))) return;
  try { res.json(await discardLaserPlan(tenantDb(req), req.params.id!)); } catch (e) { refuse(res, e); }
 }));
 
@@ -81,13 +88,15 @@ laserRouter.get("/setup", asyncHandler(async (req,res)=>{
 // AI-ACTION: digifab:laser-setup
 // UI-SCREEN: /station/machine/:connectionId/:deviceId
 laserRouter.post("/setup", asyncHandler(async (req,res)=>{
- if(!requireRole(req,res,"owner","admin"))return;
+ // ADMIN-ONLY: starting, stopping and setting up a machine stays with the admin tier, at every door (#5170)
+ if(!(await requireCapability(req, res, "digifab:laser-setup")))return;
  const parsed=LaserSetupRequestSchema.safeParse(req.body);if(!parsed.success)return badBody(res,parsed.error);
  try{res.json(await runLaserSetup(tenantDb(req),tenantContext(req).org.id,parsed.data));}catch(error){setupRefusal(res,error);}
 }));
 // AI-ACTION: digifab:laser-batch
 laserRouter.post("/nest", asyncHandler(async (req,res)=>{
- if (!requireRole(req,res,"owner","admin")) return;
+ // ADMIN-ONLY: starting, stopping and setting up a machine stays with the admin tier, at every door (#5170)
+ if (!(await requireCapability(req, res, "digifab:laser-batch"))) return;
  const p=NestDrawing.safeParse(req.body);if(!p.success)return badBody(res,p.error);
  try { res.json(await nestDrawing(tenantDb(req),tenantContext(req).org.id,p.data)); } catch(e) { refuse(res,e); }
 }));

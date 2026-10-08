@@ -126,9 +126,9 @@ export async function projectFieldScopes(req: Request, res: Response, next: Next
     const userId = req.session?.id;
     if (!t || !userId) return next();
     const hidden = await hiddenFieldsFor(t.org.id, userId, t.role);
+    const json = res.json.bind(res);
+    res.json = ((body: unknown) => json(withoutHiddenFields(body, hidden))) as typeof res.json;
     if (hidden.size > 0) {
-      const json = res.json.bind(res);
-      res.json = ((body: unknown) => json(withoutHiddenFields(body, hidden))) as typeof res.json;
       const send = res.send.bind(res);
       res.send = ((body: unknown) => {
         const type = String(res.getHeader("Content-Type") ?? "");

@@ -34,7 +34,8 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { ApiError, api, fetchAuthBlobUrl, type Location } from "../lib/api";
+import { ApiError, api, fetchCsv, type Location } from "../lib/api";
+import { downloadBlob } from "@cobblr/platform-web";
 import { deleteDialogMessage, restorePlaces, restoredSentence } from "../lib/placeDelete";
 import { countOf } from "@cobblr/platform-contract/plural";
 import { useHideEmpty } from "../lib/useHideEmpty";
@@ -97,13 +98,11 @@ export function LocationsPage() {
   const [fold, setFold] = useFoldOverrides(activeSlug);
   const filtering = q.trim().length > 0;
   const exportCsv = async () => {
-    const url = await fetchAuthBlobUrl(api.exportLocationsPath(activeSlug));
-    if (!url) { toast.error("Couldn't export"); return; }
-    const a = document.createElement("a");
-    a.href = url; a.download = "locations.csv";
-    document.body.appendChild(a); a.click(); a.remove();
-    // TIMER-OUTLIVES-COMPONENT: the blob must be released whether or not the page is still up; cancelled, it leaks.
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    try {
+      const got = await fetchCsv(api.exportLocationsPath(activeSlug));
+      downloadBlob(got.blob, "locations.csv");
+      if (got.secretsOmitted) toast.info("Secret fields were left out.");
+    } catch { toast.error("Couldn't export"); }
   };
   const [printing, setPrinting] = useState(false);
 
@@ -1352,7 +1351,7 @@ export function LocationFormModal({
           await api.reorderLocations(slug, bottomUpDisplayOrder(created));
         }
         toast.success(
-          `Created ${created.length} locations: ${expansion.names.join(", ")}` +
+          `Created ${countOf(created.length, "location")}: ${expansion.names.join(", ")}` +
             (stacked && bottomUp ? ` (${expansion.names[0]} at the bottom)` : ""),
         );
       } else {
@@ -1409,7 +1408,7 @@ export function LocationFormModal({
                 />
                 {expansion && expansion.names.length > 1 && (
                   <div className="text-[11px] text-accent dark:text-cobble-300 mt-1">
-                    → will create {expansion.names.length} locations: {expansion.preview}
+                    → will create {countOf(expansion.names.length, "location")}: {expansion.preview}
                   </div>
                 )}
                 {stacked && expansion && (
@@ -1606,4 +1605,3 @@ function inferKind(raw: string): "area" | "container" | null {
   if (AREA_WORDS.some((w) => s.includes(w))) return "area";
   return null;
 }
-

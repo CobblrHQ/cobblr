@@ -34,6 +34,7 @@ const RENDERERS_BY_TYPE: Record<PlatformFieldDef["type"], CatalogFieldRenderer[]
   measure: ["text"],
   // Money shows as "$4,300" through the one formatter; nothing to pick.
   money: ["text"],
+  secret: ["text"],
   // A person renders as their name; nothing else would mean anything.
   member: ["text"],
   person: ["text"],

@@ -36,6 +36,11 @@ export interface ChannelEvent {
    *  a notification is for. A channel that cannot render this MUST still
    *  deliver: `message` stands alone and `link_url` reaches the same place. */
   card?: NotificationCard | null;
+  /** The message and card carry a person's private content (a personal
+   *  document, a secret field). A channel whose message leaves Cobblr and can
+   *  be read off a lock screen (browser push) shows a generic line and the
+   *  link instead. */
+  private?: boolean;
 }
 
 /** Deliberately not Discord's embed shape. Channels own their own rendering,

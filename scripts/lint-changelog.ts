@@ -29,7 +29,7 @@ import { lintProse } from "./prose-rules.mjs";
 import { ALL_ENTRY_TYPES, AUDIENCE_TYPES, isInternalChangelogEntry } from "./publish/changelog-filter.mjs";
 // plain .mjs module, shared with docs-flush so this gate and the
 // release-time splice can never disagree about what "the heading exists" means
-import { findHeadingLine, listHeadings, parseDocsTarget } from "./docs-target.mjs";
+import { findHeadingLine, headingsAlreadyIn, listHeadings, parseDocsTarget } from "./docs-target.mjs";
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync } from "node:fs";
 
 // The archive is ~2,000 entries and grows with every change, so reading all of
@@ -150,6 +150,16 @@ function findBase(): string | null {
     }
     if (findHeadingLine(readOnce(file), heading) < 0) {
       bad.push(`  changelog.d/${f}: docs_target heading "${heading}" not found in ${file}`);
+      continue;
+    }
+    // A staged body whose own heading the target already has would publish a
+    // second copy of that section; the guide documents it already.
+    const body = readFileSync(`changelog.d/${f}`, "utf8").split(/^## docs\s*$/m)[1] ?? "";
+    for (const h of headingsAlreadyIn(readOnce(file), body)) {
+      bad.push(
+        `  changelog.d/${f}: its ## docs adds the heading "${h}", which ${file} already has. ` +
+          `Merge anything new into that section and set docs_target: none (documented directly in ${file}, ${h})`,
+      );
     }
   }
   if (bad.length) {
@@ -163,8 +173,8 @@ function findBase(): string | null {
       .map((file) => `  headings in ${file}:\n${listHeadings(readOnce(file)).map((h) => `    ${h}`).join("\n")}`)
       .join("\n");
     console.error(
-      `[lint:changelog] ✗ ${bad.length} entr${bad.length === 1 ? "y has a" : "ies have a"} docs_target whose heading does not exist ` +
-        `(docs-flush would mis-file the ## docs body at end-of-file). Point each at a real heading:\n${bad.join("\n")}` +
+      `[lint:changelog] ✗ ${bad.length} entr${bad.length === 1 ? "y has a" : "ies have a"} docs_target docs-flush cannot publish cleanly ` +
+        `(a heading that does not exist would mis-file the body; one that already exists would print it twice):\n${bad.join("\n")}` +
         (menus ? `\n${menus}` : ""),
     );
     process.exit(1);

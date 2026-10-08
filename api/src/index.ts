@@ -1,4 +1,6 @@
 import { readEnabledPlaceValues } from "./platform/placement-values.js";
+import { argChoicesFor } from "./platform/action-arg-choices.js";
+import { secretPresenceDb } from "./platform/secret-presence.js";
 import { registerDeletedRelations } from "./platform/deleted-relations.js";
 import { money, registerExchangeRates } from "./platform/money.js";
 import { roundMoneyAmount } from "@cobblr/platform-contract/money";
@@ -34,7 +36,7 @@ import { confirmServiceJob, registerServiceConfirm } from "./platform/service-co
 import { registerServiceSupervisor } from "./platform/service-supervisor.js";
 import { openServicesTestDoors } from "./platform/services-test-doors.js";
 import { testDoorsEnabled } from "./platform/test-doors.js";
-import { setPlatform, canContain, canBeContained, likeEscape, platform as platformSeams, EntityKindIdRegex, isInstallHolder } from "@cobblr/platform-contract";
+import { setPlatform, canContain, canBeContained, likeEscape, platform as platformSeams, EntityKindIdRegex, isInstallHolder, countOf } from "@cobblr/platform-contract";
 import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { describeBlock, describeCapabilityBlock } from "./platform/approvals.js";
 import { atVersion, mergeJsonb, rowVersion } from "./platform/jsonb-merge.js";
@@ -57,8 +59,10 @@ import { syncTenantMigrations, reconcileDefaultModules } from "./modules/enable.
 import { registerWarrantyReminders } from "./platform/warranty-reminders.js";
 import { registerStationSweep } from "./platform/scan-stations.js";
 import { comparePlacementRemove, comparePlacementWrite } from "./platform/placement-compare.js";
-import { registerOwnSendRecovery } from "./platform/record-send.js";
+import { registerSendFileSourceRecovery } from "./platform/record-send-file-confirm.js";
+import { registerOwnSendRecovery, recordOwnSendFiling } from "./platform/record-send.js";
 import { startDeliverySweeper } from "./platform/delivery-sweeper.js";
+import { ensureVapidKeys } from "./platform/push-keys.js";
 import { registerShareLinkOps } from "./platform/share-links.js";
 import { addShareSyncPass, startShareSync } from "./platform/share-sync.js";
 import * as shareMirror from "./platform/share-mirror.js";
@@ -89,6 +93,7 @@ import * as devices from "./platform/devices.js";
 import * as entities from "./platform/entities.js";
 import * as counters from "./platform/counters.js";
 import * as deletedRecords from "./platform/deleted-records.js";
+import { registerIssuedUndosSweep } from "./platform/issued-undos.js";
 import { registerHistoryWriter } from "./platform/history-store.js";
 import { announceWrites } from "./platform/entity-saved.js";
 import * as files from "./platform/files.js";
@@ -139,6 +144,7 @@ import { registerDanglingPlacesHeal } from "./platform/heal-dangling-places.js";
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
 import { seedProviderFromEnv } from "./platform/oidc.js";
 import { reconcileContributedFields } from "./platform/reconcile-contributed-fields.js";
+import { actionGateOf, gatePasses } from "./platform/action-gates.js";
 import { reconcileBundleFieldAggregates } from "./platform/reconcile-bundle-field-aggregates.js";
 import { reconcileIntegrationNav } from "./platform/integration-nav.js";
 import { reconcileBundleUpdates, startBundleUpdateSweeper } from "./platform/bundle-updates.js";
@@ -416,7 +422,7 @@ async function boot() {
     activity: { log: activity.log, registerHistoryWriter },
     events: { emit: events.emit, on: events.on },
     tenants: {
-      getDb: (orgId) => getTenantDb(orgId),
+      getDb: async (orgId) => secretPresenceDb(orgId, await getTenantDb(orgId)),
       releaseIdleDb: (orgId) => releaseIdleTenantPool(orgId),
       withDb: (orgId, fn) => withTenantDbForSweep(orgId, fn),
     },
@@ -494,6 +500,7 @@ async function boot() {
           .map((f) => ({ name: f.name, field_role: f.fieldRole!, type: f.type, choices: null, native: true, money: f.money ?? null }));
         return [...native, ...custom];
       },
+      sealSecretFields: async (orgId, kind, fields, id, current) => (await import("./platform/secret-fields.js")).sealSecretFields(orgId, kind, fields, id, current),
       fieldsFor: async (orgId, kind) => {
         const defs = await perRequest(`entity-field-defs:${orgId}:${kind}`, () => effectiveFieldDefsForKind(orgId, kind));
         return defs.map((d) => ({
@@ -501,6 +508,7 @@ async function boot() {
           display_label: d.display_label,
           field_role: d.field_role,
           type: d.type,
+          ref_kind: d.ref_kind,
           choices: d.choices,
           learns: choiceLearns(d),
           unit: (d as { unit?: string | null }).unit ?? null,
@@ -549,9 +557,11 @@ async function boot() {
       registerHandler: actions.registerHandler,
       registerPlanner: actions.registerPlanner,
       registerUndo: actions.registerUndo,
+      registerRequester: actions.registerRequester,
       listApplicable: actions.listApplicable,
       invoke: actions.invoke,
       undoFor: actions.undoFor,
+      argChoices: argChoicesFor,
     },
     live: {
       registerCapability: live.registerCapability,
@@ -782,6 +792,7 @@ async function boot() {
       offerIntake: () => offerIntakeImpl,
     },
     shares: {
+      recordOwnSendFiling,
       decideOffer: shareOffers.decideOffer,
       offerInboxItems: shareOffers.offerInboxItems,
     },
@@ -868,13 +879,18 @@ async function boot() {
       // §2.4 + 2026-05-25-audit.md S2.
       userHasCapability: async ({ orgId, userId, role, actionId }) => {
         if (roleHoldsEveryCapability(role)) return true;
+        // The action's own declaration (#5170): the role it runs by, read by
+        // every door alike (a route that does the same thing gates here too).
+        if (gatePasses(actionId, role, () => false)) return true;
+        // A grant counts for the action itself or for the capability it shares.
+        const ids = [actionId, ...(actionGateOf(actionId).grantedAs ? [actionGateOf(actionId).grantedAs!] : [])];
         // Direct grant.
         const grant = await meta
           .selectFrom("workspace_capability_grants")
           .select("id")
           .where("org_id", "=", orgId)
           .where("user_id", "=", userId)
-          .where("action_id", "=", actionId)
+          .where("action_id", "in", ids)
           .executeTakeFirst();
         if (grant) return true;
         // Custom-role assignment → role's capability bundle.
@@ -884,13 +900,14 @@ async function boot() {
           .select("c.action_id")
           .where("a.org_id", "=", orgId)
           .where("a.user_id", "=", userId)
-          .where("c.action_id", "=", actionId)
+          .where("c.action_id", "in", ids)
           .limit(1)
           .executeTakeFirst();
         if (viaRole) return true;
         // What a plain member holds without a grant (take and put back stock),
         // unless a custom role governs them.
-        if (!MEMBER_DEFAULT_CAPABILITIES.includes(actionId)) return false;
+        const byDefault = ids.find((id) => MEMBER_DEFAULT_CAPABILITIES.includes(id));
+        if (!byDefault) return false;
         const custom = await meta
           .selectFrom("workspace_role_assignments")
           .select("user_id")
@@ -898,7 +915,7 @@ async function boot() {
           .where("user_id", "=", userId)
           .limit(1)
           .executeTakeFirst();
-        return memberHoldsByDefault(role, actionId, !!custom);
+        return memberHoldsByDefault(role, byDefault, !!custom);
       },
       describeBlockedCapability: (args) => describeCapabilityBlock(args),
       describeBlock: (args) => describeBlock(args),
@@ -1912,6 +1929,7 @@ async function boot() {
   // A first boot with no UI: COBBLR_OIDC_* sets up the instance's sign-in
   // provider (platform/oidc.ts). One saved in the UI is left alone.
   await T("seedOidcProviderFromEnv", seedProviderFromEnv());
+  await T("ensureVapidKeys", ensureVapidKeys());
 
   // Installed bundles catch up to the catalog on their own (patch/minor, with
   // the install route's own gates). Used to happen only when somebody opened
@@ -1936,6 +1954,7 @@ async function boot() {
   await registerTidySweep();
   registerDeletedRelations();
   deletedRecords.registerDeletedRecordsSweep();
+  registerIssuedUndosSweep();
   registerWarrantyReminders();
   registerStationSweep();
   registerExchangeRates();
@@ -1962,6 +1981,7 @@ async function boot() {
   addShareSyncPass(sendDueShareNotices);
   startShareSync();
   registerOwnSendRecovery();
+  registerSendFileSourceRecovery();
   startBridgeOutageWatch();
   startPhotoRetentionSweeper();
   // Temporary upload files a crashed request left on disk.
@@ -2171,7 +2191,7 @@ async function boot() {
   if (poolEnabled() && env.COBBLR_TEST_ORG_POOL_SIZE) {
     const target = env.COBBLR_TEST_ORG_POOL_SIZE;
     void bakeTestOrgPool(target)
-      .then((r) => console.log(`[test-org-pool] boot bake done: ${r.total} orgs ready`))
+      .then((r) => console.log(`[test-org-pool] boot bake done: ${countOf(r.total, "org")} ready`))
       .catch((err) => console.error("[test-org-pool] boot bake failed:", (err as Error).message));
   }
 

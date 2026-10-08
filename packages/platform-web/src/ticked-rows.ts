@@ -42,6 +42,10 @@ export function tickedRowsKey(pathname: string, search: string, list?: string): 
   return PREFIX + pathname + search + (list ? `#${list}` : "");
 }
 
+export function currentTickedRows(pathname: string, search: string, list?: string): string[] {
+  return [...read(tickedRowsKey(pathname, search, list))];
+}
+
 /** Clear the ticks for a bulk action that finished, and get back the function
  *  its Undo calls to tick them again. */
 export type ClearForUndo = () => () => void;

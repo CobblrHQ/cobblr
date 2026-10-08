@@ -1,3 +1,8 @@
+import { exportSendFile } from "./record-send-file.js";
+import { registerPushDeviceHandlers } from "./push-device-actions.js";
+import { importSendFile, undoSendFileImport } from "./record-send-import.js";
+import { confirmSendFile, restoreSendFileSource } from "./record-send-file-confirm.js";
+import { ExportFileBody, ImportFileBody, sendFileInput, parseSendFile } from "../routes/record-send-file.js";
 import { SendError, sendRecords, previewSend, undoSend, type SendRequest } from "./record-send.js";
 import { SendBody } from "../routes/record-send.js";
 import { EditRecordActionLayout, editRecordActionLayout, readRecordActionLayout } from "./record-action-layout.js";
@@ -27,11 +32,14 @@ import { kindWordsFrom, type KindWords } from "@cobblr/platform-contract/kind-la
 import { disableModuleForOrg, enableModuleForOrg } from "../modules/enable.js";
 import { listEntries } from "../modules/registry.js";
 import { meta } from "../db/meta.js";
-import { actionLabelOf, registerHandler, registerPlanner, registerUndo } from "./actions.js";
+import { actionLabelOf, registerHandler, registerPlanner, registerRequester, registerUndo } from "./actions.js";
 import { getMover, instancesHolding, moveRecords } from "./move-records.js";
 import { bringBack, markGone } from "./dispositions.js";
 import { offerRecords, offerTargets } from "./share-offers.js";
-import { findShareTarget, shareRecords, stopSharingRecords } from "./share-picks.js";
+import { findShareTarget, shareRecords, stopSharingRecords, shareCollection } from "./share-picks.js";
+import { describeInviteScope, inviteToShare } from "./share-invite.js";
+import { inviteSaid } from "./share-invite-email.js";
+import { hereUrl } from "./share-links.js";
 import { decideShareEdit, describeShareEdits, listShareEdits, type ShareEditDecision } from "./share-edits.js";
 import { leaveAddition, listAdditions, takeAddition } from "./share-additions.js";
 import { DISPOSITION_LABELS, dispositionOf, type RecordDisposition } from "@cobblr/platform-contract/disposition";
@@ -60,7 +68,7 @@ import { listInstances } from "./instances.js";
 import { countInstanceItems, getInstance, provisionInstance, tearDownInstance } from "./instances.js";
 import { setWireEnabled } from "./wires.js";
 import { decideApprovalRequest } from "./approvals.js";
-import { confirmHeldChange, keepHeldChange } from "./ai-held-changes.js";
+import { confirmHeldChange, heldChangeRequester, keepHeldChange } from "./ai-held-changes.js";
 import { confirmServiceJob, mayConfirm } from "./service-confirm.js";
 import { cancelRun } from "./service-supervisor.js";
 import { invokeAs, retryJob, skipJob, stableJson } from "./services.js";
@@ -306,6 +314,7 @@ async function resolveRecordActionArrangement(ctx: ActionInvokeContext) {
 }
 
 export function registerPlatformActionHandlers(): void {
+  registerPushDeviceHandlers();
   registerPlanner("platform.edit-record-actions", async (ctx) => {
     const resolved = await resolveRecordActionArrangement(ctx);
     if (!resolved.ok) return { error: resolved.error };
@@ -382,14 +391,14 @@ export function registerPlatformActionHandlers(): void {
     if (!parsed.success) return { error: "Choose between 1 and 500 records, each with a kind and id." };
     const lines: string[] = [];
     for (const r of parsed.data) lines.push((await lookup(ctx.orgId, r.kind, r.id))?.title ?? "A record that is no longer available");
-    return { title: `Set ${String(ctx.args?.field ?? "a field")} on ${lines.length} records`, lines };
+    return { title: `Set ${String(ctx.args?.field ?? "a field")} on ${countOf(lines.length, "record")}`, lines };
   });
   registerHandler("platform.set-field-on-records", async (ctx) => {
     const parsed = refsSchema.safeParse(ctx.args?.records);
     if (!parsed.success || typeof ctx.args?.field !== "string" || !("value" in ctx.args)) return { ok: false, error: "Choose records, a field and a value, or null to clear it." };
     try {
       const data = await setBulkField(ctx.orgId, ctx.userId, parsed.data, ctx.args.field, ctx.args.value);
-      return { ok: true, data: { field: ctx.args.field, ...data }, summary: `${data.done.length} records changed.${data.failed.length ? ` ${data.failed.length} skipped.` : ""}` };
+      return { ok: true, data: { field: ctx.args.field, ...data }, summary: `${countOf(data.done.length, "record")} changed.${data.failed.length ? ` ${data.failed.length} skipped.` : ""}` };
     } catch (e) { return { ok: false, error: (e as Error).message }; }
   });
   registerUndo("platform.set-field-on-records", (result) => {
@@ -405,7 +414,7 @@ export function registerPlatformActionHandlers(): void {
     const parsed = changesSchema.safeParse(ctx.args?.changes);
     if (!parsed.success || typeof ctx.args?.field !== "string") return { ok: false, error: "The batch's changes are missing." };
     const data = await restoreBulkField(ctx.orgId, ctx.userId, ctx.args.field, parsed.data.map((r) => ({ ...r, before: r.before ?? null, after: r.after ?? null })));
-    return { ok: true, data, summary: `${data.done.length} records restored.${data.failed.length ? ` ${data.failed.length} skipped.` : ""}` };
+    return { ok: true, data, summary: `${countOf(data.done.length, "record")} restored.${data.failed.length ? ` ${data.failed.length} skipped.` : ""}` };
   });
 
   registerHandler("platform.add-field", async (ctx: ActionInvokeContext) => {
@@ -1904,20 +1913,56 @@ export function registerPlatformActionHandlers(): void {
     if (!target) return { error: `Not shared with "${said}". Shared with: ${targets.map((t) => t.to).join(", ")}.` };
     return { kind, ids, target, userId: ctx.userId };
   };
-  const shareArgs = async (ctx: ActionInvokeContext): Promise<{ error: string } | { kind: string; ids: string[]; target: { link_id: string; to: string } }> => {
+  const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  type ShareArgs = { kind: string; ids: string[]; collection: boolean; target: { link_id: string; to: string } };
+  const shareArgs = async (ctx: ActionInvokeContext, mayInvite = false): Promise<{ error: string } | ShareArgs | (Omit<ShareArgs, "target"> & { invite: string })> => {
     const args = (ctx.args ?? {}) as Record<string, unknown>;
     const kind = str(args.entity_kind);
     const ids = readListArg(args, "ids");
     if (!kind) return { error: "entity_kind (the kind of record) is required" };
-    if (!ids.length) return { error: "ids are required - read the records first and pass their real ids, never their names" };
-    const target = await findShareTarget(ctx.orgId, str(args.with));
+    const collection = args.collection === true;
+    if (collection) {
+      const member = ctx.userId ? await meta.selectFrom("org_memberships").select("role").where("org_id", "=", ctx.orgId).where("user_id", "=", ctx.userId).executeTakeFirst() : null;
+      if (!member || !roleSatisfies(member.role, ["owner", "admin"])) return { error: "Only an owner or admin can share a collection." };
+      if (ids.length) return { error: "Choose a collection or selected records, not both." };
+      if (!(await listKindsForOrg(ctx.orgId)).some((k) => k.id === kind)) return { error: "That collection is not in this workspace." };
+    } else if (!ids.length) return { error: "ids are required - read the records first and pass their real ids, never their names" };
+    const said = str(args.with).trim();
+    // An email: the person it was shared with by that address, or a new
+    // person to invite (#5365).
+    if (mayInvite && EMAIL.test(said)) {
+      const known = await meta.selectFrom("share_links").select(["id", "peer_name"]).where("org_id", "=", ctx.orgId).where("side", "=", "owner").where("status", "=", "active").where("invite_email", "=", said.toLowerCase()).executeTakeFirst();
+      if (known) return { kind, ids, collection, target: { link_id: known.id, to: known.peer_name ?? said } };
+      return { kind, ids, collection, invite: said.toLowerCase() };
+    }
+    const target = await findShareTarget(ctx.orgId, said);
     if ("error" in target) return target;
-    return { kind, ids, target };
+    return { kind, ids, target, collection };
   };
+  // Mirrored and delivered before this answers (share-picks.ts); when the
+  // other side did not take it in time, the person is told it is on its way.
+  const pending = (delivered: boolean | undefined) => (delivered === false ? " Their Cobblr has not taken the change yet; it follows when it answers." : "");
   for (const [handler, stop] of [["platform.share-with", false], ["platform.stop-sharing", true]] as const) {
     registerHandler(handler, async (ctx: ActionInvokeContext) => {
-      const a = await shareArgs(ctx);
+      const a = await shareArgs(ctx, !stop);
       if ("error" in a) return { ok: false, error: a.error };
+      if ("invite" in a) {
+        const member = ctx.userId ? await meta.selectFrom("org_memberships").select("role").where("org_id", "=", ctx.orgId).where("user_id", "=", ctx.userId).executeTakeFirst() : null;
+        if (!member || !ctx.userId || !roleSatisfies(member.role, ["owner", "admin"])) return { ok: false, error: "Only an owner or admin can invite someone new." };
+        try {
+          const made = await inviteToShare({ orgId: ctx.orgId, userId: ctx.userId, here: hereUrl(), email: a.invite, collection: { kind: a.kind, ...(a.collection ? {} : { ids: a.ids }) } });
+          const said = inviteSaid(made);
+          return { ok: true, summary: made.mail === "sent" ? said : `${said} ${made.url}`, data: { kind: a.kind, invited: made.email, invite_id: made.linkId, invite_url: made.url, emailed: made.mail === "sent" } };
+        } catch (e) {
+          return { ok: false, error: (e as Error).message };
+        }
+      }
+      if (a.collection) {
+        const r = await shareCollection(a.target.link_id, a.kind, stop);
+        if ("error" in r) return { ok: false, error: r.error };
+        const name = (await kindWords(ctx.orgId, a.kind)).many;
+        return { ok: true, skipped: !r.changed, summary: `${stop ? "Stopped sharing" : "Sharing"} ${name} with ${a.target.to}.${pending(r.delivered)}`, data: { kind: a.kind, with: a.target.link_id, collection: true, delivered: r.delivered ?? true } };
+      }
       const refs = a.ids.map((id) => ({ entity_kind: a.kind, id }));
       const r = stop ? await stopSharingRecords(a.target.link_id, refs) : await shareRecords(a.target.link_id, refs);
       if ("error" in r) return { ok: false, error: r.error };
@@ -1925,18 +1970,21 @@ export function registerPlatformActionHandlers(): void {
       if (n === 0) return { ok: true, skipped: true, summary: stop ? `Not shared with ${a.target.to}.` : `Already shared with ${a.target.to}.` };
       return {
         ok: true,
-        summary: stop ? (n === 1 ? `No longer shared with ${a.target.to}.` : `${n} things no longer shared with ${a.target.to}.`) : n === 1 ? `Shared with ${a.target.to}.` : `Shared ${n} things with ${a.target.to}.`,
-        data: { kind: a.kind, with: a.target.link_id, changed: r.changed.map((c) => c.id) },
+        summary: (stop ? (n === 1 ? `No longer shared with ${a.target.to}.` : `${n} things no longer shared with ${a.target.to}.`) : n === 1 ? `Shared with ${a.target.to}.` : `Shared ${n} things with ${a.target.to}.`) + pending(r.delivered),
+        data: { kind: a.kind, with: a.target.link_id, changed: r.changed.map((c) => c.id), delivered: r.delivered ?? true },
       };
     });
     registerPlanner(handler, async (ctx: ActionInvokeContext) => {
-      const a = await shareArgs(ctx);
+      const a = await shareArgs(ctx, !stop);
       if ("error" in a) return { error: a.error };
+      if ("invite" in a) return { title: `Invite ${a.invite} to ${await describeInviteScope(ctx.orgId, { kind: a.kind, ...(a.collection ? {} : { ids: a.ids }) })}`, lines: ["Emails them an invite when this Cobblr can send mail, and gives you the link either way. Only an account with that address can use it."] };
+      if (a.collection) return { title: `${stop ? "Stop sharing" : "Share"} ${(await kindWords(ctx.orgId, a.kind)).many} with ${a.target.to}`, lines: [stop ? "Remove the whole-collection rule. Individually shared records stay shared." : "Every current and future record in this collection, with existing exclusions kept."] };
       const lines = await goneTitles(ctx.orgId, a.kind, a.ids);
       return { title: `${stop ? "Stop sharing" : "Share"} ${countOf(lines.length, "thing")} with ${a.target.to}`, lines };
     });
     registerUndo(handler, (result) => {
-      const d = (result as { skipped?: unknown; data?: { kind?: unknown; with?: unknown; changed?: unknown } } | null);
+      const d = (result as { skipped?: unknown; data?: { kind?: unknown; with?: unknown; changed?: unknown; collection?: boolean } } | null);
+      if (!d?.skipped && d?.data?.collection && typeof d.data.kind === "string" && typeof d.data.with === "string") return { action_id: stop ? "platform:share-with" : "platform:stop-sharing", args: { entity_kind: d.data.kind, with: d.data.with, collection: true } };
       const ids = Array.isArray(d?.data?.changed) ? d.data.changed.filter((x): x is string => typeof x === "string") : [];
       if (d?.skipped || !ids.length || typeof d?.data?.kind !== "string" || typeof d.data.with !== "string") return null;
       return { action_id: stop ? "platform:share-with" : "platform:stop-sharing", args: { entity_kind: d.data.kind, ids, with: d.data.with } };
@@ -2107,6 +2155,27 @@ export function registerPlatformActionHandlers(): void {
     }
   });
 
+  registerPlanner("platform.export-send-file", async (ctx) => {
+    const r = await exportSendFile(ctx.orgId,ctx.userId!,{...ExportFileBody.parse(ctx.args),dry_run: true},ctx.origin);
+    return {title: "Download a send file",lines: [r.summary]};
+  });
+  registerHandler("platform.export-send-file", async (ctx) => {
+    try {const r = await exportSendFile(ctx.orgId,ctx.userId!,ExportFileBody.parse(ctx.args),ctx.origin); return {ok: true,...r,data: r};} catch (e) {return {ok: false,error: (e as Error).message};}
+  });
+  registerPlanner("platform.import-send-file", async (ctx) => {
+    const p = ImportFileBody.parse(ctx.args); const packet = parseSendFile(await sendFileInput(ctx.orgId,p));
+    const r = await importSendFile(ctx.orgId,ctx.userId!,{...p,packet,dry_run: true},ctx.origin);
+    return {title: "Import a send file",lines: "items" in r ? r.items?.flatMap((i) => [i.name,...i.needs]) ?? [] : []};
+  });
+  registerHandler("platform.import-send-file", async (ctx) => {
+    try {const p = ImportFileBody.parse(ctx.args); const packet = parseSendFile(await sendFileInput(ctx.orgId,p)); const r = await importSendFile(ctx.orgId,ctx.userId!,{...p,packet},ctx.origin); return {ok: true,...r,data: r};} catch (e) {return {ok: false,error: (e as Error).message};}
+  });
+  registerPlanner("platform.confirm-send-file", async (ctx) => {const input = await sendFileInput(ctx.orgId,ctx.args ?? {}); const r = await confirmSendFile(ctx.orgId,ctx.userId!,input,true); return {title: "confirm send file",lines: [r.summary]};});
+  registerHandler("platform.confirm-send-file", async (ctx) => {try {const input = await sendFileInput(ctx.orgId,ctx.args ?? {}); const r = await confirmSendFile(ctx.orgId,ctx.userId!,input,ctx.args?.dry_run === true); return {ok: true,...r,data: r};} catch (e) {return {ok: false,error: (e as Error).message};}});
+  registerPlanner("platform.restore-send-file-source", async (ctx) => {const input = await sendFileInput(ctx.orgId,ctx.args ?? {}); const r = await restoreSendFileSource(ctx.orgId,ctx.userId!,input,true); return {title: "restore send file source",lines: [r.summary]};});
+  registerHandler("platform.restore-send-file-source", async (ctx) => {try {const input = await sendFileInput(ctx.orgId,ctx.args ?? {}); const r = await restoreSendFileSource(ctx.orgId,ctx.userId!,input,ctx.args?.dry_run === true); return {ok: true,...r,data: r};} catch (e) {return {ok: false,error: (e as Error).message};}});
+  registerPlanner("platform.undo-send-file-import",async (ctx) => {const r = await undoSendFileImport(ctx.orgId,ctx.userId!,String(ctx.args?.id),true); return {title: "Undo file import",lines: [r.summary]};});
+  registerHandler("platform.undo-send-file-import",async (ctx) => {try {const r = await undoSendFileImport(ctx.orgId,ctx.userId!,String(ctx.args?.id),ctx.args?.dry_run === true); return {ok: true,...r,data: r};} catch (e) {return {ok: false,error: (e as Error).message};}});
   registerHandler("platform.offer-to", async (ctx: ActionInvokeContext) => {
     const a = await offerArgs(ctx);
     if ("error" in a) return { ok: false, error: a.error };
@@ -2389,6 +2458,15 @@ export function registerPlatformActionHandlers(): void {
     if (!job) return "There is no such step here.";
     return mayConfirm(orgId, { requested_by: job.requested_by, capability: job.capability }, userId);
   };
+  // A person answers what they started, whatever their role (#5192): the job
+  // they asked for, the change the assistant held for them. The handlers above
+  // check the same person again; this is what lets them reach it.
+  const jobRequester = async ({ orgId, args }: { orgId: string; args: Record<string, unknown> }) => {
+    const jobId = str(args.job_id);
+    return /^[0-9a-f-]{36}$/i.test(jobId) ? (await platform().services.job(orgId, jobId))?.requested_by ?? null : null;
+  };
+  for (const key of ["platform.confirm-service-job", "platform.retry-service-job", "platform.skip-service-job", "platform.cancel-service-run"]) registerRequester(key, jobRequester);
+  for (const key of ["platform.confirm-held-change", "platform.keep-held-change"]) registerRequester(key, async ({ args }) => heldChangeRequester(str(args.change_id)));
   registerHandler("platform.retry-service-job", async (ctx: ActionInvokeContext) => {
     const jobId = str((ctx.args ?? {}).job_id);
     if (!jobId) return { ok: false, error: "job_id is required" };

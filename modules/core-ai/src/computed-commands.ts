@@ -17,7 +17,7 @@ import type { WorkspaceApi } from "@cobblr/workspace-tools";
 import { getTool, fetchKinds } from "@cobblr/workspace-tools";
 import { rankFits, type FitTable } from "@cobblr/platform-contract/table-fit";
 import { fitTablesFor } from "./table-fit-menu.js";
-import { pluralise } from "@cobblr/platform-contract";
+import { pluralise, countOf } from "@cobblr/platform-contract";
 import { withArticle } from "@cobblr/platform-contract/plural";
 
 export interface ComputedPlan {
@@ -946,7 +946,7 @@ export const COMPUTED_COMMANDS: ComputedCommand[] = [
         summary:
           names.length === 1
             ? `${shown} is filed in a place that has been deleted. Forget where it says it lives; the thing itself stays.`
-            : `${names.length} things are filed in places that have been deleted (${shown}${more}). Forget where they say they live; the things themselves stay.`,
+            : `${countOf(names.length, "thing")} are filed in places that have been deleted (${shown}${more}). Forget where they say they live; the things themselves stay.`,
         operations,
       };
     },

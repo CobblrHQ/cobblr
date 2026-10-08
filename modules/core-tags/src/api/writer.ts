@@ -22,6 +22,7 @@ export function registerTagWriter(): void {
   registerDeletedTagAssignments();
   const dbOf = async (orgId: string) => (await platform().tenants.getDb(orgId)) as Kysely<CoreTagsDB>;
   platform().entities.registerWriter("core-tags:tag", {
+    table: "core_tags_tags",
     async create(orgId, fields) {
       const row = await createTag(await dbOf(orgId), { orgId, userId: null }, {
         name: String(fields.name ?? ""),

@@ -3,6 +3,7 @@
 // in metadata via Pillar-E specialisation modules' contributed
 // field-defs.
 
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { z } from "zod";
 import { GONE_STATES } from "./resolvers.js";
@@ -305,6 +306,7 @@ const NameUnit = z.object({ name: z.string().max(200).nullable().optional(), ser
 machinesRouter.post(
   "/:id/units",
   asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "machines:name-unit"))) return;
     const parsed = NameUnit.safeParse(req.body ?? {});
     if (!parsed.success) return badBody(res, parsed.error);
     const out = await nameUnit(unitsCtx(req), req.params.id!, parsed.data);
@@ -318,6 +320,7 @@ machinesRouter.post(
 machinesRouter.post(
   "/:id/split",
   asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "machines:split-unit"))) return;
     answer(res, await splitUnit(unitsCtx(req), req.params.id!));
   }),
 );
@@ -327,6 +330,7 @@ machinesRouter.post(
 machinesRouter.post(
   "/:id/split-one",
   asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "machines:split-one"))) return;
     const parsed = NameUnit.pick({ name: true }).safeParse(req.body ?? {});
     if (!parsed.success) return badBody(res, parsed.error);
     answer(res, await splitOne(unitsCtx(req), req.params.id!, parsed.data));
@@ -340,6 +344,7 @@ const MergeInto = z.object({ parent_id: z.string().uuid() });
 machinesRouter.post(
   "/:id/unit-of",
   asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "machines:make-unit-of"))) return;
     const parsed = MergeInto.safeParse(req.body ?? {});
     if (!parsed.success) return badBody(res, parsed.error);
     answer(res, await mergeInto(unitsCtx(req), req.params.id!, parsed.data.parent_id));

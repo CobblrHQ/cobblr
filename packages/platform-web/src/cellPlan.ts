@@ -71,6 +71,7 @@ export function cellPlan(def: EditableCellDef): CellPlan {
       return { kind: "locked", reason: "Set automatically" };
     // Needs the Write/Preview editor, which doesn't fit a cell. Say where to go
     // rather than offering a box that can't do the job.
+    case "secret":
     case "markdown":
       return {
         kind: "locked",

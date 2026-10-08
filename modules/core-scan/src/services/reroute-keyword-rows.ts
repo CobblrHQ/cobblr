@@ -33,6 +33,7 @@ import { applyNameFacts } from "./name-facts.js";
 import { alignStorageFields } from "./align-storage-fields.js";
 import { retargetByCategory } from "./retarget-by-category.js";
 import { workspaceIdentity } from "./receipt-photo.js";
+import { selfOrigin } from "@cobblr/platform-contract/self-api";
 
 /** The rule this pass heals rows up to: the catalog's category outranks a
  *  word the name grazed (#3004), merged at `since`. A row matched before it
@@ -43,8 +44,7 @@ export const REROUTE_RULE = { version: "category-outranks-word", since: "2026-09
 export const REROUTE_PER_TICK = 50;
 const TICK_MS = 20 * 60 * 1000;
 const DRAIN_MS = 60 * 1000;
-// loopback-ok: #5153 moves this onto selfFetch
-const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
+const INTERNAL_API = selfOrigin();
 export const REROUTE_PASS = "core-scan.reroute-keyword-rows";
 
 /** The walk is the kernel's (platform().sweeps, #3036): this registers the

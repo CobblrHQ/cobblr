@@ -3,6 +3,7 @@ type: feature
 scope: purchases
 date: 2026-10-06
 docs_target: docs/USER_GUIDE.md#3.25c Reading a purchase order
+docs_published: 2026-10-08
 ---
 Returns now live on the order: start one on any line of an arrived order, follow it from Started to Refunded with one tap per stage, and the store's own return emails move the same return. When the store has it, the count comes off the shelf once, and the refund comes off the order's spend once.
 

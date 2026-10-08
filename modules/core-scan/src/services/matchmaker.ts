@@ -396,7 +396,7 @@ export async function assembleScanMenu(
 
   let instances: Array<{ module_name: string; instance_name: string; display_name: string; is_default: boolean; is_scan_fallback?: boolean; item_count?: number | null; config?: Record<string, unknown> }> = [];
   try {
-    const res = await fetch(`${baseUrl}/api/v1/orgs/${slug}/instances`, { headers: auth });
+    const res = await apiFetch(`${baseUrl}/api/v1/orgs/${slug}/instances`, { headers: auth });
     if (res.ok) instances = ((await res.json()) as { items?: typeof instances }).items ?? [];
   } catch {
     return [];
@@ -444,7 +444,7 @@ export async function assembleScanMenu(
 
   const overridesByTarget = new Map<string, { item_noun?: string; scan_keywords?: string[] }>();
   try {
-    const res = await fetch(`${baseUrl}/api/v1/orgs/${slug}/entity-kind-overrides`, { headers: auth });
+    const res = await apiFetch(`${baseUrl}/api/v1/orgs/${slug}/entity-kind-overrides`, { headers: auth });
     if (res.ok) {
       const items = ((await res.json()) as { items?: Array<{ target_kind: string; target_id: string; config?: { item_noun?: string; scan_keywords?: string[] } }> }).items ?? [];
       for (const o of items) {
@@ -495,7 +495,7 @@ export async function assembleScanMenu(
     let lotField: ScanMenuEntry["lot_field"];
     let yearField: ScanMenuEntry["year_field"];
     try {
-      const res = await fetch(`${baseUrl}/api/v1/orgs/${slug}/field-defs?kind=${encodeURIComponent(kind)}`, { headers: auth });
+      const res = await apiFetch(`${baseUrl}/api/v1/orgs/${slug}/field-defs?kind=${encodeURIComponent(kind)}`, { headers: auth });
       if (res.ok) {
         const defs = ((await res.json()) as { items?: Array<{ name: string; display_label: string; type: string; help?: string | null; choices?: string[] | null; decode_role?: string | null; field_role?: string | null; learns?: boolean | null }> }).items ?? [];
         fields = defs
@@ -550,7 +550,7 @@ export async function assembleScanMenu(
     }
     if (parentName) {
       try {
-        const res = await fetch(`${baseUrl}/api/v1/orgs/${slug}/field-defs?kind=${encodeURIComponent(`${parentName}:item`)}`, { headers: auth });
+        const res = await apiFetch(`${baseUrl}/api/v1/orgs/${slug}/field-defs?kind=${encodeURIComponent(`${parentName}:item`)}`, { headers: auth });
         if (res.ok) {
           const defs = ((await res.json()) as { items?: Array<{ name: string; display_label: string; type: string; choices?: string[] | null }> }).items ?? [];
           fields = withTypeFields(
@@ -608,7 +608,7 @@ export async function assembleMergedMenu(
   // toward earlier entries); bundle entries whose instance already exists live
   // are dropped as duplicates.
   try {
-    const res = await fetch(`${baseUrl}/api/v1/orgs/${slug}/quickstart/bundle-menu`, {
+    const res = await apiFetch(`${baseUrl}/api/v1/orgs/${slug}/quickstart/bundle-menu`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) return live;
@@ -872,6 +872,7 @@ export function pickFallbackEntry(
 // for the bench and the tests.
 export { makeLexicalScorer, GENERIC_NOUNS, rankFits, bestFit, type LexicalEvidence } from "@cobblr/platform-contract/table-fit";
 import { contradictedByCategory, fitsTheFloor, orderFits } from "@cobblr/platform-contract/table-fit";
+import { apiFetch } from "@cobblr/platform-contract/self-api";
 
 export function heuristicMatch(
   item: PerceivedItem,

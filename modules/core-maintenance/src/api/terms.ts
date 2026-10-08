@@ -1,8 +1,9 @@
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
 import { tenantDb, tenantContext, sessionUser } from "../db.js";
-import { asyncHandler, badBody, requireRole } from "./util.js";
+import { asyncHandler, badBody } from "./util.js";
 import { TermBody } from "../term-fields.js";
 import { presentTerms, termTotals, updateTerm, endRenewal } from "../terms-store.js";
 import { present } from "./schedules.js";
@@ -32,12 +33,12 @@ termsRouter.get("/:id", asyncHandler(async (req, res) => {
 }));
 // AI-ACTION: core-maintenance:update-term
 termsRouter.patch("/:id", asyncHandler(async (req, res) => {
-  if (!requireRole(req, res, "owner", "admin", "member")) return;
+  if (!(await requireCapability(req, res, "core-maintenance:update-term"))) return;
   const d = TermBody.safeParse(req.body); if (!d.success) return badBody(res, d.error);
   res.json(await updateTerm(tenantDb(req), tenantContext(req).org.id, String(req.params.id), d.data));
 }));
+/** The route's body; its gate is the route's own (index.ts). */
 export async function endRenewalRoute(req: import("express").Request, res: import("express").Response) {
-  if (!requireRole(req, res, "owner", "admin", "member")) return;
   const row = await endRenewal(tenantDb(req), String(req.params.id), sessionUser(req).id);
   res.json(await present(tenantContext(req).org.id, row));
 }

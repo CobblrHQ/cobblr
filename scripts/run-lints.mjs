@@ -18,13 +18,13 @@
 //   node scripts/run-lints.mjs --only isolation,docs
 //   COBBLR_LINT_CONCURRENCY=4 pnpm run lint:all
 
-import { readQuietMs, readRecordedReadMB, readRegistry, writeQuietMs } from "./lib/lint-durations.mjs";
+import { readPathMs, readQuietMs, readRecordedReadMB, readRegistry, writeQuietMs } from "./lib/lint-durations.mjs";
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultConcurrency, runParallel } from "./lib/parallel.mjs";
 import { lintCommand } from "./lib/lint-command.mjs";
-import { CEILING_MS, judgeRun, ioPressure, IO_CONTENDED_AT, cpuPressure, CPU_CONTENDED_AT, overReadBudget } from "./lib/lint-budget.mjs";
+import { CEILING_MS, quietFor, judgeRun, ioPressure, IO_CONTENDED_AT, cpuPressure, CPU_CONTENDED_AT, overReadBudget } from "./lib/lint-budget.mjs";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
@@ -221,7 +221,7 @@ function main() {
     const io = ioPressure();
     const cpuAtEnd = cpuPressure();
     const cpuPsi = cpuAtStart === null && cpuAtEnd === null ? null : Math.max(cpuAtStart ?? 0, cpuAtEnd ?? 0);
-    const { factor, contended, perLint, over, unknown, remeasured, ioContended, cpuContended } = await judgeRun(results, quietMs, record ? null : rerun, { ioPressure: io, cpuPressure: cpuPsi });
+    const { factor, contended, perLint, over, unknown, remeasured, ioContended, cpuContended } = await judgeRun(results, quietFor(results, quietMs, readPathMs()), record ? null : rerun, { ioPressure: io, cpuPressure: cpuPsi });
     const factorLine =
       `this run ran at ${factor.toFixed(2)}x the recorded quiet baseline` +
       (io !== null ? `, I/O pressure ${io.toFixed(1)}%` : "") +

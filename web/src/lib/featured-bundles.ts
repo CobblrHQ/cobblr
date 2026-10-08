@@ -243,13 +243,18 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     item_example: "a reel of components",
     next_steps: [{ label: "Receive components", module: "inventory", path: "/instances/component-parts", hint: "Scan a distributor's package label, review its count and queue its reel QR label." }, { label: "Add a board project", module: "projects", path: "/instances/board-projects", hint: "Import a revision’s BOM and centroid, check components and track blank board orders." }],
     manifest: {
-      id: "cobblr.flagship.electronics-assembly", version: "0.1.5", name: "Electronics assembly", author: "Cobblr",
-      description: "Component packages and board revisions, with receiving, moisture clocks, BOM stock checks and fabrication purchases.",
-      released_at: "2026-10-06", changelog: "Import board revisions to check component stock and track fabrication purchases and stencils.",
-      releases: [{ version: "0.1.5", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { version: "0.1.4", released_at: "2026-10-06", notes: "Import board revisions to check component stock and track fabrication purchases and stencils." }, { version: "0.1.1", released_at: "2026-10-05", notes: "Receive component packages by their distributor labels and track moisture exposure and counts." }],
+      id: "cobblr.flagship.electronics-assembly", version: "0.1.6", name: "Electronics assembly", author: "Cobblr",
+      description: "Component packages and board revisions, with stock checks, fabrication purchases, assembly kits and solder paste handling.",
+      released_at: "2026-10-08", changelog: "Reserve assembly kits and track refrigerated paste handling against its label limits.",
+      releases: [{ version: "0.1.6", released_at: "2026-10-08", notes: "Reserve assembly kits and track refrigerated paste handling against its label limits." }, { version: "0.1.5", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { version: "0.1.4", released_at: "2026-10-06", notes: "Import board revisions to check component stock and track fabrication purchases and stencils." }, { version: "0.1.1", released_at: "2026-10-05", notes: "Receive component packages by their distributor labels and track moisture exposure and counts." }],
       requires: [{ module: "inventory" }, { module: "core-scan" }, { module: "labels" }, { module: "projects" }, { module: "builds" }, { module: "purchases" }],
       wires: [], field_defs: [], saved_views: [],
       provides_instances: [
+        {
+          module: "inventory", instance_name: "solder-paste", display_name: "Solder Paste", glyph: "🫙", item_noun: "paste jar", qty_unit: "ml",
+          faces: { stock: true }, paste_tracking: true,
+          field_defs: [{ entity_kind: "inventory:part", name: "lot_code", display_label: "Paste lot", type: "text", position: 1 }, { entity_kind: "inventory:part", name: "alloy", display_label: "Alloy", type: "text", position: 2, learns: true, choices: ["SAC305", "Sn63/Pb37", "Sn42/Bi58"] }], saved_views: [],
+        },
         {
           module: "projects", instance_name: "board-projects", display_name: "Board Projects", glyph: "🔌", item_noun: "board project",
           board_revisions: { package_kind: "component-packages:item", blank_kind: "blank-boards:item", stencil_kind: "board-stencils:item" },
@@ -3908,19 +3913,22 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🔁",
     blurb:
-      "Every streaming service, membership, and recurring bill in one place: a computed per-cycle line + renewal dates, grouped by category.",
+      "Software licences, recurring bills, domains and warranties, with renewal costs and time to cancel.",
     next_steps: [
       { label: "Add your first subscription", module: "inventory", path: "/instances/subscriptions", hint: "Cost per cycle, billing cycle, renewal date." },
     ],
     manifest: {
       id: "cobblr.flagship.subscriptions",
       catalog: "extended",
-      version: "0.2.7",
-      name: "Subscriptions",
-      description: "Every recurring charge as its own table: cost/cycle, renewal date, payment method, grouped by category.",
+      version: "0.3.3",
+      name: "Licences & subscriptions",
+      description: "Track licences, subscriptions, domains and warranties with paid renewal terms and cancellation reminders.",
       author: "Cobblr",
-      released_at: "2026-10-02",
+      released_at: "2026-10-06",
       releases: [
+        { version: "0.3.3", released_at: "2026-10-08", notes: "Grouped licence costs and seats add up while billing intervals and notice periods remain per record." },
+        { version: "0.3.2", released_at: "2026-10-06", notes: "Track licence keys, cancellation deadlines, paid renewals and vendors, or start from a receipt draft." },
+        { version: "0.3.0", released_at: "2026-10-06", notes: "Linked vendors, protected licence keys, paid renewal terms, cancellation reminders and receipt drafts." },
         { version: "0.2.7", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." },
         { version: "0.2.6", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." },
         {
@@ -3929,25 +3937,281 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           notes: "Cost / cycle is a money field: it shows as $12.99 and takes 12.99 or $12.99.",
         },
       ],
-      changelog:
-        "Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: Dropped the computed “Plan” summary line (clutter on the form). (Now its OWN table (an inventory instance), not generic Inventory with extra columns) its own nav entry, a “New subscription” button, only the fields a bills tracker needs (stock/parts cruft hidden). Plain-language hints + a pinned “Renews next” view.",
-      requires: [{ module: "inventory" }],
+      changelog: "Linked vendors, protected licence keys, paid renewal terms, cancellation reminders and receipt drafts.",
+      requires: [{ module: "inventory" }, { module: "core-maintenance" }, { module: "core-scan" }],
+      base_kind_fields_reason: "Paid terms belong to Maintenance. The annual spend view filters them to this bundle's subscription collection.",
+      saved_views: [{ entity_kind: "core-maintenance:term", name: "Spend by vendor this year", view_type: "table", pinned: true, config: { filter: { parent_kind: "subscriptions:item" }, where: [{ col: "performed_at", op: ">=", value: "year-start" }, { col: "performed_at", op: "<", value: "next-year-start" }], group_by: "publisher", visible_fields: ["name", "publisher", "cost_cents", "currency", "quantity", "performed_at"] } }],
       provides_instances: [
         {
           module: "inventory",
           instance_name: "subscriptions",
           faces: { stock: false },
-          display_name: "Subscriptions",
+          display_name: "Licences & subscriptions",
           glyph: "🔁",
-          item_noun: "subscription",
+          item_noun: "licence or subscription",
+          hint: "Licences, recurring bills and warranties. Keep the notice period so you have time to cancel.",
+          renewal_fields: { expiry: "renewal_date", cycle: "billing_cycle", custom_months: "billing_months", auto_renews: "auto_renews", notice_days: "notice_period", cost: "cost_per_cycle", quantity: "seats", publisher: "publisher" },
+          wires: [
+  {
+    "source_kind": "inventory:part",
+    "action_id": "core-maintenance:ensure-renewal",
+    "trigger_type": "on-create",
+    "args": {
+      "expiry": "renewal_date",
+      "cycle": "billing_cycle",
+      "custom_months": "billing_months",
+      "auto_renews": "auto_renews",
+      "notice_days": "notice_period",
+      "cost": "cost_per_cycle",
+      "quantity": "seats",
+      "publisher": "publisher"
+    }
+  },
+  {
+    "source_kind": "inventory:part",
+    "action_id": "core-maintenance:ensure-renewal",
+    "trigger_type": "on-update",
+    "args": {
+      "expiry": "renewal_date",
+      "cycle": "billing_cycle",
+      "custom_months": "billing_months",
+      "auto_renews": "auto_renews",
+      "notice_days": "notice_period",
+      "cost": "cost_per_cycle",
+      "quantity": "seats",
+      "publisher": "publisher"
+    }
+  }
+],
+          record_templates: [
+  {
+    "label": "Streaming",
+    "fields": {
+      "category": "Subscription",
+      "billing_cycle": "Monthly",
+      "auto_renews": true,
+      "notice_period": 0
+    }
+  },
+  {
+    "label": "Cloud storage",
+    "fields": {
+      "category": "Subscription",
+      "billing_cycle": "Yearly",
+      "auto_renews": true,
+      "notice_period": 30
+    }
+  },
+  {
+    "label": "Password manager",
+    "fields": {
+      "category": "Subscription",
+      "billing_cycle": "Yearly",
+      "auto_renews": true,
+      "notice_period": 30
+    }
+  },
+  {
+    "label": "Domain or DNS",
+    "fields": {
+      "category": "Domain",
+      "billing_cycle": "Yearly",
+      "auto_renews": true,
+      "notice_period": 30
+    }
+  },
+  {
+    "label": "Adobe-style software",
+    "fields": {
+      "category": "Software licence",
+      "billing_cycle": "Monthly",
+      "auto_renews": true,
+      "notice_period": 30
+    }
+  },
+  {
+    "label": "Autodesk-style software",
+    "fields": {
+      "category": "Software licence",
+      "billing_cycle": "Yearly",
+      "auto_renews": true,
+      "notice_period": 30
+    }
+  }
+],
+          links: [
+  {
+    "kind": "installed-on",
+    "label": "installed on",
+    "inverse": "has installed",
+    "to": [
+      "inventory:part",
+      "assets:asset",
+      "machines:machine",
+      "records:record"
+    ]
+  },
+  {
+    "kind": "warranty-for",
+    "date_summary": { "label": "Warranty until", "field": "renewal_date", "format": "month-year" },
+    "label": "warranty for",
+    "inverse": "has warranty",
+    "to": [
+      "inventory:part",
+      "assets:asset",
+      "machines:machine",
+      "records:record"
+    ]
+  }
+],
+          receipt_draft: { vendor_kind: "licence-vendors:item", vendor_field: "publisher", cost_field: "cost_per_cycle", cycle_field: "billing_cycle", expiry_field: "renewal_date", quantity_field: "seats", custom_months_field: "billing_months" },
           field_defs: [
-            { entity_kind: "inventory:part", name: "cost_per_cycle", display_label: "Cost / cycle", type: "money", aggregate: "sum", position: 1, help: "What you're charged each billing cycle." },
-            { entity_kind: "inventory:part", name: "billing_cycle", display_label: "Billing cycle", type: "text", position: 2, learns: false, choices: ["Weekly", "Monthly", "Quarterly", "Yearly"] },
-            { entity_kind: "inventory:part", name: "renewal_date", display_label: "Renews", type: "date", position: 3, help: "Next charge / renewal date, when to cancel by if you don't want it." },
-            { entity_kind: "inventory:part", name: "category", display_label: "Category", type: "text", position: 4, learns: true, choices: ["Streaming", "Software", "Membership", "Utility", "Insurance", "Phone / internet", "Other"] },
-            { entity_kind: "inventory:part", name: "payment_method", display_label: "Paid with", type: "text", position: 5, help: "Which card/account it bills to." },
-          ],
+  {
+    "entity_kind": "inventory:part",
+    "name": "category",
+    "display_label": "Kind",
+    "type": "text",
+    "position": 1,
+    "learns": false,
+    "choices": [
+      "Software licence",
+      "Subscription",
+      "Domain",
+      "Warranty",
+      "Insurance",
+      "Membership",
+      "Other"
+    ]
+  },
+  {
+    "entity_kind": "inventory:part",
+    "name": "publisher",
+    "display_label": "Vendor or publisher",
+    "type": "relation",
+    "position": 2,
+    "ref_kind": "licence-vendors:item"
+  },
+  {
+    "entity_kind": "inventory:part",
+    "name": "reseller",
+    "display_label": "Supplier or reseller",
+    "type": "relation",
+    "position": 3,
+    "ref_kind": "licence-vendors:item"
+  },
+  {
+    "entity_kind": "inventory:part",
+    "name": "plan",
+    "display_label": "Plan or edition",
+    "type": "text",
+    "position": 4
+  },
+  {
+    "entity_kind": "inventory:part",
+    "name": "seats",
+    "display_label": "Seats or quantity",
+    "type": "number",
+    "aggregate": "sum",
+    "position": 5
+  },
+  {
+    "entity_kind": "inventory:part",
+    "name": "licence_key",
+    "display_label": "Licence key",
+    "type": "secret",
+    "position": 6
+  },
+  {
+    "entity_kind": "inventory:part",
+    "name": "account_email",
+    "display_label": "Account or login email",
+    "type": "text",
+    "position": 7
+  },
+  {
+    "entity_kind": "inventory:part",
+    "name": "cost_per_cycle",
+    "display_label": "Cost per cycle",
+    "type": "money",
+    "aggregate": "sum",
+    "position": 8,
+    "help": "Amount and currency. Paid renewals keep their own terms and costs."
+  },
+  {
+    "entity_kind": "inventory:part",
+    "name": "billing_cycle",
+    "display_label": "Billing cycle",
+    "type": "text",
+    "position": 9,
+    "learns": false,
+    "choices": [
+      "Monthly",
+      "Yearly",
+      "Custom"
+    ],
+    "help": "Custom repeats after the number of months below."
+  },
+  {
+    "entity_kind": "inventory:part",
+    "name": "billing_months",
+    "display_label": "Custom billing months",
+    "type": "number",
+    "aggregate": "none",
+    "position": 10,
+    "help": "For a custom cycle, enter a whole number from 1 to 1000."
+  },
+  {
+    "entity_kind": "inventory:part",
+    "name": "renewal_date",
+    "display_label": "Renews or expires",
+    "type": "date",
+    "position": 11
+  },
+  {
+    "entity_kind": "inventory:part",
+    "name": "auto_renews",
+    "display_label": "Auto-renews",
+    "type": "boolean",
+    "position": 12
+  },
+  {
+    "entity_kind": "inventory:part",
+    "name": "notice_period",
+    "display_label": "Notice period in days",
+    "type": "number",
+    "aggregate": "none",
+    "position": 13,
+    "help": "Days before renewal that cancellation must arrive. Reminders come one day before that deadline."
+  },
+  {
+    "entity_kind": "inventory:part",
+    "name": "cancel_by",
+    "display_label": "Cancel by",
+    "type": "computed",
+    "position": 14,
+    "template": "{{renewal.cancel_by}}"
+  },
+  {
+    "entity_kind": "inventory:part",
+    "name": "payment_method",
+    "display_label": "Payment method",
+    "type": "text",
+    "position": 15,
+    "field_role": "payment-method",
+    "help": "Card name and last four digits only, such as Visa ending 4242. Full card numbers are refused."
+  },
+  {
+    "entity_kind": "inventory:part",
+    "name": "assigned_to",
+    "display_label": "Owner or assignee",
+    "type": "member",
+    "position": 16,
+    "field_role": "belongs-to"
+  }
+],
           field_overrides: [
+            { entity_kind: "inventory:part", name: "cost", hidden: true },
+            { entity_kind: "inventory:part", name: "sku", hidden: true },
             { entity_kind: "inventory:part", name: "supplier_url", display_label: "Manage URL" },
             { entity_kind: "inventory:part", name: "manufacturer", display_label: "Provider" },
             { entity_kind: "inventory:part", name: "qty", hidden: true },
@@ -3959,8 +4223,94 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             { entity_kind: "inventory:part", name: "model_number", hidden: true },
           ],
           saved_views: [
-            { entity_kind: "inventory:part", name: "Renews next", view_type: "table", pinned: true, config: { group_by: "category", visible_fields: ["title", "cost_per_cycle", "billing_cycle", "renewal_date"] } },
-          ],
+  {
+    "entity_kind": "inventory:part",
+    "view_type": "table",
+    "name": "Renewing soon",
+    "pinned": true,
+    "config": {
+      "where": [
+        {
+          "col": "renewal_date",
+          "op": ">=",
+          "value": "today"
+        },
+        {
+          "col": "renewal_date",
+          "op": "<=",
+          "value": "today+60"
+        }
+      ],
+      "sort": [
+        "renewal_date"
+      ],
+      "visible_fields": [
+        "title",
+        "publisher",
+        "cost_per_cycle",
+        "renewal_date",
+        "cancel_by"
+      ]
+    }
+  },
+  {
+    "entity_kind": "inventory:part",
+    "view_type": "table",
+    "name": "Auto-renewing",
+    "config": {
+      "filter": {
+        "auto_renews": true
+      },
+      "sort": [
+        "renewal_date"
+      ],
+      "visible_fields": [
+        "title",
+        "publisher",
+        "renewal_date",
+        "cancel_by",
+        "notice_period"
+      ]
+    }
+  },
+  {
+    "entity_kind": "inventory:part",
+    "view_type": "table",
+    "name": "Lapsed",
+    "config": {
+      "where": [
+        {
+          "col": "renewal_date",
+          "op": "<",
+          "value": "today"
+        }
+      ],
+      "sort": [
+        "-renewal_date"
+      ],
+      "visible_fields": [
+        "title",
+        "publisher",
+        "renewal_date"
+      ]
+    }
+  },
+  {
+    "entity_kind": "inventory:part",
+    "name": "Renewal calendar",
+    "view_type": "calendar",
+    "config": {
+      "date_field": "renewal_date",
+      "title_field": "title"
+    }
+  }
+],
+
+        },
+        {
+          module: "inventory", instance_name: "licence-vendors", display_name: "Licence vendors", glyph: "🏷️", item_noun: "vendor", scan_keywords: ["software publisher", "licence vendor"], faces: { stock: false },
+          field_defs: [{ entity_kind: "inventory:part", name: "website", display_label: "Website", type: "url" }],
+          field_overrides: ["qty", "unit", "location", "warranty", "min_qty", "serial_number", "model_number", "manufacturer", "cost", "category"].map(name => ({ entity_kind: "inventory:part", name, hidden: true })),
         },
       ],
     },

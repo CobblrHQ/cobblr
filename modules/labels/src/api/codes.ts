@@ -2,6 +2,7 @@
 // its entity, and manage per-kind grain + prefixes. See
 // docs/design-decisions/label-codes.md and ../services/codes.ts.
 
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
@@ -131,6 +132,7 @@ const ConfigBody = z
 codesRouter.patch(
   "/config",
   asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "labels:set-code"))) return;
     const parsed = ConfigBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const { kind, group_field, overlay_center } = parsed.data;
@@ -318,6 +320,7 @@ const PrefixBody = z.object({ prefix: z.string().max(8), keep_existing: z.boolea
 codesRouter.patch(
   "/groups/:group_key",
   asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "labels:set-code"))) return;
     const parsed = PrefixBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const key = req.params.group_key;
@@ -356,6 +359,7 @@ const OverlayBody = z.object({ overlay_center: z.boolean() });
 codesRouter.patch(
   "/groups/:group_key/overlay",
   asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "labels:set-code"))) return;
     const parsed = OverlayBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const key = req.params.group_key;

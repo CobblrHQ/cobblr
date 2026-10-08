@@ -1,4 +1,4 @@
-import { RecordFormModal, NewItemMenu, MoneyTotalNotice, useMoneyCurrency, PresentationGate, useFaces, usePlatformWeb, UsedValueInput, usedValueFieldItem } from "@cobblr/platform-web";
+import { useNewRecordBarcode, RecordFormModal, NewItemMenu, MoneyTotalNotice, useMoneyCurrency, PresentationGate, useFaces, usePlatformWeb, UsedValueInput, usedValueFieldItem } from "@cobblr/platform-web";
 // /assets — list + detail modal for the assets module. Same shape
 // as MachinesPage. No specialisations yet (no assets:asset Pillar-E
 // modules ship), so no lens UI here — but the column rendering is
@@ -946,6 +946,7 @@ function NewAssetModal({
   const navigate = useNavigate();
   const [name, setName] = useState("");
   const [manufacturer, setManufacturer] = useState("");
+  const [model, setModel] = useState("");
   const [category, setCategory] = useState("");
   const [locationId, setLocationId] = useState<string | null>(null);
   useEffect(() => {
@@ -953,15 +954,30 @@ function NewAssetModal({
       setName("");
       setManufacturer("");
       setCategory("");
+      setModel("");
       setLocationId(null);
     }
   }, [open]);
+
+  const [barcodeMetadata, setBarcodeMetadata] = useState<Record<string, unknown>>({});
+  const [barcodeImage, setBarcodeImage] = useState("");
+  const barcode = useNewRecordBarcode({ kind: instance ? `${instance}:item` : "assets:asset", metadata: barcodeMetadata, setMetadata: setBarcodeMetadata, natives: [
+    { name: "name", label: "Name", key: "title", value: name, setValue: setName },
+    { name: "manufacturer", label: "Brand", key: "brand", value: manufacturer, setValue: setManufacturer },
+    { name: "model", label: fp.label("model", "Model"), key: "model", value: model, setValue: setModel },
+    { name: "category", label: "Category", key: "category", value: category, setValue: setCategory },
+    { name: "image_path", label: "Photo", key: "image_url", value: barcodeImage, setValue: setBarcodeImage },
+  ] });
+  useEffect(() => { if (open) { setBarcodeMetadata({}); setBarcodeImage(""); } }, [open]);
 
   const create = useMutation({
     mutationFn: () =>
       api.createAsset(activeSlug, {
         name: name.trim(),
+        metadata: barcodeMetadata,
+        image_path: barcodeImage || null,
         manufacturer: manufacturer.trim() || null,
+        model: model.trim() || null,
         type: category.trim() || null,
         location_id: locationId,
       }, instance),
@@ -978,18 +994,24 @@ function NewAssetModal({
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim() || barcode.blocked) return;
     create.mutate();
   }
 
   return (
     <RecordFormModal open={open} onClose={onClose} title={`New ${noun}`}>
       <form onSubmit={submit} className="space-y-3">
+        {barcode.controls}
+        {barcodeImage && <div className="flex items-center gap-2"><EntityThumb src={barcodeImage} alt="Photo from barcode" size={96} /><button type="button" className="text-sm text-accent underline" onClick={() => setBarcodeImage("")}>Remove photo</button></div>}
         <label className="block">
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Name</span>
           <input value={name} onChange={(e) => setName(e.target.value)} autoFocus className="input" />
         </label>
         <FieldPack items={[
+          {
+            need: fieldNeed("model", { control: "text", label: fp.label("model", "Model") }),
+            node: <label className="block"><span className="block text-sm mb-1">{fp.label("model", "Model")}</span><input className="input" value={model} onChange={(e) => setModel(e.target.value)} /></label>,
+          },
           {
             need: fieldNeed("manufacturer", { control: "text", label: fp.label("manufacturer", "Manufacturer") }),
             node: (
@@ -1023,7 +1045,7 @@ function NewAssetModal({
           <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition">
             Cancel
           </button>
-          <button type="submit" disabled={!name.trim() || create.isPending} className="px-3 py-1.5 rounded-md text-sm font-medium bg-slate-700 hover:bg-slate-600 text-mortar-50 transition disabled:opacity-50">
+          <button type="submit" disabled={!name.trim() || create.isPending || barcode.blocked} className="px-3 py-1.5 rounded-md text-sm font-medium bg-slate-700 hover:bg-slate-600 text-mortar-50 transition disabled:opacity-50">
             {create.isPending ? "Creating…" : "Create"}
           </button>
         </div>

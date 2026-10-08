@@ -1,5 +1,8 @@
+import { arrivedEverywhere as arrivedEverywhereForView } from "@cobblr/platform-contract/day";
 import { FieldAggregateSchema } from "@cobblr/platform-contract/field-aggregate";
 import type { GroupBy, GroupPlan, GroupedResult } from "./grouped-list.js";
+import { parseDecodeRole, type DecodeRole } from "@cobblr/platform-contract/decode-role";
+export { parseDecodeRole, type DecodeRole } from "@cobblr/platform-contract/decode-role";
 export { groupListRows, normalizeGrouping } from "@cobblr/platform-contract/grouped-list";
 export type { GroupBy, GroupPlan, GroupedResult, EntityGroup, GroupTotal } from "./grouped-list.js";
 import { ActionGroupReference } from "@cobblr/platform-contract/action-groups-schema";
@@ -18,13 +21,14 @@ import { z } from "zod";
 import { SERVICE_EFFECTS, type PlatformServices } from "@cobblr/platform-contract/services";
 export type { PlatformServices } from "@cobblr/platform-contract/services";
 import type { DateFieldDirection } from "@cobblr/platform-contract/date-field-direction";
-import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
+import { ORG_ROLES, type OrgRoleName } from "@cobblr/platform-contract/org-roles";
 import { centsFromAmount } from "@cobblr/platform-contract/money";
 import { isJunkCategory } from "@cobblr/platform-contract/category-reconcile";
 import { measurePaths, measureTokens, type Measure } from "@cobblr/platform-contract/measure";
 
 export type { DateFieldDirection } from "@cobblr/platform-contract/date-field-direction";
 export { dateFieldDirection, directionOfRole, canBeOverdue, dateEventTitle } from "@cobblr/platform-contract/date-field-direction";
+export { randomId } from "@cobblr/platform-contract/random-id";
 export { pluralise, countOf, wordForCount, countWordsFor, quantityWithUnit, itemNounFor, articleFor, withArticle, type CountWords } from "@cobblr/platform-contract/plural";
 export { PLATFORM_OWNER, PLATFORM_COMMANDS, PLATFORM_COMMANDS_VERSION } from "@cobblr/platform-contract/platform-commands";
 export { expiryState, expiryPhrase, EXPIRING_WITHIN_DAYS, type ExpiryState, type ExpiryReading } from "@cobblr/platform-contract/expiry-grace";
@@ -448,10 +452,6 @@ export const EntityKindIdRegex = /^[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*$/;
 // future ISBN decoder emitting `author` fills a `decode:author` field with zero
 // new platform code. Presentation roles (title/subtitle/…) are untouched.
 
-export type DecodeRole =
-  | { kind: "identifier"; decoderId: string }
-  | { kind: "target"; key: string };
-
 /**
  * Every DecodeRole variant MUST be consumed by the fill planner. Adding a kind to
  * the union without handling it in planDecodeFill is a COMPILE ERROR, courtesy of
@@ -481,19 +481,6 @@ function assertEveryRoleKindIsConsumed(r: DecodeRole): void {
       );
     }
   }
-}
-
-/** Parse a `decode_role` string into its structured form, or null when the
- *  string is absent/blank/malformed. Pure; safe on any input. */
-export function parseDecodeRole(raw: string | null | undefined): DecodeRole | null {
-  if (typeof raw !== "string") return null;
-  const s = raw.trim();
-  if (!s) return null;
-  const id = s.match(/^identifier:([a-z][a-z0-9_-]*)$/i);
-  if (id) return { kind: "identifier", decoderId: id[1]!.toLowerCase() };
-  const tgt = s.match(/^decode:([a-z][a-z0-9_-]*)$/i);
-  if (tgt) return { kind: "target", key: tgt[1]!.toLowerCase() };
-  return null;
 }
 
 /** A fillable field, described generically for the decode-fill planner. */
@@ -1310,6 +1297,25 @@ const EntityAction = z.object({
   // help. When in doubt, leave it: the cost is a refusal that explains itself,
   // not a silently missing capability.
   undoable: z.boolean().default(false),
+  /** Who may run it without being granted it: the lowest role, by rank
+   *  (@cobblr/platform-contract/org-roles). A guest never is. Absent: the
+   *  admin tier, and anyone granted it (#5170).
+   *
+   *  The ONE answer for every door. A route that does the same thing gates
+   *  with requireCapability on this action's id, which reads this, so a
+   *  member who may add a line on the Purchases page may add it through the
+   *  API and through Cobb too, and one who may not is refused at all three.
+   *  lint:route-and-action-gate-agree holds every paired route to it.
+   *
+   *  `"requester"`: the person who started what it answers (their service
+   *  job, the change the assistant held for them) runs it whatever their
+   *  role, and the admin tier as ever; the module registers who that is with
+   *  platform().actions.registerRequester (#5192). Every invokable action
+   *  says one of these or `grantedAs` (lint:every-action-says-who-runs-it). */
+  runBy: z.union([z.enum(ORG_ROLES).refine((r) => r !== "guest", "A guest never runs an action by role."), z.literal("requester")]).optional(),
+  /** A capability whose grant also covers this action, when several actions
+   *  share one permission (inventory's holdings are all "add a part"). */
+  grantedAs: z.string().regex(ActionIdRegex).optional(),
   /** What running it does to the world, which decides who has to say yes
    *  (services.md §9): `none`, `writes`, `physical` (moves or heats
    *  something: sending a print) or `spends`. The same field a service
@@ -2244,6 +2250,8 @@ export interface PlatformDeletedRecords {
 }
 
 export interface HistoryWriter {
+  /** The owning module's row table, for predicates applied before paging. */
+  table?: string;
   snapshotDeletion?(orgId: string, id: string): Promise<DeletionSnapshot | null>;
   restoreDeletion?(orgId: string, snapshot: DeletionSnapshot): Promise<void>;
   snapshot(orgId: string, id: string): Promise<Record<string, unknown> | null>;
@@ -2421,7 +2429,7 @@ export type EntityResolver = (
  *  aggressive degrades to "no extra filter" rather than 500ing. */
 export interface FilterPredicate {
   col: string;
-  op: "<" | "<=" | ">" | ">=" | "=" | "!=";
+  op: "<" | "<=" | ">" | ">=" | "=" | "!=" | "empty" | "not_empty";
   /** Literal value. Use the string `'now'` for current timestamp on
    *  date/timestamptz columns, and `'today'` for the READER's calendar day
    *  against a date field (`EntityListQuery.today`): "ready to drink" is
@@ -2511,13 +2519,24 @@ export interface EntityListQuery {
  *  the inventory list page both call this: for a long time the first applied
  *  the config and the second applied only group_by and visible_fields, so
  *  the same view sorted through one door and not the other (#2772, #2422). */
-export function viewQuery(config: Record<string, unknown> | null | undefined): Pick<EntityListQuery, "filter" | "where" | "sort"> {
+export function viewQuery(config: Record<string, unknown> | null | undefined, today = arrivedEverywhereForView(new Date())): Pick<EntityListQuery, "filter" | "where" | "sort"> {
   const cfg = config ?? {};
   const out: Pick<EntityListQuery, "filter" | "where" | "sort"> = {};
   if (cfg.filter && typeof cfg.filter === "object" && !Array.isArray(cfg.filter)) {
     out.filter = cfg.filter as Record<string, unknown>;
   }
-  if (Array.isArray(cfg.where)) out.where = cfg.where as FilterPredicate[];
+  if (Array.isArray(cfg.where)) out.where = (cfg.where as FilterPredicate[]).map(p => {
+    const value = p.value;
+    if (typeof value !== "string") return p;
+    const offset = /^today([+-][0-9]{1,4})?$/.exec(value);
+    if (offset) {
+      const date = new Date(today + "T12:00:00Z");
+      date.setUTCDate(date.getUTCDate() + Number(offset[1] ?? 0));
+      return { ...p, value: date.toISOString().slice(0, 10) };
+    }
+    if (value === "year-start" || value === "next-year-start") return { ...p, value: `${Number(today.slice(0, 4)) + (value === "next-year-start" ? 1 : 0)}-01-01` };
+    return p;
+  });
   const sort = normalizeSortSpec(cfg.sort);
   if (sort) out.sort = sort;
   else if (typeof cfg.sort_by === "string" && cfg.sort_by.trim()) {
@@ -2762,6 +2781,8 @@ export interface ScannableInfo {
  *  writer resolves its own tenant db from orgId and runs the module's own
  *  validation + events. */
 export interface EntityWriter {
+  /** Owning row table, used for predicates that must run before paging. */
+  table?: string;
   /** Create an entity; returns the new entity's id. */
   create(orgId: string, fields: Record<string, unknown>): Promise<string>;
   update(orgId: string, id: string, fields: Record<string, unknown>): Promise<void>;
@@ -3113,6 +3134,7 @@ export interface PlatformEntities {
     query: EntityListQuery,
     viewer: { userId?: string; role?: string },
     only?: string[],
+    options?: { includeSecrets?: boolean },
   ): Promise<{ csv: string; filename: string; rows: number; complete: boolean } | null>;
   /** Batched lookup — resolve N (kind, id) refs in one call. Foreign
    *  callers that need joined data should use this instead of N
@@ -3189,6 +3211,7 @@ export interface PlatformEntities {
    *  bookshelf without its authors (2026-09-12), and an import that cannot
    *  name them has nowhere to put them back. */
   fieldsFor(orgId: string, kind: string): Promise<DefinedField[]>;
+  sealSecretFields(orgId: string, kind: string, fields: Record<string, unknown>, id?: string, current?: Record<string, unknown>): Promise<Record<string, unknown>>;
   /** What a kind counts as it is used: the module's own counters
    *  (EntityWriter.counters) and every number field marked with the `usage`
    *  role. The one answer for "every [5000] [miles]". */
@@ -3371,6 +3394,9 @@ export interface PlanStepBefore {
   id: string;
 }
 
+/** Who started what a run answers, from the arguments the run was given. */
+export type ActionRequester = (ctx: { orgId: string; args: Record<string, unknown>; entity?: { kind: string; id: string } }) => Promise<string | null>;
+
 export interface ActionInvokeContext {
   orgId: string;
   userId: string | null;
@@ -3516,6 +3542,13 @@ export interface PlatformActions {
    *  guard test holds the two together), and the card after a run offers
    *  Undo exactly when the run handed steps back. See action-undo.ts. */
   registerUndo(handlerKey: string, undoer: ActionUndoer): void;
+  /** Who started the thing this run answers: the person whose service job,
+   *  held change or request it is, from its arguments, or null when nobody
+   *  did. An action declared run by "requester" registers one beside its
+   *  handler, and the action door lets that person through whatever their
+   *  role (#5192): a person may always answer, undo or cancel what they
+   *  themselves started. The handler still checks it too. */
+  registerRequester(handlerKey: string, requester: ActionRequester): void;
   /** Find every registered action that applies to a given entity
    *  kind, factoring in `applies_to` predicates. When `orgId` is
    *  provided, per-org appliesTo overrides take precedence over the
@@ -3532,6 +3565,12 @@ export interface PlatformActions {
    *  wants to keep its inverse beside its own record (a scan attach keeping
    *  the restock's) asks here, the same way the invoke route does. */
   undoFor(actionId: string, result: unknown, ctx: ActionUndoContext): Promise<ActionUndoStep[] | null>;
+  /** What the actions' arguments pick from, for one kind: returns a function
+   *  that gives an `args_schema` with every `choicesFrom` argument filled in
+   *  as `choices` (the usage counters, the workspace's People). The same fill
+   *  GET /actions?kind= answers with, for a module's own door that shows an
+   *  action's form (a Station's Lend offers names, never an id box). */
+  argChoices(orgId: string, kind: string, schemas: readonly unknown[]): Promise<(schema: unknown) => unknown>;
 }
 
 /** What a collection wears, as the platform resolved it: the trait values
@@ -3927,6 +3966,13 @@ export interface PlatformNotifications {
      */
     card?: { heading?: string; body?: string; context?: string; rows?: NotificationCardRow[] };
     /**
+     * The message or card carries a person's private content: a personal
+     * document, a secret field (#5243). A push to their phone or computer then
+     * shows a generic line and the link, never the words, because a lock
+     * screen is not private. The bell and the record still show it to them.
+     */
+    private?: boolean;
+    /**
      * How urgent this is. Defaults to `normal`.
      *
      * It decides two separate things, and a module only has to think about the
@@ -4297,6 +4343,7 @@ export const AiCapabilities = [
   // a weaker one: a provider's busyAlternates are told the job, and answer
   // none lighter for this one.
   "document-read",
+  "personal-document-read",
   // Planning a CHANGE in the chat: a turn that deletes a record or reshapes
   // the workspace (a feature off, a bundle removed, a list made, a field's
   // choices edited). The same conversation, tools and answer shape as `chat`,
@@ -4340,6 +4387,7 @@ export const AI_CAPABILITY_FALLBACK: Partial<Record<AiCapability, AiCapability>>
   // A provider written before documents had their own job still reads one,
   // the way it reads any picture it is handed a prompt for.
   "document-read": "identify-image",
+  "personal-document-read": "document-read",
   // A provider written before planning had its own job plans in its chat.
   "plan-changes": "chat",
 };
@@ -4398,7 +4446,26 @@ export interface AiProviderSetup {
   caveat?: string;
 }
 
+export type AiPrivacy = "personal" | "normal";
+export const AI_JOB_PRIVACY: Record<AiCapability, AiPrivacy> = {
+  "classify-image": "normal",
+  "identify-image": "normal",
+  "extract-text": "normal",
+  "summarise": "normal",
+  "embed-text": "normal",
+  "chat": "normal",
+  "match-to-catalog": "normal",
+  "rank-images": "normal",
+  "split-image": "normal",
+  "identify-glance": "normal",
+  "design-workspace": "normal",
+  "document-read": "normal",
+  "personal-document-read": "personal",
+  "plan-changes": "normal",
+};
+
 export interface AiProviderDef {
+  locality?: "local" | "cloud";
   id: string;
   label: string;
   describeCredentials: () => Record<string, AiCredentialField>;
@@ -4497,6 +4564,7 @@ export interface AiProviderDef {
   /** Run a single inference. The platform handles caching + audit
    *  before/after. */
   invoke: (ctx: {
+    privacy?: AiPrivacy;
     orgId: string;
     rowId: string;
     capability: AiCapability;
@@ -4622,6 +4690,7 @@ export interface PlatformAi {
      *  is returned already sorted by it — carried as well as applied, so a
      *  consumer that re-merges these with another registry can re-sort. */
     rank?: number;
+    locality?: "local" | "cloud";
   }>;
   getProvider(id: string): AiProviderDef | null;
   /** Every AI a call for `capability` by `userId` would ask, in the order it
@@ -4629,7 +4698,7 @@ export interface PlatformAi {
    *  choices cannot offer one the router would never reach or leave out one
    *  it would. A person's own "Just me" connection is in it; somebody else's
    *  is only when shared with the workspace. */
-  chainFor(orgId: string, userId: string | null, capability: AiCapability, opts?: { limit?: number }): Promise<{ steps: AiChainStep[] }>;
+  chainFor(orgId: string, userId: string | null, capability: AiCapability, opts?: { limit?: number; privacy?: AiPrivacy }): Promise<{ steps: AiChainStep[] }>;
   /** The models a connection serves, asked of it (briefly cached), for a menu
    *  or a setting that must offer only what it has. Names the workspace's own
    *  provider (`providerId`) or a personal connection routed here
@@ -4640,12 +4709,11 @@ export interface PlatformAi {
    *  model from the workspace's capability defaults, calls the
    *  cache, calls the provider, writes audit + cache rows, returns
    *  the result. */
-  invoke(req: {
+  invoke(req: ({ privacy: "personal"; provider_id?: never } | { privacy?: "normal"; provider_id?: string }) & {
     orgId: string;
     capability: AiCapability;
     input: Record<string, unknown>;
     /** Override provider + model from workspace defaults. */
-    provider_id?: string;
     model?: string;
     /** A PERSONAL connection routed into this workspace, chosen for this call
      *  (cobblr_meta.user_credentials.id). The chat's model pill sets it per
@@ -4775,6 +4843,7 @@ export class EdgeTimeout extends Error {
 
 /** A fetch-shaped call performed by a bridge on its own network. */
 export interface EdgeFetchInit {
+  privacy?: "personal" | "normal";
   /** The service's base URL on the bridge's network. The call is held to its origin. */
   baseUrl: string;
   path: string;
@@ -4785,6 +4854,7 @@ export interface EdgeFetchInit {
   /** This hop's budget. The bridge stops the request to the service when it runs out. */
   timeoutMs?: number;
   lane?: EdgeLane;
+  requiredFeatures?: readonly string[];
   /** Send this file as the request body, on the bridge's streamed file channel
    *  (no size limit, sha256 checked on the bridge before it is handed on). */
   bodyFile?: { path: string; sha256: string; size: number };
@@ -4803,6 +4873,7 @@ export interface EdgeBlobRef {
 }
 
 export interface EdgeRequest {
+  privacy?: "personal" | "normal";
   /** Path on the edge's local target, e.g. "/api/chat". */
   path: string;
   method?: EdgeMethod;
@@ -6748,6 +6819,7 @@ export interface PlatformScan {
 /** Shares between workspaces (docs/design-decisions/share-spaces.md): what a
  *  module may ask of them. */
 export interface PlatformShares {
+  recordOwnSendFiling?(orgId: string, offerId: string, inboxId: string, record: { kind: string; id: string }): Promise<void>;
   /** A person answered an offer that arrived in their scan inbox. Taking it
    *  keeps it (or, in a share space, moves it to `into`, a workspace of theirs
    *  on this Cobblr); passing removes it; maybe leaves it for later. The giver
@@ -6847,9 +6919,11 @@ export interface Platform {
   /** `fetch` against this api's own routes, handled in-process by its app:
    *  the same middleware (auth, tenant, rules) from the same remote address a
    *  loopback call had, with no socket to be refused under load (#4901).
-   *  Takes "/api/v1/…" or a loopback URL. Code in the api process calls this,
+   *  Takes "/api/v1/…" or a loopback URL to its own port; any other URL is an
+   *  ordinary fetch, so a caller can pass whatever base it was given. Code in
+   *  the api process calls this,
    *  never 127.0.0.1:$API_PORT (lint:no-loopback-to-self). */
-  selfFetch(input: string | URL, init?: RequestInit): Promise<Response>;
+  selfFetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
   entities: PlatformEntities;
   actions: PlatformActions;
   live: PlatformLive;
@@ -7062,7 +7136,7 @@ export interface PlatformUnits {
   convert(orgId: string, value: number, fromRaw: string, toRaw: string): Promise<number | null>;
 }
 
-export { platform, setPlatform } from "@cobblr/platform-contract/platform-runtime";
+export { isPlatformSet, platform, setPlatform } from "@cobblr/platform-contract/platform-runtime";
 
 /** A route's upload middleware through the one upload door
  *  (platform().http.upload), built on its first request so a module can
@@ -7213,6 +7287,7 @@ export interface RoledField {
 
 /** One workspace-defined field on a kind, as `fieldsFor` reports it. */
 export interface DefinedField extends RoledField {
+  ref_kind?: string | null;
   display_label: string;
   type: string;
   /** The declared unit of a number field ("m", "g"), when it has one. */
@@ -7338,6 +7413,7 @@ export function imageId(image: Record<string, unknown>): string | null {
 export function registerRowHistoryWriter(kind: string, table: string): void {
   const prefix = `${kind.split(":")[0]!.replace(/-/g, "_")}_`;
   platform().activity.registerHistoryWriter(kind, {
+    table,
     snapshotDeletion: async (orgId, id) => snapshotRowTree(await platform().tenants.getDb(orgId), table, id, prefix),
     restoreDeletion: async (orgId, snapshot) => restoreRowTree(await platform().tenants.getDb(orgId), table, snapshot, prefix),
     snapshot: async (orgId, id) => snapshotRow(await platform().tenants.getDb(orgId), table, id),
@@ -7531,7 +7607,7 @@ export async function restoreRow(
  *  accept it, and the SQL it produces is what the api tests check. */
 export interface LikeFnModule {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (name: "lower" | "jsonb_path_exists", args: any[]): any;
+  (name: "lower" | "jsonb_path_exists" | "jsonb_path_query_array", args: any[]): any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   coalesce(...args: any[]): any;
 }
@@ -7608,7 +7684,7 @@ export function textSearchWhere<EB extends LikeBuilder>(eb: EB, q: string | unde
     const like = likeNeedle(text);
     return [
       ...columns.text.map((c: string) => eb(eb.fn("lower", [eb.fn.coalesce(c, empty)]), "like", like)),
-      ...(columns.json ?? []).map((c: string) => eb(eb.fn("lower", [eb.cast(c, "text")]), "like", like)),
+      ...(columns.json ?? []).map((c: string) => eb(eb.fn("lower", [eb.cast(eb.fn("jsonb_path_query_array", [c, eb.val("$.* ? (!exists(@.__cobblr_secret))")]), "text")]), "like", like)),
     ];
   };
   const exprs = anywhere(needle);

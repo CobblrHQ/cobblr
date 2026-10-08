@@ -64,7 +64,7 @@ const CARRIERS: Record<string, { name: string; trackingUrl: ((n: string) => stri
     trackingUrl: (n) => `https://www.dhl.com/global-en/home/tracking.html?tracking-id=${n}`,
   },
   amazon: {
-    name: "Amazon",
+    name: "Amazon Logistics",
     trackingUrl: (n) => `https://track.amazon.com/tracking/${n}`,
   },
   ontrac: {

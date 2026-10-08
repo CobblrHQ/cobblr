@@ -15,6 +15,7 @@
 // A draft holds only what it changes, over the room as it is now, so a
 // change made outside it while it is open is not undone by applying it.
 // See docs/design-decisions/location-floor-plan.md, "Planning a layout".
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { platform } from "@cobblr/platform-contract";
 import { plannedRack } from "@cobblr/platform-contract/plan-draft";
 import { OUTER_SIZE_ROLE, parseOuterSize, type OuterSize } from "@cobblr/platform-contract/outer-size";
@@ -556,7 +557,7 @@ planDraftsRouter.get(
 planDraftsRouter.patch(
   "/plan-drafts/:draftId",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-locations:plan-put"))) return;
     const parsed = DraftPatch.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     try {
@@ -572,7 +573,7 @@ planDraftsRouter.patch(
 planDraftsRouter.delete(
   "/plan-drafts/:draftId",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-locations:plan-discard"))) return;
     const gone = await deleteDraft(tenantContext(req).org.id, req.params.draftId!);
     res.status(gone ? 204 : 404).end();
   }),
@@ -583,7 +584,7 @@ planDraftsRouter.delete(
 planDraftsRouter.post(
   "/plan-drafts/:draftId/apply",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-locations:plan-apply"))) return;
     try {
       res.json(await applyDraft(tenantContext(req).org.id, req.params.draftId!, sessionUser(req).id));
     } catch (e) {
@@ -597,7 +598,7 @@ planDraftsRouter.post(
 planDraftsRouter.post(
   "/plan-drafts/:draftId/undo",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-locations:plan-undo"))) return;
     try {
       res.json(await undoApply(tenantContext(req).org.id, req.params.draftId!, sessionUser(req).id));
     } catch (e) {
@@ -618,7 +619,7 @@ planDraftsRouter.get(
 planDraftsRouter.post(
   "/:id/plan-drafts",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-locations:plan-layout"))) return;
     const parsed = DraftCreate.safeParse(req.body ?? {});
     if (!parsed.success) return badBody(res, parsed.error);
     try {

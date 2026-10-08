@@ -2,6 +2,7 @@
 // prints, then clear the queue. Returns the rendered batch with QR
 // SVGs so the client can drop them straight into a print preview.
 
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
@@ -12,6 +13,7 @@ import { liveQrUrl } from "../live-qr-url.js";
 import { SIZES } from "../print/layout.js";
 import { renderRowsToPdf } from "../print/render-queue.js";
 import { assignCodes, freezePrintedGroups, getOverlayForRefs } from "../services/codes.js";
+import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
 export const printRouter = Router({ mergeParams: true });
 
@@ -35,9 +37,8 @@ export async function qrBaseFor(req: Request): Promise<string | null> {
     const slug = req.params.slug;
     if (!slug) return null;
     const auth = req.headers.authorization;
-    const port = process.env.API_PORT ?? "4000";
-    const r = await fetch(
-      `http://127.0.0.1:${port}/api/v1/orgs/${encodeURIComponent(slug)}/modules/labels/qr/settings`,
+    const r = await apiFetch(
+      `${selfOrigin()}/api/v1/orgs/${encodeURIComponent(slug)}/modules/labels/qr/settings`,
       { headers: auth ? { authorization: auth } : {} },
     );
     if (!r.ok) return null;
@@ -102,6 +103,7 @@ printRouter.post(
 printRouter.post(
   "/",
   asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "labels:print"))) return;
     const db = tenantDb(req);
     const session = sessionUser(req);
     const ctx = tenantContext(req);

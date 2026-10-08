@@ -1,7 +1,7 @@
 // Settings → Sharing: who this workspace is shared with, and how each share
 // is syncing (docs/design-decisions/share-spaces.md).
 //
-// In your own workspace: share with someone (an invite link to send them),
+// In your own workspace: share with someone (their email, or a link to send),
 // each share's person, where their Cobblr is, when it last synced and what is
 // waiting, Sync now, and End. In a share space (someone shared with you): who
 // shared it, how it is syncing, and Leave.
@@ -9,13 +9,14 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDownLeft, ArrowUpRight, Check, Copy, Plus, RefreshCw, Share2 } from "lucide-react";
-import { Modal, relativeTime, useConfirm, usePageTitle, useToast, SegmentedChoice } from "@cobblr/platform-web";
+import { ArrowDownLeft, ArrowUpRight, Plus, RefreshCw, Share2 } from "lucide-react";
+import { Modal, relativeTime, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
 import { api, type ShareLinkItem, type ShareOfferItem } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 import { ShareWhatEditor } from "./ShareWhatEditor";
 import { ShareEditsList } from "./ShareEditsList";
+import { InviteForm } from "../components/ShareInviteForm";
 import { PublicPagesSection } from "./PublicPagesSection";
 
 export function SharingPage() {
@@ -135,7 +136,7 @@ export function SharingPage() {
           Review every suggested edit ({live.reduce((n, l) => n + (l.edits_waiting ?? 0), 0)})
         </Link>
       ) : null}
-      {live.length > 0 && <HandedOver slug={activeSlug} />}
+      <HandedOver slug={activeSlug} />
       <PublicPagesSection slug={activeSlug} />
       <Modal open={!!editing} onClose={() => setEditing(null)} title={`What ${editing?.peer_name ?? editing?.label ?? "they"} can see`} size="md">
         {editing && <ShareWhatEditor slug={activeSlug} linkId={editing.id} who={editing.peer_name ?? editing.label ?? "they"} onDone={() => setEditing(null)} />}
@@ -143,7 +144,7 @@ export function SharingPage() {
       <Modal open={!!reviewing} onClose={() => setReviewing(null)} title={`${reviewing?.peer_name ?? reviewing?.label ?? "Their"}'s edits`} size="md">
         {reviewing && <ShareEditsList slug={activeSlug} linkId={reviewing.id} who={reviewing.peer_name ?? reviewing.label ?? "They"} />}
       </Modal>
-      <Modal open={inviting} onClose={() => setInviting(false)} title="Share with someone" size="sm">
+      <Modal open={inviting} onClose={() => setInviting(false)} title="Share with someone" size="md">
         {inviting && <InviteForm slug={activeSlug} onDone={() => void qc.invalidateQueries({ queryKey: key })} />}
       </Modal>
     </div>
@@ -151,7 +152,8 @@ export function SharingPage() {
 }
 
 function ShareRow({ link, onSync, syncing, onEnd, endLabel, onWhat, onEdits }: { link: ShareLinkItem; onSync: () => void; syncing: boolean; onEnd: () => void; endLabel: string; onWhat?: () => void; onEdits?: () => void }) {
-  const who = link.side === "share" ? (link.peer_name ? `Shared by ${link.peer_name}` : "Shared with you") : (link.peer_name ?? link.label ?? "Someone");
+  const made = `Link made ${new Date(link.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+  const who = link.side === "share" ? (link.peer_name ? `Shared by ${link.peer_name}` : "Shared with you") : (link.peer_name ?? link.invite_email ?? link.label ?? (link.status === "pending" ? made : "Someone"));
   const where = link.peer_host ? `on ${link.peer_host}` : "on this Cobblr";
   return (
     <div data-testid="share-row" className="rounded-lg border border-line bg-surface p-3 dark:border-slate-600 space-y-1">
@@ -183,7 +185,7 @@ function ShareRow({ link, onSync, syncing, onEnd, endLabel, onWhat, onEdits }: {
       </div>
       <p className="text-xs text-muted" data-testid="share-status">
         {link.status === "pending"
-          ? `Invite sent${link.label ? ` to ${link.label}` : ""}, not accepted yet${link.invite_expires_at ? ` · expires ${relativeTime(link.invite_expires_at)}` : ""}`
+          ? `${link.invite_email ? "Invited, not accepted yet" : link.label ? "Invite link, not used yet" : "Not used yet; anyone with the link can use it"}${link.invite_expires_at ? ` · expires ${relativeTime(link.invite_expires_at)}` : ""}`
           : `${link.last_synced_at ? `Last synced ${relativeTime(link.last_synced_at)}` : "Not synced yet"}${link.waiting ? ` · ${link.waiting} change${link.waiting === 1 ? "" : "s"} waiting` : ""}${link.side === "owner" ? (link.edit_mode === "direct" ? " · their edits apply at once" : " · you review their edits") : ""}`}
       </p>
       {link.side === "share" && link.last_viewed && (
@@ -229,80 +231,6 @@ function ViewAsButton({ link }: { link: ShareLinkItem }) {
   );
 }
 
-function InviteForm({ slug, onDone }: { slug: string; onDone: () => void }) {
-  const [label, setLabel] = useState("");
-  const [made, setMade] = useState<{ links: Array<{ label: string; url: string; note: string | null }>; expires: string } | null>(null);
-  const [where, setWhere] = useState(0);
-  const [copied, setCopied] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  if (made) {
-    const chosen = made.links[where] ?? made.links[0]!;
-    return (
-      <div className="space-y-3">
-        {made.links.length > 1 && (
-          <div className="space-y-1" data-testid="share-invite-where">
-            <span className="text-sm font-medium text-content">Where is their Cobblr?</span>
-            <SegmentedChoice
-              stack
-              label="Where is their Cobblr?"
-              value={String(where)}
-              onChange={(v) => setWhere(Number(v))}
-              options={made.links.map((l, i) => ({ value: String(i), label: l.label, hint: l.note, testId: "share-invite-where-option" }))}
-            />
-          </div>
-        )}
-        <p className="text-sm text-content">
-          Send this link to {label || "them"}. They open it signed in to their Cobblr there and accept; with no account there yet, they sign up first and come back to it. It works once, for a week.
-        </p>
-        <div className="flex gap-2">
-          <input readOnly value={chosen.url} data-testid="share-invite-url" className="min-w-0 flex-1 rounded-lg border border-line bg-subtle px-3 py-2 text-xs text-content dark:border-slate-600" onFocus={(e) => e.currentTarget.select()} />
-          <button
-            type="button"
-            onClick={async () => {
-              await navigator.clipboard?.writeText(chosen.url).catch(() => undefined);
-              setCopied(true);
-            }}
-            className="inline-flex items-center gap-1 rounded-lg border border-line px-3 text-sm text-muted hover:text-accent dark:border-slate-600"
-          >
-            {copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
-            {copied ? "Copied" : "Copy"}
-          </button>
-        </div>
-      </div>
-    );
-  }
-  return (
-    <form
-      className="space-y-3"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        setBusy(true);
-        setError(null);
-        try {
-          const r = await api.createShareLink(slug, label);
-          setMade({ links: r.links?.length ? r.links : [{ label: "", url: r.invite_url, note: null }], expires: r.expires_at });
-          onDone();
-        } catch (err) {
-          setError((err as Error).message);
-        } finally {
-          setBusy(false);
-        }
-      }}
-    >
-      <label className="block space-y-1">
-        <span className="text-sm font-medium text-content">Who is it for?</span>
-        <input data-testid="share-label" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="A name, so you know which invite is whose" className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-content dark:border-slate-600" />
-      </label>
-      {error && <p className="text-sm text-ember-600 dark:text-ember-400">{error}</p>}
-      <div className="flex justify-end">
-        <button type="submit" disabled={busy} data-testid="share-make-invite" className="rounded-lg bg-cobble-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-60">
-          {busy ? "Making…" : "Make an invite link"}
-        </button>
-      </div>
-    </form>
-  );
-}
 
 const STATE_WORDS: Record<ShareOfferItem["status"], string> = {
   offered: "offered",
@@ -340,8 +268,10 @@ function HandedOver({ slug }: { slug: string }) {
               {o.direction === "out" ? <ArrowUpRight size={14} className="text-muted" aria-label="given" /> : <ArrowDownLeft size={14} className="text-muted" aria-label="received" />}
               <span className="min-w-0 flex-1 truncate text-content">{o.title}</span>
               <span className="text-xs text-muted">
-                {o.direction === "out" ? "to" : "from"} {o.peer_name ?? "them"} · {o.send_mode && o.status === "taken" ? (o.send_mode === "copy" ? "copied" : "sent") : STATE_WORDS[o.status]} · {relativeTime(o.taken_at ?? o.created_at)}
+                {o.direction === "out" ? "to" : "from"} {o.peer_name ?? "them"} · {o.send_file?.state === "exported" ? "downloaded, source kept" : o.send_mode && o.status === "taken" ? (o.send_mode === "copy" ? "copied" : "sent") : STATE_WORDS[o.status]} · {relativeTime(o.taken_at ?? o.created_at)}
               </span>
+              {o.send_file?.can_download && <button type="button" className="rounded border border-line px-2 py-1 text-xs" onClick={async () => {try {if (o.send_file!.transport === "file-export") await api.downloadSendFile(slug,o.send_file!.id); else await api.downloadSendFileReceipt(slug,o.send_file!.id,o.send_file!.state === "undone" ? "undone" : "imported");} catch (e) {toast.error((e as Error).message);}}}>Download {o.send_file.transport === "file-export" ? "send file" : o.send_file.state === "undone" ? "return file" : "confirmation"}</button>}
+              {o.send_file?.can_undo && <button type="button" className="rounded border border-line px-2 py-1 text-xs" onClick={async () => {try {const r = await api.undoSendFileImport(slug,o.send_file!.id);toast.success(r.summary);void qc.invalidateQueries();} catch (e) {toast.error((e as Error).message);}}}>Undo import here</button>}
               {o.can_undo && <button type="button" disabled={act.isPending} onClick={() => act.mutate({ id: o.id, what: "undo" })} className="rounded border border-line px-2 py-1 text-xs">Undo send</button>}
               {o.can_withdraw && (
                 <button type="button" onClick={() => act.mutate({ id: o.id, what: "withdraw" })} disabled={act.isPending} className="rounded border border-line px-2 py-1 text-xs text-muted hover:text-accent dark:border-slate-600">

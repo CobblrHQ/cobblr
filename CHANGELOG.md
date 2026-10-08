@@ -2,6 +2,29 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-10-08
+
+### Features
+- A forwarded shipping notice for an order you already imported now adds its tracking number to that order instead of answering "you already imported this receipt". When a store ships an order in several boxes, each notice's number goes on the lines in that box, the rest show "Not shipped yet", and each box is followed and confirmed on its own. Amazon Logistics numbers (TBA…) are now followed too, for free, with nothing to set up.
+- You can add tracking to an order yourself: paste the number or the carrier's tracking link, and tick the lines that are in that box. Each line, and the thing it becomes, now says where it is ("On its way: Amazon Logistics TBA…, expected Oct 11") or "Not shipped yet". An online order with no delivery date says "On its way, no date yet" and is asked about once, a week later.
+- Cobblr can now send notifications to your phone and computer, the iPhone and iPad Home Screen app included: turn it on per device under Communication preferences, choose what is worth a buzz (high and urgent by default), set quiet hours, and send a test. A self-hosted server does this with no account and no cost.
+- Production test now keeps versioned plans, jig maintenance and per-board evidence, with offline stations and customer test certificates.
+- You can now choose your own AI for each kind of work on Your account, Connections, such as Gemini Flash Lite for reading scans and Claude Sonnet for chat, with fallbacks, and every workspace you use follows it unless that workspace chose its own.
+
+### Improvements
+- A sheet's leftover now keeps its real shape. A triangle cut across a sheet leaves a triangle offcut that reads about half the sheet, where it read nothing left before, and the sheet drawing shows it as a triangle. Laser nesting places parts into that leftover, and the slivers between nested parts still never count.
+
+### Fixes
+- A build that names what it makes, in a workspace without Inventory, now says Inventory is off instead of failing with "something went wrong".
+- Stopping sharing something, turning a share's prices or notes off, or changing what a share holds now reaches the friend's copy before you are told it is done, instead of up to a minute later on a busy server.
+- A sheet's "percent left" now counts only material you can still cut a part from. A sheet nested with outlines, such as a sheet of stars, used to count the slivers between the parts as left; it now reads the free rectangles at least the minimum usable size, the same area that decides whether a part fits.
+- The Inventory list now shows what is left of a sheet or a wearing tool: a plywood sheet reads "About 49% left" and an end mill "7.5 h left", where both used to read 1 with a + button. Rows measured in grams, metres or millilitres show their unit once instead of twice, and millilitres are written "ml" everywhere.
+- An order email's own photos and pack sizes are used. Each line of an emailed order now takes the product photo printed beside it in the email, and the web is searched only for a line with no photo of its own. A filament bundle like "10KG / Multicolor" files as ten 1 kg spools, its sibling lines are read the same way, a multicolour pack reads "Mixed (10 colours)", and a code taken off the whole order is shared across the lines to the cent.
+- The model pickers for a Claude or OpenAI connection now list the models your own key can use, so Haiku, Sonnet and Opus 5.5 appear without an update. Each Claude family offers "latest" first, which follows new versions by itself, and exact versions to pin underneath. Existing Claude choices now follow their family's latest, and the activity feed says so once, for example "Now using Haiku 5.5. Pin 4.5 in Configuration → AI if you want it back." A call to a model whose price is not known yet shows "price unknown" instead of $0.
+- The phone menu keeps each group together. Each heading and bundle family (Machines, Kitchen, LEGO) is now a block: its name, then its own destinations, so a collection never sits under a group it is not in. Your other collections follow under Collections, then the tools. LEGO's Sets and Bricks, or Filament and Vendors, are ordinary rows under their header instead of two links squeezed into one cell. A name too long for half the menu gets the whole row rather than being cut short, and there are no empty cells. The "…" on each row and the unexplained dot are gone from the everyday menu: tap Arrange at the top, or hold a row, to split or join rows.
+- Sharing invites someone by email, on one page. Sharing a list, a selection or a record opens one page with everything on it: what is shared, who it reaches now, and a field for someone new that is there from the start, with no extra "Invite a new person" click and no name to fill in. Type their email and choose Share: when this Cobblr can send email, the invite goes to them, and the link shows too in case it lands in spam. Only an account with that address can use it. Leave the field empty to make a link to send yourself, with Copy and, on a phone, Share. Cobb can invite by email too.
+- Links into a workspace land where they say. "Change the order" on Your account → Connections now opens that workspace's AI page at Who answers, for the workspace you are in and for any other, instead of the dashboard. The same mistake sent thirteen other links to the dashboard too: the scan inbox's AI link, the low-stock shopping list link, a found sheet, a bench reading's record and screenshot, a kiln's station and pieces, the printer station, ESPHome's place and attached record, the scan result sheet's inbox link, and the station pages' back links. A link to a section of a page now scrolls to that section once it has drawn.
+
 ## 2026-10-07
 
 ### Features

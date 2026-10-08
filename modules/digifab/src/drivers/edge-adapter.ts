@@ -22,7 +22,7 @@ import { join } from "node:path";
 import { LaserSetupSchema, LaserCommissionSchema, type LaserSetup, type LaserCommission } from "@cobblr/platform-contract/laser-setup";
 import { EdgeUnsupported } from "@cobblr/platform-contract";
 import { DriverSaid, sentenceIn } from "../job-truth.js";
-import { ReviewRequired } from "./job-review.js";
+import { ReviewRequired, InterruptedStart } from "./job-review.js";
 import type {
   CommandResult,
   ControlDef,
@@ -126,6 +126,8 @@ export class EdgeAdapterDriver implements MachineDriver {
   resumeJob?: (jobId: string) => Promise<void>;
   private knownReviewRequired: boolean;
   private knownPrintReview: boolean;
+  private knownCncReview: boolean;
+  private readonly cncReviewIsJobId: boolean;
   private knownCutterReview: boolean;
   private base: string;
   private token: string | null;
@@ -138,13 +140,15 @@ export class EdgeAdapterDriver implements MachineDriver {
   private tunnelPrefix: string;
   constructor(cfg: ManagerConfig, relay?: EdgeRelay | null) {
     const edge = cfg.extra?.creds?.edge as Record<string, unknown> | undefined;
-    this.benchInstrument = edge?.driver ? edge.driver === "scpi" : undefined;
+    this.benchInstrument = edge?.driver ? ["scpi","riden","esphome-bench","sigrok"].includes(String(edge.driver)) : undefined;
     this.laserBackend = edge?.driver === "gcode-laser" ? "gcode" : edge?.driver === "ruida" ? "ruida" : edge?.driver === "galvo" ? "galvo" : undefined;
     this.knownCutterReview = edge?.driver === "cutter";
     this.printProcess = edge?.driver === "sdcp" ? "resin" : edge?.driver === "ipp" ? "large-format" : undefined;
     this.knownPrintReview = edge?.driver === "ipp" || edge?.driver === "sdcp" || edge?.driver === "snapmaker" || edge?.driver === "moonraker" && edge.profile === "snapmaker-u1";
-    this.knownReviewRequired = edge?.driver === "lightburn" || this.knownPrintReview || this.knownCutterReview || this.laserBackend != null;
-    if (this.knownPrintReview) {
+    this.cncReviewIsJobId = edge?.driver === "cnc";
+    this.knownCncReview = this.cncReviewIsJobId;
+    this.knownReviewRequired = edge?.driver === "lightburn" || this.knownPrintReview || this.knownCutterReview || this.knownCncReview || this.laserBackend != null;
+    if (this.knownPrintReview || this.knownCncReview) {
       const control = async (id: string) => {
         const result = await this.runControl("", id, {});
         if (!result.ok) throw new Error(result.detail || "The printer did not accept the control.");
@@ -172,7 +176,11 @@ export class EdgeAdapterDriver implements MachineDriver {
   async identifyBench():Promise<{identity:string;profile:string}>{
     const result=await this.req("GET","/bench/identify");
     const { z }=await import("zod");
-    return z.object({identity:z.string().min(1).max(512),profile:z.enum(["psu","dmm","rigol-ds1000z"])}).parse(result);
+    return z.object({identity:z.string().min(1).max(512),profile:z.enum(["psu","dmm","rigol-ds1000z","riden","sigrok"])}).parse(result);
+  }
+  async captureBench(input:import("../bench-model.js").CaptureInput):Promise<import("../bench-model.js").BenchReport>{
+    const {BenchReportSchema,CaptureRequest}=await import("../bench-model.js");
+    return BenchReportSchema.parse(await this.req("POST","/bench/capture",{body:CaptureRequest.parse(input),timeoutMs:30000}));
   }
   async readBench():Promise<import("../bench-model.js").BenchReport>{
     const {BenchReportSchema}=await import("../bench-model.js");
@@ -207,7 +215,8 @@ export class EdgeAdapterDriver implements MachineDriver {
     try {
       const data = (await this.req("GET", "/controls")) as ControlDef[];
       return Array.isArray(data) ? data : [];
-    } catch {
+    } catch (error) {
+      if (!this.unsupported(error)) throw error;
       return [];
     }
   }
@@ -217,10 +226,11 @@ export class EdgeAdapterDriver implements MachineDriver {
     if (this.laserBackend && !["frame", "pause", "resume", "stop"].includes(id)) return { ok: false, detail: "Choose a direct laser control." };
     const cutter = await this.jobReviewRequired() && await this.jobReviewKind() === "cutter";
     if (cutter && !["frame", "pause", "resume", "stop", "confirm-idle"].includes(id)) return { ok: false, detail: "Choose a cutter station control." };
-    if (!this.laserBackend && !cutter && await this.jobReviewRequired() && !(await this.jobReviewKind() === "print" && ["stop", "pause", "resume"].includes(id))) return { ok: false, detail: "Approve Start at the machine's station." };
+    if (!this.laserBackend && !cutter && !(this.knownCncReview && ["stop", "cancel", "pause", "resume", "frame"].includes(id)) && await this.jobReviewRequired() && !(await this.jobReviewKind() === "print" && ["stop", "pause", "resume"].includes(id))) return { ok: false, detail: "Approve Start at the machine's station." };
     const { checkMotionAllowed, ...wireParams } = params;
-    const check = (this.laserBackend || cutter) && ["frame", "confirm-idle"].includes(id) && typeof checkMotionAllowed === "function" ? checkMotionAllowed as () => Promise<void> : undefined;
-    if ((this.laserBackend || cutter) && ["frame", "confirm-idle"].includes(id) && !check) return { ok: false, detail: "Frame the reviewed queued job at this laser." };
+    const motionGated = (this.laserBackend || cutter) && ["frame", "confirm-idle"].includes(id) || this.knownCncReview && id === "frame";
+    const check = motionGated && typeof checkMotionAllowed === "function" ? checkMotionAllowed as () => Promise<void> : undefined;
+    if (motionGated && !check) return { ok: false, detail: "Frame the reviewed queued job at this laser." };
     try {
       await check?.();
       let r: { ok?: boolean; ref?: string; detail?: string };
@@ -254,7 +264,8 @@ export class EdgeAdapterDriver implements MachineDriver {
     try {
       const data = (await this.req("GET", "/files")) as RemoteFile[];
       return Array.isArray(data) ? data : [];
-    } catch {
+    } catch (error) {
+      if (!this.unsupported(error)) throw error;
       return [];
     }
   }
@@ -265,7 +276,8 @@ export class EdgeAdapterDriver implements MachineDriver {
     try {
       const data = (await this.req("GET", `/fileinfo/${encodeURIComponent(name)}`)) as RemoteFileInfo | null;
       return data && typeof data === "object" ? data : null;
-    } catch {
+    } catch (error) {
+      if (!this.unsupported(error)) throw error;
       return null;
     }
   }
@@ -276,7 +288,8 @@ export class EdgeAdapterDriver implements MachineDriver {
     try {
       const data = (await this.req("GET", "/camera")) as { jpeg_b64?: string };
       return data?.jpeg_b64 ? Buffer.from(data.jpeg_b64, "base64") : null;
-    } catch {
+    } catch (error) {
+      if (!this.unsupported(error)) throw error;
       return null;
     }
   }
@@ -288,9 +301,14 @@ export class EdgeAdapterDriver implements MachineDriver {
     try {
       const data = (await this.req("GET", "/detect")) as { probability?: number } | null;
       return data && typeof data.probability === "number" ? { probability: data.probability } : null;
-    } catch {
+    } catch (error) {
+      if (!this.unsupported(error)) throw error;
       return null;
     }
+  }
+
+  private unsupported(error: unknown): boolean {
+    return error instanceof DriverSaid && [404, 501].includes(error.status);
   }
 
   /** One transport for every contract call. Tunnel mode routes through the relay
@@ -325,7 +343,10 @@ export class EdgeAdapterDriver implements MachineDriver {
       headers["content-type"] = "application/json";
     }
     const res = await fetch(this.base + path, { method, headers, body: fetchBody, signal: AbortSignal.timeout(opts.timeoutMs ?? 15_000) });
-    if (!res.ok) throw new Error(`adapter ${method} ${path} → ${res.status}: ${(await res.text()).slice(0, 160)}`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new DriverSaid(res.status, sentenceIn(body) || `The bridge refused the request (HTTP ${res.status}).`);
+    }
     return res.status === 204 ? null : res.json().catch(() => null);
   }
 
@@ -344,7 +365,7 @@ export class EdgeAdapterDriver implements MachineDriver {
       id: String(d.id ?? ""),
       name: String(d.name ?? "device"),
       enabled: d.enabled !== false,
-      station_kind: d.station_kind === "print" || d.station_kind === "laser" || d.station_kind === "cutter" ? d.station_kind : undefined,
+      station_kind: d.station_kind === "print" || d.station_kind === "laser" || d.station_kind === "cnc" || d.station_kind === "cutter" ? d.station_kind : undefined,
       camera_available: d.camera_available === true,
       state: (d.state as string | undefined) ?? null,
       tags: [],
@@ -364,6 +385,7 @@ export class EdgeAdapterDriver implements MachineDriver {
     try {
       const data = await this.req("GET", "/capabilities") as { jobReview?: boolean; jobReviewKind?: unknown };
       if (data?.jobReviewKind === "print") this.knownPrintReview = true;
+      if (data?.jobReviewKind === "cnc") this.knownCncReview = true;
       if (data?.jobReviewKind === "cutter") this.knownCutterReview = true;
       return this.knownReviewRequired || data?.jobReview === true;
     } catch (e) {
@@ -376,12 +398,13 @@ export class EdgeAdapterDriver implements MachineDriver {
     }
   }
 
-  async jobReviewKind(): Promise<"laser" | "print" | "cutter"> {
+  async jobReviewKind(): Promise<"laser" | "print" | "cnc" | "cutter"> {
+    if (this.knownCncReview) return "cnc";
     if (this.knownCutterReview) return "cutter";
     if (this.knownPrintReview) return "print";
     if (this.knownReviewRequired) return "laser";
     const data = await this.req("GET", "/capabilities") as { jobReviewKind?: unknown };
-    return data?.jobReviewKind === "cutter" ? "cutter" : data?.jobReviewKind === "print" ? "print" : "laser";
+    return data?.jobReviewKind === "cnc" ? "cnc" : data?.jobReviewKind === "cutter" ? "cutter" : data?.jobReviewKind === "print" ? "print" : "laser";
   }
 
   async prepareJob(file: Uint8Array, filename: string): Promise<JobReview> {
@@ -432,7 +455,7 @@ export class EdgeAdapterDriver implements MachineDriver {
   async submitJob(args: SubmitArgs): Promise<SubmitResult> {
     if (await this.jobReviewRequired() && !args.approval) throw new ReviewRequired("Approve at the laser's station.");
     const cutter = await this.jobReviewRequired() && await this.jobReviewKind() === "cutter";
-    if ((this.laserBackend || cutter || ["resin", "large-format"].includes(this.printProcess ?? "")) && !args.checkStartAllowed) throw new ReviewRequired("Approve at the machine's station.");
+    if ((this.laserBackend || this.knownCncReview || cutter || ["resin", "large-format"].includes(this.printProcess ?? "")) && !args.checkStartAllowed) throw new ReviewRequired("Approve at the machine's station.");
     const check = args.checkStartAllowed;
     await check?.();
     let data: { jobId?: string; queued?: boolean } | undefined;
@@ -442,7 +465,10 @@ export class EdgeAdapterDriver implements MachineDriver {
       }) as typeof data;
       await check?.();
     } catch (e) {
-      if (this.laserBackend || cutter || ["resin", "large-format"].includes(this.printProcess ?? "")) await this.req("POST", "/control", { body: { id: "stop", params: {} } }).catch(() => {});
+      if (this.laserBackend || this.knownCncReview || cutter || ["resin", "large-format"].includes(this.printProcess ?? "")) await this.req("POST", "/control", { body: { id: "stop", params: {} } }).catch(() => {});
+      const ambiguous = !(e instanceof DriverSaid) || e.status === 408 || e.status >= 500;
+      const interruptedJobId=data?.jobId??(this.cncReviewIsJobId&&ambiguous?args.fileId:undefined);
+      if(this.knownCncReview && interruptedJobId) throw new InterruptedStart(e instanceof Error?e.message:"The station withdrew Start. Check the CNC controller.",interruptedJobId);
       if ((cutter || this.printProcess === "large-format") && data?.jobId) return { jobId: data.jobId, deviceId: args.deviceId ?? null, queued: true, status: "queued", interrupted: true };
       throw e;
     }
@@ -452,13 +478,15 @@ export class EdgeAdapterDriver implements MachineDriver {
   }
 
   async getJobStatus(jobId: string): Promise<JobStatus> {
-    const data = (await this.req("GET", `/status/${encodeURIComponent(jobId)}`)) as { state?: unknown; progress?: unknown };
+    const data = (await this.req("GET", `/status/${encodeURIComponent(jobId)}`)) as { state?: unknown; progress?: unknown; elapsedSec?: unknown; message?: unknown; toolSeconds?: unknown };
     const p = Number(data?.progress);
     return {
       jobId,
       state: coerceState(data?.state),
       progress: Number.isFinite(p) ? (p > 1 ? p / 100 : p) : null,
       deviceId: null,
+      elapsedSec: Number.isFinite(data.elapsedSec) ? Number(data.elapsedSec) : null,
+      message: typeof data.message === "string" ? data.message : undefined,
       raw: data,
     };
   }

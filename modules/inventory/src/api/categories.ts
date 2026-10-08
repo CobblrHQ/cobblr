@@ -1,6 +1,7 @@
 // /categories — list + create for now. Update + delete come when
 // the UI needs them.
 
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
@@ -32,6 +33,7 @@ categoriesRouter.get(
 categoriesRouter.post(
   "/",
   asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "inventory:add-category"))) return;
     const parsed = CategoryCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);

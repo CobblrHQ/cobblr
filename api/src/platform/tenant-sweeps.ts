@@ -329,6 +329,11 @@ export async function walkWith(
         .filter((r) => opts.orgIds !== undefined || !quiet.has(r.id) || quietVisitDue(s.pass, r.id, opts.now.getTime()))
         .map((r) => r.id);
       let chosen: string[] | null = null;
+      // Nothing in scope (a fresh instance, a module nobody turned on): there
+      // is nothing to narrow, so a pass's candidates is never asked. Asked with
+      // [], a candidates that filters by the list writes `in ()`, which
+      // Postgres refuses, and every round logged a failure on a new box (#5367).
+      if (inScope.length === 0) continue;
       if (s.pass.candidates) {
         try {
           chosen = await s.pass.candidates(inScope, { named: opts.orgIds !== undefined });

@@ -9,6 +9,7 @@
 // already used, where what you type is the value and, on a field that
 // learns, becomes a choice.
 
+import { SecretField } from "./SecretField";
 import { ColourInput } from "./ColourInput";
 import { useMemo, useState, type FocusEvent } from "react";
 import { useFieldDraft } from "./use-field-draft";
@@ -240,6 +241,7 @@ export function CustomFieldsPanel({
               // stored before still shows and can change, but none is offered.
               onCommitNote={nativeSeller && f.field_role === "acquired-from" && !noteOf(values, f.name) ? undefined : (v) => onCommit(noteKey(f.name), v)}
               kind={entityKind}
+              entityId={entityId}
               detailField={sellerBeside(f)}
             />
             {misfitLine(f, value)}
@@ -313,6 +315,7 @@ export function FieldValueEditor({
   note,
   onCommitNote,
   kind,
+  entityId,
   detailField,
   draftOnly,
   currency,
@@ -332,6 +335,7 @@ export function FieldValueEditor({
   onCommitNote?: (v: unknown) => void;
   /** The record's kind, for the values already used on its records. */
   kind: string;
+  entityId?: string;
   /** A field of its own that rides beside this one (a `seller` beside where
    *  it came from), written by this field's picker instead of the note. */
   detailField?: { name: string; label: string; value: string | null; onCommit: (v: string | null) => void };
@@ -341,7 +345,9 @@ export function FieldValueEditor({
   // fell through to a text box showing "false".
   const control = fieldControl(def);
   const inner =
-    control === "computed" ? (
+    control === "secret" ? (
+      <div className="space-y-1"><label className="block text-sm">{def.display_label}</label><SecretField value={value} field={def.name} kind={kind} recordId={entityId} onCommit={onCommit} /></div>
+    ) : control === "computed" ? (
       // Read-only, value derived server-side at resolve time.
       <ComputedRow def={def} value={value} fallbackValue={fallbackValue} />
     ) : control === "server-managed" ? (

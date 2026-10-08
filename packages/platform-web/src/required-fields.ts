@@ -1,3 +1,4 @@
+import { isMaskedSecret, isStoredSecret } from "@cobblr/platform-contract/secret-field";
 // Which required fields a record, or a form about to make one, has no value in.
 //
 // A create may leave a required field empty (capture comes before structure:
@@ -12,7 +13,7 @@ export interface RequiredLike {
   type?: string;
 }
 
-const empty = (v: unknown) => v === null || v === undefined || (typeof v === "string" && v.trim() === "") || (Array.isArray(v) && v.length === 0);
+const empty = (v: unknown) => ((isMaskedSecret(v) || isStoredSecret(v)) && v.has_value === false) || v === null || v === undefined || (typeof v === "string" && v.trim() === "") || (Array.isArray(v) && v.length === 0);
 
 /** The required fields with nothing in them. `values` is the record's
  *  metadata (or a form's draft), with top-level values read as a fallback. */

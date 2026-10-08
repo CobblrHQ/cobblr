@@ -16,6 +16,7 @@ import { basicsRouter } from "./basics.js";
 import { activityRouter } from "./activity.js";
 import { register as registerOllama } from "../providers/ollama.js";
 import { register as registerOpenAI } from "../providers/openai.js";
+import { register as registerLocalOpenAI } from "../providers/local-openai.js";
 import { register as registerOpenAICompat } from "../providers/openai-compat.js";
 import { register as registerOpenRouter } from "../providers/openrouter.js";
 import { register as registerGoogleAiStudio } from "../providers/google-ai-studio.js";
@@ -33,6 +34,7 @@ function registerBuiltins(): void {
   registerGoogleAiStudio();
   registerOpenAI();
   registerOpenAICompat();
+  registerLocalOpenAI();
   // Shaped preset over the compat machinery: fixed base URL, required
   // key + model — "one key, any model" without knowing a base URL.
   registerOpenRouter();

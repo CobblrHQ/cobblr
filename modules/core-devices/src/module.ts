@@ -58,6 +58,7 @@ export default defineModule({
         // NO-PHRASING: fires on a DEVICE reading and self-locates the entity; nobody asks for it, they ask for what it does to the thing
         group: "more",
         id: "core-devices:apply-to-linked-entity",
+        runBy: "member",
         label: "Apply a device event to its linked entity",
         description:
           "Resolve a device's (connection, device) link to a Cobblr entity and perform the link's mode by invoking the entity-owning module's action (e.g. a scale reading → inventory:set-stock). Wire-driven; the ingest path applies it automatically when a link exists. Reads the device payload from the event.",
@@ -72,6 +73,8 @@ export default defineModule({
       {
         group: "more",
         id: "core-devices:run-command",
+        // ADMIN-ONLY: sends a command to a physical device; no page route sends one, so a person does it at the device
+        runBy: "admin",
         examples: ["open the valve for 30 seconds", "send that command to the controller"],
         label: "Run a device command",
         description:

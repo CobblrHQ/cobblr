@@ -21,6 +21,7 @@ import { ServiceJobCard } from "../components/ServiceJobCard";
 import { DesignMakeDoor } from "../features/digifab/designMake";
 import { PrintConfirmCard, PrintThisDialog } from "../features/digifab/printThis";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 const STEP_TITLE: Record<MakeStepName, string> = {
   request: "Request",
   design: "Design",
@@ -231,10 +232,11 @@ export function MakePage() {
   useFilePreviewRegistry();
   const [reading, setReading] = useState<MakeStepRecord["files"][number] | null>(null);
   const [rerunning, setRerunning] = useState(false);
+  const on = useEnabledModules(activeSlug);
   const one = useQuery({
     queryKey: makeKeys.one(activeSlug, id),
     queryFn: () => api.getMake(activeSlug, id),
-    enabled: !!activeSlug && !!id,
+    enabled: !!activeSlug && !!id && !!on?.has("digifab"),
     // A step a service is doing (a slice) and a print in progress both move on
     // their own; the page follows them. A slice that finishes turns into the
     // print's confirm card without a reload.
@@ -278,7 +280,14 @@ export function MakePage() {
     onError: fail,
   });
 
-  if (one.isLoading) return <div className="max-w-3xl mx-auto px-4 py-6 text-sm text-muted">Loading…</div>;
+  if (on && !on.has("digifab")) {
+    return (
+      <div className="max-w-3xl mx-auto px-4 py-6 text-sm text-muted" data-testid="make-digifab-off">
+        Makes come with Digital Fabrication, which is not on in this workspace. <Link to="/configuration/modules" className="text-accent hover:underline">Turn it on in Modules</Link>
+      </div>
+    );
+  }
+  if (on === null || one.isLoading) return <div className="max-w-3xl mx-auto px-4 py-6 text-sm text-muted">Loading…</div>;
   if (one.isError || !one.data) {
     return (
       <div className="max-w-3xl mx-auto px-4 py-6 text-sm">
@@ -509,7 +518,7 @@ function StepBody({ row, detail, onOutcome }: { row: MakeStepRecord; detail: Mak
         <>
           {d.source === "uploaded" && rows.length === 0 ? <p className="text-sm text-muted">Brought as a file.</p> : rows.length ? <Facts rows={rows} /> : null}
           {row.files.filter((f) => f.role === "preview").map((f) => <EntityPhoto key={f.file_id} src={api.fileRawUrl(activeSlug, f.file_id, "medium")} alt="Model preview" fit="contain" aspect="4/3" />)}
-          {printable && <PrintThisDoor makeId={detail.make.id} what={detail.make.name} />}
+          {printable && <PrintThisDoor makeId={detail.make.id} what={detail.make.name} quantity={typeof row.data.quantity === "number" ? row.data.quantity : 1} />}
         </>
       );
     }
@@ -535,7 +544,7 @@ function StepBody({ row, detail, onOutcome }: { row: MakeStepRecord; detail: Mak
           {rows.length > 0 && <Facts rows={rows} />}
           {settings.length > 0 && (
             <details className="mt-1">
-              <summary className="text-xs text-muted cursor-pointer">All {settings.length} settings{str(d.profile_hash) ? ` · profile ${str(d.profile_hash)!.slice(0, 16)}` : ""}</summary>
+              <summary className="text-xs text-muted cursor-pointer">All {countOf(settings.length, "setting")}{str(d.profile_hash) ? ` · profile ${str(d.profile_hash)!.slice(0, 16)}` : ""}</summary>
               <Facts rows={settings.map(([k, v]) => [k.replace(/_/g, " "), typeof v === "object" ? JSON.stringify(v) : String(v)])} />
             </details>
           )}
@@ -543,7 +552,7 @@ function StepBody({ row, detail, onOutcome }: { row: MakeStepRecord; detail: Mak
       );
     }
     case "print": {
-      if (row.status === "awaiting_confirm") return <PrintConfirmCard makeId={detail.make.id} row={row} />;
+      if (row.status === "awaiting_confirm" || row.data.batch) return <PrintConfirmCard makeId={detail.make.id} row={row} />;
       const p = detail.print;
       if (!p) return null;
       const rows: Array<[string, string]> = [];
@@ -578,14 +587,14 @@ function StepBody({ row, detail, onOutcome }: { row: MakeStepRecord; detail: Mak
 }
 
 /** "Print this" on a Make that has its model and nothing after it yet. */
-function PrintThisDoor({ makeId, what }: { makeId: string; what: string }) {
+function PrintThisDoor({ makeId, what, quantity }: { makeId: string; what: string; quantity: number }) {
   const [open, setOpen] = useState(false);
   return (
     <>
       <button type="button" onClick={() => setOpen(true)} className="mt-2 inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 hover:border-accent px-3 py-1.5 text-sm">
         Print this
       </button>
-      {open && <PrintThisDialog makeId={makeId} what={what} onClose={() => setOpen(false)} />}
+      {open && <PrintThisDialog makeId={makeId} what={what} initialQuantity={quantity} onClose={() => setOpen(false)} />}
     </>
   );
 }

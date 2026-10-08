@@ -10,6 +10,7 @@
 // sidebar portals to <body> so the header's backdrop-blur can't trap its
 // position:fixed (CLAUDE.md modal note).
 
+import { setHomeScreenBadge } from "../lib/home-screen-badge";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, Check, PanelRight, PanelRightClose, X } from "lucide-react";
@@ -68,6 +69,12 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
     queryFn: () => api.meNotificationsUnreadCount(),
     refetchInterval: poll,
   });
+  // The Home Screen icon's badge follows the same count, cleared as things
+  // are read here (#5267). A push sets it while the app is closed.
+  const unreadTotal = unread.data?.count;
+  useEffect(() => {
+    if (typeof unreadTotal === "number") setHomeScreenBadge(unreadTotal);
+  }, [unreadTotal]);
   // Unread in the CURRENT workspace, so the badge can distinguish "you
   // have something here" (ember red) from "the count is all in another
   // workspace" (sky blue — cool vs warm so they're distinct at a glance)

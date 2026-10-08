@@ -1,4 +1,5 @@
 import type { EntityWriter } from "@cobblr/platform-contract";
+import { omitSecretValues } from "@cobblr/platform-contract/secret-field";
 import { currentHistoryWrite, historyDiff, runHistoryWrite, type HistoryWrite } from "./record-history.js";
 
 export async function finishHistoryWrite(write: HistoryWrite): Promise<void> {
@@ -9,7 +10,7 @@ export async function finishHistoryWrite(write: HistoryWrite): Promise<void> {
   if (!(diff.changes as unknown[]).length && !write.forceLog) return;
   const { log } = await import("./activity.js");
   const [module, entityType] = write.kind.split(":");
-  await log({ orgId: write.orgId, action: `${entityType}_updated`, ref: { module: module ?? null, entityType: entityType ?? write.kind, entityId: write.id }, before: write.before, diff });
+  await log({ orgId: write.orgId, action: `${entityType}_updated`, ref: { module: module ?? null, entityType: entityType ?? write.kind, entityId: write.id }, before: omitSecretValues(write.before), diff });
   write.logged = true;
 }
 

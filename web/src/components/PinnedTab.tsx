@@ -21,6 +21,7 @@ import { Pin } from "lucide-react";
 import { api, type KnowledgeEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { RailTabContent, useRailTab } from "./SideRail";
+import { useEnabledModules } from "../lib/useEnabledModules";
 
 /** A pinned entry, rendered for READING rather than for editing.
  *
@@ -69,13 +70,17 @@ export function PinnedTab() {
       : null,
   );
 
+  // Pinned reads the Knowledge module; a workspace that never turned it on
+  // answers 409 module_not_enabled, so the read waits until it is known to be
+  // on and an off module shows the empty tab without asking (#5142).
+  const knowledgeOn = useEnabledModules(activeSlug ?? "")?.has("knowledge") ?? false;
   const pinned = useQuery({
     queryKey: ["knowledge-pinned", activeSlug],
     queryFn: () => api.listKnowledgeEntries(activeSlug, { pinned: true }),
     // Only while showing, like every other tab: mounted-but-hidden must not
     // poll. But a LONG stale time, because pinned things change rarely and the
     // point of this tab is that it is instantly there.
-    enabled: !!activeSlug && active,
+    enabled: !!activeSlug && active && knowledgeOn,
     staleTime: 5 * 60_000,
     // Knowledge Base is opt-in. A workspace without it should see an empty tab,
     // not an error, so a 404 here is an answer rather than a failure.

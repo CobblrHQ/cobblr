@@ -1,3 +1,4 @@
+import { readPersonalDocument } from "@cobblr/platform-contract/personal-documents";
 // core-ai platform service.
 //
 // Three responsibilities mirroring core-integrations:
@@ -25,7 +26,7 @@ import type {
   AiReportedModels,
   PlatformAi,
 } from "@cobblr/platform-contract";
-import { aiCapabilityChain, isChatTurn, isFloatingModel, type AiChainStep } from "@cobblr/platform-contract";
+import { AI_JOB_PRIVACY, aiCapabilityChain, isChatTurn, isFloatingModel, type AiChainStep } from "@cobblr/platform-contract";
 import { getTenantDb } from "../db/tenant.js";
 import { meta } from "../db/meta.js";
 import * as integrationsImpl from "./integrations.js";
@@ -122,6 +123,7 @@ export function listProviders(): ReturnType<PlatformAi["listProviders"]> {
     // registry (the connections catalogue does) has to be able to re-sort, and
     // a picker whose default is providers[0] should be able to say WHY.
     rank: p.rank,
+    locality: p.locality,
   }));
 }
 
@@ -550,6 +552,11 @@ export function mayAskAnotherProvider(err: unknown, req: { provider_id?: string;
  *  the workspace lists for the job, in the workspace's order, up to three.
  *  The answer says who answered and who was asked first (#3819). */
 export const invoke: PlatformAi["invoke"] = async (req) => {
+  if (AI_JOB_PRIVACY[req.capability] === "personal") req = { ...req, privacy: "personal", provider_id: undefined };
+  if (req.privacy !== "personal" && typeof req.input.image_b64 === "string") {
+    const classified = await readPersonalDocument({ bytes: Buffer.from(req.input.image_b64, "base64"), mime: String(req.input.image_media_type || "image/jpeg") });
+    if (classified.privacy === "personal") throw aiRefusal("no_provider", "This is a personal document. Read it with Personal documents in the scan inbox; it cannot use the ordinary vision job.");
+  }
   const { result: r, asked: tried, current } = await askInOrder<TriedProvider, { rowId?: string; providerId?: string; model?: string; label?: string }, Awaited<ReturnType<typeof invokeRaw>>>({
     max: MAX_PROVIDERS_PER_CALL,
     newCurrent: () => ({}),
@@ -612,11 +619,16 @@ export function setBusyRetryDelaysForTest(delays: readonly number[]): void {
  *  and `aiChainFor` walks it to list the whole order, so the order a person
  *  is shown is the order the router uses, by construction (#3842). */
 async function nextCandidate(
-  req: Pick<Parameters<PlatformAi["invoke"]>[0], "orgId" | "userId" | "capability" | "provider_id" | "model" | "credential_id" | "costPolicy">,
+  req: Pick<Parameters<PlatformAi["invoke"]>[0], "orgId" | "userId" | "capability" | "provider_id" | "model" | "credential_id" | "costPolicy" | "privacy">,
   tried: readonly TriedProvider[],
 ): Promise<{ row: ProviderRow; model: string; picked: boolean; personalCredentials?: Record<string, unknown>; personal: ResolvedPersonalProvider | null }> {
   const triedPersonal = new Set(tried.filter((t) => t.rowId.startsWith("personal:")).map((t) => t.rowId.slice("personal:".length)));
   const triedWorkspace = new Set(tried.filter((t) => !t.rowId.startsWith("personal:")).map((t) => t.provider_id));
+  const personalDocument = req.privacy === "personal" || AI_JOB_PRIVACY[req.capability] === "personal";
+  if (personalDocument) {
+    for (const [id, provider] of providers) if (provider.locality !== "local") triedWorkspace.add(id);
+    if (req.provider_id && triedWorkspace.has(req.provider_id)) throw aiRefusal("no_provider", "Personal documents can only be read by a local model.");
+  }
   // Instance kill-switch: when AI is disabled for the whole deployment,
   // refuse before touching any per-workspace config. Same error family as
   // "no provider configured" so every caller's existing degrade path
@@ -650,7 +662,7 @@ async function nextCandidate(
     const personal = await resolvePersonalProvider(
       req.orgId,
       req.userId ?? null,
-      (pid) => !!providers.get(pid)?.capabilities[req.capability],
+      (pid) => aiCapabilityChain(req.capability).some((cap) => !!providers.get(pid)?.capabilities[cap]) && (!personalDocument || providers.get(pid)?.locality === "local"),
       "ai-provider",
       req.capability,
       req.credential_id ?? choice?.credentialId ?? null,
@@ -672,8 +684,7 @@ async function nextCandidate(
       const pmodel =
         req.model ??
         chosenModel ??
-        pdef?.capabilities[req.capability]?.defaultModel ??
-        pdef?.capabilities[req.capability]?.models[0];
+        aiCapabilityChain(req.capability).map((cap) => pdef?.capabilities[cap]?.defaultModel ?? pdef?.capabilities[cap]?.models[0]).find(Boolean);
       if (pdef && pmodel) {
         resolved = {
           row: {
@@ -731,11 +742,11 @@ export async function aiChainFor(
   orgId: string,
   userId: string | null,
   capability: AiCapability,
-  opts: { limit?: number } = {},
+  opts: { limit?: number; privacy?: "personal" | "normal" } = {},
 ): Promise<{ steps: AiChainStep[]; refusal?: { code: string; message: string } }> {
   const { steps, stoppedBy } = await listInOrder<TriedProvider, Awaited<ReturnType<typeof nextCandidate>>, AiChainStep>({
     limit: opts.limit ?? MAX_PROVIDERS_PER_CALL + 3,
-    next: (asked) => nextCandidate({ orgId, userId: userId ?? undefined, capability }, asked),
+    next: (asked) => nextCandidate({ orgId, userId: userId ?? undefined, capability, privacy: opts.privacy }, asked),
     step: async (next, position) => {
       const { row, personal } = next;
       const def = providers.get(row.provider_id);
@@ -782,6 +793,21 @@ const invokeRaw = async (
   current.providerId = row.provider_id;
   current.model = model;
   current.label = nameOf(row);
+
+  if (req.privacy === "personal") {
+    const def = providers.get(row.provider_id)!;
+    const credentials = personalCredentials ?? (row.credentials_enc ? await integrationsImpl.decryptCredentials(req.orgId, row.credentials_enc) : {});
+    if (def.locality !== "local" || credentials.mcp_relay === "bridge") throw aiRefusal("no_provider", "Personal documents can only be read by a local model.");
+    const start = Date.now();
+    try {
+      const payload = await def.invoke({ orgId: req.orgId, rowId: row.id, capability: aiCapabilityChain(req.capability).find((cap) => def.capabilities[cap]) ?? req.capability, model,
+        privacy: "personal", credentials, input: req.input, config: { ...(row.config ?? {}), ...(req.config ?? {}) } });
+      return { ...payload, result: payload.result, provider_id: row.provider_id, model, cached: false, duration_ms: Date.now() - start };
+    } catch (error) {
+      throw aiRefusal("provider_error", "Your local AI could not read this document. The values read by code are still available.",
+        { reason: providerReasonOf(error), providerId: row.provider_id, model });
+    }
+  }
 
   // Ask-Cobb-over-the-bridge (MCP tool relay). When the resolved chat provider
   // is a Claude-subscription bridge (the connection's `mcp_relay` flag — works
@@ -1218,6 +1244,7 @@ function pinnedOf(credentials: Record<string, unknown>): string[] {
   const m = typeof credentials.model === "string" ? credentials.model.trim() : "";
   return m ? [m] : [];
 }
+// single-flight: a provider call per connection, asked when a person opens the model picker; not a per-row lookup
 const reported = new Map<string, { at: number; value: AiReportedModels }>();
 
 export async function modelsReportedBy(

@@ -91,38 +91,44 @@ export function parseRawResponse(raw: Buffer): Response {
   return new Response(empty ? null : new Uint8Array(body), { status, headers });
 }
 
-/** The path a loopback URL named: "/api/v1/…" from "http://127.0.0.1:4000/api/v1/…". */
-function pathOf(input: string | URL): string {
+/** The path a request for this api named ("/api/v1/…", or a loopback URL to
+ *  its own port), or null for any other address: a base URL a caller passed
+ *  in (x-cobblr-base-url) or another server is fetched as it always was. */
+function ownPath(input: unknown): string | null {
+  if (typeof input !== "string" && !(input instanceof URL)) return null;
   const s = typeof input === "string" ? input : input.href;
   if (s.startsWith("/")) return s;
   const u = new URL(s);
-  return u.pathname + u.search;
+  const own = (u.hostname === "127.0.0.1" || u.hostname === "localhost") && u.port === String(process.env.API_PORT || "4000");
+  return own ? u.pathname + u.search : null;
 }
 
 /** `fetch` against this api, handled in-process by its own app. The answer is
  *  buffered until the handler finishes, so this is for request and response
  *  routes: a server-sent-events or other never-ending stream never resolves
- *  (call those over HTTP). It rejects, naming the call, when the handler
+ *  (call those over HTTP). A full URL to any other address is an ordinary
+ *  fetch, so a base URL a caller chose keeps its meaning. It rejects, naming the call, when the handler
  *  drops the response before finishing it, and when `init.signal` aborts, as
  *  fetch does. */
-export async function selfFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
-  const path = pathOf(input);
+export async function selfFetch(input: string | URL | Request, init: RequestInit = {}): Promise<Response> {
+  const path = ownPath(input);
+  if (path === null) return fetch(input, init);
   // loopback-ok: the fallback before the app is built, or outside the api process
   if (!handler) return fetch(`http://127.0.0.1:${process.env.API_PORT || "4000"}${path}`, init);
   const h = handler;
   const method = (init.method ?? "GET").toUpperCase();
   const headers: Record<string, string> = {};
   new Headers(init.headers).forEach((v, k) => (headers[k] = v));
-  const body =
-    init.body === undefined || init.body === null
-      ? null
-      : typeof init.body === "string"
-        ? Buffer.from(init.body)
-        : init.body instanceof Uint8Array
-          ? Buffer.from(init.body)
-          : init.body instanceof ArrayBuffer
-            ? Buffer.from(new Uint8Array(init.body))
-            : Buffer.from(await new Response(init.body as ConstructorParameters<typeof Response>[0]).arrayBuffer());
+  // The body as fetch would send it, and the content type it implies when the
+  // caller set none (a FormData's multipart boundary, a URLSearchParams'
+  // form encoding): without that type the route cannot parse the body.
+  let body: Buffer | null = null;
+  if (init.body !== undefined && init.body !== null) {
+    const encoded = new Response(init.body as ConstructorParameters<typeof Response>[0]);
+    body = Buffer.from(await encoded.arrayBuffer());
+    const implied = encoded.headers.get("content-type");
+    if (implied && !headers["content-type"]) headers["content-type"] = implied;
+  }
   // HOST-OK: the Host header a loopback request carried, never used to build a link; loopback-ok: the same
   headers.host ??= `127.0.0.1:${process.env.API_PORT || "4000"}`;
   headers.connection = "close";

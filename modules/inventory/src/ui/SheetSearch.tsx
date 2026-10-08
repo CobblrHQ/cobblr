@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Modal, QueryError, SearchInput } from "@cobblr/platform-web";
+import { Modal, QueryError, SearchInput, NumberField } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 
 export function SheetSearch() {
@@ -20,7 +20,7 @@ export function SheetSearch() {
     <Modal open={open} title="Find a sheet with room" onClose={() => setOpen(false)} size="lg">
       <form className="space-y-3" onSubmit={e => { e.preventDefault(); if (!material.trim()) return; setOffset(0); setSearch({ material: material.trim(), thickness_mm: Number(thickness), width_mm: Number(width), height_mm: Number(height), rotate }); }}>
         <label className="block text-sm">Material<SearchInput wrapperClassName="w-full" aria-label="Find material" placeholder="Material" value={material} onChange={setMaterial} /></label>
-        <div className="grid grid-cols-3 gap-2">{([["Thickness (mm)", thickness, setThickness], ["Width (mm)", width, setWidth], ["Height (mm)", height, setHeight]] as const).map(([label, value, set]) => <label key={label} className="text-sm">{label}<input className="input w-full min-h-11" aria-label={`Needed ${label.toLowerCase()}`} type="number" min="0.001" step="any" required value={value} onChange={e => set(e.target.value === "" ? "" : Number(e.target.value))} /></label>)}</div>
+        <div className="grid grid-cols-3 gap-2">{([["Thickness (mm)", thickness, setThickness], ["Width (mm)", width, setWidth], ["Height (mm)", height, setHeight]] as const).map(([label, value, set]) => <label key={label} className="text-sm">{label}<NumberField className="input w-full min-h-11" label={`Needed ${label.toLowerCase()}`} min={0.001} required value={value === "" ? null : value} onChange={n => set(n)} onClear={() => set("")} /></label>)}</div>
         <label className="flex gap-2 items-center min-h-11 text-sm"><input type="checkbox" checked={rotate} onChange={e => setRotate(e.target.checked)} />A quarter turn is OK</label>
         <button className="min-h-11 rounded bg-cobble-600 text-white px-4">Find room</button>
       </form>

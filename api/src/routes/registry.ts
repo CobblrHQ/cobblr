@@ -89,6 +89,7 @@ const DEFAULT_SIG = process.env.COBBLR_EXTENSIONS_SIG_URL || (EXTERNAL_INDEX_URL
 // authenticated API is 5,000/hr, but a 5-min cache keeps us comfortable).
 // We cache the RAW bytes too — needed to verify the detached signature
 // over exactly what was signed.
+// single-flight: the marketplace index from GitHub (5 minute TTL), browsed by one person; a duplicate first fetch is harmless
 const cache = new Map<string, { at: number; raw: string; data: IndexShape }>();
 const TTL_MS = 5 * 60_000;
 

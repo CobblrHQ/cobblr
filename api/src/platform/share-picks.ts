@@ -13,7 +13,7 @@ import { sql } from "kysely";
 import { readScope, type ScopeDef, type ScopeRef } from "@cobblr/platform-contract/share-scope";
 import { meta } from "../db/meta.js";
 import { recordsInScope, scopeKey } from "./scope-eval.js";
-import { mirrorShareNow } from "./share-mirror.js";
+import { mirrorAndDeliverNow } from "./share-mirror.js";
 import { sharePerson } from "./share-person.js";
 
 // One record however it is named: a page's kind or its collection's (#4689).
@@ -51,13 +51,20 @@ async function readLinkScope(linkId: string): Promise<{ orgId: string; scope: Sc
   return l ? { orgId: l.org_id, scope: readScope((l.settings as Record<string, unknown> | null)?.scope) } : null;
 }
 
-async function writeLinkScope(linkId: string, scope: ScopeDef): Promise<void> {
+/** A share's scope changed: written, then mirrored and delivered before this
+ *  answers (share-mirror.ts mirrorAndDeliverNow), so "stop sharing" means
+ *  the friend no longer has it when the owner is told so. */
+async function writeLinkScope(linkId: string, scope: ScopeDef): Promise<{ delivered: boolean }> {
   await meta
     .updateTable("share_links")
     .set({ settings: sql`coalesce(settings, '{}'::jsonb) || ${JSON.stringify({ scope })}::jsonb` as never, mirror_due_at: new Date() })
     .where("id", "=", linkId)
     .execute();
-  void mirrorShareNow(linkId).catch((err) => console.error(`[share] mirror of ${linkId} failed:`, err));
+  const r = await mirrorAndDeliverNow(linkId).catch((err) => {
+    console.error(`[share] mirror of ${linkId} failed:`, err);
+    return { delivered: false };
+  });
+  return { delivered: r.delivered };
 }
 
 async function inScope(orgId: string, linkId: string, scope: ScopeDef): Promise<Set<string>> {
@@ -67,7 +74,7 @@ async function inScope(orgId: string, linkId: string, scope: ScopeDef): Promise<
 
 /** Put these records in a share. Answers the ones it changed (the rest were
  *  in already). */
-export async function shareRecords(linkId: string, refs: ScopeRef[]): Promise<{ changed: ScopeRef[] } | { error: string }> {
+export async function shareRecords(linkId: string, refs: ScopeRef[]): Promise<{ changed: ScopeRef[]; delivered?: boolean } | { error: string }> {
   const got = await readLinkScope(linkId);
   if (!got) return { error: "That share has ended." };
   const scope = { ...got.scope, picks: [...got.scope.picks], excluded: [...got.scope.excluded] };
@@ -82,13 +89,13 @@ export async function shareRecords(linkId: string, refs: ScopeRef[]): Promise<{ 
     if (!now.has(key(r)) && !scope.picks.some((p) => key(p) === key(r))) scope.picks.push({ entity_kind: r.entity_kind, id: r.id });
     changed.push(r);
   }
-  await writeLinkScope(linkId, scope);
-  return { changed };
+  const { delivered } = await writeLinkScope(linkId, scope);
+  return { changed, delivered };
 }
 
 /** Take these records out of a share. Answers the ones it changed (the rest
  *  were not in it). */
-export async function stopSharingRecords(linkId: string, refs: ScopeRef[]): Promise<{ changed: ScopeRef[] } | { error: string }> {
+export async function stopSharingRecords(linkId: string, refs: ScopeRef[]): Promise<{ changed: ScopeRef[]; delivered?: boolean } | { error: string }> {
   const got = await readLinkScope(linkId);
   if (!got) return { error: "That share has ended." };
   const scope = { ...got.scope, picks: [...got.scope.picks], excluded: [...got.scope.excluded] };
@@ -99,8 +106,8 @@ export async function stopSharingRecords(linkId: string, refs: ScopeRef[]): Prom
   scope.picks = scope.picks.filter((p) => !want.has(key(p)));
   const now = await inScope(got.orgId, linkId, scope);
   for (const r of wanted) if (now.has(key(r))) scope.excluded.push({ entity_kind: r.entity_kind, id: r.id });
-  await writeLinkScope(linkId, scope);
-  return { changed: wanted };
+  const { delivered } = await writeLinkScope(linkId, scope);
+  return { changed: wanted, delivered };
 }
 
 /** The shares a record is in now, for its page ("Shared with Vince"). */
@@ -111,4 +118,24 @@ export async function sharesOfRecord(orgId: string, kind: string, id: string): P
     if (got && (await inScope(orgId, t.link_id, got.scope)).has(key({ entity_kind: kind, id }))) out.push(t);
   }
   return out;
+}
+
+export async function sharesOfCollection(orgId: string, kind: string): Promise<ShareTarget[]> {
+  const out: ShareTarget[] = [];
+  for (const t of await shareTargets(orgId)) {
+    const got = await readLinkScope(t.link_id);
+    if (got?.scope.rules.some((r) => r.type === "collection" && r.entity_kind === kind)) out.push(t);
+  }
+  return out;
+}
+
+export async function shareCollection(linkId: string, kind: string, stop: boolean): Promise<{ changed: boolean; delivered?: boolean } | { error: string }> {
+  const got = await readLinkScope(linkId);
+  if (!got) return { error: "That share has ended." };
+  const has = got.scope.rules.some((r) => r.type === "collection" && r.entity_kind === kind);
+  if (has === !stop) return { changed: false };
+  const scope = { ...got.scope, rules: got.scope.rules.filter((r) => !(r.type === "collection" && r.entity_kind === kind)) };
+  if (!stop) scope.rules.push({ type: "collection", entity_kind: kind });
+  const { delivered } = await writeLinkScope(linkId, scope);
+  return { changed: true, delivered };
 }

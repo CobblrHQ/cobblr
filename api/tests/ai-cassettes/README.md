@@ -43,6 +43,14 @@ nightly's path), and `cubepro-out-of-the-garage.json` does what the remove
 action's description tells a model to do: find the Garage, `list_related`
 its contents, and act on what is inside (`$result.list_related...`).
 
+A missing cassette is reported as `replay_missing_cassette`. A reference that
+finds no value in a tool result ends with an honest reply explaining the
+missing result, and proposes no write. Its server log names
+`replay_missing_result` and keeps the reference and result needed to diagnose
+it. The response omits raw tool data and the recording directory. Tests still
+require the intended proposal, so this reply does not pass a scenario that
+needed an accept card.
+
 `"refuse": "quota"` (or `invalid_key`, `model_unavailable`, `unreachable`,
 `unknown`) makes the provider REFUSE the turn instead of answering: the same
 `ProviderError` a real adapter throws on a 429 or a rejected key, with the

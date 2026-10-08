@@ -20,6 +20,7 @@ recordSendRouter.get("/:slug/records/send-targets", requireAuth, withTenant, asy
 });
 // UI-SCREEN: /machines
 // AI-ACTION: platform:send-records
+// GATE: the bar depends on the mode (a move is a member's, a copy anyone's who may write), which one action declaration cannot say (#5170 lists it).
 recordSendRouter.post("/:slug/records/send", requireAuth, withTenant, async (req, res, next) => {
   try {
     const parsed = SendBody.safeParse(req.body);
@@ -33,6 +34,7 @@ recordSendRouter.post("/:slug/records/send", requireAuth, withTenant, async (req
 });
 // UI-SCREEN: /machines
 // AI-ACTION: platform:undo-send
+// GATE: undoing a send is its sender's own, whatever the mode was, as above (#5170).
 recordSendRouter.post("/:slug/records/send/:id/undo", requireAuth, withTenant, async (req, res, next) => {
   if (!requireRole(req, res, "guest")) return;
   try { res.json(await undoSend(req.tenant!.org.id, req.session!.id, String(req.params.id))); }

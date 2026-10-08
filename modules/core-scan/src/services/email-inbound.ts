@@ -25,11 +25,11 @@
 
 import { platform } from "@cobblr/platform-contract";
 import { readReceiptAnswer, type ReceiptAnswer } from "./receipt-photo.js";
+import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
 // enrich.ts's INTERNAL_API — these calls carry a minted bearer, so they must
 // target our own API, never a caller-influenced URL.
-// loopback-ok: #5153 moves this onto selfFetch
-const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
+const INTERNAL_API = selfOrigin();
 
 // Abuse caps. core-files itself caps a single upload at 25 MB; we stay under it
 // and bound the count so one email can't fan out into unbounded parse work.
@@ -150,7 +150,7 @@ async function uploadFile(
  *  a product (#4027). Null when the call itself failed. */
 async function receiptCapture(slug: string, token: string, fileId: string): Promise<ReceiptAnswer | null> {
   try {
-    const r = await fetch(`${INTERNAL_API}/api/v1/orgs/${slug}/modules/core-scan/scan/receipt`, {
+    const r = await apiFetch(`${INTERNAL_API}/api/v1/orgs/${slug}/modules/core-scan/scan/receipt`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
       // "email": the session reads "emailed", and its rows are never a kept
@@ -167,7 +167,7 @@ async function receiptCapture(slug: string, token: string, fileId: string): Prom
  *  path (vision enrichment), so a product photo still becomes an item. */
 async function photoCapture(slug: string, token: string, fileId: string): Promise<boolean> {
   try {
-    const r = await fetch(`${INTERNAL_API}/api/v1/orgs/${slug}/modules/core-scan/scan`, {
+    const r = await apiFetch(`${INTERNAL_API}/api/v1/orgs/${slug}/modules/core-scan/scan`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify({ source_kind: "photo", image_file_id: fileId, origin: "email" }),
@@ -180,7 +180,7 @@ async function photoCapture(slug: string, token: string, fileId: string): Promis
 
 async function noteCapture(slug: string, token: string, text: string): Promise<string | null> {
   try {
-    const r = await fetch(`${INTERNAL_API}/api/v1/orgs/${slug}/modules/core-scan/scan/note`, {
+    const r = await apiFetch(`${INTERNAL_API}/api/v1/orgs/${slug}/modules/core-scan/scan/note`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify({ text }),

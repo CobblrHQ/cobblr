@@ -64,6 +64,10 @@ services:
       JWT_SECRET: ${JWT_SECRET:-dev-only-do-not-use-in-prod-must-be-overridden}
       SESSION_TTL_DAYS: ${SESSION_TTL_DAYS:-30}
       TENANT_CREDS_ENCRYPTION_KEY: ${TENANT_CREDS_ENCRYPTION_KEY:-dev-only-32-byte-key-replace-me!!}
+      # Web Push (#5267): unset, the server makes and keeps its own key pair.
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY_FILE: ${VAPID_PRIVATE_KEY_FILE:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
       # Comma-separated list of platform-operator emails. Empty in
       # dev (no /super-admin/* access); set in prod .env per
       # docs/operations/PRODUCTION_DEPLOY.md §3.1.

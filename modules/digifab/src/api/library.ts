@@ -44,7 +44,7 @@ libraryRouter.post(
     const file = uploadedFile(req);
     if (!file) return void res.status(400).json({ error: { code: "missing_file", message: "Multipart field 'file' is required." } });
     if (!isLibraryFile(file.originalname)) {
-      return void res.status(400).json({ error: { code: "bad_type", message: "Upload a .3mf, .gcode, .goo, SVG, DXF, AI, PDF, PNG, JPEG or .lbrn2 file." } });
+      return void res.status(400).json({ error: { code: "bad_type", message: "Upload a .3mf, .gcode, .goo, .nc, .tap, SVG, DXF, AI, PDF, PNG, JPEG or .lbrn2 file." } });
     }
     const stored = await platform().files.write(orgId, { path: file.path, size: file.size, sha256: file.sha256 }, { filename: file.originalname, mimeType: file.mimetype || "application/octet-stream" });
     if (!stored) return void res.status(500).json({ error: { code: "store_failed", message: "File storage is unavailable." } });

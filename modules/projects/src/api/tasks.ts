@@ -2,6 +2,7 @@
 // "what's next" picker. Status transitions go through PATCH so
 // completed_at can be stamped server-side.
 
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { z } from "zod";
 import { ENERGIES, PRIORITIES, TASK_STATUSES } from "../vocab.js";
@@ -134,6 +135,7 @@ tasksRouter.get(
 tasksRouter.post(
   "/reorder",
   asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "projects:move-task"))) return;
     const parsed = z.object({ project_id: z.string().uuid(), ids: z.array(z.string().uuid()).min(1).max(1000) }).safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
@@ -341,6 +343,7 @@ tasksRouter.delete(
 tasksRouter.post(
   "/:id/dependencies",
   asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "projects:blocked-by"))) return;
     const parsed = DependencyCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const id = req.params.id;
@@ -397,6 +400,7 @@ tasksRouter.post(
 tasksRouter.delete(
   "/:id/dependencies/:depId",
   asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "projects:unblock"))) return;
     const id = req.params.id;
     const depId = req.params.depId;
     if (!id || !depId) {

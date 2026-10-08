@@ -66,6 +66,7 @@ export default defineModule({
       {
         group: "make",
         id: "bricklink:disassemble-kit",
+        grantedAs: "inventory:create-part",
         examples: ["break that set into its parts", "part out this kit"],
         label: "Disassemble into parts",
         description:

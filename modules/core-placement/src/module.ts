@@ -56,6 +56,7 @@ export default defineModule({
       {
         group: "stock",
         id: "core-placement:place",
+        runBy: "member",
         examples: ["put this in bin 4", "it lives in the Garage now"],
         undoable: true,
         label: "Place in container",
@@ -75,6 +76,7 @@ export default defineModule({
       {
         group: "stock",
         id: "core-placement:contents-worth",
+        runBy: "member",
         examples: ["what's the garage worth?", "what did everything in the toolbox cost?"],
         label: "Contents worth",
         description: "Total paid for everything inside the targeted place or holder, including sub-places and containers. Each record counts once. Includes the thing count and how many have no price. Requires inventory:view-costs. Read-only.",
@@ -85,6 +87,7 @@ export default defineModule({
       {
         group: "stock",
         id: "core-placement:built-from",
+        runBy: "member",
         examples: ["what's inside the Gaming PC?", "what is the server worth with its parts?"],
         label: "What it is built from",
         description:
@@ -96,6 +99,7 @@ export default defineModule({
       {
         group: "stock",
         id: "core-placement:return-home",
+        runBy: "member",
         examples: ["take the spool off the printer", "put it back where it was"],
         undoable: true,
         label: "Back where it was",
@@ -108,6 +112,7 @@ export default defineModule({
       {
         group: "stock",
         id: "core-placement:remove",
+        runBy: "member",
         examples: ["take it out of the bin", "it is not in there any more"],
         undoable: true,
         label: "Remove from container",

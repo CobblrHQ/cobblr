@@ -29,12 +29,15 @@ export async function termValues(db: Kysely<CoreMaintenanceDB>, orgId: string,
   const currency = d.currency ?? last?.currency ?? await platform().money.currency(orgId);
   const record = await platform().entities.lookup(orgId, `${s.entity_module}:${s.entity_type}`, s.entity_id);
   const fields = record?.fields ?? {};
-  const publisher = fields.publisher ?? (fields.metadata as Record<string, unknown> | undefined)?.publisher;
+  let publisher = fields.publisher ?? (fields.metadata as Record<string, unknown> | undefined)?.publisher;
+  const defs = typeof publisher === "string" && /^[0-9a-f-]{36}$/i.test(publisher) ? await platform().entities.fieldsFor(orgId, `${s.entity_module}:${s.entity_type}`) : [];
+  const ref = defs.find(d => d.name === "publisher" && d.type === "relation")?.ref_kind;
+  if (ref && typeof publisher === "string") publisher = (await platform().entities.lookup(orgId, ref, publisher))?.title ?? publisher;
   return {
     is_term: true, term_start: start, term_end: expiry, previous_term_id: last?.id ?? null,
     cost_cents: d.cost_cents === undefined ? last?.cost_cents ?? null : d.cost_cents,
     currency, reference: d.reference ?? null,
     quantity: d.quantity === undefined ? last?.quantity ?? null : d.quantity,
-    metadata: { money_currency_cost_cents: currency, ...(typeof publisher === "string" ? { publisher } : {}) },
+    metadata: { parent_kind: `${s.entity_module}:${s.entity_type}`, money_currency_cost_cents: currency, ...(typeof publisher === "string" ? { publisher } : {}) },
   };
 }

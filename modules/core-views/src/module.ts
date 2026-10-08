@@ -62,6 +62,7 @@ export default defineModule({
         // NO-PHRASING: the way back for another action, run only from Undo
         group: "organise",
         id: "core-views:delete-view",
+        runBy: "member",
         internal: true,
         label: "Delete a saved view",
         description: "Internal, the inverse of saving a view: deletes it again. Runs from Undo on the card; not for direct use.",
@@ -80,6 +81,7 @@ export default defineModule({
         // UI-SCREEN: /views
         group: "organise",
         id: "core-views:save-view",
+        runBy: "member",
         examples: ["save this as a board", "make me a kanban of tasks"],
         undoable: true,
         label: "Save a view",

@@ -72,7 +72,7 @@ export const PLACEMENT: PlacementRow[] = [
   {
     id: "renewal-history",
     what: "renewal terms with dates, costs and documents",
-    keywords: ["maintenance", "renewal", "renewal terms", "term history", "registration"],
+    keywords: ["maintenance", "renewal", "renewal terms", "term history", "registration", "subscription cancel by reminder", "notice period"],
     dir: "modules/core-maintenance/src/",
     exemplar: "modules/core-maintenance/src/api/schedules.ts",
     why: "Renewals extend the existing service entries and anchored schedule so reminders, documents and history retain one source.",

@@ -82,6 +82,7 @@ export default defineModule({
       {
         group: "lifecycle",
         id: "core-tags:restore-tag",
+        runBy: "member",
         label: "Put a tag back",
         description: "The way back for a merge: the tag under its own id, on every record it was on.",
         scope: "workspace" as const,
@@ -95,6 +96,8 @@ export default defineModule({
       {
         group: "more",
         id: "core-tags:merge",
+        // ADMIN-ONLY: the page's own route POST /tags/:id/merge needs this action's own grant on top of member (tags.ts:225)
+        runBy: "admin",
         examples: ["merge these two tags", "we have the same tag twice"],
         label: "Merge into another tag",
         description:
@@ -114,6 +117,7 @@ export default defineModule({
       {
         group: "organise",
         id: "core-tags:tag-record",
+        runBy: "member",
         examples: ["tag this as fragile", "label it urgent"],
         undoable: true,
         label: "Tag record",
@@ -132,6 +136,7 @@ export default defineModule({
       {
         group: "organise",
         id: "core-tags:untag-record",
+        runBy: "member",
         examples: ["remove the fragile tag", "untag this one"],
         undoable: true,
         label: "Remove tag from record",

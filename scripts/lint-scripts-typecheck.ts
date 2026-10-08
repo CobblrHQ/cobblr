@@ -22,19 +22,48 @@
 // Only scripts/ is judged here: everything else has its own typecheck, and a
 // file pulled in by an import answers to that one.
 //
+// A GENERATED MULTI-MEGABYTE FILE IS NEVER TYPECHECKED THROUGH scripts/. A test
+// that imported the 6 MB embedded bridge bundle made every run of this check
+// parse it, and its read budget went red on every push from every session
+// (17.3 MB against 7, 2026-10-08). tsc lists what it read; a file over
+// BIG_BYTES outside node_modules is named, with the remedy.
+//
 // Placement row: dev-script + lint (scripts/placement-registry.ts).
 
 import { execFileSync } from "node:child_process";
+import { statSync } from "node:fs";
 
+const BIG_BYTES = 1_500_000;
 let out = "";
 try {
-  execFileSync("npx", ["tsc", "-p", "tsconfig.scripts.json"], {
+  out = execFileSync("npx", ["tsc", "-p", "tsconfig.scripts.json", "--listFiles"], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer: 64 * 1024 * 1024,
   });
 } catch (e) {
   const err = e as { stdout?: string; stderr?: string };
   out = `${err.stdout ?? ""}${err.stderr ?? ""}`;
+}
+
+const big = out
+  .split("\n")
+  .map((l) => l.trim())
+  .filter((l) => l && !l.includes("/node_modules/") && !/error TS\d+/.test(l))
+  .flatMap((f) => {
+    try {
+      const n = statSync(f).size;
+      return n > BIG_BYTES ? [`${f.replace(`${process.cwd()}/`, "")} (${(n / 1e6).toFixed(1)} MB)`] : [];
+    } catch {
+      return [];
+    }
+  });
+if (big.length > 0) {
+  console.error("scripts/ typechecks a file too big to parse on every run:");
+  for (const b of big) console.error(`  ${b}`);
+  console.error("  A script or test imports it statically. Load it when the test runs instead, through a");
+  console.error("  specifier tsc does not follow (see scripts/lib/a-downloaded-bridge-can-serve-several-instruments.test.ts).");
+  process.exit(1);
 }
 
 const hits = out.split("\n").filter((l) => /^scripts\/.*error TS\d+/.test(l));

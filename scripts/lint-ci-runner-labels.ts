@@ -43,7 +43,40 @@ const DIR = join(ROOT, ".forgejo", "workflows");
 // (This list is a copy of RELEASE_LANE_WORKFLOWS in scripts/lib/release-lane.mjs, which the
 // public export does not ship; a test keeps the two equal.)
 const RELEASE_LANE_WORKFLOWS = ["publish-selfhost-images.yml", "release-stable.yml"];
-const KNOWN = new Set(["image-main", "image-pr", "release", "ubuntu-latest", "light", "ci-test", "ci-test-full", "ci-e2e", "bake-a6", "bake-aurora", "bake-z87", "bake-b550", "docker-build", "light-main", "ci-main", "fast-light", "fast-test", "pr-check"]);
+// One label a line: two pull requests that each add or drop a label then merge cleanly.
+const KNOWN = new Set([
+  "image-main",
+  "image-pr",
+  "release",
+  "ubuntu-latest",
+  "light",
+  "ci-test",
+  "ci-test-full",
+  "ci-e2e",
+  "bake-a6",
+  "bake-aurora",
+  "docker-build",
+  "light-main",
+  "ci-main",
+  "fast-light",
+  "fast-test",
+  "fast-dispatch",
+  "pr-check",
+]);
+
+// THE b550 IS TEST-ONLY (2026-10-07, server-setup #190: a bad DRAM spot). A job there may compute, but nothing
+// it makes may leave the box: no artifact upload, no image push, no release asset, no publish script, since a
+// flipped bit would ship. nightly-tour's `record` job made the homepage's published media on `ci-test`, a
+// label the b550 carries. A deliberate exception says why on the runs-on line: `# b550-ok: <why>`.
+const B550_LABELS = new Set(["ci-test", "bake-b550"]);
+// One list of what publishes, for both rules below (a test-only box and a pr-check job never ship anything).
+const PUBLISHES = /actions\/upload-artifact|\bdocker push\b|buildx build[^\n]*--push|--push\b|\/releases\/[^\s]*assets|publish-[\w-]+\.(?:py|sh|mjs)\b|\bgh release\b|\bgit push\b|\b(?:npm|pnpm) publish\b|\bcrane push\b|\bskopeo copy\b|\boras push\b/;
+/** The job body that starts at `runs-on` line i: up to the next job header (two-space indent). */
+function jobBody(lines: string[], i: number): string {
+  const out: string[] = [];
+  for (let j = i; j < lines.length && !/^ {2}[A-Za-z0-9_-]+:\s*$/.test(lines[j]!); j++) if (!/^\s*#/.test(lines[j]!)) out.push(lines[j]!);
+  return out.join("\n");
+}
 
 const errors: string[] = [];
 const seen = new Map<string, string[]>();
@@ -85,6 +118,10 @@ for (const f of readdirSync(DIR).filter((n) => n.endsWith(".yml") || n.endsWith(
     }
     if (label.startsWith("$")) return; // some other expression; not ours to judge
     seen.set(label, [...(seen.get(label) ?? []), `${f}:${i + 1}`]);
+    if (B550_LABELS.has(label) && !/# b550-ok: \S/.test(line)) {
+      const what = PUBLISHES.exec(jobBody(src.split("\n"), i))?.[0];
+      if (what) errors.push(`.forgejo/workflows/${f}:${i + 1} runs on "${label}", which the test-only b550 carries (bad RAM), and the job publishes (${what}): a flipped bit would ship. Run it on an A6-only label (ci-e2e for the test image), or say why on the line: # b550-ok: <why>.`);
+    }
     const inLane = RELEASE_LANE_WORKFLOWS.includes(f);
     if (label === "release" && !inLane) {
       errors.push(`.forgejo/workflows/${f}:${i + 1} asks for runner label "release", which is the release lane's alone: only ${RELEASE_LANE_WORKFLOWS.join(", ")} may (the runner takes one job at a time, so anything else queues a release behind it).`);
@@ -111,7 +148,6 @@ if (seen.size === 0) {
 // 2026-10-07), so a job asking for it must never publish, push or ship anything: a flipped bit there
 // may turn a check red, never reach something shared. A step that does must be guarded to a push to
 // main (which runs on main's own lane, never on pr-check).
-const PUBLISHES = /\b(docker (push|login)|git push|npm publish|pnpm publish|gh release|crane push|skopeo copy|oras push|buildx build[^\n]*--push)\b/;
 for (const f of readdirSync(DIR).filter((n) => n.endsWith(".yml") || n.endsWith(".yaml"))) {
   const src = readFileSync(join(DIR, f), "utf8");
   const lines = src.split("\n");

@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "purchases",
-  version: "0.13.0",
+  version: "0.14.0",
   displayName: "Purchases",
   description:
     "Orders you placed and what they cost, with each line tied to the parts it bought and what they went into.",
@@ -136,6 +136,7 @@ export default defineModule({
     eventPayloads: {
       "purchases.order_item.received": [...ORDER_ITEM_RECEIVED_KEYS],
       "purchases.order_item.returned": [...ORDER_ITEM_RETURNED_KEYS],
+      "purchases.order_item.unreceived": [...ORDER_ITEM_RECEIVED_KEYS],
     },
     // The KINDS of workspace notification this module sends, so the
     // workspace can say who each kind is for (Configuration > Who gets told).
@@ -153,12 +154,17 @@ export default defineModule({
       "purchases.order_item.returned",
       "purchases.order.status_changed",
       "purchases.order.arrived",
+      "purchases.order.shipment_recorded",
       "purchases.order_item.received",
+      // A line's receive taken back (delta < 0): a shipping notice proved an
+      // order its receipt had filed as arrived was still on its way.
+      "purchases.order_item.unreceived",
       "purchases.vendor.created",
     ],
     actions: [
       {
         id: "purchases:start-return", group: "buy", label: "Start a return", examples: ["return two of those", "I'm sending this back"],
+        runBy: "member",
         description: "Start a return on an order that arrived: which line (line_id) or item, how many (qty, default 1) and why. One open return per line; a second start on the same line answers with the open one. The stock comes off the shelf when the store has it, the refund off the order's spend when it is refunded.",
         appliesTo: { kinds: ["purchases:order"] }, invokeHandler: "purchases.start-return", userInvokable: true, undoable: true,
         argsSchema: {
@@ -172,6 +178,7 @@ export default defineModule({
       {
         // UI-SCREEN: /purchases/:id (the stage pills on each return)
         id: "purchases:advance-return", group: "buy", label: "Move a return along", examples: ["I dropped the return off", "the refund came through"],
+        runBy: "member",
         description: "Move a return to its next stage: dropped_off, received (its count comes off the shelf, once), refunded (with refund_amount, default the line's cost; it comes off the order's spend once) or cancelled (only before the store has it). Stages only move forward.",
         scope: "workspace" as const, invokeHandler: "purchases.advance-return", userInvokable: false, undoable: true,
         argsSchema: {
@@ -182,7 +189,22 @@ export default defineModule({
         },
       },
       {
+        // UI-SCREEN: /purchases/:id (Add a parcel, and a line's "Shipped in" chip)
+        id: "purchases:add-shipment", group: "buy", label: "Add a parcel", examples: ["the black spool shipped, tracking TBA335321582286", "add tracking for part of this order"],
+        runBy: "member",
+        description: "Record one parcel of an order: its tracking number, and which lines are in it, by line_ids or by items (the store's words for what is in the box, matched to the order's lines). A parcel that carries every line still to come goes on the order itself. The same number twice updates the parcel.",
+        appliesTo: { kinds: ["purchases:order"] }, invokeHandler: "purchases.add-shipment", userInvokable: true,
+        argsSchema: {
+          order_id: { label: "Which order, defaults to the record this ran on", type: "text" },
+          tracking_number: { label: "The parcel's tracking number", type: "text", required: true },
+          line_ids: { label: "The lines in this parcel", type: "text" },
+          items: { label: "What is in the box, in the store's words (a list)", type: "json" },
+          expected_arrival: { label: "When it is due (YYYY-MM-DD)", type: "text" },
+        },
+      },
+      {
         id: "purchases:plan-order", group: "buy", label: "Plan an order", examples: ["plan an order for these parts", "track this fabrication order"],
+        runBy: "member",
         description: "Create a planned purchase with lines, expected arrival, tracking and an optional source file. request_key makes retries safe. add_to_stock is false for scanned component receiving and true for blank board stock. No supplier order is submitted.",
         scope: "workspace" as const, invokeHandler: "purchases.plan-order", userInvokable: true,
         argsSchema: {
@@ -197,6 +219,7 @@ export default defineModule({
         // NO-PHRASING: the way back for another action, run only from Undo
         group: "buy",
         id: "purchases:remove-line",
+        runBy: "member",
         internal: true,
         label: "Remove an order line",
         description: "Internal, the inverse of adding a line to a purchase order: removes it again. Runs from Undo on the card; not for direct use.",
@@ -211,6 +234,7 @@ export default defineModule({
       {
         group: "buy",
         id: "purchases:add-line",
+        runBy: "member",
         examples: ["add another line to that order", "put two more on the order"],
         undoable: true,
         label: "Add a line to this order",
@@ -234,6 +258,7 @@ export default defineModule({
         // UI-REACH: plumbing for the paperwork door, which every screen reaches through core-scan's record Files and inbox
         group: "buy",
         id: "purchases:record-paperwork",
+        runBy: "member",
         label: "Record the purchase a document shows",
         description:
           "Record a purchase from a document put on a record (a bill of sale on a car): the order with every line as the paper printed it, each marked as a charge or an add-on where it is one, and the line the paper is about claimed for that record, which fills its Paid, Purchased at and Bought from. Used by the paperwork door; to attach a document to a record ask for core-scan:attach-paperwork. Args: { vendor?, ordered_at?, order_ref?, total?, currency?, source_file_id?, lines, claim? }.",
@@ -255,6 +280,7 @@ export default defineModule({
       {
         group: "buy",
         id: "purchases:edit-line",
+        runBy: "member",
         examples: ["that line was 5, not 3", "the screws were 12 cents each"],
         undoable: true,
         label: "Correct a line on this order",
@@ -281,6 +307,7 @@ export default defineModule({
         // button on any part.
         group: "buy",
         id: "purchases:draft-po",
+        runBy: "member",
         examples: ["order more of these", "put that on a purchase order"],
         undoable: true,
         label: "Draft a purchase order",
@@ -308,14 +335,16 @@ export default defineModule({
         // twice cannot double-count.
         group: "buy",
         id: "purchases:mark-arrived",
+        runBy: "member",
         examples: ["that order turned up", "the parcel arrived"],
         label: "Mark arrived",
         description:
-          "Record that a purchase order turned up: sets its status to arrived, stamps the arrival date, and releases the stock-receipt events for every line mapped to a part. Does nothing if the order is already arrived. Args (all optional): { orderId, arrivedOn }.",
+          "Record that a purchase order turned up: sets its status to arrived, stamps the arrival date, and releases the stock-receipt events for every line mapped to a part. With shipmentId, only that parcel's lines are received, and the order arrives when nothing else on it is still to come. Does nothing if the order is already arrived. Args (all optional): { orderId, shipmentId, arrivedOn }.",
         appliesTo: { kinds: ["purchases:order"] },
         invokeHandler: "purchases.mark-arrived",
         argsSchema: {
           orderId: { label: "Which order, defaults to the record this ran on", type: "text" },
+          shipmentId: { label: "One parcel of the order: only its lines arrived", type: "text" },
           arrivedOn: { label: "The date it arrived, defaults to today", type: "text" },
           add_to_stock: { label: "Add its lines to stock (default yes; no for a past purchase whose stock is already counted)", type: "boolean" },
         },

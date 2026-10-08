@@ -154,12 +154,12 @@ export const MERGE_SENTENCE = "You already have this. Adding counts one more.";
 
 /** The scan matches several things the workspace has, equally well: no
  *  machine can pick, so a person does. */
-export const AMBIGUOUS_MATCH_SENTENCE = "This could be any of {n} things you have. Open it to pick.";
+export const AMBIGUOUS_MATCH_SENTENCE = "This could be any of {n} things you have. Open it to pick."; // count-plural-ok: only shown for two or more
 
 /** The scan is one thing the workspace keeps in several places, and nothing
  *  says which place this is: not the place being worked in, and nobody has
  *  picked. A person does, once; the choice stays on the row. */
-export const WHICH_PLACE_SENTENCE = "You keep this in {n} places. Open it to pick which one.";
+export const WHICH_PLACE_SENTENCE = "You keep this in {n} places. Open it to pick which one."; // count-plural-ok: only shown for two or more
 /** The thing is already here, kept somewhere else: this scan is another place
  *  of it, never a second item (one item, a row per place). */
 /** A document read off a page whose own checks did not pass on these

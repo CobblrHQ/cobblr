@@ -1,3 +1,6 @@
+import { personalDocumentsRouter } from "./personal-documents.js";
+import { registerPersonalDocumentReader } from "@cobblr/platform-contract/personal-documents";
+import { readPersonalDocumentLocally } from "../services/personal-document.js";
 // core-scan router. Mounted at
 //   /api/v1/orgs/:slug/modules/core-scan/.
 
@@ -12,6 +15,7 @@ import { exportRouter } from "./export.js";
 import { entityImageRouter } from "./entity-image.js";
 import { recordPhotosRouter } from "./record-photos.js";
 import { qrRulesRouter } from "./qr-rules.js";
+import { barcodeLookupRouter } from "./barcode-lookup.js";
 import { decodeRouter } from "./decode.js";
 import { feedRouter } from "./feed.js";
 import { stationsRouter } from "./stations.js";
@@ -24,6 +28,7 @@ import { offerIntake } from "../services/offer-intake.js";
 import { offersRouter } from "./offers.js";
 import { platform } from "@cobblr/platform-contract";
 
+registerPersonalDocumentReader(readPersonalDocumentLocally);
 registerScanHandlers();
 registerEmailInbound();
 registerOperatorServices();
@@ -39,6 +44,7 @@ startPicturesSweeper();
 
 const router = Router({ mergeParams: true });
 // Before the inbox router: its /inbox/:id routes would take /inbox/offer-to-sharer.
+router.use("/", personalDocumentsRouter);
 router.use("/", offersRouter);
 router.use("/", inboxRouter);
 router.use("/", shipmentEventRouter);
@@ -50,6 +56,7 @@ router.use("/", exportRouter); // bulk export (interop v1 envelope: JSON + CSV)
 router.use("/", entityImageRouter);
 router.use("/", recordPhotosRouter); // pictures suggested for records made without one
 router.use("/", qrRulesRouter);
+router.use("/", barcodeLookupRouter);
 router.use("/", decodeRouter); // identifier-decoder registry: POST /decode { code }
 router.use("/", feedRouter); // live feed: the last few captures, for a screen that is not the scanner
 router.use("/", stationsRouter); // a Station: a tablet a barcode scanner drives (#4640)

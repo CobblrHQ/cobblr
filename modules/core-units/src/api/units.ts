@@ -9,6 +9,7 @@
 // The client fetches this once and formats quantities itself
 // (formatQuantity in units-catalog.ts is mirrored into platform-web).
 
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { z } from "zod";
 import { tenantDb } from "../db.js";
@@ -65,7 +66,7 @@ unitsRouter.get(
 unitsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "core-units:add-unit"))) return;
     const parsed = CustomUnit.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     // A workspace custom unit must not shadow a built-in code.

@@ -19,7 +19,7 @@ const FabOrder = z.object({ build_id: z.string().uuid(), vendor: z.enum(["JLCPCB
 const Stencil = z.object({ build_id: z.string().uuid(), style: z.enum(["framed", "frameless"]), part_id: z.string().uuid().optional() });
 const CircuitConfig = z.object({ package_kind: z.string().min(3), blank_kind: z.string().min(3), stencil_kind: z.string().min(3) });
 const specOf = (metadata: unknown): BoardRevision | null => (metadata as { assembly?: BoardRevision } | null)?.assembly ?? null;
-async function revision(db: Kysely<BuildsDB>, id: string) {
+export async function revision(db: Kysely<BuildsDB>, id: string) {
   const build = await db.selectFrom("builds_builds").selectAll().where("id", "=", id).executeTakeFirst();
   const spec = specOf(build?.metadata);
   if (!build || !spec) throw new ActionRefusal("Choose a board revision first.");

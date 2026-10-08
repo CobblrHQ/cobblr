@@ -25,7 +25,7 @@ import { landedSomething } from "../platform/inbound-dedupe.js";
 import { notifyAccount } from "../platform/notifications.js";
 import { absoluteAppUrl } from "../platform/public-url.js";
 import { planBodyCapture, planEmptyRead } from "../platform/receipt-body.js";
-import { classifyOrderNotice, classifyReturnEmail, classifyShipmentEmail, isAutomatedStoreSender, isForwardingVerification } from "../platform/shipment-email.js";
+import { classifyOrderNotice, classifyReturnEmail, classifyShipmentEmail, isAutomatedStoreSender, isForwardingVerification, trackingAddedReply } from "../platform/shipment-email.js";
 import { outcomeStatus } from "../platform/inbound-outcome.js";
 import { bestReceiptBody, receiptReplyHeaders } from "../platform/inbound-email-body.js";
 import {
@@ -34,9 +34,9 @@ import {
   receiptEmailConfigured,
   verifyReceiptToken,
 } from "../platform/receipt-email.js";
+import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
-// loopback-ok: #5153 moves this onto selfFetch
-const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
+const INTERNAL_API = selfOrigin();
 
 // Attachments worth trying to parse as a receipt. The Worker pre-filters too,
 // but we re-check (defense against a misconfigured Worker).
@@ -217,7 +217,7 @@ export async function ingestReceiptEmail(
   const scanUrl = absoluteAppUrl(scanPath);
   const sessionToken = await signSession(userId);
   const post = (path: string, payload: Record<string, unknown>) =>
-    fetch(`${INTERNAL_API}/api/v1/orgs/${slug}${path}`, {
+    apiFetch(`${INTERNAL_API}/api/v1/orgs/${slug}${path}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${sessionToken}`, "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -330,6 +330,7 @@ export async function ingestReceiptEmail(
         description: observed.description,
         expected_arrival: observed.expectedArrival,
         expected_arrival_date: observed.expectedArrivalDate,
+        items: observed.items,
       });
       const rb = (await r.json().catch(() => ({}))) as Record<string, unknown>;
       shipment = { ...rb, http: r.status };
@@ -447,7 +448,31 @@ export async function ingestReceiptEmail(
   // receipt imported), on that channel alone; a duplicate or a miss is not.
   const readFromMailbox = input.source === "gmail";
 
-  if (appliedShipment || machineNoise || (readFromMailbox && parsedCount === 0 && !noteCreated)) {
+  // A parcel a notice added to an order already imported is answered with
+  // what was added (#5351): which order, which lines, which number, which
+  // day. Before, the notice matched no order, the parser read its order
+  // number and the reply was "you already imported this receipt", with the
+  // tracking number dropped. A notice that is ALSO the moment (delivered, out
+  // for delivery) is answered by the parcel's own card instead.
+  const parcel = (shipment?.parcel ?? null) as Parameters<typeof trackingAddedReply>[0] & { added?: boolean } | null;
+  const parcelIsNews = Boolean(appliedShipment && parcel?.added && observed && observed.state !== "delivered" && observed.state !== "out_for_delivery");
+
+  if (parcelIsNews && parcel) {
+    const said = trackingAddedReply(parcel);
+    await notifyAccount({
+      originChannel: readFromMailbox ? "in_app" : "email",
+      userId,
+      representativeOrgId: orgId,
+      notificationType: "core-scan.email.tracking_added",
+      message: said,
+      link_url: scanPath,
+      email: {
+        subject: reSubject("Tracking added to your order"),
+        text: said,
+        ...replyHeaders,
+      },
+    }).catch(() => {});
+  } else if (appliedShipment || machineNoise || (readFromMailbox && parsedCount === 0 && !noteCreated)) {
     // The parcel's own notification (the sweep's card, to the parcel's owner)
     // is the answer. A "we got your email" on top of it is the double-send
     // this file has already been cured of once (2026-08-24). And a store's
@@ -465,6 +490,25 @@ export async function ingestReceiptEmail(
       email: {
         subject: reSubject("Your emailed receipt is in your scan inbox"),
         text: `We captured ${parsedCount} item${parsedCount === 1 ? "" : "s"} from your receipt. Review them in your scan inbox:\n${scanUrl}`,
+        ...replyHeaders,
+      },
+    }).catch(() => {});
+  } else if (duplicate && observed?.trackingNumber) {
+    // A shipping notice that still found no order, and whose order number
+    // the parser knew: it is not a second copy of the receipt, and saying so
+    // would hide the one thing it carried. Say what it was, and where the
+    // number goes.
+    const refLabel = duplicate.order_ref ? ` (order #${duplicate.order_ref})` : "";
+    await notifyAccount({
+      originChannel: readFromMailbox ? "in_app" : "email",
+      userId,
+      representativeOrgId: orgId,
+      notificationType: "core-scan.email.shipment_unmatched",
+      message: `That was a shipping notice${refLabel} with tracking number ${observed.trackingNumber}, but I couldn't tell which order to add it to. Open the order and add the number there.`,
+      link_url: `/w/${slug}/purchases`,
+      email: {
+        subject: reSubject("Tracking number not added"),
+        text: `That was a shipping notice${refLabel} with tracking number ${observed.trackingNumber}, but I couldn't tell which order to add it to. Open the order in Purchases and add the number there:\n${absoluteAppUrl(`/w/${slug}/purchases`)}`,
         ...replyHeaders,
       },
     }).catch(() => {});

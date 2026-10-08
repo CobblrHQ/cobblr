@@ -1177,7 +1177,7 @@ function BundleUpdateRow({
       <span className="flex-1 basis-40 min-w-0 flex items-baseline gap-1 text-content dark:text-mortar-200">{version}</span>
       {install.isPending ? (
         <span className="shrink-0 text-faint dark:text-slate-500">Updating…</span>
-      ) : preview.isPending ? (
+      ) : preview.isLoading ? (
         // While the preview loads: an auto tier (patch/minor) will land on its
         // own within the hour, so say so rather than offer a click.
         canApply && tierAutoApplies(tier) ? (

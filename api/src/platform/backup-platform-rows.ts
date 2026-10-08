@@ -1,3 +1,4 @@
+import { rebindBackupSecrets } from "./secret-backup.js";
 // The part of a backup that lives outside the workspace's own database: its
 // rows in the shared platform tables that SHARED_WORKSPACE_TABLES marks
 // `backup` (links between records, the workspace's people, field sections,
@@ -124,7 +125,7 @@ export async function restorePlatformRows(
       const cols = await metaColumns(trx, table);
       let refusedHere = 0;
       for (const raw of source) {
-        const row = rowForTarget(raw, policy, orgId, ids, members);
+        const row = rebindBackupSecrets(orgId, rowForTarget(raw, policy, orgId, ids, members));
         const names = Object.keys(row).filter((c) => cols.all.has(c) && !cols.generated.has(c));
         if (names.length === 0) continue;
         const values = names.map((c) => {

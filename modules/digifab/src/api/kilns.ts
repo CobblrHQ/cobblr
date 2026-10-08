@@ -1,4 +1,5 @@
 import { Router, type Response } from "express";
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { sql } from "kysely";
 import { z } from "zod";
 import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
@@ -20,17 +21,20 @@ kilnsRouter.get("/:machineId", asyncHandler(async (req, res) => {
 }));
 // AI-ACTION: digifab:kiln-log
 kilnsRouter.post("/:machineId/profile", asyncHandler(async (req, res) => {
- if (!requireRole(req, res, "owner", "admin")) return;
+ // ADMIN-ONLY: a kiln's profile and firing log are the admin tier's on the page, at every door (#5170)
+ if (!(await requireCapability(req, res, "digifab:kiln-log"))) return;
  try { res.json(await saveKilnProfile(tenantDb(req), tenantContext(req).org.id, Id.parse(req.params.machineId), req.body)); } catch(e) { refuse(res, e); }
 }));
 // AI-ACTION: digifab:kiln-log
 kilnsRouter.post("/:machineId/firings", asyncHandler(async (req, res) => {
- if (!requireRole(req, res, "owner", "admin")) return;
+ // ADMIN-ONLY: a kiln's profile and firing log are the admin tier's on the page, at every door (#5170)
+ if (!(await requireCapability(req, res, "digifab:kiln-log"))) return;
  try { res.status(201).json(await createFiring(tenantDb(req), tenantContext(req).org.id, { ...req.body, machine_id: Id.parse(req.params.machineId) }, sessionUser(req)?.id ?? null)); } catch(e) { refuse(res, e); }
 }));
 // AI-ACTION: digifab:kiln-log
 kilnsRouter.post("/firings/:id/finish", asyncHandler(async (req, res) => {
- if (!requireRole(req, res, "owner", "admin")) return;
+ // ADMIN-ONLY: a kiln's profile and firing log are the admin tier's on the page, at every door (#5170)
+ if (!(await requireCapability(req, res, "digifab:kiln-log"))) return;
  try { res.json(await finishFiring(tenantDb(req), tenantContext(req).org.id, sessionUser(req)?.id ?? null, Id.parse(req.params.id), req.body)); } catch(e) { refuse(res, e); }
 }));
 // AI-REACH: exempt physical kiln Start/Stop needs the authorized screen's credential, never an assistant or a wire.

@@ -10,6 +10,7 @@ import { dirname } from "node:path";
 import sharp from "sharp";
 import { platform, type FilesDriver, type WorkspaceFolder } from "@cobblr/platform-contract";
 import type { FileKind, FileVariants } from "../db.js";
+import { readPersonalDocument } from "@cobblr/platform-contract/personal-documents";
 import { sniffType } from "@cobblr/platform-contract/sniff-type";
 
 // Default storage root: <repo>/_files. Overridable per-deploy.
@@ -177,6 +178,33 @@ export interface StoredFile {
   mime_type: string;
 }
 
+/** Bytes a workspace has just had read as ordinary, so the same file
+ *  stored again (a re-upload, a zip entry checked and then stored, a
+ *  pattern attached twice) is not read again: a typed PDF's pictures cost
+ *  seconds of OCR. Only an ordinary verdict is kept; a refusal is read
+ *  again. Scoped to the workspace, or an upload's speed would tell one
+ *  workspace what another had just stored. */
+const ordinaryRecently = new Map<string, number>();
+const ORDINARY_TTL_MS = 15 * 60_000;
+
+export async function assertSharedFileSource(source: FileSourceIn, claimedMime: string, orgId?: string, known?: Fingerprint): Promise<void> {
+  const head = await headOf(source, 4096);
+  const mime = sniffType(head) || claimedMime;
+  if (!/^(?:image\/|application\/pdf|text\/)/.test(mime)) return;
+  const key = orgId ? `${orgId}:${mime}:${(known ?? (await fingerprintOf(source))).sha256}` : null;
+  const kept = key ? ordinaryRecently.get(key) : undefined;
+  if (key && kept !== undefined && Date.now() - kept < ORDINARY_TTL_MS) return;
+  const size = source instanceof Uint8Array ? source.length : source.size;
+  if (mime !== "application/pdf" && size > 25 * 1024 * 1024) throw new Error("This may be a personal document. Read it in Personal documents instead of shared Files.");
+  const onDisk = !(source instanceof Uint8Array);
+  const read = await readPersonalDocument({ bytes: onDisk ? mime === "application/pdf" ? head : await readFile(source.path) : source, mime, ...(onDisk && mime === "application/pdf" ? { path: source.path } : {}) });
+  if (read.privacy === "personal") throw new Error("This is a personal document. Read it in Personal documents instead of shared Files.");
+  if (key) {
+    ordinaryRecently.set(key, Date.now());
+    if (ordinaryRecently.size > 500) ordinaryRecently.delete(ordinaryRecently.keys().next().value as string);
+  }
+}
+
 /** Persist a file (bytes, or a file on disk moved in without being read)
  *  and generate image variants if applicable. Variants are made from the
  *  stored file, never from a buffer of it. Returns the metadata that becomes
@@ -188,6 +216,7 @@ export async function storeUpload(
   claimedMime: string,
   known?: Fingerprint,
 ): Promise<StoredFile> {
+  await assertSharedFileSource(source, claimedMime, orgId, known);
   // The bytes' own type over whatever the upload claimed: a PDF stored under
   // a wrong type was served as a download and shown as raw bytes (#4523).
   const declaredMime = sniffType(await headOf(source)) ?? claimedMime;

@@ -28,8 +28,9 @@ import * as activity from "./activity.js";
 import { baseKindOf, lookup } from "./entities.js";
 import { describeChanges } from "./history-describe.js";
 import { gatedFields } from "./scope-eval.js";
-import { COPY_BOOKKEEPING, fieldsOf, isReference, mirrorShareNow, noteWorkspaceChanged } from "./share-mirror.js";
+import { COPY_BOOKKEEPING, fieldsOf, isReference, mirrorAndDeliverNow, noteWorkspaceChanged } from "./share-mirror.js";
 import { enqueueShareOp, getShareLink, kickShareSync, registerShareOp, type ShareLinkRow } from "./share-sync.js";
+import { withShareCopyState } from "./share-copy-state.js";
 import { runExclusive } from "./exclusive.js";
 import { noteShare } from "./share-notices.js";
 import { sendAdditions } from "./share-additions.js";
@@ -67,6 +68,11 @@ export async function noteCopiesChanged(orgId: string): Promise<void> {
 /** Send back every field the friend changed on a link's copies since the
  *  mirror last left them. */
 export async function sendCopyEdits(linkId: string): Promise<{ sent: number }> {
+  // SKIP-IF-BUSY OK: the mirror owns the copy and base; leave edits_due_at set for the next pass
+  return (await withShareCopyState(linkId, () => sendCopyEditsPass(linkId))) ?? { sent: 0 };
+}
+
+async function sendCopyEditsPass(linkId: string): Promise<{ sent: number }> {
   const link = await getShareLink(linkId);
   if (!link || link.side !== "share" || link.status !== "active") return { sent: 0 };
   await meta.updateTable("share_links").set({ edits_due_at: null }).where("id", "=", linkId).execute();
@@ -181,7 +187,13 @@ export async function receiveEdit(link: ShareLinkRow & { settings?: unknown }, k
     .executeTakeFirst();
   const base = waiting ? waiting.base : c.from;
   if (same(current, c.to)) {
-    if (waiting) await meta.updateTable("share_suggestions").set({ status: "accepted", decided_at: new Date() }).where("id", "=", waiting.id).execute();
+    if (waiting) {
+      // The friend's copy is back at what this workspace holds, so nothing is
+      // left to decide. Said in the log: a suggestion that vanished before the
+      // owner saw it (#5119, main 2026-10-08) is otherwise silent.
+      console.info(`[share] ${by}'s ${c.field} on ${kind} ${id} now matches this workspace's: suggestion ${waiting.id} closes`);
+      await meta.updateTable("share_suggestions").set({ status: "accepted", decided_at: new Date() }).where("id", "=", waiting.id).execute();
+    }
     return null;
   }
   const conflict = !same(current, base);
@@ -205,6 +217,11 @@ export async function receiveEdit(link: ShareLinkRow & { settings?: unknown }, k
       await meta.updateTable("share_suggestions").set({ status: "pending", decided_at: null }).where("id", "=", rowId).execute();
       throw err;
     }
+  } else {
+    // A running mirror may have snapshotted waiting edits before this row
+    // existed. It needs another pass to keep the proposal and tell the friend
+    // what the owner's conflicting value is.
+    await noteWorkspaceChanged(link.org_id);
   }
   await noteShare(link.id, status === "applied" ? "applied" : "suggested", rec.title);
   return status;
@@ -296,7 +313,8 @@ export async function listShareEdits(orgId: string, where: { linkId?: string; ki
 async function resendRecord(linkId: string, kind: string, id: string): Promise<void> {
   await meta.updateTable("share_mirror_state").set({ digest: "" }).where("link_id", "=", linkId).where("entity_kind", "=", kind).where("entity_id", "=", id).execute();
   await meta.updateTable("share_links").set({ mirror_due_at: new Date() }).where("id", "=", linkId).execute();
-  void mirrorShareNow(linkId).catch((err) => console.error(`[share] mirror of ${linkId} failed:`, err));
+  // DETACHED: the owner's answer is recorded; this waits out a running pass rather than skipping it
+  void mirrorAndDeliverNow(linkId).catch((err) => console.error(`[share] mirror of ${linkId} failed:`, err));
 }
 
 export type DecideResult = { ok: true; status: ShareSuggestionStatus } | { ok: false; error: string };

@@ -14,6 +14,7 @@
 // `unavailable` (provider timeout/outage) is NEVER cached — the caller retries.
 // See services/identifier-registry.ts + docs/design-decisions/vin-decode.md §6.
 
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { z } from "zod";
 import { tenantDb } from "../db.js";
@@ -36,7 +37,7 @@ decodeRouter.post(
   "/decode",
   asyncHandler(async (req, res) => {
     // Decode feeds the entity EDIT form, which is an editor action → member+.
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-scan:decode-identifier"))) return;
     const parsed = DecodeBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
 

@@ -61,3 +61,10 @@ export async function testSupport(path: string, init: TestSupportInit = {}): Pro
 export async function testSupportJson<T = unknown>(path: string, init: TestSupportInit = {}): Promise<T> {
   return (await (await testSupport(path, init)).json()) as T;
 }
+
+/** The address of the CI push service's box `box` (#5267): what a test
+ *  "device" subscribes with, so Web Push sends there and the test reads it
+ *  back through testSupport(`push-service/${box}`). */
+export function testPushServiceEndpoint(box: string): string {
+  return `${BASE}/api/v1/test-support/push-service/${encodeURIComponent(box)}`;
+}

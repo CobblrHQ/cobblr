@@ -55,6 +55,7 @@ export interface OfferedThing {
     mapped: Record<string, unknown>;
     field_map?: Record<string, string | null>;
     location: string | null;
+    placement_needed?: boolean;
   };
 }
 
@@ -139,7 +140,7 @@ export const SHARE_COMMENT_ARRIVED = "platform.share.comment-arrived";
 
 export function mapOfferedFields(
   values: Record<string, unknown>,
-  fields: readonly { name: string; display_label?: string | null; type: string; native?: boolean }[],
+  fields: readonly { name: string; display_label?: string | null; type: string; native?: boolean; choices?: readonly string[] | null }[],
   fieldMap: Record<string, string | null> = {},
 ): { values: Record<string, unknown>; missing: string[]; dropped: string[]; mappings: Array<{ from: string; to: string | null }> } {
   const key = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
@@ -154,7 +155,8 @@ export function mapOfferedFields(
     const matches = fields.filter((f) => f.type !== "computed" && (fieldMap[label] ? f.name === fieldMap[label] : key(f.display_label || f.name) === key(label) || key(f.name) === key(label)));
     const f = matches.length === 1 ? matches[0] : undefined;
     const fits = f && (f.type === "number" ? typeof value === "number" && Number.isFinite(value) : f.type === "boolean" ? typeof value === "boolean" : ["text", "textarea", "url", "select", "date", "datetime"].includes(f.type) ? typeof value === "string" || value instanceof Date : true);
-    if (!f || !fits || used.has(f.name)) {
+    const choiceFits = f?.type !== "select" || !f.choices?.length || (typeof value === "string" && f.choices.includes(value));
+    if (!f || !fits || !choiceFits || used.has(f.name)) {
       out.missing.push(label);
       out.mappings.push({ from: label, to: null });
     } else {
@@ -179,4 +181,24 @@ export function canUndoOwnMove(writer: import("./index.js").EntityWriter | null)
 
 export function sameSendSnapshot(left: unknown, right: unknown): boolean {
   return canonicalJson(JSON.parse(JSON.stringify(left ?? null))) === canonicalJson(JSON.parse(JSON.stringify(right ?? null)));
+}
+
+export function sendFileThing(thing: OfferedThing): OfferedThing {
+  const s = thing.send;
+  if (!s) throw new Error("This item has no send envelope.");
+  return {
+    name: thing.name, manufacturer: thing.manufacturer, model: thing.model,
+    kind_words: thing.kind_words, quantity: thing.quantity, notes: thing.notes,
+    collection: thing.collection ? {module: thing.collection.module, instance: thing.collection.instance} : null,
+    fields: {}, photos: [],
+    send: {
+      version: 1, mode: s.mode,
+      origin: {instance: s.origin.instance, org: s.origin.org, kind: s.origin.kind, id: s.origin.id},
+      module_version: s.module_version, kind_version: s.kind_version, values: s.values,
+      references: s.references?.map((r) => ({label: r.label, value: r.value})),
+      files: s.files.map((f) => ({filename: f.filename, role: f.role, sort_order: f.sort_order, mime: f.mime, data: f.data})),
+      needs: [...s.needs], target_kind: null, mapped: {}, location: null,
+      placement_needed: !!s.location || !!s.placement_needed,
+    },
+  };
 }

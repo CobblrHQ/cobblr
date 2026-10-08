@@ -120,6 +120,7 @@ import {
 } from "@cobblr/platform-contract/receipt-totals";
 
 export interface ParsedReceipt {
+  renewal?: import("./renewal-draft.js").ReceiptRenewal;
   /** What kind of document it was, when not a store receipt. */
   document?: "bill-of-sale";
   /** A document read off a page is checked before it is believed

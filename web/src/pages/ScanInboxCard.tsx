@@ -131,6 +131,7 @@ import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 /** Base-kind fallback for when the scan menu can't load — the menu
  *  (GET /modules/core-scan/menu) is the real source of truth and lists
  *  the workspace's ACTUAL tables ("Yarn"), not module names. */
@@ -1450,7 +1451,7 @@ export function InboxCard({
   const split = useMutation({
     mutationFn: () => api.splitScanItem(activeSlug, item.id),
     onSuccess: (r) => {
-      toast.success(`Split into ${r.children.length} items`);
+      toast.success(`Split into ${countOf(r.children.length, "item")}`);
       invalidateInbox();
     },
     onError: onErr,
@@ -2492,7 +2493,7 @@ export function InboxCard({
     if (item.status === "pending") {
       if (item.image_file_id && !multiItem && toolSplit) actions.push({ ...toolSplit, tool: "split", label: "Split into items", icon: screenIcons.split, hint: "Several different things in one photo", busy: split.isPending, onClick: () => split.mutate() });
       if (item.image_file_id && toolReceipt) actions.push({ ...toolReceipt, tool: "receipt", label: "Read as a receipt", icon: screenIcons.receipt, hint: "This photo is a receipt: split into its lines", busy: asReceipt.isPending, onClick: () => asReceipt.mutate() });
-      if (combinedCount) actions.push({ label: SCAN_UNDO_ACTIONS.undoCombine, icon: screenIcons.undo, hint: `Put the ${combinedCount} scans back as they were`, busy: uncombine.isPending, onClick: () => uncombine.mutate() });
+      if (combinedCount) actions.push({ label: SCAN_UNDO_ACTIONS.undoCombine, icon: screenIcons.undo, hint: `Put the ${countOf(combinedCount, "scan")} back as they were`, busy: uncombine.isPending, onClick: () => uncombine.mutate() });
       if ((item.suggested_metadata as { split_from?: string } | null)?.split_from) actions.push({ label: SCAN_UNDO_ACTIONS.undoSplit, icon: screenIcons.undo, hint: "Put the group photo back; every piece goes to Recently deleted", busy: unsplit.isPending, onClick: () => unsplit.mutate() });
       if (hasLocations && toolBin) actions.push({ ...toolBin, tool: "bin", label: "Turn into a bin", hint: "This IS a container: make it a location you can scan into", onClick: () => setMakeBinOpen(true) });
       if (toolBox) actions.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "empty-box" ? "Not an empty box" : "Empty box", hint: BOX_STATE_EFFECT["empty-box"], busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "empty-box" ? null : "empty-box") });
@@ -2665,7 +2666,7 @@ export function InboxCard({
       more.push({ label: "Replay processing", hint: "Free: keeps the identification, re-applies routing and fields", busy: aiWorking, onClick: () => rerun.mutate({ noAi: true }) });
       if (item.image_file_id && !multiItem && toolSplit) more.push({ ...toolSplit, tool: "split", label: "Split into items", hint: "Several different things in one photo", busy: split.isPending, onClick: () => split.mutate() });
       if (item.image_file_id && toolReceipt) more.push({ ...toolReceipt, tool: "receipt", label: "Read as a receipt", hint: "This photo is a receipt: split into its lines", busy: asReceipt.isPending, onClick: () => asReceipt.mutate() });
-      if (combinedCount) more.push({ label: SCAN_UNDO_ACTIONS.undoCombine, hint: `Put the ${combinedCount} scans back as they were`, busy: uncombine.isPending, onClick: () => uncombine.mutate() });
+      if (combinedCount) more.push({ label: SCAN_UNDO_ACTIONS.undoCombine, hint: `Put the ${countOf(combinedCount, "scan")} back as they were`, busy: uncombine.isPending, onClick: () => uncombine.mutate() });
       if (splitFrom) more.push({ label: SCAN_UNDO_ACTIONS.undoSplit, hint: "Put the group photo back; every piece goes to Recently deleted", busy: unsplit.isPending, onClick: () => unsplit.mutate() });
       if (hasLocations && toolBin) more.push({ ...toolBin, tool: "bin", label: "Turn into a bin", hint: "This IS a container: make it a location you can scan into", onClick: () => setMakeBinOpen(true) });
       if (toolBox) more.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "empty-box" ? "Not an empty box" : "Empty box", hint: BOX_STATE_EFFECT["empty-box"], busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "empty-box" ? null : "empty-box") });
@@ -3108,7 +3109,7 @@ export function InboxCard({
               if (combinedCount && item.status === "pending")
                 segs.push(
                   <span className="text-accent">
-                    ⧉ {combinedCount} scans combined
+                    ⧉ {countOf(combinedCount, "scan")} combined
                     <button
                       type="button"
                       data-testid="undo-combine"

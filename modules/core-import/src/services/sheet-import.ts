@@ -24,6 +24,7 @@ import { isStockPreviewUrl } from "@cobblr/platform-contract/stock-preview";
 import type { CoreImportDB, ImportDb } from "../db.js";
 import type { SheetPlan, RecordPlan, SummaryCheck } from "./sheet-plan.js";
 import { pathKey } from "./sheet-plan.js";
+import { apiFetch } from "@cobblr/platform-contract/self-api";
 
 export const SHEET_IMPORT_QUEUE = "core-import.sheet";
 const LOCATION_KIND = "core-locations:location";
@@ -170,7 +171,7 @@ export interface Loopback {
 }
 
 async function call<T>(lb: Loopback, method: string, path: string, body?: unknown): Promise<{ status: number; json: T }> {
-  const res = await fetch(`${lb.base}/api/v1/orgs/${lb.slug}${path}`, {
+  const res = await apiFetch(`${lb.base}/api/v1/orgs/${lb.slug}${path}`, {
     method,
     headers: { Authorization: `Bearer ${lb.token}`, "Content-Type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),

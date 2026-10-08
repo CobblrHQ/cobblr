@@ -14,6 +14,7 @@
 // no drift between the two that could either leak a field or hide one
 // the user is actually allowed to see.
 
+import { actionsRunBy } from "../platform/action-gates.js";
 import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { meta } from "../db/meta.js";
 import { MEMBER_DEFAULT_CAPABILITIES, memberHoldsByDefault } from "../platform/capability-grants.js";
@@ -65,12 +66,12 @@ export async function effectiveCapabilities(
   // A plain member (no custom role) holds the member defaults; a custom role
   // decides for itself. Same rule as userHasCapability (memberHoldsByDefault).
   const hasCustomRole = viaRole.length > 0 || (await hasAnyCustomRole(orgId, userId));
-  return {
-    all: false,
-    caps: new Set([
-      ...direct.map((r) => r.action_id),
-      ...viaRole.map((r) => r.action_id),
-      ...MEMBER_DEFAULT_CAPABILITIES.filter((c) => memberHoldsByDefault(role, c, hasCustomRole)),
-    ]),
-  };
+  const held = new Set([
+    ...direct.map((r) => r.action_id),
+    ...viaRole.map((r) => r.action_id),
+    ...MEMBER_DEFAULT_CAPABILITIES.filter((c) => memberHoldsByDefault(role, c, hasCustomRole)),
+  ]);
+  // And what an action's own declaration lets this role run (#5170), the
+  // same answer userHasCapability gives, so a button shows where it works.
+  return { all: false, caps: new Set([...held, ...actionsRunBy(role, held)]) };
 }

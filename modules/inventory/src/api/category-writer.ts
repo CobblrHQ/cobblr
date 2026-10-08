@@ -30,6 +30,7 @@ export function registerCategoryWriter(): void {
   registered = true;
 
   platform().entities.registerWriter("inventory:category", {
+    table: TABLE,
     async create(orgId, fields) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
       const name = String(fields.name ?? "Untitled");

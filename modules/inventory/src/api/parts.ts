@@ -1156,7 +1156,7 @@ partsRouter.post(
       ref: { module: "inventory", entityType: "part", entityId: modelId },
       diff: { unit_id: unit.id, serial },
     });
-    platform().events.emit("inventory.part.created", { orgId: ctx.org.id, partId: unit.id });
+    await platform().events.emit("inventory.part.created", { orgId: ctx.org.id, partId: unit.id });
 
     res.status(201).json(unit);
   }),
@@ -1325,7 +1325,7 @@ partsRouter.post(
       ref: { module: "inventory", entityType: "part", entityId: inserted.id },
       diff: { name: inserted.name, qty: inserted.qty, instance: instanceOf(req) },
     });
-    platform().events.emit("inventory.part.created", {
+    await platform().events.emit("inventory.part.created", {
       orgId: ctx.org.id,
       partId: inserted.id,
     });
@@ -1717,7 +1717,7 @@ partsRouter.post(
     const mayCount =
       (await platform().auth.userHasCapability({ ...who, actionId: "inventory:count-stock" })) ||
       (await platform().auth.userHasCapability({ ...who, actionId: "inventory:update-part" }));
-    if (!mayCount && !(await requireCapability(req, res, "inventory:count-stock"))) return;
+    if (!mayCount && !(await requireCapability(req, res, "inventory:adjust-stock"))) return;
     const parsed = StockAdjust.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const id = req.params.id;

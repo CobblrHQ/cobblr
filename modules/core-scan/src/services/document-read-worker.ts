@@ -17,6 +17,7 @@ import { checkAndSettle, readPageWithDocumentModel } from "./document-read.js";
 import { fieldsToCheck } from "./document-checks.js";
 import { mergeMeta } from "./metadata.js";
 import { restampTrackedMatch } from "./tracked-stamp.js";
+import { readPersonalDocumentLocally } from "./personal-document.js";
 
 export const DOCUMENT_READ_QUEUE = "core-scan.document-read";
 /** Five minutes, doubling to half an hour: a busy model usually frees inside
@@ -48,6 +49,7 @@ async function pageOf(orgId: string, db: Kysely<CoreScanDB>, batchId: string | n
   const file = await platform().files.read(orgId, fileId, "original");
   if (!file) return null;
   const bytes = Buffer.from(file.bytes);
+  if ((await readPersonalDocumentLocally({ bytes, mime: file.mimeType })).privacy === "personal") return null;
   if (bytes.subarray(0, 5).toString("latin1").startsWith("%PDF")) {
     const images = await documentImages(new Uint8Array(bytes), { maxPages: 2, minSide: 300 });
     return images?.[0]?.png ? Buffer.from(images[0].png) : null;

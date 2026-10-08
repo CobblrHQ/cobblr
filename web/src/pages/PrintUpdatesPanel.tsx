@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Send, Bell, X, Copy } from "lucide-react";
-import { Modal, useToast } from "@cobblr/platform-web";
+import { Modal, useToast, NumberField } from "@cobblr/platform-web";
 import { api, ApiError, type DigifabChannel, type DigifabRule, type DigifabCadence, type DigifabStep } from "../lib/api";
 
 const lbl = "text-[10px] font-mono uppercase tracking-widest text-faint";
@@ -280,7 +280,7 @@ function RuleEditor({
             <div className="space-y-1.5">
               {cadence.map((c, i) => (
                 <div key={i} className="flex items-center gap-1.5">
-                  <input type="number" min={1} value={c.every} onChange={(e) => setCad(i, { every: Math.max(1, Number(e.target.value) || 1) })} className={field + " !w-20"} />
+                  <NumberField min={1} value={c.every} onChange={(n) => setCad(i, { every: Math.max(1, n || 1) })} className={field + " !w-20"} />
                   <select value={c.type} onChange={(e) => setCad(i, { type: e.target.value as DigifabCadence["type"] })} className={field + " !w-32"}>
                     {CADENCE_TYPES.map((t) => <option key={t} value={t}>{t === "minutes" ? "minutes" : t}</option>)}
                   </select>
@@ -382,11 +382,10 @@ function StepEditor({ steps, onChange }: { steps: DigifabStep[]; onChange: (s: D
             </select>
             {kind === "wait" && (
               <>
-                <input
-                  type="number"
+                <NumberField
                   min={0}
                   value={"wait_ms" in s ? s.wait_ms / 1000 : 0}
-                  onChange={(e) => set(i, { wait_ms: Math.max(0, Math.round(Number(e.target.value) * 1000)) })}
+                  onChange={(n) => set(i, { wait_ms: Math.max(0, Math.round(n * 1000)) })}
                   className={field + " !w-16"}
                 />
                 <span className="text-xs text-faint">s</span>

@@ -26,6 +26,7 @@ import { meta } from "../db/meta.js";
 import { resolveFieldDefsForKind } from "./field-defs.js";
 import { getEntityWriterFor, listAll as listAllEntities } from "./entities.js";
 import { listEntries } from "../modules/registry.js";
+import { ttlCache } from "../lib/ttl-cache.js";
 
 /** How long an answer is reused. One menu assembly asks per kind per row, and
  *  a native read is a taxonomy listing; a few seconds turns that into one read
@@ -33,7 +34,7 @@ import { listEntries } from "../modules/registry.js";
  *  commit invalidates its own key, so a value confirmed a moment ago is in the
  *  next caller's `values` whatever this number is. */
 const MEMO_MS = 3_000;
-const memo = new Map<string, { at: number; axis: CategoryAxis | null }>();
+const memo = ttlCache<CategoryAxis | null>(MEMO_MS);
 const keyOf = (orgId: string, kind: string, instance?: string | null) => `${orgId}|${kind}|${instance ?? ""}`;
 
 /** Which entity kind holds this kind's taxonomy, when it declares one. Read
@@ -89,20 +90,16 @@ async function readAxis(orgId: string, kind: string): Promise<CategoryAxis | nul
 
 export async function axisFor(args: { orgId: string; kind: string; instance?: string | null }): Promise<CategoryAxis | null> {
   const key = keyOf(args.orgId, args.kind, args.instance);
-  const hit = memo.get(key);
-  if (hit && Date.now() - hit.at < MEMO_MS) return hit.axis;
-  let axis: CategoryAxis | null = null;
   try {
-    axis = await readAxis(args.orgId, args.kind);
+    return await memo.get(key, () => readAxis(args.orgId, args.kind));
   } catch (err) {
     // A workspace whose defs or taxonomy cannot be read ranks against nothing
-    // rather than failing the scan that asked. Not memoised: the next caller
-    // tries again rather than inheriting a transient failure for 3s.
+    // rather than failing the scan that asked. Not memoised (a rejected load is
+    // never kept): the next caller tries again rather than inheriting a
+    // transient failure for 3s.
     console.error("[category-axis] read failed:", (err as Error).message);
     return null;
   }
-  memo.set(key, { at: Date.now(), axis });
-  return axis;
 }
 
 export function forgetAxis(orgId: string, kind: string, instance?: string | null): void {

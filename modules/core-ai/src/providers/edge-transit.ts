@@ -53,7 +53,7 @@ export async function edgeFetch(
   key: string,
   baseUrl: string,
   path: string,
-  init: { method?: "GET" | "POST"; headers?: Record<string, string>; body?: unknown },
+  init: { method?: "GET" | "POST"; headers?: Record<string, string>; body?: unknown; privacy?: "personal" | "normal"; requiredFeatures?: readonly string[] },
 ): Promise<Response> {
   // Providers pass the same JSON string they'd hand fetch(); the relay carries
   // structured bodies, so parse it back rather than double-encoding.
@@ -66,6 +66,8 @@ export async function edgeFetch(
     ...(body !== undefined && body !== null ? { body } : {}),
     timeoutMs: 120_000, // local models can be slow — same budget as a direct call
     lane: "ai",
+    ...(init.privacy ? { privacy: init.privacy } : {}),
+    ...(init.requiredFeatures ? { requiredFeatures: init.requiredFeatures } : {}),
   });
   const ctype = res.headers.get("content-type") ?? "";
   if (!/json|^text\//.test(ctype) && res.body !== null && ctype) return res; // binary rides through as bytes

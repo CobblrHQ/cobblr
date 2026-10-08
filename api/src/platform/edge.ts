@@ -115,6 +115,7 @@ export async function hasChannel(key: string): Promise<boolean> {
 }
 
 export async function send(key: string, req: EdgeRequest): Promise<EdgeResponse> {
+  if (req.privacy === "personal" && req.bodyFile) throw privateTransitUnavailable(key);
   if (req.bodyFile) {
     // The file goes on the blob channel; the relayed call carries only its id.
     const { bodyFile, ...rest } = req;
@@ -134,6 +135,7 @@ async function sendOne(key: string, req: EdgeRequest): Promise<EdgeResponse> {
   // it is both faster and the only one that can serve it.
   const ch = channels.get(key);
   if (ch) return ch(req);
+  if (req.privacy === "personal") throw privateTransitUnavailable(key);
 
   if (await bridgeIsFresh(key)) return relaySend(key, req);
   // The operator's diagnosis goes to the log; the person gets a sentence about
@@ -150,11 +152,14 @@ const RECONNECT_GRACE_MS = 1_500;
  *  module (it used to be private in the AI and the shipments transits, each
  *  retrying on a text match of an error message). */
 export async function fetchViaEdge(key: string, init: EdgeFetchInit): Promise<Response> {
+  if (init.privacy === "personal" && (init.bodyFile || init.download)) throw privateTransitUnavailable(key);
+  for (const feature of init.requiredFeatures ?? []) await requireFeature(key, feature);
   const moving = !!init.bodyFile || !!init.download;
   if (init.download) await requireFeature(key, "blobs");
   // A body file is offered by send(); only a download is set up here.
   const blob = init.download ? { id: await blobExpect(key), direction: "up" as const } : undefined;
   const req: EdgeRequest = {
+    ...(init.privacy ? { privacy: init.privacy } : {}),
     path: init.path,
     method: init.method ?? (init.bodyFile ? "PUT" : "GET"),
     ...(init.body !== undefined && init.body !== null && !init.bodyFile ? { body: init.body } : {}),
@@ -232,6 +237,10 @@ function pulledFrom(path: string, done: () => void): ReadableStream<Uint8Array> 
 /** How long one file hop may take by default. */
 const FILE_HOP_MS = 30 * 60_000;
 
+function privateTransitUnavailable(key: string): EdgeUnsupported {
+  return new EdgeUnsupported(key, "private-transit", "This bridge cannot safely read personal documents yet. Use a local model on this server.");
+}
+
 /** Refuse a call the bridge on `key` has not said it can make, in words and by
  *  type, so a caller with an older way to do it can fall back. */
 async function requireFeature(key: string, feature: string): Promise<void> {
@@ -240,7 +249,8 @@ async function requireFeature(key: string, feature: string): Promise<void> {
   if (!has) {
     const w = await workspaceBridge(key).catch(() => null);
     const who = w?.last_seen ? `Your bridge “${bridgeDisplayName(w)}”` : "Your edge bridge";
-    throw new EdgeUnsupported(key, feature, `${who} is too old to carry files. Bridges update themselves within about half an hour; try again after that.`);
+    const reason = feature === "no-redirects" ? "cannot safely read personal documents yet" : "is too old to carry files";
+    throw new EdgeUnsupported(key, feature, `${who} ${reason}. Bridges update themselves within about half an hour; try again after that.`);
   }
 }
 

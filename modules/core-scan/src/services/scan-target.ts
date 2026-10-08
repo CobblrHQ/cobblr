@@ -17,6 +17,7 @@
 // here: which module a kind resolves to, and which instance it names, is one
 // answer from one place.
 import { platform, type ActionUndoStep, type ScannableInfo, type ScannableKind } from "@cobblr/platform-contract";
+import { apiFetch } from "@cobblr/platform-contract/self-api";
 
 export interface ScanTarget {
   scannable: ScannableInfo;
@@ -174,7 +175,7 @@ export async function moveQuantity(
   const have = Number.isFinite(opts.current) ? opts.current : 0;
   const applied = delta < 0 ? -Math.min(-delta, Math.max(0, have)) : delta;
   if (delta < 0 && applied === 0) return { ok: false, delta: 0, newQty: have, refused: "Nothing on hand to use" };
-  const r = await fetch(path, { method: "PATCH", headers: opts.door.headers, body: JSON.stringify({ [field]: have + applied }) });
+  const r = await apiFetch(path, { method: "PATCH", headers: opts.door.headers, body: JSON.stringify({ [field]: have + applied }) });
   if (!r.ok) return { ok: false, delta: 0, newQty: null, refused: `the record's own route answered ${r.status}` };
   return { ok: true, delta: applied, newQty: have + applied, ...(applied !== delta ? { note: `Only ${have} on hand; took ${have}, now 0` } : {}) };
 }

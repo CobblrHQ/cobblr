@@ -176,8 +176,10 @@ function missingFor(step: MakeStep, reach: MakeReach): TimelineEnd | null {
  *  is a failure, never read as "nothing connected". */
 export async function reachFor(db: Kysely<DigifabDB>, orgId: string, userId: string | null): Promise<MakeReach> {
   const caps = new Set((await platform().services.capabilities(orgId, userId)).map((c) => c.id));
-  const printer = await db.selectFrom("digifab_connections").select("id").limit(1).executeTakeFirst();
-  return { design: caps.has(DESIGN_CAPABILITY), slice: caps.has(SLICE_CAPABILITY), print: !!printer };
+  const { availableDriverKeys } = await import("./drivers/registry.js");
+  const driveable = new Set(await availableDriverKeys(db));
+  const printer = (await platform().devices.connections().list(orgId)).some(connection => connection.enabled && driveable.has(connection.type));
+  return { design: caps.has(DESIGN_CAPABILITY), slice: caps.has(SLICE_CAPABILITY), print: printer };
 }
 
 // ── Reading #4016's material columns ──────────────────────────────────────
@@ -268,6 +270,8 @@ export async function linkPrint(db: Kysely<DigifabDB>, orgId: string, makeId: st
  *  step's status, and links to the spools the print actually drew from.
  *  Nothing when the job belongs to no Make. */
 export async function settleMakeForJob(db: Kysely<DigifabDB>, orgId: string, jobId: string, status: "completed" | "failed" | "cancelled"): Promise<void> {
+  const { settleBatchForJob } = await import("./print-batch.js");
+  if (await settleBatchForJob(db, orgId, jobId, status)) return;
   const step = await db.selectFrom("digifab_make_steps").select(["id", "make_id"]).where("job_id", "=", jobId).where("step", "=", "print").executeTakeFirst();
   if (!step) return;
   await db
@@ -281,6 +285,11 @@ export async function settleMakeForJob(db: Kysely<DigifabDB>, orgId: string, job
 /** The bed-clear verdict on a job is the Make's outcome, unless a person
  *  already said otherwise on the Make itself. */
 export async function recordVerdictOnMake(db: Kysely<DigifabDB>, orgId: string, jobId: string, verdict: "good" | "scrapped"): Promise<void> {
+  const batchJob = await db.selectFrom("digifab_jobs").select(["make_id", "make_ordinal"]).where("id", "=", jobId).executeTakeFirst();
+  if (batchJob?.make_ordinal && batchJob.make_id) {
+    const print = await db.selectFrom("digifab_make_steps").select("data").where("make_id", "=", batchJob.make_id).where("step", "=", "print").executeTakeFirst();
+    if ((print?.data.batch as { state?: string } | undefined)?.state !== "complete") return;
+  }
   const step = await db.selectFrom("digifab_make_steps").select(["make_id"]).where("job_id", "=", jobId).where("step", "=", "print").executeTakeFirst();
   if (!step) return;
   const outcome = verdict === "good" ? "pass" : "fail";
@@ -353,6 +362,10 @@ export interface StepWrite {
 
 /** Record (or replace) one step of a Make, attach its files, and keep the
  *  Make's search copies current. Routes and flows alike write through here. */
+export class BatchPrintStepOwnedError extends Error {
+  constructor() { super("Use the batch controls to change its approval or history."); }
+}
+
 export async function recordMakeStep(
   db: Kysely<DigifabDB>,
   orgId: string,
@@ -383,9 +396,17 @@ export async function recordMakeStep(
   const row = await db
     .insertInto("digifab_make_steps")
     .values({ make_id: make.id, step, ...first })
-    .onConflict((oc) => oc.columns(["make_id", "step"]).doUpdateSet(first))
+    .onConflict((oc) => {
+      const update = oc.columns(["make_id", "step"]).doUpdateSet(first);
+      // The route's earlier read can precede batch preparation. Guard the
+      // actual write so a delayed ordinary edit cannot erase its journal.
+      return step === "print" && !body.data?.batch
+        ? update.where(sql<boolean>`digifab_make_steps.data -> 'batch' is null`)
+        : update;
+    })
     .returning("id")
-    .executeTakeFirstOrThrow();
+    .executeTakeFirst();
+  if (!row) throw new BatchPrintStepOwnedError();
   for (const f of files) await attachToStep(db, orgId, make, row.id, f.file_id, f.role);
   if (holding) await db.updateTable("digifab_make_steps").set({ status: finalStatus, updated_at: new Date() }).where("id", "=", row.id).execute();
 

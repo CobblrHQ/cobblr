@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { changesOf, changesIn, type ActivityChange } from "@cobblr/platform-contract/activity-changes";
+import { isStoredSecret, secretHistoryDiff } from "@cobblr/platform-contract/secret-field";
 
 export const historyBag = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const IMMUTABLE = new Set(["id", "org_id", "instance", "created_at", "updated_at", "search_vector"]);
@@ -12,7 +13,7 @@ export function changesBetween(before: unknown, after: unknown): ActivityChange[
 }
 
 export function historyDiff(before: Record<string, unknown>, after: Record<string, unknown>): Record<string, unknown> {
-  return { ...after, changes: changesBetween(before, after), version_before: before };
+  return secretHistoryDiff({ ...after, changes: changesBetween(before, after), version_before: before }) as Record<string, unknown>;
 }
 
 export function restoreImage(current: Record<string, unknown>, diff: unknown, hidden: ReadonlySet<string>): Record<string, unknown> {
@@ -20,11 +21,12 @@ export function restoreImage(current: Record<string, unknown>, diff: unknown, hi
   if (!Object.keys(before).length) throw new Error("This entry has no saved version to restore.");
   const image = { ...current };
   for (const [field, value] of Object.entries(before)) {
-    if (IMMUTABLE.has(field) || hidden.has(field)) continue;
+    if (IMMUTABLE.has(field) || hidden.has(field) || isStoredSecret(current[field])) continue;
     if (field === "metadata") {
       const live = historyBag(current.metadata);
       const old = historyBag(value);
-      image.metadata = { ...Object.fromEntries(Object.entries(old).filter(([key]) => !hidden.has(key))), ...Object.fromEntries(Object.entries(live).filter(([key]) => hidden.has(key))) };
+      const preserve = (key: string) => hidden.has(key) || isStoredSecret(live[key]);
+      image.metadata = { ...Object.fromEntries(Object.entries(old).filter(([key]) => !preserve(key))), ...Object.fromEntries(Object.entries(live).filter(([key]) => preserve(key))) };
     } else if (field in current) image[field] = value;
   }
   return image;

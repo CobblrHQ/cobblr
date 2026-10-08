@@ -52,7 +52,7 @@ function Device({ slug, connection }: { slug: string; connection: DeviceConnecti
       <p className="text-sm text-muted">{typeof connection.config.host === "string" ? connection.config.host : "Uses the host configured on the bridge"}</p>
       <button type="button" className={button} disabled={discover.isPending} onClick={() => discover.mutate()}>Find devices on this network</button>
       {discover.data && <label className="block text-sm">Found devices<select className={field} value={String(connection.config.host || "")} disabled={choose.isPending} onChange={e => { if (e.target.value) choose.mutate(e.target.value); }}><option value="">Choose a device</option>{discover.data.items.map(d => <option key={d.host} value={d.host}>{d.name} ({d.host})</option>)}</select></label>}
-      {entities.isPending && opened && <p role="status">Reading ESPHome entities...</p>}
+      {entities.isLoading && opened && <p role="status">Reading ESPHome entities...</p>}
       {entities.isError && <p role="alert">ESPHome did not answer. Check the bridge configuration and native API key. <button type="button" className={button} onClick={() => void entities.refetch()}>Try again</button></p>}
       {entities.data?.items.map(entity => <div key={entity.id} className="border-t border-line pt-3 space-y-2">
         <p className="font-medium">{entity.name} <span className="text-xs text-muted">{entity.id}</span></p>

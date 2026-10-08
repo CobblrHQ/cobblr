@@ -8,7 +8,7 @@
 // act on files, on many rows, or on settings are desk work and are not
 // offered there: Live Sort (a bench rig with a wedge scanner and a spacebar;
 // the phone's version is the camera's Sort mode), Fill missing photos,
-// Export and Import, Drive this screen, the Auto-pick and First-look
+// Export, Drive this screen, the Auto-pick and First-look
 // toggles, Same thing twice (docs/design-decisions/scan-inbox-device-split.md §3.1).
 import { Copy, Download, FileSpreadsheet, Image as ImageIcon, LayoutGrid, MonitorSmartphone, MoreHorizontal, ReceiptText, Sparkles, Tv, Upload, Wand2, Zap } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -145,17 +145,12 @@ export function ScanInboxMenu(p: ScanInboxMenuProps) {
           {/* Import belongs NEXT TO export, not with the uploads: it is the
               other half of the same conversation, and an export file is
               neither a pic nor a receipt. */}
-          {!handheld && (
-            <MenuItem
-              icon={<Upload size={14} />}
-              label="Import an export"
-              hint="JSON or CSV, reversible in one click"
-              onClick={() => {
-                close();
-                p.onImport();
-              }}
-            />
-          )}
+          <MenuItem
+            icon={<Upload size={14} />}
+            label="Import from file"
+            hint="A send file, confirmation, return file, JSON or CSV"
+            onClick={() => {close(); p.onImport();}}
+          />
           {/* A list someone already keeps is not a scan: it has its own
               sheet, which shows where every row goes before anything moves. */}
           <MenuItem

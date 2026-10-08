@@ -197,6 +197,7 @@ const AdminConsole = lazy(() => import("./pages/AdminConsole").then((m) => ({ de
 import { AppLayout } from "./components/AppLayout";
 import { WorkspaceStateBar } from "./components/WorkspaceStateBar";
 import { WorkspaceDeletionBar } from "./components/WorkspaceDeletionBar";
+import { PersonalDocumentSheet } from "./components/PersonalDocumentSheet";
 import { BlockedActionHost } from "./components/BlockedActionHost";
 import { ImpersonationBanner } from "./components/ImpersonationBanner";
 import { ShareViewBanner } from "./components/ShareViewBanner";
@@ -683,6 +684,7 @@ function ActiveOrgScopedRoutes() {
       {/* The one sheet a refusal opens, from whichever surface made the call,
           and the one that finishes an approved ask (?resume=<id>). */}
       <BlockedActionHost />
+      <PersonalDocumentSheet />
       {shouldRedirectToPortal && <Navigate to={`/portal/${activeSlug}`} replace />}
       {shouldRedirectToAppHome && <Navigate to={appMode!.home_path} replace />}
       <Routes>

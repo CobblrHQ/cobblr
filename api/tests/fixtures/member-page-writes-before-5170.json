@@ -1,0 +1,277 @@
+{
+ "why": "Every route #5170 moved onto its action's gate where a plain member was let through on origin/main before it (50643df607). A member must still be let through on each.",
+ "routes": [
+  {
+   "route": "POST modules/builds/src/api/builds.ts:/builds/:id/build",
+   "action": "builds:build-one"
+  },
+  {
+   "route": "POST modules/core-cadence/src/api/index.ts:/events",
+   "action": "core-cadence:record-event"
+  },
+  {
+   "route": "POST modules/core-discussion/src/api/conversations.ts:/",
+   "action": "core-discussion:post-comment"
+  },
+  {
+   "route": "POST modules/core-discussion/src/api/conversations.ts:/:id/resolve",
+   "action": "core-discussion:resolve-conversation"
+  },
+  {
+   "route": "POST modules/core-documents/src/api/index.ts:/records/:kind/:id/copies",
+   "action": "core-documents:copy-item"
+  },
+  {
+   "route": "POST modules/core-documents/src/api/index.ts:/records/:kind/:id/links",
+   "action": "core-documents:link-item"
+  },
+  {
+   "route": "DELETE modules/core-documents/src/api/index.ts:/records/:kind/:id/links",
+   "action": "core-documents:unlink-item"
+  },
+  {
+   "route": "POST modules/core-files/src/api/files.ts:/:id/restore",
+   "action": "core-files:restore"
+  },
+  {
+   "route": "POST modules/core-locations/src/api/floorplan-file.ts:/floorplan/import",
+   "action": "core-locations:import-floorplan"
+  },
+  {
+   "route": "POST modules/core-locations/src/api/lights.ts:/:id/light-grid",
+   "action": "core-locations:map-light-grid"
+  },
+  {
+   "route": "POST modules/core-locations/src/api/locations.ts:/:id/move-everything",
+   "action": "core-locations:move-everything"
+  },
+  {
+   "route": "POST modules/core-locations/src/api/plan-drafts.ts:/plan-drafts/:draftId/apply",
+   "action": "core-locations:plan-apply"
+  },
+  {
+   "route": "DELETE modules/core-locations/src/api/plan-drafts.ts:/plan-drafts/:draftId",
+   "action": "core-locations:plan-discard"
+  },
+  {
+   "route": "POST modules/core-locations/src/api/plan-drafts.ts:/:id/plan-drafts",
+   "action": "core-locations:plan-layout"
+  },
+  {
+   "route": "PATCH modules/core-locations/src/api/plan-drafts.ts:/plan-drafts/:draftId",
+   "action": "core-locations:plan-put"
+  },
+  {
+   "route": "POST modules/core-locations/src/api/plan-drafts.ts:/plan-drafts/:draftId/undo",
+   "action": "core-locations:plan-undo"
+  },
+  {
+   "route": "POST modules/core-locations/src/api/locations.ts:/move-everything/undo",
+   "action": "core-locations:put-back-everything"
+  },
+  {
+   "route": "PUT modules/core-locations/src/api/lights.ts:/:id/light",
+   "action": "core-locations:set-light"
+  },
+  {
+   "route": "POST modules/core-locations/src/api/lights.ts:/lights/request",
+   "action": "core-locations:show-me"
+  },
+  {
+   "route": "POST modules/core-locations/src/api/floorplan-file.ts:/floorplan/import/undo",
+   "action": "core-locations:undo-floorplan-import"
+  },
+  {
+   "route": "POST modules/core-maintenance/src/api/entries.ts:/:id/complete",
+   "action": "core-maintenance:complete"
+  },
+  {
+   "route": "POST modules/core-maintenance/src/api/index.ts:/schedules/:id/end",
+   "action": "core-maintenance:end-renewal"
+  },
+  {
+   "route": "POST modules/core-maintenance/src/api/entries.ts:/",
+   "action": "core-maintenance:log"
+  },
+  {
+   "route": "PATCH modules/core-maintenance/src/api/reminders.ts:/:id",
+   "action": "core-maintenance:reminders"
+  },
+  {
+   "route": "DELETE modules/core-maintenance/src/api/schedules.ts:/:id",
+   "action": "core-maintenance:remove-schedule"
+  },
+  {
+   "route": "POST modules/core-maintenance/src/api/schedules.ts:/:id/renew",
+   "action": "core-maintenance:renew"
+  },
+  {
+   "route": "POST modules/core-maintenance/src/api/schedules.ts:/",
+   "action": "core-maintenance:schedule"
+  },
+  {
+   "route": "PATCH modules/core-maintenance/src/api/schedules.ts:/:id",
+   "action": "core-maintenance:update-schedule"
+  },
+  {
+   "route": "PATCH modules/core-maintenance/src/api/terms.ts:/:id",
+   "action": "core-maintenance:update-term"
+  },
+  {
+   "route": "POST modules/digifab/src/api/loaded.ts:/:machineId/load",
+   "action": "core-placement:place"
+  },
+  {
+   "route": "POST modules/core-placement/src/api/index.ts:/return-home",
+   "action": "core-placement:return-home"
+  },
+  {
+   "route": "POST modules/digifab/src/api/loaded.ts:/:machineId/unload",
+   "action": "core-placement:return-home"
+  },
+  {
+   "route": "POST modules/core-scan/src/api/inbox.ts:/scan/paperwork",
+   "action": "core-scan:attach-paperwork"
+  },
+  {
+   "route": "POST modules/core-scan/src/api/decode.ts:/decode",
+   "action": "core-scan:decode-identifier"
+  },
+  {
+   "route": "POST modules/core-tags/src/api/tags.ts:/tags/deleted/:id/restore",
+   "action": "core-tags:restore-tag"
+  },
+  {
+   "route": "POST modules/core-tags/src/api/tags.ts:/attachments",
+   "action": "core-tags:tag-record"
+  },
+  {
+   "route": "POST modules/core-views/src/api/views.ts:/",
+   "action": "core-views:save-view"
+  },
+  {
+   "route": "POST modules/digifab/src/api/cutter.ts:/control",
+   "action": "digifab:cutter-control"
+  },
+  {
+   "route": "POST modules/digifab/src/api/resin.ts:/jobs/:id/postprocess",
+   "action": "digifab:resin-postprocess"
+  },
+  {
+   "route": "POST modules/digifab/src/api/large-format.ts:/stop",
+   "action": "digifab:stop"
+  },
+  {
+   "route": "POST modules/inventory/src/api/categories.ts:/",
+   "action": "inventory:add-category"
+  },
+  {
+   "route": "POST modules/inventory/src/api/parts.ts:/:id/stock-adjust",
+   "action": "inventory:adjust-stock"
+  },
+  {
+   "route": "POST modules/inventory/src/api/allocations.ts:/",
+   "action": "inventory:reserve-stock"
+  },
+  {
+   "route": "PATCH modules/inventory/src/api/allocations.ts:/:id/status",
+   "action": "inventory:settle-allocation"
+  },
+  {
+   "route": "POST modules/labels/src/api/print.ts:/",
+   "action": "labels:print"
+  },
+  {
+   "route": "POST modules/labels/src/api/queue.ts:/",
+   "action": "labels:print"
+  },
+  {
+   "route": "PATCH modules/labels/src/api/codes.ts:/config",
+   "action": "labels:set-code"
+  },
+  {
+   "route": "PATCH modules/labels/src/api/codes.ts:/groups/:group_key",
+   "action": "labels:set-code"
+  },
+  {
+   "route": "PATCH modules/labels/src/api/codes.ts:/groups/:group_key/overlay",
+   "action": "labels:set-code"
+  },
+  {
+   "route": "POST modules/lists/src/api/lists.ts:/lists/:id/clear-done",
+   "action": "lists:clear-done"
+  },
+  {
+   "route": "POST modules/machines/src/api/machines.ts:/:id/unit-of",
+   "action": "machines:make-unit-of"
+  },
+  {
+   "route": "POST modules/machines/src/api/machines.ts:/:id/units",
+   "action": "machines:name-unit"
+  },
+  {
+   "route": "POST modules/machines/src/api/machines.ts:/:id/split-one",
+   "action": "machines:split-one"
+  },
+  {
+   "route": "POST modules/machines/src/api/machines.ts:/:id/split",
+   "action": "machines:split-unit"
+  },
+  {
+   "route": "POST api/src/routes/deleted-records.ts:/:id/restore",
+   "action": "platform:restore-deleted-record"
+  },
+  {
+   "route": "POST modules/projects/src/api/tasks.ts:/:id/dependencies",
+   "action": "projects:blocked-by"
+  },
+  {
+   "route": "POST modules/projects/src/api/tasks.ts:/reorder",
+   "action": "projects:move-task"
+  },
+  {
+   "route": "DELETE modules/projects/src/api/tasks.ts:/:id/dependencies/:depId",
+   "action": "projects:unblock"
+  },
+  {
+   "route": "POST modules/purchases/src/api/orders.ts:/:id/items",
+   "action": "purchases:add-line"
+  },
+  {
+   "route": "POST modules/purchases/src/api/returns.ts:/returns/:returnId/stage",
+   "action": "purchases:advance-return"
+  },
+  {
+   "route": "POST modules/purchases/src/api/returns.ts:/orders/:id/returns",
+   "action": "purchases:start-return"
+  },
+  {
+   "route": "POST modules/sales/src/api/orders.ts:/:id/items",
+   "action": "sales:add-line"
+  },
+  {
+   "route": "POST modules/sales/src/api/orders.ts:/:id/cancel",
+   "action": "sales:cancel-order"
+  },
+  {
+   "route": "POST modules/sales/src/api/orders.ts:/:id/fulfill",
+   "action": "sales:fulfill-order"
+  },
+  {
+   "route": "POST modules/sales/src/api/orders.ts:/:id/items/:itemId/make",
+   "action": "sales:make-line"
+  },
+  {
+   "route": "POST modules/sales/src/api/orders.ts:/:id/reinstate",
+   "action": "sales:reinstate-order"
+  },
+  {
+   "route": "POST modules/sales/src/api/orders.ts:/:id/ship",
+   "action": "sales:ship-order"
+  },
+  {
+   "route": "POST modules/tracking/src/api/metrics.ts:/metrics/:id/measurements",
+   "action": "tracking:log-measurement"
+  }
+ ]
+}

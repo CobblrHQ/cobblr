@@ -2,7 +2,7 @@
 // two constants in front (BUILD, PRECACHE) and sw-logic.js inlined; see the
 // rules there. Served from the root so its scope is the whole app, and never
 // cached by the browser itself (nginx: /sw.js is no-cache).
-/* global BUILD, PRECACHE, routeOf, keepable, asOfflineCopy, offlineAnswer, sharePayload, SHARE_CACHE, SHARE_PAYLOAD */
+/* global BUILD, PRECACHE, routeOf, keepable, asOfflineCopy, offlineAnswer, sharePayload, SHARE_CACHE, SHARE_PAYLOAD, notificationFor, tapTarget */
 
 const SHELL = `cobblr-shell-${BUILD}`;
 const STATIC = "cobblr-static-v1";
@@ -45,6 +45,37 @@ self.addEventListener("message", (event) => {
   }
   // A page that found itself on a stale build asks the waiting worker to take over.
   if (event.data && event.data.type === "cobblr:skip-waiting") self.skipWaiting();
+});
+
+// A push from Cobblr (#5267): show it, and put the unread count on the Home
+// Screen icon where the device supports a badge.
+self.addEventListener("push", (event) => {
+  let data = null;
+  try {
+    data = event.data ? event.data.json() : null;
+  } catch {
+    data = null;
+  }
+  const n = notificationFor(data);
+  const badge =
+    n.badge == null || !("setAppBadge" in self.navigator)
+      ? Promise.resolve()
+      : (n.badge > 0 ? self.navigator.setAppBadge(n.badge) : self.navigator.clearAppBadge()).catch(() => {});
+  event.waitUntil(Promise.all([self.registration.showNotification(n.title, n.options), badge]));
+});
+
+// A tap opens Cobblr at what the notification is about: an open Cobblr window
+// is brought forward and moved there, else a new one opens.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = tapTarget(event.notification.data && event.notification.data.url, self.location.origin);
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
+      const open = windows.find((w) => w.url.startsWith(self.location.origin));
+      if (open) return open.focus().then((w) => (w && "navigate" in w ? w.navigate(target) : undefined)).catch(() => self.clients.openWindow(target));
+      return self.clients.openWindow(target);
+    }),
+  );
 });
 
 self.addEventListener("fetch", (event) => {

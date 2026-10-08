@@ -154,7 +154,7 @@ export async function assignPoolJobs(db: Kysely<DigifabDB>, orgId: string): Prom
       const dev = (await devicesFor(m.connection_id)).find((d) => d.id === m.remote_device_id);
       if (!dev || !dev.enabled || classify(dev.state ?? "") !== "idle") continue;
 
-      const refusal = printerMaterialRefusal(job, materialCandidates.find(c => c.device.connection_id === m.connection_id && c.device.remote_device_id === m.remote_device_id)?.loaded ?? []);
+      const refusal = job.file_id ? null : printerMaterialRefusal(job, materialCandidates.find(c => c.device.connection_id === m.connection_id && c.device.remote_device_id === m.remote_device_id)?.loaded ?? []);
       if (refusal) { materialBlock = refusal; continue; }
       const driver = await buildDriverById(db, orgId, m.connection_id);
       if (await driver?.jobReviewRequired?.()) continue;
@@ -225,6 +225,10 @@ export async function assignPoolJobs(db: Kysely<DigifabDB>, orgId: string): Prom
         if (r.ok) {
           if (r.shouldPoll) await enqueuePoll(orgId, job.id);
           busy.add(key);
+        } else if (r.code === "material_not_ready") {
+          await db.updateTable("digifab_jobs").set({ status: "queued", connection_id: null, target_device: null, error: r.message, updated_at: new Date() }).where("id", "=", job.id).where("status", "=", "assigning").execute();
+          materialBlock = r.message;
+          continue;
         } else {
           await failJob(job.id, `pool assignment send failed: ${r.code}`);
         }

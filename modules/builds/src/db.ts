@@ -101,6 +101,7 @@ export interface RunInputsTable {
 }
 
 export interface PlannedTable {
+  assembly: Generated<import("./api/assembly-orders.js").AssemblyOrder | null>;
   id: Generated<string>;
   build_id: string;
   qty: Generated<string>;

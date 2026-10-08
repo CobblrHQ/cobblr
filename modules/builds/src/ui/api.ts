@@ -111,6 +111,7 @@ export interface TraceResult {
 // Scheduling (rung 7)
 export interface ScheduledItem {
   id: string;
+  assembly_state?: string | null;
   build_id: string;
   build_name: string;
   qty: number;
@@ -152,6 +153,8 @@ export class BuildsApiError extends Error {
 }
 
 export class BuildsApi {
+  assemblyOrders(id: string) { return this.req<{ items: Array<{ id: string; qty: string; assembly: import("../api/assembly-orders.js").AssemblyOrder }> }>("GET", `/assembly-orders?${new URLSearchParams({ build_id: id })}`); }
+  assemblyOrder(id: string) { return this.req<import("../api/assembly-orders.js").AssemblyOrderView>("GET", `/assembly-orders/${id}`); }
   constructor(private readonly slug: string, private readonly getToken: () => string | null) {}
 
   private headers(json = false): Record<string, string> {

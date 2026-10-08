@@ -47,6 +47,7 @@ export function registerMachinesWriter(): void {
   registered = true;
 
   platform().entities.registerWriter("machines:machine", {
+    table: "machines_machines",
     snapshotDeletion: async (orgId, id) => snapshotRowTree(await platform().tenants.getDb(orgId), "machines_machines", id, "machines_"),
     restoreDeletion: async (orgId, snapshot) => restoreRowTree(await platform().tenants.getDb(orgId), "machines_machines", snapshot, "machines_"),
     // A record that already carries the source's key is adopted by a sync, never

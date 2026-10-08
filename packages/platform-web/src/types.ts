@@ -159,6 +159,7 @@ export interface PlatformFieldDef {
    *  display resolves it to the target's title. */
   ref_kind?: string | null;
   /** What the field MEANS (a record role such as "acquired-from"). */
+  decode_role?: string | null;
   field_role?: string | null;
   /** Whether what a person types becomes a choice (field-choices.ts). */
   learns?: boolean | null;
@@ -177,6 +178,7 @@ export interface FieldSection {
 export type BulkFieldOption = Pick<PlatformFieldDef, "name" | "display_label" | "type" | "required" | "choices" | "learns" | "ref_kind" | "unit" | "field_role"> & { native: boolean; money?: "cents" | "amount" };
 
 export interface PlatformWebApi {
+  lookupBarcode?(slug: string, code: string): Promise<import("./barcode-fill").BarcodeLookup>;
   /** How a collection presents its native fields: relabels and hides
    *  (GET /:slug/native-field-overrides?kind=). Read through
    *  useFieldPresentation; a host without it shows the presentation as
@@ -222,6 +224,9 @@ export interface PlatformWebApi {
   requestLight?(slug: string, ref: { kind: string; id: string }, reason?: "shown" | "found" | "picked" | "put-away" | "label-scanned"): Promise<{ requested: boolean; place: string | null; note: string }>;
   /** Who this workspace can hand things to (its shares), and what it has
    *  handed over. Optional: a host without sharing offers no Give to. */
+  previewSendFile?(slug: string, p: {entity_kind: string;ids: string[];mode: "copy" | "move"}): Promise<import("./SendRecords").SendFileExportPreview>;
+  exportSendFile?(slug: string, p: {entity_kind: string;ids: string[];mode: "copy" | "move";request_id?: string}): Promise<{id: string;download_path: string;summary: string}>;
+  downloadSendFile?(slug: string, id: string): Promise<void>;
   sendTargets?(slug: string): Promise<import("./SendRecords").WorkspaceSendTargets>;
   previewSend?(slug: string, p: import("./SendRecords").WorkspaceSendRequest): Promise<import("./SendRecords").WorkspaceSendPreview>;
   sendRecords?(slug: string, p: import("./SendRecords").WorkspaceSendRequest): Promise<{ summary: string; offer_ids: string[] }>;
@@ -234,7 +239,7 @@ export interface PlatformWebApi {
   listSuggestions?(slug: string, q: { kind: string; id: string }): Promise<{ items: SuggestedEdit[] }>;
   /** On a copy in a share space: what the owner changed since you edited it. */
   copyNotes?(slug: string, kind: string, id: string): Promise<{ from: string | null; notes: Array<{ field: string; label: string; theirs: string | null }> }>;
-  recordShares?(slug: string, kind?: string, id?: string): Promise<{ targets: Array<{ link_id: string; to: string }>; shared_with: Array<{ link_id: string; to: string }> }>;
+  recordShares?(slug: string, kind?: string, id?: string): Promise<{ can_share?: boolean; targets: Array<{ link_id: string; to: string }>; shared_with: Array<{ link_id: string; to: string }> }>;
   /** The workspace's printers. Needed only to honour a `ui.print` directive,
    *  which is how walk-up printing reaches a browser-driven printer. Optional:
    *  a host that doesn't wire it never walk-up prints, and the module's normal
@@ -256,7 +261,7 @@ export interface PlatformWebApi {
   /** A collection as a spreadsheet, read as the viewer (`GET
    *  /orgs/:slug/entities/:kind/export.csv`). Optional: a host without it
    *  shows no Export on a collection's header. */
-  exportEntitiesCsv?(slug: string, kind: string, q?: string): Promise<{ blob: Blob; filename: string; complete: boolean }>;
+  exportEntitiesCsv?(slug: string, kind: string, q?: string, includeSecrets?: boolean): Promise<{ blob: Blob; filename: string; complete: boolean; secretsOmitted?: boolean }>;
   /** The workspace's members — the data source for `member`-field pickers.
    *  Optional, exactly like listEntities: a host that does not wire it renders
    *  the value read-only rather than a picker it cannot populate. */
@@ -267,6 +272,7 @@ export interface PlatformWebApi {
   /** Add someone by name from a person picker ("+ Someone else…"). */
   addPerson?(slug: string, name: string): Promise<PlatformPerson>;
   listBulkFieldOptions?(slug: string, kinds: string[]): Promise<{ items: BulkFieldOption[] }>;
+  revealSecretField?(slug: string, kind: string, id: string, field: string, operation: "reveal" | "copy"): Promise<{ value: string }>;
   listFieldDefs(slug: string, kind: string): Promise<{
     items: PlatformFieldDef[];
     sections?: FieldSection[];

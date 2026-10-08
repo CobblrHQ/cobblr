@@ -7,6 +7,7 @@
 // the bubble gets one sentence that says what happened and what to do.
 
 import { forAPerson } from "./says-something.js";
+import { REPLAY_MISSING_RESULT_MESSAGE } from "../providers/replay-failure.js";
 import { providerSentence, type CredentialDoor, type ProviderReason } from "@cobblr/platform-contract/provider-reason";
 
 /** What the router's refusal carried beside the message, when it did: the
@@ -27,7 +28,7 @@ export interface HumanizedError {
   /** What KIND of failure this is, for anything that must act rather than
    *  read: a widget deciding whether to offer "try again", a bench deciding
    *  whether to wait or give up. Prose is for people; this is for code. */
-  code?: "rate_limited" | "session_limit" | "unauthorized" | "model_missing" | "unavailable" | "unknown";
+  code?: "rate_limited" | "session_limit" | "unauthorized" | "model_missing" | "unavailable" | "unknown" | "replay_missing_result" | "replay_missing_cassette";
   /** When the provider named a wall-clock reset ("resets 11:50pm"), its own
    *  words - a subscription's window is not a number of seconds it tells us. */
   resetsAt?: string;
@@ -54,12 +55,16 @@ function providerName(raw: string): string {
  * (a TurnError already carries user-facing prose), minus any JSON tail.
  */
 export function humanizeProviderError(error: string, detail?: ProviderFailureDetail): HumanizedError {
-  // The replay provider (registered only where COBBLR_AI_REPLAY_DIR is set,
-  // never in production) says exactly which cassette step failed and what it
-  // read. Folded into a generic sentence, a red CI run said only "no_ai,
-  // unknown" and kept no api log to say more (#5119), so its words pass through.
-  const replayed = /\breplay: [\s\S]*/.exec(error);
-  if (replayed) return { code: "unknown", message: replayed[0] };
+  const replayed = /\breplay: [\s\S]*/.exec(error)?.[0];
+  if (replayed) {
+    if (/found nothing in the .+ result:/i.test(replayed)) {
+      return { code: "replay_missing_result", message: REPLAY_MISSING_RESULT_MESSAGE };
+    }
+    if (/no cassette matches/i.test(replayed)) {
+      return { code: "replay_missing_cassette", message: "There is no recorded reply for this request. Nothing was changed." };
+    }
+    return { code: "unknown", message: replayed };
+  }
   const isProvider = PROVIDER_PREFIX.test(error);
   const raw = error.replace(PROVIDER_PREFIX, "");
   const who = detail?.provider ?? providerName(raw);

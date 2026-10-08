@@ -7,6 +7,7 @@
 // a real test DM the bot sends (button confirm or website fallback), so we never
 // rely on a DM channel blind.
 
+import { PushNotificationsCard } from "../components/PushNotificationsCard";
 import { useEffect, useState } from "react";
 import { AreaTabs, NOTIFICATION_TABS } from "../components/AreaTabs";
 import { DeliveryWindows } from "../components/DeliveryWindows";
@@ -109,7 +110,7 @@ export function CommunicationPreferencesPage() {
   const configured = discordConnectable(discordQ.data);
   // A server that cannot connect Discord does not name it: the page is about
   // what can reach you here.
-  usePageTitle(configured || discordQ.isLoading ? "Discord, email & in-app" : "Email & in-app");
+  usePageTitle(configured || discordQ.isLoading ? "Phone, Discord, email & in-app" : "Phone, email & in-app");
   // Connected and previously confirmed, but by the PREVIOUS Discord app. The
   // DM channel belongs to the bot, so the permission does not carry over and
   // messages would go nowhere silently. One re-confirm fixes it.
@@ -185,6 +186,9 @@ export function CommunicationPreferencesPage() {
         }}
         loading={discordQ.isLoading}
       />
+
+      {/* ── Push to this phone or computer (#5267) ──────────────────────── */}
+      <PushNotificationsCard />
 
       {/* ── Post-verify routing prompt ──────────────────────────────────── */}
       {verified && !promptDismissed && (

@@ -21,9 +21,12 @@ import { currency as workspaceCurrency } from "./money.js";
 
 import { deletionWriter } from "./deleted-records.js";
 import { historyWriter } from "./history-writes.js";
+import { secretWriter, secretReadContextFor } from "./secret-fields.js";
+import { runSecretPresence } from "./secret-presence.js";
+import { isStoredSecret, isMaskedSecret, maskSecretValues, omitSecretValues, type SecretReadContext } from "@cobblr/platform-contract/secret-field";
 import { noteResolverFailure } from "./resolver-failures.js";
 import { sql } from "kysely";
-import { perRequest } from "../lib/request-context.js";
+import { perReadRequest, perRequest } from "../lib/request-context.js";
 import type {
   EntityKindRecord,
   EntityInstanceListResolver,
@@ -57,6 +60,7 @@ import { applyServedTitle } from "./served-title.js";
 import { normalizeEntitySort } from "./sort.js";
 import { effectiveCapabilities } from "../auth/effective-capabilities.js";
 import { ORG_ROLE_RANK } from "@cobblr/platform-contract/org-roles";
+import { ttlCache } from "../lib/ttl-cache.js";
 
 const resolvers = new Map<string, EntityResolver>();
 const listResolvers = new Map<string, EntityListResolver>();
@@ -229,8 +233,8 @@ const fieldReadScopesCache = new Map<string, Record<string, string> | null>();
 // The modules a workspace has enabled, memoised briefly. Enablement CHANGES at
 // runtime (enable/disable a module), so unlike the whitelist caches above this
 // one must expire rather than live until restart.
-const enabledModulesCache = new Map<string, { at: number; names: Set<string> }>();
 const ENABLED_MODULES_TTL_MS = 30_000;
+const enabledModulesCache = ttlCache<Set<string>>(ENABLED_MODULES_TTL_MS);
 
 /** Has `orgId` enabled `moduleName`? Presence of an `org_modules` row is the
  *  signal - there is no enabled flag, disabling deletes the row.
@@ -239,17 +243,15 @@ const ENABLED_MODULES_TTL_MS = 30_000;
  *  and answering "disabled" on a blip would make every list silently empty. */
 export async function moduleEnabledForOrg(orgId: string, moduleName: string): Promise<boolean> {
   moduleName = canonicalModuleName(moduleName);
-  const hit = enabledModulesCache.get(orgId);
-  const now = Date.now();
-  if (hit && now - hit.at < ENABLED_MODULES_TTL_MS) return hit.names.has(moduleName);
   try {
-    const rows = await meta
-      .selectFrom("org_modules")
-      .select("module_name")
-      .where("org_id", "=", orgId)
-      .execute();
-    const names = new Set(rows.map((r) => r.module_name));
-    enabledModulesCache.set(orgId, { at: now, names });
+    const names = await enabledModulesCache.get(orgId, async () => {
+      const rows = await meta
+        .selectFrom("org_modules")
+        .select("module_name")
+        .where("org_id", "=", orgId)
+        .execute();
+      return new Set(rows.map((r) => r.module_name));
+    });
     return names.has(moduleName);
   } catch {
     return true;
@@ -364,6 +366,7 @@ async function getFieldReadScopes(
  *     (owner/admin) sees everything — fully backward-compatible. */
 /** Every string in a value, however nested. */
 function stringsIn(v: unknown, out: string[] = []): string[] {
+  if (isStoredSecret(v) || isMaskedSecret(v)) return out;
   if (typeof v === "string") out.push(v);
   else if (typeof v === "number") out.push(String(v));
   else if (Array.isArray(v)) for (const x of v) stringsIn(x, out);
@@ -395,6 +398,8 @@ function applyExposableProjection(
   fieldReadScopes?: Record<string, string> | null,
   readScope?: ViewerReadScope,
   publicRead?: boolean,
+  viewer?: EntityViewer,
+  secretContext?: SecretReadContext,
 ): ResolvedEntity {
   let fields: Record<string, unknown>;
   if (whitelist === null) {
@@ -441,16 +446,27 @@ function applyExposableProjection(
   if (fieldReadScopes && readScope?.all !== true) {
     const caps = readScope?.caps;
     const hidden = Object.entries(fieldReadScopes).filter(([, cap]) => !caps || !caps.has(cap)).map(([field]) => field);
-    for (const field of hidden) delete fields[field];
+    for (const field of hidden) {
+      if (!secretContext || !isStoredSecret(fields[field])) delete fields[field];
+    }
     // A custom field lives in the record's metadata (and is lifted to the top
     // level after this runs), so a gated one is dropped from there too, or
     // it would come back one step later.
     const bag = fields.metadata;
     if (hidden.length && bag && typeof bag === "object" && !Array.isArray(bag) && hidden.some((f) => Object.prototype.hasOwnProperty.call(bag, f))) {
       const kept = { ...(bag as Record<string, unknown>) };
-      for (const field of hidden) delete kept[field];
+      for (const field of hidden) {
+        if (!secretContext || !isStoredSecret(kept[field])) delete kept[field];
+      }
       fields.metadata = kept;
     }
+  }
+  if (!viewer?.system) {
+    fields = (publicRead ? omitSecretValues(fields) : maskSecretValues(fields, secretContext ? { ...secretContext, kind: resolved.kind, recordId: resolved.id } : {
+      role: viewer?.role ?? "member", userId: viewer?.userId ?? "", kind: resolved.kind, recordId: resolved.id,
+      held: readScope?.all ? new Set(Object.values(fieldReadScopes ?? {})) : readScope?.caps ?? new Set(),
+      scopes: new Map(Object.entries(fieldReadScopes ?? {})),
+    })) as Record<string, unknown>;
   }
   // A search snippet quotes the record's words (a pattern's PDF, its notes),
   // which the field whitelist exists to keep from an anonymous reader.
@@ -475,7 +491,7 @@ export function registerResolver(kind: string, resolver: EntityResolver): void {
 const entityWriters = new Map<string, EntityWriter>();
 
 export function registerEntityWriter(kind: string, writer: EntityWriter): void {
-  entityWriters.set(kind, deletionWriter(kind, historyWriter(kind, writer)));
+  entityWriters.set(kind, deletionWriter(kind, historyWriter(kind, secretWriter(kind, writer))));
 }
 
 /** The writer for a kind — INCLUDING an instance kind.
@@ -629,7 +645,6 @@ export async function lookup(
 ): Promise<ResolvedEntity | null> {
   const resolver = resolvers.get(kind) ?? (await instanceFallbackEntityResolver(orgId, kind));
   if (!resolver) return null;
-  const systemScope = viewer?.system ? SYSTEM_READ_SCOPE : undefined;
   const publicRead = viewer?.publicRead === true;
   const whitelist = await getExposableFields(kind);
   // Single-hop / cross-module lookups carry no resolved capability set,
@@ -638,6 +653,8 @@ export async function lookup(
   // never need commercial fields like cost). Member-facing field
   // visibility flows through list() with a viewer.
   const fieldReadScopes = await getFieldReadScopes(kind, orgId);
+  const systemScope = viewer?.system ? SYSTEM_READ_SCOPE : undefined;
+  const secretContext = !viewer?.system && viewer?.userId ? await secretReadContextFor(orgId, viewer.userId, viewer.role ?? "member") : undefined;
 
   // Own workspace first — common case, no cross-workspace traffic.
   try {
@@ -657,7 +674,7 @@ export async function lookup(
       // whitelist above was already computed from the requested kind, so this is
       // consistent.
       const own = await ownWhitelist(orgId, kind, whitelist, viewer);
-      const projected = { ...applyExposableProjection(resolved, own, fieldReadScopes, systemScope, publicRead), kind };
+      const projected = { ...applyExposableProjection(resolved, own, fieldReadScopes, systemScope, publicRead, viewer, secretContext), kind };
       return applyServedTitle(await applyMemberFields(orgId, await applyRelationFields(orgId, await applyComputedFields(orgId, await applyCustomFieldValues(orgId, projected))), { publicRead }));
     }
   } catch (err) {
@@ -717,6 +734,7 @@ export async function lookupMany(
 ): Promise<ResolvedEntity[]> {
   const systemScope = viewer?.system ? SYSTEM_READ_SCOPE : undefined;
   if (refs.length === 0) return [];
+  const secretContext = !viewer?.system && viewer?.userId ? await secretReadContextFor(orgId, viewer.userId, viewer.role ?? "member") : undefined;
   // Group refs by kind so each kind's resolver gets its own fan-out.
   const byKind = new Map<string, string[]>();
   for (const r of refs) {
@@ -740,7 +758,7 @@ export async function lookupMany(
         ids.map(async (id) => {
           try {
             const r = await resolver(orgId, id);
-            return r ? applyExposableProjection(r, whitelist, fieldReadScopes, systemScope) : null;
+            return r ? applyExposableProjection(r, whitelist, fieldReadScopes, systemScope, viewer?.publicRead, viewer, secretContext) : null;
           } catch (err) {
             console.error(`[entities] resolver for ${kind}:${id} failed:`, err);
             return null;
@@ -910,6 +928,21 @@ export async function list(
   query: EntityListQuery = {},
   viewer?: EntityViewer,
 ): Promise<EntityListResult> {
+  const valueFields = [...Object.keys(query.filter ?? {}), ...(query.sort ?? []).map((field) => field.replace(/^-/, "")), ...(query.where ?? []).filter((p) => p.op !== "empty" && p.op !== "not_empty").flatMap((p) => [p.col, ...(p.ref_col ? [p.ref_col] : [])])];
+  if (valueFields.length) {
+    const defs = await perRequest(`secret-defs:${orgId}:${kind}`, () => resolveFieldDefsForKind(orgId, kind));
+    if (defs.some((d) => d.type === "secret" && valueFields.includes(d.name))) throw new GroupingError("Secret fields can only be filtered by empty or has a value.");
+  }
+  const presence = query.where?.filter((p) => p.op === "empty" || p.op === "not_empty") ?? [];
+  if (presence.length) {
+    const defs = await perRequest(`secret-defs:${orgId}:${kind}`, () => resolveFieldDefsForKind(orgId, kind));
+    const hidden = await hiddenFieldsFor(orgId, kind, viewer ?? {});
+    if (presence.some((p) => hidden.has(p.col) || !defs.some((d) => d.name === p.col && d.type === "secret"))) throw new GroupingError("Choose a readable secret field for an empty or has a value filter.");
+    const { historyTableFor } = await import("./history-store.js");
+    const table = await historyTableFor(orgId, kind);
+    if (!table) throw new GroupingError("This collection does not support secret presence filters.");
+    return runSecretPresence(orgId, table, presence.map((p) => ({ field: p.col, hasValue: p.op === "not_empty" })), () => list(orgId, kind, { ...query, where: query.where?.filter((p) => p.op !== "empty" && p.op !== "not_empty") }, viewer));
+  }
   if (query.sort !== undefined) {
     query = { ...query, sort: normalizeEntitySort(query.sort) };
   }
@@ -979,7 +1012,7 @@ export async function list(
     const stock = hasStock ? places?.numbers : undefined;
     const hideFlag = query.filter?.hide_unavailable;
     const hideUnavailable = hideFlag === true || hideFlag === "true" || hideFlag === "1";
-    query = { ...query, q: undefined, group_plan: { by, fields: [...fields.values()], weighted_by: weightedBy, currency: await workspaceCurrency(orgId), ...(stock ? { numbers: stock, ...(hideUnavailable ? { where: sql<boolean>`${stock.spare_qty!} > 0` } : {}) } : {}), ...(by.some((g) => g.field === "location") ? { values: places?.values } : {}), search: query.q, search_fields: [...new Set(["name", ...defs.filter((f) => allowed(f.name)).map((f) => f.name)])] } };
+    query = { ...query, q: undefined, group_plan: { by, fields: [...fields.values()], weighted_by: weightedBy, currency: await workspaceCurrency(orgId), ...(stock ? { numbers: stock, ...(hideUnavailable ? { where: sql<boolean>`${stock.spare_qty!} > 0` } : {}) } : {}), ...(by.some((g) => g.field === "location") ? { values: places?.values } : {}), search: query.q, search_fields: [...new Set(["name", ...defs.filter((f) => f.type !== "secret" && allowed(f.name)).map((f) => f.name)])] } };
   }
 
   // Own-workspace results first.
@@ -1008,7 +1041,7 @@ export async function list(
             // Present each row as the REQUESTED kind so computed defs keyed by an
             // instance kind (`<name>:item`) resolve — same override + reasoning as
             // lookup(). No-op for base kinds (resolver already returns them).
-            await applyCustomFieldValues(orgId, { ...applyExposableProjection(r, own, fieldReadScopes, readScope, publicRead), kind }),
+            await applyCustomFieldValues(orgId, { ...applyExposableProjection(r, own, fieldReadScopes, readScope, publicRead, viewer), kind }),
           ),
         ), { publicRead })),
       ),
@@ -1228,7 +1261,15 @@ export async function kindRecordForOrg(orgId: string, kind: string): Promise<Ent
   return recs.find((r) => (r.id.includes(":") ? r.id : `${r.module_name}:${r.id}`) === kind) ?? null;
 }
 
+/** The kinds a workspace has, its instance kinds included. A feed resolves
+ *  each kind it shows through this, so a read-only request asks once: the
+ *  activity feed ran these three statements once per kind on the page, 12
+ *  times for one read (2026-10-08). */
 export async function listKindsForOrg(orgId: string): Promise<EntityKindRecord[]> {
+  return [...(await perReadRequest(`kinds-for-org:${orgId}`, () => loadKindsForOrg(orgId)))];
+}
+
+async function loadKindsForOrg(orgId: string): Promise<EntityKindRecord[]> {
   const all = await listKinds();
   // ONLY the kinds this workspace enabled. The registry is process-global —
   // every loaded module registers its kinds — while enablement is per-org, so
@@ -1361,7 +1402,7 @@ export async function getKind(kind: string): Promise<EntityKindRecord | null> {
 // identical meta queries; a field-def write calls clearServerManagedCache for
 // immediate freshness.
 const SM_TTL_MS = 5_000;
-const smCache = new Map<string, { at: number; names: string[] }>();
+const smCache = ttlCache<string[]>(SM_TTL_MS);
 
 export function clearServerManagedCache(): void {
   smCache.clear();
@@ -1369,24 +1410,23 @@ export function clearServerManagedCache(): void {
 
 export async function serverManagedFields(orgId: string, kind: string): Promise<string[]> {
   const key = `${orgId}:${kind}`;
-  const hit = smCache.get(key);
-  if (hit && Date.now() - hit.at < SM_TTL_MS) return hit.names;
-  let names: string[] = [];
-  try {
-    const rows = await meta
-      .selectFrom("module_field_defs")
-      .select("name")
-      .where("org_id", "=", orgId)
-      .where("entity_kind", "=", kind)
-      .where("server_managed", "=", true)
-      .execute();
-    names = rows.map((r) => r.name);
-  } catch (err) {
-    console.error(`[server-managed] defs query for ${key} failed:`, (err as Error).message);
-    names = [];
-  }
-  smCache.set(key, { at: Date.now(), names });
-  return names;
+  return smCache.get(key, async () => {
+    let names: string[] = [];
+    try {
+      const rows = await meta
+        .selectFrom("module_field_defs")
+        .select("name")
+        .where("org_id", "=", orgId)
+        .where("entity_kind", "=", kind)
+        .where("server_managed", "=", true)
+        .execute();
+      names = rows.map((r) => r.name);
+    } catch (err) {
+      console.error(`[server-managed] defs query for ${key} failed:`, (err as Error).message);
+      names = [];
+    }
+    return names;
+  });
 }
 
 function rowToKindRecord(row: {

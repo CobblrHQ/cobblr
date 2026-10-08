@@ -40,6 +40,7 @@ export default defineModule({
         // NO-PHRASING: the way back for another action, run only from Undo
         group: "service",
         id: "core-cadence:remove-event",
+        runBy: "member",
         internal: true,
         label: "Remove a recorded event",
         description:
@@ -59,6 +60,7 @@ export default defineModule({
         // people record consumption by using the app, not by filing ledger rows.
         group: "service",
         id: "core-cadence:record-event",
+        runBy: "member",
         examples: ["bought two more today", "used one of those"],
         undoable: true,
         label: "Record a stock event",

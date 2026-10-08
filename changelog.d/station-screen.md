@@ -15,6 +15,8 @@ A station is a page for a tablet with a barcode scanner, for a pantry shelf, a "
 
 **Scan.** Something you already have shows its photo, its place and how many you have, with big buttons: **+1**, **Used one**, **Set total…** (a keypad) and **Move to…**. A tap changes its stock straight away, with no scan inbox item, and **Undo** stays on the card until the next scan. Something new goes to the scan inbox and shows the same card you see there, so you can name it, pick a photo and file it anywhere; **Not now** leaves it in the inbox. A Cobblr label opens its thing.
 
+**A thing's own actions.** Below those buttons, a station shows the thing's own actions that can be undone, such as **Lend it** for a tool or **Log service** for a car. An action that needs an answer asks for it first (who has the tool, what was done), and **Undo** puts it back. A station shows these only for the collections it keeps.
+
 **Settings** (the ⋯ in the corner): what a scan of something you have does (**Ask** shows the buttons; **One-tap** adds 1 or uses 1 on every scan and shows "Added 1 · Undo"), which collections the station keeps, where new things go, how long before it goes back to Ready to scan (8 seconds unless you change it), sound and flash, light or dark, and large text. An owner or admin can set an owner PIN; with one, the settings can be changed on the tablet itself.
 
 If the network drops, taps wait on the tablet ("3 waiting to sync") and are sent in order when it is back, never counted twice. To stop a tablet, use **Stop this screen** under Devices → Stations.

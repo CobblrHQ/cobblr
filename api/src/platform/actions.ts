@@ -10,7 +10,7 @@ import type {
   ActionInvokeContext,
   EntityActionRecord,
 } from "@cobblr/platform-contract";
-import { axisOfTrait, PLATFORM_OWNER, type AnyAxisName } from "@cobblr/platform-contract";
+import { axisOfTrait, PLATFORM_OWNER, type ActionRequester, type AnyAxisName } from "@cobblr/platform-contract";
 import { requiredArgsRefusal } from "@cobblr/platform-contract/action-args";
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import { ActionRefusal } from "@cobblr/platform-contract/action-refusal";
@@ -88,6 +88,22 @@ export function hasUndo(handlerKey: string): boolean {
 /** The registered undoer itself, for a test to hand a result to. */
 export function undoerFor(handlerKey: string): ActionUndoer | undefined {
   return undoers.get(handlerKey);
+}
+
+const requesters = new Map<string, ActionRequester>();
+
+export function registerRequester(handlerKey: string, requester: ActionRequester): void {
+  requesters.set(handlerKey, requester);
+}
+
+/** Is `userId` the person who started what this run of `actionId` answers?
+ *  False for an action with no requester, or a target nobody started. */
+export async function isRequester(actionId: string, userId: string, ctx: Parameters<ActionRequester>[0]): Promise<boolean> {
+  const row = await meta.selectFrom("entity_actions").select("invoke_handler").where("id", "=", actionId).executeTakeFirst();
+  const requester = row?.invoke_handler ? requesters.get(row.invoke_handler) : undefined;
+  if (!requester) return false;
+  const who = await requester(ctx);
+  return who !== null && who === userId;
 }
 
 export async function undoFor(actionId: string, result: unknown, ctx: ActionUndoContext): Promise<ActionUndo[] | null> {

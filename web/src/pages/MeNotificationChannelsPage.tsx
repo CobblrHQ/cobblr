@@ -57,6 +57,12 @@ const CHANNEL_OPTIONS: Array<{
     fields: [],
   },
   {
+    channel: "browser_push",
+    label: "Push to my devices",
+    hint: "A notification on each phone and computer you turned notifications on for (the account's Notifications page; on an iPhone or iPad, from the Home Screen app). A row here sets this workspace's own threshold for them, instead of your account's.",
+    fields: [],
+  },
+  {
     channel: "discord",
     label: "Discord",
     hint: "Server-side incoming webhook. Right-click the channel → Edit Channel → Integrations → Webhooks.",

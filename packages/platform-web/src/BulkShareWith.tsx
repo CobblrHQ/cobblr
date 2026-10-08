@@ -1,18 +1,21 @@
 // "Share with…" in a list's selection bar: put the ticked things in a share
-// with someone (docs/design-decisions/share-spaces.md §9). Shown only when
-// this workspace shares its things with someone.
+// with someone (docs/design-decisions/share-spaces.md §9). An owner or admin
+// gets the one share page (#5365), where someone new can be invited too; a
+// member picks from the people this workspace already shares with.
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Share2 } from "lucide-react";
 import { countOf } from "@cobblr/platform-contract/plural";
-import { usePlatformWeb } from "./context";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { useFlowHost, usePlatformWeb } from "./context";
 import { FooterActionPopover } from "./FooterActionPopover";
 import { useRunAction } from "./run-action";
 import { useToast } from "./ToastContext";
 
 export function BulkShareWith({ kind, ids, noun = "thing", onDone }: { kind: string; ids: string[]; noun?: string; onDone?: () => void }) {
-  const { api, orgSlug } = usePlatformWeb();
+  const { api, orgSlug, role } = usePlatformWeb();
+  const { openFlow } = useFlowHost();
   // PRESS-ARGS: the panel names who (the one argument a person chooses); the kind and the ticked ids are the selection itself.
   const runAction = useRunAction();
   const toast = useToast();
@@ -20,6 +23,14 @@ export function BulkShareWith({ kind, ids, noun = "thing", onDone }: { kind: str
   const targets = shares.data?.targets ?? [];
   const [to, setTo] = useState("");
   const [busy, setBusy] = useState(false);
+  if (roleSatisfies(role, ["owner", "admin"]) && shares.data?.can_share !== false) {
+    return (
+      <button type="button" data-testid="bulk-share-with" onClick={() => openFlow("platform:share-list", { kind, ids })} className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-accent hover:text-accent">
+        <Share2 size={12} aria-hidden />
+        Share…
+      </button>
+    );
+  }
   if (targets.length === 0) return null;
   const chosen = to || targets[0]!.link_id;
   const who = targets.find((t) => t.link_id === chosen)?.to ?? "them";

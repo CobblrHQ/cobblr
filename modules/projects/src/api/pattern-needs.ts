@@ -26,6 +26,7 @@ import type { PatternNeedKind, PatternNeedSource, ProjectsDB } from "../db.js";
 import { latestPatternFileId } from "./pattern-photo.js";
 import { NOTIONS, readPatternMaterials, weightFromWords, type NotionNeed, type PatternMaterials, type ToolNeed, type YarnNeed } from "./pattern-materials.js";
 import { storePatternText } from "./pattern-text.js";
+import { namedAfterFile, patternTitle } from "./pattern-title.js";
 
 export interface PatternNeed {
   id: string;
@@ -112,8 +113,11 @@ export async function listNeeds(db: Kysely<ProjectsDB>, projectId: string): Prom
   }));
 }
 
-/** The PDF's text, or a reason it has none. */
-export async function patternText(orgId: string, fileId: string): Promise<{ text: string } | { error: string }> {
+/** The PDF's text and the title it gives itself, or a reason it has none. */
+export async function patternText(
+  orgId: string,
+  fileId: string,
+): Promise<{ text: string; filename: string; title: string | null } | { error: string }> {
   const bytes = await platform().files.read(orgId, fileId, "original");
   if (!bytes) return { error: "The pattern file could not be found." };
   try {
@@ -121,7 +125,8 @@ export async function patternText(orgId: string, fileId: string): Promise<{ text
     const parser = new PDFParse({ data: new Uint8Array(bytes.bytes) });
     const text = (await parser.getText()).text ?? "";
     if (!text.trim()) return { error: "The PDF has no text to read (a scan of printed pages?). Add what it needs by hand." };
-    return { text };
+    const info = (await parser.getInfo().catch(() => null))?.info as { Title?: unknown } | undefined;
+    return { text, filename: bytes.filename, title: patternTitle(text, typeof info?.Title === "string" ? info.Title : null) };
   } catch {
     return { error: "That PDF could not be read." };
   }
@@ -313,6 +318,26 @@ async function recordRead(
     .execute();
 }
 
+/** A pattern still named after its file takes the title its PDF gives itself.
+ *  A name the person chose is never touched. */
+export async function nameAfterItsTitle(
+  db: Kysely<ProjectsDB>,
+  orgId: string,
+  projectId: string,
+  got: { filename: string; title: string | null },
+): Promise<void> {
+  if (!got.title) return;
+  const row = await db.selectFrom("projects_projects").select(["name"]).where("id", "=", projectId).executeTakeFirst();
+  if (!row || !namedAfterFile(row.name, got.filename) || row.name === got.title) return;
+  await db
+    .updateTable("projects_projects")
+    .set({ name: got.title, updated_at: new Date() })
+    .where("id", "=", projectId)
+    .where("name", "=", row.name)
+    .execute();
+  platform().events.emit("projects.project.updated", { orgId, projectId });
+}
+
 const inFlight = new Map<string, Promise<void>>();
 
 /**
@@ -336,6 +361,7 @@ export function runPatternRead(
     // them (pattern-text.ts); a PDF with none is kept as none, so the heal
     // does not read it again.
     await storePatternText(db, projectId, fileId, "error" in got ? null : got.text);
+    if (!("error" in got)) await nameAfterItsTitle(db, orgId, projectId, got);
     if ("error" in got) {
       await recordRead(db, projectId, fileId, { status: "failed", method: null, ai_tried: false, reason: got.error });
       return;

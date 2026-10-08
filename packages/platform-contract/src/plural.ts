@@ -27,6 +27,10 @@ export function pluralise(noun: string): string {
   // "partses" the moment somebody's noun is already plural, which is the more
   // likely case for a label typed into a workspace. Leaving it gives "2 lens",
   // which is mildly wrong and instantly fixable by setting `item_noun`.
+  // The one unambiguous exception: no plural ends in "-ss", so "pass",
+  // "glass" and "class" are singulars and take -es (a laser station said
+  // "2 pass").
+  if (/ss$/.test(lower)) return `${n}es`;
   if (/s$/.test(lower)) return n;
   // x / z / ch / sh genuinely need -es and are unambiguous.
   if (/(?:x|z|ch|sh)$/.test(lower)) return `${n}es`;

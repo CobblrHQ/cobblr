@@ -9,6 +9,7 @@
 // there, so the card can offer it as the backup in one press.
 import type { ConnRoute, ConnRouteMode } from "./api";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 export interface BackupConn {
   id: string;
   kind: string;
@@ -51,5 +52,5 @@ export function backupSummary(offers: readonly BackupOffer[], orgName: (id: stri
   const who = behind.length === 1 ? behind[0]! : "your other AI";
   return offers.length === 1
     ? `Can back up ${who} in ${orgName(offers[0]!.org_id)}`
-    : `Can back up ${who} in ${offers.length} workspaces`;
+    : `Can back up ${who} in ${countOf(offers.length, "workspace")}`;
 }

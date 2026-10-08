@@ -13,6 +13,7 @@ import { platform } from "@cobblr/platform-contract";
 import { tenantContext, tenantDb, type DigifabDB } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { classify } from "../state.js";
+import { loadedOn } from "../loaded-spools.js";
 import { occupiesDevice, NOT_OCCUPYING_STATUSES } from "../jobs-core.js";
 import { rankPrinters, type LoadedSpool, type PrintAsk, type PrinterCandidate, type PrintingProfile } from "../pick-printer.js";
 import type { RemoteDevice } from "../drivers/types.js";
@@ -138,6 +139,30 @@ function gramsLeft(snap: Record<string, unknown>): number | null {
   return null;
 }
 
+export async function loadedSpoolsForMachine(orgId: string, machineId: string): Promise<LoadedSpool[]> {
+  const loaded: LoadedSpool[] = [];
+  const contents = await loadedOn(orgId, machineId);
+  for (const c of contents) {
+    const snap = await platform().entities.snapshot(orgId, c.kind, c.partId).catch(() => null);
+    if (!snap) continue;
+    const types = await platform()
+      .pairings.findBySources({ orgId, sourceKind: c.kind, sourceIds: [c.partId], targetKind: c.kind, relationshipKind: "instance-of" })
+      .catch(() => []);
+    const type = types[0]?.targetId ? await platform().entities.snapshot(orgId, c.kind, types[0].targetId) : null;
+    const md = { ...((type?.metadata ?? {}) as Record<string, unknown>), ...((snap.metadata ?? {}) as Record<string, unknown>) };
+    loaded.push({
+      spool: { kind: c.kind, id: c.partId, name: typeof snap.name === "string" ? snap.name : null },
+      slot: c.slot!.trim(),
+      material: typeof md.material === "string" ? md.material : null,
+      color: typeof md.color === "string" ? md.color : null,
+      grams_left: gramsLeft(snap),
+      type_id: types[0]?.targetId ?? null,
+      values: filamentValues(md, snap.manufacturer ?? type?.manufacturer),
+    });
+  }
+  return loaded;
+}
+
 /** Every linked printer as pick-printer sees it: its profile, the spools placed
  *  in its slots, whether it is free right now, and where it sits in the
  *  person's pool order. */
@@ -175,28 +200,7 @@ export async function gatherCandidates(orgId: string, db: Kysely<DigifabDB>): Pr
     const key = `${l.connection_id}:${l.remote_device_id}`;
     const dev = deviceState.get(key);
     const idle = !!dev && dev.enabled !== false && classify(dev.state ?? "") === "idle" && !busy.has(key) && !attention.has(key);
-    const loaded: LoadedSpool[] = [];
-    const contents = await platform()
-      .placement.contents({ orgId, container: { kind: MACHINE_KIND, id: l.machine_id } })
-      .catch(() => []);
-    for (const c of contents) {
-      const snap = await platform().entities.snapshot(orgId, c.kind, c.id).catch(() => null);
-      if (!snap) continue;
-      const types = await platform()
-        .pairings.findBySources({ orgId, sourceKind: c.kind, sourceIds: [c.id], targetKind: c.kind, relationshipKind: "instance-of" })
-        .catch(() => []);
-      const type = types[0]?.targetId ? await platform().entities.snapshot(orgId, c.kind, types[0].targetId) : null;
-      const md = { ...((type?.metadata ?? {}) as Record<string, unknown>), ...((snap.metadata ?? {}) as Record<string, unknown>) };
-      loaded.push({
-        spool: { kind: c.kind, id: c.id, name: typeof snap.name === "string" ? snap.name : null },
-        slot: c.slot ?? null,
-        material: typeof md.material === "string" ? md.material : null,
-        color: typeof md.color === "string" ? md.color : null,
-        grams_left: gramsLeft(snap),
-        type_id: types[0]?.targetId ?? null,
-        values: filamentValues(md, snap.manufacturer ?? type?.manufacturer),
-      });
-    }
+    const loaded = await loadedSpoolsForMachine(orgId, l.machine_id);
     out.push({
       machine: { id: l.machine_id, label: l.machine_label },
       device: { connection_id: l.connection_id, remote_device_id: l.remote_device_id, name: l.remote_device_name },

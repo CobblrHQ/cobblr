@@ -28,6 +28,8 @@ import { useDiscordStatus } from "../lib/useDiscordStatus";
  *  bell is a place you look, not a push, and the platform refuses to defer it. */
 const CHANNELS: Array<{ key: string; label: string; hint: string; batchedOnly?: boolean }> = [
   { key: "discord_dm", label: "Discord DM", hint: "direct messages from Cobblr" },
+  // Daily here sends the day's pushes as one, instead of a Discord DM digest.
+  { key: "browser_push", label: "Push to my devices", hint: "the phones and computers you turned notifications on for" },
   {
     key: "email",
     label: "Email",
@@ -92,7 +94,11 @@ export function DeliveryWindows() {
 
   // No Discord on this server: no Discord schedule to set.
   const discord = useDiscordStatus();
-  const channels = CHANNELS.filter((c) => c.key !== "discord_dm" || discordConnectable(discord.data));
+  // Push only once a device takes it.
+  const push = useQuery({ queryKey: ["me-push"], queryFn: () => api.mePush() });
+  const channels = CHANNELS.filter(
+    (c) => (c.key !== "discord_dm" || discordConnectable(discord.data)) && (c.key !== "browser_push" || (push.data?.devices.length ?? 0) > 0),
+  );
 
   const byChannel = useMemo(() => {
     const m = new Map<string, DeliveryWindowRow>();

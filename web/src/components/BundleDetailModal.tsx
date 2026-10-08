@@ -1229,6 +1229,7 @@ export function BundleDetailModal(props: Props) {
                 onClick={() => void handleInstall()}
                 // Not before the conflicts are known: an Update pressed first
                 // would apply without the person's answers.
+                // pending-ok: the preview is on whenever an update is offered, and an update must wait for it
                 disabled={!effectiveManifest || install.isPending || updatePreview.isPending || updatePreview.data?.valid === false}
                 className="text-xs font-medium px-3 py-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white transition flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -1258,6 +1259,7 @@ export function BundleDetailModal(props: Props) {
           ) : (
             <button
               onClick={() => void handleInstall()}
+              // pending-ok: the preview is on whenever record actions arrive, and installing them must wait for it
               disabled={
                 !effectiveManifest || install.isPending || props.alreadyInstalled === true || (!!incomingManifest?.record_actions && (updatePreview.isPending || updatePreview.data?.valid === false))
               }

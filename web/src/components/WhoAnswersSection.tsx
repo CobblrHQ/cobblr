@@ -75,6 +75,7 @@ function JobChain({ group, answer, loading, orgId }: { group: AiJobGroup; answer
   return (
     <div>
       <h3 className="text-[10px] font-mono uppercase tracking-widest text-accent">{group.title}</h3>
+      {group.id === "personal" && <p className="mt-1 text-sm text-muted">Personal documents are read here or by your local AI. They never go to a cloud AI.</p>}
       {loading ? (
         <p className="text-xs text-faint mt-1">Checking…</p>
       ) : steps.length === 0 ? (

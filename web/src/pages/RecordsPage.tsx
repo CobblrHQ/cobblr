@@ -1,4 +1,4 @@
-import { RecordFormModal, PresentationGate, useFaces } from "@cobblr/platform-web";
+import { useNewRecordBarcode, RecordFormModal, PresentationGate, useFaces } from "@cobblr/platform-web";
 // /records — list + detail modal for the records module, the neutral
 // generic-record substrate. Same shape as AssetsPage minus the domain
 // columns: a record carries ONLY the universal base (name, image, notes,
@@ -503,10 +503,20 @@ function NewRecordModal({
     }
   }, [open]);
 
+  const [barcodeMetadata, setBarcodeMetadata] = useState<Record<string, unknown>>({});
+  const [barcodeImage, setBarcodeImage] = useState("");
+  const barcode = useNewRecordBarcode({ kind: instance ? `${instance}:item` : "records:record", metadata: barcodeMetadata, setMetadata: setBarcodeMetadata, natives: [
+    { name: "name", label: "Name", key: "title", value: name, setValue: setName },
+    { name: "image_path", label: "Photo", key: "image_url", value: barcodeImage, setValue: setBarcodeImage },
+  ] });
+  useEffect(() => { if (open) { setBarcodeMetadata({}); setBarcodeImage(""); } }, [open]);
+
   const create = useMutation({
     mutationFn: () =>
       api.createRecord(activeSlug, {
         name: name.trim(),
+        metadata: barcodeMetadata,
+        image_path: barcodeImage || null,
         location_id: locationId,
       }, instance),
     onSuccess: (r) => {
@@ -522,13 +532,15 @@ function NewRecordModal({
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim() || barcode.blocked) return;
     create.mutate();
   }
 
   return (
     <RecordFormModal open={open} onClose={onClose} title={`New ${noun}`}>
       <form onSubmit={submit} className="space-y-3">
+        {barcode.controls}
+        {barcodeImage && <div className="flex items-center gap-2"><EntityThumb src={barcodeImage} alt="Photo from barcode" size={96} /><button type="button" className="text-sm text-accent underline" onClick={() => setBarcodeImage("")}>Remove photo</button></div>}
         <FieldPack items={[
           {
             need: fieldNeed("name", { control: "text", label: "Name" }),
@@ -554,7 +566,7 @@ function NewRecordModal({
           <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition">
             Cancel
           </button>
-          <button type="submit" disabled={!name.trim() || create.isPending} className="px-3 py-1.5 rounded-md text-sm font-medium bg-slate-700 hover:bg-slate-600 text-mortar-50 transition disabled:opacity-50">
+          <button type="submit" disabled={!name.trim() || create.isPending || barcode.blocked} className="px-3 py-1.5 rounded-md text-sm font-medium bg-slate-700 hover:bg-slate-600 text-mortar-50 transition disabled:opacity-50">
             {create.isPending ? "Creating…" : "Create"}
           </button>
         </div>

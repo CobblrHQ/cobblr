@@ -5,6 +5,7 @@ import { Modal, useFieldPresentation, usePhotoPick, usePlatformWeb, useRunAction
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import { useInventory } from "./context";
 import type { FamilyPayload } from "./api";
+import { randomId } from "@cobblr/platform-contract";
 
 type Receipt = { part_id: string; already_received: boolean; quantity: number };
 
@@ -113,7 +114,7 @@ export function ReceivePackage({ data }: { data: FamilyPayload }) {
           <p>{receipt.already_received ? "This label was already received. Its count is unchanged." : `Received ${receipt.quantity}. ${printed ? "QR label queued." : "QR label needs printing."}`}</p>
           <Link to={`${childPath}/parts/${receipt.part_id}`} onClick={() => setOpen(false)} className="text-accent underline">Open package</Link>
           <div className="flex flex-wrap gap-2"><button disabled={busy} type="button" onClick={() => void print(receipt.part_id)} className="rounded border border-line px-3 py-2">Print label</button>
-            <button type="button" onClick={() => { setReceiptKey(crypto.randomUUID()); setReceipt(null); setPrinted(false); }} className="rounded border border-line px-3 py-2">Receive another package with this label</button></div>
+            <button type="button" onClick={() => { setReceiptKey(randomId()); setReceipt(null); setPrinted(false); }} className="rounded border border-line px-3 py-2">Receive another package with this label</button></div>
         </div>}
       </div>
     </Modal>

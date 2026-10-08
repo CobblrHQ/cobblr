@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { MutationError, QueryError } from "@cobblr/platform-web";
+import { MutationError, QueryError, NumberField } from "@cobblr/platform-web";
 import { sheetSpec, type Rect } from "../sheet-area";
 import { useInventory } from "./context";
 
@@ -47,12 +47,12 @@ export function SheetPanel({ id, metadata }: { id: string; metadata: Record<stri
       {mode && <form className="space-y-3" onSubmit={e => { e.preventDefault(); save.mutate(false); }}>
         <p className="text-sm">{mode === "cut" ? "Enter each placed part's bounding box. Kerf and spacing are added around it." : "Keep only the rectangles still on the sheet. A hand edit can remove area, and Undo brings it back."} Measure X and Y from the lower left corner, in millimetres.</p>
         {rectangles.map((r, index) => <div key={index} className="rounded border border-line p-2 space-y-2">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">{(["x", "y", "width", "height"] as const).map(field => <label key={field} className="text-sm">{field === "x" || field === "y" ? field.toUpperCase() : field[0]!.toUpperCase() + field.slice(1)} (mm)<input aria-label={`Area ${index + 1} ${field} (mm)`} className="input w-full min-h-11" type="number" step="any" min={field === "x" || field === "y" ? 0 : 0.001} required value={r[field]} onChange={e => setRectangles(old => old.map((p, i) => i === index ? { ...p, [field]: e.target.value === "" ? 0 : Number(e.target.value) } : p))} /></label>)}</div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">{(["x", "y", "width", "height"] as const).map(field => <label key={field} className="text-sm">{field === "x" || field === "y" ? field.toUpperCase() : field[0]!.toUpperCase() + field.slice(1)} (mm)<NumberField label={`Area ${index + 1} ${field} (mm)`} className="input w-full min-h-11" min={field === "x" || field === "y" ? 0 : 0.001} required value={r[field]} onChange={n => setRectangles(old => old.map((p, i) => i === index ? { ...p, [field]: n } : p))} /></label>)}</div>
           <button type="button" className={button} onClick={() => setRectangles(old => old.filter((_, i) => i !== index))}>Remove area {index + 1}</button>
         </div>)}
         <button type="button" className={button} disabled={rectangles.length >= 128} onClick={() => setRectangles(old => [...old, { x: 0, y: 0, width: Math.min(20, view.spec.width_mm), height: Math.min(20, view.spec.height_mm) }])}>Add rectangle</button>
         {mode === "cut" && <label className="block text-sm">Result<select aria-label="Sheet cut result" className="input min-h-11 w-full" value={verdict} onChange={e => setVerdict(e.target.value as typeof verdict)}><option value="good">Came out good</option><option value="scrap">Scrap</option></select></label>}
-        {mode === "cut" && <div className="grid grid-cols-2 gap-2">{([["Kerf (mm)", kerf, setKerf], ["Spacing (mm)", spacing, setSpacing]] as const).map(([label, value, set]) => <label key={label} className="text-sm">{label}<input className="input min-h-11 w-full" aria-label={label} type="number" min="0" max="1000" step="any" required value={value} onChange={e => set(e.target.value === "" ? "" : Number(e.target.value))} /></label>)}</div>}
+        {mode === "cut" && <div className="grid grid-cols-2 gap-2">{([["Kerf (mm)", kerf, setKerf], ["Spacing (mm)", spacing, setSpacing]] as const).map(([label, value, set]) => <label key={label} className="text-sm">{label}<NumberField className="input min-h-11 w-full" label={label} min={0} max={1000} required value={value === "" ? null : value} onChange={n => set(n)} onClear={() => set("")} /></label>)}</div>}
         <div className="flex flex-wrap gap-2"><button className={button} disabled={save.isPending || mode === "cut" && !rectangles.length}>{mode === "cut" ? "Record cut" : "Save free area"}</button><button type="button" className={button} disabled={save.isPending} onClick={() => setMode(null)}>Cancel</button></div>
       </form>}
     </>}

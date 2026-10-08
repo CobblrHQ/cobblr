@@ -1,3 +1,4 @@
+import type { RecordTemplate, ReceiptDraftConfig } from "@cobblr/platform-contract/record-creation";
 // Inventory module's UI export. The web host imports this from
 // "@cobblr/inventory/ui" and mounts <InventoryUI /> inside its
 // React Router tree, wrapping it with InventoryProvider so the
@@ -58,8 +59,11 @@ interface InventoryUIProps {
    *  type), the forms show a parent picker + write an `instance-of` pairing. */
   parent?: ParentConfig;
   /** The table's "Import from <service>" button, when its bundle declares one. */
+  recordTemplates?: RecordTemplate[];
+  receiptDraft?: ReceiptDraftConfig;
   connectorImport?: ConnectorImportDecl;
   storageTracking?: boolean;
+  pasteTracking?: boolean;
   /** One line under the title saying what goes in the table. */
   hint?: string | null;
   /** This is a TYPE collection with a collection of things of those types
@@ -69,9 +73,9 @@ interface InventoryUIProps {
   family?: { childPath: string; tablePath: string };
 }
 
-export function InventoryUI({ orgSlug, getToken, instance, displayName, itemNoun, itemNounPlural, qtyUnit, countWords, parent, connectorImport, storageTracking, hint, family }: InventoryUIProps) {
+export function InventoryUI({ orgSlug, getToken, instance, displayName, itemNoun, itemNounPlural, qtyUnit, countWords, parent, connectorImport, recordTemplates, receiptDraft, storageTracking, pasteTracking, hint, family }: InventoryUIProps) {
   return (
-    <InventoryProvider orgSlug={orgSlug} getToken={getToken} instance={instance} itemNoun={itemNoun} itemNounPlural={itemNounPlural} qtyUnit={qtyUnit} countWords={countWords} parent={parent} connectorImport={connectorImport} storageTracking={storageTracking}>
+    <InventoryProvider orgSlug={orgSlug} getToken={getToken} instance={instance} itemNoun={itemNoun} itemNounPlural={itemNounPlural} qtyUnit={qtyUnit} countWords={countWords} parent={parent} recordTemplates={recordTemplates} receiptDraft={receiptDraft} connectorImport={connectorImport} storageTracking={storageTracking} pasteTracking={pasteTracking}>
       <div className="space-y-4">
         <Header title={displayName ?? "inventory"} hint={hint} listLabel={family ? displayName : undefined} />
         <Routes>

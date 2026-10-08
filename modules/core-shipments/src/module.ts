@@ -21,7 +21,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-shipments",
-  version: "0.6.7",
+  version: "0.7.0",
   maturity: "beta",
   displayName: "Shipments",
   description:
@@ -75,6 +75,7 @@ export default defineModule({
         // UI-REACH: a sales order's Ship dialog names the carrier and the tracking link from it (sales ship preview and notice)
         group: "more",
         id: "core-shipments:identify",
+        runBy: "member",
         label: "Name a tracking number's carrier",
         description:
           "Which carrier a tracking number belongs to, and the page where anyone can follow it (the carrier's own, or a universal tracker when the carrier is not recognised). Never calls a carrier. Args: { number }.",
@@ -96,6 +97,7 @@ export default defineModule({
         // core-shipments has no business naming whose record it came from.
         group: "more",
         id: "core-shipments:track",
+        runBy: "member",
         examples: ["where is my parcel", "track this number"],
         label: "Check a tracking number",
         description:

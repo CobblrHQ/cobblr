@@ -80,7 +80,7 @@ export { PhotoSourceBadge, AiMark } from "./PhotoSourceBadge";
 export { FooterActionPopover, type FooterActionPopoverProps } from "./FooterActionPopover";
 export { BulkTagAction } from "./BulkTagAction";
 export { PlacePickList, readRecentPlaces, noteRecentPlace, type PlaceChoice } from "./PlacePickList";
-export { CustomFieldsPanel, RelationSelect } from "./CustomFieldsPanel";
+export { CustomFieldsPanel, RelationSelect, MemberSelect } from "./CustomFieldsPanel";
 export { TipLine, pickTip, registerTip, registeredTips, type Tip, type TipState, type TipStripProps } from "./tips";
 export { useRecordInPath, type RecordInPathOptions } from "./useRecordInPath";
 export { EditableCell, type EditableCellDef } from "./EditableCell";
@@ -343,6 +343,13 @@ export { MoneyTotalNotice } from "./MoneyTotalNotice";
 export { NewItemMenu, NewFromTemplateButton, type TemplateCreateArgs } from "./NewItemMenu";
 
 export { ActionDescription, firstActionSentence } from "./ActionDescription";
+export { NumberField, readNumber, type NumberFieldProps } from "./NumberField";
 
 export { SendRecords } from "./SendRecords";
 export type { WorkspaceSendRequest, WorkspaceSendPreview, WorkspaceSendTargets } from "./SendRecords";
+export { SendPreviewCards } from "./SendPreviewCards";
+export type { SendFileExportPreview } from "./SendRecords";
+export { BarcodeFill, type BarcodeCaptureProps } from "./BarcodeFill";
+export { barcodeField, barcodeFills, type BarcodeFillField, type BarcodeLookup } from "./barcode-fill";
+export { useNewRecordBarcode } from "./useNewRecordBarcode";
+export { raisePersonalDocument, clearPersonalDocument, nextPersonalDocument, subscribePersonalDocument, type RaisedPersonalDocument } from "./personal-documents";

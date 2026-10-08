@@ -1,3 +1,6 @@
+import { controlCnc } from "../cnc-controls.js";
+import { CncPlacementBody, placeCncProgram } from "../cnc-placement-service.js";
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { prepareResinPrint } from "../resin-prints.js";
 import { extractPlateMetadata } from "../library/extract-metadata.js";
 import { controlResinPrinter } from "../resin-controls.js";
@@ -21,13 +24,25 @@ import { tenantDb, tenantContext, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { pollJob, sendJob, assignJob, buildDriverById, reverseBuildIfCommitted, TERMINAL, markJobTerminal, managerName } from "../jobs-core.js";
 import { enqueuePoll, reconcilePolls } from "../poll-worker.js";
-import { JobApprovalSchema } from "../drivers/job-review.js";
+import { JobApprovalSchema, ReviewRequired } from "../drivers/job-review.js";
 import { requireLaserBedReady, stationTokenHash } from "../laser-station.js";
 import { matchingLibraryMaterial } from "../laser-material.js";
 import type { JobApproval } from "../drivers/types.js";
 import { plainDriverError } from "../job-truth.js";
 
 export const jobsRouter = Router({ mergeParams: true });
+
+// AI-REACH: action digifab:place-program
+// UI-SCREEN: /station/machine/:connectionId/:deviceId
+jobsRouter.post("/:id/place", asyncHandler(async (req, res) => {
+  // ADMIN-ONLY: placing a program on stock is setting up the machine; it stays with the admin tier, at every door (#5170)
+  if (!(await requireCapability(req, res, "digifab:place-program"))) return;
+  const body = CncPlacementBody.safeParse(req.body), id = z.string().uuid().safeParse(req.params.id);
+  if (!body.success) return badBody(res, body.error);
+  if (!id.success) return badBody(res, id.error);
+  try { res.json(await placeCncProgram(tenantDb(req), tenantContext(req).org.id, id.data, body.data)); }
+  catch (e) { if (!(e instanceof ReviewRequired)) throw e; res.status(409).json({ error: { code: "placement_refused", message: e.message } }); }
+}));
 
 const JOB_COLS = [
   "embroidery_run",
@@ -192,7 +207,7 @@ jobsRouter.post(
         target_pool: pool,
         material_part_id: parsed.data.material_part_id ?? null,
         material_grams: parsed.data.material_grams != null ? String(parsed.data.material_grams) : null,
-        material_grams_by_tool: parsed.data.material_grams_by_tool?.length ? (JSON.stringify(parsed.data.material_grams_by_tool) as never) : null,
+        material_grams_by_tool: parsed.data.material_grams_by_tool?.length ? JSON.stringify(parsed.data.material_grams_by_tool) : null,
         material_type: parsed.data.material_type ?? null,
         file_id: parsed.data.file_id ?? null,
         linked_machine_id: parsed.data.linked_machine_id ?? null,
@@ -281,16 +296,16 @@ jobsRouter.post("/:id/prepare", asyncHandler(async (req, res) => {
   if (!driver.prepareJob || !job.file_id) return void res.status(409).json({ error: { code: "file_required", message: "Choose a stored file to prepare this job." } });
   const file = await platform().files.read(orgId, job.file_id);
   if (!file) return void res.status(409).json({ error: { code: "file_missing", message: "The job's stored file no longer exists." } });
-  const kind = await driver.jobReviewKind?.();
-  const print = kind === "print", cutter = kind === "cutter";
-  const preparedFile = cutter ? /\.cutterplan$/i : driver.printProcess === "large-format" ? /\.ippplan$/i : driver.printProcess === "resin" ? /\.goo$/i : print ? /\.(gcode|gco)$/i : driver.laserBackend ? /\.laserplan$/i : /\.lbrn2$/i;
-  if (!preparedFile.test(file.filename)) return void res.status(409).json({ error: { code: "prepared_file_required", message: cutter ? "Choose a prepared cutter file for this station." : driver.printProcess === "resin" ? "Choose a sliced GOO resin print for this station." : print ? "Choose a sliced G-code print for this station." : "Choose a prepared laser file for this station." } });
+  const reviewKind = await driver.jobReviewKind?.();
+  const print = reviewKind === "print", cnc = reviewKind === "cnc", cutter = reviewKind === "cutter";
+  const preparedFile = cnc ? /\.(nc|gcode|tap)$/i : cutter ? /\.cutterplan$/i : driver.printProcess === "large-format" ? /\.ippplan$/i : driver.printProcess === "resin" ? /\.goo$/i : print ? /\.(gcode|gco)$/i : driver.laserBackend ? /\.laserplan$/i : /\.lbrn2$/i;
+  if (!preparedFile.test(file.filename)) return void res.status(409).json({ error: { code: "prepared_file_required", message: cnc ? "Choose a posted CNC program for this station." : cutter ? "Choose a prepared cutter file for this station." : driver.printProcess === "resin" ? "Choose a sliced GOO resin print for this station." : print ? "Choose a sliced G-code print for this station." : "Choose a prepared laser file for this station." } });
   try {
     await requireLaserBedReady(db, job);
     const devices = await driver.listDevices();
     const device = devices.find(d => d.id === job.target_device);
     if (!device || ["running", "printing", "paused", "busy"].includes(device.state ?? "")) throw new Error("This machine is busy. Finish its current job before loading another file.");
-    if (driver.laserBackend || cutter || ["resin", "large-format"].includes(driver.printProcess ?? "")) await db.updateTable("digifab_jobs").set({ cancel_requested_at: null }).where("id", "=", job.id).where("send_token", "is", null).execute();
+    if (driver.laserBackend || cnc || cutter || ["resin", "large-format"].includes(driver.printProcess ?? "")) await db.updateTable("digifab_jobs").set({ cancel_requested_at: null }).where("id", "=", job.id).where("send_token", "is", null).execute();
     const review = await driver.prepareJob(new Uint8Array(file.bytes), file.filename);
     if (driver.printProcess === "resin") {
       if (!job.target_device) throw new Error("Choose this resin printer before reviewing the print.");
@@ -307,7 +322,7 @@ jobsRouter.post("/:id/prepare", asyncHandler(async (req, res) => {
   }
   catch (e) {
     const detail = String(e instanceof Error ? e.message : e);
-    res.status(print ? 409 : 502).json({ error: { code: "prepare_failed", message: !print && /import|timeout|modal|unsaved/i.test(detail) ? "LightBurn needs attention on its screen. Check for a prompt, then try preparing the job again." : plainDriverError(e, await managerName(orgId, job.connection_id), "preparing the project") } });
+    res.status(print ? 409 : 502).json({ error: { code: "prepare_failed", message: !print && !cnc && /import|timeout|modal|unsaved/i.test(detail) ? "LightBurn needs attention on its screen. Check for a prompt, then try preparing the job again." : plainDriverError(e, await managerName(orgId, job.connection_id), "preparing the project") } });
   }
 }));
 
@@ -332,6 +347,7 @@ jobsRouter.post(
 );
 
 const SEND_REFUSALS: Record<string, string> = {
+  batch_approval_required: "Start this print from its batch card so its approval and bed check are recorded.",
   review_required: "Review this job in the queue and approve Start first.",
   already_sent: "job already sent",
   already_sending: "This job is already being sent to its printer.",
@@ -346,10 +362,11 @@ const SEND_REFUSALS: Record<string, string> = {
  *  page's button (the route above) and the digifab:send action alike, so the
  *  action's physical effect is the only way a job reaches a machine (Services
  *  §9, §14.3). */
-export async function sendAndWatch(db: Parameters<typeof sendJob>[0], orgId: string, jobId: string, approval?: JobApproval) {
-  const r = await sendJob(db, orgId, jobId, approval);
+export async function sendAndWatch(db: Parameters<typeof sendJob>[0], orgId: string, jobId: string, approval?: JobApproval, batchPermit?: import("../batch-start-permit.js").BatchStartPermit) {
+  const r = await sendJob(db, orgId, jobId, approval, batchPermit);
   if (!r.ok) {
-    const message = r.code === "send_failed" ? r.message : (SEND_REFUSALS[r.code] ?? "no such job");
+    if(r.code==="send_failed"&&r.shouldPoll)await enqueuePoll(orgId,jobId);
+    const message = (r.code === "send_failed" || r.code === "material_not_ready") ? r.message : (SEND_REFUSALS[r.code] ?? "no such job");
     return { ok: false as const, code: r.code, message };
   }
   if (r.shouldPoll) await enqueuePoll(orgId, jobId);
@@ -388,8 +405,10 @@ jobsRouter.post(
     if (!r.ok) {
       const status = r.code === "not_found" ? 404 : 409;
       const message =
-        r.code === "not_found"
+        r.code === "material_not_ready" ? r.message : r.code === "not_found"
           ? "no such job"
+          : r.code === "batch_approval_required"
+            ? "Start this print from its batch card so its approval and bed check are recorded."
           : r.code === "not_awaiting"
             ? "job is not awaiting assignment"
             : r.code === "no_file"
@@ -419,12 +438,14 @@ jobsRouter.post(
     if (!requireRole(req, res, "owner", "admin")) return;
     const ctx = tenantContext(req);
     const db = tenantDb(req);
-    const job = await db.selectFrom("digifab_jobs").select(["id", "status", "target_pool", "embroidery_run"]).where("id", "=", req.params.id!).executeTakeFirst();
+    const job = await db.selectFrom("digifab_jobs").select(["id", "status", "target_pool", "cnc_setup", "cnc_usage_recorded_at", "embroidery_run", "make_ordinal"]).where("id", "=", req.params.id!).executeTakeFirst();
     if (!job) return void res.status(404).json({ error: { code: "not_found", message: "no such job" } });
+    if (job.make_ordinal != null) return void res.status(409).json({ error: { code: "batch_approval_required", message: "Use the batch card for this print. To print another batch, prepare it in Makes." } });
     if (job.embroidery_run) return void res.status(409).json({ error: { code: "embroidery_station_required", message: "Prepare a new embroidery run or record this run at its embroidery station." } });
     if (job.status !== "failed" && job.status !== "cancelled") {
       return void res.status(409).json({ error: { code: "not_retryable", message: "only a failed or cancelled job can be retried" } });
     }
+    if(job.cnc_setup&&!job.cnc_usage_recorded_at)return void res.status(409).json({error:{code:"stock_use_pending",message:"Record this CNC attempt's stock use and outcome at the station first."}});
     // A build whose consumption was reversed can commit again on this send.
     // Conditional on the job still being failed or cancelled: two retries at
     // once must not both re-queue it (the second would wipe the first's send
@@ -491,6 +512,7 @@ jobsRouter.post(
     const db = tenantDb(req);
     const src = await db.selectFrom("digifab_jobs").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
     if (!src) return void res.status(404).json({ error: { code: "not_found", message: "no such job" } });
+    if (src.make_ordinal != null) return void res.status(409).json({ error: { code: "batch_approval_required", message: "Use the batch card for this print. To print another batch, prepare it in Makes." } });
     if (src.embroidery_run) return void res.status(409).json({ error: { code: "embroidery_station_required", message: "Prepare a new embroidery run with its hoop and thread choices." } });
     // A double tap is almost never "two copies, please", and a print is
     // physical. The stamp is one conditional UPDATE, so two taps at once
@@ -514,6 +536,7 @@ jobsRouter.post(
     if (Number(stamped.numUpdatedRows ?? 0n) === 0) {
       return void res.status(409).json({ error: { code: "just_reprinted", message: "You just reprinted this. Print another copy?" } });
     }
+    // check-then-insert: The stamp serializes requests; clones get generated ids with no batch ordinal.
     const clone = await db
       .insertInto("digifab_jobs")
       .values({
@@ -524,7 +547,7 @@ jobsRouter.post(
         target_pool: src.target_pool,
         material_part_id: src.material_part_id,
         material_grams: src.material_grams,
-        material_grams_by_tool: src.material_grams_by_tool == null ? null : (JSON.stringify(src.material_grams_by_tool) as never),
+        material_grams_by_tool: src.material_grams_by_tool == null ? null : JSON.stringify(src.material_grams_by_tool),
         material_type: src.material_type,
         file_id: src.file_id,
         linked_machine_id: src.linked_machine_id,
@@ -585,10 +608,19 @@ const reply = (status: number, body: Record<string, unknown>): JobReply => ({ st
  *  (#5091). It stops the machine where the job runs, and is real only when the
  *  machine says it stopped. */
 export async function cancelJob(db: ReturnType<typeof tenantDb>, orgId: string, jobId: string): Promise<JobReply> {
-    const job = await db.selectFrom("digifab_jobs").select(["id", "status", "connection_id", "remote_job_id", "target_device", "embroidery_run"]).where("id", "=", jobId).executeTakeFirst();
+    const job = await db.selectFrom("digifab_jobs").select(["id", "status", "connection_id", "remote_job_id", "target_device", "send_token", "embroidery_run"]).where("id", "=", jobId).executeTakeFirst();
     if (!job) return reply(404, { error: { code: "not_found", message: "no such job" } });
     if (job.embroidery_run) return reply(409, { error: { code: "embroidery_station_required", message: "Stop the physical embroidery machine using its own controls, then record the interruption and measured thread use at its embroidery station." } });
     if (TERMINAL.has(job.status)) return reply(409, { error: { code: "already_terminal", message: `job is ${job.status}` } });
+
+    if(job.send_token && job.connection_id && job.target_device && !job.remote_job_id){
+      const driver=await buildDriverById(db,orgId,job.connection_id);
+      if(await driver?.jobReviewKind?.()==="cnc"){
+        const result=await controlCnc(db,orgId,driver!,job.target_device,"stop",{},job.connection_id);
+        if(!result.ok)return reply(502, {error:{code:"cancel_failed",message:result.detail??"The CNC controller has not confirmed Stop. Check the machine."}});
+        return reply(202, {status:job.status,cancelling:true,remote_cancelled:false,message:"Stop requested during Start. Waiting for the CNC controller to confirm."});
+      }
+    }
 
     const printDriver = job.connection_id ? await buildDriverById(db, orgId, job.connection_id) : null;
     if ((printDriver?.printProcess === "resin" || printDriver?.printProcess === "large-format") && job.target_device && job.connection_id) {
@@ -650,7 +682,7 @@ export async function cancelJob(db: ReturnType<typeof tenantDb>, orgId: string, 
 jobsRouter.post(
   "/:id/cancel",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "digifab:stop"))) return;
     const out = await cancelJob(tenantDb(req), tenantContext(req).org.id, req.params.id!);
     res.status(out.status).json(out.body);
   }),
@@ -682,13 +714,18 @@ export async function controlJobById(db: ReturnType<typeof tenantDb>, orgId: str
   await db.updateTable("digifab_jobs").set({ status, updated_at: new Date() }).where("id", "=", job.id).execute();
   return reply(200, { status });
 }
-async function controlJob(req: import("express").Request, res: import("express").Response, action: "pause" | "resume") {
-  if (!requireRole(req, res, "owner", "admin")) return;
+async function controlJob(req: import("express").Request, res: import("express").Response, action: "pause" | "resume", gate = true) {
+  // Pause is the assistant's Stop: its route gates on digifab:stop (#5170);
+  // resume is the page's alone and keeps its own bar.
+  if (gate && !requireRole(req, res, "owner", "admin")) return;
   const out = await controlJobById(tenantDb(req), tenantContext(req).org.id, req.params.id!, action);
   res.status(out.status).json(out.body);
 }
 // AI-ACTION: digifab:stop
-jobsRouter.post("/:id/pause", asyncHandler((req, res) => controlJob(req, res, "pause")));
+jobsRouter.post("/:id/pause", asyncHandler(async (req, res) => {
+  if (!(await requireCapability(req, res, "digifab:stop"))) return;
+  await controlJob(req, res, "pause", false);
+}));
 // AI-REACH: exempt resuming starts a machine again; a person presses it at the page, where it is confirmed
 
 jobsRouter.post("/:id/resume", asyncHandler((req, res) => controlJob(req, res, "resume")));
@@ -701,8 +738,9 @@ jobsRouter.delete(
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin")) return;
     const db = tenantDb(req);
-    const job = await db.selectFrom("digifab_jobs").select(["id", "status", "embroidery_run"]).where("id", "=", req.params.id!).executeTakeFirst();
+    const job = await db.selectFrom("digifab_jobs").select(["id", "status", "cnc_setup", "cnc_usage_recorded_at", "embroidery_run"]).where("id", "=", req.params.id!).executeTakeFirst();
     if (!job) return void res.status(404).json({ error: { code: "not_found", message: "no such job" } });
+    if(job.cnc_setup&&!job.cnc_usage_recorded_at)return void res.status(409).json({error:{code:"stock_use_pending",message:"Record this CNC attempt's stock use and outcome at the station first."}});
     if (job.embroidery_run) return void res.status(409).json({ error: { code: "embroidery_station_required", message: "Prepare a new embroidery run or record this run at its embroidery station." } });
     // `paused` is physically mid-print too, and an `unknown`-status job may be —
     // anything that isn't locally terminal or pre-send must be cancelled first,

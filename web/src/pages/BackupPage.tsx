@@ -12,7 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, Upload, FileArchive, Layers, Loader2, AlertTriangle, HardDrive, Play, Trash2, Plus, Clock } from "lucide-react";
 import { getToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { downloadBlob, useToast, usePageTitle, SecretInput, sendUpload, uploadErrorOf } from "@cobblr/platform-web";
+import { downloadBlob, useToast, usePageTitle, SecretInput, sendUpload, uploadErrorOf, NumberField } from "@cobblr/platform-web";
 
 interface BlueprintPlan {
   enable_modules: string[];
@@ -711,13 +711,12 @@ function DestinationsSection({ base, auth }: { base: string; auth: () => Record<
             </label>
             <label className="flex flex-col gap-1">
               <span className="text-muted">Keep (retention)</span>
-              <input
-                type="number"
+              <NumberField
                 min={1}
                 max={365}
                 className="w-24 bg-transparent border border-line dark:border-slate-600 rounded px-2 py-1"
                 value={form.retention}
-                onChange={(e) => setForm((f) => ({ ...f, retention: Number(e.target.value) || 7 }))}
+                onChange={(n) => setForm((f) => ({ ...f, retention: n || 7 }))}
               />
             </label>
           </div>

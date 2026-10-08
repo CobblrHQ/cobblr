@@ -59,7 +59,7 @@ export function durationPath(name, dir = DURATIONS_DIR) {
  *  second lint's name, is refused rather than read: the old map grew two
  *  lint entries at its top level beside `ms` (2026-09-22), where the budget
  *  never looked, so a hand-added time sat there reading as recorded. */
-export const FILE_KEYS = ["lint", "run", "rows", "manual", "tsx", "ms", "readMB", "recorded", "source"];
+export const FILE_KEYS = ["lint", "run", "rows", "manual", "tsx", "ms", "readMB", "recorded", "source", "paths"];
 
 /** The map this directory replaced. It must not come back beside it. */
 export const LEGACY_MAP = join(ROOT, "scripts", "lint-durations.json");
@@ -87,7 +87,11 @@ function readOne(dir, file) {
   if (onTsx && !(typeof d.tsx === "string" && d.tsx.trim().length >= 20)) return { name: expected, problem: `${file} runs under tsx with no "tsx" reason; run it as \`node ${d.run.replace(/^tsx\s+/, "")}\` (Node strips the types, ~0.1 s to start against ~1.3 s), or say why it needs tsx` };
   if (!onTsx && d.tsx !== undefined) return { name: expected, problem: `${file} gives a "tsx" reason but does not run under tsx` };
   if (d.readMB !== undefined && !(Number.isFinite(d.readMB) && d.readMB >= 0)) return { name: expected, problem: `${file} has readMB ${JSON.stringify(d.readMB)}, which is not a size` };
-  return { name: expected, ...(d.ms !== undefined ? { ms: d.ms } : {}), ...(d.readMB !== undefined ? { readMB: d.readMB } : {}), run: d.run, rows: d.rows ?? [], manual: d.manual };
+  // A lint with a fast path and a full fallback has a quiet time per path ("paths": {"full": 14000}); it says
+  // which it took with a `[lint-path] <name>` line, and is judged against that path's time.
+  if (d.paths !== undefined && !(d.paths && typeof d.paths === "object" && !Array.isArray(d.paths) && Object.values(d.paths).every((v) => Number.isFinite(v) && v > 0)))
+    return { name: expected, problem: `${file} has "paths" that is not an object of path name to a time` };
+  return { name: expected, ...(d.ms !== undefined ? { ms: d.ms } : {}), ...(d.readMB !== undefined ? { readMB: d.readMB } : {}), ...(d.paths ? { paths: d.paths } : {}), run: d.run, rows: d.rows ?? [], manual: d.manual };
 }
 
 /** Every registered lint, from its record: `{ name, run, rows, manual }`.
@@ -124,6 +128,23 @@ export function readQuietMs(dir = DURATIONS_DIR) {
     if (!file.endsWith(".json")) continue;
     const r = readOne(dir, file);
     if (r.ms !== undefined) out[r.name] = r.ms;
+  }
+  return out;
+}
+
+/** Each lint's quiet time per path, for the lints that have more than one: `{ name: { path: ms } }`. */
+export function readPathMs(dir = DURATIONS_DIR) {
+  const out = {};
+  let names;
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return out;
+  }
+  for (const file of names) {
+    if (!file.endsWith(".json")) continue;
+    const r = readOne(dir, file);
+    if (r.paths) out[r.name] = r.paths;
   }
   return out;
 }

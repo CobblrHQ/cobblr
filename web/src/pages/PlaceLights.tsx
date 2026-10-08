@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useToast, runAction } from "@cobblr/platform-web";
+import { useToast, runAction, NumberField } from "@cobblr/platform-web";
 import { PlaceLight, type PlaceLightMapping } from "@cobblr/platform-contract/place-indicate";
 import { api, type Location } from "../lib/api";
 
@@ -48,7 +48,7 @@ export function PlaceLights({ slug, place, hasBins }: { slug: string; place: Loc
   });
   const show = useMutation({ mutationFn: () => api.requestLight(slug, { kind: "core-locations:location", id: place.id }, "shown"), onSuccess: r => toast.success(r.note), onError: e => toast.error(e.message) });
   const busy = save.isPending || grid.isPending || clear.isPending;
-  const numeric = (label: string, value: number, set: (n: number) => void, min = 0, max = 65534) => <label className="flex flex-col gap-1 min-w-0 text-xs">{label}<input type="number" min={min} max={max} value={value} onChange={e => set(Number(e.target.value))} className="w-full rounded border border-line bg-surface p-2 text-sm" /></label>;
+  const numeric = (label: string, value: number, set: (n: number) => void, min = 0, max = 65534) => <label className="flex flex-col gap-1 min-w-0 text-xs">{label}<NumberField min={min} max={max} value={value} onChange={(n) => set(n)} className="w-full rounded border border-line bg-surface p-2 text-sm" /></label>;
   return <details className="rounded border border-line p-3">
     <summary className="cursor-pointer text-sm font-medium">Light</summary>
     <div className="mt-3 space-y-3">

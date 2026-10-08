@@ -42,6 +42,8 @@ import {
   type TriggeredBy,
 } from "./delivery-windows.js";
 import { decodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
+import { pushDevicesFor, pushSettingsFor } from "./push-delivery.js";
+import { heldForQuietHours, privatePushLine, worthAPush, type PushSettings } from "./push-policy.js";
 
 // Exported so the delivery sweeper flushes through the SAME adapters a live
 // send uses. A second registry would drift the moment a channel is added.
@@ -106,6 +108,9 @@ export type DispatchParams = NotificationDestination & {
   actions?: NotificationAction[];
   /** Substance behind the one-liner, for channels that can render a card. */
   card?: NotificationCard;
+  /** The message or card carries a person's private content (a personal
+   *  document, a secret field): a push shows a generic line and the link. */
+  private?: boolean;
 };
 
 export interface DispatchResult {
@@ -270,6 +275,20 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
     }
   }
 
+  // 2a. Push (#5267) is a person's, across their devices, not a workspace's: a
+  //     person who turned it on for a device hears about whatever crosses
+  //     their push threshold (high and urgent by default; the bell keeps the
+  //     rest). A binding this workspace has for browser_push, enabled or not,
+  //     decides instead: it was set on purpose.
+  let pushSettings: PushSettings | null = null;
+  if (!winningByChannel.has("browser_push") && !effective.some((e) => e.channel === "browser_push")) {
+    const devices = await pushDevicesFor(p.userId, p.orgId);
+    if (devices.length > 0) {
+      pushSettings = await pushSettingsFor(p.userId);
+      if (worthAPush(priority, pushSettings)) effective.push({ channel: "browser_push", config: null });
+    }
+  }
+
   // 2b. Split the channels into "now" and "with the rest".
   //
   //     A delivery window is per (person, channel) and is about VOLUME; the
@@ -285,6 +304,10 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
   for (const e of effective) {
     if (shouldDefer(windows.get(e.channel), priority, e.channel, triggeredBy))
       deferredChannels.push(e.channel);
+    // Quiet hours hold every push but urgent until they end; the sweeper sends
+    // what waited as one push then.
+    else if (e.channel === "browser_push" && heldForQuietHours(priority, (pushSettings ??= await pushSettingsFor(p.userId)), new Date()))
+      deferredChannels.push(e.channel);
     else liveChannels.push(e);
   }
   for (const channel of deferredChannels) {
@@ -295,7 +318,9 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
         notification_id: inserted.id,
         org_id: p.orgId,
         event_type: p.eventType,
-        message: p.message,
+        // A held push is sent later with no payload to say it was private, so
+        // a private one waits with only the line it may show.
+        message: channel === "browser_push" && p.private ? privatePushLine(p.eventType) : p.message,
         link_url: p.link_url ?? null,
         priority,
         triggered_by: triggeredBy,
@@ -328,6 +353,7 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
           payload: p.payload,
           actions: p.actions ?? null,
           card: p.card ?? null,
+          private: p.private === true,
         });
         return { name, ok };
       } catch (err) {

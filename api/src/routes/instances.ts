@@ -5,6 +5,7 @@
 // ordering). Both are read-mostly from the web side; CRUD is workspace
 // owner/admin only.
 
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware.js";
@@ -165,7 +166,7 @@ instancesRouter.post(
   withTenant,
   async (req, res, next) => {
     try {
-      if (!requireOwnerOrAdmin(req, res)) return;
+      if (!(await requireCapability(req, res, "platform:create-instance"))) return;
       const parsed = CreateInstanceBody.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
@@ -219,7 +220,7 @@ instancesRouter.post(
   withTenant,
   async (req, res, next) => {
     try {
-      if (!requireOwnerOrAdmin(req, res)) return;
+      if (!(await requireCapability(req, res, "platform:promote-category"))) return;
       const parentInstance = req.params.instanceName;
       const parsed = PromoteBody.safeParse(req.body);
       if (!parentInstance || !parsed.success) {
@@ -271,7 +272,7 @@ instancesRouter.post(
   withTenant,
   async (req, res, next) => {
     try {
-      if (!requireOwnerOrAdmin(req, res)) return;
+      if (!(await requireCapability(req, res, "platform:demote-category"))) return;
       const instanceName = req.params.instanceName;
       const parsed = DemoteBody.safeParse(req.body);
       if (!instanceName || !parsed.success) {
@@ -413,7 +414,7 @@ overridesRouter.put(
   withTenant,
   async (req, res, next) => {
     try {
-      if (!requireOwnerOrAdmin(req, res)) return;
+      if (!(await requireCapability(req, res, "platform:rename-thing"))) return;
       const parsed = UpsertOverrideBody.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({

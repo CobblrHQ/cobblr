@@ -2,6 +2,7 @@
 //
 // Spec: docs/design-decisions/discussion-and-the-side-rail.md
 
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { z } from "zod";
 import { likeEscape, platform } from "@cobblr/platform-contract";
@@ -189,7 +190,7 @@ discussionRouter.get(
 discussionRouter.post(
   "/",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-discussion:post-comment"))) return;
     const parsed = PostBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const ctx = tenantContext(req);
@@ -400,7 +401,7 @@ const ResolveBody = z.object({ resolved: z.boolean() });
 discussionRouter.post(
   "/:id/resolve",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-discussion:resolve-conversation"))) return;
     const parsed = ResolveBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const ctx = tenantContext(req);

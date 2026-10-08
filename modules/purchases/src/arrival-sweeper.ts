@@ -249,8 +249,11 @@ async function visitWorkspace(
   opts: { number?: string; orderId?: string; force?: boolean },
 ): Promise<{ due: number; asked: number } | void> {
   const org = { id: orgId };
-  let due = 0;
-  let asked = 0;
+  // The parcels of orders that ship in more than one (#5351) are followed and
+  // asked about one by one, before the orders themselves.
+  const parcels = await visitShipments(orgId, raw as Kysely<unknown>, now, opts);
+  let due = parcels.due;
+  let asked = parcels.asked;
   {
     {
       {
@@ -292,10 +295,10 @@ async function visitWorkspace(
           rows = ((await tdb.executeQuery(q)) as { rows: DueRow[] }).rows;
         } catch (err) {
           // A workspace whose purchases migrations have not caught up yet.
-          if ((err as Error).message.includes("does not exist")) return;
+          if ((err as Error).message.includes("does not exist")) return { due, asked };
           throw err;
         }
-        if (rows.length === 0) return;
+        if (rows.length === 0) return { due, asked };
 
         // Ask the carrier first, where there is one to ask. core-shipments owns
         // every judgement here — whether it is even due, how its date ranks
@@ -408,7 +411,7 @@ async function visitWorkspace(
             decision: decideAsk(askStateFromRow(r, today), now),
           }))
           .filter((d) => d.decision !== "quiet");
-        if (decisions.length === 0) return;
+        if (decisions.length === 0) return { due, asked };
 
         // Only now, with something to say, do we pay for the member list.
         const memberIds = await platform().notifications.orgMemberIds(org.id);
@@ -518,4 +521,171 @@ async function visitWorkspace(
     }
   }
   return { due, asked };
+}
+
+interface ParcelRow {
+  id: string;
+  order_id: string;
+  tracking_number: string;
+  shipment_state: string | null;
+  shipment_checked_at: Date | null;
+  expected_arrival: string | null;
+  eta_source: string | null;
+  asked_state: string | null;
+  tracking_added_by_user_id: string | null;
+  vendor: string | null;
+  order_number: string | null;
+  order_owner: string | null;
+  lines: string[] | null;
+}
+
+/** What a parcel's card says: the store and the lines in the box. */
+export function parcelMessage(p: { vendor: string | null; orderNumber: string | null; lines: readonly string[] }, state: string): string {
+  const what = p.lines.length ? p.lines.join(", ") : "A parcel";
+  const from = p.vendor ? ` from ${p.vendor}` : p.orderNumber ? ` (order ${p.orderNumber})` : "";
+  return state === "delivered" ? `${what}${from} was delivered. Put it away?` : `${what}${from} is out for delivery today.`;
+}
+
+/** One order's parcels, each followed on its own number and asked about once
+ *  per state, delivered or out for delivery. The order-level rules above
+ *  still ask about the lines in no parcel. */
+async function visitShipments(
+  orgId: string,
+  tdb: Kysely<unknown>,
+  now: Date,
+  opts: { number?: string; orderId?: string; force?: boolean },
+): Promise<{ due: number; asked: number }> {
+  let rows: ParcelRow[];
+  try {
+    rows = (
+      await sql<ParcelRow>`
+        select s.id::text as id, s.order_id::text as order_id, s.tracking_number, s.shipment_state,
+               s.shipment_checked_at, s.expected_arrival::text as expected_arrival, s.eta_source, s.asked_state,
+               s.tracking_added_by_user_id, o.vendor, o.order_number,
+               o.tracking_added_by_user_id as order_owner,
+               (select array_agg(coalesce(i.description, 'an item') order by i.created_at)
+                  from purchases_order_items i where i.shipment_id = s.id) as lines
+          from purchases_order_shipments s
+          join purchases_orders o on o.id = s.order_id
+         where o.arrived_at is null
+           and o.status not in ('arrived', 'cancelled')
+           and s.received_at is null
+           and (not exists (select 1 from purchases_order_items i where i.shipment_id = s.id)
+                or exists (select 1 from purchases_order_items i where i.shipment_id = s.id and i.received_at is null))
+      `.execute(tdb)
+    ).rows;
+  } catch (err) {
+    // A workspace whose purchases migrations have not caught up yet.
+    if ((err as Error).message.includes("does not exist")) return { due: 0, asked: 0 };
+    throw err;
+  }
+  if (rows.length === 0) return { due: 0, asked: 0 };
+
+  for (const row of rows) {
+    if (opts.number && row.tracking_number !== opts.number) continue;
+    if (opts.orderId && row.order_id !== opts.orderId) continue;
+    try {
+      const res = (await platform().actions.invoke("core-shipments:track", {
+        orgId,
+        userId: null,
+        event: {
+          name: "purchases.arrival-sweep",
+          payload: {},
+          actor: { user_id: null, display_name: null, auth_method: "system" },
+          timestamp: now.toISOString(),
+          trigger_type: "schedule",
+        },
+        args: {
+          number: row.tracking_number,
+          currentEta: row.expected_arrival,
+          currentEtaSource: row.eta_source ?? (row.expected_arrival ? "receipt" : "none"),
+          lastState: row.shipment_state,
+          lastCheckedAt: row.shipment_checked_at ? new Date(row.shipment_checked_at).toISOString() : null,
+          deliveredAt: row.shipment_state === "delivered" && row.shipment_checked_at ? new Date(row.shipment_checked_at).toISOString() : null,
+          confirmed: false,
+          ...(opts.force ? { force: true } : {}),
+        },
+      })) as { followed?: boolean; status?: { state?: string }; eta?: { date: string | null; source: string }; nextPollAt?: string | null } | null;
+      if (!res?.followed || !res.status?.state) {
+        // The attempt is what the cadence paces, answered or not.
+        await sql`update purchases_order_shipments set shipment_checked_at = ${now}, updated_at = now() where id = ${row.id}`.execute(tdb);
+        continue;
+      }
+      row.shipment_state = res.status.state;
+      await sql`
+        update purchases_order_shipments
+           set shipment_state        = ${res.status.state},
+               shipment_checked_at   = ${now},
+               shipment_next_poll_at = ${res.nextPollAt ? new Date(res.nextPollAt) : null},
+               expected_arrival      = coalesce(${res.eta?.date ?? null}::date, expected_arrival),
+               eta_source            = coalesce(${res.eta?.source ?? null}, eta_source),
+               updated_at            = now()
+         where id = ${row.id}
+      `.execute(tdb);
+    // pass-catch: a carrier being down is not an arrival; the parcel keeps its last state
+    } catch (err) {
+      platform().health.notePassFailure("purchases.parcel-track", orgId, err);
+    }
+  }
+
+  const askable = rows.filter(
+    (r) =>
+      (!opts.orderId || r.order_id === opts.orderId) &&
+      (r.shipment_state === "delivered" || r.shipment_state === "out_for_delivery") &&
+      r.asked_state !== r.shipment_state,
+  );
+  if (askable.length === 0) return { due: 0, asked: 0 };
+  const memberIds = new Set(await platform().notifications.orgMemberIds(orgId));
+  let asked = 0;
+  for (const parcel of askable) {
+    // Claim before sending, the same order the order-level ask keeps: a
+    // failed stamp costs one ask, never an ask on every tick.
+    const claimed = await sql<{ id: string }>`
+      update purchases_order_shipments set asked_state = ${parcel.shipment_state}, updated_at = now()
+       where id = ${parcel.id} and asked_state is distinct from ${parcel.shipment_state}
+      returning id::text as id
+    `.execute(tdb).catch((err: unknown) => {
+      platform().health.notePassFailure("purchases.parcel-claim", orgId, err);
+      return { rows: [] as Array<{ id: string }> };
+    });
+    if (!claimed.rows.length) continue;
+    const message = parcelMessage({ vendor: parcel.vendor, orderNumber: parcel.order_number, lines: parcel.lines ?? [] }, parcel.shipment_state!);
+    const recordLink = await platform().entities.recordAddressForEntity(orgId, "purchases:order", parcel.order_id);
+    const audience = parcelAudience([parcel.tracking_added_by_user_id ?? parcel.order_owner], memberIds);
+    for (const userId of audience) {
+      try {
+        // dispatch-per-row-ok: one card per parcel; each box lands on its own day and carries its own "Yes, it turned up" for just its lines
+        await platform().notifications.dispatch({
+          orgId,
+          userId,
+          eventType: "purchases.order.due",
+          message,
+          module: "purchases",
+          triggeredBy: "schedule",
+          entityType: "purchases:order",
+          entityId: parcel.order_id,
+          ...(recordLink ? { link_url: recordLink } : { no_link_reason: "the order has no detail page" }),
+          card: {
+            heading: parcel.shipment_state === "delivered" ? "A parcel was delivered" : "A parcel is out for delivery",
+            body: message,
+            ...(parcel.vendor ? { context: `${parcel.vendor}${parcel.order_number ? ` · #${parcel.order_number}` : ""}` } : {}),
+          },
+          payload: { shipmentId: parcel.id, trackingNumber: parcel.tracking_number, state: parcel.shipment_state },
+          actions: [
+            {
+              id: "arrived",
+              label: "Yes, it turned up",
+              action: "purchases:mark-arrived",
+              args: { orderId: parcel.order_id, shipmentId: parcel.id },
+              style: "primary" as const,
+            },
+          ],
+        });
+      } catch (err) {
+        platform().health.notePassFailure("purchases.parcel-notify", orgId, err);
+      }
+    }
+    asked += 1;
+  }
+  return { due: askable.length, asked };
 }

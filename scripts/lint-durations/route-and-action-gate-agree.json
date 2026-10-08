@@ -1,0 +1,10 @@
+{
+  "lint": "lint:route-and-action-gate-agree",
+  "run": "node scripts/lint-route-and-action-gate-agree.ts",
+  "rows": [
+    "api-route"
+  ],
+  "ms": 26736,
+  "recorded": "2026-10-07",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

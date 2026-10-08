@@ -10,12 +10,13 @@
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Modal, EntityPhoto, useToast } from "@cobblr/platform-web";
+import { Modal, EntityPhoto, NumberField, useToast } from "@cobblr/platform-web";
 import { Printer } from "lucide-react";
 import { api, ApiError, type MakeStepRecord } from "../../lib/api";
 import { useActiveOrg } from "../../auth/ActiveOrgContext";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import type { EntityDetailPanelCtx } from "../../panels/types";
+import { PrintBatchCard } from "./PrintBatchCard";
 
 const MATERIALS = ["PLA", "PETG", "ABS", "ASA", "TPU", "PA", "PC"];
 
@@ -27,16 +28,17 @@ export function isPrintable(filename: string): boolean {
 const message = (err: unknown) => (err instanceof ApiError ? err.message : (err as Error).message);
 
 /** Ask for the material (and colour), then start Print this and open the Make. */
-export function PrintThisDialog({ fileId, makeId, what, onClose }: { fileId?: string; makeId?: string; what: string; onClose: () => void }) {
+export function PrintThisDialog({ fileId, makeId, what, initialQuantity = 1, onClose }: { fileId?: string; makeId?: string; what: string; initialQuantity?: number; onClose: () => void }) {
   const { activeSlug } = useActiveOrg();
   const navigate = useNavigate();
   const toast = useToast();
   const qc = useQueryClient();
   const [material, setMaterial] = useState("PLA");
   const [color, setColor] = useState("");
+  const [quantity, setQuantity] = useState(initialQuantity);
   const [error, setError] = useState<string | null>(null);
   const start = useMutation({
-    mutationFn: () => api.printThis(activeSlug, { ...(fileId ? { file_id: fileId } : { make_id: makeId! }), material: material.trim(), ...(color.trim() ? { color: color.trim() } : {}) }),
+    mutationFn: () => api.printThis(activeSlug, { ...(fileId ? { file_id: fileId } : { make_id: makeId! }), material: material.trim(), quantity, ...(color.trim() ? { color: color.trim() } : {}) }),
     onSuccess: (r) => {
       toast.success(r.summary);
       void qc.invalidateQueries({ queryKey: ["makes", activeSlug] });
@@ -74,6 +76,10 @@ export function PrintThisDialog({ fileId, makeId, what, onClose }: { fileId?: st
         <label className="block text-sm">
           <span className="text-muted">Colour (optional)</span>
           <input value={color} onChange={(e) => setColor(e.target.value)} placeholder="Any colour" className="mt-1 w-full rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2 py-1.5" />
+        </label>
+        <label className="block text-sm">
+          <span className="text-muted">Prints</span>
+          <NumberField integer min={1} max={10000} required value={quantity} onChange={setQuantity} className="mt-1 w-full rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2 py-1.5" />
         </label>
         {error && (
           <p role="alert" className="text-sm text-red-700 dark:text-red-400">
@@ -115,6 +121,10 @@ const minutes = (s: number) => {
 
 /** The one yes. Everything a person needs to decide, and one button. */
 export function PrintConfirmCard({ makeId, row }: { makeId: string; row: MakeStepRecord }) {
+  return row.data.batch ? <PrintBatchCard makeId={makeId} row={row} /> : <SinglePrintConfirmCard makeId={makeId} row={row} />;
+}
+
+function SinglePrintConfirmCard({ makeId, row }: { makeId: string; row: MakeStepRecord }) {
   const { activeSlug, activeOrg } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();

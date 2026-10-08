@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRunAction } from "@cobblr/platform-web";
 import { useInventory } from "./context";
+import { randomId } from "@cobblr/platform-contract";
 
 export function StoragePanel({ id }: { id: string }) {
   const { api, entityKind } = useInventory();
@@ -17,7 +18,7 @@ export function StoragePanel({ id }: { id: string }) {
   const [instruction, setInstruction] = useState("");
   const [count, setCount] = useState("");
   const [placements, setPlacements] = useState("");
-  const [runId, setRunId] = useState<string>(() => crypto.randomUUID());
+  const [runId, setRunId] = useState<string>(() => randomId());
   const query = useQuery({ queryKey: ["inventory-storage", id], queryFn: () => api.storage(id), refetchInterval: 60_000, meta: { kinds: [entityKind] } });
   const view = query.data;
   const bakeEnd = view?.state.bake ? Date.parse(view.state.bake.started_at) + view.state.bake.minutes * 60_000 : null;

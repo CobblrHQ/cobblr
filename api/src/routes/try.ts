@@ -690,6 +690,7 @@ tryRouter.post(
 // so the file door can check a file against the package without rebuilding
 // it once per picture.
 const PACKAGE_TTL_MS = 10 * 60_000;
+// single-flight: one package per token (10 minute TTL), read by the page that previews it and the picture doors that follow; a duplicate rebuild is harmless
 const packages = new Map<string, { at: number; pkg: CarryPackage; orgId: string }>();
 async function packageFor(token: string): Promise<{ pkg: CarryPackage; orgId: string } | null> {
   const hit = packages.get(token);

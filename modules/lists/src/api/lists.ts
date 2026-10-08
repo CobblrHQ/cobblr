@@ -12,6 +12,7 @@
 //   PATCH  /items/:id             toggle checked / claimed / edit
 //   DELETE /items/:id             remove an item
 
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { sql } from "kysely";
 import { platform, sourceIdKey, type WireEffect } from "@cobblr/platform-contract";
@@ -230,7 +231,7 @@ listsRouter.delete(
 listsRouter.post(
   "/lists/:id/clear-done",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "member")) return;
+    if (!(await requireCapability(req, res, "lists:clear-done"))) return;
     const db = tenantDb(req);
     const rows = await db.selectFrom("lists_items").select("id").where("list_id", "=", req.params.id!).where("checked", "=", true).execute();
     let cleared = 0;

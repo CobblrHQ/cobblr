@@ -6,6 +6,7 @@ import { StockConfig, formatStockAmount, type StockShape } from "../stock-shapes
 import type { StockDetail } from "./api";
 import { useInventory } from "./context";
 import { AddToListButton } from "./AddToListButton";
+import { randomId } from "@cobblr/platform-contract";
 
 const button = "min-h-11 rounded border border-line px-3 py-2 text-sm disabled:opacity-50";
 const shapes: Array<{ value: StockShape; label: string }> = [{ value: "sheet", label: "Sheet" }, { value: "roll", label: "Roll" }, { value: "spool", label: "Spool" }, { value: "liquid", label: "Liquid" }, { value: "wearing-tool", label: "Wearing tool" }, { value: "count", label: "Count" }];
@@ -89,7 +90,7 @@ function UseForm({ view, onDone, onCancel }: { view: StockDetail; onDone: () => 
   const [revision] = useState(view.revision);
   const [amount, setAmount] = useState("");
   const [unit, setUnit] = useState(view.unit);
-  const [source, setSource] = useState<string>(() => crypto.randomUUID());
+  const [source, setSource] = useState<string>(() => randomId());
   const [verdict, setVerdict] = useState<"good" | "scrap">("good");
   const [waste, setWaste] = useState("");
   const [warning, setWarning] = useState("");

@@ -6,5 +6,8 @@
   ],
   "ms": 2000,
   "recorded": "2026-10-04",
-  "source": "measured: a changed-files run is ~1 s, the whole tree (LINT_ALL=1, or when the lint itself changes) 8-14 s; the scaffold recorded 784 ms before the rule existed"
+  "source": "measured: a changed-files run is ~1 s, the whole tree (LINT_ALL=1, or when the lint itself changes) 8-14 s; the scaffold recorded 784 ms before the rule existed",
+  "paths": {
+    "full": 14000
+  }
 }

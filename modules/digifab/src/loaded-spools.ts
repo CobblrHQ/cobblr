@@ -32,28 +32,27 @@ export interface Draw {
   slot: string;
 }
 
-/** The machine a job prints on: its own link, else its device's. */
+/** The selected device takes precedence when a job was reassigned. */
 export async function machineOfJob(
   db: Kysely<DigifabDB>,
   job: { linked_machine_id: string | null; connection_id: string | null; target_device: string | null },
 ): Promise<string | null> {
-  if (job.linked_machine_id) return job.linked_machine_id;
-  if (!job.connection_id || !job.target_device) return null;
+  if (!job.connection_id || !job.target_device) return job.linked_machine_id;
   const link = await db
     .selectFrom("digifab_device_links")
     .select(["machine_id"])
     .where("connection_id", "=", job.connection_id)
     .where("remote_device_id", "=", job.target_device)
     .executeTakeFirst();
-  return link?.machine_id ?? null;
+  return link?.machine_id ?? job.linked_machine_id;
 }
 
 /** The spools loaded on a machine, by slot. */
-export async function loadedOn(orgId: string, machineId: string): Promise<Loaded[]> {
+export async function loadedOn(orgId: string, machineId: string): Promise<Array<Loaded & { kind: string }>> {
   const contents = await platform().placement.contents({ orgId, container: { kind: MACHINE_KIND, id: machineId } });
   return contents
     .filter((c) => c.kind === THING_KIND && typeof c.slot === "string" && c.slot.trim() !== "")
-    .map((c) => ({ slot: c.slot!.trim(), partId: c.id }))
+    .map((c) => ({ slot: c.slot!.trim(), partId: c.id, kind: c.kind }))
     .sort((a, b) => Number(a.slot) - Number(b.slot) || a.slot.localeCompare(b.slot));
 }
 

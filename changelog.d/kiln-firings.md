@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-05
 docs_target: docs/USER_GUIDE.md#3.19 Digital Fabrication (`digifab`, stock)
+docs_published: 2026-10-08
 ---
 Added kiln monitoring, firing logs with linked pieces, saved schedules, shared liquid glaze use and replacement reminders by firing hours.
 

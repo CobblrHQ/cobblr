@@ -299,7 +299,7 @@ export type FieldDefCreateInput = z.infer<typeof FieldDefCreate>;
 
 export type CreateFieldDefResult =
   | { ok: true; def: FieldDefRow; warning?: string }
-  | { ok: false; code: "missing_ref_kind" | "unknown_scope" | "duplicate_name" | "role_owned_by_platform" | "role_wrong_type"; message: string }
+  | { ok: false; code: "missing_ref_kind" | "unknown_scope" | "duplicate_name" | "role_owned_by_platform" | "role_wrong_type" | "secret_name_used"; message: string }
   | { ok: false; code: "same_meaning"; message: string; existing: { name: string; label: string }; role: FieldRole; inferred: boolean };
 
 /** Create one custom field def — the shared body of POST /field-defs and the
@@ -348,6 +348,14 @@ export async function createFieldDef(
     };
   }
   const entityKind = scopeTraits.length ? fieldScopeSentinel(scopeTraits) : input.entity_kind;
+  if (input.type === "secret") {
+    const kinds = scopeTraits.length
+      ? (await listKindsForOrg(orgId)).filter((k) => matchAction({ traits: scopeTraits }, k.fields, k.id, k.traits).via).map((k) => k.id)
+      : [entityKind];
+    const { secretNameIsUnused } = await import("./secret-field-name.js");
+    if (!(await secretNameIsUnused(orgId, kinds, input.name))) return { ok: false, code: "secret_name_used", message: "Choose an unused field key for a secret. Existing plain values cannot become secrets." };
+  }
+
   // A per-kind def SHADOWS a trait-scoped def of the same name for that kind
   // (resolveFieldDefsForKind keeps the specific one), and when the scoped def
   // carried a field_role the role vanishes with it - a preset's landing pad

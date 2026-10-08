@@ -7,6 +7,7 @@
 //                                      one it replaces goes back to its shelf
 //   POST /loaded/:machineId/unload     { slot }         back to its shelf
 
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
@@ -67,7 +68,7 @@ const Load = z.object({ part_id: z.string().uuid(), slot: z.string().regex(/^\d{
 loadedRouter.post(
   "/:machineId/load",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-placement:place"))) return;
     const parsed = Load.safeParse(req.body ?? {});
     if (!parsed.success) return badBody(res, parsed.error);
     const orgId = tenantContext(req).org.id;
@@ -121,7 +122,7 @@ const Unload = z.object({ slot: z.string().regex(/^\d{1,2}$/) });
 loadedRouter.post(
   "/:machineId/unload",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-placement:return-home"))) return;
     const parsed = Unload.safeParse(req.body ?? {});
     if (!parsed.success) return badBody(res, parsed.error);
     const orgId = tenantContext(req).org.id;

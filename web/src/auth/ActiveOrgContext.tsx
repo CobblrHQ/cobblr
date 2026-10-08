@@ -180,7 +180,9 @@ export function ActiveOrgProvider({
     [org, orgs],
   );
 
-  if (unknown || (org && money.isPending)) return <BootScrim />;
+  // isLoading, not isPending: a guest may not read the currency, so the query
+  // is switched off and stays pending forever, and a guest never got past here.
+  if (unknown || (org && money.isLoading)) return <BootScrim />;
 
   return (
     <Ctx.Provider value={{ activeOrg: org, activeSlug: org?.slug ?? "", setActiveSlug }}>

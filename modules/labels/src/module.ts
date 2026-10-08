@@ -71,6 +71,7 @@ export default defineModule({
       {
         group: "label",
         id: "labels:print",
+        runBy: "member",
         examples: ["print a label for this", "sticker it"],
         label: "Print label",
         description:
@@ -93,6 +94,7 @@ export default defineModule({
         // labels (keep_existing), so it's always safe to run.
         group: "label",
         id: "labels:set-code",
+        runBy: "member",
         examples: ["change the code prefix", "stop printing codes on those labels"],
         label: "Change label codes",
         description:

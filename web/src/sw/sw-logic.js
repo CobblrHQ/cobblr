@@ -91,3 +91,39 @@ export function sharePayload(entries) {
   }
   return out;
 }
+
+/** What a push from Cobblr becomes on the device (#5267): a title, one line,
+ *  the app's icon, a tag that collapses a repeat of the same notification, the
+ *  Home Screen badge, and where a tap goes. Only these fields are read. A push
+ *  that cannot be read still shows "Cobblr": a push that shows nothing is a
+ *  silent buzz, and the browsers withdraw push from a site that does that. */
+export function notificationFor(data) {
+  const d = data && typeof data === "object" ? data : {};
+  const str = (v, max) => (typeof v === "string" ? v.slice(0, max) : "");
+  const badge = typeof d.badge === "number" && d.badge >= 0 ? Math.floor(d.badge) : null;
+  return {
+    title: str(d.title, 80) || "Cobblr",
+    options: {
+      body: str(d.body, 240) || "Open Cobblr to see what changed.",
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
+      tag: str(d.tag, 80) || "cobblr",
+      renotify: d.priority === "urgent",
+      requireInteraction: d.priority === "urgent",
+      data: { url: str(d.url, 1000) || "/" },
+    },
+    badge,
+  };
+}
+
+/** Where a tap on a notification opens: a path inside the app, never another
+ *  site, whatever the push said. */
+export function tapTarget(url, origin) {
+  if (typeof url !== "string" || !url.startsWith("/") || url.startsWith("//")) return `${origin}/`;
+  try {
+    const u = new URL(url, origin);
+    return u.origin === origin ? u.href : `${origin}/`;
+  } catch {
+    return `${origin}/`;
+  }
+}

@@ -55,7 +55,11 @@ function check(file: string, src: string): Violation[] {
   const lines = src.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
-    if (!/(127\.0\.0\.1|localhost):\$\{[^}]*API_PORT/.test(line)) continue;
+    const literal = /(127\.0\.0\.1|localhost):\$\{[^}]*API_PORT/.test(line);
+    // The port read into a variable first (core-authoring's `port`), in a file
+    // that reads API_PORT at all.
+    const viaVariable = /(127\.0\.0\.1|localhost):\$\{/.test(line) && /API_PORT/.test(src);
+    if (!literal && !viaVariable) continue;
     if (/loopback-ok:\s*\S/.test(line) || /loopback-ok:\s*\S/.test(lines[i - 1] ?? "")) continue;
     out.push({ file, line: i + 1, what: "a loopback URL to the api's own port" });
   }

@@ -20,7 +20,7 @@
 //   3. Put the NEW key in .env as TENANT_CREDS_ENCRYPTION_KEY (save the old
 //      one until you've verified boot).
 //   4. docker compose up -d api  →  healthz green, open a workspace.
-//   5. Retire the old key from wherever it lived. Print the new one to paper.
+//   5. Retain the old key while any backups encrypted with it remain. Store the new key securely.
 //
 // Safety properties: idempotent-safe to re-run with the same pair (rows already
 // on the new key fail old-key decrypt and are then tried with the new key — if
@@ -29,6 +29,8 @@
 // a mixed-key state you must resolve by hand, not paper over).
 
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
+import { credentialKeyId } from "../src/db/credential-key-id.js";
+import { rotateSecretPayloads } from "./secret-key-rotation.js";
 import { createPool } from "../src/db/client-error-guard.js";
 
 const SALT = "cobblr-tenant-creds-v1"; // must match api/src/db/crypto.ts
@@ -77,8 +79,8 @@ async function main() {
   // (Phase 1 verifies every row before any write, so a failure here is safe —
   // but it must be READABLE.) createPool's clients listen from creation.
   const pool = createPool({ connectionString: dbUrl }, "rotate-creds-key");
-  const { rows } = await pool.query<{ id: string; slug: string; db_credentials_encrypted: string | null }>(
-    "select id, slug, db_credentials_encrypted from orgs order by created_at",
+  const { rows } = await pool.query<{ id: string; slug: string; db_name: string; db_credentials_encrypted: string | null }>(
+    "select id, slug, db_name, db_credentials_encrypted from orgs order by created_at",
   );
 
   // Phase 1 — verify EVERY row before touching ANY row.
@@ -106,13 +108,66 @@ async function main() {
       }
     }
   }
+  const quoted = (name: string) => '"' + name.replaceAll('"', '""') + '"';
+  type SecretUpdate = { table: string; column: string; tid: string; value: unknown };
+  const secretPlans: Array<{ dbName: string | null; updates: SecretUpdate[] }> = [];
+  for (const dbName of [null, ...new Set(rows.map((r) => r.db_name).filter(Boolean))]) {
+    const url = new URL(dbUrl);
+    if (dbName) url.pathname = "/" + dbName;
+    const db = createPool({ connectionString: url.toString() }, "rotate-secret-fields");
+    try {
+      const columns = await db.query<{ table_name: string; column_name: string }>("select table_name, column_name from information_schema.columns where table_schema = 'public' and data_type = 'jsonb'");
+      const updates: SecretUpdate[] = [];
+      for (const col of columns.rows) {
+        const found = await db.query<{ tid: string; value: unknown }>(`select ctid::text as tid, ${quoted(col.column_name)} as value from ${quoted(col.table_name)} where strpos(${quoted(col.column_name)}::text, '__cobblr_secret') > 0`);
+        for (const row of found.rows) {
+          const rotated = rotateSecretPayloads(row.value, (ciphertext) => {
+            let plaintext: string;
+            try { plaintext = decryptWith(oldKey, ciphertext); }
+            catch {
+              try { decryptWith(newKey, ciphertext); return ciphertext; }
+              catch { throw new Error("An encrypted secret decrypts with neither key. No rotation writes have started."); }
+            }
+            const next = encryptWith(newKey, plaintext);
+            if (decryptWith(newKey, next) !== plaintext) throw new Error("Secret key rotation verification failed.");
+            return next;
+          }, credentialKeyId(newKey));
+          if (JSON.stringify(rotated) !== JSON.stringify(row.value)) updates.push({ table: col.table_name, column: col.column_name, tid: row.tid, value: rotated });
+        }
+      }
+      secretPlans.push({ dbName, updates });
+    } finally { await db.end(); }
+  }
   console.log(
     `${rows.length} org(s): ${plan.length} to rotate, ${alreadyRotated} already on the new key, ${empty} with no stored creds.` +
       (dryRun ? " (dry-run: verified decrypt only, writing nothing)" : ""),
   );
-  if (dryRun || plan.length === 0) {
+  if (dryRun || (plan.length === 0 && secretPlans.every((p) => p.updates.length === 0))) {
     await pool.end();
     return;
+  }
+
+  // Each database commits independently; a rerun accepts either key after an interruption.
+  for (const p of secretPlans) {
+    if (!p.updates.length) continue;
+    const url = new URL(dbUrl);
+    if (p.dbName) url.pathname = "/" + p.dbName;
+    const db = createPool({ connectionString: url.toString() }, "rotate-secret-fields");
+    const connection = await db.connect();
+    try {
+      await connection.query("begin");
+      const tids = new Map<string, string>();
+      for (const update of p.updates) {
+        const key = update.table + ":" + update.tid;
+        const changed = await connection.query<{ tid: string }>(`update ${quoted(update.table)} set ${quoted(update.column)} = $1::jsonb where ctid = $2::tid returning ctid::text as tid`, [JSON.stringify(update.value), tids.get(key) ?? update.tid]);
+        if (changed.rows.length !== 1) throw new Error("A row changed during secret key rotation. Stop all writers before running it.");
+        tids.set(key, changed.rows[0]!.tid);
+      }
+      await connection.query("commit");
+    } catch (err) {
+      await connection.query("rollback");
+      throw err;
+    } finally { connection.release(); await db.end(); }
   }
 
   // Phase 2 — one transaction; verified round-trip per row.
@@ -130,7 +185,7 @@ async function main() {
     console.log(`Rotated ${plan.length} org(s). Now set TENANT_CREDS_ENCRYPTION_KEY to the NEW key and start the api.`);
   } catch (err) {
     await client.query("rollback");
-    console.error("Rolled back — nothing changed:", (err as Error).message);
+    console.error("Credential transaction rolled back; rerun the rotation to complete any committed secret databases:", (err as Error).message);
     process.exit(1);
   } finally {
     client.release();

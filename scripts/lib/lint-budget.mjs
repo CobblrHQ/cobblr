@@ -207,6 +207,19 @@ export function overBudget(results, quietMs = {}, opts = {}) {
  *
  * `rerun(name)` resolves to the lint's wall time in ms when run alone.
  */
+/** THE QUIET TIME OF THE PATH A LINT TOOK. A lint with a fast path and a full fallback (lint:mjs-names-defined:
+ *  ~1 s on the files a change touched, 8-14 s on the whole tree when it cannot tell what changed) was judged
+ *  against the fast path's time either way, so its fallback went red on time alone on any busy runner (#5175,
+ *  16.1 s and 20.9 s, 2026-10-08). It prints `[lint-path] <name>`; that path's recorded time is its budget. */
+export function quietFor(results, quietMs = {}, pathMs = {}) {
+  const out = { ...quietMs };
+  for (const r of results) {
+    const p = /^\[lint-path\] (\S+)\s*$/m.exec(r.out ?? "")?.[1];
+    if (p && pathMs[r.name]?.[p]) out[r.name] = pathMs[r.name][p];
+  }
+  return out;
+}
+
 export async function judgeRun(results, quietMs = {}, rerun, opts = {}) {
   const ceilingMs = opts.ceilingMs ?? CEILING_MS;
   const margin = opts.margin ?? MARGIN;

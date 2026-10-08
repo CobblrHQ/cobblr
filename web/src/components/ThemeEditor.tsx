@@ -5,7 +5,7 @@
 // for how the tokens become CSS variables.
 
 import { useRef } from "react";
-import { DragInput, usePasteImage, useToast } from "@cobblr/platform-web";
+import { DragInput, usePasteImage, useToast, NumberField } from "@cobblr/platform-web";
 import type { AppTheme } from "../lib/api";
 
 const COLOR_FIELDS = [
@@ -93,12 +93,11 @@ export function ThemeEditor({
         </label>
         <label className="text-xs text-content dark:text-mortar-200">
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Corners (px)</span>
-          <input
-            type="number"
+          <NumberField
             min={0}
             max={36}
             value={theme?.radius ?? 12}
-            onChange={(e) => onChange({ radius: Number(e.target.value) })}
+            onChange={(n) => onChange({ radius: n })}
             className="w-20 px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
         </label>

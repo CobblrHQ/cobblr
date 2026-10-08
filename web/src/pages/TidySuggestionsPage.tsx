@@ -11,7 +11,7 @@ export function TidySuggestionsPage() {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const q = useQuery({ queryKey: ["tidy-settings", activeSlug], queryFn: () => api.tidySuggestions(activeSlug), enabled: !!activeSlug });
-  if (q.isPending) return <p className="text-sm text-faint">Loading suggestions settings…</p>;
+  if (q.isLoading) return <p className="text-sm text-faint">Loading suggestions settings…</p>;
   if (q.isError) return <p role="alert" className="text-sm text-red-600 dark:text-red-400">{q.error.message}</p>;
   if (!q.data?.available) return <p className="text-sm text-faint">Tidy is unavailable on this instance.</p>;
   const flip = async () => {

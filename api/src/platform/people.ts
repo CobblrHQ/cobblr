@@ -19,6 +19,7 @@
 
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
+import { ttlCache } from "../lib/ttl-cache.js";
 
 export interface WorkspacePerson {
   id: string;
@@ -34,7 +35,7 @@ export interface WorkspacePerson {
 }
 
 const TTL_MS = 5_000;
-const namesCache = new Map<string, { at: number; names: Map<string, string> }>();
+const namesCache = ttlCache<Map<string, string>>(TTL_MS);
 
 export function clearPeopleCache(orgId?: string): void {
   if (orgId) namesCache.delete(orgId);
@@ -89,17 +90,16 @@ export async function listPeople(orgId: string, opts: { includeArchived?: boolea
 /** How each entry reads, by id: one query per workspace per TTL, so a list of
  *  200 rows is not 200 lookups. A member who left reads "<name> (left)". */
 export async function personNamesFor(orgId: string): Promise<Map<string, string>> {
-  const hit = namesCache.get(orgId);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.names;
-  let names = new Map<string, string>();
-  try {
-    const people = await listPeople(orgId, { includeArchived: true });
-    names = new Map(people.map((p) => [p.id, p.left ? `${p.name} (left)` : p.name]));
-  } catch {
-    names = new Map();
-  }
-  namesCache.set(orgId, { at: Date.now(), names });
-  return names;
+  return namesCache.get(orgId, async () => {
+    let names = new Map<string, string>();
+    try {
+      const people = await listPeople(orgId, { includeArchived: true });
+      names = new Map(people.map((p) => [p.id, p.left ? `${p.name} (left)` : p.name]));
+    } catch {
+      names = new Map();
+    }
+    return names;
+  });
 }
 
 /** The entry for this member, made if they have none yet. */

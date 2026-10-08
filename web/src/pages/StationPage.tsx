@@ -27,9 +27,10 @@ import {
   type StationSettings,
   type StationStockOp,
 } from "@cobblr/platform-contract/station-screen";
-import { api, ApiError, getToken, type Location, type ScanInboxItem, type OrgMembership } from "../lib/api";
+import { api, ApiError, getToken, type Location, type ScanInboxItem, type OrgMembership, type StationRecordAction } from "../lib/api";
+import { askBeforePress, pressAnswersToArgs } from "@cobblr/platform-contract/action-args";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
-import { DragInput, OverlayLayer, SearchInput, useEscapeToClose, useLater, SegmentedChoice } from "@cobblr/platform-web";
+import { AskBeforeRun, DragInput, OverlayLayer, SearchInput, useEscapeToClose, useLater, SegmentedChoice, type Asking } from "@cobblr/platform-web";
 import { MAIN_ID, SkipToContent } from "../components/a11y/shell-landmarks";
 import { FixedActiveOrgProvider } from "../auth/ActiveOrgContext";
 import { WorkspacePlatformWeb } from "../WorkspacePlatformWeb";
@@ -138,7 +139,7 @@ function PersonOrApproval({ slug, address, kiosk, personToken, onApproved }: { s
     enabled: !!personToken && mayUse,
     retry: false,
   });
-  if (personToken && (me.isPending || (mayUse && asPerson.isPending))) return <Shell kiosk={kiosk}><Centered title="Opening…" /></Shell>;
+  if (personToken && (me.isLoading || (mayUse && asPerson.isLoading))) return <Shell kiosk={kiosk}><Centered title="Opening…" /></Shell>;
   if (personToken && mayUse && asPerson.data) return <StationLoader slug={slug} address={address} kiosk={kiosk} device={false} onForget={() => {}} />;
   return <ApprovalView slug={slug} address={address} onApproved={onApproved} />;
 }
@@ -195,7 +196,16 @@ function ApprovalView({ slug, address, onApproved }: { slug: string; address: st
       <div className="mx-auto flex min-h-screen max-w-3xl flex-col items-center justify-center gap-6 px-4 py-10 text-center" data-testid="station-approve">
         <h1 className="text-3xl font-semibold">Approve this screen</h1>
         <p className="max-w-xl text-lg text-muted">
-          To make this tablet the <b className="text-content dark:text-mortar-100">{address}</b> station, approve it from a phone or computer that is signed in to this workspace: scan the code, or open Configuration → Devices → Stations and type it.
+          To make this tablet{" "}
+          {address === DEFAULT_STATION_ADDRESS ? (
+            "this workspace's station"
+          ) : (
+            <>
+              the <b className="text-content dark:text-mortar-100">{address}</b>
+              {/(^|-)station$/.test(address) ? "" : " station"}
+            </>
+          )}
+          , approve it from a phone or computer that is signed in to this workspace: scan the code, or open Configuration → Devices → Stations and type it.
         </p>
         {ask ? (
           <div className="flex flex-col items-center gap-6 sm:flex-row sm:gap-10">
@@ -264,6 +274,10 @@ interface LastMove {
   words: string;
   queued: boolean;
   at: number;
+  /** A record action's run (Lend, Log service), undone at its own door. */
+  action?: boolean;
+  /** False when the run handed back no way to undo it. */
+  undoable?: boolean;
 }
 
 function Station(props: { slug: string; address: string; kiosk: boolean; device: boolean; label: string; settings: StationSettings; hasPin: boolean; onForget: () => void }) {
@@ -273,6 +287,7 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
   const [last, setLast] = useState<LastMove | null>(null);
   const [flash, setFlash] = useState<"ok" | "bad" | null>(null);
   const [keypad, setKeypad] = useState(false);
+  const [asking, setAsking] = useState<Asking | null>(null);
   const [mover, setMover] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [queue, setQueue] = useState<QueuedMove[]>(() => loadQueue(slug, address, Date.now()));
@@ -366,8 +381,55 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
     };
   }, [flush]);
 
+  // A known thing's own record actions (Lend, Log service): only what this
+  // station offers, which is what Undo can take back (#4640).
+  const recordKind = view.kind === "record" ? view.record.kind : null;
+  const recordActions = useQuery({
+    queryKey: ["station-actions", slug, address, recordKind],
+    queryFn: () => api.stationActions(slug, address, recordKind!).then((r) => r.items),
+    enabled: !!recordKind,
+    staleTime: 5 * 60_000,
+  });
+  const runRecordAction = useCallback(
+    (record: StationRecord, a: StationRecordAction) => {
+      const go = async (args: Record<string, unknown>) => {
+        const request_id = newRequestId();
+        try {
+          const r = await api.stationActionRun(slug, address, { request_id, action_id: a.id, kind: record.kind, entity_id: record.id, args });
+          setLast({ request_id, words: r.summary || `${a.label}: ${record.title}`, queued: false, at: Date.now(), action: true, undoable: r.undoable });
+          signal(true);
+        } catch (e) {
+          setView({ kind: "error", message: unreachable(e) ? "No connection. Try it again when the network is back." : errText(e) });
+          signal(false);
+        }
+      };
+      const ask = askBeforePress(a.args_schema, null);
+      if (!ask.length) return void go({});
+      setAsking({
+        label: a.label,
+        ask,
+        submit: (answers) => {
+          setAsking(null);
+          touchedAt.current = Date.now();
+          void go(pressAnswersToArgs(ask, answers));
+        },
+        cancel: () => setAsking(null),
+      });
+    },
+    [slug, address, signal],
+  );
+
   const undo = useCallback(async () => {
     if (!last) return;
+    if (last.action) {
+      try {
+        await api.stationActionUndo(slug, address, last.request_id);
+        setLast(null);
+      } catch (e) {
+        setView({ kind: "error", message: errText(e) });
+      }
+      return;
+    }
     if (last.queued) {
       persistQueue(loadQueue(slug, address, Date.now()).filter((m) => m.request_id !== last.request_id));
       setLast(null);
@@ -439,7 +501,7 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
     [slug, address, settings.action, settings.count_repeats, settings.new_location_id, count, signal],
   );
 
-  useBarcodeWedge({ enabled: !keypad && !settingsOpen, onScan: (c) => void onScan(c) });
+  useBarcodeWedge({ enabled: !keypad && !settingsOpen && !asking, onScan: (c) => void onScan(c) });
 
   // A bridge's scanner: codes it posted for this station, taken in order.
   useEffect(() => {
@@ -531,6 +593,11 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
               onUndo={undo}
               onSetTotal={() => setKeypad(true)}
               onMove={() => setMover(true)}
+              actions={recordActions.data ?? []}
+              onAction={(a) => {
+                touchedAt.current = Date.now();
+                runRecordAction(view.record, a);
+              }}
               onDone={() => setView({ kind: "ready" })}
             />
           )}
@@ -586,6 +653,7 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
             }}
           />
         )}
+        <AskBeforeRun asking={asking} />
         {settingsOpen && (
           <SettingsSheet
             slug={slug}
@@ -622,14 +690,17 @@ function UndoBar({ last, onUndo }: { last: LastMove; onUndo: () => void }) {
   return (
     <div className="inline-flex items-center gap-3 rounded-full bg-moss-100 px-4 py-2 text-lg text-moss-900 dark:bg-moss-900/40 dark:text-moss-100" role="status" data-testid="station-last">
       <Check size={20} /> {last.words}
-      <button type="button" onClick={onUndo} className="inline-flex items-center gap-1 rounded-full px-3 py-1 font-medium underline-offset-2 hover:underline">
+      {last.undoable !== false && <button type="button" onClick={onUndo} className="inline-flex items-center gap-1 rounded-full px-3 py-1 font-medium underline-offset-2 hover:underline">
         <Undo2 size={18} /> Undo
-      </button>
+      </button>}
     </div>
   );
 }
 
 function RecordCard(props: {
+  /** The record's own actions this station offers (Lend, Log service). */
+  actions: StationRecordAction[];
+  onAction: (a: StationRecordAction) => void;
   record: StationRecord;
   countable: boolean;
   last: LastMove | null;
@@ -683,6 +754,15 @@ function RecordCard(props: {
           <MapPin size={22} /> Move to…
         </BigButton>
       </div>
+      {props.actions.length > 0 && (
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4" data-testid="station-record-actions">
+          {props.actions.map((a) => (
+            <BigButton key={a.id} tone="plain" onClick={() => props.onAction(a)}>
+              {a.label}
+            </BigButton>
+          ))}
+        </div>
+      )}
       <div className="mt-4 flex justify-end">
         <button type="button" onClick={props.onDone} className="px-3 py-2 text-lg text-muted underline-offset-2 hover:underline">
           Done

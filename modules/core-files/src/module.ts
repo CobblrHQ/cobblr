@@ -112,6 +112,7 @@ export default defineModule({
       {
         group: "lifecycle",
         id: "core-files:restore",
+        runBy: "member",
         label: "Restore from Recently deleted",
         description:
           "Brings a file back from Recently deleted, where it was. A deleted file stays there for 30 days before it is removed for good.",

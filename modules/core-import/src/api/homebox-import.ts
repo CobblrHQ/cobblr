@@ -19,11 +19,11 @@ import type { Request } from "express";
 import { z } from "zod";
 import { requireRole } from "./util.js";
 import { parseHomebox, homeboxMetadata, locationPathKey, type HomeboxItem, type HomeboxParse } from "../services/homebox.js";
+import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
 export const homeboxRouter = Router({ mergeParams: true });
 
-// loopback-ok: #5153 moves this onto selfFetch
-const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
+const INTERNAL_API = selfOrigin();
 const PART_CONCURRENCY = 6;
 
 const Body = z.object({ csv: z.string().min(1).max(20 * 1024 * 1024) });
@@ -37,7 +37,7 @@ function slugOf(req: Request): string {
 }
 
 async function api<T = unknown>(method: string, path: string, token: string, body?: unknown): Promise<{ status: number; json: T }> {
-  const res = await fetch(`${INTERNAL_API}${path}`, {
+  const res = await apiFetch(`${INTERNAL_API}${path}`, {
     method,
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),

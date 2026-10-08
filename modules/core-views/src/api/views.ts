@@ -1,3 +1,4 @@
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { readGroupKeys } from "@cobblr/platform-contract/grouped-list";
 // /views — saved view CRUD + the /data passthrough that delegates
 // to platform.entities.list() for the kind the view targets.
@@ -59,7 +60,7 @@ function notFound(res: Response): void {
 viewsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-views:save-view"))) return;
     const parsed = ViewCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
@@ -257,7 +258,7 @@ viewsRouter.get(
       // The view's own query (filter, where, sort), read the one way every
       // surface reads it. Resolvers ignore what they cannot honour, so a
       // request-level override layered on top is safe.
-      ...viewQuery(view.config as Record<string, unknown>),
+      ...viewQuery(view.config as Record<string, unknown>, today),
     };
     // H2 — viewer identity so the kernel applies per-field read-scope:
     // a member sees only the fields their capabilities permit (e.g.
@@ -323,7 +324,7 @@ viewsRouter.get(
     const out = await platform().entities.exportCsv(
       ctx.org.id,
       view.entity_kind,
-      { today, ...viewQuery(config), ...(req.query.subtotals === "true" && config.group_by ? { group_by: config.group_by as string, group_subtotals: true } : {}) },
+      { today, ...viewQuery(config, today), ...(req.query.subtotals === "true" && config.group_by ? { group_by: config.group_by as string, group_subtotals: true } : {}) },
       { userId: sessionUser(req)?.id, role: ctx.role },
       only,
     );

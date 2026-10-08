@@ -82,6 +82,7 @@ import sharp from "sharp";
 import { ProviderError, providerSentence, type ProviderReason } from "@cobblr/platform-contract/provider-reason";
 import { turnsOf, type ChatTurn, type ToolCall } from "./tool-wire.js";
 import { promptFingerprint } from "./prompt-fingerprint.js";
+import { MissingReplayResult, REPLAY_MISSING_RESULT_MESSAGE } from "./replay-failure.js";
 
 export const REPLAY_PROVIDER_ID = "replay";
 
@@ -258,7 +259,7 @@ function resolvePrevRefs(v: unknown, turns: ChatTurn[]): unknown {
       cur = cur && typeof cur === "object" ? (cur as Record<string, unknown>)[key] : undefined;
       if (idx) cur = Array.isArray(cur) ? cur[Number(idx[2])] : undefined;
     }
-    if (cur === undefined || cur === null) throw new Error(`replay: ${v} found nothing in the ${m[2] ?? "previous"} result: ${JSON.stringify(read).slice(0, 800)}`);
+    if (cur === undefined || cur === null) throw new MissingReplayResult(`replay: ${v} found nothing in the ${m[2] ?? "previous"} result: ${JSON.stringify(read).slice(0, 800)}`);
     return cur;
   }
   if (Array.isArray(v)) return v.map((x) => resolvePrevRefs(x, turns));
@@ -351,15 +352,23 @@ export function register(): void {
           }
           const n = roundIndex(turns);
           const round = cassette.rounds[Math.min(n, cassette.rounds.length - 1)] ?? { content: "" };
-          const tool_calls: ToolCall[] | undefined = round.tool_calls?.map((c) => ({
-            id: `replay-${++idCounter}`,
-            name: c.name,
-            args: resolvePrevRefs(c.args ?? {}, turns) as Record<string, unknown>,
-          }));
+          let content = round.content ?? "";
+          let tool_calls: ToolCall[] | undefined;
+          try {
+            tool_calls = round.tool_calls?.map((c) => ({
+              id: `replay-${++idCounter}`,
+              name: c.name,
+              args: resolvePrevRefs(c.args ?? {}, turns) as Record<string, unknown>,
+            }));
+          } catch (err) {
+            if (!(err instanceof MissingReplayResult)) throw err;
+            console.error(`[ai:replay] replay_missing_result: ${err.message}`);
+            content = REPLAY_MISSING_RESULT_MESSAGE;
+          }
           return {
             result: {
               role: "assistant",
-              content: round.content ?? "",
+              content,
               ...(tool_calls?.length ? { tool_calls } : {}),
             },
             input_tokens: 0,

@@ -68,7 +68,7 @@ export function glancePromptFor(input: Record<string, unknown>): string {
  * cached under the hash of a prompt it never sent.
  */
 export function visionPromptFor(capability: string, input: Record<string, unknown>): string {
-  if (capability === "document-read") return documentPromptFor(input);
+  if (capability === "document-read" || capability === "personal-document-read") return documentPromptFor(input);
   return capability === "identify-glance" ? glancePromptFor(input) : identifyPromptFor(input);
 }
 

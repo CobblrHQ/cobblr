@@ -58,6 +58,7 @@ export default defineModule({
       {
         group: "more",
         id: "core-documents:link-item",
+        runBy: "member",
         examples: ["link the warranty PDF to the dishwasher", "link the Zelda ROM to this cartridge"],
         label: "Link from a library",
         description:
@@ -80,6 +81,7 @@ export default defineModule({
       {
         group: "more",
         id: "core-documents:unlink-item",
+        runBy: "member",
         examples: ["that manual is not for this one, unlink it"],
         label: "Unlink a library item",
         description: "Take a linked library item off this record. Pass `connection_id` and `ref` (list_related shows them on the link). The item itself is not touched.",
@@ -98,6 +100,7 @@ export default defineModule({
       {
         group: "more",
         id: "core-documents:copy-item",
+        runBy: "member",
         examples: ["keep a copy of the manual in Cobblr"],
         label: "Bring a copy into Cobblr",
         description: "Copy a library item's file into Cobblr, attached to this record, so it is in Cobblr's backup too. Only a library that offers library.copy can. Pass `connection_id` and `ref`.",

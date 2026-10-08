@@ -2,6 +2,7 @@
 // Read by any member (the nav renders them); mutated by owner/admin.
 // See docs/architecture/nav-builder.md.
 
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware.js";
@@ -51,7 +52,7 @@ navHeadingsRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
 // AI-ACTION: core-presentation:group-nav
 navHeadingsRouter.post("/", requireAuth, withTenant, async (req, res, next) => {
   try {
-    if (!requireOwnerOrAdmin(req, res)) return;
+    if (!(await requireCapability(req, res, "core-presentation:group-nav"))) return;
     const parsed = CreateBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "Bad body", details: parsed.error.issues } });
@@ -104,7 +105,7 @@ navHeadingsRouter.delete("/:id", requireAuth, withTenant, async (req, res, next)
 // AI-ACTION: core-presentation:group-nav
 navHeadingsRouter.post("/:id/members", requireAuth, withTenant, async (req, res, next) => {
   try {
-    if (!requireOwnerOrAdmin(req, res)) return;
+    if (!(await requireCapability(req, res, "core-presentation:group-nav"))) return;
     const parsed = MemberBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "Bad body", details: parsed.error.issues } });
@@ -131,7 +132,7 @@ navHeadingsRouter.delete(
   withTenant,
   async (req, res, next) => {
     try {
-      if (!requireOwnerOrAdmin(req, res)) return;
+      if (!(await requireCapability(req, res, "core-presentation:ungroup-nav"))) return;
       await removeNavMember(
         req.tenant!.org.id,
         req.params.targetKind!,

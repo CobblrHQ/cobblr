@@ -13,8 +13,7 @@ import {
   parseJsonReply,
   nativesToHide,
   type EntityKindRecord,
-  type NativeFieldsPolicy,
-} from "@cobblr/platform-contract";
+  type NativeFieldsPolicy, countOf } from "@cobblr/platform-contract";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { getTemplate, type TemplateEntry } from "./templates.js";
 
@@ -123,7 +122,7 @@ export async function assembleContext(
   }
   if (!fullCatalogTask && chosen.length > MAX_KINDS) {
     warnings.push(
-      `${chosen.length} kinds in scope — capped to ${MAX_KINDS}. More kinds = lower small-model success rate. Narrow the selection.`,
+      `${countOf(chosen.length, "kind")} in scope — capped to ${MAX_KINDS}. More kinds = lower small-model success rate. Narrow the selection.`,
     );
     chosen = chosen.slice(0, MAX_KINDS);
   }

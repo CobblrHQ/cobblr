@@ -10,6 +10,7 @@
 
 import { currentHistoryWrite, historyDiff } from "./record-history.js";
 import { changesOf } from "@cobblr/platform-contract/activity-changes";
+import { secretHistoryDiff } from "@cobblr/platform-contract/secret-field";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { env } from "../env.js";
@@ -86,7 +87,7 @@ export async function log(p: LogParams): Promise<void> {
       action: p.action,
       entity_type: p.ref.entityType,
       entity_id: p.ref.entityId,
-      diff: diff === undefined ? null : (diff as object),
+      diff: diff === undefined ? null : (secretHistoryDiff(diff) as object),
       auth_method: authMethod,
       api_token_id: apiTokenId,
       via_kind: via?.kind ?? null,

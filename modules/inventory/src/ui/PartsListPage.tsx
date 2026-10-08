@@ -1,3 +1,4 @@
+import { dayHere } from "@cobblr/platform-contract/day";
 import { SpoolmanModal } from "./SpoolmanModal";
 import { FilamentCatalog } from "./FilamentCatalog";
 import { NewItemMenu } from "@cobblr/platform-web";
@@ -164,7 +165,7 @@ export function PartsListPage() {
   // surface reads it, and sent to the server so it holds across pages.
   // Only group_by and visible_fields used to reach this page, so "Use it or
   // lose it" stayed alphabetical and a Built chip filtered nothing.
-  const viewQ = activeView ? viewQuery(activeView.config) : {};
+  const viewQ = activeView ? viewQuery(activeView.config, dayHere()) : {};
   // When a view is active, restrict the custom columns to its visible_fields;
   // otherwise show the first 6 (the prior behaviour).
   const customCols = viewFields
@@ -256,13 +257,14 @@ export function PartsListPage() {
   async function exportCsv() {
     setExporting(true);
     try {
-      await api.partsExportCsv({
+      const got = await api.partsExportCsv({
         search: search.trim() || undefined,
         state: state === "all" ? undefined : state,
         show_archived: archivedFilter === "include" || undefined,
         archived_only: archivedFilter === "only" || undefined,
         insured_only: insuredOnly || undefined,
       });
+      if (got.secretsOmitted) toast.info("Secret fields were left out.");
       toast.success("CSV downloaded.");
     } catch (err) {
       toast.error((err as Error).message);

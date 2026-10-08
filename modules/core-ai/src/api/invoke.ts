@@ -11,6 +11,7 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 export const invokeRouter = Router({ mergeParams: true });
 
 const Body = z.object({
+  privacy: z.enum(["personal", "normal"]).default("normal"),
   capability: z.enum(AiCapabilities),
   input: z.record(z.unknown()),
   provider_id: z.string().optional(),
@@ -32,7 +33,7 @@ invokeRouter.post(
         orgId: ctx.org.id,
         capability: parsed.data.capability,
         input: parsed.data.input,
-        provider_id: parsed.data.provider_id,
+        ...(parsed.data.privacy === "personal" ? { privacy: "personal" as const } : { privacy: "normal" as const, provider_id: parsed.data.provider_id }),
         model: parsed.data.model,
         bypass_cache: parsed.data.bypass_cache,
         source: parsed.data.source,

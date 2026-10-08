@@ -9,9 +9,11 @@
 // eyeball in a `psql` query.
 
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
+import { credentialKeyId } from "./credential-key-id.js";
 import { env } from "../env.js";
 
 const KEY = scryptSync(env.TENANT_CREDS_ENCRYPTION_KEY, "cobblr-tenant-creds-v1", 32);
+export const tenantCredsKeyId = credentialKeyId(KEY);
 
 export function encryptCreds(plaintext: string): string {
   const iv = randomBytes(12);

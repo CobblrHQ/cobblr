@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-// A route gated by requireCapability names a capability an admin can grant: a user-invokable action or a declared capability in a manifest, or an entry in ENDPOINT_CAPABILITIES; otherwise a member is refused something no approval can ever give.
+// A route gated by requireCapability names a capability an admin can grant: a user-invokable action (a module's or the kernel's) or a declared capability in a manifest, or an entry in ENDPOINT_CAPABILITIES, or says `// ADMIN-ONLY: <why>`; otherwise a member is refused something no approval can ever give.
 //
 // THE BUG THIS PREVENTS. POST /parts/:id/stock-adjust gated on inventory:adjust-stock, whose action is userInvokable:false and so never grantable: a member could be refused and nobody could say yes (#3073, 2026-09-17).
 //
@@ -49,6 +49,7 @@ function* walk(dir: string): Generator<string> {
 
 /** Action ids the manifests declare as buttons a person may press, so a
  *  grant for them means something. Read once. */
+const sharedGrants = new Map<string, string>();
 function grantableActionIds(): Set<string> {
   const ids = new Set<string>();
   const modules = "modules";
@@ -74,7 +75,13 @@ function grantableActionIds(): Set<string> {
       const rest = src.slice(m.index + m[0].length);
       const next = rest.search(/\bid:\s*["'`][a-z0-9-]+:[a-z0-9-]+["'`]/);
       const window = next < 0 ? rest : rest.slice(0, next);
-      if (!/userInvokable:\s*false/.test(window)) ids.add(m[1]!);
+      // A member is never refused an action that runs by member (runBy, #5170),
+      // and one that says grantedAs is granted through that capability.
+      if (!/userInvokable:\s*false/.test(window) || /runBy:\s*["'`]member["'`]/.test(window)) ids.add(m[1]!);
+      else {
+        const shared = /grantedAs:\s*["'`]([a-z0-9-]+:[a-z0-9-]+)["'`]/.exec(window)?.[1];
+        if (shared) sharedGrants.set(m[1]!, shared);
+      }
     }
   }
   return ids;
@@ -93,7 +100,27 @@ function endpointCapabilityIds(): Set<string> {
   return ids;
 }
 
-const GRANTABLE = new Set([...grantableActionIds(), ...endpointCapabilityIds()]);
+/** The kernel's own actions a person can run (PLATFORM_ACTIONS with
+ *  user_invokable: true), registered and grantable like a module's. */
+function platformActionIds(): Set<string> {
+  const ids = new Set<string>();
+  let src = "";
+  try {
+    src = readFileSync(join("api", "src", "platform", "platform-actions.ts"), "utf8");
+  } catch {
+    return ids;
+  }
+  for (const m of src.matchAll(/(?<![\w$])id:\s*"(platform:[a-z0-9-]+|core-presentation:[a-z0-9-]+)"/g)) {
+    const rest = src.slice(m.index + m[0].length);
+    const next = rest.search(/(?<![\w$])id:\s*"[a-z0-9-]+:[a-z0-9-]+"/);
+    const window = next < 0 ? rest : rest.slice(0, next);
+    if (/user_invokable:\s*true/.test(window)) ids.add(m[1]!);
+  }
+  return ids;
+}
+
+const GRANTABLE = new Set([...grantableActionIds(), ...endpointCapabilityIds(), ...platformActionIds()]);
+for (const [id, shared] of sharedGrants) if (GRANTABLE.has(shared)) GRANTABLE.add(id);
 
 /** The check. Return every violation in one file; an empty array is a pass. */
 function check(file: string, src: string): Violation[] {
@@ -103,6 +130,9 @@ function check(file: string, src: string): Violation[] {
     const line = lines[i] ?? "";
     // A usage example in a comment is not a gate.
     if (/^\s*(?:\/\/|\*|\/\*)/.test(line)) continue;
+    // An action the admin tier alone runs, by design, says so with its reason:
+    // a member refused it is refused at every door, and no grant is owed.
+    if (/\/\/ ADMIN-ONLY: \S/.test(line) || /\/\/ ADMIN-ONLY: \S/.test(lines[i - 1] ?? "")) continue;
     for (const m of line.matchAll(/requireCapability\(\s*req\s*,\s*res\s*,\s*["'`]([a-z0-9-]+:[a-z0-9-]+)["'`]/g)) {
       const id = m[1]!;
       if (GRANTABLE.has(id)) continue;

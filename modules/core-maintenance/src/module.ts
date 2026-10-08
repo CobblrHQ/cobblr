@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-maintenance",
-  version: "0.2.13",
+  version: "0.2.14",
   displayName: "Maintenance",
   description:
     "Remember when things need servicing: log what was done and get a reminder when the next one is due.",
@@ -80,15 +80,24 @@ export default defineModule({
     ],
     actions: [
       {
+        // UI-REACH: collection field edits maintain the bound renewal through an ordinary bundle wire.
+        // DELIBERATELY universal: the collection wire supplies its own field binding; generic base kinds do not yet carry the instance traits at install.
+        group: "service", id: "core-maintenance:ensure-renewal", label: "Keep a renewal scheduled", scope: "entity", appliesTo: { any: true }, wireOnly: true, internal: true, userInvokable: false,
+        runBy: "member",
+        description: "Keep one anchored renewal bound to a collection's expiry, billing and cancellation fields. Used by collection create and edit wires.",
+        invokeHandler: "core-maintenance.ensure-renewal",
+        argsSchema: Object.fromEntries(["expiry", "cycle", "custom_months", "auto_renews", "notice_days", "cost", "quantity", "publisher"].map(name => [name, { label: name.replace(/_/g, " "), type: "text" as const, required: true }])),
+      },
+      {
         // UI-SCREEN: /instances/:name
-        group: "service", id: "core-maintenance:end-renewal", label: "End renewal", scope: "workspace", icon: "calendar-x",
+        group: "service", id: "core-maintenance:end-renewal", runBy: "member", label: "End renewal", scope: "workspace", icon: "calendar-x",
         invokeHandler: "core-maintenance.end-renewal", examples: ["I didn't renew the registration"],
         description: "End a renewal chain, stop future reminders and keep all past terms. Pass schedule_id from list_maintenance.",
         argsSchema: { schedule_id: { label: "Renewal", type: "text", required: true } },
       },
       {
         // UI-SCREEN: /instances/:name
-        group: "service", id: "core-maintenance:update-term", label: "Edit renewal term", scope: "workspace", icon: "pencil",
+        group: "service", id: "core-maintenance:update-term", runBy: "member", label: "Edit renewal term", scope: "workspace", icon: "pencil",
         undoable: true, invokeHandler: "core-maintenance.update-term", examples: ["the registration cost was actually $87"],
         description: "Correct a paid term from list_maintenance with terms true. Dates cannot overlap another term. Cost keeps its currency.",
         argsSchema: { term_id: { label: "Term", type: "text", required: true }, term_start: { label: "Start", type: "date" }, term_end: { label: "End", type: "date" }, cost: { label: "Cost", type: "text", money: true }, currency: { label: "Currency", type: "text" }, reference: { label: "PO or invoice", type: "text" }, quantity: { label: "Seats or quantity", type: "number" }, file_id: { label: "Document", type: "text" } },
@@ -96,6 +105,7 @@ export default defineModule({
       {
         // UI-REACH: stock setup and job-use writers reconcile an automatic usage schedule, rather than offering a second service form.
         group: "service", id: "core-maintenance:ensure-usage", label: "Keep a usage service scheduled", internal: true, userInvokable: false,
+        runBy: "member",
         description: "Keep one automatic service schedule for a record's usage counter and reconcile its open occurrence. The first interval starts at zero; completed service advances it normally. Repeated and concurrent calls keep one schedule and one due item.",
         scope: "workspace", invokeHandler: "core-maintenance.ensure-usage",
         argsSchema: { name: { label: "Service", type: "text", required: true }, counter_field: { label: "Usage counter", type: "text", required: true }, counter_every: { label: "Usage interval", type: "number", required: true } },
@@ -103,6 +113,7 @@ export default defineModule({
       {
         group: "service", primary: true,
         id: "core-maintenance:log",
+        runBy: "member",
         examples: ["changed the oil today", "log that I serviced it"],
         undoable: true,
         label: "Log service",
@@ -135,6 +146,7 @@ export default defineModule({
       {
         group: "service",
         id: "core-maintenance:schedule",
+        runBy: "member",
         examples: ["change the oil every 3 months", "service the printer every 200 print hours"],
         undoable: true,
         label: "Set a service schedule",
@@ -170,6 +182,7 @@ export default defineModule({
       },
       {
         group: "service", id: "core-maintenance:renewal", label: "Add a renewal",
+        runBy: "member",
         description: "Keep a registration, inspection, licence, insurance or domain renewal on a fixed expiry. Enter the current expiry; the anchor defaults to that date every year. Choose a month-end anchor, interval, reminder and optional date field to bind it to.",
         examples: ["my passport expires next March", "remind me to renew this domain a month before it expires"],
         appliesTo: { traits: ["unique", "indefinite", "durable"] }, undoable: true, icon: "calendar-clock", invokeHandler: "core-maintenance.renewal",
@@ -184,7 +197,7 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /maintenance
-        group: "service", id: "core-maintenance:reminders", label: "Change maintenance reminders",
+        group: "service", id: "core-maintenance:reminders", runBy: "member", label: "Change maintenance reminders",
         description: "Snooze, stop or resume reminders for an open occurrence. Its overdue status stays visible. Pass entry_id from list_maintenance and mode; snooze takes duration week or month, or until as an ISO timestamp.",
         examples: ["stop reminding me about the inspection", "snooze the registration reminder for a month"],
         scope: "workspace", undoable: true, icon: "bell", invokeHandler: "core-maintenance.reminders",
@@ -193,6 +206,7 @@ export default defineModule({
       {
         // NO-PHRASING: inverse of changing an occurrence's reminders.
         group: "service", id: "core-maintenance:restore-reminders", label: "Restore maintenance reminders",
+        runBy: "member",
         description: "Restore the previous snooze or stop state from Undo.", internal: true, userInvokable: false,
         scope: "workspace", icon: "undo", invokeHandler: "core-maintenance.restore-reminders",
         argsSchema: { entry_id: { label: "Service", type: "text", required: true }, nag_stopped_at: { label: "Previous stop", type: "text" }, nag_snoozed_until: { label: "Previous snooze", type: "text" } },
@@ -200,13 +214,15 @@ export default defineModule({
       {
         // UI-SCREEN: /configuration/notification-audiences
         group: "service", id: "core-maintenance:reminder-default", label: "Set overdue reminder cadence",
+        // ADMIN-ONLY: the page's own route PUT /reminders/preferences gates on this action's own id, owner or admin (reminders.ts)
+        runBy: "admin",
         description: "Set the workspace default for overdue maintenance reminders to day, week, month or off. Each schedule can override it.",
         examples: ["remind us weekly about overdue maintenance"], scope: "workspace", icon: "bell", undoable: true, invokeHandler: "core-maintenance.reminder-default",
         argsSchema: { overdue_every: { label: "Overdue reminders", type: "text", required: true, choices: [{ value: "day", label: "Daily" }, { value: "week", label: "Weekly" }, { value: "month", label: "Monthly" }, { value: "off", label: "Off" }] } },
       },
       {
         // UI-SCREEN: /instances/:name
-        group: "service", id: "core-maintenance:renew", label: "Renew",
+        group: "service", id: "core-maintenance:renew", runBy: "member", label: "Renew",
         examples: ["I renewed the inspection today, good till next March"],
         description: "Renew an anchored schedule. Pass schedule_id from list_maintenance, an optional new_expiry date, cost and notes. Early renewal keeps the next anchored expiry.",
         scope: "workspace" as const, icon: "calendar-check", invokeHandler: "core-maintenance.renew",
@@ -222,7 +238,7 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /instances/:name
-        group: "service", id: "core-maintenance:update-schedule", label: "Change a service schedule",
+        group: "service", id: "core-maintenance:update-schedule", runBy: "member", label: "Change a service schedule",
         examples: ["remind me a month before the registration expires"],
         description: "Change a schedule by schedule_id from list_maintenance. Edit its interval, anchor, current_expiry or remind (before and unit, or on month_start).",
         scope: "workspace" as const, icon: "pencil", undoable: true, invokeHandler: "core-maintenance.update-schedule",
@@ -243,6 +259,7 @@ export default defineModule({
         // door holds it for a person's confirm.
         group: "service",
         id: "core-maintenance:remove-schedule",
+        runBy: "member",
         label: "Remove a service schedule",
         examples: ["stop tracking the oil change on the van", "remove the registration renewal"],
         description: "Remove a schedule by schedule_id from list_maintenance. Its open occurrence goes with it; the history it already rolled stays. Asks the person first.",
@@ -259,6 +276,7 @@ export default defineModule({
         // NO-PHRASING: the way back for another action, run only from Undo
         group: "service",
         id: "core-maintenance:remove-entry",
+        runBy: "member",
         internal: true,
         label: "Remove a maintenance entry",
         description: "Internal, the inverse of logging maintenance: removes the entry again. Runs from Undo on the card; not for direct use.",
@@ -275,6 +293,7 @@ export default defineModule({
         // NO-PHRASING: the way back for another action, run only from Undo
         group: "service",
         id: "core-maintenance:reopen-entry",
+        runBy: "member",
         internal: true,
         label: "Reopen a maintenance entry",
         description: "Internal, the inverse of completing an entry: puts back when and by whom it said it was done, or none. Runs from Undo on the card; not for direct use.",
@@ -293,6 +312,7 @@ export default defineModule({
         // UI-SCREEN: /maintenance
         group: "service",
         id: "core-maintenance:complete",
+        runBy: "member",
         examples: ["that service is done"],
         undoable: true,
         label: "Mark service done",
@@ -339,12 +359,15 @@ export default defineModule({
     onBoot: async () => {
       const { registerTermsHeal } = await import("./heal-terms.js");
       registerTermsHeal();
+      const { registerBoundRenewalsHeal } = await import("./heal-bound-renewals.js");
+      registerBoundRenewalsHeal();
       const { registerTermResolvers } = await import("./term-resolvers.js");
       registerTermResolvers();
       const { startMaintenanceSweeper } = await import("./sweeper.js");
       startMaintenanceSweeper();
-      const { registerMaintenanceContext } = await import("./computed-context.js");
+      const { registerMaintenanceContext, registerRenewalContext } = await import("./computed-context.js");
       registerMaintenanceContext();
+      registerRenewalContext();
       const { registerMaintenanceCalendarSource } = await import("./calendar-source.js");
       registerMaintenanceCalendarSource();
     },

@@ -1,0 +1,41 @@
+{
+  "shipmentProfileType": "OUTBOUND_PROFILE",
+  "progressTracker": "{\"progressMeter\":{\"milestoneList\":[{\"position\":0,\"mileStoneType\":\"NORMAL\",\"eventSummary\":{\"statusElement\":{\"translatorString\":{\"localisedStringId\":\"swa_rex_shipping_label_created\"}},\"metaDataElement\":{\"translatorString\":{}},\"timeElement\":\"Oct 8, 2026, 3:00:00\u202fPM\"},\"isActive\":true},{\"position\":1,\"mileStoneType\":\"NORMAL\",\"eventSummary\":{\"statusElement\":{\"translatorString\":{\"localisedStringId\":\"swa_rex_intransit\"}},\"metaDataElement\":{\"translatorString\":{}},\"timeElement\":\"Oct 8, 2026, 3:00:00\u202fPM\"},\"isActive\":false},{\"position\":2,\"mileStoneType\":\"NORMAL\",\"eventSummary\":{\"statusElement\":{\"translatorString\":{\"localisedStringId\":\"swa_rex_ofd\"}},\"metaDataElement\":{\"translatorString\":{}},\"timeElement\":\"Oct 11, 2026, 3:00:00\u202fAM\"},\"isActive\":false},{\"position\":3,\"mileStoneType\":\"NORMAL\",\"eventSummary\":{\"statusElement\":{\"translatorString\":{\"localisedStringId\":\"swa_rex_delivering_eddday\",\"fieldValueMap\":{\"expectedDeliveryDate\":{\"date\":\"Oct 11, 2026, 3:00:00\u202fAM\",\"type\":\"DATE\"}}}},\"metaDataElement\":{\"translatorString\":{}},\"timeElement\":\"Oct 11, 2026, 3:00:00\u202fAM\"},\"isActive\":false}]},\"summary\":{\"status\":\"CreationConfirmed\",\"metadata\":{\"promisedDeliveryDate\":{\"date\":\"Oct 11, 2026, 3:00:00\u202fAM\",\"type\":\"DATE\"},\"expectedDeliveryDate\":{\"date\":\"Oct 11, 2026, 3:00:00\u202fAM\",\"type\":\"DATE\"},\"shipperName\":{\"stringValue\":\"DERICK LIMITED\",\"type\":\"STRING\"},\"isLastLegCarrierAmazon\":{\"value\":1,\"type\":\"INTEGER\"},\"trackingStatus\":{\"stringValue\":\"READY_FOR_RECEIVE\"},\"creationDate\":{\"date\":\"Oct 8, 2026, 10:48:35\u202fAM\"},\"lastLegCarrier\":{\"stringValue\":\"Amazon\",\"type\":\"STRING\"}},\"containerStatusTags\":[\"READY_FOR_RECEIVE\"],\"valueAddedServices\":[\"PhotoOfService\",\"DangerousGoods\"]},\"expectedDeliveryDate\":\"Oct 11, 2026, 3:00:00\u202fAM\",\"legType\":\"FORWARD\",\"hasDeliveryDelayed\":false,\"trackerSource\":\"SWA\"}",
+  "eventHistory": "{\"eventHistory\":[{\"eventCode\":\"CreationConfirmed\",\"statusSummary\":{\"localisedStringId\":\"swa_rex_detail_creation_confirmed\"},\"eventTime\":\"Oct 8, 2026, 10:48:47\u202fAM\",\"location\":{},\"shipmentType\":\"FORWARD\",\"eventMetadata\":{}}],\"summary\":{\"status\":\"READY_FOR_RECEIVE\"},\"trackerSource\":\"SWA\"}",
+  "addresses": null,
+  "eligibleActions": null,
+  "proofOfDeliveryImage": "{\"imageUrl\":null}",
+  "shipperId": null,
+  "packageMarketplaceDetail": {
+    "isPackageBelongToCurrentMarketplace": true,
+    "packageCountryCode": "US"
+  },
+  "shipperBrandingDetails": {
+    "brandingType": "NO_BRANDING",
+    "shipperAssetDetails": []
+  },
+  "geocodeDetails": null,
+  "packageAuthenticationDetails": {
+    "isTokenValid": false,
+    "accessType": "ANONYMOUS_PACKAGE_ACCESS"
+  },
+  "deliveryLocationDetails": {
+    "deliveryLocation": null
+  },
+  "recipientDetails": null,
+  "claimYourPackageEligibility": null,
+  "pinsAndBridgesDetails": null,
+  "otpDetails": null,
+  "shipperDetails": {
+    "shipperName": "shipper",
+    "shipperId": "5905348246"
+  },
+  "d2CDetails": {
+    "isD2CPackage": false,
+    "counterDetails": "null"
+  },
+  "signatureInfo": null,
+  "recipientEligibleActions": null,
+  "returnDetails": null,
+  "predictiveDeliveryWindowDetails": null
+}

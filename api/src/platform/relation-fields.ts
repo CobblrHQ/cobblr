@@ -20,6 +20,7 @@ import { meta } from "../db/meta.js";
 import { lookupMany } from "./entities.js";
 import type { ResolvedEntity } from "@cobblr/platform-contract";
 import { coerceMetadata } from "@cobblr/platform-contract/entity-metadata";
+import { ttlCache } from "../lib/ttl-cache.js";
 
 interface RelDef {
   name: string;
@@ -27,7 +28,7 @@ interface RelDef {
 }
 
 const TTL_MS = 5_000;
-const cache = new Map<string, { at: number; defs: RelDef[] }>();
+const cache = ttlCache<RelDef[]>(TTL_MS);
 const relDepth = new AsyncLocalStorage<number>();
 
 export function clearRelationDefsCache(): void {
@@ -40,27 +41,26 @@ async function relationDefsFor(orgId: string, kind: string): Promise<RelDef[]> {
 
 async function loadRelationDefsFor(orgId: string, kind: string): Promise<RelDef[]> {
   const key = `${orgId}:${kind}`;
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.defs;
-  let defs: RelDef[] = [];
-  try {
-    const rows = await meta
-      .selectFrom("module_field_defs")
-      .select(["name", "ref_kind"])
-      .where("org_id", "=", orgId)
-      .where("entity_kind", "=", kind)
-      .where("type", "=", "relation")
-      .where("ref_kind", "is not", null)
-      .execute();
-    defs = rows
-      .filter((r): r is { name: string; ref_kind: string } => !!r.ref_kind)
-      .map((r) => ({ name: r.name, ref_kind: r.ref_kind }));
-  } catch (err) {
-    console.error(`[relation-fields] defs query for ${key} failed:`, (err as Error).message);
-    defs = [];
-  }
-  cache.set(key, { at: Date.now(), defs });
-  return defs;
+  return cache.get(key, async () => {
+    let defs: RelDef[] = [];
+    try {
+      const rows = await meta
+        .selectFrom("module_field_defs")
+        .select(["name", "ref_kind"])
+        .where("org_id", "=", orgId)
+        .where("entity_kind", "=", kind)
+        .where("type", "=", "relation")
+        .where("ref_kind", "is not", null)
+        .execute();
+      defs = rows
+        .filter((r): r is { name: string; ref_kind: string } => !!r.ref_kind)
+        .map((r) => ({ name: r.name, ref_kind: r.ref_kind }));
+    } catch (err) {
+      console.error(`[relation-fields] defs query for ${key} failed:`, (err as Error).message);
+      defs = [];
+    }
+    return defs;
+  });
 }
 
 /** Inject `<name>_label` for each relation field on the entity, resolving the

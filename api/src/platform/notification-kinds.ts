@@ -44,6 +44,8 @@ export const KERNEL_NOTIFICATION_KINDS: readonly NotificationKindDecl[] = [
   { eventType: "core-scan.email.received", scope: "account", label: "Receipt email received", description: "A receipt you emailed in arrived and is being read." },
   { eventType: "core-scan.email.imported", scope: "account", label: "Receipt imported", description: "The items on a receipt you emailed in are in your scan inbox." },
   { eventType: "core-scan.email.duplicate", scope: "account", label: "Receipt already imported", description: "A receipt you emailed in was one you had already imported." },
+  { eventType: "core-scan.email.tracking_added", scope: "account", label: "Tracking added to an order", description: "A shipping notice you forwarded added its tracking number to the order, and which lines are in that parcel." },
+  { eventType: "core-scan.email.shipment_unmatched", scope: "account", label: "Tracking number not added", description: "A shipping notice you forwarded named an order Cobblr could not match, so its tracking number was not added." },
   { eventType: "core-scan.email.no_receipt", scope: "account", label: "No receipt in that email", description: "An email you sent in had no receipt Cobblr could read." },
   { eventType: "platform.assistant.change_held", label: "Assistant wants to delete something", description: "An assistant asked to delete a record, and it waits for your yes." },
   { eventType: "platform.service.awaiting_confirm", label: "Service waiting for your yes", description: "An automation or a module asked for a service that runs only once someone says yes." },

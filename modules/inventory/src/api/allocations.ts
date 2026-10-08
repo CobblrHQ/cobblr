@@ -11,11 +11,12 @@
 // require platform-level subscription to every module's delete
 // events, which is overkill for Phase 1.
 
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { assertStorageReady } from "./storage.js";
 import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { ActionRefusal, platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody } from "./util.js";
 import { recordConsumption } from "./stock-ledger.js";
@@ -150,6 +151,7 @@ export async function reserveAllocation(
 allocationsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "inventory:reserve-stock"))) return;
     const parsed = AllocCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const outcome = await reserveAllocation(
@@ -196,11 +198,12 @@ export async function settleAllocation(
       .selectFrom("inventory_allocations")
       .select([
         "id", "part_id", "qty", "status", "reason",
-        "target_module", "target_entity_type", "target_entity_id",
+        "target_module", "target_entity_type", "target_entity_id", "target_line",
       ])
       .where("id", "=", id)
       .forUpdate().executeTakeFirst();
     if (!current) return { error: "not_found" as const };
+    if (current.target_line === "assembly-kit") throw new ActionRefusal("Settle this reservation through its whole assembly work order.");
     if (current.status !== "reserved") {
       return { error: "not_reserved" as const, current };
     }
@@ -309,6 +312,7 @@ export async function settleAllocation(
 allocationsRouter.patch(
   "/:id/status",
   asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "inventory:settle-allocation"))) return;
     const parsed = StatusChange.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const id = req.params.id;

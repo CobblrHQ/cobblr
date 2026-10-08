@@ -34,7 +34,7 @@ export async function receiveOrderLines(db: Kysely<PurchasesDB>, orgId: string, 
        set received_at = ${receivedOn}
      where order_id = ${orderId}
        and received_at is null
-    returning id, part_id, qty, unit_cost, line_amount, description`.execute(db);
+    returning id, part_id, qty, unit_cost, line_amount, description, stock_withdrawn_at`.execute(db);
   let received = 0;
   for (const it of rows.rows) {
     received++;
@@ -55,7 +55,7 @@ export async function receiveOrderLine(db: Kysely<PurchasesDB>, orgId: string, l
        set received_at = ${receivedOn}, part_id = coalesce(part_id, ${partId}::uuid)
      where id = ${lineId}
        and received_at is null
-    returning id, order_id, part_id, qty, unit_cost, line_amount, description`.execute(db);
+    returning id, order_id, part_id, qty, unit_cost, line_amount, description, stock_withdrawn_at`.execute(db);
   const it = rows.rows[0];
   if (!it) return false;
   if (it.part_id) await tellReceived(orgId, it.order_id, it as ReceivedLine, await orderAddsStock(db, it.order_id));
@@ -79,13 +79,16 @@ export async function receiveIfArrived(db: Kysely<PurchasesDB>, orgId: string, o
   return receiveOrderLines(db, orgId, orderId, on, addToStock ?? order.add_to_stock !== false);
 }
 
-type ReceivedLine = { id: string; part_id: string; qty: string | null; unit_cost: string | null; line_amount: string | null; description: string | null };
+type ReceivedLine = { id: string; part_id: string; qty: string | null; unit_cost: string | null; line_amount: string | null; description: string | null; stock_withdrawn_at?: Date | string | null };
 
 async function tellReceived(orgId: string, orderId: string, it: ReceivedLine, addsStock = true): Promise<void> {
   const qty = Number(it.qty ?? 0);
   const unitCost = it.unit_cost == null ? null : Number(it.unit_cost);
   // The receipt's own line total wins over qty × unit price (0007).
   const lineCost = it.line_amount != null ? Number(it.line_amount) : unitCost == null ? null : amountOf(centsFromAmount(unitCost * qty));
+  // Received once already and taken back (unreceiveOrderLines): its spend was
+  // told the first time, so this receive moves the shelf and nothing else.
+  const counted = !!it.stock_withdrawn_at;
   const payload: OrderItemReceived = {
     orgId,
     orderId,
@@ -94,8 +97,8 @@ async function tellReceived(orgId: string, orderId: string, it: ReceivedLine, ad
     // The stock change this receipt makes, which the stock wire reads.
     delta: addsStock ? qty : 0,
     qty,
-    unitCost,
-    lineCost,
+    unitCost: counted ? null : unitCost,
+    lineCost: counted ? null : lineCost,
     reason: `Order arrived (${it.description ?? "item"})`,
     description: it.description,
   };
@@ -117,4 +120,39 @@ export async function settleUnconfirmedLine(db: Kysely<PurchasesDB>, orgId: stri
   if (!it) return false;
   if (decision === "add" && it.part_id) await tellReceived(orgId, it.order_id, it);
   return true;
+}
+
+/** Take back the receive of every line of an order that was received with
+ *  it: the receipt filed the order as arrived (no tracking number, no
+ *  promised day), and a shipping notice since proved it was still on its way.
+ *  The stamp is cleared in the statement that reads it, so a second notice
+ *  takes nothing back twice; a part's stock leaves the shelf once (delta < 0),
+ *  and stock_withdrawn_at keeps its cost from being counted again when it
+ *  really arrives. Answers how many lines were taken back. */
+export async function unreceiveOrderLines(db: Kysely<PurchasesDB>, orgId: string, orderId: string, reason: string): Promise<number> {
+  const adds = await orderAddsStock(db, orderId);
+  const rows = await sql<ReceivedLine & { part_id: string | null }>`
+    update purchases_order_items
+       set received_at = null, stock_withdrawn_at = now()
+     where order_id = ${orderId}
+       and received_at is not null
+    returning id, part_id, qty, unit_cost, line_amount, description`.execute(db);
+  for (const it of rows.rows) {
+    if (!it.part_id || !adds) continue;
+    const qty = Number(it.qty ?? 0);
+    const payload: OrderItemReceived = {
+      orgId,
+      orderId,
+      orderItemId: it.id,
+      partId: it.part_id,
+      delta: -qty,
+      qty,
+      unitCost: null,
+      lineCost: null,
+      reason: `${reason} (${it.description ?? "item"})`,
+      description: it.description,
+    };
+    await platform().events.emit("purchases.order_item.unreceived", payload);
+  }
+  return rows.rows.length;
 }

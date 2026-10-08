@@ -44,6 +44,7 @@ import { scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
 
 import { rowPictures, leadYours } from "../lib/rowPictures";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 function CaptureThumbnail({ slug, item, name }: { slug: string; item: ScanInboxItem; name: string }) {
   const pics = rowPictures(slug, item);
   const picture = leadYours(pics.pictures) ?? pics.pictures.find(p => p.fileId);
@@ -378,7 +379,7 @@ export function WhatToDoPanel({
     onSuccess: (r) => {
       void qc.invalidateQueries();
       if (r.failed.length) toast.error(`${r.filed.length} added. ${r.failed.length} could not be added: ${r.failed[0]!.reason}`);
-      else toast.success(`Added ${r.filed.length} items.`);
+      else toast.success(`Added ${countOf(r.filed.length, "item")}.`);
     },
     onError: (e) => { void qc.invalidateQueries(); toast.error(e instanceof Error ? e.message : "Couldn't add those items"); },
   });

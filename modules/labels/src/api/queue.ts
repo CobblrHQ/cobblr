@@ -2,6 +2,7 @@
 // renderer needs (qr_payload + pre-rendered description) so we don't
 // have to re-query the source module to print.
 
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
@@ -98,6 +99,7 @@ queueRouter.get(
 queueRouter.post(
   "/",
   asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "labels:print"))) return;
     const parsed = QueueAdd.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);

@@ -53,6 +53,7 @@ const PERSONAL = "one person's own inbox and choices, tied to accounts the targe
 export const SHARED_WORKSPACE_TABLES: Record<string, SharedTablePolicy> = {
   record_action_layouts: { travels: "backup" },
   record_action_pins: { travels: "never", why: PERSONAL },
+  push_subscriptions: { travels: "never", why: "a browser on one device, subscribed to this server's own push key; restored elsewhere it is a key that server cannot sign for, so a device turns notifications on again there" },
   deleted_records: { travels: "never", why: "deleted before-images expire in the workspace where the deletion happened" },
   // ── Restored with the backup (order: parents first) ────────────────────
   workspace_people: { travels: "backup", id: "id", users: ["user_id"] },
@@ -108,6 +109,7 @@ export const SHARED_WORKSPACE_TABLES: Record<string, SharedTablePolicy> = {
   workspace_capability_grants: { travels: "never", why: ACCESS },
   approval_requests: { travels: "never", why: "a request to a person in this workspace; it lapses rather than travels" },
   ai_held_changes: { travels: "never", why: "a change an assistant asked for, waiting on a person in this workspace; it lapses in a day and never replays somewhere else" },
+  issued_undos: { travels: "never", why: "an undo step handed to one person for their own run; it is theirs for a week and means nothing in another workspace" },
   notifications: { travels: "never", why: PERSONAL },
   notification_subscriptions: { travels: "never", why: PERSONAL },
   notification_deferred: { travels: "never", why: PERSONAL },

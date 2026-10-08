@@ -1,0 +1,10 @@
+{
+  "lint": "lint:no-red-proof-left-in",
+  "run": "node scripts/lint-no-red-proof-left-in.ts",
+  "rows": [
+    "kernel-platform-service"
+  ],
+  "ms": 1222,
+  "recorded": "2026-10-08",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

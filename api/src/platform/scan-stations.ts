@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { canContain, platform, type EntityRef } from "@cobblr/platform-contract";
+import { canContain, platform, type EntityRef, countOf } from "@cobblr/platform-contract";
 import { nfcUid, stationControl, type ScanStation, type StationCommand, type StationPlacement, type StationRef } from "@cobblr/platform-contract/scan-station";
 import { actionActed } from "@cobblr/platform-contract/action-result";
 import { qrTokenFromScan } from "@cobblr/platform-contract/qr-token";
@@ -7,10 +7,10 @@ import { StationEngine, StationRefusal, type StationPorts } from "./scan-station
 import { stationStore } from "./scan-station-store.js";
 import { resolveQrToken } from "../routes/qr-scan.js";
 import { routeScanToDrive } from "./scan-drive.js";
+import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
 export interface StationCaller { orgId: string; userId: string; orgSlug: string; token: string }
-// loopback-ok: #5153 moves this onto selfFetch
-const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT || 4000}`;
+const INTERNAL_API = selfOrigin();
 
 async function record(orgId: string, ref: EntityRef): Promise<StationRef> {
   const entity = await platform().entities.lookup(orgId, ref.kind, ref.id);
@@ -37,7 +37,7 @@ export async function resolveStationCode(orgId: string, code: string) {
 }
 
 async function scanApi<T>(caller: StationCaller, method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${INTERNAL_API}/api/v1/orgs/${encodeURIComponent(caller.orgSlug)}/modules/core-scan${path}`, {
+  const res = await apiFetch(`${INTERNAL_API}/api/v1/orgs/${encodeURIComponent(caller.orgSlug)}/modules/core-scan${path}`, {
     method, headers: { Authorization: `Bearer ${caller.token}`, "Content-Type": "application/json" },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
@@ -113,7 +113,7 @@ function ports(caller: StationCaller, device: ScanStation): StationPorts {
     async notify(s) {
       const filed = s.actions.filter((a) => a.status === "done" && (a.type === "file" || a.type === "inbox"));
       const places = new Set(filed.map((a) => `${a.after?.container?.kind}:${a.after?.container?.id}`));
-      const message = `${s.device_name}: ${filed.length} things filed into ${places.size} places. Review`;
+      const message = `${s.device_name}: ${countOf(filed.length, "thing")} filed into ${countOf(places.size, "place")}. Review`;
       // OUTSIDE-RECORD-ADDRESS: a station session is an app review page, not an entity record; notification delivery qualifies it for the workspace
       await platform().notifications.dispatch({
         orgId, userId: caller.userId, eventType: "scan.station.review", priority: "normal", message,

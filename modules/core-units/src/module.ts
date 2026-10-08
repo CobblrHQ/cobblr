@@ -44,6 +44,8 @@ export default defineModule({
         // NO-PHRASING: the way back for another action, run only from Undo
         group: "more",
         id: "core-units:remove-unit",
+        // ADMIN-ONLY: the undo of add-unit, admin
+        runBy: "admin",
         internal: true,
         label: "Remove a unit",
         description: "Internal, the inverse of adding a unit this workspace made: removes it again. Runs from Undo on the card; not for direct use.",
@@ -64,6 +66,8 @@ export default defineModule({
         // UI-SCREEN: /configuration/units
         group: "more",
         id: "core-units:add-unit",
+        // ADMIN-ONLY: the page's own route POST /units gates on this action's own id, owner or admin (units.ts)
+        runBy: "admin",
         examples: ["we measure yarn in balls", "add a fathom unit"],
         undoable: true,
         label: "Add a unit",

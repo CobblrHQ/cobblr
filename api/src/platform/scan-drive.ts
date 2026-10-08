@@ -14,9 +14,9 @@ import { invoke } from "./actions.js";
 import { withStation } from "./scan-stations.js";
 import { emit } from "./events.js";
 import type { StationResult } from "@cobblr/platform-contract/scan-station";
+import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
-// loopback-ok: #5153 moves this onto selfFetch
-const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
+const INTERNAL_API = selfOrigin();
 
 // Re-exported from the contract package, which is the ONE definition shared with
 // the browser. Three hand-rolled copies had drifted; two were wrong.
@@ -105,7 +105,7 @@ export async function routeScanToDrive(opts: {
   // 2. A product barcode → intake via the existing /scan, then surface the inbox.
   let itemId: string | undefined;
   try {
-    const res = await fetch(`${baseUrl}/api/v1/orgs/${opts.orgSlug}/modules/core-scan/scan`, {
+    const res = await apiFetch(`${baseUrl}/api/v1/orgs/${opts.orgSlug}/modules/core-scan/scan`, {
       method: "POST",
       headers: { Authorization: `Bearer ${opts.token}`, "Content-Type": "application/json" },
       body: JSON.stringify({

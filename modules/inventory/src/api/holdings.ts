@@ -748,7 +748,7 @@ const AddHolding = z.object({
 holdingsRouter.post(
   "/:id/holdings",
   asyncHandler(async (req, res) => {
-    if (!(await requireCapability(req, res, "inventory:create-part"))) return;
+    if (!(await requireCapability(req, res, "inventory:add-holding"))) return;
     const parsed = AddHolding.safeParse(req.body ?? {});
     if (!parsed.success) return badBody(res, parsed.error);
     const out = await addHolding(holdingsCtx(req), req.params.id!, parsed.data);
@@ -767,7 +767,7 @@ const Combine = z.object({ ids: z.array(z.string().uuid()).min(1).max(100) });
 holdingsRouter.post(
   "/:id/holdings/combine",
   asyncHandler(async (req, res) => {
-    if (!(await requireCapability(req, res, "inventory:create-part"))) return;
+    if (!(await requireCapability(req, res, "inventory:combine-holdings"))) return;
     const parsed = Combine.safeParse(req.body ?? {});
     if (!parsed.success) return badBody(res, parsed.error);
     const out = await combineInto(holdingsCtx(req), req.params.id!, parsed.data.ids);
@@ -784,7 +784,7 @@ holdingsRouter.post(
 holdingsRouter.post(
   "/:id/holdings/:holdingId/split",
   asyncHandler(async (req, res) => {
-    if (!(await requireCapability(req, res, "inventory:create-part"))) return;
+    if (!(await requireCapability(req, res, "inventory:split-holding"))) return;
     const c = holdingsCtx(req);
     const actual = (await cardOfHoldings(c, [req.params.holdingId!])).get(req.params.holdingId!);
     if (actual !== req.params.id) {
@@ -839,7 +839,7 @@ const Transfer = z
 holdingsRouter.post(
   "/:id/transfer",
   asyncHandler(async (req, res) => {
-    if (!(await requireCapability(req, res, "inventory:update-part"))) return;
+    if (!(await requireCapability(req, res, "inventory:transfer-stock"))) return;
     const parsed = Transfer.safeParse(req.body ?? {});
     if (!parsed.success) return badBody(res, parsed.error);
     const out = await transferStock(holdingsCtx(req), req.params.id!, parsed.data);
@@ -858,7 +858,7 @@ const MoveAll = z.object({ to_location_id: z.string().uuid(), via: Via });
 holdingsRouter.post(
   "/:id/move-all",
   asyncHandler(async (req, res) => {
-    if (!(await requireCapability(req, res, "inventory:update-part"))) return;
+    if (!(await requireCapability(req, res, "inventory:move-all-stock"))) return;
     const parsed = MoveAll.safeParse(req.body ?? {});
     if (!parsed.success) return badBody(res, parsed.error);
     const out = await moveAllTo(holdingsCtx(req), req.params.id!, parsed.data);
@@ -881,7 +881,7 @@ const Receive = z.object({
 holdingsRouter.post(
   "/:id/receive",
   asyncHandler(async (req, res) => {
-    if (!(await requireCapability(req, res, "inventory:update-part"))) return;
+    if (!(await requireCapability(req, res, "inventory:receive-lot"))) return;
     const parsed = Receive.safeParse(req.body ?? {});
     if (!parsed.success) return badBody(res, parsed.error);
     const out = await receiveLot(holdingsCtx(req), req.params.id!, parsed.data);

@@ -4,6 +4,7 @@
 // (parts, machines, etc.) match against rows inside them via
 // entity_pairings with relationship_kind='matches'.
 
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
@@ -697,7 +698,7 @@ export async function pullCatalogFromSource(
 catalogsRouter.post(
   "/:id/pull",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "core-catalogs:refresh"))) return;
     const id = req.params.id;
     if (!id) {
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });

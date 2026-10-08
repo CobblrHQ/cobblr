@@ -101,7 +101,11 @@ capabilitiesRouter.put(
       });
       return;
     }
-    const cap = def.capabilities[parsed.data.capability];
+    if (parsed.data.capability === "personal-document-read" && def.locality !== "local") {
+      res.status(400).json({ error: { code: "personal_requires_local", message: "Personal documents can only be read by a local model." } });
+      return;
+    }
+    const cap = def.capabilities[parsed.data.capability] ?? (parsed.data.capability === "personal-document-read" ? def.capabilities["document-read"] : undefined);
     if (!cap) {
       res.status(400).json({
         error: {

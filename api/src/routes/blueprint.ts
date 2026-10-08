@@ -17,6 +17,7 @@
 import { Router } from "express";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
+import { omitSecretValues } from "@cobblr/platform-contract/secret-field";
 import { bindingAskOf } from "@cobblr/platform-contract/binding-ask";
 import { sql, type Kysely } from "kysely";
 import { requireAuth } from "../auth/middleware.js";
@@ -282,7 +283,7 @@ export async function captureBlueprint(orgId: string): Promise<BlueprintManifest
     .executeTakeFirstOrThrow();
   // UTC-DAY OK: the manifest's capture stamp, not a claim about anybody's calendar.
   const stamp = new Date().toISOString().slice(0, 10);
-  return {
+  return omitSecretValues({
     kind: "cobblr.blueprint",
     id: `cobblr.blueprint.export.${orgRow.slug}.${stamp}`,
     version: stamp,
@@ -324,7 +325,7 @@ export async function captureBlueprint(orgId: string): Promise<BlueprintManifest
     })),
     saved_views: savedViews,
     public_surfaces: publicSurfaces,
-  };
+  }) as BlueprintManifestT;
 }
 
 // ── Plan: what an install would do (the needs_consent payload) ───────

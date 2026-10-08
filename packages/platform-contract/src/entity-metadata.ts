@@ -12,6 +12,7 @@
 // Six modules and two kernel files each carried their own copy, identical
 // today and free to drift apart (#3499). They import these now.
 
+import { isMaskedSecret, omitSecretValues } from "@cobblr/platform-contract/secret-field";
 import { fieldKindOf } from "@cobblr/platform-contract/kind-label";
 import { asMeasure } from "@cobblr/platform-contract/measure";
 import { readMoney, parseMoney } from "@cobblr/platform-contract/money";
@@ -118,7 +119,8 @@ export function coerceMetadata(raw: unknown): Record<string, unknown> {
  *  native fields, so every shipped label that named a bundle's field printed
  *  its placeholder ("Unknown / Effective Java / ?", #3591). */
 export function templateDataOf(fields: Record<string, unknown>): Record<string, unknown> {
-  return { ...fields, ...coerceMetadata(fields.metadata) };
+  const safe = omitSecretValues(fields) as Record<string, unknown>;
+  return { ...safe, ...coerceMetadata(safe.metadata) };
 }
 
 /** Props on a resolved record that every reader sees whatever the kind's
@@ -253,7 +255,7 @@ export interface FieldValueProblem {
   value: unknown;
   /** What the field takes, in words: "one of: small, large", "a number". */
   expected: string;
-  code: "not_a_choice" | "not_a_number" | "not_a_yes_no" | "not_a_date" | "not_a_measure" | "required_field";
+  code: "not_a_choice" | "not_a_number" | "not_a_yes_no" | "not_a_date" | "not_a_measure" | "required_field" | "not_a_secret" | "full_card_number";
   choices?: string[];
 }
 
@@ -266,7 +268,7 @@ export class InvalidFieldValueError extends Error {
     super(
       problems
         .map((p) =>
-          p.code === "required_field"
+          p.code === "full_card_number" ? `${p.field} takes a payment method and the last four digits only. Remove the full card number.` : p.code === "not_a_secret" ? `${p.field} takes a new text value or null.` : p.code === "required_field"
             ? `${p.field} is required, so it cannot be emptied.`
             : `${p.field} takes ${p.expected}, not ${JSON.stringify(p.value)}.${p.code === "not_a_choice" ? " Add it as a choice first if it should be one." : ""}`,
         )
@@ -282,6 +284,7 @@ export class InvalidFieldValueError extends Error {
 }
 
 export interface JudgedField {
+  field_role?: string | null;
   name: string;
   type: string;
   choices?: string[] | null;
@@ -290,7 +293,7 @@ export interface JudgedField {
   learns?: boolean | null;
 }
 
-const BLANK = (v: unknown) => v === null || v === undefined || (typeof v === "string" && v.trim() === "") || (Array.isArray(v) && v.length === 0);
+const BLANK = (v: unknown) => (isMaskedSecret(v) && !v.has_value) || v === null || v === undefined || (typeof v === "string" && v.trim() === "") || (Array.isArray(v) && v.length === 0);
 /** What "fits" means for a stored string, written once so the write-side
  *  reading (problemWith) and a SQL filter over stored rows (a list's "don't
  *  fit their field") cannot disagree. POSIX-compatible: the same text is a
@@ -377,6 +380,15 @@ export function fieldValueProblemsOf(
     if (written.length === 0) continue;
     const before = storedBag && def.name in storedBag ? storedBag[def.name] : stored?.[def.name];
     for (const v of written) {
+      if (def.field_role === "payment-method" && typeof v === "string" && /(?:[0-9][ -]*){13,}/.test(v)) {
+        out.push({ field: def.name, value: undefined, expected: "a payment method and the last four digits only", code: "full_card_number" });
+        continue;
+      }
+      if (def.type === "secret" && isMaskedSecret(v)) continue;
+      if (def.type === "secret" && v !== null && v !== undefined && typeof v !== "string") {
+        out.push({ field: def.name, value: undefined, expected: "a new text value or null", code: "not_a_secret" });
+        continue;
+      }
       if (stored && same(v, before)) continue;
       if (stored && def.required && BLANK(v) && !BLANK(before)) {
         out.push({ field: def.name, value: v, expected: "a value", code: "required_field" });
@@ -404,11 +416,16 @@ export async function refuseUnknownFields(req: unknown, body: unknown, nativeKey
   }
   // Values: judged against what the record holds now, on an update.
   const judged = defs.filter((d) => d.type !== "computed" && !nativeKeys.has(d.name));
-  if (judged.length === 0) return;
   const q = req as { method?: string; params?: Record<string, string> };
   const id = q.params?.id;
   const updating = (q.method === "PATCH" || q.method === "PUT") && !!id;
-  const stored = updating ? ((await platform().entities.lookup(orgId, kind, id!))?.fields ?? {}) : null;
+  const stored = updating && judged.length ? ((await platform().entities.lookup(orgId, kind, id!))?.fields ?? {}) : null;
   const problems = fieldValueProblemsOf(body, judged, stored);
   if (problems.length > 0) throw new InvalidFieldValueError(kind, problems);
+  if (body && typeof body === "object" && !Array.isArray(body)) {
+    const safe = await platform().entities.sealSecretFields(orgId, kind, body as Record<string, unknown>, updating ? id : undefined);
+    if (safe === body) return;
+    for (const key of Object.keys(body)) delete (body as Record<string, unknown>)[key];
+    Object.assign(body, safe);
+  }
 }

@@ -20,10 +20,10 @@
 //   - a stray key in a record's custom fields: only a declared choice lands
 //     in the folder field, matched to the choice's own spelling.
 import { meta } from "../db/meta.js";
-import { env } from "../env.js";
 import { signSession } from "../auth/jwt.js";
 import { listKindsForOrg } from "./entities.js";
 import { platform, type EntityKindRecord, type FileIntakeDecl } from "@cobblr/platform-contract";
+import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
 export type { FileIntakeDecl };
 
@@ -109,8 +109,7 @@ export async function intakeFiles(opts: {
   for (const [key, v] of Object.entries(opts.values ?? {})) if (asked.has(key) && typeof v === "string" && v.trim()) values[key] = v.trim();
 
   const session = await signSession(opts.userId);
-  // loopback-ok: #5153 moves this onto selfFetch
-  const base = `http://127.0.0.1:${env.API_PORT}/api/v1/orgs/${encodeURIComponent(slug)}/instances/${encodeURIComponent(instance)}`;
+  const base = `${selfOrigin()}/api/v1/orgs/${encodeURIComponent(slug)}/instances/${encodeURIComponent(instance)}`;
   const out: IntakeOutcome[] = [];
   // One file, one record, within a batch too: the same bytes twice in one zip
   // answer as the one file, and must not make two records.
@@ -144,7 +143,7 @@ export async function intakeFiles(opts: {
       const metadata: Record<string, string> = { ...values };
       const fromFolder = decl.folder_field ? choiceFromPath(line.path, folderChoices) : null;
       if (decl.folder_field && fromFolder) metadata[decl.folder_field] = fromFolder;
-      const res = await fetch(`${base}${k.endpoints!.create}`, {
+      const res = await apiFetch(`${base}${k.endpoints!.create}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${session}`, "Content-Type": "application/json" },
         body: JSON.stringify({ [titleField]: title, ...(Object.keys(metadata).length ? { metadata } : {}) }),

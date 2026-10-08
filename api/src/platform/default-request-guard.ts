@@ -123,10 +123,12 @@ function sweep(state: Map<string, number[]>, now: number, widest: number): void 
 
 type Decision =
   | { allow: true }
-  | { allow: false; retryAfterSec: number; reason: string };
+  | { allow: false; retryAfterSec: number; reason: string; rule: string; key: "address" | "global" };
 
-function deny(rule: Rule, reason: string): Decision {
-  return { allow: false, retryAfterSec: Math.ceil(rule.windowMs / 1000), reason };
+/** `name` and `key` say which rule refused and what its bucket counts (one address, or
+ *  everyone): the middleware logs and counts them, never the address itself. */
+function deny(rule: Rule, reason: string, name: string, key: "address" | "global"): Decision {
+  return { allow: false, retryAfterSec: Math.ceil(rule.windowMs / 1000), reason, rule: name, key };
 }
 
 // Pure decision core — takes the counter state + clock so it's testable without
@@ -151,7 +153,7 @@ export function decide(
   // 1. Path-class brute-force limit (auth / feedback / anon).
   const hit = classify(ctx.path);
   if (hit && !allow(state, `${hit.cls}:${ctx.ip}`, hit.rule, now)) {
-    return deny(hit.rule, "Too many requests — slow down and try again shortly.");
+    return deny(hit.rule, "Too many requests — slow down and try again shortly.", hit.cls, "address");
   }
 
   // 2. Daily signup caps, when configured — these STACK on the auth limit so a
@@ -162,13 +164,13 @@ export function decide(
       cfg.signupPerIpPerDay !== null &&
       !allow(state, `signup-ip:${ctx.ip}`, { max: cfg.signupPerIpPerDay, windowMs: DAY_MS }, now)
     ) {
-      return deny({ max: cfg.signupPerIpPerDay, windowMs: DAY_MS }, signupReason);
+      return deny({ max: cfg.signupPerIpPerDay, windowMs: DAY_MS }, signupReason, "signup-ip", "address");
     }
     if (
       cfg.signupGlobalPerDay !== null &&
       !allow(state, "signup-global", { max: cfg.signupGlobalPerDay, windowMs: DAY_MS }, now)
     ) {
-      return deny({ max: cfg.signupGlobalPerDay, windowMs: DAY_MS }, signupReason);
+      return deny({ max: cfg.signupGlobalPerDay, windowMs: DAY_MS }, signupReason, "signup-global", "global");
     }
   }
 
@@ -183,13 +185,13 @@ export function decide(
       cfg.sandboxPerIpPerHour !== null &&
       !allow(state, `sandbox-ip:${ctx.ip}`, { max: cfg.sandboxPerIpPerHour, windowMs: HOUR_MS }, now)
     ) {
-      return deny({ max: cfg.sandboxPerIpPerHour, windowMs: HOUR_MS }, reason);
+      return deny({ max: cfg.sandboxPerIpPerHour, windowMs: HOUR_MS }, reason, "sandbox-ip", "address");
     }
     if (
       cfg.sandboxGlobalPerHour !== null &&
       !allow(state, "sandbox-global", { max: cfg.sandboxGlobalPerHour, windowMs: HOUR_MS }, now)
     ) {
-      return deny({ max: cfg.sandboxGlobalPerHour, windowMs: HOUR_MS }, reason);
+      return deny({ max: cfg.sandboxGlobalPerHour, windowMs: HOUR_MS }, reason, "sandbox-global", "global");
     }
   }
 

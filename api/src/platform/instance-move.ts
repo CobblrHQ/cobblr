@@ -188,6 +188,9 @@ export const KIND_SCOPED_CONFIG = [
   // A deleted record is absent, so it cannot move between collections. Its
   // recovery image keeps the collection it belonged to when it was deleted.
   "deleted_records",
+  // An undo step is matched exactly as it was handed out, kind and all, so a
+  // move leaves it as it was; rewritten, the person's own Undo would miss it.
+  "issued_undos",
   "module_field_defs",
   // A share's record of what its mirror last sent. Left alone on purpose: the
   // next pass reads a moved record as one that left the old kind and arrived

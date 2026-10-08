@@ -5,6 +5,7 @@
 // (performed_at), scheduled-only (scheduled_at), or both (a thing
 // done with a follow-up).
 
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
@@ -160,7 +161,7 @@ entriesRouter.get(
 entriesRouter.post(
   "/",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-maintenance:log"))) return;
     const parsed = EntryCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const ctx = tenantContext(req);
@@ -286,7 +287,7 @@ entriesRouter.delete(
 entriesRouter.post(
   "/:id/complete",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-maintenance:complete"))) return;
     const id = req.params.id;
     if (!id) {
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });

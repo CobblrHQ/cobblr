@@ -14,6 +14,7 @@ import { deletedRecordsRouter } from "./routes/deleted-records.js";
 import { floorplanJsonSchema } from "@cobblr/platform-contract/floorplan-format";
 import { lastOrphanFilesReport } from "./platform/heal-orphan-files.js";
 import { WorkspaceNotProvisioned, WORKSPACE_NOT_CREATED_MESSAGE } from "./platform/provision-workspace.js";
+import { SecretFieldError } from "./platform/secret-fields.js";
 import { InvalidFieldValueError, UnknownFieldError } from "@cobblr/platform-contract/entity-metadata";
 import { failingResolvers } from "./platform/resolver-failures.js";
 import { oauthRouter, wellKnownRouter } from "./auth/oauth.js";
@@ -27,6 +28,7 @@ import { rememberProbe } from "./platform/meta-probe.js";
 import { tenantPoolStats } from "./db/tenant.js";
 import { poolCounts } from "./db/pool-stats.js";
 import { errors5xxRecent, noteResponse } from "./platform/error-rate.js";
+import { guardRefusals } from "./platform/guard-refusals.js";
 import { outboundReport, outboundSnapshot } from "./platform/outbound-reach.js";
 import compression from "compression";
 import cors from "cors";
@@ -43,9 +45,11 @@ import { publicRouter } from "./routes/public.js";
 import { changelogRouter } from "./routes/changelog.js";
 import { frameDocsRouter } from "./routes/frame-docs.js";
 import { meRouter } from "./routes/me.js";
+import { mePushOrgRouter, mePushRouter } from "./routes/me-push.js";
 import { oidcAdminRouter, oidcAuthRouter, oidcMeRouter } from "./routes/oidc.js";
 import { discordInteractionsRouter } from "./routes/discord-interactions.js";
 import { testSupportRouter } from "./routes/test-support.js";
+import { allowTestPushService } from "./platform/push-endpoints.js";
 import { testDoorsEnabled } from "./platform/test-doors.js";
 import { listRoutes } from "./lib/route-list.js";
 import { connectionsRouter, workspaceAiSharesRouter } from "./routes/connections.js";
@@ -60,6 +64,7 @@ import { quickstartRouter } from "./routes/quickstart.js";
 import { tidyRouter } from "./routes/tidy-suggestions.js";
 import { attentionRouter } from "./routes/attention.js";
 import { edgePairRouter, edgeRouter } from "./routes/edge.js";
+import { recordSendFileRouter } from "./routes/record-send-file.js";
 import { recordSendRouter } from "./routes/record-send.js";
 import { shareLinksOrgRouter, shareLinksRouter } from "./routes/share-links.js";
 import { blueprintRouter } from "./routes/blueprint.js";
@@ -179,6 +184,8 @@ export function createApp(): AppHandles {
   app.use((req, res, next) =>
     req.method === "POST" && /^\/api\/v1\/share-links\/[^/]+\/[a-z-]+$/.test(req.path) ? shareOpsJson(req, res, next) : next(),
   );
+  const sendFileJson = express.json({limit: "64mb"});
+  app.use((req,res,next) => req.method === "POST" && /^\/api\/v1\/orgs\/[^/]+\/records\/send\/file\/(import|confirm|restore)$/.test(req.path) ? sendFileJson(req,res,next) : next());
   app.use(
     express.json({
       limit: "1mb",
@@ -295,6 +302,10 @@ export function createApp(): AppHandles {
       // readers, never a refusal: the canary channel is this state.
       migrations_ahead: ahead,
       errors_5xx_5m: errors5xxRecent(),
+      // Requests the request guard refused with a 429, by rule, in the last hour and since
+      // this process started; auth_last_hour is what the box's alert reads. A guard that
+      // refused silently made "nobody was refused" a guess (2026-10-07).
+      rate_limited: guardRefusals(),
       // The files of workspaces deleted before deletes erased them: counted at
       // boot, erased by nothing yet (heal-orphan-files.ts). null = not counted
       // yet in this process.
@@ -410,10 +421,14 @@ export function createApp(): AppHandles {
   // TEST-ONLY: org-pool checkout endpoints, mounted ONLY under the flag (never
   // in prod — the route mints tokens). See routes/test-support.ts.
   if (env.COBBLR_TEST_ORG_POOL) v1.use(testSupportRouter);
+  // The CI push service (test-support's /push-service) is this api itself.
+  // loopback-ok: the address a test device subscribes with; push-delivery reaches it in-process (selfFetch), never over the socket
+  if (env.COBBLR_TEST_ORG_POOL) allowTestPushService([`http://127.0.0.1:${env.API_PORT}`, `http://localhost:${env.API_PORT}`]);
   // The receiving end of a trial's "bring what I built": on every deployment,
   // answering only where COBBLR_CARRY_SOURCES names somewhere to read from.
   v1.use(carryRouter);
   v1.use(meRouter);
+  v1.use(mePushRouter);
   v1.use(oidcMeRouter);
   // A one-shot URL for a document that must run inline scripts (a custom app
   // block, an installed renderer). The GET is unauthenticated on purpose --
@@ -530,6 +545,8 @@ export function createApp(): AppHandles {
   v1.use("/station", stationPublicRouter);
   // Sharing: a workspace's shares, and the doors another Cobblr knocks on.
   v1.use("/orgs", shareLinksOrgRouter);
+  v1.use("/orgs", mePushOrgRouter);
+  v1.use("/orgs", recordSendFileRouter);
   v1.use("/orgs", recordSendRouter);
   v1.use(shareLinksRouter);
   // Blueprint (workspace setup snapshot) + Backup (setup + data + files).
@@ -605,7 +622,7 @@ export function completeApp(app: Application): void {
       }
       // A write naming a field the kind does not have (entity-metadata.ts):
       // the caller's mistake, said with the names they could have meant.
-      if (err instanceof UnknownFieldError || err instanceof InvalidFieldValueError || err instanceof GroupingError) {
+      if (err instanceof SecretFieldError || err instanceof UnknownFieldError || err instanceof InvalidFieldValueError || err instanceof GroupingError) {
         res.status(err.status).json(err.toJSON());
         return;
       }

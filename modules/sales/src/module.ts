@@ -123,6 +123,7 @@ export default defineModule({
         // NO-PHRASING: offered by the notification and order sheet after an automatic close
         group: "more",
         id: "sales:undo-delivery-close",
+        runBy: "member",
         internal: true,
         label: "Undo delivery close", icon: "undo",
         description: "Reopen an order closed automatically after delivery. Leaves it shipped and prevents another automatic close.",
@@ -133,6 +134,7 @@ export default defineModule({
         // NO-PHRASING: the way back for another action, run only from Undo
         group: "more",
         id: "sales:remove-line",
+        runBy: "member",
         internal: true,
         label: "Remove an order line",
         description: "Internal, the inverse of adding a line to a sales order: removes it again. Runs from Undo on the card; not for direct use.",
@@ -147,6 +149,7 @@ export default defineModule({
       {
         group: "more",
         id: "sales:add-line",
+        runBy: "member",
         examples: ["add a line to that order", "they want two more"],
         undoable: true,
         label: "Add a line to this order",
@@ -165,6 +168,7 @@ export default defineModule({
       {
         group: "more",
         id: "sales:cancel-order",
+        runBy: "member",
         examples: ["cancel that order", "they cancelled"],
         undoable: true,
         label: "Cancel order",
@@ -181,6 +185,7 @@ export default defineModule({
         // NO-PHRASING: the way back for a cancel, run only from Undo
         group: "more",
         id: "sales:reinstate-order",
+        runBy: "member",
         internal: true,
         label: "Reinstate a cancelled order",
         description: "Internal, the inverse of cancelling a sales order: restores its status and takes again what the cancel put back. Runs from Undo; not for direct use.",
@@ -196,6 +201,7 @@ export default defineModule({
       {
         group: "more",
         id: "sales:fulfill-order",
+        runBy: "member",
         examples: ["that order went out", "mark it shipped"],
         label: "Fulfill order",
         description:
@@ -211,6 +217,7 @@ export default defineModule({
       {
         group: "more",
         id: "sales:make-line",
+        runBy: "member",
         examples: ["make the brackets for that order", "put 5 of those in to be made"],
         label: "Make this for the order",
         description:
@@ -227,6 +234,7 @@ export default defineModule({
       {
         group: "more",
         id: "sales:ship-order",
+        runBy: "member",
         examples: ["that order went out with UPS", "it shipped, here is the tracking number"],
         label: "Ship order",
         description:
@@ -244,6 +252,7 @@ export default defineModule({
         // UI-REACH: inbound mail creates a draft; the Sales order sheet offers review and confirmation.
         group: "more",
         id: "sales:read-order-email",
+        runBy: "member",
         examples: ["read this order email"],
         label: "Read an order email",
         description: "Read a sales order email using templates then free AI, and save a draft with the email for review. Non-orders create nothing.",
@@ -259,6 +268,7 @@ export default defineModule({
       {
         group: "more",
         id: "sales:create-order",
+        runBy: "member",
         examples: ["a new order came in", "record an order from the shop"],
         label: "Create order",
         description:

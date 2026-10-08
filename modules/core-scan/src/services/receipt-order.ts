@@ -20,6 +20,7 @@
 
 import { arrivedEverywhere } from "@cobblr/platform-contract";
 import { fileReceiptAs, type KnownShipment } from "./receipt-arrival.js";
+import { apiFetch } from "@cobblr/platform-contract/self-api";
 
 export interface ReceiptOrderInput {
   baseUrl: string;
@@ -51,12 +52,12 @@ export async function linkVendor(
   if (!vendor) return null;
   try {
     const base = `${input.baseUrl}/api/v1/orgs/${input.slug}/modules/purchases/vendors`;
-    const listRes = await fetch(base, { headers: input.headers });
+    const listRes = await apiFetch(base, { headers: input.headers });
     if (!listRes.ok) return null;
     const items = ((await listRes.json()) as { items?: Array<{ id: string; name: string }> }).items ?? [];
     const hit = items.find((v) => v.name.trim().toLowerCase() === vendor.trim().toLowerCase());
     if (hit) return hit.id;
-    const cRes = await fetch(base, { method: "POST", headers: input.headers, body: JSON.stringify({ name: vendor }) });
+    const cRes = await apiFetch(base, { method: "POST", headers: input.headers, body: JSON.stringify({ name: vendor }) });
     return cRes.ok ? ((await cRes.json()) as { id: string }).id : null;
   } catch (err) {
     console.warn("[core-scan] receipt vendor link threw:", (err as Error).message);
@@ -76,7 +77,7 @@ export async function createReceiptOrder(input: ReceiptOrderInput): Promise<stri
 export async function tryCreateReceiptOrder(input: ReceiptOrderInput): Promise<{ id: string | null; purchasesOff: boolean }> {
   const vendorId = await linkVendor(input);
   try {
-    const res = await fetch(`${input.baseUrl}/api/v1/orgs/${input.slug}/modules/purchases/orders`, {
+    const res = await apiFetch(`${input.baseUrl}/api/v1/orgs/${input.slug}/modules/purchases/orders`, {
       method: "POST",
       headers: input.headers,
       body: JSON.stringify({
@@ -167,7 +168,7 @@ export async function addOrderLine(args: {
   kind?: "charge" | "add-on";
 }): Promise<string | null> {
   try {
-    const res = await fetch(
+    const res = await apiFetch(
       `${args.baseUrl}/api/v1/orgs/${args.slug}/modules/purchases/orders/${args.orderId}/items`,
       {
         method: "POST",
@@ -213,7 +214,7 @@ export async function claimOrderLine(args: {
   subjectKind?: string | null;
 }): Promise<boolean> {
   try {
-    const res = await fetch(
+    const res = await apiFetch(
       `${args.baseUrl}/api/v1/orgs/${args.slug}/modules/purchases/orders/${args.orderId}/items/${args.itemId}`,
       {
         method: "PATCH",
@@ -237,7 +238,7 @@ export async function orderLines(args: {
   orderId: string;
 }): Promise<Array<{ id: string; part_id: string | null }> | null> {
   try {
-    const res = await fetch(`${args.baseUrl}/api/v1/orgs/${args.slug}/modules/purchases/orders/${args.orderId}/items`, { headers: args.headers });
+    const res = await apiFetch(`${args.baseUrl}/api/v1/orgs/${args.slug}/modules/purchases/orders/${args.orderId}/items`, { headers: args.headers });
     if (!res.ok) return null;
     const body = (await res.json()) as { items?: Array<{ id: string; part_id: string | null }> };
     return body.items ?? [];
@@ -260,7 +261,7 @@ export async function deleteReceiptOrder(args: {
   orderId: string;
 }): Promise<boolean> {
   try {
-    const res = await fetch(`${args.baseUrl}/api/v1/orgs/${args.slug}/modules/purchases/orders/${args.orderId}`, {
+    const res = await apiFetch(`${args.baseUrl}/api/v1/orgs/${args.slug}/modules/purchases/orders/${args.orderId}`, {
       method: "DELETE",
       headers: args.headers,
     });

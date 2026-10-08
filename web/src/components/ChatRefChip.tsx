@@ -98,7 +98,7 @@ export function ChatRefChip({
   // Drawn as a plain link it would flip into a chip under the reader's eyes
   // (and a press would skip the still-there check), so it holds the chip's
   // shape, inert, until it is known.
-  if (href?.startsWith("/") && kinds.isPending) {
+  if (href?.startsWith("/") && kinds.isLoading) {
     return (
       <span className={CHIP} aria-busy="true" data-chip-pending="">
         {children}

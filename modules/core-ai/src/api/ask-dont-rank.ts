@@ -68,6 +68,7 @@ import { PLACED_IN, placementAsked } from "@cobblr/workspace-tools";
 import type { ToolCall } from "../providers/tool-wire.js";
 import { recordsFromToolResult } from "./mentions.js";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 /** One search the loop ran this turn and the records it returned. */
 export interface SearchHits {
   /** The words searched for, as the model typed them; "" for a listing with
@@ -328,7 +329,7 @@ export function rankedNotAsked(
       : `Name the candidates in your answer and stop there; the write runs once they have chosen.`;
   return {
     message:
-      `"${ref}" matches ${total} records and the person's words do not say which: ${names}. ` +
+      `"${ref}" matches ${countOf(total, "record")} and the person's words do not say which: ${names}. ` +
       `Ask them which one before running ${what}; do not pick one for them. ${how} ` +
       `Say only what the reads returned about them: the person's words are the question, not facts about these records, so do not say where one is unless a read said so.`,
     ref,

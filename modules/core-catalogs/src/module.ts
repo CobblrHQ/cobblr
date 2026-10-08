@@ -112,6 +112,8 @@ export default defineModule({
       {
         group: "service",
         id: "core-catalogs:refresh",
+        // ADMIN-ONLY: the page's own route POST /catalogs/:id/pull gates on this action's own id, owner or admin (catalogs.ts)
+        runBy: "admin",
         examples: ["refresh this catalog", "pull the latest from the source"],
         label: "Refresh from source",
         description:

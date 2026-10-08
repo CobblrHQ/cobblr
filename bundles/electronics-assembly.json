@@ -1,13 +1,18 @@
 {
   "manifest": {
     "id": "cobblr.flagship.electronics-assembly",
-    "version": "0.1.5",
+    "version": "0.1.6",
     "name": "Electronics assembly",
     "author": "Cobblr",
-    "description": "Component packages and board revisions, with receiving, moisture clocks, BOM stock checks and fabrication purchases.",
-    "released_at": "2026-10-06",
-    "changelog": "Import board revisions to check component stock and track fabrication purchases and stencils.",
+    "description": "Component packages and board revisions, with stock checks, fabrication purchases, assembly kits and solder paste handling.",
+    "released_at": "2026-10-08",
+    "changelog": "Reserve assembly kits and track refrigerated paste handling against its label limits.",
     "releases": [
+      {
+        "version": "0.1.6",
+        "released_at": "2026-10-08",
+        "notes": "Reserve assembly kits and track refrigerated paste handling against its label limits."
+      },
       {
         "version": "0.1.5",
         "released_at": "2026-10-07",
@@ -48,6 +53,41 @@
     "field_defs": [],
     "saved_views": [],
     "provides_instances": [
+      {
+        "module": "inventory",
+        "instance_name": "solder-paste",
+        "display_name": "Solder Paste",
+        "glyph": "🫙",
+        "item_noun": "paste jar",
+        "qty_unit": "ml",
+        "faces": {
+          "stock": true
+        },
+        "paste_tracking": true,
+        "field_defs": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "lot_code",
+            "display_label": "Paste lot",
+            "type": "text",
+            "position": 1
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "alloy",
+            "display_label": "Alloy",
+            "type": "text",
+            "position": 2,
+            "learns": true,
+            "choices": [
+              "SAC305",
+              "Sn63/Pb37",
+              "Sn42/Bi58"
+            ]
+          }
+        ],
+        "saved_views": []
+      },
       {
         "module": "projects",
         "instance_name": "board-projects",

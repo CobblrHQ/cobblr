@@ -2,20 +2,23 @@ import { RecordActionItem } from "./RecordActionContributions";
 // Who a record is shared with, on its own page (docs/design-decisions/share-spaces.md §9).
 //
 // When this workspace shares its things with someone, a record says which
-// shares hold it ("Shared with Vince", with Stop sharing) and offers
-// "Share with…" for the others. Both run the kernel's actions
+// shares hold it ("Shared with Vince", with Stop sharing). An owner or admin
+// gets "Share…", the one share page (#5365) where someone new can be invited
+// too; a member gets "Share with…" for the others. Both run the kernel's actions
 // (platform:share-with / platform:stop-sharing), the same the assistant uses,
 // and each undoes the other. Placed once by the platform, on every record.
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Share2 } from "lucide-react";
-import { usePlatformWeb } from "./context";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { useFlowHost, usePlatformWeb } from "./context";
 import { useRunAction } from "./run-action";
 import { useToast } from "./ToastContext";
 
 export function RecordSharing({ kind, id, className }: { kind: string; id: string; className?: string }) {
-  const { api, orgSlug } = usePlatformWeb();
+  const { api, orgSlug, role } = usePlatformWeb();
+  const { openFlow } = useFlowHost();
   // PRESS-ARGS: who is the one argument a person chooses here; the kind and the id are the page's record.
   const runAction = useRunAction();
   const toast = useToast();
@@ -28,7 +31,8 @@ export function RecordSharing({ kind, id, className }: { kind: string; id: strin
     staleTime: 30_000,
   });
   const targets = q.data?.targets ?? [];
-  if (!targets.length) return null;
+  const manager = roleSatisfies(role, ["owner", "admin"]) && q.data?.can_share === true;
+  if (!targets.length && !manager) return null;
   const inIds = new Set((q.data?.shared_with ?? []).map((t) => t.link_id));
   const others = targets.filter((t) => !inIds.has(t.link_id));
 
@@ -67,7 +71,17 @@ export function RecordSharing({ kind, id, className }: { kind: string; id: strin
           </button>
         </span></RecordActionItem>
       ))}
-      {others.length > 0 &&
+      {manager &&
+        <RecordActionItem id="record:share-with" group="share" label="Share…" description="Share this record with someone, or invite someone new by email."><button
+            type="button"
+            data-testid="record-share-with"
+            onClick={() => openFlow("platform:share-list", { kind, ids: [id] })}
+            className={`order-last ${chip} ${className ?? ""}`}
+          >
+            <Share2 size={12} aria-hidden />
+            Share…
+          </button></RecordActionItem>}
+      {!manager && others.length > 0 &&
         <RecordActionItem id="record:share-with" group="share" label="Share with…" description="Choose someone who can see this record.">{(choosing && others.length > 1 ? (
           <span className={`order-last inline-flex flex-wrap items-center gap-1 ${className ?? ""}`}>
             {others.map((t) => (

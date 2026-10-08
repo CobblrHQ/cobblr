@@ -4,6 +4,7 @@
 // dependencies.
 
 import { createContext, Suspense, useCallback, useContext, useState, type ComponentType, type ReactNode } from "react";
+import type { BarcodeCaptureProps } from "./BarcodeFill";
 import type { PlatformWebApi } from "./types";
 import { EntityPhoto } from "./EntityPhoto";
 
@@ -27,6 +28,7 @@ export function RecordPhoto(props: RecordPhotoProps) {
 
 interface PlatformWebCtx {
   /** The host photo editor, including the shared web picker. */
+  barcodeCapture?: ComponentType<BarcodeCaptureProps>;
   recordPhoto?: ComponentType<RecordPhotoProps>;
   decodeBarcodeImage?: (file: File) => Promise<string | null>;
   api: PlatformWebApi;
@@ -83,10 +85,12 @@ export function PlatformWebProvider({
   cobbIcon,
   recordPhoto,
   decodeBarcodeImage,
+  barcodeCapture,
   children,
 }: {
   api: PlatformWebApi;
   orgSlug: string;
+  barcodeCapture?: ComponentType<BarcodeCaptureProps>;
   recordPhoto?: ComponentType<RecordPhotoProps>;
   decodeBarcodeImage?: (file: File) => Promise<string | null>;
   role?: string | null;
@@ -107,7 +111,7 @@ export function PlatformWebProvider({
   );
   const Active = active && flows ? flows[active.flow] : null;
   return (
-    <Ctx.Provider value={{ api, orgSlug, role, appMode, cobbIcon, recordPhoto, decodeBarcodeImage }}>
+    <Ctx.Provider value={{ api, orgSlug, role, appMode, cobbIcon, recordPhoto, decodeBarcodeImage, barcodeCapture }}>
       <FlowCtx.Provider value={{ openFlow }}>
         {children}
         {/* A flow may be a lazy component (the shell loads a flow's code when it

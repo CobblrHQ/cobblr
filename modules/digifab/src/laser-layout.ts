@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { countOf } from "@cobblr/platform-contract/plural";
 export type Point = { x: number; y: number; c0?: Point; c1?: Point };
 export type Design = { width: number; height: number; paths: { layer: string; points: Point[]; closed: boolean; curves?: boolean[] }[] };
 export type Rect = { x: number; y: number; width: number; height: number };
@@ -54,7 +55,7 @@ export function nestParts(design: Pick<Design, "width" | "height">, quantity: nu
   if (next === quantity) return result;
  }
  if (partial) return result;
- throw new Error(next ? `There is room for ${next} of ${quantity} parts. Add another sheet or reduce the quantity.` : "This part is bigger than every free area. Choose a larger sheet or reduce the part size.");
+ throw new Error(next ? `There is room for ${next} of ${countOf(quantity, "part")}. Add another sheet or reduce the quantity.` : "This part is bigger than every free area. Choose a larger sheet or reduce the part size.");
 }
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
 const n = (v: number) => Number(v.toFixed(6));

@@ -28,7 +28,8 @@ import { fileIdFromRawPath, rawPathFor } from "./file-paths.js";
 import { privateFieldNames } from "./field-defs.js";
 import { gatedFields, recordsInScope } from "./scope-eval.js";
 import { sharePerson } from "./share-person.js";
-import { enqueueShareOp, kickShareSync, registerShareOp, type ShareLinkRow } from "./share-sync.js";
+import { enqueueShareOp, flushShareLinkNow, kickShareSync, registerShareOp, type ShareLinkRow } from "./share-sync.js";
+import { withShareCopyState } from "./share-copy-state.js";
 import { runExclusive } from "./exclusive.js";
 import { editsMadeDuringApply, type Bags } from "./share-held-edits.js";
 
@@ -271,6 +272,35 @@ export async function mirrorShareNow(linkId: string): Promise<{ sent: number; re
   return run.ran ? out : null;
 }
 
+/** The owner changed what a share holds (its scope, what it shows, a record
+ *  in or out): mirror it and hand the change to the other side NOW, and say
+ *  whether it got there. A pass already running for the share is waited out
+ *  rather than skipped, because it may have read the share before this
+ *  change; skipping left the change to the box's next loop, behind every
+ *  other share due on it, and under load a friend still saw a thing a
+ *  minute after it was taken out of a share (#5340, #5391). Bounded: a slow
+ *  or unreachable other side answers delivered: false, and the outbox and
+ *  the loop carry on from there. */
+export async function mirrorAndDeliverNow(linkId: string, waitMs = 20_000): Promise<{ delivered: boolean; error: string | null; sent: number }> {
+  const until = Date.now() + waitMs;
+  for (;;) {
+    const run = await runExclusive(`share.mirror.${linkId}`, async () => {
+      await mirrorShare(linkId);
+    });
+    if (run.ran) break;
+    if (Date.now() > until) return { delivered: false, error: null, sent: 0 };
+    await new Promise((res) => setTimeout(res, 200));
+  }
+  const flushed = await flushShareLinkNow(linkId, Math.max(1_000, until - Date.now()));
+  const left = await meta
+    .selectFrom("share_outbox")
+    .select((eb) => eb.fn.countAll<string>().as("n"))
+    .where("link_id", "=", linkId)
+    .where("sent_at", "is", null)
+    .executeTakeFirst();
+  return { delivered: !flushed.error && Number(left?.n ?? 0) === 0, error: flushed.error, sent: flushed.sent };
+}
+
 /** Something changed in a workspace: its mirrored shares are due a pass.
  *  One indexed update, matching nothing in a workspace that shares nothing;
  *  no cache, so a share set up a moment ago (in any process) is never
@@ -395,19 +425,35 @@ async function recordCopyBase(
     .execute();
 }
 
-/** Test-only: hold the mirror's apply on one share space at a point, so a
- *  test can land the friend's edit exactly inside it. Set through the
- *  test-support door; `reached` is the positive control. */
+/** Test-only: hold the mirror on one workspace at a point, so a test can
+ *  land an edit exactly inside a pass. Set through the test-support door;
+ *  `reached` is the positive control. One hold and one count PER WORKSPACE:
+ *  a single hold for the whole api was replaced, and its count reset, by
+ *  another test file setting its own while CI ran them side by side, so a
+ *  test's pass never reached a hold that was no longer there (#5396). */
 type ApplyPoint = "before-write" | "after-write" | "owner-pass";
-let applyHold: { orgId: string; at: ApplyPoint; ms: number; reached: number } | null = null;
+const applyHolds = new Map<string, { at: ApplyPoint; ms: number }>();
+const holdsReached = new Map<string, number>();
 export function setMirrorApplyHoldForTests(h: { orgId: string; at: ApplyPoint; ms: number } | null): void {
-  applyHold = h && h.ms > 0 ? { ...h, ms: Math.min(h.ms, 30_000), reached: 0 } : null;
+  if (!h) {
+    applyHolds.clear();
+    holdsReached.clear();
+    return;
+  }
+  if (h.ms > 0) {
+    applyHolds.set(h.orgId, { at: h.at, ms: Math.min(h.ms, 30_000) });
+    holdsReached.set(h.orgId, 0);
+  } else {
+    applyHolds.delete(h.orgId);
+  }
 }
-export const mirrorApplyHoldReached = (): number => applyHold?.reached ?? 0;
+/** How often a hold was reached: one workspace's, or every workspace's together. */
+export const mirrorApplyHoldReached = (orgId?: string): number =>
+  orgId ? (holdsReached.get(orgId) ?? 0) : [...holdsReached.values()].reduce((n, x) => n + x, 0);
 async function holdForTests(orgId: string, at: ApplyPoint): Promise<void> {
-  const h = applyHold;
-  if (!h || h.orgId !== orgId || h.at !== at) return;
-  h.reached++;
+  const h = applyHolds.get(orgId);
+  if (!h || h.at !== at) return;
+  holdsReached.set(orgId, (holdsReached.get(orgId) ?? 0) + 1);
   await new Promise((r) => setTimeout(r, h.ms));
 }
 
@@ -480,13 +526,18 @@ async function slugOf(orgId: string): Promise<string> {
 }
 
 export function registerShareMirrorOps(): void {
+  const registerCopyOp = (op: string, apply: (link: ShareLinkRow, p: Record<string, unknown>) => Promise<void>) =>
+    registerShareOp(op, async (link, p) => {
+      const applied = await withShareCopyState(link.id, () => apply(link, p));
+      if (applied === null) throw new Error("The shared copy is being checked for edits. Try syncing again.");
+    });
   registerShareOp("mirror.shape", async (link, p) => {
     const manifest = BlueprintManifest.parse(p.manifest);
     const sess = { id: (await meta.selectFrom("share_links").select("created_by").where("id", "=", link.id).executeTakeFirst())?.created_by ?? "", auth_method: "system" as const };
     await applyBlueprint(link.org_id, sess, manifest);
   });
 
-  registerShareOp("mirror.upsert", async (link, p) => {
+  registerCopyOp("mirror.upsert", async (link, p) => {
     const origin = p.origin as { kind?: string; id?: string } | undefined;
     if (!origin?.kind || !origin.id) throw new Error("a mirrored record without its origin");
     const kind = origin.kind;
@@ -564,7 +615,7 @@ export function registerShareMirrorOps(): void {
     if (!clean && mark !== null && before) await keepEditsMadeDuringApply(link, kind, origin.id, id, mark, before, sent ?? before);
   });
 
-  registerShareOp("mirror.remove", async (link, p) => {
+  registerCopyOp("mirror.remove", async (link, p) => {
     const origin = p.origin as { kind?: string; id?: string } | undefined;
     if (!origin?.kind || !origin.id) return;
     const id = await copyOf(link.org_id, origin.kind, originRef(link, origin.kind, origin.id));

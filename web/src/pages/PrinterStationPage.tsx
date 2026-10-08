@@ -4,6 +4,7 @@ import { QueryError, usePageTitle } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api } from "../lib/api";
 import { LoadedSpoolsPanel } from "../features/digifab/loaded";
+import { MachinePrintBatches } from "../features/digifab/PrintBatchCard";
 import { GlobalScanWedge } from "../components/GlobalScanWedge";
 import { MAIN_ID, SkipToContent } from "../components/a11y/shell-landmarks";
 
@@ -19,6 +20,7 @@ export function PrinterStationPage() {
       <p>Scan the spool you are loading. Cobblr records the swap and sends the previous one back to its shelf.</p>
       {query.isError && <QueryError what="The record could not be loaded." onRetry={() => void query.refetch()} />}
       {query.data && <LoadedSpoolsPanel ctx={{ slug, entityId: machineId, entityTitle: query.data.title, kind: query.data.kind, hints: { station: "printer" } }} />}
+      {query.data && <MachinePrintBatches slug={slug} machineId={machineId} />}
     </main>
   </div>;
 }

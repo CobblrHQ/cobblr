@@ -1,15 +1,17 @@
+import { AssemblyOrdersCard } from "./AssemblyOrders.js";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FieldPack, QueryError, fieldNeed, RecordFormModal, usePlatformWeb, runAction, downloadBlob, type EntityDetailPanelCtx } from "@cobblr/platform-web";
+import { FieldPack, QueryError, fieldNeed, RecordFormModal, usePlatformWeb, runAction, downloadBlob, type EntityDetailPanelCtx, NumberField } from "@cobblr/platform-web";
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import type { BoardRevision } from "../api/board-revisions.js";
 import type { checkBoardStock } from "../board-revision.js";
 import type { BuildsApi } from "./api.js";
+import { randomId, countOf } from "@cobblr/platform-contract";
 const control = "w-full rounded border border-line bg-surface px-3 py-2 text-sm text-content";
 const button = "rounded border border-line px-3 py-2 text-sm disabled:opacity-50";
 const primary = `${button} bg-cobble-600 text-white`;
-function useBoardAction(slug: string) {
+export function useBoardAction(slug: string) {
   const { api } = usePlatformWeb();
   const qc = useQueryClient();
   return async <T,>(action: string, args: Record<string, unknown>): Promise<T> => {
@@ -86,15 +88,16 @@ export function BoardRevisionCard({ slug, id, spec, api }: { slug: string; id: s
   const [tracking, setTracking] = useState("");
   const [vendor, setVendor] = useState("JLCPCB");
   const [fileId, setFileId] = useState("");
-  const [orderKey, setOrderKey] = useState(() => crypto.randomUUID());
+  const [orderKey, setOrderKey] = useState(() => randomId());
   const [orderId, setOrderId] = useState("");
   const [style, setStyle] = useState("frameless");
   const files = useQuery({ queryKey: ["board-files", slug, id], queryFn: () => api.boardRevision(id) });
   function run(task: () => Promise<void>) { setMessage(""); operation.mutate(task); }
   return <section className="space-y-4" data-testid="board-revision">
-    <p>Revision {spec.revision} · {spec.placements.length} placements · {spec.bom.length} BOM lines</p>
+    <AssemblyOrdersCard slug={slug} buildId={id} api={api} />
+    <p>Revision {spec.revision} · {countOf(spec.placements.length, "placement")} · {spec.bom.length} BOM lines</p>
     <Link className="underline text-accent" to={`/instances/${spec.project_kind.split(":")[0]}/${spec.project_id}`}>Open board project</Link>
-    <div className="flex flex-wrap items-end gap-2"><label className="text-sm">Boards to make<input aria-label="Boards to make" className={control} type="number" min={1} max={1_000_000} value={boards} onChange={e => { setBoards(Number(e.target.value)); setChecked(null); }} /></label><button type="button" disabled={busy} className={button} onClick={() => void run(async () => setChecked(await call("builds:check-board-stock", { build_id: id, boards })))}>Check BOM stock</button></div>
+    <div className="flex flex-wrap items-end gap-2"><label className="text-sm">Boards to make<NumberField label="Boards to make" className={control} min={1} max={1_000_000} value={boards} onChange={(n) => { setBoards(n); setChecked(null); }} /></label><button type="button" disabled={busy} className={button} onClick={() => void run(async () => setChecked(await call("builds:check-board-stock", { build_id: id, boards })))}>Check BOM stock</button></div>
     {checked && <div className="space-y-2"><p role="status">{checked.ready ? "Component stock is ready." : "Components are short. Check the quantities and moisture warnings."}</p>
       <div className="space-y-3 sm:hidden">{checked.lines.map((l, i) => <div key={i} className="rounded border border-line p-3 space-y-2"><p className="font-semibold break-all">{l.mpn}</p><dl className="grid grid-cols-2 gap-x-4 gap-y-1">{[["On hand", l.on_hand], ["Reserved", l.reserved], ["Needed", l.required], ["Short", l.short]].map(([label, value]) => <div key={label}><dt className="text-xs text-muted">{label}</dt><dd>{value}</dd></div>)}</dl>{l.msl_problems.map(p => <p key={p.part_id} data-testid="msl-problem" className="text-sm text-red-700 dark:text-red-300">{p.reason}</p>)}</div>)}</div>
       <div className="hidden sm:block overflow-x-auto"><table className="w-full text-sm"><thead><tr>{["MPN", "On hand", "Reserved", "Needed", "Short", "Moisture"].map(h => <th key={h} className="p-2 text-left">{h}</th>)}</tr></thead><tbody>{checked.lines.map((l, i) => <tr key={i} className="border-t border-line"><td className="p-2">{l.mpn}</td><td className="p-2">{l.on_hand}</td><td className="p-2">{l.reserved}</td><td className="p-2">{l.required}</td><td className="p-2">{l.short}</td><td className="p-2" data-testid={l.msl_problems.length ? "msl-problem" : undefined}>{l.msl_problems.length ? l.msl_problems.map(p => p.reason).join(" ") : "No blocked packages"}</td></tr>)}</tbody></table></div>
@@ -110,7 +113,7 @@ export function BoardRevisionCard({ slug, id, spec, api }: { slug: string; id: s
       <p className="text-sm text-muted">Upload the fab zip, place the order on the fab’s site, and track it here. Mark the purchase arrived to add blank boards to stock.</p>
       <FieldPack maxCols={2} items={[
         { need: fieldNeed("vendor", { control: "choice", label: "Board fab" }), node: <label className="space-y-1 block text-sm"><span className="block text-muted">Board fab</span><select aria-label="Board fab" className={control} value={vendor} onChange={e => setVendor(e.target.value)}>{["JLCPCB", "PCBWay", "OSH Park"].map(v => <option key={v}>{v}</option>)}</select></label> },
-        { need: fieldNeed("zip", { control: "picker", label: "Fabrication zip" }), node: <label className="space-y-1 block text-sm"><span className="block text-muted">Fabrication zip</span><input aria-label="Fabrication zip" type="file" accept=".zip" className={control} onChange={e => { const file = e.target.files?.[0]; if (file) void run(async () => { const out = await api.uploadBoardFile(file); setFileId(out.id); setOrderKey(crypto.randomUUID()); setMessage("Fabrication zip selected."); }); }} /></label> },
+        { need: fieldNeed("zip", { control: "picker", label: "Fabrication zip" }), node: <label className="space-y-1 block text-sm"><span className="block text-muted">Fabrication zip</span><input aria-label="Fabrication zip" type="file" accept=".zip" className={control} onChange={e => { const file = e.target.files?.[0]; if (file) void run(async () => { const out = await api.uploadBoardFile(file); setFileId(out.id); setOrderKey(randomId()); setMessage("Fabrication zip selected."); }); }} /></label> },
         { need: fieldNeed("expected", { control: "date", label: "Expected arrival" }), node: <label className="space-y-1 block text-sm"><span className="block text-muted">Expected arrival</span><input aria-label="Expected arrival" type="date" value={expected} onChange={e => setExpected(e.target.value)} className={control} /></label> },
         { need: fieldNeed("parcelTracking", { control: "text", label: "Tracking number" }), node: <label className="space-y-1 block text-sm"><span className="block text-muted">Tracking number</span><input aria-label="Tracking number" value={tracking} onChange={e => setTracking(e.target.value)} className={control} /></label> },
       ]} />

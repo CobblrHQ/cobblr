@@ -16,6 +16,7 @@ import { asMeasure } from "@cobblr/platform-contract/measure";
 import { moneyForStorage, moneyInputText, moneyStorageOf, type MoneyFieldLike } from "@cobblr/platform-contract/money";
 
 export type FieldControl =
+  | "secret"
   | "computed" // read-only, server-resolved every read (never stored)
   | "server-managed" // read-only, server-STAMPED stored value (client writes rejected)
   | "relation" // reference to another entity (picker over the def's ref_kind)
@@ -47,6 +48,7 @@ export function fieldControl(def: {
   server_managed?: boolean | null;
   learns?: boolean | null;
 } & MoneyFieldLike): FieldControl {
+  if (def.type === "secret") return "secret";
   if (def.type === "computed") return "computed";
   if (def.server_managed) return "server-managed";
   if (def.type === "relation") return "relation";
@@ -100,7 +102,7 @@ export function fieldControl(def: {
 /** What an input shows for a stored value: a measured value as the person
  *  typed it ("4k7"), never "[object Object]"; anything else as text. */
 export function fieldInputText(def: FieldValueDef, value: unknown): string {
-  if (value == null) return "";
+  if (value == null || def.type === "secret") return "";
   if (def.type === "measure") return asMeasure(value)?.text ?? (typeof value === "string" ? value : "");
   const money = moneyStorageOf(def);
   if (money) return moneyInputText(value, money);

@@ -1,3 +1,4 @@
+import { captureBackupSecrets, rebindBackupSecrets } from "../platform/secret-backup.js";
 // Backup — a full point-in-time copy of a workspace: the Blueprint (its
 // setup) + every tenant-DB row + every uploaded file. Restoring a backup
 // into a fresh workspace reproduces it exactly. See
@@ -161,7 +162,7 @@ export async function buildBackupZip(
     const rows = (await sql<Record<string, unknown>>`select * from ${sql.ref(table)}`.execute(tdb as unknown as Kysely<unknown>)).rows;
     dataFiles.push({
       file: `data/${table}.jsonl`,
-      jsonl: rows.map((r) => JSON.stringify(r)).join("\n"),
+      jsonl: rows.map((r) => JSON.stringify(captureBackupSecrets(r))).join("\n"),
       index: { table, file: `data/${table}.jsonl`, row_count: rows.length },
     });
   }
@@ -187,7 +188,7 @@ export async function buildBackupZip(
   const platformRows = await capturePlatformRows(orgId);
   const platformFiles = [...platformRows].map(([table, rows]) => ({
     file: `platform/${table}.jsonl`,
-    jsonl: rows.map((r) => JSON.stringify(r)).join("\n"),
+    jsonl: rows.map((r) => JSON.stringify(captureBackupSecrets(r))).join("\n"),
     index: { table, file: `platform/${table}.jsonl`, row_count: rows.length },
   }));
 
@@ -421,7 +422,7 @@ export async function restoreBackupInto(
       const rows = tables.get(t) ?? [];
       const info = tableMeta.get(t) ?? { all: new Set<string>(), jsonb: new Set<string>(), generated: new Set<string>() };
       for (const raw of rows) {
-        const row = repathFiles(swapIds(raw, idSwap), slug, fileMap) as Record<string, unknown>;
+        const row = rebindBackupSecrets(orgId, repathFiles(swapIds(raw, idSwap), slug, fileMap)) as Record<string, unknown>;
         // Only real, insertable columns reach the INSERT: drop any key that
         // isn't a known column (superuser identifier-injection guard) and skip
         // GENERATED columns (Postgres recomputes them). See safeInsertColumns.

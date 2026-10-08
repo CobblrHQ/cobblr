@@ -86,7 +86,8 @@ async function fieldsOf(orgId: string, kinds: string[]): Promise<Map<string, Fie
 /** The changes a row carries: old → new, or the row's own fields (an older
  *  edit's new values, what a record was made with, what an action recorded),
  *  so the Activity page's details read in words too, never as raw JSON. */
-function changesOfRow(_action: string, diff: unknown): ActivityChange[] {
+function changesOfRow(action: string, diff: unknown): ActivityChange[] {
+  if (action === "secret_field_revealed" || action === "secret_field_copied") return [];
   const kept = changesIn(diff);
   if (kept) return kept;
   if (!diff || typeof diff !== "object" || Array.isArray(diff)) return [];
@@ -189,6 +190,7 @@ export async function describeChanges(
       return Promise.all(
         cs.map(async (c): Promise<SaidChange> => {
           const f = info.get(c.field);
+          if (c.secret || f?.type === "secret") return { field: c.field, label: f?.label ?? saidLabel(c.field), to: { text: "updated" } };
           const said: SaidChange = { field: c.field, label: f?.label ?? saidLabel(c.field), to: await show(c.to, c.field, f, own) };
           if (changesIn(rows[i]!.diff)) said.from = await show(c.from, c.field, f, own);
           return said;

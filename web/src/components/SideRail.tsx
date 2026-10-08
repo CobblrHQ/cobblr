@@ -25,6 +25,7 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -204,6 +205,13 @@ export function SideRail({
   // back on Cobb. The restore is therefore attempted on every registration
   // until it lands, and then never again, so it cannot fight a later click.
   const restored = useRef(false);
+  // A tab someone asked for (a launcher, a deep link, a click on the bar)
+  // ends the restore: a remembered tab that registers later must not take
+  // the panel away from what was asked for ("Ask Cobb" showed Pinned, #5142).
+  const choose = useCallback((id: string) => {
+    restored.current = true;
+    setActiveId(id);
+  }, []);
   useEffect(() => {
     if (!activeId && tabs[0]) {
       const wanted = !restored.current && initialTab ? tabs.find((t) => t.id === initialTab) : undefined;
@@ -228,7 +236,7 @@ export function SideRail({
   useEffect(() => {
     const onOpenRail = (e: Event) => {
       const tab = (e as CustomEvent<{ tab?: string }>).detail?.tab;
-      if (tab) setActiveId(tab);
+      if (tab) choose(tab);
       setOpen(true);
     };
     window.addEventListener("cobblr:open-rail", onOpenRail);
@@ -239,15 +247,15 @@ export function SideRail({
   // surface opens Cobb. It must also SELECT his tab, or a click on "Ask Cobb"
   // would open the rail on whatever tab was last used.
   useEffect(() => {
-    const onOpenChat = () => setActiveId("cobb");
+    const onOpenChat = () => choose("cobb");
     window.addEventListener("cobblr:open-chat", onOpenChat);
     return () => window.removeEventListener("cobblr:open-chat", onOpenChat);
   }, []);
 
   const barVisible = tabs.length > 1;
   const ctx = useMemo<RailContext>(
-    () => ({ open, setOpen, activeId, setActiveId, register, titleEl, actionsEl, contentEl, barVisible }),
-    [open, setOpen, activeId, register, titleEl, actionsEl, contentEl, barVisible],
+    () => ({ open, setOpen, activeId, setActiveId: choose, register, titleEl, actionsEl, contentEl, barVisible }),
+    [open, setOpen, activeId, choose, register, titleEl, actionsEl, contentEl, barVisible],
   );
 
   return (
@@ -279,7 +287,7 @@ export function SideRail({
                       key={t.id}
                       role="tab"
                       aria-selected={on}
-                      onClick={() => setActiveId(t.id)}
+                      onClick={() => choose(t.id)}
                       title={t.label}
                       className={
                         "inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm transition min-w-0 " +

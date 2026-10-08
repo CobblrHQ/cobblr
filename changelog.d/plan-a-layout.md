@@ -3,6 +3,7 @@ type: feature
 scope: locations
 date: 2026-10-05
 docs_target: docs/USER_GUIDE.md#3.12 Locations (foundational)
+docs_published: 2026-10-08
 ---
 Plan a layout for a room before anything moves: drag racks and things into a draft, keep several options and compare them, print one to scale, and apply it as one step you can undo.
 

@@ -188,6 +188,43 @@ export function OrderLineKind({ slug, order, item }: { slug: string; order: Orde
   );
 }
 
+const PARCEL_WORDS: Record<string, string> = {
+  pre_transit: "Label made",
+  in_transit: "On its way",
+  out_for_delivery: "Out for delivery",
+  delivered: "Delivered",
+  exception: "Delivery problem",
+};
+
+/** Which parcel a line travels in, when its order ships in several (#5351):
+ *  "On its way · TBA335321582286", or "Not shipped yet" for a line no
+ *  parcel has named. Nothing for an order that ships in one box, and nothing
+ *  once the line is received. */
+export function orderLineParcel(
+  order: Pick<Order, "shipments" | "tracking_number">,
+  item: Pick<OrderItem, "shipment_id" | "received_at">,
+): { label: string; title: string } | null {
+  const parcels = order.shipments ?? [];
+  if (!parcels.length || item.received_at) return null;
+  const parcel = item.shipment_id ? parcels.find((p) => p.id === item.shipment_id) : null;
+  if (!parcel) {
+    return order.tracking_number ? null : { label: "Not shipped yet", title: "No shipping notice has named this line yet" };
+  }
+  const word = PARCEL_WORDS[parcel.shipment_state ?? ""] ?? "Shipped";
+  const due = parcel.expected_arrival ? `, due ${String(parcel.expected_arrival).slice(0, 10)}` : "";
+  return { label: `${word} · ${parcel.tracking_number}`, title: `In the parcel ${parcel.tracking_number}${due}` };
+}
+
+function OrderLineParcel({ order, item }: { order: Order; item: OrderItem }) {
+  const parcel = orderLineParcel(order, item);
+  if (!parcel) return null;
+  return (
+    <span title={parcel.title} className="shrink-0 max-w-[14rem] truncate rounded-full border border-line dark:border-slate-700 px-1.5 py-0.5 text-[10px] text-muted">
+      {parcel.label}
+    </span>
+  );
+}
+
 export function OrderLineControls({ slug, order, item, onStartReturn }: { slug: string; order: Order; item: OrderItem; onStartReturn?: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -242,7 +279,8 @@ export function OrderLineControls({ slug, order, item, onStartReturn }: { slug: 
     return (
       // A line with a label or a button keeps the line itself at full width on
       // a phone: beside them its name and price were squeezed into each other.
-      <span className={`flex items-center gap-1 shrink-0 ${orderLineKind(item) ? "max-sm:basis-full max-sm:justify-end" : ""}`}>
+      <span className={`flex items-center gap-1 shrink-0 ${orderLineKind(item) || orderLineParcel(order, item) ? "max-sm:basis-full max-sm:justify-end" : ""}`}>
+        <OrderLineParcel order={order} item={item} />
         <OrderLineKind slug={slug} order={order} item={item} />
         {onStartReturn && order.status === "arrived" && <StartReturnButton onClick={onStartReturn} />}
         <button type="button" onClick={() => setEditing(true)} aria-label="Correct this line" title="Correct this line" className="p-1.5 rounded text-faint hover:text-accent hover:bg-subtle dark:hover:bg-slate-800">

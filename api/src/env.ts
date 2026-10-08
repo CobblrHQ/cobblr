@@ -44,6 +44,16 @@ const Schema = z.object({
   SESSION_TTL_DAYS: z.coerce.number().int().positive().default(30),
   TENANT_CREDS_ENCRYPTION_KEY: z.string().min(16),
 
+  // Web Push (#5267). Unset (the default, a self-hosted box): the instance
+  // makes its own VAPID key pair on first boot and keeps it, so push works
+  // with no account and no cost. A hosted instance may give its pair instead:
+  // the public key here and the private key in a file (token-file pattern,
+  // never the private key itself in the environment). VAPID_SUBJECT is who
+  // the push services contact (mailto: or https:), default the public URL.
+  VAPID_PUBLIC_KEY: z.string().optional(),
+  VAPID_PRIVATE_KEY_FILE: z.string().optional(),
+  VAPID_SUBJECT: z.string().optional(),
+
   // Backup destinations (Phase C) — all optional.
   //  • BACKUP_FS_ROOT — root dir for the filesystem destination driver
   //    (a NAS bind-mount, etc.). Defaults to /files/backups.

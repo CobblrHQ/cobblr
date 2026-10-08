@@ -9,6 +9,7 @@ import { LightBurnPairing, type BridgeInstallOS } from "./LightBurnPairing";
 import { desktopBridgeAction } from "../lib/desktop-bridge";
 import { api, ApiError } from "../lib/api";
 import { useToast } from "@cobblr/platform-web";
+import { randomId } from "@cobblr/platform-contract/random-id";
 
 const lbl = "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
 
@@ -29,7 +30,7 @@ export function BridgeInstallMethod({
   lightBurn?: boolean;
 }) {
   const toast = useToast();
-  const [nonce] = useState(() => crypto.randomUUID().slice(0, 8));
+  const [nonce] = useState(() => randomId().slice(0, 8));
   const bid = methodIdentity(bridgeId, label, nonce);
   const [token, setToken] = useState<string | null>(null);
   const [cmdMode, setCmdMode] = useState<"run" | "compose">("compose");

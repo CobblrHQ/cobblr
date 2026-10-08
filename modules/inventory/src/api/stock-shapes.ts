@@ -81,7 +81,9 @@ shapedStockRouter.get("/:id", asyncHandler(async (req, res) => {
 }));
 
 async function routeWrite(req: Parameters<typeof tenantDb>[0], res: import("express").Response, action: string, schema: typeof ConfigureStock | typeof ConsumeStock | typeof LoadStock) {
-  if (!await requireCapability(req, res, "inventory:update-part")) return;
+  // The action this route is: its own declaration says who may (grantedAs
+  // inventory:update-part), the same answer its action door gives (#5170).
+  if (!await requireCapability(req, res, action)) return;
   const body = schema.safeParse(req.body);
   const id = PartId.safeParse(req.params.id);
   if (!body.success) return void badBody(res, body.error);

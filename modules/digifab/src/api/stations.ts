@@ -1,3 +1,4 @@
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { TelemetrySchema } from "../kilns/model.js";
 import { planResinPrint, readLoadedResinStock, resinStationKey } from "../resin-stock.js";
 import { reservedResin } from "../resin-prints.js";
@@ -7,6 +8,7 @@ import { randomBytes } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
+import { cncStationStock } from "../cnc-stock.js";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { buildDriverById } from "../jobs-core.js";
 import { authorizeLaserStart, stationTokenHash } from "../laser-station.js";
@@ -69,12 +71,19 @@ export async function revokeStation(db: ReturnType<typeof tenantDb>, orgId: stri
 
 // AI-ACTION: digifab:revoke-station
 stationsRouter.delete("/:id", asyncHandler(async (req, res) => {
-  if (!requireRole(req, res, "owner", "admin")) return;
+  // ADMIN-ONLY: starting, stopping and setting up a machine stays with the admin tier, at every door (#5170)
+  if (!(await requireCapability(req, res, "digifab:revoke-station"))) return;
   await revokeStation(tenantDb(req), tenantContext(req).org.id, sessionUser(req)?.id ?? null, req.params.id!);
   res.json({ ok: true });
 }));
 
 stationsRouter.get("/:connectionId/:deviceId", asyncHandler(async (req, res) => {
+  const benchDriver=await buildDriverById(tenantDb(req),tenantContext(req).org.id,req.params.connectionId!);
+  if(benchDriver?.benchInstrument===true){
+    if(!requireRole(req,res,"owner","admin","member"))return;
+    const linked=await tenantDb(req).selectFrom("digifab_device_links").select("machine_id").where("connection_id","=",req.params.connectionId!).where("remote_device_id","=",req.params.deviceId!).executeTakeFirst();
+    return void res.json({kind:"bench",screen_kind:"bench",machine_id:linked?.machine_id || null,job:null,library:null,attention:null,sheets:[]});
+  }
   if (!requireRole(req, res, "owner", "admin")) return;
   const orgId = tenantContext(req).org.id;
   const db = tenantDb(req);
@@ -82,8 +91,6 @@ stationsRouter.get("/:connectionId/:deviceId", asyncHandler(async (req, res) => 
   const device = req.params.deviceId!;
   const jobs = await db.selectFrom("digifab_jobs").selectAll().where("connection_id", "=", connection).where("target_device", "=", device).where("status", "in", ["queued", "sent", "printing", "paused"]).orderBy("priority", "desc").orderBy("created_at", "asc").orderBy(sql<number>`coalesce((laser_layout ->> 'sheet_index')::int, 0)`, "asc").orderBy("id", "asc").execute();
   const attention = await db.selectFrom("digifab_device_attention").selectAll().where("connection_id", "=", connection).where("remote_device_id", "=", device).executeTakeFirst();
-  const job = jobs.find(j => j.status !== "queued") ?? jobs[0] ?? null;
-  const library = job ? await libraryForJob(db, job) : null;
   const driver = await buildDriverById(db, orgId, connection);
   const link = await db.selectFrom("digifab_device_links").select("machine_id").where("connection_id", "=", connection).where("remote_device_id", "=", device).executeTakeFirst();
   const machine = link?.machine_id ? await platform().entities.lookup(orgId, "machines:machine", link.machine_id) : null;
@@ -99,6 +106,14 @@ stationsRouter.get("/:connectionId/:deviceId", asyncHandler(async (req, res) => 
   const kind = machineKind === "print" && processKind ? processKind : machineKind ?? driverKind ?? null;
   const reviewedKind = processKind ?? reviewKind;
   const screen_kind = reviewRequired && kind === reviewedKind ? kind : null;
+  // A CNC job keeps its station, and Stop, while the bridge is away, the way a
+  // known print process does; a finished one stays on screen until its outcome
+  // is answered.
+  const finished = attention?.job_id ? await db.selectFrom("digifab_jobs").selectAll().where("id", "=", attention.job_id).where("connection_id", "=", connection).where("target_device", "=", device).executeTakeFirst() : null;
+  const cnc = screen_kind === "cnc" || ((kind === "cnc" || kind === null) && (!!finished?.cnc_setup || jobs.some(j => !!j.cnc_setup)));
+  const job = (cnc ? finished : null) ?? jobs.find(j => j.status !== "queued") ?? jobs[0] ?? null;
+  const library = job ? await libraryForJob(db, job) : null;
+  if (cnc) return void res.json({ kind: "cnc", screen_kind: "cnc", job, library: library ?? null, attention: attention ?? null, sheets: [], cncStock: await cncStationStock(orgId, typeof req.query.q === "string" ? req.query.q : undefined) });
   if (!screen_kind) return void res.json({ kind, screen_kind, job, library: library ?? null, attention: attention ?? null, sheets: [] });
   if (kind === "cutter") return void res.json({ kind, screen_kind, job, library: library ?? null, attention: attention ?? null, sheets: [] });
   if (kind === "resin") {

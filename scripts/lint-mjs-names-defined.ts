@@ -55,6 +55,8 @@ function changedSinceMain(): string[] | null {
   }
 }
 const changed = changedSinceMain();
+// The whole-tree fallback has its own quiet time (scripts/lint-durations/mjs-names-defined.json "paths").
+if (changed === null) console.log("[lint-path] full");
 const files = changed === null ? all : all.filter((f) => changed.includes(f));
 if (!files.length) {
   console.log("lint:mjs-names-defined OK (no .mjs file changed)");

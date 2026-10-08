@@ -1,4 +1,4 @@
-import { RecordFormModal, NewItemMenu, BulkGiveTo, BulkShareWith, CustomFieldsPanel, EditField, EditSelect, EntityActionsBar, FaceSection, FacesOn, faceShows, FieldPack, RecordFaces, editFieldItem, fieldNeed, useAskCobbAboutSelection, useTickedRows, Modal, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PresentationGate, useFaces, UsedValueInput, usedValueFieldItem } from "@cobblr/platform-web";
+import { useNewRecordBarcode, RecordFormModal, NewItemMenu, BulkGiveTo, BulkShareWith, CustomFieldsPanel, EditField, EditSelect, EntityActionsBar, FaceSection, FacesOn, faceShows, FieldPack, RecordFaces, editFieldItem, fieldNeed, useAskCobbAboutSelection, useTickedRows, Modal, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PresentationGate, useFaces, UsedValueInput, usedValueFieldItem } from "@cobblr/platform-web";
 // /machines — list view for the machines module, with a detail
 // modal launched per row. URL pattern:
 //
@@ -63,6 +63,7 @@ import { EntityAttachments } from "../components/EntityAttachments";
 import { LocationTreePicker } from "../components/LocationTreePicker";
 import { itemNounFor, pluralise } from "@cobblr/platform-contract/plural";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 const ENTITY_KIND = "machines:machine";
 
 export function MachinesPage({
@@ -911,7 +912,7 @@ function SaveViewModal({
             <div className="text-[10px] text-faint mt-1">
               {included.size === allStates.length
                 ? "All states: no filter, shows everything"
-                : `${included.size} of ${allStates.length} states`}
+                : `${included.size} of ${countOf(allStates.length, "state")}`}
             </div>
           </div>
         )}
@@ -1668,15 +1669,27 @@ function NewMachineModal({
     if (d.model) setFamily((f) => f.trim() || d.model!);
   }
 
+  const [barcodeMetadata, setBarcodeMetadata] = useState<Record<string, unknown>>({});
+  const [barcodeImage, setBarcodeImage] = useState("");
+  const barcode = useNewRecordBarcode({ kind: instance ? `${instance}:item` : "machines:machine", metadata: barcodeMetadata, setMetadata: setBarcodeMetadata, natives: [
+    { name: "name", label: "Name", key: "title", value: name, setValue: setName },
+    { name: "manufacturer", label: "Brand", key: "brand", value: manufacturer, setValue: setManufacturer },
+    { name: "family", label: "Model", key: "model", value: family, setValue: setFamily },
+    { name: "image_path", label: "Photo", key: "image_url", value: barcodeImage, setValue: setBarcodeImage },
+  ] });
+  useEffect(() => { if (open) { setBarcodeMetadata({}); setBarcodeImage(""); } }, [open]);
+
   const create = useMutation({
     mutationFn: async () => {
+      const initialMetadata = { ...barcodeMetadata, ...(printerFlow && kind ? { printer_kind: kind } : {}) };
       const m = await api.createMachine(
         activeSlug,
         {
           name: name.trim(), manufacturer: manufacturer.trim() || null, family: family.trim() || null, location_id: locationId,
           // Persist the chosen kind so the detail form can hide fields the kind
           // doesn't need (a Bambu hides hotend/mainboard/firmware/local-IP).
-          ...(printerFlow && kind ? { metadata: { printer_kind: kind } } : {}),
+          metadata: initialMetadata,
+          image_path: barcodeImage || null,
         },
         instance,
       );
@@ -1728,7 +1741,7 @@ function NewMachineModal({
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim() || barcode.blocked) return;
     create.mutate();
   }
 
@@ -1789,6 +1802,8 @@ function NewMachineModal({
   return (
     <RecordFormModal open={open} onClose={onClose} title={`New ${noun ?? "machine"}`}>
       <form onSubmit={submit} className="space-y-3">
+        {barcode.controls}
+        {barcodeImage && <div className="flex items-center gap-2"><EntityThumb src={barcodeImage} alt="Photo from barcode" size={96} /><button type="button" className="text-sm text-accent underline" onClick={() => setBarcodeImage("")}>Remove photo</button></div>}
         {printerFlow && (
           <div>
             <span className={lblCls}>What kind of printer is this?</span>
@@ -1954,7 +1969,7 @@ function NewMachineModal({
           <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition">
             Cancel
           </button>
-          <button type="submit" disabled={!name.trim() || create.isPending} className="px-3 py-1.5 rounded-md text-sm font-medium bg-slate-700 hover:bg-slate-600 text-mortar-50 transition disabled:opacity-50">
+          <button type="submit" disabled={!name.trim() || create.isPending || barcode.blocked} className="px-3 py-1.5 rounded-md text-sm font-medium bg-slate-700 hover:bg-slate-600 text-mortar-50 transition disabled:opacity-50">
             {create.isPending ? "Creating…" : "Create"}
           </button>
         </div>

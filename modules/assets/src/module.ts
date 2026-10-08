@@ -144,6 +144,7 @@ export default defineModule({
       {
         group: "lifecycle",
         id: "assets:lend",
+        runBy: "member",
         examples: ["lend the ladder to Sam", "Sam borrowed the drill until Friday", "check the projector out to Robin"],
         label: "Lend it",
         description:
@@ -160,6 +161,7 @@ export default defineModule({
       {
         group: "lifecycle",
         id: "assets:got-back",
+        runBy: "member",
         examples: ["I got the ladder back", "Sam returned the drill", "check it back in"],
         label: "Got it back",
         description: "The thing is back: clears Who has it and Due back.",
@@ -172,6 +174,7 @@ export default defineModule({
       {
         group: "lifecycle",
         id: "assets:archive",
+        runBy: "member",
         examples: ["put the old laptop away", "archive the lawnmower, we sold it"],
         label: "Archive this asset",
         description:
@@ -184,6 +187,7 @@ export default defineModule({
       {
         group: "lifecycle",
         id: "assets:restore",
+        runBy: "member",
         examples: ["bring the laptop back", "restore the lawnmower"],
         label: "Restore to the register",
         description: "Bring an archived thing back into the register, as it was.",
@@ -196,6 +200,7 @@ export default defineModule({
         // NO-PHRASING: the way back for another action, run only from Undo
         group: "lifecycle",
         id: "assets:set-custody",
+        runBy: "member",
         label: "Put who had it back",
         description: "The undo of Lend it and Got it back: sets Who has it and Due back to what they were.",
         appliesTo: { kinds: ["assets:asset"] },
@@ -210,6 +215,7 @@ export default defineModule({
       {
         group: "organise",
         id: "assets:update-fields",
+        runBy: "member",
         examples: ["update the mileage on it", "set a field on that asset"],
         label: "Update an asset's fields",
         description:
@@ -230,6 +236,8 @@ export default defineModule({
       {
         group: "organise",
         id: "assets:field-to-location",
+        // ADMIN-ONLY: no page twin: a bundle migration that rewrites every asset in an instance and makes locations
+        runBy: "admin",
         examples: ["move the Room field into Location", "turn that place field into real locations"],
         label: "Move a place field into Location",
         description:

@@ -14,6 +14,7 @@ import { MoneyTotalNotice } from "./MoneyTotalNotice";
 // must be `containable`), so the panel appears on every physical record but only
 // accepts things that can actually go inside one.
 
+import { NumberField } from "./NumberField";
 import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -470,13 +471,12 @@ export function ContentsPanel({
           </select>
           {counted && (
             <label className="flex items-center gap-1 text-xs text-muted">
-              <input
-                type="number"
+              <NumberField
                 min={1}
                 max={pickedQty}
                 value={addQty}
-                onChange={(e) => setAddQty(Math.max(1, Math.min(pickedQty, Math.floor(Number(e.target.value) || 1))))}
-                aria-label="How many to install"
+                onChange={(n) => setAddQty(Math.max(1, Math.min(pickedQty, Math.floor(n || 1))))}
+                label="How many to install"
                 className="w-16 px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
               />
               of {pickedQty}

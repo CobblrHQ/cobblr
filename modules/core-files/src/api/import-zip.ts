@@ -24,6 +24,7 @@ import { tooLargeMessage, uploadedFile } from "@cobblr/platform-contract/upload"
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, requireRole } from "./util.js";
 import { ensureFolderPath, intakeFile, resolveTarget, sameBytes } from "./intake.js";
+import { assertSharedFileSource } from "./storage.js";
 import { bytesUsed, QUOTA_BYTES, quotaDecision } from "./quota.js";
 
 export const importZipRouter = Router({ mergeParams: true });
@@ -161,12 +162,13 @@ importZipRouter.post(
         const parts = path.split("/").filter(Boolean);
         const filename = parts.pop() ?? path;
         try {
-          const folderId = await ensureFolderPath(db, target, parts, cache);
           // One entry at a time, inflated to disk beside the zip and hashed on
           // the way, never held whole.
           const at = `${file.path}.${spent.length}`;
           spent.push(at);
           const unpacked = await unpackEntry(entry, at, platform().http.uploadSizeFor(filename, mimeFor(filename)).maxBytes);
+          await assertSharedFileSource(unpacked, mimeFor(filename), ctx.org.id, { sha256: unpacked.sha256, size: unpacked.size });
+          const folderId = await ensureFolderPath(db, target, parts, cache);
           const fingerprint = { sha256: unpacked.sha256, size: unpacked.size };
           const same = await sameBytes(db, fingerprint);
           if (same) {

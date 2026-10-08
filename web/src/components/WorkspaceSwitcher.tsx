@@ -8,27 +8,12 @@
 // the URL slug is an advanced/risky opt-in). Shared workspaces stay grouped
 // below in their persisted order.
 
-import { VERTICAL_DRAG } from "../lib/vertical-drag";
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { Star, ChevronDown, GripVertical, LogOut, Pencil, Plus, Sliders, Users } from "lucide-react";
-import {
-  DndContext,
-  PointerSensor,
-  closestCenter,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from "@dnd-kit/core";
-import {
-  SortableContext,
-  arrayMove,
-  useSortable,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
+import { useSortKit, type SortKit } from "./sort-kit-static";
 import { ApiError, api, type OrgMembership } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -56,7 +41,9 @@ export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {})
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
   // Drag only after a 6px move so a plain click on a row still selects it.
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  // Drag-to-reorder arrives after the first paint (sort-kit.tsx); until then
+  // the rows draw without their grip.
+  const K = useSortKit();
 
   useLayoutEffect(() => {
     if (!open || inline) return;
@@ -138,13 +125,14 @@ export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {})
     }
   }
 
-  function onDragEnd(e: DragEndEvent) {
-    const { active, over } = e;
-    if (!over || active.id === over.id) return;
-    const from = owned.findIndex((o) => o.slug === active.id);
-    const to = owned.findIndex((o) => o.slug === over.id);
+  function onDrop(activeId: string, overId: string) {
+    if (activeId === overId) return;
+    const from = owned.findIndex((o) => o.slug === activeId);
+    const to = owned.findIndex((o) => o.slug === overId);
     if (from < 0 || to < 0) return;
-    void persistOrder(arrayMove(owned, from, to));
+    const next = [...owned];
+    next.splice(to, 0, ...next.splice(from, 1));
+    void persistOrder(next);
   }
 
   const header = (label: string, border: boolean) => (
@@ -188,11 +176,12 @@ export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {})
           <ul className="max-h-80 overflow-y-auto">
             {owned.length > 0 && header("your workspaces", false)}
             {owned.length > 0 && (
-              <DndContext {...VERTICAL_DRAG} sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-                <SortableContext items={owned.map((o) => o.slug)} strategy={verticalListSortingStrategy}>
+              <K.Root grip="pointer" onDrop={onDrop}>
+                <K.Group ids={owned.map((o) => o.slug)}>
                   {owned.map((o) => (
                     <SortableRow
                       key={o.id}
+                      K={K}
                       org={o}
                       active={o.slug === activeSlug}
                       onPick={() => pick(o.slug)}
@@ -201,8 +190,8 @@ export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {})
                       onSetDefault={() => toggleDefault(o.slug, !!o.is_default)}
                     />
                   ))}
-                </SortableContext>
-              </DndContext>
+                </K.Group>
+              </K.Root>
             )}
             {shared.length > 0 && header("shared with you", owned.length > 0)}
             {shared.map((o) => (
@@ -246,11 +235,12 @@ export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {})
           <ul className="max-h-80 overflow-y-auto">
             {owned.length > 0 && header("your workspaces", false)}
             {owned.length > 0 && (
-              <DndContext {...VERTICAL_DRAG} sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-                <SortableContext items={owned.map((o) => o.slug)} strategy={verticalListSortingStrategy}>
+              <K.Root grip="pointer" onDrop={onDrop}>
+                <K.Group ids={owned.map((o) => o.slug)}>
                   {owned.map((o) => (
                     <SortableRow
                       key={o.id}
+                      K={K}
                       org={o}
                       active={o.slug === activeSlug}
                       onPick={() => pick(o.slug)}
@@ -259,8 +249,8 @@ export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {})
                       onSetDefault={() => toggleDefault(o.slug, !!o.is_default)}
                     />
                   ))}
-                </SortableContext>
-              </DndContext>
+                </K.Group>
+              </K.Root>
             )}
             {shared.length > 0 && header("shared with you", owned.length > 0)}
             {shared.map((o) => (
@@ -428,7 +418,8 @@ function WorkspaceRow({
 }
 
 /** An owned row wrapped for drag-to-reorder (grip handle on the left). */
-function SortableRow(props: {
+function SortableRow({ K, ...props }: {
+  K: SortKit;
   org: OrgMembership;
   active: boolean;
   onPick: () => void;
@@ -436,34 +427,33 @@ function SortableRow(props: {
   onRename: () => void;
   onSetDefault: () => void;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: props.org.slug });
-  // No guard needed here: this row drags by its GripVertical handle only, and
+  // No click guard here: this row drags by its GripVertical handle only, and
   // its content is buttons rather than links, so a press on the row was never
   // ambiguous and there is no native link-drag to cancel.
   return (
-    <div
-      ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.6 : 1 }}
-    >
-      <WorkspaceRow
-        {...props}
-        // role-gate: exact — Manage opens the members modal, which is
-        // governance; an editor does not inherit it by rank.
-        onManage={props.org.role === "owner" || props.org.role === "admin" ? props.onManage : undefined}
-        dragHandle={
-          <button
-            type="button"
-            {...attributes}
-            {...listeners}
-            className="pl-1.5 pr-0.5 flex items-center text-faint/70 dark:text-slate-700 hover-reveal focus-visible:opacity-100 hover:text-muted dark:hover:text-slate-400 cursor-grab active:cursor-grabbing touch-none transition-opacity"
-            title="Drag to reorder"
-            aria-label="Drag to reorder"
-          >
-            <GripVertical size={12} />
-          </button>
-        }
-      />
-    </div>
+    <K.Handled id={props.org.slug}>
+      {(grip) => (
+        <WorkspaceRow
+          {...props}
+          // role-gate: exact — Manage opens the members modal, which is
+          // governance; an editor does not inherit it by rank.
+          onManage={props.org.role === "owner" || props.org.role === "admin" ? props.onManage : undefined}
+          dragHandle={
+            grip && (
+              <button
+                type="button"
+                {...grip}
+                className="pl-1.5 pr-0.5 flex items-center text-faint/70 dark:text-slate-700 hover-reveal focus-visible:opacity-100 hover:text-muted dark:hover:text-slate-400 cursor-grab active:cursor-grabbing touch-none transition-opacity"
+                title="Drag to reorder"
+                aria-label="Drag to reorder"
+              >
+                <GripVertical size={12} />
+              </button>
+            )
+          }
+        />
+      )}
+    </K.Handled>
   );
 }
 

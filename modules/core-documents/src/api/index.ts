@@ -7,6 +7,7 @@
 // in the background (../matching.ts). Find, Link and the thumbnail are the
 // only routes that reach a library, each when a person asks.
 
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
@@ -179,7 +180,7 @@ const DocBody = z.object({ connection_id: z.string().min(1).max(200), ref: z.str
 router.post(
   "/records/:kind/:id/links",
   handler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-documents:link-item"))) return;
     const b = DocBody.safeParse(req.body ?? {});
     if (!b.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "connection_id and ref are required" } });
@@ -195,7 +196,7 @@ router.post(
 router.delete(
   "/records/:kind/:id/links",
   handler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-documents:unlink-item"))) return;
     const b = DocBody.safeParse({ ...(req.body ?? {}), ...req.query });
     if (!b.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "connection_id and ref are required" } });
@@ -254,7 +255,7 @@ router.post(
 router.post(
   "/records/:kind/:id/copies",
   handler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-documents:copy-item"))) return;
     const b = DocBody.safeParse(req.body ?? {});
     if (!b.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "connection_id and ref are required" } });

@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.59.4",
+  version: "0.61.0",
   displayName: "Scan",
   description:
     "Scan a barcode or snap a photo, and get the thing named and ready to file in one tap.",
@@ -186,8 +186,29 @@ export default defineModule({
     ],
     actions: [
       {
+        // UI-SCREEN: /instances/:name
+        group: "buy", id: "core-scan:renewal-draft", label: "Draft from a receipt", scope: "workspace", invokeHandler: "core-scan.renewal-draft",
+        runBy: "member",
+        description: "Read a receipt file or forwarded receipt inbox item into a reviewable renewal draft. Pass target_kind and binding matching the collection's receipt_draft configuration, plus file_id or inbox_id. Nothing is filed until the person saves the draft with create_record.",
+        argsSchema: { target_kind: { type: "text", label: "Collection", required: true }, file_id: { type: "text", label: "Receipt file" }, inbox_id: { type: "text", label: "Forwarded receipt" }, binding: { type: "json", label: "Receipt field mapping", required: true } },
+      },
+      {
+        group: "more",
+        // UI-SCREEN: /records
+        id: "core-scan:lookup-barcode",
+        runBy: "member",
+        examples: ["what is this barcode?", "look up this ISBN"],
+        label: "Look up a barcode",
+        description: "Look up a UPC, EAN, GTIN or ISBN without filing anything. Returns product fields and records already in this workspace. Args: { code }.",
+        scope: "workspace",
+        invokeHandler: "core-scan.lookup-barcode",
+        userInvokable: true,
+        argsSchema: { code: { label: "Barcode", type: "text", required: true } },
+      },
+      {
         group: "more",
         id: "core-scan:decode-identifier",
+        runBy: "member",
         examples: ["decode this package label", "read the fields in this identifier"],
         label: "Decode identifier",
         description: "Decode a scanned identifier into its recorded fields. Package labels decode locally; unknown formats return a miss. Args: { code }.",
@@ -199,6 +220,7 @@ export default defineModule({
       {
         group: "more",
         id: "core-scan:confirm-receipt-arrival",
+        runBy: "member",
         examples: ["I have the parcel", "the package is here", "got the delivery in hand"],
         label: "Confirm a parcel is in hand",
         description:
@@ -221,6 +243,7 @@ export default defineModule({
         // NO-PHRASING: the scan pipeline's own step; a person asking to identify something means core-scan:identify
         group: "more",
         id: "core-scan:identify-photo",
+        runBy: "member",
         label: "Identify a scanned photo",
         description:
           "Vision-identify a photo-only inbox row (no barcode) into a draft. Wire-fired on scan.received; no-ops for barcode/url scans.",
@@ -237,6 +260,7 @@ export default defineModule({
         // NO-PHRASING: an internal ranking step between enrichment and the draft; there is no sentence for it
         group: "more",
         id: "core-scan:rank-catalog-photo",
+        runBy: "member",
         label: "Pick the best catalog photo",
         description:
           "Vision-rank an enriched row's candidate photos and set the cleanest catalog shot (product alone, correct colour, no people). Wire-fired on scan.enriched; no-ops unless the workspace turned always-on ranking on, and never over a photo the user picked.",
@@ -253,6 +277,7 @@ export default defineModule({
         // UI-SCREEN: /scan
         group: "more",
         id: "core-scan:attach-paperwork",
+        runBy: "member",
         examples: ["attach this bill of sale to the Civic", "this receipt is for my mower, put it on it"],
         label: "Attach paperwork to a record",
         description:
@@ -270,6 +295,8 @@ export default defineModule({
         // NO-PHRASING: a table's own wire runs it when a record is made or changed; the person's door is the record's identifier box
         group: "more",
         id: "core-scan:fill-known",
+        // ADMIN-ONLY: fills any kind's empty fields through its writer; no one page gate covers every kind it may write
+        runBy: "admin",
         label: "Fill what the record already says",
         description:
           "Fill a record's EMPTY fields from what it already carries: its identifier (a VIN, read by the decoder) and its own name (\"Yamaha YZF-R3, Blue\" with Make Yamaha says the model). Never touches a field that holds a value. Wire-fired by a bundle on its table's created and updated events. Undoable.",
@@ -286,6 +313,8 @@ export default defineModule({
         // DELIBERATELY universal: the undo of fill-known, which runs on whatever record that did.
         group: "more",
         id: "core-scan:unfill-known",
+        // ADMIN-ONLY: fill-known's undo, as above
+        runBy: "admin",
         label: "Empty what was filled",
         description:
           "Undo of fill-known: empty the fields it filled, only where each still holds the value it put there. Args: { filled }.",
@@ -297,6 +326,8 @@ export default defineModule({
       {
         group: "organise",
         id: "core-scan:fill-fields-from-receipts",
+        // ADMIN-ONLY: the page's own route POST /receipts/backfill-fields gates on this action's own id, owner or admin (inbox.ts)
+        runBy: "admin",
         examples: [
           "fill in where my things came from",
           "backfill provenance from my receipts",
@@ -325,6 +356,7 @@ export default defineModule({
       {
         group: "more",
         id: "core-scan:identify",
+        runBy: "member",
         examples: ["what is this thing", "identify this for me"],
         label: "Identify a thing",
         description:

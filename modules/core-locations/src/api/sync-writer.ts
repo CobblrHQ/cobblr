@@ -18,6 +18,7 @@ export function registerLocationsWriter(): void {
   registered = true;
 
   platform().entities.registerWriter("core-locations:location", {
+    table: "core_locations_locations",
     // A record that already carries the source's key is adopted by a sync, never
     // duplicated (#3836).
     findByKey: async (orgId, key, value) => findRowIdByKey(await platform().tenants.getDb(orgId), "core_locations_locations", key, value),

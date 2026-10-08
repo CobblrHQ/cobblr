@@ -17,6 +17,7 @@
 // projects the same way on the server that copies it and on the page that
 // shows it.
 
+import { omitSecretValues } from "@cobblr/platform-contract/secret-field";
 import { MONEY_ROLES, isCurrencyUnit } from "@cobblr/platform-contract/money";
 
 export type ScopeRule =
@@ -98,7 +99,7 @@ export function readVisibility(v: unknown): VisibilityDef {
 }
 
 /** What a field is, for deciding who may see it. */
-export type FieldClass = "price" | "private" | "place" | "restricted" | "plain";
+export type FieldClass = "price" | "private" | "place" | "restricted" | "secret" | "plain";
 
 export interface ClassifiableField {
   name: string;
@@ -119,6 +120,7 @@ const NATIVE_PRIVATE = new Set(["notes"]);
 const NATIVE_PLACE = /^(location|place)(_|$)|_location$/;
 
 export function classifyField(f: ClassifiableField, gated: ReadonlySet<string>): FieldClass {
+  if (f.type === "secret") return "secret";
   if (gated.has(f.name)) return "restricted";
   if (f.private === true || NATIVE_PRIVATE.has(f.name)) return "private";
   if (f.type === "money" || f.money || (f.field_role && MONEY_ROLES.has(f.field_role)) || (f.type === "number" && isCurrencyUnit(f.unit)) || NATIVE_PRICE.test(f.name)) return "price";
@@ -129,6 +131,8 @@ export function classifyField(f: ClassifiableField, gated: ReadonlySet<string>):
 /** May a field of this class (and name) be shown under this visibility? */
 export function fieldVisible(cls: FieldClass, name: string, vis: VisibilityDef): boolean {
   switch (cls) {
+    case "secret":
+      return false;
     case "plain":
       return true;
     case "price":
@@ -172,14 +176,23 @@ export function projectRecord(
   };
   const fields: Record<string, unknown> = {};
   const metadata: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(record.fields)) {
+  const safe = omitSecretValues(record.fields) as Record<string, unknown>;
+  for (const [k, v] of Object.entries(safe)) {
     if (k === "metadata" || k.startsWith("_")) continue;
     if (keep(k)) fields[k] = v;
   }
-  const meta = record.fields.metadata && typeof record.fields.metadata === "object" ? (record.fields.metadata as Record<string, unknown>) : {};
+  const meta = safe.metadata && typeof safe.metadata === "object" ? (safe.metadata as Record<string, unknown>) : {};
   for (const [k, v] of Object.entries(meta)) {
     if (k.startsWith("_")) continue;
     if (keep(k)) metadata[k] = v;
   }
   return { fields, metadata, hidden };
+}
+
+export function listInviteScope(kind: string, ids: readonly string[] = []): ScopeDef {
+  return {
+    rules: ids.length ? [] : [{ type: "collection", entity_kind: kind }],
+    picks: ids.map((id) => ({ entity_kind: kind, id })),
+    excluded: [], with_contents: false, lent_to_them: false,
+  };
 }
