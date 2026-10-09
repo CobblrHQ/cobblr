@@ -189,6 +189,7 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
         instance={inst.instance_name}
         displayName={displayName}
         itemNoun={cfg.item_noun}
+        itemNounPlural={cfg.item_noun_plural}
         fileIntake={cfg.file_intake ?? undefined}
         hint={cfg.hint}
       />
@@ -204,6 +205,7 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
         instance={inst.instance_name}
         displayName={displayName}
         itemNoun={cfg.item_noun}
+        itemNounPlural={cfg.item_noun_plural}
         hint={cfg.hint}
       />
     );
@@ -216,6 +218,7 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
         instance={inst.instance_name}
         displayName={displayName}
         itemNoun={cfg.item_noun}
+        itemNounPlural={cfg.item_noun_plural}
         hint={cfg.hint}
       />
     );
@@ -229,6 +232,7 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
         instance={inst.instance_name}
         displayName={displayName}
         itemNoun={cfg.item_noun}
+        itemNounPlural={cfg.item_noun_plural}
         hint={cfg.hint}
       />
     );

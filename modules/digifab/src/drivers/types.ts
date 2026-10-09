@@ -6,7 +6,7 @@ import type { LaserSetup, LaserCommission } from "@cobblr/platform-contract/lase
 // (resolve → queue, or explicit printer) rather than "submit to printer N".
 
 export interface RemoteDevice {
-  station_kind?: "laser" | "print" | "cnc" | "cutter";
+  station_kind?: "laser" | "print" | "cnc" | "cutter" | "production-test";
   camera_available?: boolean;
   /** The id inside the farm system (stored locally as remote_device_id). */
   id: string;
@@ -148,6 +148,7 @@ export interface SubmitArgs {
 }
 
 export interface MachineDriver {
+  productionRequest?(operation: string, args: Record<string, unknown>): Promise<unknown>;
   readonly benchInstrument?:boolean;
   identifyBench?():Promise<{identity:string;profile:string}>;
   captureBench?(input:import("../bench-model.js").CaptureInput):Promise<import("../bench-model.js").BenchReport>;

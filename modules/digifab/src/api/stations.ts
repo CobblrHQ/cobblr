@@ -16,7 +16,10 @@ import { ReviewRequired } from "../drivers/job-review.js";
 import { LaserMaterialSchema, materialFromFields } from "../laser-material.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
+import { machineStationsRouter } from "./machine-stations.js";
+
 export const stationsRouter = Router({ mergeParams: true });
+stationsRouter.use("/machines", machineStationsRouter);
 const Machine = z.object({ connection_id: z.string().uuid(), device_id: z.string().min(1).max(200) });
 
 type StationKind = "laser" | "print" | "cutter" | "resin" | "kiln" | "cnc" | "embroidery" | "large-format";
@@ -50,7 +53,7 @@ stationsRouter.post("/", asyncHandler(async (req, res) => {
 
 stationsRouter.get("/", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin")) return;
-  res.json({ items: await tenantDb(req).selectFrom("digifab_stations").select(["id", "label", "connection_id", "remote_device_id", "created_at", "revoked_at"]).orderBy("created_at", "desc").execute() });
+  res.json({ items: await tenantDb(req).selectFrom("digifab_stations").select(["id", "label", "connection_id", "remote_device_id", "purpose", "machine_kind", "machine_id", "created_at", "revoked_at"]).orderBy("created_at", "desc").execute() });
 }));
 
 /** Take a station screen's Start permission away: the page's Revoke and the
@@ -98,6 +101,8 @@ stationsRouter.get("/:connectionId/:deviceId", asyncHandler(async (req, res) => 
   const processKind = driver?.printProcess === "resin" || driver?.printProcess === "large-format" ? driver.printProcess : null;
   // Known print processes keep the station and Stop reachable while the bridge is disconnected.
   const remote = processKind ? undefined : (await driver?.listDevices())?.find(d => d.id === device);
+  // A production test station is a bridge device of its own; it is read from the same device list, never a second call.
+  if (remote?.station_kind === "production-test") return void res.json({ kind: "production-test", screen_kind: "production-test", job: null, library: null, attention: null, sheets: [] });
   const reviewKind = processKind ?? await driver?.jobReviewKind?.();
   const reviewRequired = !!processKind || !!await driver?.jobReviewRequired?.();
   // Bridges without review support may still return a default laser review kind.

@@ -20,7 +20,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-placement",
-  version: "0.4.1",
+  version: "0.4.2",
   displayName: "Placement",
   description:
     "Keeps track of what is inside what: a part in a machine, a jar on a shelf, a shelf in a room.",

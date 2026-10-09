@@ -12,6 +12,10 @@
 import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { InventoryDB } from "../db.js";
+import { freeSlug } from "./category-writer.js";
+
+/** The table a category this action adds lives in: the default instance's. */
+const INSTANCE = "inventory";
 
 export function registerCategoryHandlers(): void {
   platform().actions.registerHandler("inventory.add-category", async (ctx) => {
@@ -34,9 +38,11 @@ export function registerCategoryHandlers(): void {
     if (existing) return { ok: true, result: { id: existing.id, name: existing.name, existed: true } };
 
     // Asked for twice at once, both found none: the second gets the first's.
+    // Every column the table requires, typed: a slug left out made this
+    // action fail on every call, hidden behind a cast (#4286's walk).
     const row = await db
       .insertInto("inventory_categories")
-      .values({ name, color } as never)
+      .values({ name, color, slug: await freeSlug(db, INSTANCE, name), instance: INSTANCE, parent_id: null })
       .onConflict((oc) => oc.doNothing())
       .returning(["id", "name"])
       .executeTakeFirst();

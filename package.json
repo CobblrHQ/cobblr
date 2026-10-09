@@ -21,6 +21,7 @@
     "typecheck:tsc": "H=$(node scripts/lib/job-budget.mjs heap tsc) && NODE_OPTIONS=\"$H ${NODE_OPTIONS:-}\" pnpm -r --no-sort --workspace-concurrency=${COBBLR_TSC_CONCURRENCY:-$(node scripts/lib/job-budget.mjs tsc 8)} run --if-present typecheck && node scripts/verify-cache.mjs stamp typecheck-tsc",
     "verify:served": "node scripts/verify-served.mjs",
     "where": "tsx scripts/placement.ts",
+    "where-test": "node scripts/where-test.mjs",
     "lint": "node scripts/run-lints.mjs --one",
     "lint:all": "bash scripts/heavy-slot.sh node scripts/run-lints.mjs",
     "budget:first-load": "pnpm --filter @cobblr/web exec vite build --logLevel warn && node scripts/first-load-budget.mjs",

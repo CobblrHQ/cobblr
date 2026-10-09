@@ -48,6 +48,15 @@ export function registerAssetsWriter(): void {
 
   platform().entities.registerWriter("assets:asset", {
     table: "assets_assets",
+    counters: {
+      defs: [{ key: "production_cycles", label: "test cycles" }],
+      async read(orgId, id) {
+        const db = await platform().tenants.getDb(orgId) as Kysely<AssetsDB>;
+        const row = await db.selectFrom("assets_assets").select("metadata").where("id", "=", id).executeTakeFirst();
+        const value = (row?.metadata as Record<string, unknown> | null)?.production_cycles;
+        return { production_cycles: typeof value === "number" && Number.isFinite(value) ? value : null };
+      },
+    },
     snapshotDeletion: async (orgId, id) => snapshotRowTree(await platform().tenants.getDb(orgId), "assets_assets", id, "assets_"),
     restoreDeletion: async (orgId, snapshot) => restoreRowTree(await platform().tenants.getDb(orgId), "assets_assets", snapshot, "assets_"),
     // A record that already carries the source's key is adopted by a sync, never

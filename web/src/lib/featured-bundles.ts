@@ -243,13 +243,15 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     item_example: "a reel of components",
     next_steps: [{ label: "Receive components", module: "inventory", path: "/instances/component-parts", hint: "Scan a distributor's package label, review its count and queue its reel QR label." }, { label: "Add a board project", module: "projects", path: "/instances/board-projects", hint: "Import a revision’s BOM and centroid, check components and track blank board orders." }],
     manifest: {
-      id: "cobblr.flagship.electronics-assembly", version: "0.1.6", name: "Electronics assembly", author: "Cobblr",
-      description: "Component packages and board revisions, with stock checks, fabrication purchases, assembly kits and solder paste handling.",
-      released_at: "2026-10-08", changelog: "Reserve assembly kits and track refrigerated paste handling against its label limits.",
-      releases: [{ version: "0.1.6", released_at: "2026-10-08", notes: "Reserve assembly kits and track refrigerated paste handling against its label limits." }, { version: "0.1.5", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { version: "0.1.4", released_at: "2026-10-06", notes: "Import board revisions to check component stock and track fabrication purchases and stencils." }, { version: "0.1.1", released_at: "2026-10-05", notes: "Receive component packages by their distributor labels and track moisture exposure and counts." }],
-      requires: [{ module: "inventory" }, { module: "core-scan" }, { module: "labels" }, { module: "projects" }, { module: "builds" }, { module: "purchases" }],
+      id: "cobblr.flagship.electronics-assembly", version: "0.1.9", name: "Electronics assembly", author: "Cobblr",
+      description: "Component packages and board revisions, with stock checks, fabrication purchases, assembly kits, solder paste handling and placement stations.",
+      released_at: "2026-10-08", changelog: "Export calibrated placement files, verify feeder reels and record runs at an authorized station.",
+      releases: [{ version: "0.1.9", released_at: "2026-10-08", notes: "Export calibrated placement files, verify feeder reels and record runs at an authorized station." }, { version: "0.1.6", released_at: "2026-10-08", notes: "Reserve assembly kits and track refrigerated paste handling against its label limits." }, { version: "0.1.5", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { version: "0.1.4", released_at: "2026-10-06", notes: "Import board revisions to check component stock and track fabrication purchases and stencils." }, { version: "0.1.1", released_at: "2026-10-05", notes: "Receive component packages by their distributor labels and track moisture exposure and counts." }],
+      requires: [{ module: "inventory" }, { module: "core-scan" }, { module: "labels" }, { module: "projects" }, { module: "builds" }, { module: "purchases" }, { module: "machines" }, { module: "digifab" }],
       wires: [], field_defs: [], saved_views: [],
       provides_instances: [
+        { module: "inventory", instance_name: "placed-boards", scan_keywords: ["placed PCB", "placed circuit board"], display_name: "Placed Boards", glyph: "▱", item_noun: "placed board", qty_unit: "each", faces: { stock: true }, field_defs: [{ entity_kind: "inventory:part", name: "board_revision_id", display_label: "Board revision", type: "text", position: 1 }], saved_views: [] },
+        { module: "machines", instance_name: "assembly-machines", scan_keywords: ["pick and place", "SMT machine", "reflow oven", "inspection bench"], display_name: "Assembly Machines", glyph: "⚙", item_noun: "assembly machine", field_defs: [{ entity_kind: "machines:machine", name: "calibration_notes", display_label: "Calibration notes", type: "text", position: 1 }], saved_views: [] },
         {
           module: "inventory", instance_name: "solder-paste", display_name: "Solder Paste", glyph: "🫙", item_noun: "paste jar", qty_unit: "ml",
           faces: { stock: true }, paste_tracking: true,
@@ -257,7 +259,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         },
         {
           module: "projects", instance_name: "board-projects", display_name: "Board Projects", glyph: "🔌", item_noun: "board project",
-          board_revisions: { package_kind: "component-packages:item", blank_kind: "blank-boards:item", stencil_kind: "board-stencils:item" },
+          board_revisions: { package_kind: "component-packages:item", blank_kind: "blank-boards:item", stencil_kind: "board-stencils:item", placed_kind: "placed-boards:item" },
           scan_keywords: ["PCB project", "board project", "electronics project"],
           field_defs: [{ entity_kind: "projects:project", name: "board_notes", display_label: "Board notes", type: "text", position: 1 }], saved_views: [],
         },
@@ -2119,8 +2121,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.community.lego",
-      version: "0.6.4",
-      releases: [{ version: "0.6.4", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { version: "0.6.3", released_at: "2026-10-03", notes: "Sets and Bricks share a navigation row that you can join or split on this device." }, { version: "0.6.2", released_at: "2026-10-03", notes: "Adding Sets offers BrickLink as an optional service instead of turning it on or adding a sidebar row." }, { version: "0.6.1", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
+      version: "0.6.5",
+      releases: [{ version: "0.6.5", released_at: "2026-10-08", notes: "The Bricks table's \"By part category\" view opens again: it grouped by a field the bricks do not have, so it showed an error instead of your bricks." }, { version: "0.6.4", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { version: "0.6.3", released_at: "2026-10-03", notes: "Sets and Bricks share a navigation row that you can join or split on this device." }, { version: "0.6.2", released_at: "2026-10-03", notes: "Adding Sets offers BrickLink as an optional service instead of turning it on or adding a sidebar row." }, { version: "0.6.1", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
       name: "Lego",
       description:
         "Lego as its own tables. Sets you own (sealed / built / disassembled) with optional Bricks bins, a Rebrickable catalog link, and a one-tap Disassemble that spawns the parts and opens the sorting planner.",
@@ -2201,7 +2203,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                 { entity_kind: "inventory:part", name: "model_number", hidden: true },
               ],
               saved_views: [
-                { entity_kind: "inventory:part", name: "By part category", view_type: "table", pinned: true, config: { group_by: "category", visible_fields: ["title", "category", "color", "location", "qty"] } },
+                { entity_kind: "inventory:part", name: "By part category", view_type: "table", pinned: true, config: { group_by: "category_name", visible_fields: ["title", "category", "color", "location", "qty"] } },
               ],
             },
           ],

@@ -26,16 +26,21 @@
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { isEmbeddedPayload } from "./lib/embedded-payloads.mjs";
 
 const ROOT = join("api", "src");
 
 /** Every hooks id a URL in the source points at, with where it was written. */
+/** Each file read once: the two scans below share it. */
+const sources = new Map<string, string>();
+const read = (f: string) => sources.get(f) ?? (sources.set(f, readFileSync(f, "utf8")), sources.get(f)!);
+
 function referencedIds(files: string[]): Map<string, string[]> {
   // `/api/v1/hooks/mcp`, and template forms like `${base}/api/v1/hooks/mcp`.
   const re = /\/api\/v1\/hooks\/([a-z0-9][a-z0-9-]*)/gi;
   const out = new Map<string, string[]>();
   for (const f of files) {
-    const src = readFileSync(f, "utf8");
+    const src = read(f);
     src.split("\n").forEach((line, i) => {
       // Skip the seam's own docs + the router that implements /hooks/:id.
       if (/hooks\/:id|hooks\/\$\{|startsWith\(/.test(line)) return;
@@ -56,7 +61,7 @@ function registeredIds(files: string[]): Set<string> {
   // registerWebhook({ id: "mcp", … }) — the id may sit on the next line.
   const re = /registerWebhook\(\s*\{[\s\S]{0,200}?id:\s*["'`]([a-z0-9-]+)["'`]/gi;
   for (const f of files) {
-    for (const m of readFileSync(f, "utf8").matchAll(re)) ids.add(m[1]!.toLowerCase());
+    for (const m of read(f).matchAll(re)) ids.add(m[1]!.toLowerCase());
   }
   return ids;
 }
@@ -75,7 +80,7 @@ function walk(dir: string, acc: string[] = []): string[] {
       continue; // vanished between readdir and stat
     }
     if (isDir) walk(p, acc);
-    else if (p.endsWith(".ts") && !p.endsWith(".d.ts")) acc.push(p);
+    else if (p.endsWith(".ts") && !p.endsWith(".d.ts") && !isEmbeddedPayload(p)) acc.push(p);
   }
   return acc;
 }

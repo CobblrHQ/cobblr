@@ -203,6 +203,7 @@ export function HoldingsPanel({ partId, unit }: { partId: string; unit?: string 
           onSplit={async (row) => {
             const ok = await confirm({
               title: "Split this place into its own record?",
+              // base-noun-ok: "part of", the English phrase, not the kind
               message: `${row.location_name ?? "This place"} keeps its count, minimum and history, and stops being part of this item. You can combine them again later.`,
               confirmLabel: "Split into its own",
             });

@@ -13,7 +13,6 @@ import { ApiError, api, type CatalogEntry, type CatalogSchema } from "../lib/api
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { CatalogFieldValue, NoImage } from "../components/CatalogFieldValue";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 export function CatalogDetailPage() {
   const { activeSlug } = useActiveOrg();
   const { id } = useParams<{ id: string }>();
@@ -373,7 +372,7 @@ function ImportCsvModal({
         },
       }),
     onSuccess: (r) => {
-      toast.success(`Imported ${r.imported} of ${countOf(r.total, "total entry")}.`);
+      toast.success(`Imported ${r.imported} of ${r.total} total entries.`);
       onDone();
     },
     onError: (err) => {
@@ -415,7 +414,7 @@ function ImportCsvModal({
         {csvText && (
           <details className="text-xs">
             <summary className="cursor-pointer text-muted">
-              Preview ({countOf(csvText.length, "char")})
+              Preview ({csvText.length} chars)
             </summary>
             <pre className="mt-2 p-2 bg-subtle dark:bg-slate-800 rounded text-[10px] max-h-32 overflow-auto">
               {csvText.slice(0, 600)}

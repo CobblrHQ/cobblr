@@ -16,6 +16,8 @@ export interface AiChainStep {
   label: string;
   provider_id?: string;
   model?: string;
+  /** "Haiku · latest (5.5)", for a provider that lists its models. */
+  model_label?: string;
   floating?: boolean;
   credential_id?: string;
   status: string | null;
@@ -67,7 +69,10 @@ export const AI_JOB_GROUPS: AiJobGroup[] = [
 /** "Gemini · Flash Lite (floating) · yours · Verified" */
 export function stepLine(s: AiChainStep): string {
   const bits = [s.label];
-  if (s.model) bits.push(s.floating ? `${s.model} (floating)` : s.model);
+  // "Haiku · latest (5.5)" says it moves already; an id that floats on the
+  // provider's side ("gemini-flash-lite-latest") says so in words.
+  if (s.model_label) bits.push(s.model_label);
+  else if (s.model) bits.push(s.floating ? `${s.model} (floating)` : s.model);
   bits.push(sourceWords(s.source));
   if (s.status) bits.push(s.status);
   return bits.join(" · ");

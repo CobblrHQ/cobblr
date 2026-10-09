@@ -17,7 +17,8 @@
 // See docs/design-decisions/location-floor-plan.md, "Planning a layout".
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { platform } from "@cobblr/platform-contract";
-import { plannedRack } from "@cobblr/platform-contract/plan-draft";
+import { placesUnderDraft, plannedRack } from "@cobblr/platform-contract/plan-draft";
+import { isRotation, ownSize, planFlags, readCloset, roomWalls, rotated, type PlanBox, type PlanFlag, type PlanWall } from "@cobblr/platform-contract/plan-clearance";
 import { OUTER_SIZE_ROLE, parseOuterSize, type OuterSize } from "@cobblr/platform-contract/outer-size";
 import type { Kysely } from "kysely";
 import { Router, type Response } from "express";
@@ -39,6 +40,8 @@ const Rect = z.object({
   y_mm: z.number().finite(),
   w_mm: z.number().finite().positive(),
   d_mm: z.number().finite().positive(),
+  /** A quarter turn on the plan; w × d are as it stands. */
+  rot: z.union([z.literal(90), z.literal(180), z.literal(270)]).optional(),
 });
 
 export const DraftBody = z.object({
@@ -276,7 +279,7 @@ export async function applyDraft(orgId: string, id: string, userId: string | nul
     for (const p of ready) {
       const parentId = resolve(p.parent)!;
       const parent = await db.selectFrom("core_locations_locations").select("depth").where("id", "=", parentId).executeTakeFirst();
-      const fp: Record<string, unknown> = { x_mm: Math.round(p.rect.x_mm), y_mm: Math.round(p.rect.y_mm), w_mm: Math.round(p.rect.w_mm), d_mm: Math.round(p.rect.d_mm) };
+      const fp: Record<string, unknown> = { x_mm: Math.round(p.rect.x_mm), y_mm: Math.round(p.rect.y_mm), w_mm: Math.round(p.rect.w_mm), d_mm: Math.round(p.rect.d_mm), ...(p.rect.rot ? { rot: p.rect.rot } : {}) };
       if (p.face) fp.face = { w_mm: Math.round(p.face.w_mm), d_mm: Math.round(p.face.d_mm), view: "front", unit: "mm" };
       const ins = await db
         .insertInto("core_locations_locations")
@@ -311,8 +314,11 @@ export async function applyDraft(orgId: string, id: string, userId: string | nul
     }
     if (m.rect) {
       const fp = floorplanOf(cur.metadata);
-      const next = { ...fp, x_mm: Math.round(m.rect.x_mm), y_mm: Math.round(m.rect.y_mm), w_mm: Math.round(m.rect.w_mm), d_mm: Math.round(m.rect.d_mm) };
-      if (["x_mm", "y_mm", "w_mm", "d_mm"].some((k) => fp[k] !== next[k as keyof typeof next])) {
+      const next: Record<string, unknown> = { ...fp, x_mm: Math.round(m.rect.x_mm), y_mm: Math.round(m.rect.y_mm), w_mm: Math.round(m.rect.w_mm), d_mm: Math.round(m.rect.d_mm) };
+      // The turn is the draft's to say: none in the draft is none on the rack.
+      if (m.rect.rot) next.rot = m.rect.rot;
+      else delete next.rot;
+      if (["x_mm", "y_mm", "w_mm", "d_mm", "rot"].some((k) => fp[k] !== next[k])) {
         await setFloorplan(db, locId, next);
         changed = true;
       }
@@ -499,8 +505,12 @@ export async function describeDraft(orgId: string, id: string) {
     const size = sizeOf(r.kind, e?.fields);
     return { kind: r.kind, id: r.id, name: e?.title ?? "a thing", into: r.into, x_mm: r.x_mm, size: size ? { w_mm: size.w_mm, d_mm: size.d_mm, h_mm: size.h_mm } : null };
   });
+  const floor = floorOf(all, draft);
   return {
     draft: { id: draft.id, name: draft.name, applied: !!draft.applied_at },
+    room: floor.room,
+    racks: floor.racks,
+    flags: floor.flags,
     shelves: shelves.map((s) => {
       const on = things.filter((t) => t.into === s.id);
       const used = on.reduce((a, t) => a + (t.size?.w_mm ?? 0), 0);
@@ -514,6 +524,45 @@ export async function describeDraft(orgId: string, id: string) {
     }),
     elsewhere: things.filter((t) => !shelves.some((s) => s.id === t.into)).map((t) => ({ kind: t.kind, id: t.id, name: t.name, into: t.into, size: t.size })),
   };
+}
+
+/** The room's floor as the draft would leave it: each rack's spot, size and
+ *  turn, and what stands in a door's swing, before a window, or (when the
+ *  room checks aisles) too close to the next thing to walk between. The
+ *  same rules the plan draws with (plan-clearance.ts). */
+function floorOf(
+  all: ReadonlyArray<{ id: string; name: string; parent_id: string | null; kind: string; metadata: unknown }>,
+  draft: PlanDraft,
+): {
+  room: { w_mm: number; d_mm: number; aisle_mm: number | null; walls: PlanWall[] } | null;
+  racks: Array<{ id: string; name: string; planned: boolean; x_mm: number; y_mm: number; w_mm: number; d_mm: number; rot: number; own_w_mm: number; own_d_mm: number; h_mm: number | null }>;
+  flags: PlanFlag[];
+} {
+  const places = placesUnderDraft(all.map((l) => ({ ...l, metadata: (l.metadata ?? {}) as Record<string, unknown> })), draft.body);
+  const roomRow = places.find((p) => p.id === draft.location_id);
+  const fp = floorplanOf(roomRow?.metadata);
+  const w = Number(fp.w_mm), d = Number(fp.d_mm);
+  if (!roomRow || !(w > 0) || !(d > 0)) return { room: null, racks: [], flags: [] };
+  const kids = places.filter((p) => p.parent_id === draft.location_id);
+  const boxOf = (m: unknown): PlanBox | null => {
+    const f = floorplanOf(m);
+    const b = { x_mm: Number(f.x_mm), y_mm: Number(f.y_mm), w_mm: Number(f.w_mm), d_mm: Number(f.d_mm) };
+    if (![b.x_mm, b.y_mm].every(Number.isFinite) || !(b.w_mm > 0) || !(b.d_mm > 0)) return null;
+    return isRotation(f.rot) ? { ...b, rot: f.rot } : b;
+  };
+  const ownWalls = (Array.isArray(fp.walls) ? fp.walls : []) as PlanWall[];
+  const walls = roomWalls({ w_mm: w, d_mm: d, walls: ownWalls }, kids.filter((k) => k.kind === "area").map((k) => ({ id: k.id, box: boxOf(k.metadata), closet: readCloset(floorplanOf(k.metadata)) })));
+  const racks = kids
+    .filter((k) => k.kind !== "area" && boxOf(k.metadata) && floorplanOf(k.metadata).wall_mounted !== true)
+    .map((k) => {
+      const box = boxOf(k.metadata)!;
+      const face = floorplanOf(k.metadata).face as { d_mm?: unknown } | undefined;
+      const own = ownSize(box);
+      return { id: k.id, name: k.name, planned: "planned" in k, ...box, rot: box.rot ?? 0, own_w_mm: own.w_mm, own_d_mm: own.d_mm, h_mm: Number(face?.d_mm) > 0 ? Number(face!.d_mm) : null };
+    });
+  const aisle = Number(fp.aisle_mm) > 0 ? Number(fp.aisle_mm) : null;
+  const flags = planFlags({ room: { w_mm: w, d_mm: d, walls }, items: racks.map((r) => ({ id: r.id, name: r.name, box: { x_mm: r.x_mm, y_mm: r.y_mm, w_mm: r.w_mm, d_mm: r.d_mm }, h_mm: r.h_mm })), aisle_mm: aisle });
+  return { room: { w_mm: w, d_mm: d, aisle_mm: aisle, walls }, racks, flags };
 }
 
 // ── the doors: HTTP for the page, actions for the assistant ──
@@ -660,17 +709,50 @@ export function registerPlanDraftHandlers(): void {
       const a = (ctx.args ?? {}) as Record<string, unknown>;
       const d = await getDraft(ctx.orgId, str(a.draft_id));
       if (!d) throw new DraftRefused("There is no such layout.");
-      const raw = typeof a.put === "string" ? (JSON.parse(a.put) as unknown) : a.put;
-      const list = Array.isArray(raw) ? raw : [];
-      if (!list.length) throw new DraftRefused("Pass `put`: a list of {kind, id, into, x_mm?}.");
+      const listOf = (v: unknown) => {
+        const raw = typeof v === "string" ? (JSON.parse(v) as unknown) : v;
+        return (Array.isArray(raw) ? raw : []) as Array<Record<string, unknown>>;
+      };
+      const list = listOf(a.put);
+      const racks = listOf(a.move);
+      if (!list.length && !racks.length) throw new DraftRefused("Pass `put`: a list of {kind, id, into, x_mm?}, or `move`: a list of {id, x_mm?, y_mm?, turn?}.");
       const things = { ...d.body.things };
-      for (const p of list as Array<Record<string, unknown>>) {
+      for (const p of list) {
         const kind = str(p.kind), id = str(p.id), into = str(p.into);
         if (!kind || !id || !into) throw new DraftRefused("Each thing to put needs kind, id and into (a place id, or planned:<key>).");
         things[`${kind}:${id}`] = { kind, id, into, ...(typeof p.x_mm === "number" ? { x_mm: p.x_mm } : {}), ...(typeof p.y_mm === "number" ? { y_mm: p.y_mm } : {}) };
       }
-      await updateDraft(ctx.orgId, d.id, { body: { ...d.body, things } });
-      return { draft_id: d.id, put: list.length, note: `${d.name}: ${plural(list.length, "thing", "things")} placed in the draft. Nothing has moved yet.` };
+      const body = { ...d.body, things, moves: { ...d.body.moves }, planned: [...d.body.planned] };
+      if (racks.length) {
+        // A rack moved or turned on the room's floor, as the planner's drag
+        // and Turn do: a turn is about its middle and keeps it in the room.
+        const db = await dbOf(ctx.orgId);
+        const all = await db.selectFrom("core_locations_locations").select(["id", "name", "parent_id", "metadata", "kind"]).execute();
+        const floor = floorOf(all, d);
+        if (!floor.room) throw new DraftRefused("This room has no size on its floor plan, so nothing can be moved on it.");
+        for (const m of racks) {
+          const id = str(m.id);
+          const rack = floor.racks.find((r) => r.id === id);
+          if (!rack) throw new DraftRefused(`There is no rack ${id} on this room's floor. Read the layout (plan-read) for the racks and their ids.`);
+          let box: PlanBox = { x_mm: rack.x_mm, y_mm: rack.y_mm, w_mm: rack.w_mm, d_mm: rack.d_mm, ...(isRotation(rack.rot) ? { rot: rack.rot } : {}) };
+          if (typeof m.x_mm === "number") box.x_mm = m.x_mm;
+          if (typeof m.y_mm === "number") box.y_mm = m.y_mm;
+          box = { ...box, x_mm: Math.max(0, Math.min(floor.room.w_mm - box.w_mm, Math.round(box.x_mm))), y_mm: Math.max(0, Math.min(floor.room.d_mm - box.d_mm, Math.round(box.y_mm))) };
+          const turns = Math.round((Number(m.turn) || 0) / 90) % 4;
+          for (let i = 0; i < (turns + 4) % 4; i++) {
+            const t = rotated(box, floor.room);
+            if (!t) throw new DraftRefused(`${rack.name} is longer than the room, so it cannot turn here.`);
+            box = t;
+          }
+          if (id.startsWith(PLANNED)) {
+            const key = id.slice(PLANNED.length);
+            body.planned = body.planned.map((p) => (p.key === key ? { ...p, rect: box } : p));
+          } else body.moves[id] = { ...body.moves[id], rect: box };
+        }
+      }
+      await updateDraft(ctx.orgId, d.id, { body });
+      const said = [list.length ? plural(list.length, "thing", "things") + " placed" : null, racks.length ? plural(racks.length, "rack", "racks") + " moved" : null].filter(Boolean).join(", ");
+      return { draft_id: d.id, put: list.length, moved: racks.length, note: `${d.name}: ${said} in the draft. Nothing has moved yet.` };
     }),
   );
   h.registerHandler(

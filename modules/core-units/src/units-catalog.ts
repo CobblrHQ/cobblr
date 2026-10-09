@@ -70,7 +70,7 @@ export const BUILTIN_UNITS: UnitDef[] = [
   { code: "square-meter", symbol: "m²", name: "square meter", plural: "square meters", category: "area", factor: 1 },
   { code: "square-foot", symbol: "ft²", name: "square foot", plural: "square feet", category: "area", factor: 0.09290304 },
   // volume — base = litre
-  { code: "milliliter", symbol: "mL", name: "milliliter", plural: "milliliters", category: "volume", factor: 0.001 },
+  { code: "milliliter", symbol: "ml", name: "milliliter", plural: "milliliters", category: "volume", factor: 0.001 },
   { code: "liter", symbol: "L", name: "liter", plural: "liters", category: "volume", factor: 1 },
   { code: "fluid-ounce", symbol: "fl oz", name: "fluid ounce", plural: "fluid ounces", category: "volume", factor: 0.0295735295625 },
   // time — base = second

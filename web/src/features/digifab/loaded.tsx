@@ -13,7 +13,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Modal, SearchInput, useToast, useRunAction } from "@cobblr/platform-web";
+import { Modal, SearchInput, useToast, useRunAction, WorkspaceLink } from "@cobblr/platform-web";
 import { api, ApiError, type DigifabLoaded, type PlatformResolvedEntity } from "../../lib/api";
 import { resolveScannedThing, useScanTarget, type ScannedThing } from "../../lib/scanTarget";
 import { ScanOneSheet } from "../../components/ScanOneSheet";
@@ -90,7 +90,7 @@ export function LoadedSpoolsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
     <section className="rounded-lg border border-line dark:border-slate-700" data-testid="loaded-spools">
       <header className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-line dark:border-slate-700">
         <h3 className="flex-1 text-sm font-semibold text-content dark:text-mortar-100">Loaded filament</h3>
-        {ctx.hints?.station !== "printer" && <Link className="min-h-11 flex items-center px-2 text-sm text-accent" to={`/w/${slug}${stationPath}`}>Open printer station</Link>}
+        {ctx.hints?.station !== "printer" && <WorkspaceLink className="min-h-11 flex items-center px-2 text-sm text-accent" slug={slug} to={`${stationPath}`}>Open printer station</WorkspaceLink>}
         <label className="text-xs text-muted dark:text-slate-400">
           Slots{" "}
           <select

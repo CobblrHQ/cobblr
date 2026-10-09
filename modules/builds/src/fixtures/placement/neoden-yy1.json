@@ -1,0 +1,22 @@
+[
+  {
+    "name": "board-1-top.csv",
+    "content": "NEODEN,YY1,P&P FILE,,,,,,,,,,,\r\n,,,,,,,,,,,,,\r\nPanelizedPCB,UnitLength,0,UnitWidth,0,Rows,1,Columns,1,\r\n,,,,,,,,,,,,,\r\nFiducial,1-X,0,1-Y,0,OverallOffsetX,0.00,OverallOffsetY,0.00,\r\n,,,,,,,,,,,,,\r\nNozzleChange,OFF,BeforeComponent,1,Head1,Drop,Station1,PickUp,Station1,\r\nNozzleChange,OFF,BeforeComponent,2,Head1,Drop,Station1,PickUp,Station1,\r\nNozzleChange,OFF,BeforeComponent,3,Head1,Drop,Station1,PickUp,Station1,\r\nNozzleChange,OFF,BeforeComponent,4,Head1,Drop,Station1,PickUp,Station1,\r\n,,,,,,,,,,,,,\r\nDesignator,Comment,Footprint,Mid X(mm),Mid Y(mm),Rotation,Head,FeederNo,Mount Speed(%),Pick Height(mm),Place Height(mm),Mode,Skip\r\nR1,10k,R0603,2.00,3.00,90,1,1,50,0.5,0.5,1,0\r\nU1,Sensor,SOIC8,5.10,5.80,-90,2,2,50,1.5,1.5,1,0\r\n"
+  },
+  {
+    "name": "board-1-bottom.csv",
+    "content": "NEODEN,YY1,P&P FILE,,,,,,,,,,,\r\n,,,,,,,,,,,,,\r\nPanelizedPCB,UnitLength,0,UnitWidth,0,Rows,1,Columns,1,\r\n,,,,,,,,,,,,,\r\nFiducial,1-X,0,1-Y,0,OverallOffsetX,0.00,OverallOffsetY,0.00,\r\n,,,,,,,,,,,,,\r\nNozzleChange,OFF,BeforeComponent,1,Head1,Drop,Station1,PickUp,Station1,\r\nNozzleChange,OFF,BeforeComponent,2,Head1,Drop,Station1,PickUp,Station1,\r\nNozzleChange,OFF,BeforeComponent,3,Head1,Drop,Station1,PickUp,Station1,\r\nNozzleChange,OFF,BeforeComponent,4,Head1,Drop,Station1,PickUp,Station1,\r\n,,,,,,,,,,,,,\r\nDesignator,Comment,Footprint,Mid X(mm),Mid Y(mm),Rotation,Head,FeederNo,Mount Speed(%),Pick Height(mm),Place Height(mm),Mode,Skip\r\nR2,10k,R0603,2.00,3.00,0,1,1,50,0.5,0.5,1,0\r\n"
+  },
+  {
+    "name": "board-2-top.csv",
+    "content": "NEODEN,YY1,P&P FILE,,,,,,,,,,,\r\n,,,,,,,,,,,,,\r\nPanelizedPCB,UnitLength,0,UnitWidth,0,Rows,1,Columns,1,\r\n,,,,,,,,,,,,,\r\nFiducial,1-X,0,1-Y,0,OverallOffsetX,0.00,OverallOffsetY,0.00,\r\n,,,,,,,,,,,,,\r\nNozzleChange,OFF,BeforeComponent,1,Head1,Drop,Station1,PickUp,Station1,\r\nNozzleChange,OFF,BeforeComponent,2,Head1,Drop,Station1,PickUp,Station1,\r\nNozzleChange,OFF,BeforeComponent,3,Head1,Drop,Station1,PickUp,Station1,\r\nNozzleChange,OFF,BeforeComponent,4,Head1,Drop,Station1,PickUp,Station1,\r\n,,,,,,,,,,,,,\r\nDesignator,Comment,Footprint,Mid X(mm),Mid Y(mm),Rotation,Head,FeederNo,Mount Speed(%),Pick Height(mm),Place Height(mm),Mode,Skip\r\nR1,10k,R0603,2.00,3.00,90,1,1,50,0.5,0.5,1,0\r\nU1,Sensor,SOIC8,5.10,5.80,-90,2,2,50,1.5,1.5,1,0\r\n"
+  },
+  {
+    "name": "board-2-bottom.csv",
+    "content": "NEODEN,YY1,P&P FILE,,,,,,,,,,,\r\n,,,,,,,,,,,,,\r\nPanelizedPCB,UnitLength,0,UnitWidth,0,Rows,1,Columns,1,\r\n,,,,,,,,,,,,,\r\nFiducial,1-X,0,1-Y,0,OverallOffsetX,0.00,OverallOffsetY,0.00,\r\n,,,,,,,,,,,,,\r\nNozzleChange,OFF,BeforeComponent,1,Head1,Drop,Station1,PickUp,Station1,\r\nNozzleChange,OFF,BeforeComponent,2,Head1,Drop,Station1,PickUp,Station1,\r\nNozzleChange,OFF,BeforeComponent,3,Head1,Drop,Station1,PickUp,Station1,\r\nNozzleChange,OFF,BeforeComponent,4,Head1,Drop,Station1,PickUp,Station1,\r\n,,,,,,,,,,,,,\r\nDesignator,Comment,Footprint,Mid X(mm),Mid Y(mm),Rotation,Head,FeederNo,Mount Speed(%),Pick Height(mm),Place Height(mm),Mode,Skip\r\nR2,10k,R0603,2.00,3.00,0,1,1,50,0.5,0.5,1,0\r\n"
+  },
+  {
+    "name": "feeder-map.csv",
+    "content": "Reel ID,Slot,MPN,Manufacturer,Lot,Placements,Reserved count\r\nreel-a,1,RES,Maker,,4,5\r\nreel-b,2,IC,Maker,,2,2\r\n"
+  }
+]

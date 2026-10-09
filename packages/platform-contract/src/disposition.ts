@@ -13,7 +13,10 @@
 import { centsFromAmount, formatMoney } from "@cobblr/platform-contract/money";
 
 // VOCAB-ENUMERATION OK: the disposition vocabulary's own declaration
-export const DISPOSITIONS = ["sold", "given-away", "parted-out", "converted", "traded", "lost", "scrapped"] as const;
+// `gone` is what a stocktake records for everything it did not find: it left
+// by that day, and nobody said how. It is not "finished" and not "thrown out",
+// so nothing that learns from how things end may read it as either.
+export const DISPOSITIONS = ["sold", "given-away", "parted-out", "converted", "traded", "lost", "scrapped", "gone"] as const;
 export type Disposition = (typeof DISPOSITIONS)[number];
 
 /** How each reads to a person, lower case, as it would sit in a sentence or a
@@ -26,6 +29,7 @@ export const DISPOSITION_LABELS: Record<Disposition, string> = {
   traded: "traded",
   lost: "lost",
   scrapped: "scrapped",
+  gone: "gone",
 };
 
 // Read from the START of what was written: "Given to Son/Now Sold" was given
@@ -144,16 +148,18 @@ const VERB: Record<Disposition, string> = {
   traded: "Traded",
   lost: "Lost",
   scrapped: "Disposed of",
+  gone: "Gone",
 };
 
 /** The record's line about it: "Sold 2026-09-12 for $180 to Vince · kept 3
  *  years 2 months". `money` formats a price in the workspace's currency. */
 export function sayDisposition(d: RecordDisposition, money: (n: number) => string = (n) => formatMoney(centsFromAmount(n))): string {
   const parts = [VERB[d.how]];
-  if (d.on) parts.push(d.on);
+  if (d.on) parts.push(d.how === "gone" ? `by ${d.on}` : d.on);
   if (d.price !== null && (d.how === "sold" || d.how === "traded")) parts.push(`for ${money(d.price)}`);
   if (d.to) parts.push(`to ${d.to}`);
   let line = parts.join(" ");
+  if (d.how === "gone") line += ", not recorded how";
   const kept = d.held_since && d.on ? heldFor(d.held_since, d.on) : null;
   if (kept) line += ` · kept ${kept}`;
   return line;

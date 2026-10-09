@@ -10,6 +10,7 @@ import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { evaluateAutoflush } from "./autoflush.js";
 import { qrBaseFor } from "./print.js";
+import { liveQrUrl } from "../live-qr-url.js";
 
 export const queueRouter = Router({ mergeParams: true });
 
@@ -70,6 +71,10 @@ queueRouter.get(
     // shows that instead of the raw `machines/machine`. The workspace's kind labels
     // are fetched ONCE here; each row resolves its actual kind (base vs named
     // instance) and looks up the display name.
+    // Each row's link is shown as it will print: Print draws every QR on the
+    // workspace's label base, so the stored link (minted on whatever origin
+    // queued it) read as one address on this page and printed as another.
+    const base = await qrBaseFor(req);
     const kinds = await platform().entities.listKindsForOrg(ctx.org.id).catch(() => []);
     const labelByKind = new Map(kinds.map((k) => [k.id, k.display_name_plural ?? k.display_name]));
     const items = await Promise.all(
@@ -88,7 +93,7 @@ queueRouter.get(
         } catch {
           kind_label = null;
         }
-        return { ...r, stock_title, kind_label };
+        return { ...r, qr_payload: liveQrUrl(r.qr_payload, base), stock_title, kind_label };
       }),
     );
     res.json({ items });

@@ -45,7 +45,6 @@ import { withArticle } from "@cobblr/platform-contract/plural";
 import { useJobStartReview } from "./startReview";
 import { useReprint } from "./useReprint";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 export type LinkableMachine = { id: string; name: string; instLabel: string | null; image: string | null };
 
 /** A print history row is reprintable unless it's the task-derived kind. */
@@ -288,13 +287,14 @@ const defOf = (m: MachineDraft) => {
   return {...def,label:m.cfg.firmware === "forgefirm" ? "Glowforge (ForgeFIRM)" : def.label,fields};
 };
 
-export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName }: { onCreated: (connectionId?: string) => void; onClose: () => void; presetDriver?: string; presetName?: string }) {
+export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName, presetConfig, presetBridge }: { onCreated: (connectionId?: string) => void; onClose: () => void; presetDriver?: string; presetName?: string; presetConfig?:Record<string,string>; presetBridge?:string|null }) {
   const { activeSlug } = useActiveOrg();
   const toast = useToast();
   const [label, setLabel] = useState("Workshop bridge");
-  const [bridgeId, setBridgeId] = useState("");
+  const [bridgeId, setBridgeId] = useState(presetBridge || "");
   const [machines, setMachines] = useState<MachineDraft[]>(() => {
     const m = newMachine(presetDriver && BRIDGE_DRIVERS.some((d) => d.key === presetDriver) ? presetDriver : "mock");
+    if (presetConfig) m.cfg = {...presetConfig};
     if (presetName?.trim()) m.name = presetName.trim(); // carry the name from the New-printer form
     return [m];
   });
@@ -2127,7 +2127,7 @@ function FileRow({
             <span className="flex flex-wrap gap-x-3 gap-y-0.5">
               {fmtDuration(fi.printTimeSec) && <span>⏱ {fmtDuration(fi.printTimeSec)}</span>}
               {fi.filamentMm != null && <span>🧵 {(fi.filamentMm / 1000).toFixed(1)} m</span>}
-              {fi.numLayers != null && <span>{countOf(fi.numLayers, "layer")}</span>}
+              {fi.numLayers != null && <span>{fi.numLayers} layers</span>}
               {fi.height != null && <span>{fi.height} mm tall</span>}
               {fi.generatedBy && <span className="opacity-70">· {fi.generatedBy.split(/\s+/)[0]}</span>}
             </span>

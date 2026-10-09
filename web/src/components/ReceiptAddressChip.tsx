@@ -14,6 +14,8 @@
 import { Mail } from "lucide-react";
 import { useToast } from "@cobblr/platform-web";
 import { HeaderMenu, MenuHead } from "./HeaderMenu";
+import { OwnAddressActions } from "./OwnAddressActions";
+import { ownAddressName } from "@cobblr/platform-contract/address-name";
 
 /** The same fact as the chip, laid out for INSIDE a menu: a phone folds the
  *  chip into the ⋯ menu, and a chip whose whole job is to open a panel cannot
@@ -23,9 +25,12 @@ import { HeaderMenu, MenuHead } from "./HeaderMenu";
  *  caught it (2026-08-10). */
 export function ReceiptAddressMenuBlock({
   address,
+  name = ownAddressName("receipts", null),
   onCopied,
 }: {
   address: string;
+  /** What the address sends as (#5462): "Cobblr Receipts <workspace name>". */
+  name?: string;
   onCopied?: () => void;
 }) {
   const toast = useToast();
@@ -51,12 +56,14 @@ export function ReceiptAddressMenuBlock({
       <code className="mt-1 block overflow-x-auto whitespace-nowrap rounded bg-mortar-100 dark:bg-slate-800 px-1.5 py-1 text-[11px] text-content dark:text-mortar-100 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {address}
       </code>
+      <OwnAddressActions address={address} name={name} />
     </span>
   );
 }
 
 export function ReceiptAddressChip({
   address,
+  name = ownAddressName("receipts", null),
   /** Extra classes for the trigger's host (e.g. hiding it on a phone). */
   className,
   /** Show the word "Email receipts" from this breakpoint up. The scan header is
@@ -64,6 +71,8 @@ export function ReceiptAddressChip({
   labelFrom = "lg",
 }: {
   address: string;
+  /** What the address sends as (#5462): "Cobblr Receipts <workspace name>". */
+  name?: string;
   className?: string;
   labelFrom?: "sm" | "md" | "lg";
 }) {
@@ -105,6 +114,7 @@ export function ReceiptAddressChip({
             >
               Copy address
             </button>
+            <OwnAddressActions address={address} name={name} />
           </div>
         </>
       )}

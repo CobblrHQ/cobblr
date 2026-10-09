@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/digifab",
-  "version": "0.32.3",
+  "version": "0.33.0",
   "private": true,
   "type": "module",
   "main": "dist/module.js",
@@ -8,7 +8,9 @@
     ".": {
       "import": "./dist/module.js",
       "types": "./dist/module.d.ts"
-    }
+    },
+    "./laser-controller": "./src/laser-controller.ts",
+    "./laser-session": "./src/laser-session.ts"
   },
   "scripts": {
     "gen": "node scripts/gen-detectors.mjs",

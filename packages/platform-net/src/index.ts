@@ -52,6 +52,10 @@ export interface PinnedFetchArgs {
   signal?: AbortSignal;
   /** A redirect chain longer than this is refused. Default 5. */
   maxRedirects?: number;
+  /** Hand back the first redirect as the response instead of following it,
+   *  for a caller that carries state (a cookie) from hop to hop and so walks
+   *  the chain itself, one validated call per hop. */
+  stopAtRedirect?: boolean;
   /**
    * Validate ONE hop's URL under the caller's policy and return the IP to pin
    * its connection to — or `null` to connect without pinning (rare; only when a
@@ -167,7 +171,7 @@ export async function pinnedRedirectingFetch(args: PinnedFetchArgs): Promise<Pin
 
     const isRedirect =
       response.status >= 300 && response.status < 400 && response.headers.get("location") !== null;
-    if (!isRedirect) {
+    if (!isRedirect || args.stopAtRedirect) {
       // Final response: hand it back with its Agent unclosed (the caller reads
       // the body then closes, or streams it and lets undici reap).
       return { response, dispatcher };

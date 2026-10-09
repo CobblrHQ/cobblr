@@ -1,0 +1,22 @@
+[
+  {
+    "name": "board-1-top.csv",
+    "content": "Designator,Footprint,Mid X,Mid Y,Ref X,Ref Y,Pad X,Pad Y,Layer,Rotation,Comment\r\nR1,R0603,2mm,3mm,2mm,3mm,2mm,3mm,TopLayer,90,10k\r\nU1,SOIC8,5.1mm,5.8mm,5.1mm,5.8mm,5.1mm,5.8mm,TopLayer,-90,Sensor\r\n"
+  },
+  {
+    "name": "board-1-bottom.csv",
+    "content": "Designator,Footprint,Mid X,Mid Y,Ref X,Ref Y,Pad X,Pad Y,Layer,Rotation,Comment\r\nR2,R0603,2mm,3mm,2mm,3mm,2mm,3mm,BottomLayer,0,10k\r\n"
+  },
+  {
+    "name": "board-2-top.csv",
+    "content": "Designator,Footprint,Mid X,Mid Y,Ref X,Ref Y,Pad X,Pad Y,Layer,Rotation,Comment\r\nR1,R0603,2mm,3mm,2mm,3mm,2mm,3mm,TopLayer,90,10k\r\nU1,SOIC8,5.1mm,5.8mm,5.1mm,5.8mm,5.1mm,5.8mm,TopLayer,-90,Sensor\r\n"
+  },
+  {
+    "name": "board-2-bottom.csv",
+    "content": "Designator,Footprint,Mid X,Mid Y,Ref X,Ref Y,Pad X,Pad Y,Layer,Rotation,Comment\r\nR2,R0603,2mm,3mm,2mm,3mm,2mm,3mm,BottomLayer,0,10k\r\n"
+  },
+  {
+    "name": "feeder-map.csv",
+    "content": "Reel ID,Slot,MPN,Manufacturer,Lot,Placements,Reserved count\r\nreel-a,1,RES,Maker,,4,5\r\nreel-b,2,IC,Maker,,2,2\r\n"
+  }
+]

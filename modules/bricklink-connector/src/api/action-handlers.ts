@@ -11,7 +11,7 @@
 // direct access to inventory's tables.
 
 import { actionActed, normaliseActionResult } from "@cobblr/platform-contract/action-result";
-import { countOf, platform, requireActionEntity } from "@cobblr/platform-contract";
+import { platform, requireActionEntity } from "@cobblr/platform-contract";
 
 let registered = false;
 
@@ -147,7 +147,7 @@ export function registerBricklinkHandlers(): void {
       kitId,
       setNum,
       spawned: ids.length,
-      message: `Spawned ${countOf(ids.length, "part")} from set ${setNum}.`,
+      message: `Spawned ${ids.length} parts from set ${setNum}.`,
       ui: {
         flow: "core-scan:organize",
         args: { scope: "refs", refs: ids.map((id) => `inventory:part::${id}`) },

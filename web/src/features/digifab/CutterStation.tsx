@@ -1,3 +1,5 @@
+import {StationInstall} from "./StationInstall";
+import {keepStationScreenAwake} from "../../lib/station-screen";
 import { jobDisplayName } from "./jobDisplayName";
 import {countOf} from "@cobblr/platform-contract";
 import {useEffect,useRef,useState} from "react";
@@ -29,6 +31,8 @@ export function CutterStation({slug,connectionId,deviceId}:{slug:string;connecti
  const fleet=useQuery({queryKey:["digifab-fleet",slug],queryFn:()=>api.getDigifabFleet(slug),refetchInterval:3000});
  const device=fleet.data?.connections.find(c=>c.connection_id===connectionId)?.devices.find(d=>d.id===deviceId);
  const saved=q.data?.plan,job=q.data?.job,program=saved?.plan.program;
+ const keepAwake=!!credential&&(busy||!!review||!!job&&["sent","running","paused"].includes(job.status)||device?.state==="awaiting-confirmation");
+ useEffect(()=>{if(keepAwake)return keepStationScreenAwake(document,navigator.wakeLock);return undefined;},[keepAwake]);
  const context=`${key}:${job?.id}:${job?.status}:${saved?.plan.content_hash}:${JSON.stringify(q.data?.stock.loaded)}:${q.data?.stock.items.find(r=>r.id===saved?.plan.roll.id)?.revision}`;
  const latest=useRef(context);latest.current=context;
  useEffect(()=>{setCredential(readCredential());setReview(null);setProfile(initial);setEditing("");setProfileOpen(false);setDrawing("");setRoll("");setMapping({});},[key]);
@@ -46,6 +50,7 @@ export function CutterStation({slug,connectionId,deviceId}:{slug:string;connecti
   <div className="flex flex-wrap gap-3">{!currentReview&&!profileOpen&&<button className={`${button} border-red-500`} onClick={stop}>Stop cutter</button>}<p>Stay beside the cutter. Use its physical Stop in an emergency.</p></div>
   {(error||q.error||design.error||profiles.error)&&<p role="alert" className="rounded border border-red-500 p-4 break-words">{error||String(q.error||design.error||profiles.error)}</p>}{notice&&<p role="status">{notice}</p>}
   {!credential?<section className={panel}><h2 className="text-xl font-semibold font-mono uppercase tracking-wide">Authorize this screen</h2><p>An owner or admin authorizes this browser or tablet at the machine before Frame, Start and recording roll use.</p><button className={button} disabled={busy} onClick={()=>void run(async()=>{const next=await api.registerDigifabStation(slug,connectionId,deviceId);localStorage.setItem(key,JSON.stringify(next));setCredential(next);})}>Authorize cutter station</button></section>:<button className={button} disabled={busy} onClick={()=>void run(async()=>{await api.revokeDigifabStation(slug,credential.id);localStorage.removeItem(key);setCredential(null);setReview(null);})}>Revoke this screen</button>}
+  {credential&&<StationInstall/>}
   <p className="text-muted">HPGL, DMPL and Silhouette use a shared bridge on Linux, Windows or macOS. Cricut is unsupported because its protocol is cloud locked.</p>
   {!saved?<section className={panel}><h2 className="text-xl font-semibold font-mono uppercase tracking-wide">Prepare a cut</h2>
    <label className="block">Drawing<select className={input} value={drawing} onChange={e=>{setDrawing(e.target.value);setMapping({});}}><option value="">Choose SVG or DXF</option>{library.data?.items.filter(i=>["svg","dxf"].includes(i.kind)).map(i=><option key={i.id} value={i.id}>{i.name}</option>)}</select></label>

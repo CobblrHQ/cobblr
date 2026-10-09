@@ -95,7 +95,9 @@ async function validateEgressHop(orgId: string, url: URL): Promise<{ address: st
 /** SSRF-guarded outbound fetch for a tenant. Follows redirects and re-pins every
  *  hop through the shared pinnedRedirectingFetch (the policy is validateEgressHop).
  *  Returns a WHATWG Response (undici's); its pinned Agent is left for undici's
- *  idle reaper, since the caller streams the body (e.g. the bounded gunzip read). */
+ *  idle reaper, since the caller streams the body (e.g. the bounded gunzip read).
+ *  `redirect: "manual"` hands back each redirect instead, still validated, for a
+ *  caller that walks the chain itself carrying a cookie. */
 export async function guardedFetch(
   orgId: string,
   input: string | URL | Request,
@@ -112,6 +114,7 @@ export async function guardedFetch(
         ? (init.body as PinnedFetchArgs["body"])
         : undefined,
     maxRedirects: MAX_REDIRECTS,
+    ...(init?.redirect === "manual" ? { stopAtRedirect: true } : {}),
     ...(init?.headers ? { headers: init.headers as Record<string, string> } : {}),
     ...(init?.signal ? { signal: init.signal as AbortSignal } : {}),
     validate: (url) => validateEgressHop(orgId, url),

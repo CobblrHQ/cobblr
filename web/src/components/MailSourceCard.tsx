@@ -8,6 +8,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { Mail, RefreshCw } from "lucide-react";
 import { relativeTime, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type AiProviderDef, type MailSourceView, type UserConnection } from "../lib/api";
@@ -155,6 +156,8 @@ export function MailSourceRow({ connection, orgName }: { connection: UserConnect
             <RefreshCw size={11} className={check.isPending ? "animate-spin" : ""} /> {check.isPending ? "Checking…" : "Check now"}
           </button>
         )}
+        {/* The whole history, filing nothing (#5462): what the order rules would do, to review before they read live. */}
+        <Link to={`/me/connections/mailbox-check/${me.id}`} className="text-accent hover:underline">Check my mailbox</Link>
       </div>
     </div>
   );

@@ -10,3 +10,5 @@ RUSTFLAGS='-C target-feature=+simd128' cargo build --locked --manifest-path modu
 mkdir -p modules/digifab/nesting/pkg
 wasm-bindgen modules/digifab/nesting/target/wasm32-unknown-unknown/release/cobblr_nesting.wasm --target nodejs --out-dir modules/digifab/nesting/pkg
 mv modules/digifab/nesting/pkg/cobblr_nesting.js modules/digifab/nesting/pkg/cobblr_nesting.cjs
+# The sources this build came from, so a test can refuse an engine older than its checkout (#5419).
+cat modules/digifab/nesting/Cargo.toml modules/digifab/nesting/Cargo.lock modules/digifab/nesting/src/lib.rs | sha256sum | cut -d' ' -f1 > modules/digifab/nesting/pkg/source.sha256

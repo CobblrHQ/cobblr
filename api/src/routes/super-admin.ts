@@ -1388,6 +1388,7 @@ interface AiActivityRow {
   capability: string;
   provider_id: string;
   model: string | null;
+  served_model: string | null;
   input_summary: string | null;
   output_summary: string | null;
   input_tokens: number | null;
@@ -1428,7 +1429,7 @@ superAdminRouter.get("/ai-activity", async (req, res, next) => {
           ? sql`where ${sql.join(conds, sql` and `)}`
           : sql``;
         const r = await sql<AiActivityRow>`
-          select id, user_id, capability, provider_id, model, input_summary, output_summary,
+          select id, user_id, capability, provider_id, model, served_model, input_summary, output_summary,
                  input_tokens, output_tokens, cost_cents, duration_ms, ok, source_kind, cached, invoked_at
           from core_ai_calls ${whereClause}
           order by invoked_at desc limit ${perOrg}`.execute(tdb);

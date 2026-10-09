@@ -359,7 +359,7 @@ fleetRouter.get(
               // Cockpit: live temps — the Bambu cloud-MQTT pump's reading wins
               // over the slower driver-reported one when fresh. Embed-only.
               temps: live?.temps ?? d.temps ?? null,
-              station_kind: d.station_kind,
+              station_kind: d.raw?.bench ? "bench" : d.station_kind,
               monitor_only: d.raw?.monitorOnly === true,
               print_process: d.raw?.resin === true ? "resin" : null,
               // Current job sub-stage (preheating/leveling/…) when reported —

@@ -3,6 +3,7 @@ type: feature
 scope: bundles
 date: 2026-10-06
 docs_target: docs/USER_GUIDE.md#Licences and subscriptions
+docs_published: 2026-10-10
 ---
 Tracked licences, subscriptions and warranties with cancellation reminders, paid terms, vendor totals and receipt drafts.
 

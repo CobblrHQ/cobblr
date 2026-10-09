@@ -1,3 +1,4 @@
+export { AssemblyStation } from "./AssemblyStation.js";
 import { BoardRevisionCard } from "./BoardRevisions.js";
 import type { BoardRevision } from "../api/board-revisions.js";
 export { BuildsApi } from "./api.js";

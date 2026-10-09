@@ -7,7 +7,7 @@ export {
   PlatformWebProvider,
   RecordPhoto,
   type RecordPhotoProps,
-  usePlatformWeb, useViewerRole,
+  usePlatformWeb, useViewerRole, useActiveWorkspaceSlug,
   useFlowHost,
   type FlowComponent,
   type FlowRegistry,
@@ -352,4 +352,7 @@ export type { SendFileExportPreview } from "./SendRecords";
 export { BarcodeFill, type BarcodeCaptureProps } from "./BarcodeFill";
 export { barcodeField, barcodeFills, type BarcodeFillField, type BarcodeLookup } from "./barcode-fill";
 export { useNewRecordBarcode } from "./useNewRecordBarcode";
+export { WorkspaceLink, useWorkspaceTarget, workspaceTarget, type WorkspaceTarget } from "./WorkspaceLink";
+export { useScrollToHash } from "./useScrollToHash";
 export { raisePersonalDocument, clearPersonalDocument, nextPersonalDocument, subscribePersonalDocument, type RaisedPersonalDocument } from "./personal-documents";
+export { useStationWakeLock } from "./station-wake-lock";

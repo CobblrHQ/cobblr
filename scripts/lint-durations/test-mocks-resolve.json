@@ -1,0 +1,10 @@
+{
+  "lint": "lint:test-mocks-resolve",
+  "run": "node scripts/lint-test-mocks-resolve.ts",
+  "rows": [
+    "unit-test"
+  ],
+  "ms": 650,
+  "recorded": "2026-10-10",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

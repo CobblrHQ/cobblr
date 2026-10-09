@@ -39,6 +39,7 @@ import { useInventory } from "./context";
 import { useFieldPresentation } from "./useFieldPresentation";
 import { ParentPicker, type ParentRef } from "./ParentPicker";
 import { InventoryApiError, type InvFieldDef } from "./api";
+import { PART_FIELD_LABELS } from "../part-field-labels";
 
 interface NewPartDialogProps {
   onClose: (created: boolean) => void;
@@ -68,7 +69,7 @@ interface NewPartDialogProps {
 // inventory + medication units, since "each" alone was too thin (feedback).
 const UNIT_SUGGESTIONS = [
   "each", "pcs", "pack", "box", "set", "pair",  // VOCAB-ENUMERATION OK: a coincidence of spelling, not a field role
-  "tablet", "capsule", "pill", "mL", "L", "drop", "puff", "spray", "patch", "dose", "sachet",
+  "tablet", "capsule", "pill", "ml", "L", "drop", "puff", "spray", "patch", "dose", "sachet",
   "mg", "mcg", "g", "kg", "IU", "unit",
   "m", "cm", "ft", "roll", "sheet",
 ];
@@ -396,9 +397,9 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
           items={[
             !fp.hidden("qty")
               ? {
-                  need: fieldNeed("native:qty", { control: "number", label: estimated ? "Roughly how many" : fp.label("qty", "Qty") }),
+                  need: fieldNeed("native:qty", { control: "number", label: estimated ? "Roughly how many" : fp.label("qty", PART_FIELD_LABELS.qty) }),
                   node: (
-                    <Field label={estimated ? "Roughly how many" : fp.label("qty", "Qty")}>
+                    <Field label={estimated ? "Roughly how many" : fp.label("qty", PART_FIELD_LABELS.qty)}>
                       <input type="number" step="any" min="0" value={qty} onChange={(e) => setQty(e.target.value)} className={"input " + fieldPackControlClass} />
                     </Field>
                   ),

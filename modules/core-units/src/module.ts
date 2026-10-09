@@ -18,7 +18,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-units",
-  version: "0.2.6",
+  version: "0.2.7",
   displayName: "Units",
   description:
     "The units you count and measure in (grams, metres, pieces, your own), shown the way you like.",

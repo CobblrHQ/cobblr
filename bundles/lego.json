@@ -1,8 +1,13 @@
 {
   "manifest": {
     "id": "cobblr.community.lego",
-    "version": "0.6.4",
+    "version": "0.6.5",
     "releases": [
+      {
+        "version": "0.6.5",
+        "released_at": "2026-10-08",
+        "notes": "The Bricks table's \"By part category\" view opens again: it grouped by a field the bricks do not have, so it showed an error instead of your bricks."
+      },
       {
         "version": "0.6.4",
         "released_at": "2026-10-07",
@@ -299,7 +304,7 @@
                 "view_type": "table",
                 "pinned": true,
                 "config": {
-                  "group_by": "category",
+                  "group_by": "category_name",
                   "visible_fields": [
                     "title",
                     "category",

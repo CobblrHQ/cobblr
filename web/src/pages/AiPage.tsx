@@ -25,6 +25,8 @@ import { aiAvailabilityKeys } from "../lib/ai-availability-keys";
 import { useEffect, useMemo, useState } from "react";
 import { CredentialFields } from "../components/CredentialFields";
 import { ProviderSetupSteps } from "../components/ProviderSetupSteps";
+import { AiCallModel } from "../components/AiCallModel";
+import { redirectNote } from "@cobblr/platform-contract/ai-models";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Info, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
@@ -268,9 +270,9 @@ export function AiPage() {
               {c.cached && <span className="text-blue-500">cached</span>}
               <span className="font-medium">{c.capability}</span>
               <span className="text-muted">{c.provider_id}</span>
-              <span className="text-muted">{c.model ?? "—"}</span>
+              <span className="text-muted"><AiCallModel model={c.model} served={c.served_model} /></span>
               <span className="text-faint">
-                {c.cost_cents !== null ? formatStoredMoney(c.cost_cents, "cents") : "—"} ·{" "}
+                {c.cost_cents !== null ? formatStoredMoney(c.cost_cents, "cents") : c.ok && !c.cached ? "price unknown" : "—"} ·{" "}
                 {c.duration_ms ?? "—"}ms
               </span>
               <span className="text-faint">
@@ -650,7 +652,7 @@ function ProviderEditModal({
   );
 }
 
-function CapabilityDefaultModal({
+export function CapabilityDefaultModal({
   capability,
   providers,
   catalogue,
@@ -697,9 +699,14 @@ function CapabilityDefaultModal({
   // A connection that can be asked what it serves offers exactly that (a box's
   // pulled models, a bridge's sonnet/opus/haiku), the same answer the save is
   // checked against; one with a curated list keeps it.
-  const ref = chosenCredentialId ? { credential_id: chosenCredentialId } : { provider_id: providerId };
+  // Asked per job: a provider that lists its models answers with what this
+  // job's rule accepts, each family's "latest" first (#5417).
+  const ref: { credential_id?: string; provider_id?: string; capability: string } = chosenCredentialId
+    ? { credential_id: chosenCredentialId, capability }
+    : { provider_id: providerId, capability };
+  const reportedKey = ["ai-reported-models", activeSlug, ref.credential_id ?? ref.provider_id ?? "", capability];
   const reportedQ = useQuery({
-    queryKey: ["ai-reported-models", activeSlug, ref.credential_id ?? ref.provider_id ?? ""],
+    queryKey: reportedKey,
     queryFn: () => api.aiReportedModels(activeSlug, ref),
     enabled: !!activeSlug && !!(ref.credential_id || ref.provider_id),
     staleTime: 60_000,
@@ -712,8 +719,20 @@ function CapabilityDefaultModal({
     if (reported?.ok && reported.models.length && !reported.models.includes(model)) setModel(reported.models[0]!);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reported]);
-  const retryModels = () =>
-    void api.aiReportedModels(activeSlug, ref, true).then((r) => qc.setQueryData(["ai-reported-models", activeSlug, ref.credential_id ?? ref.provider_id ?? ""], r)).catch(() => undefined);
+  const [refreshing, setRefreshing] = useState(false);
+  const retryModels = () => {
+    setRefreshing(true);
+    void api
+      .aiReportedModels(activeSlug, ref, true)
+      .then((r) => qc.setQueryData(reportedKey, r))
+      .catch(() => undefined)
+      .finally(() => setRefreshing(false));
+  };
+  const choices = reported?.ok ? reported.choices : undefined;
+  // Models this connection's calls were answered by another model for.
+  const redirects = reportedQ.data?.redirects ?? undefined;
+  const latestChoices = choices?.filter((c) => c.latest) ?? [];
+  const pinChoices = choices?.filter((c) => !c.latest) ?? [];
 
   const saveM = useMutation({
     mutationFn: () =>
@@ -838,27 +857,68 @@ function CapabilityDefaultModal({
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">Model</label>
+            <div className="mb-1 flex items-baseline justify-between gap-2">
+              <label className="block text-sm font-medium">Model</label>
+              {reported && (
+                <button type="button" onClick={retryModels} disabled={refreshing} className="text-xs text-muted underline hover:text-content disabled:opacity-50" data-refresh-models>
+                  {refreshing ? "Refreshing…" : "Refresh models"}
+                </button>
+              )}
+            </div>
             {reported && !reported.ok && (
               <div className="mb-1 text-xs text-muted" title={reported.error} data-models-unlisted>
-                Couldn't list models ·{" "}
-                <button type="button" onClick={retryModels} className="underline hover:text-content">
-                  Retry
-                </button>
+                Couldn't list models. Refresh to ask again.
+              </div>
+            )}
+            {reported?.ok && reported.fallback && (
+              <div className="mb-1 text-xs text-muted" title={reported.fallback} data-models-fallback>
+                Couldn't ask for the current list, so these are the usual models.
               </div>
             )}
             <select
               value={model}
               onChange={(e) => setModel(e.target.value)}
               disabled={supportedModels.length === 0}
-              className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900 font-mono"
+              className={`w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900 ${choices ? "" : "font-mono"}`}
             >
-              {supportedModels.map((m) => (
-                <option key={m} value={m}>
-                  {def?.modelNotes?.[m] ? `${def.modelNotes[m]!.label}${def.modelNotes[m]!.note ? ` - ${def.modelNotes[m]!.note}` : ""}` : m}
-                </option>
-              ))}
+              {choices ? (
+                <>
+                  {latestChoices.length > 0 && (
+                    <optgroup label="Latest (moves to each new version)">
+                      {latestChoices.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {pinChoices.length > 0 && (
+                    <optgroup label="Pin a version">
+                      {pinChoices.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </>
+              ) : (
+                supportedModels.map((m) => {
+                  const base = def?.modelNotes?.[m] ? `${def.modelNotes[m]!.label}${def.modelNotes[m]!.note ? ` - ${def.modelNotes[m]!.note}` : ""}` : m;
+                  const to = redirects?.[m];
+                  return (
+                    <option key={m} value={m} data-redirects-to={to}>
+                      {to ? redirectNote(base, to) : base}
+                    </option>
+                  );
+                })
+              )}
             </select>
+            {redirects?.[model] && (
+              <div className="mt-1 text-xs text-muted" data-model-redirect>
+                The provider answers {model} with {redirects[model]}.
+              </div>
+            )}
           </div>
           <div className="flex justify-end gap-2 pt-2">
             {existing && (
@@ -1399,7 +1459,7 @@ function AiActivitySection({ slug }: { slug: string }) {
                 {/* Which connection, by the name somebody gave it; the kind
                     of provider rides as the hover. */}
                 <td className="px-3 py-1.5 text-muted whitespace-nowrap" title={c.provider_id}>{c.provider_label || c.provider_id}</td>
-                <td className="px-3 py-1.5 text-muted whitespace-nowrap">{c.model ?? "—"}</td>
+                <td className="px-3 py-1.5 text-muted whitespace-nowrap"><AiCallModel model={c.model} served={c.served_model} /></td>
                 <td className="px-3 py-1.5 text-muted whitespace-nowrap">{(c.input_tokens ?? 0) + (c.output_tokens ?? 0) || "—"}</td>
                 <td className="px-3 py-1.5 text-faint whitespace-nowrap">{c.cached ? "cache" : c.source_kind ?? "—"}{c.ok ? "" : " ⚠"}</td>
                 <td className="px-3 py-1.5 text-right text-accent">view</td>
@@ -1424,7 +1484,7 @@ function AiActivityDetail({ slug, item, onClose }: { slug: string; item: AiActiv
     <Modal open onClose={onClose} title={`AI call · ${item.capability}`} size="lg">
       <div className="space-y-3 text-sm">
         <div className="text-xs text-muted" title={usage.title}>
-          {item.provider_label || item.provider_id} · {item.model ?? "—"} · {new Date(item.invoked_at).toLocaleString()} · {usage.text}
+          {item.provider_label || item.provider_id} · <AiCallModel model={item.model} served={item.served_model} /> · {new Date(item.invoked_at).toLocaleString()} · {usage.text}
         </div>
         {!d ? (
           <div className="text-faint text-xs">Loading full text…</div>

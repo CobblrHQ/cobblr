@@ -276,9 +276,19 @@ function readLines(text: string): number {
  * or when it read nothing at all; the caller treats every null the same way
  * (ask the model), so none of them is an error worth throwing.
  */
-export async function ocrImageText(bytes: Buffer | Uint8Array, options: { private?: boolean } = {}): Promise<OcrResult | null> {
+export async function ocrImageText(
+  bytes: Buffer | Uint8Array,
+  options: {
+    private?: boolean;
+    /** The frame pass only. The second, "paper" pass looks for one printed
+     *  page photographed on a background; a contact sheet of a document's
+     *  pictures is no such photo, and a sheet of photos always looked like it
+     *  needed the second pass, doubling the privacy check on every pattern. */
+    framePassOnly?: boolean;
+  } = {},
+): Promise<OcrResult | null> {
   if (!(await ocrAvailable())) return null;
-  if (options.private) return readImageText(bytes).catch(() => null);
+  if (options.private) return readImageText(bytes, options.framePassOnly).catch(() => null);
   const key = createHash("sha1").update(bytes).digest("hex");
   const now = Date.now();
   const kept = memo.get(key);
@@ -312,9 +322,10 @@ const inFlight = new Map<string, Promise<OcrResult | null>>();
 /** The read itself, both passes. Only ocrImageText calls this; it is what the
  *  memo above keeps to once per image. Null is "read nothing"; a failed
  *  engine throws, so the two are never confused above. */
-async function readImageText(bytes: Buffer | Uint8Array): Promise<OcrResult | null> {
+async function readImageText(bytes: Buffer | Uint8Array, framePassOnly = false): Promise<OcrResult | null> {
   const t0 = performance.now();
   const frame = await run(["stdin", "stdout", "--psm", "4", "-l", "eng"], await preprocessForOcr(bytes));
+  if (framePassOnly) return frame.trim() ? { text: frame, ms: Math.round(performance.now() - t0), engine: "tesseract", pass: "frame" } : null;
   if (readLines(frame) >= FRAME_ENOUGH_LINES) {
     return { text: frame, ms: Math.round(performance.now() - t0), engine: "tesseract", pass: "frame" };
   }

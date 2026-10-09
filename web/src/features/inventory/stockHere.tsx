@@ -22,8 +22,8 @@ import { api, type StockPlaceRow } from "../../lib/api";
 import { StockStepper } from "@cobblr/platform-web";
 import { useKindLabels } from "../../lib/useKindLabels";
 import type { EntityDetailPanelCtx } from "../../panels/types";
+import { WhatsStillHereButton } from "./WhatsStillHere";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 function fmt(n: number): string {
   return Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3)));
 }
@@ -67,7 +67,7 @@ function Row({ r, today, slug, here }: { r: StockPlaceRow; today: string; slug: 
         {off && <span className="font-mono text-[11px] text-muted dark:text-slate-400">{off}</span>}
         {r.lots.length > 1 && (
           <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="text-[11px] text-accent hover:underline">
-            {open ? "Hide" : "Show"} {countOf(r.lots.length, "lot")}
+            {open ? "Hide" : "Show"} {r.lots.length} lots
           </button>
         )}
       </div>
@@ -107,6 +107,9 @@ export function StockHerePanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
           {items.length} {items.length === 1 ? "thing" : "things"}
           {low ? ` · ${low} low` : ""}
           {expiring ? ` · ${expiring} going off within 30 days` : ""}
+        </span>
+        <span className="ml-auto">
+          <WhatsStillHereButton slug={ctx.slug} placeId={ctx.entityId} placeName={ctx.entityTitle} />
         </span>
       </div>
       {[...byCollection.entries()].map(([kind, rows]) => (

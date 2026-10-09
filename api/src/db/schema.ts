@@ -1876,6 +1876,9 @@ export interface MetaDB {
   installed_modules: InstalledModulesTable;
   inbound_emails: InboundEmailsTable;
   mail_source_state: MailSourceStateTable;
+  mailbox_checks: MailboxChecksTable;
+  mailbox_check_items: MailboxCheckItemsTable;
+  mailbox_sender_verdicts: MailboxSenderVerdictsTable;
 }
 
 /** Durable archive of every inbound email, written BEFORE processing so a
@@ -1904,6 +1907,47 @@ export interface InboundEmailsTable {
 }
 
 /** Sync state of a connected mailbox (a `mail-source` personal connection). */
+/** "Check my mailbox" runs (#5462): a dry run that files nothing. */
+export interface MailboxChecksTable {
+  id: Generated<string>;
+  credential_id: string;
+  user_id: string;
+  query: string;
+  status: Generated<"running" | "done" | "stopped" | "failed">;
+  page_token: string | null;
+  pages: Generated<number>;
+  seen: Generated<number>;
+  last_error: string | null;
+  started_at: Generated<Date>;
+  updated_at: Generated<Date>;
+  finished_at: Date | null;
+}
+
+/** One message a check decided: never its body. */
+export interface MailboxCheckItemsTable {
+  check_id: string;
+  gmail_id: string;
+  received_at: Date | null;
+  sender: string | null;
+  sender_domain: string | null;
+  subject: string | null;
+  purchases_label: Generated<boolean>;
+  verdict: string;
+  decided_by: string;
+  strength: string | null;
+  platform: string | null;
+  found: ColumnType<Record<string, unknown>, string | undefined, string | undefined>;
+  person_verdict: string | null;
+}
+
+/** A person's "is / isn't an order" for a sender, remembered. */
+export interface MailboxSenderVerdictsTable {
+  user_id: string;
+  sender_domain: string;
+  verdict: "order" | "not-order";
+  set_at: Generated<Date>;
+}
+
 export interface MailSourceStateTable {
   credential_id: string;
   cursor_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;

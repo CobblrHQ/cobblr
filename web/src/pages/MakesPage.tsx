@@ -21,7 +21,6 @@ import { ServiceJobCard } from "../components/ServiceJobCard";
 import { DesignMakeDoor } from "../features/digifab/designMake";
 import { PrintConfirmCard, PrintThisDialog } from "../features/digifab/printThis";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 const STEP_TITLE: Record<MakeStepName, string> = {
   request: "Request",
   design: "Design",
@@ -544,7 +543,7 @@ function StepBody({ row, detail, onOutcome }: { row: MakeStepRecord; detail: Mak
           {rows.length > 0 && <Facts rows={rows} />}
           {settings.length > 0 && (
             <details className="mt-1">
-              <summary className="text-xs text-muted cursor-pointer">All {countOf(settings.length, "setting")}{str(d.profile_hash) ? ` · profile ${str(d.profile_hash)!.slice(0, 16)}` : ""}</summary>
+              <summary className="text-xs text-muted cursor-pointer">All {settings.length} settings{str(d.profile_hash) ? ` · profile ${str(d.profile_hash)!.slice(0, 16)}` : ""}</summary>
               <Facts rows={settings.map(([k, v]) => [k.replace(/_/g, " "), typeof v === "object" ? JSON.stringify(v) : String(v)])} />
             </details>
           )}

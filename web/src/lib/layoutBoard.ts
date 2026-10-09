@@ -7,6 +7,7 @@
 import { fieldKindOf } from "@cobblr/platform-contract/kind-label";
 import { PLANNED_PREFIX, placesUnderDraft, type PlanDraftBody } from "@cobblr/platform-contract/plan-draft";
 import type { OuterSize } from "@cobblr/platform-contract/outer-size";
+import { ownSize, planFlags, readCloset, roomWalls, type PlanFlag, type PlanWall } from "@cobblr/platform-contract/plan-clearance";
 import { hasOwnLayout, readBound, readRect, type FpBound, type FpRect } from "./floorplanGeometry";
 import { footprintAt, shelfFitLine, shelfRow, type ShelfRow } from "./planFit";
 
@@ -64,18 +65,24 @@ export interface BoardRack {
   rect: FpRect | null;
   /** Its face (width × height), when it has one. */
   face: FpBound | null;
+  /** How tall it stands: its face's height, when it has one. */
+  h_mm: number | null;
   planned: boolean;
   moved: boolean;
   shelves: BoardShelf[];
 }
 
 export interface Board {
-  room: { id: string; name: string; bound: FpBound | null };
+  /** The room, with every wall drawn on it: its own and its closets'. */
+  room: { id: string; name: string; bound: FpBound | null; walls: PlanWall[]; closets: Array<{ id: string; name: string; rect: FpRect }> };
   racks: BoardRack[];
   /** Things standing on the room's own floor. */
   floor: BoardThing[];
   /** Where each thing is under the draft: a place id or planned key. */
   where: Map<string, string | null>;
+  /** What stands in a door's swing or before a window, and (when the room
+   *  checks aisles) each gap narrower than its aisle. */
+  flags: PlanFlag[];
 }
 
 /** How wide a rack's face is drawn, in px, when its height is capped at
@@ -171,7 +178,10 @@ export function buildBoard(opts: {
     .map((rack) => {
       const fp = (rack.metadata.floorplan ?? {}) as Record<string, unknown>;
       const face = fp.face ? readBound(rack.metadata) : hasOwnLayout(rack.metadata) ? readBound(rack.metadata) : null;
-      const depth = readRect(rack.metadata)?.d_mm ?? null;
+      // A shelf's things are measured against the rack's own depth, however
+      // it is turned on the floor.
+      const at = readRect(rack.metadata);
+      const depth = at ? ownSize(at).d_mm : null;
       const drawnPx = opts.faceWidth ?? (opts.faceHeightPx ? faceWidthPx(face ?? { w_mm: 1, d_mm: 1 }, opts.faceHeightPx) : 0);
       const band = face && drawnPx > 0 ? Math.round((SHELF_BAND_PX / drawnPx) * face.w_mm) : 0;
       const shelves: BoardShelf[] = kids(rack.id)
@@ -218,6 +228,7 @@ export function buildBoard(opts: {
         name: rack.name,
         rect: readRect(rack.metadata),
         face,
+        h_mm: face?.d_mm ?? null,
         planned: !!rack.planned,
         moved: !!draft.moves[rack.id],
         shelves,
@@ -231,7 +242,24 @@ export function buildBoard(opts: {
     return { key, kind: r.kind, id: r.id, name: r.name, short: shortLabel(r.name, r.shortName), size, rect: size && at ? footprintAt(size, at) : null, moved: moved.has(key) };
   });
 
-  return { room: { id: roomNow.id, name: roomNow.name, bound }, racks, floor, where };
+  const areas = kids(roomNow.id).filter((p) => p.kind === "area");
+  const walls = bound
+    ? roomWalls(bound, areas.map((a) => ({ id: a.id, box: readRect(a.metadata), closet: readCloset(a.metadata.floorplan) })))
+    : [];
+  const closets = areas
+    .filter((a) => walls.some((w) => w.closet === a.id))
+    .map((a) => ({ id: a.id, name: a.name, rect: readRect(a.metadata)! }));
+  const flags = bound
+    ? planFlags({
+        room: { ...bound, walls },
+        items: [
+          ...racks.filter((r) => r.rect && !r.rect.wall_mounted).map((r) => ({ id: r.id, name: r.name, box: r.rect!, h_mm: r.h_mm })),
+          ...floor.filter((t) => t.rect).map((t) => ({ id: t.key, name: t.name, box: t.rect!, h_mm: t.size?.h_mm ?? null })),
+        ],
+        aisle_mm: bound.aisle_mm ?? null,
+      })
+    : [];
+  return { room: { id: roomNow.id, name: roomNow.name, bound, walls, closets }, racks, floor, where, flags };
 }
 
 /** Is this id a planned place (made only on Apply)? */

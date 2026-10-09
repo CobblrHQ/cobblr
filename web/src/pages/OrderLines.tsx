@@ -11,6 +11,7 @@
 // (line-edit.ts).
 
 import { useState, type FormEvent } from "react";
+import { parcelWords } from "../features/purchases/parcelWords";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, Trash2, ArrowUpRight } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -188,18 +189,10 @@ export function OrderLineKind({ slug, order, item }: { slug: string; order: Orde
   );
 }
 
-const PARCEL_WORDS: Record<string, string> = {
-  pre_transit: "Label made",
-  in_transit: "On its way",
-  out_for_delivery: "Out for delivery",
-  delivered: "Delivered",
-  exception: "Delivery problem",
-};
-
 /** Which parcel a line travels in, when its order ships in several (#5351):
- *  "On its way · TBA335321582286", or "Not shipped yet" for a line no
- *  parcel has named. Nothing for an order that ships in one box, and nothing
- *  once the line is received. */
+ *  "On its way: Amazon Logistics TBA335321582286, expected Oct 11", or "Not
+ *  shipped yet" for a line no parcel has named. Nothing for an order that
+ *  ships in one box, and nothing once the line is received. */
 export function orderLineParcel(
   order: Pick<Order, "shipments" | "tracking_number">,
   item: Pick<OrderItem, "shipment_id" | "received_at">,
@@ -210,9 +203,8 @@ export function orderLineParcel(
   if (!parcel) {
     return order.tracking_number ? null : { label: "Not shipped yet", title: "No shipping notice has named this line yet" };
   }
-  const word = PARCEL_WORDS[parcel.shipment_state ?? ""] ?? "Shipped";
-  const due = parcel.expected_arrival ? `, due ${String(parcel.expected_arrival).slice(0, 10)}` : "";
-  return { label: `${word} · ${parcel.tracking_number}`, title: `In the parcel ${parcel.tracking_number}${due}` };
+  const words = parcelWords(parcel);
+  return { label: words, title: words };
 }
 
 function OrderLineParcel({ order, item }: { order: Order; item: OrderItem }) {
@@ -222,6 +214,102 @@ function OrderLineParcel({ order, item }: { order: Order; item: OrderItem }) {
     <span title={parcel.title} className="shrink-0 max-w-[14rem] truncate rounded-full border border-line dark:border-slate-700 px-1.5 py-0.5 text-[10px] text-muted">
       {parcel.label}
     </span>
+  );
+}
+
+/** The lines a new parcel starts with: every line still to come that no
+ *  parcel carries yet. A line already in a parcel stays there unless the
+ *  person ticks it. */
+export function trackingSheetStart(items: Array<Pick<OrderItem, "id" | "shipment_id" | "received_at">>): string[] {
+  return items.filter((i) => !i.received_at && !i.shipment_id).map((i) => i.id);
+}
+
+/** The lines to send with a hand-added parcel. Nothing (the whole order) only
+ *  when the order has no parcel yet and every line still to come is ticked;
+ *  once it ships in parcels, the ticked lines are always named, so a line in
+ *  another parcel is never moved by leaving the boxes as they were. */
+export function trackingSheetLines(
+  order: Pick<Order, "shipments">,
+  items: Array<Pick<OrderItem, "id" | "received_at">>,
+  picked: ReadonlySet<string>,
+): string[] | undefined {
+  const open = items.filter((i) => !i.received_at);
+  const ticked = open.filter((i) => picked.has(i.id)).map((i) => i.id);
+  if (!(order.shipments ?? []).length && ticked.length === open.length) return undefined;
+  return ticked;
+}
+
+/** Add tracking to an order by hand (#5351): the number, or the carrier's
+ *  tracking link pasted whole, and the lines in that box. The lines no
+ *  parcel carries yet are ticked to begin with; a first box with all of them
+ *  is the whole order, and its number goes on the order itself. */
+export function AddTrackingSheet({ slug, order, items, onClose }: { slug: string; order: Order; items: OrderItem[]; onClose: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const open = items.filter((i) => !i.received_at);
+  const [text, setText] = useState("");
+  const [picked, setPicked] = useState<Set<string>>(() => new Set(trackingSheetStart(items)));
+  const add = useMutation({
+    mutationFn: () => {
+      const lineIds = trackingSheetLines(order, items, picked);
+      return api.addShipment(slug, order.id, { tracking_number: text.trim(), ...(lineIds ? { line_ids: lineIds } : {}) });
+    },
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: orderKey(slug, order.id) });
+      void qc.invalidateQueries({ queryKey: ["orders", slug] });
+      toast.success(r.mode === "order" ? `Tracking ${r.tracking_number} added to the order.` : `Tracking ${r.tracking_number} added to ${r.lines.length} line${r.lines.length === 1 ? "" : "s"}.`);
+      onClose();
+    },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't add the tracking number."),
+  });
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        add.mutate();
+      }}
+      aria-label="Add tracking"
+      className="mt-2 rounded-md border border-line dark:border-slate-700 p-3 space-y-2"
+    >
+      <label className="block">
+        <span className="block text-xs text-muted mb-1">Tracking number, or the tracking link from the email</span>
+        <input value={text} onChange={(e) => setText(e.target.value)} className="input" autoFocus placeholder="TBA335321582286" />
+      </label>
+      {open.length > 1 && (
+        <fieldset className="space-y-1">
+          <legend className="text-xs text-muted mb-1">What is in this box</legend>
+          {open.map((i) => (
+            <label key={i.id} className="flex items-start gap-2 text-sm text-content dark:text-mortar-100">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={picked.has(i.id)}
+                onChange={(e) =>
+                  setPicked((prev) => {
+                    const next = new Set(prev);
+                    if (e.target.checked) next.add(i.id);
+                    else next.delete(i.id);
+                    return next;
+                  })
+                }
+              />
+              <span className="min-w-0 break-words">
+                {i.description ?? "Item"}
+                {i.shipment_id && <span className="block text-xs text-muted">{orderLineParcel(order, i)?.label}</span>}
+              </span>
+            </label>
+          ))}
+        </fieldset>
+      )}
+      <div className="flex justify-end gap-2">
+        <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-md text-sm text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800">
+          Cancel
+        </button>
+        <button type="submit" disabled={!text.trim() || picked.size === 0 || add.isPending} className="px-3 py-1.5 rounded-md text-sm font-medium bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50">
+          {add.isPending ? "Adding…" : "Add tracking"}
+        </button>
+      </div>
+    </form>
   );
 }
 

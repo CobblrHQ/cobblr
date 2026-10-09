@@ -9,7 +9,6 @@ import { useToast } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import type { CombineSuggestion } from "./api";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 function placesWords(s: CombineSuggestion): string {
   return s.records.map((r) => r.location_name ?? "no place set").join(", ");
 }
@@ -74,7 +73,7 @@ export function CombineSuggestionsBanner() {
         <span className="flex-1 min-w-0 text-content dark:text-mortar-100">
           {items.length === 1
             ? `${items[0]!.records[0]!.name} looks like one item kept in ${items[0]!.records.length} places.`
-            : `${countOf(items.length, "thing")} look like one item kept in several places.`}
+            : `${items.length} things look like one item kept in several places.`}
         </span>
         <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="text-xs text-accent hover:underline">
           {open ? "Hide" : "Review"}

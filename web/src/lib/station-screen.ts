@@ -97,3 +97,5 @@ export async function flushQueue(
 export function newRequestId(): string {
   return randomId();
 }
+
+export { keepStationScreenAwake } from "./screen-awake";

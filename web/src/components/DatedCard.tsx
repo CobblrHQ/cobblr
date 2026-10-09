@@ -15,7 +15,6 @@ import { useConfirm, useRunAction, useToast, type ActionRun } from "@cobblr/plat
 import { api, type AttentionFeedItem } from "../lib/api";
 import { datedCounts, type DatedCardModel, type DatedGroup } from "../lib/attention-cards";
 import { useDetailRoute } from "../lib/useDetailRoute";
-import { countOf } from "@cobblr/platform-contract/plural";
 // The merge sheet loads when it is opened (#4945).
 const DuplicateRecordsSheet = lazy(() => import("../pages/DuplicateRecordsSheet").then((m) => ({ default: m.DuplicateRecordsSheet })));
 
@@ -267,7 +266,7 @@ export function DatedCard({ slug, card }: { slug: string; card: DatedCardModel }
                 <span className="flex-1 min-w-0">
                   {pairs.length === 1
                     ? `${pairs[0]!.a.title} and ${pairs[0]!.b.title} look like one thing.`
-                    : `${countOf(pairs.length, "pair")} here look like one thing each.`}
+                    : `${pairs.length} pairs here look like one thing each.`}
                 </span>
                 <button type="button" onClick={() => setMerging(true)} className="shrink-0 font-medium text-accent hover:underline">
                   Put together

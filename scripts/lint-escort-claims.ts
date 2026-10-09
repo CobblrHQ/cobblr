@@ -48,6 +48,16 @@ for (const mod of readdirSync("modules")) {
 const kernelActions = join("api", "src", "platform", "platform-actions.ts");
 if (existsSync(kernelActions)) collect(kernelActions);
 
+function actionBelongsToDestination(destination: string, action: string): boolean {
+  const [owner, operation = ""] = action.split(":");
+  // A configuration verb alone does not make another module's calibration an AI-provider action.
+  if (destination === "ai-config") {
+    return operation.includes("config") && (owner === "core-ai" || owner === "platform" && operation.split("-").includes("ai"));
+  }
+  const noun = destination.replace(/s$/, "").split("-").pop()!;
+  return noun.length >= 4 && operation.includes(noun);
+}
+
 /** The destinations, parsed from their literal — id, plus any covered_by. */
 const problems: string[] = [];
 const block = src.slice(src.indexOf("export const ESCORT_DESTINATIONS"));
@@ -55,10 +65,7 @@ const end = block.indexOf("\n];");
 for (const entry of block.slice(0, end).split(/\n  \{/).slice(1)) {
   const id = entry.match(/id:\s*"([^"]+)"/)?.[1];
   if (!id) continue;
-  // The noun this screen is about: "api-tokens" → "token", "fields" → "field".
-  const noun = id.replace(/s$/, "").split("-").pop()!;
-  if (noun.length < 4) continue; // too short to match meaningfully
-  const doors = [...new Set(actionIds.filter((a) => a.split(":")[1]?.includes(noun)))];
+  const doors = [...new Set(actionIds.filter(action => actionBelongsToDestination(id, action)))];
   if (!doors.length) continue;
   const declared = entry.match(/covered_by:\s*\[([^\]]*)\]/)?.[1] ?? "";
   const missing = doors.filter((d) => !declared.includes(d));

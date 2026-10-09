@@ -76,6 +76,8 @@ export function listenForInstallPrompt(): void {
   });
 }
 
+export function resetInstallPrompt(): void { kept = null; }
+
 /** Raise the kept prompt. The event is spent either way (Chromium allows one
  *  prompt per event). */
 export async function promptInstall(): Promise<"accepted" | "dismissed" | "unavailable"> {

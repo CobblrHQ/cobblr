@@ -1115,6 +1115,7 @@ export const CAPABILITIES: Capability[] = [
     detect: /\bas\s*\{\s*(?:content|text)\?:\s*string;?\s*(?:(?:content|text)\?:\s*string;?\s*)?\}|\.result\)?\??\.(?:text|content)\b/,
     except: {
       "modules/core-ai/src/api/none-from-one-list.test.ts": "reads the chat transcript's messages, which are the conversation, not an answer from invoke",
+      "api/src/platform/a-chat-on-a-canary-is-answered-by-the-canary-never-its-release.test.ts": "reads an MCP tools/call result's content blocks, the protocol's own answer shape, not an answer from ai.invoke",
     },
     use: "read `r.text` off the invoke result (tool calls and vectors stay on `r.result`)",
   },

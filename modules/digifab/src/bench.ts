@@ -8,12 +8,12 @@ import { BenchRequest, type BenchRequestInput } from "./bench-model.js";
 import { scopeScreenshotPng } from "./bench-screenshot.js";
 import { discoverBenchESPHome } from "./bench-discovery.js";
 import { logBenchReading } from "./bench-log.js";
-async function configuredControl(orgId:string,connectionId:string){
+export async function configuredControl(orgId:string,connectionId:string){
  const row=await platform().devices.connections().getInternal(orgId,connectionId);
  if(!row?.credentials_enc)return false;
  const creds=await platform().integrations.decryptCredentials(orgId,row.credentials_enc);
  const edge=creds.edge as Record<string,unknown>|undefined;
- if(!edge||!["riden","esphome-bench"].includes(String(edge.driver)))return false;
+ if(!edge||!["riden","esphome-bench","scpi"].includes(String(edge.driver)))return false;
  const config=edge.config&&typeof edge.config==="object"?edge.config as Record<string,unknown>:edge;
  return config.control_enabled===true;
 }
@@ -34,12 +34,12 @@ export async function runBench(db:Kysely<DigifabDB>,orgId:string,raw:unknown,use
  const {driver,link}=machine;
  if(input.operation==="configure"){
   if(!userId||!await platform().auth.userHasRole({orgId,userId,minRole:"owner"}))throw new Error("Only the workspace owner can enable instrument control.");
-  if(machine.device.raw?.bench && (machine.device.raw.bench as {profile?:string}).profile!=="riden")throw new Error("Control is available for Riden supplies only.");
+  if(machine.device.raw?.bench && !["riden","psu"].includes(String((machine.device.raw.bench as {profile?:string}).profile)))throw new Error("Control is available for supported bench supplies only.");
   const store=platform().devices.connections(),row=await store.getInternal(orgId,link.connection_id);
   if(!row?.credentials_enc)throw new Error("Configure this instrument through its paired bridge first.");
   const creds=await platform().integrations.decryptCredentials(orgId,row.credentials_enc);
   const edge=creds.edge as Record<string,unknown>;
-  if(!edge||!["riden","esphome-bench"].includes(String(edge.driver)))throw new Error("Choose a Riden bridge connection first.");
+  if(!edge||!["riden","esphome-bench","scpi"].includes(String(edge.driver)))throw new Error("Choose a supported supply bridge connection first.");
   const configured=edge.config&&typeof edge.config==="object"?{...edge,config:{...edge.config as Record<string,unknown>,control_enabled:input.control_enabled}}:{...edge,control_enabled:input.control_enabled};
   await store.update(orgId,link.connection_id,{creds:{edge:configured} as unknown as Record<string,string|null>});
   await platform().activity.log({orgId,userId,action:"instrument-control_configured",ref:{module:"digifab",entityType:"instrument",entityId:link.id},diff:{machine_id:input.machine_id,control_enabled:input.control_enabled}});

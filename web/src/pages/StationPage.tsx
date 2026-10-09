@@ -12,7 +12,7 @@
 // this station. Kiosk display by default (no app frame, the screen kept
 // awake); `?kiosk=0` shows a frame for setting it up from a computer.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
+import { Navigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
 import { Check, Minus, MoreHorizontal, Plus, Hash, MapPin, Undo2, WifiOff, X } from "lucide-react";
@@ -30,7 +30,7 @@ import {
 import { api, ApiError, getToken, type Location, type ScanInboxItem, type OrgMembership, type StationRecordAction } from "../lib/api";
 import { askBeforePress, pressAnswersToArgs } from "@cobblr/platform-contract/action-args";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
-import { AskBeforeRun, DragInput, OverlayLayer, SearchInput, useEscapeToClose, useLater, SegmentedChoice, type Asking } from "@cobblr/platform-web";
+import { AskBeforeRun, DragInput, OverlayLayer, SearchInput, useEscapeToClose, useLater, SegmentedChoice, type Asking, WorkspaceLink } from "@cobblr/platform-web";
 import { MAIN_ID, SkipToContent } from "../components/a11y/shell-landmarks";
 import { FixedActiveOrgProvider } from "../auth/ActiveOrgContext";
 import { WorkspacePlatformWeb } from "../WorkspacePlatformWeb";
@@ -971,9 +971,9 @@ function SettingsSheet(props: {
                 Stop using this tablet as the station
               </button>
             ) : (
-              <Link to={`/w/${props.slug}/configuration/devices?tab=stations`} className="text-sm text-muted underline">
+              <WorkspaceLink slug={props.slug} to={`/configuration/devices?tab=stations`} className="text-sm text-muted underline">
                 Approved screens
-              </Link>
+              </WorkspaceLink>
             )}
             <BigButton onClick={() => void save()} disabled={saving}>
               {saving ? "Saving…" : "Save"}

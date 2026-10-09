@@ -17,6 +17,7 @@
 
 import { platform, type AiCapability, type AiProviderDef, isChatTurn } from "@cobblr/platform-contract";
 import { providerError, providerSentence, reasonFromResponse, reasonFromTransportError, redactSecrets, retryAfterSecOf } from "@cobblr/platform-contract/provider-reason";
+import { servedModelOf } from "@cobblr/platform-contract/ai-models";
 import { assertSafeAiEndpoint, pinnedFetch, type PinnedResponse } from "../ssrf.js";
 import { TRANSIT_FIELD, viaBridge, edgeKeyFor, edgeFetch } from "./edge-transit.js";
 import { buildMessages } from "./openai.js";
@@ -265,12 +266,14 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
           const body = (await res.json()) as {
             data: Array<{ embedding: number[] }>;
             usage?: { prompt_tokens?: number };
+            model?: unknown;
           };
           return {
             result: { vector: body.data[0]?.embedding ?? [] },
             input_tokens: body.usage?.prompt_tokens ?? 0,
             output_tokens: 0,
             cost_cents: 0, // self-hosted / user-billed — Cobblr never estimates it
+            served_model: servedModelOf(body.model),
           };
         }
         // The builder sends a conversation like chat does (no tools), and reads
@@ -325,6 +328,8 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
           // partial line is held until the rest of it turns up.
           let sseTail = "";
           let streamedText = "";
+          // Every frame names the model answering; the first one that does is kept.
+          let streamedModel: string | null = null;
           const onChunk = streamText
             ? (chunk: string) => {
                 sseTail += chunk;
@@ -338,7 +343,9 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
                   try {
                     const frame = JSON.parse(payload) as {
                       choices?: Array<{ delta?: { content?: string } }>;
+                      model?: unknown;
                     };
+                    streamedModel ??= servedModelOf(frame.model);
                     const piece = frame.choices?.[0]?.delta?.content;
                     if (typeof piece === "string" && piece) {
                       streamedText += piece;
@@ -375,7 +382,7 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
             // A streamed body is SSE frames, not one JSON object. Everything
             // needed was collected on the way past.
             if (!streamedText.trim()) throw new Error(`${id}: the stream carried no text`);
-            return { result: { role: "assistant", content: streamedText }, input_tokens: 0, output_tokens: 0 };
+            return { result: { role: "assistant", content: streamedText }, input_tokens: 0, output_tokens: 0, served_model: streamedModel };
           }
           const out = (await res.json()) as {
             choices: Array<{
@@ -388,6 +395,9 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
               };
             }>;
             usage?: { prompt_tokens?: number; completion_tokens?: number };
+            /** The model that answered, which a provider may have swapped
+             *  for the one asked (Google redirects a deprecated Gemini). */
+            model?: unknown;
           };
           const msg = out.choices[0]?.message ?? { role: "assistant", content: "" };
           const calls = parseOpenAiToolCalls(msg);
@@ -400,6 +410,7 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
             input_tokens: out.usage?.prompt_tokens ?? 0,
             output_tokens: out.usage?.completion_tokens ?? 0,
             cost_cents: 0,
+            served_model: servedModelOf(out.model),
           };
         }
         default:

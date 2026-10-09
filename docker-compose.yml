@@ -128,6 +128,9 @@ services:
       # Keeping photos of filed items (#3769 step 3): off until the updated
       # terms ship and the owner says go.
       COBBLR_PHOTO_OBSERVATIONS: ${COBBLR_PHOTO_OBSERVATIONS:-}
+      # Read stores' own order pages for each line's tracking (#5461). Unset is
+      # off; the self-host overlay and each hosted deploy say it explicitly.
+      COBBLR_ORDER_PAGE_READS: ${COBBLR_ORDER_PAGE_READS:-}
       # ── settings the schema accepted but compose never carried ──────────
       # env.ts read all of these and none of them arrived: this map is
       # explicit, so a variable it does not list is absent however carefully

@@ -30,9 +30,9 @@ export async function libraryForJob(db: Kysely<DigifabDB>, job: { file_id: strin
 export async function availableSheet(orgId: string, id: string): Promise<Sheet & { material: string; thickness_mm: number; name: string }> {
  const entity = await platform().entities.lookup(orgId, "inventory:part", id);
  const material = entity && !entity.retired ? materialFromFields(entity.fields) : null;
- const geometry = entity?.fields.sheet_geometry as { revision?: number; free_rectangles?: Rect[]; used_outlines?: Point[][]; cut_capacity?: Sheet["cut_capacity"] } | undefined;
+ const geometry = entity?.fields.sheet_geometry as { revision?: number; free_rectangles?: Rect[]; free_regions?: Point[][][]; used_outlines?: Point[][]; cut_capacity?: Sheet["cut_capacity"] } | undefined;
  if (!material || Number(entity?.fields.qty ?? 0) <= 0 || !geometry || !Array.isArray(geometry.free_rectangles) || typeof geometry.revision !== "number") throw new LaserPlanRefusal("Choose an available sheet with saved dimensions and free area.");
- return { id, name: entity!.title, width: material.width_mm, height: material.height_mm, revision: geometry.revision, material: material.material, thickness_mm: material.thickness_mm, free_rectangles: geometry.free_rectangles, used_outlines: geometry.used_outlines, cut_capacity: geometry.cut_capacity };
+ return { id, name: entity!.title, width: material.width_mm, height: material.height_mm, revision: geometry.revision, material: material.material, thickness_mm: material.thickness_mm, free_rectangles: geometry.free_rectangles, ...(Array.isArray(geometry.free_regions) ? { free_regions: geometry.free_regions } : {}), used_outlines: geometry.used_outlines, cut_capacity: geometry.cut_capacity };
 }
 export async function laserBed(db: Kysely<DigifabDB>, orgId: string, connectionId: string, deviceId: string): Promise<{ width: number; height: number }> {
  const link = await db.selectFrom("digifab_device_links").select("machine_id").where("connection_id", "=", connectionId).where("remote_device_id", "=", deviceId).executeTakeFirst();

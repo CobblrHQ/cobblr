@@ -44,7 +44,7 @@ allocationsRouter.get(
       .selectFrom("inventory_allocations as a")
       .leftJoin("inventory_parts as p", "p.id", "a.part_id")
       .select([
-        "a.id", "a.part_id", "a.qty", "a.status",
+        "a.id", "a.part_id", "a.qty", "a.status", "a.context",
         "a.target_module", "a.target_entity_type", "a.target_entity_id",
         "a.reason", "a.target_line", "a.reserved_at", "a.consumed_at", "a.released_at",
         "p.name as part_name",

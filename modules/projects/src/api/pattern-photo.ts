@@ -181,6 +181,20 @@ async function runOnce(orgId: string, designId: string, fileId: string, force: b
     const existing = await loadState(db, designId, fileId);
     if (existing) return existing;
   }
+  // A pull that fails part way is RECORDED with its reason (#5475). Thrown
+  // and unrecorded, the design had no row, so every read of its state started
+  // the pull again: a page open re-read the PDF each time, and a design whose
+  // write or attach kept failing sat at "reading the pattern" forever.
+  try {
+    return await pullOnce(db, orgId, designId, fileId);
+  } catch (err) {
+    const why = (err as Error)?.message || String(err);
+    console.error(`[projects] pattern photo pull failed for design ${designId}:`, why);
+    return record(db, designId, fileId, { images: [], scored: [], hero: null, error: `the pull failed: ${why}`.slice(0, 500) });
+  }
+}
+
+async function pullOnce(db: Kysely<ProjectsDB>, orgId: string, designId: string, fileId: string): Promise<PatternPhotoState> {
 
   const bytes = await platform().files.read(orgId, fileId, "original");
   if (!bytes) return record(db, designId, fileId, { images: [], scored: [], hero: null, error: "pattern file not found" });

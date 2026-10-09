@@ -23,7 +23,6 @@ import { BASE_NATIVE_FIELDS } from "../lib/native-field-policy";
 import { HeadingsBuilder } from "../components/HeadingsBuilder";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 export function PresentationPage() {
   usePageTitle("Presentation");
   const { activeSlug } = useActiveOrg();
@@ -130,7 +129,7 @@ export function PresentationPage() {
     <div className="space-y-4">
       <ConfigHeaderActions>
         <span className="text-sm text-muted dark:text-slate-400">
-          {countOf(rows.length, "thing")} in your workspace
+          {rows.length} things in your workspace
         </span>
       </ConfigHeaderActions>
 

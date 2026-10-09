@@ -24,7 +24,11 @@ export interface CoreAiCapabilityDefaultsTable {
   /** A PERSONAL connection chosen for this job; null = the workspace's own
    *  provider named by provider_id. */
   credential_id: string | null;
+  /** Always a model the provider serves: what an older api sends. */
   model: string;
+  /** A family's latest ("claude-haiku-latest") when that was chosen (0016);
+   *  the call then uses the newest listed model of the family. */
+  model_follows: string | null;
   config: Generated<Record<string, unknown>>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
@@ -37,6 +41,9 @@ export interface CoreAiCallsTable {
   provider_label: string | null;
   capability: string;
   model: string | null;
+  /** The model the provider said answered, when it said (0017). Null when
+   *  it did not: a cached reply, an older row. Never a copy of `model`. */
+  served_model: string | null;
   /** Who initiated the call (null = system-initiated, e.g. a wire). */
   user_id: string | null;
   input_summary: string | null;
@@ -80,6 +87,14 @@ export interface CoreAiDB {
   core_ai_chat_turn_events: CoreAiChatTurnEventsTable;
   core_ai_offers: CoreAiOffersTable;
   core_ai_conversations: CoreAiConversationsTable;
+  core_ai_model_state: CoreAiModelStateTable;
+}
+
+/** What the AI must say once per workspace (0016): see the migration. */
+export interface CoreAiModelStateTable {
+  key: string;
+  value: string;
+  updated_at: Generated<Date>;
 }
 
 /** One chat turn: persisted so it survives the request that started it. */
@@ -118,6 +133,8 @@ export interface CoreAiChatPrefsTable {
   provider_id: string | null;
   model: string | null;
   credential_id: string | null;
+  /** A family's latest when that was picked on the pill (0016). */
+  model_follows: string | null;
 }
 
 // The AI change ledger: every write Cobb executes (confirmed or auto-applied),

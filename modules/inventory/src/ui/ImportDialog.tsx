@@ -10,8 +10,8 @@ import { Modal } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import type { ImportResponse } from "./api";
 import { InventoryApiError } from "./api";
+import { PART_FIELD_LABELS } from "../part-field-labels";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 export function ImportDialog({ onClose }: { onClose: (importedCount: number) => void }) {
   const { api, itemNounPlural } = useInventory();
   const qc = useQueryClient();
@@ -157,7 +157,7 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
                   <tr className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
                     <th className="px-2 py-1.5 text-left">#</th>
                     <th className="px-2 py-1.5 text-left">Name</th>
-                    <th className="px-2 py-1.5 text-right">Qty</th>
+                    <th className="px-2 py-1.5 text-right">{PART_FIELD_LABELS.qty}</th>
                     <th className="px-2 py-1.5 text-left">Unit</th>
                     <th className="px-2 py-1.5 text-left">Category</th>
                     <th className="px-2 py-1.5 text-left">Location</th>
@@ -193,7 +193,7 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
                 className="flex-1 rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium py-2 transition disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 <FileUp size={14} />
-                {commit.isPending ? "…" : `Import ${countOf(preview.rows.length, "row")}`}
+                {commit.isPending ? "…" : `Import ${preview.rows.length} rows`}
               </button>
             </div>
           </>

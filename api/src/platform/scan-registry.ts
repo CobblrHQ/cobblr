@@ -13,6 +13,13 @@ import { listKindsForOrg } from "./entities.js";
 import { assertModulesMounted } from "../modules/mount-state.js";
 
 const scannable = new Map<string, ScannableInfo>();
+const labelValues = new Map<string, (orgId: string, kind: string, id: string) => Promise<string[]>>();
+export function registerLabelValuesProvider(name: string, provider: (orgId: string, kind: string, id: string) => Promise<string[]>): void {
+  labelValues.set(name, provider);
+}
+export async function labelValuesFor(orgId: string, kind: string, id: string): Promise<string[]> {
+  return [...new Set((await Promise.all([...labelValues.values()].map(read => read(orgId, kind, id)))).flat())];
+}
 
 export function registerScannable(kind: string, info: ScannableInfo): void {
   scannable.set(kind, info);

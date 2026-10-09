@@ -17,7 +17,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "builds",
-  version: "0.1.17",
+  version: "0.1.18",
   displayName: "Builds",
   description:
     "Describe what you make as a recipe of parts, see how many you could build right now and what runs out first, and take the parts from stock when you build one.",
@@ -59,7 +59,7 @@ export default defineModule({
         ],
         // A bundle's own fields ride in `metadata`, readable like a part's,
         // so a view or a label naming one prints its value.
-        exposableFields: ["name", "description", "metadata"],
+        exposableFields: ["name", "description", "notes", "metadata"],
         detailRoute: "/builds/{id}",
         getEndpoint: "/builds/{id}",
       },
@@ -94,6 +94,54 @@ export default defineModule({
       "builds.planned.completed",
     ],
     actions: [
+      {
+        // UI-SCREEN: /builds/<revision> lists machines and paste jars for assembly.
+        id: "builds:placement-resources", group: "make", label: "Read assembly machines", description: "List native Machines records with their package calibrations and available paste jars.", scope: "workspace" as const, invokeHandler: "builds.placement-resources", userInvokable: true,
+        runBy: "member",
+      },
+      {
+        // UI-SCREEN: /builds/<revision> exports its prepared placement program.
+        id: "builds:placement-program", group: "make", label: "Export a placement program", description: "Read the immutable placement files and feeder map prepared for an assembly work order. Vendor files are loaded and run at the machine.", scope: "workspace" as const, invokeHandler: "builds.placement-program", userInvokable: true,
+        runBy: "member",
+        argsSchema: { order_id: { label: "Work order id", type: "text", required: true } },
+      },
+      {
+        // UI-SCREEN: /builds/<revision> saves verified package settings on a native machine.
+        id: "builds:configure-placement-machine", group: "make", label: "Save placement calibration", description: "Save the operator-verified rotation, offsets, height and nozzle settings for each package on a native machine, with its measured work area.", scope: "workspace" as const, invokeHandler: "builds.configure-placement-machine", userInvokable: true,
+        // ADMIN-ONLY: calibration is machine setup; a wrong rotation or offset misplaces every later board, and a member has no say over configuration
+        runBy: "admin",
+        argsSchema: { machine_kind: { label: "Machine kind", type: "text", required: true }, machine_id: { label: "Machine id", type: "text", required: true }, model: { label: "openpnp, neoden4, neoden-yy1, neoden-k1830, charmhigh-t48vb or charmhigh-t36va", type: "text", required: true }, packages: { label: "Verified package calibrations", type: "json", required: true }, work_area_width_mm: { label: "Work area width mm", type: "number", required: true }, work_area_height_mm: { label: "Work area height mm", type: "number", required: true } },
+      },
+      {
+        // UI-SCREEN: /builds/<revision> records a reviewed paste application against the linked stencil.
+        id: "builds:apply-assembly-paste", group: "make", label: "Record paste application", description: "Consume usable liquid paste once for a released work order and capture its jar, lot, amount and linked stencil. A lost reply recovers the original application.", scope: "workspace" as const, invokeHandler: "builds.apply-assembly-paste", userInvokable: true,
+        runBy: "member",
+        argsSchema: { order_id: { label: "Work order id", type: "text", required: true }, part_id: { label: "Paste jar id", type: "text", required: true }, kind: { label: "Paste collection kind", type: "text", required: true }, amount_ml: { label: "Paste applied in ml", type: "number", required: true }, confirmed_applied: { label: "The linked stencil and this jar were used for every board", type: "boolean", required: true } },
+      },
+      {
+        // UI-SCREEN: /builds/<revision> binds calibrated placements and feeder slots to its kit.
+        id: "builds:prepare-placement", group: "make", label: "Prepare a placement job", description: "Snapshot a machine's verified calibration, board geometry and exact reel-to-slot map against a released kit. A started program cannot be replaced.", scope: "workspace" as const, invokeHandler: "builds.prepare-placement", userInvokable: true,
+        runBy: "member",
+        argsSchema: { order_id: { label: "Work order id", type: "text", required: true }, machine_kind: { label: "Machine kind", type: "text", required: true }, machine_id: { label: "Machine id", type: "text", required: true }, geometry: { label: "PCB dimensions, origins and panel layout in mm", type: "json", required: true }, slots: { label: "Reel id to feeder slot map", type: "json", required: true } },
+      },
+      {
+        // UI-SCREEN: /station/assembly/<machineId>/<orderId> scans a reel at its exact feeder slot.
+        id: "builds:verify-feeder", group: "make", label: "Verify a feeder reel", description: "An authorized station scans the exact Cobblr reel QR at a slot in the prepared job. A wrong reel, expired MSL or revoked station is refused.", scope: "workspace" as const, invokeHandler: "builds.verify-feeder", userInvokable: true,
+        runBy: "member",
+        argsSchema: { order_id: { label: "Work order id", type: "text", required: true }, station_token: { label: "Authorized station credential", type: "text", required: true }, slot: { label: "Feeder slot", type: "text", required: true }, code: { label: "Scanned reel QR", type: "text", required: true } },
+      },
+      {
+        // UI-SCREEN: /station/assembly/<machineId>/<orderId> starts a reviewed side at its authorized station.
+        id: "builds:start-placement", group: "make", label: "Start placement", description: "Record the start of a prepared side after station authorization, every feeder scan, fresh MSL and paste readiness. Physically load and run vendor files at the machine; OpenPnP events can report the same start.", scope: "workspace" as const, invokeHandler: "builds.start-placement", userInvokable: false, effect: "physical",
+        runBy: "member",
+        argsSchema: { order_id: { label: "Work order id", type: "text", required: true }, station_token: { label: "Authorized station credential", type: "text", required: true }, side: { label: "top or bottom", type: "text", required: true }, source: { label: "manual or openpnp", type: "text", required: true }, coverage_hash: { label: "OpenPnP observed placement and board layout hash", type: "text" }, confirmed_all_boards: { label: "Every board is loaded and the machine is clear", type: "boolean", required: true } },
+      },
+      {
+        // UI-SCREEN: /station/assembly/<machineId>/<orderId> records complete sides and the final physical stock draw.
+        id: "builds:finish-placement", group: "make", label: "Finish placement", description: "Confirm every board completed this side. Once all required sides finish, consume the native kit including attrition and create placed-board stock atomically. OpenPnP completion must match every exported placement.", scope: "workspace" as const, invokeHandler: "builds.finish-placement", userInvokable: true,
+        runBy: "member",
+        argsSchema: { order_id: { label: "Work order id", type: "text", required: true }, station_token: { label: "Authorized station credential", type: "text", required: true }, side: { label: "top or bottom", type: "text", required: true }, source: { label: "manual or openpnp", type: "text", required: true }, coverage_hash: { label: "OpenPnP observed completed placement and board layout hash", type: "text" }, confirmed_all_boards: { label: "Every board completed this side", type: "boolean", required: true } },
+      },
       {
         // UI-SCREEN: /instances/board-projects/:id reads through GET board-project to avoid refreshing its own query.
         id: "builds:board-project", group: "make", label: "Board revisions", description: "Read the board revisions belonging to a project. Changes nothing.",

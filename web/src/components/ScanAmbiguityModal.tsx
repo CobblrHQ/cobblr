@@ -14,7 +14,6 @@ import { useKindLabels } from "../lib/useKindLabels";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import type { ScanResolveCandidate } from "../lib/api";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 export function ScanAmbiguityModal({
   scanKey,
   candidates,
@@ -30,7 +29,7 @@ export function ScanAmbiguityModal({
 }) {
   const labels = useKindLabels(useActiveOrg().activeSlug);
   return (
-    <Modal open onClose={onClose} title={`“${scanKey}” matches ${countOf(candidates.length, "thing")}`}>
+    <Modal open onClose={onClose} title={`“${scanKey}” matches ${candidates.length} things`}>
       <div className="space-y-3">
         <p className="text-sm text-slate-600 dark:text-slate-300">
           Pick the one you are holding.

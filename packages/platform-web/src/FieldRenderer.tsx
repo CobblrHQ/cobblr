@@ -27,7 +27,6 @@ import { Markdown, stripMarkdown } from "./Markdown";
 import { QrCode } from "./QrCode";
 import { useUnits } from "./useUnits";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 interface Props {
   fieldName: string;
   value: unknown;
@@ -205,7 +204,7 @@ function ColorSwatch({ value, size }: { value: unknown; size: "inline" | "block"
   // (Swatch.tsx); a value that names no colour shows as text.
   const spec = parseColour(value);
   if (!spec) return <span>{String(value)}</span>;
-  const text = spec.style === "solid" ? spec.colours[0]!.toUpperCase() : `${spec.style === "gradient" ? "Gradient" : "Segments"} · ${countOf(spec.colours.length, "colour")}`;
+  const text = spec.style === "solid" ? spec.colours[0]!.toUpperCase() : `${spec.style === "gradient" ? "Gradient" : "Segments"} · ${spec.colours.length} colours`;
   if (size === "block") {
     // Stacked over its code so it fills the card's image slot the way a
     // thumbnail would (~128×128 grid cell).

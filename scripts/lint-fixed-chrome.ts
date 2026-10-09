@@ -54,6 +54,7 @@ const OWNER = "packages/platform-web";
 
 /** Files that ARE the layer: each names why it may spell fixed itself. */
 const ALLOW: Record<string, string> = {
+  "web/src/features/production-test/Station.tsx": "the production station is copied verbatim into the edge bridge's offline station page (edge-bridge scripts/sync-shared.mjs), which has no platform-web layers; its full-screen operator prompt spells its own fixed",
   "web/src/components/SidePanel.tsx": "the right-side panel is an overlay layer of its own and raises the flag",
   "web/src/pages/ScanCameraPage.tsx": "the camera is a full-screen overlay layer: viewfinder, shutter and its own controls",
   "web/src/lib/outfit-planner-app.ts": "a drag ghost inside an app-player script that runs in the app's own frame, not the shell",

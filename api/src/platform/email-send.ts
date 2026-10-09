@@ -216,5 +216,10 @@ export async function sendEmailVia(cfg: ValidConfig, subject: string, text: stri
     console.log(`[email] skipping send to reserved/test address ${cfg.to}`);
     return { skipped: true, reason: "test_address" };
   }
-  return { skipped: false, messageId: await SENDERS[cfg.provider](cfg, subject, text, html, extras) };
+  // The receipts / orders name stands only on its own address (#5462): the
+  // configured From and a per-message one alike.
+  const { ownAddressFrom } = await import("./own-address.js");
+  const held = { ...cfg, from: (await ownAddressFrom(cfg.from)) ?? cfg.from };
+  const heldExtras = extras?.from ? { ...extras, from: await ownAddressFrom(extras.from) } : extras;
+  return { skipped: false, messageId: await SENDERS[cfg.provider](held, subject, text, html, heldExtras) };
 }

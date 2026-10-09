@@ -173,6 +173,10 @@ export class EdgeAdapterDriver implements MachineDriver {
     return await this.req("POST", "/command", { body: { command: `kiln_${operation}`, params: { ...params, device_id: permit.deviceId } } }) as CommandResult;
   }
 
+  async productionRequest(operation: string, args: Record<string, unknown>): Promise<unknown> {
+    return this.req("POST", "/production", { body: { operation, args }, timeoutMs: 30_000 });
+  }
+
   async identifyBench():Promise<{identity:string;profile:string}>{
     const result=await this.req("GET","/bench/identify");
     const { z }=await import("zod");

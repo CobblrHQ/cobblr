@@ -17,6 +17,7 @@
 // wire-compatible alias over the same platform().edge primitives, so bridges
 // in the field keep polling + self-updating without a reinstall.
 
+import {BridgeDiscovery} from "@cobblr/platform-contract/bridge-discovery";
 import { Router } from "express";
 import type { NextFunction, Request, Response } from "express";
 import { z } from "zod";
@@ -36,6 +37,7 @@ import { requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
 import { createPairingCode, redeemPairingCode } from "../platform/edge-pairing.js";
+import {serverBridgeState,setServerBridge} from "../platform/server-bridge.js";
 import { WINDOWS_INSTALL_SCRIPT } from "../platform/edge-bridge-install-windows-script.js";
 import { INSTALL_SCRIPT } from "../platform/edge-bridge-install-script.js";
 import { makeIpLimiter, overLimit, rateLimited } from "../platform/ip-limiter.js";
@@ -151,6 +153,18 @@ edgeRouter.get("/status", async (req, res) => {
 
 // Every bridge this workspace has, online or not, by name (#3904). The page
 // and every bridge picker read this; the ids stay out of sight.
+// AI-REACH: get_workspace_setup (part devices)
+edgeRouter.get("/discovery", async (req,res,next)=>{
+ if(!requireRole(req,res,"owner","admin","member"))return;
+ try{
+  const result=await platform().edge.send(channelKeyOf(req),{method:"GET",path:"/discover",timeoutMs:5000});
+  if(result.status>=400){res.status(502).json({error:{code:"bridge_discovery",message:"This bridge could not scan for devices. Update it and check that it is online."}});return;}
+  const parsed=BridgeDiscovery.safeParse(result.body);
+  if(!parsed.success){res.status(502).json({error:{code:"bridge_discovery",message:"The bridge returned an invalid discovery report. Update it before adding devices."}});return;}
+  res.json(parsed.data);
+ }catch(error){next(error);}
+});
+
 edgeRouter.get("/bridges", async (req, res, next) => {
   if (!requireRole(req, res, "owner", "admin", "member")) return;
   try {
@@ -178,6 +192,24 @@ edgeRouter.post("/bridges/rename", async (req, res, next) => {
   } catch (e) {
     next(e);
   }
+});
+
+edgeRouter.get("/server-bridge", async (req, res, next) => {
+  if (!requireRole(req, res, "owner", "admin")) return;
+  try { res.json(await serverBridgeState(req.tenant!.org.id)); } catch (error) { next(error); }
+});
+const ServerBridgeBody = z.object({enabled:z.boolean()}).strict();
+// AI-REACH: exempt enrolling or revoking a bridge grants device credentials, which only an owner or admin grants in Configuration > Devices
+edgeRouter.post("/server-bridge", async (req, res, next) => {
+  if (!requireRole(req, res, "owner", "admin")) return;
+  const parsed = ServerBridgeBody.safeParse(req.body);
+  if (!parsed.success) return void res.status(400).json({error:{code:"bad_body",message:"Choose whether to use the server bridge."}});
+  try {
+    const state = await serverBridgeState(req.tenant!.org.id);
+    if (!state.available) return void res.status(409).json({error:{code:"server_bridge_unavailable",message:state.reason === "cloud" ? "A cloud server cannot reach your LAN. Install one bridge on your network." : "Enable the optional bridge service in your self-hosted compose stack."}});
+    await setServerBridge({orgId:req.tenant!.org.id,slug:req.tenant!.org.slug,userId:req.session!.id,enabled:parsed.data.enabled});
+    res.json(await serverBridgeState(req.tenant!.org.id));
+  } catch (error) { next(error); }
 });
 
 const PairingBody = z.object({ name: z.string().trim().min(1).max(120), bridge: z.string().trim().max(60).nullable().optional() });

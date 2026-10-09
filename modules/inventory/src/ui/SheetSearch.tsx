@@ -1,7 +1,6 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Modal, QueryError, SearchInput, NumberField } from "@cobblr/platform-web";
+import { Modal, QueryError, SearchInput, NumberField, WorkspaceLink } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 
 export function SheetSearch() {
@@ -27,7 +26,7 @@ export function SheetSearch() {
       <p className="text-sm text-muted mt-3">Searches all your sheet stock. Offcuts come first.</p>
       {query.isError && <QueryError what="The record could not be loaded." onRetry={() => void query.refetch()} />}
       {query.isFetching && <p className="text-sm mt-3">Looking for room…</p>}
-      {query.data && <><ul className="mt-3 divide-y divide-line">{query.data.items.map(sheet => <li key={sheet.id} className="py-3"><Link className="text-accent" onClick={() => setOpen(false)} to={`/w/${orgSlug}${sheet.instance === "inventory" ? "/inventory" : `/instances/${sheet.instance}`}/parts/${sheet.id}`}>{sheet.name}</Link><p className="text-sm">{sheet.offcut ? "Offcut · " : ""}About {Math.round(sheet.percent_left)}% left</p></li>)}</ul>{query.data.total === 0 && <p className="mt-3 text-sm">No sheet has enough usable room.</p>}<div className="flex gap-2 mt-3"><button className="min-h-11 px-3 border rounded" disabled={offset === 0} onClick={() => setOffset(v => Math.max(0, v - 50))}>Previous</button><button className="min-h-11 px-3 border rounded" disabled={offset + 50 >= query.data.total} onClick={() => setOffset(v => v + 50)}>Next</button></div></>}
+      {query.data && <><ul className="mt-3 divide-y divide-line">{query.data.items.map(sheet => <li key={sheet.id} className="py-3"><WorkspaceLink className="text-accent" onClick={() => setOpen(false)} slug={orgSlug} to={`${sheet.instance === "inventory" ? "/inventory" : `/instances/${sheet.instance}`}/parts/${sheet.id}`}>{sheet.name}</WorkspaceLink><p className="text-sm">{sheet.offcut ? "Offcut · " : ""}About {Math.round(sheet.percent_left)}% left</p></li>)}</ul>{query.data.total === 0 && <p className="mt-3 text-sm">No sheet has enough usable room.</p>}<div className="flex gap-2 mt-3"><button className="min-h-11 px-3 border rounded" disabled={offset === 0} onClick={() => setOffset(v => Math.max(0, v - 50))}>Previous</button><button className="min-h-11 px-3 border rounded" disabled={offset + 50 >= query.data.total} onClick={() => setOffset(v => v + 50)}>Next</button></div></>}
     </Modal>
   </>;
 }

@@ -16,12 +16,11 @@ import { pushSettingsFor, pushToDevice, unreadCountFor } from "../platform/push-
 import { buildPushPayload, inQuietHours, worthAPush } from "../platform/push-policy.js";
 import type { NotificationPriority } from "../db/schema.js";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 export const mePushRouter = Router();
 
 const Priority = z.enum(["low", "normal", "high", "urgent"]);
 const b64urlBytes = (n: number) =>
-  z.string().refine((s) => decodeBase64urlExact(s)?.length === n, `must be ${countOf(n, "byte")}, base64url`);
+  z.string().refine((s) => decodeBase64urlExact(s)?.length === n, `must be ${n} bytes, base64url`);
 
 const Subscribe = z.object({
   endpoint: z.string().url().max(2048),

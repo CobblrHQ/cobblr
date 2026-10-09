@@ -1,0 +1,105 @@
+{
+  "_note": "Shape of a Shopify Customer Account API OrderFulfillments answer, recorded 2026-10-09 from a real order page; every value is an example (tracking numbers are format-preserving fakes).",
+  "data": {
+    "order": {
+      "id": "gid://shopify/Order/2",
+      "fulfillments": {
+        "edges": [
+          {
+            "node": {
+              "id": "gid://shopify/Fulfillment/1",
+              "status": "SUCCESS",
+              "createdAt": "2026-10-08T16:08:59Z",
+              "estimatedDeliveryAt": "2026-10-11T00:00:00Z",
+              "fulfillmentLineItems": {
+                "nodes": [
+                  {
+                    "quantity": 1,
+                    "lineItem": {
+                      "presentmentName": "KINGROON PETG Filament 1.75mm - US / 10KG / Multicolor-1",
+                      "title": "KINGROON PETG Filament 1.75mm"
+                    }
+                  }
+                ]
+              },
+              "outForDelivery": {
+                "edges": []
+              },
+              "delivered": {
+                "edges": []
+              },
+              "trackingInformation": [
+                {
+                  "number": "TBA000000000001",
+                  "company": "Amazon Logistics"
+                }
+              ]
+            }
+          },
+          {
+            "node": {
+              "id": "gid://shopify/Fulfillment/2",
+              "status": "SUCCESS",
+              "createdAt": "2026-10-08T15:58:46Z",
+              "estimatedDeliveryAt": "2026-10-11T00:00:00Z",
+              "fulfillmentLineItems": {
+                "nodes": [
+                  {
+                    "quantity": 1,
+                    "lineItem": {
+                      "presentmentName": "KINGROON PETG Filament 1.75mm - US / 10KG / white",
+                      "title": "KINGROON PETG Filament 1.75mm"
+                    }
+                  }
+                ]
+              },
+              "outForDelivery": {
+                "edges": []
+              },
+              "delivered": {
+                "edges": []
+              },
+              "trackingInformation": [
+                {
+                  "number": "TBA000000000002",
+                  "company": "Amazon Logistics"
+                }
+              ]
+            }
+          },
+          {
+            "node": {
+              "id": "gid://shopify/Fulfillment/3",
+              "status": "SUCCESS",
+              "createdAt": "2026-10-08T15:58:16Z",
+              "estimatedDeliveryAt": "2026-10-11T00:00:00Z",
+              "fulfillmentLineItems": {
+                "nodes": [
+                  {
+                    "quantity": 1,
+                    "lineItem": {
+                      "presentmentName": "KINGROON PETG Filament 1.75mm - US / 10KG / Multicolor",
+                      "title": "KINGROON PETG Filament 1.75mm"
+                    }
+                  }
+                ]
+              },
+              "outForDelivery": {
+                "edges": []
+              },
+              "delivered": {
+                "edges": []
+              },
+              "trackingInformation": [
+                {
+                  "number": "TBA000000000003",
+                  "company": "Amazon Logistics"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

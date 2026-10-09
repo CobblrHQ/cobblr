@@ -10,10 +10,11 @@
 // are imported lazily by the loader when needed.
 
 import { defineModule } from "@cobblr/platform-contract";
+import { PART_FIELD_LABELS } from "./part-field-labels.js";
 
 export default defineModule({
   name: "inventory",
-  version: "0.18.22",
+  version: "0.20.2",
   displayName: "Inventory",
   description:
     "Parts and supplies: how many you have, where they are kept, and what is running low.",
@@ -55,10 +56,10 @@ export default defineModule({
           { name: "name", type: "text", role: "title", required: true },
           { name: "description", type: "text", role: "summary" },
           { name: "state", type: "text", readOnly: true },
-          { name: "qty", type: "number", role: "quantity", trait: "fungible" },
+          { name: "qty", type: "number", label: PART_FIELD_LABELS.qty, role: "quantity", trait: "fungible" },
           { name: "unit", type: "text", role: "unit", trait: "fungible" },
           { name: "cost", type: "number", money: "amount", aggregate: "per_unit", trait: "fungible" },
-          { name: "min_qty", type: "number", aggregate: "none", trait: "fungible" },
+          { name: "min_qty", type: "number", label: PART_FIELD_LABELS.min_qty, aggregate: "none", trait: "fungible" },
           // An ESTIMATE, deliberately not role:"quantity" — that role means a
           // counted amount, and a face reading it as one would render a guess
           // with a stepper. Its presence is what marks a record as an
@@ -444,8 +445,17 @@ export default defineModule({
           target_id: { label: "Assembly work order id", type: "text", required: true },
           operation: { label: "reserve, check, release or consume", type: "text", required: true },
           lines: { label: "Stock lines with part_id, kind and qty", type: "json" },
+          confirmed_placed: { label: "The physical placement already happened; retain late moisture warnings while recording actual stock movement", type: "boolean" },
+          output: { label: "Placed-board stock with part_id, kind and qty, required for consumption", type: "json" },
           require_ready: { label: "Refuse an unusable kit", type: "boolean" },
         },
+      },
+      {
+        // UI-SCREEN: /builds/<revision> invokes this draw through its recorded paste application.
+        // NO-PHRASING: the native assembly application supplies its captured lot and stable receipt key.
+        id: "inventory:use-ready-paste", group: "stock", label: "Use applied paste", description: "Draw liquid paste under its stock lock after checking fresh handling and expiry. The application key records one draw and recovers a lost reply.", scope: "workspace" as const, invokeHandler: "inventory.use-ready-paste", userInvokable: false,
+        runBy: "member",
+        argsSchema: { partId: { label: "Paste jar id", type: "text", required: true }, amount_ml: { label: "Amount in ml", type: "number", required: true }, sourceId: { label: "Application receipt key", type: "text", required: true }, lot: { label: "Captured paste lot", type: "text", required: true }, revision: { label: "Captured handling revision", type: "number", required: true } },
       },
       {
         id: "inventory:change-paste", group: "stock", label: "Record paste handling", description: "Record a liquid paste jar's immutable lot and label limits, take it out of refrigeration, open it after warming, or return an unopened jar to cold storage. Clocks cannot be reset by repeated handling.",
@@ -984,6 +994,33 @@ export default defineModule({
           "Bulk-create N inventory items in one INSERT (a kit BOM, a CSV import, a batch from another module). Returns the new ids in input order so the caller can wire pairings. Does NOT fan out per-item created events. Generic. Args: { items: [{ name, instance?, fields?, qty?, unit?, image_path?, manufacturer?, location_id? }] }.",
         scope: "workspace" as const,
         invokeHandler: "inventory.create-items",
+        userInvokable: true,
+      },
+      {
+        group: "stock",
+        id: "inventory:stocktake",
+        // Taking stock is counting what is there: the member's own stock work.
+        grantedAs: "inventory:count-stock",
+        examples: ["here's what's left in the fridge: milk, eggs, half the cheddar", "everything else in the pantry is gone", "what's still here?"],
+        // Not declared undoable, though it has one Undo: marking a place's
+        // things gone is shown on a card and confirmed by the person first.
+        label: "Take stock of a place",
+        description:
+          "What's still here: the person says what is left in a place (or in the records they picked, or among a collection's things with no place) and every other listed record there is marked gone, by today, not recorded how. Never 'finished' or 'threw it out', so shelf-life learning is untouched. Read the place's records first (GET stocktake) and pass their real ids. A partial ('half the cheddar') goes in counted with the quantity left and keeps the record. Something said that is not on record is NOT created here: offer it as a new item first. One Undo restores every record. Marking a whole place gone, or a collection's unplaced things, needs confirm_count set to the number being marked gone. Args: { scope: { place_id, instance? } | { unplaced: true, instance } | { ids }, keep: [id], counted?: [{ id, qty }], confirm_count? }.",
+        scope: "workspace" as const,
+        invokeHandler: "inventory.stocktake",
+        userInvokable: true,
+      },
+      {
+        group: "stock",
+        id: "inventory:undo-stocktake",
+        grantedAs: "inventory:count-stock",
+        examples: ["undo that stocktake", "bring the fridge back"],
+        label: "Undo a stocktake",
+        description:
+          "Put a stocktake back: every record it marked gone is listed again and every count it lowered goes back up by what it took. Records deleted since stay deleted. Args: { stocktake_id }.",
+        scope: "workspace" as const,
+        invokeHandler: "inventory.undo-stocktake",
         userInvokable: true,
       },
       {

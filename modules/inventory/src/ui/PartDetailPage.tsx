@@ -51,6 +51,7 @@ import {
 } from "./consumption/perUnit";
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { putPart, type PartPlace } from "./move-part";
+import { PART_FIELD_LABELS } from "../part-field-labels";
 
 // The part-detail body. Rendered inside PartDetailModal (below) — the
 // detail view is a modal over the list now (consistent with machines),
@@ -645,7 +646,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
                   ),
                 }
               : null,
-            !hide("min_qty") ? editFieldItem("min_qty", { label: fp.label("min_qty", "Min qty"), value: p.min_qty ?? "", placeholder: "—", numeric: true, fractionDigits: 9, onCommit: (v) => update.mutate({ min_qty: v === "" ? null : Number(v) }) }) : null,
+            !hide("min_qty") ? editFieldItem("min_qty", { label: fp.label("min_qty", PART_FIELD_LABELS.min_qty), value: p.min_qty ?? "", placeholder: "—", numeric: true, fractionDigits: 9, onCommit: (v) => update.mutate({ min_qty: v === "" ? null : Number(v) }) }) : null,
             !hide("min_qty") ? {
               need: fieldNeed("low-stock-alerts", { control: "checkbox", label: "Don't tell me when this item runs low" }),
               node: (
@@ -919,7 +920,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
             const ok = await confirm({
               title: `Delete "${p.name}"?`,
               message: "You can restore this record from Recently deleted for 30 days.",
-              confirmLabel: "Delete part",
+              confirmLabel: `Delete ${itemNoun}`,
               destructive: true,
             });
             if (ok) remove.mutate();

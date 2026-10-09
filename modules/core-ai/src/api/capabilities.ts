@@ -8,6 +8,7 @@ import { sql } from "kysely";
 import { platform, AiCapabilities } from "@cobblr/platform-contract";
 import { sessionUserId, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { chosenModel, storedModel } from "./model-follows.js";
 
 export const capabilitiesRouter = Router({ mergeParams: true });
 
@@ -31,15 +32,19 @@ capabilitiesRouter.get(
       .selectFrom("core_ai_capability_defaults")
       .selectAll()
       .execute();
-    res.json({ items: rows, all_capabilities: AiCapabilities });
+    // A family's latest reads as the choice it is ("claude-haiku-latest"),
+    // not as the model it stood for when it was saved.
+    res.json({ items: rows.map((r) => ({ ...r, model: chosenModel(r) })), all_capabilities: AiCapabilities });
   }),
 );
 
-// GET /capability-defaults/models?provider_id=…|credential_id=…[&fresh=1]
+// GET /capability-defaults/models?provider_id=…|credential_id=…[&capability=…][&fresh=1]
 // What a connection reports it serves, for the job picker's model list: the
 // same answer the save checks against, so the list never offers a model the
 // save refuses or hides one it would take. `reported` is null for a provider
-// that keeps a curated list.
+// that keeps a curated list. For a provider that lists its own models, the
+// answer for a job carries `choices`: each family's "latest" first, then the
+// exact versions to pin (#5417); `fresh=1` is the picker's "Refresh models".
 // AI-REACH: this module IS the assistant; its own configuration is not a thing it should reach into
 capabilitiesRouter.get(
   "/models",
@@ -52,10 +57,16 @@ capabilitiesRouter.get(
       res.status(400).json({ error: { code: "missing_provider", message: "provider_id or credential_id is required" } });
       return;
     }
-    const reported = await platform()
-      .ai.modelsReportedBy(orgId, sessionUserId(req) ?? null, credentialId ? { credentialId } : { providerId: providerId! }, { fresh: req.query.fresh === "1" })
-      .catch(() => null);
-    res.json({ reported });
+    const capability = typeof req.query.capability === "string" && (AiCapabilities as readonly string[]).includes(req.query.capability) ? (req.query.capability as (typeof AiCapabilities)[number]) : undefined;
+    const ref = credentialId ? { credentialId } : { providerId: providerId! };
+    const [reported, redirects] = await Promise.all([
+      platform()
+        .ai.modelsReportedBy(orgId, sessionUserId(req) ?? null, ref, { fresh: req.query.fresh === "1", ...(capability ? { capability } : {}) })
+        .catch(() => null),
+      // What this connection's calls showed it serves instead, for the picker.
+      platform().ai.modelRedirects(orgId, sessionUserId(req) ?? null, ref).catch(() => null),
+    ]);
+    res.json({ reported, redirects });
   }),
 );
 
@@ -124,7 +135,9 @@ capabilitiesRouter.put(
     // right now refuses with why, rather than taking a name on trust.
     const reported = model
       ? await platform()
-          .ai.modelsReportedBy(orgId, sessionUserId(req) ?? null, credentialId ? { credentialId } : { providerId })
+          .ai.modelsReportedBy(orgId, sessionUserId(req) ?? null, credentialId ? { credentialId } : { providerId }, {
+            capability: parsed.data.capability === "personal-document-read" ? "document-read" : parsed.data.capability,
+          })
           .catch(() => null)
       : null;
     if (reported && !reported.ok) {
@@ -145,6 +158,9 @@ capabilitiesRouter.put(
       });
       return;
     }
+    // Picked exactly as offered: a family's latest is kept as that, beside
+    // the model it means today for an older api reading the same row.
+    const stored = storedModel(model, { providerId, resolves: reported?.ok ? reported.choices?.find((c) => c.id === model)?.latest?.resolves : null });
     const db = tenantDb(req);
     const row = await db
       .insertInto("core_ai_capability_defaults")
@@ -152,21 +168,21 @@ capabilitiesRouter.put(
         capability: parsed.data.capability,
         provider_id: providerId,
         credential_id: credentialId,
-        model,
+        ...stored,
         config: sql`${JSON.stringify(parsed.data.config ?? {})}::jsonb` as never,
       })
       .onConflict((c) =>
         c.column("capability").doUpdateSet({
           provider_id: providerId,
           credential_id: credentialId,
-          model,
+          ...stored,
           config: sql`${JSON.stringify(parsed.data.config ?? {})}::jsonb` as never,
           updated_at: new Date(),
         }),
       )
       .returningAll()
       .executeTakeFirstOrThrow();
-    res.json(row);
+    res.json({ ...row, model: chosenModel(row) });
   }),
 );
 

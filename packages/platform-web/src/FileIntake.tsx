@@ -14,7 +14,6 @@ import { useToast } from "./ToastContext";
 import { sendUpload, uploadErrorOf } from "./upload-client";
 import { usePasteImage } from "./usePasteImage";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 const TOKEN_KEY = "cobblr.token";
 
 /** What happened to one file. A duplicate carries the file already holding
@@ -158,7 +157,7 @@ export function useFileIntake(opts: FileIntakeOptions) {
         }
       }
       setBusy(false);
-      finish(`${lines.filter((l) => l.status === "stored").length} of ${countOf(lines.length, "file")} imported`, lines, false);
+      finish(`${lines.filter((l) => l.status === "stored").length} of ${lines.length} files imported`, lines, false);
     },
     [post, finish],
   );

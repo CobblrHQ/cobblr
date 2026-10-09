@@ -15,7 +15,8 @@ import {
   useAskCobbAboutSelection, useTickedRows, SearchInput, CollectionHeader } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import type { Project } from "./api";
-import { pluralise } from "@cobblr/platform-contract";
+import { countOf } from "@cobblr/platform-contract";
+import { withArticle } from "@cobblr/platform-contract/plural";
 
 type SavedViewLite = {
   id: string;
@@ -34,17 +35,15 @@ const STATUS_LABEL: Record<string, string> = {
 const STATUS_ORDER = ["planning", "active", "blocked", "done", "abandoned"];
 
 export function ProjectsListPage() {
-  const { api, orgSlug, getToken, displayName, itemNoun, instance, entityKind, fileIntake, hint } = useProjects();
+  const { api, orgSlug, getToken, displayName, noun, nounPlural, nounWords, instance, entityKind, fileIntake, hint } = useProjects();
   // An instance's rows must stay INSIDE the instance — the bare /projects
   // detail route filters to the default instance and 404s on instance rows
   // ("Project not found" on every Designs/Outfits click).
   const basePath = instance ? `/instances/${instance}` : "/projects";
   // Instance skin: an "Outfits" instance reads "Outfits" / "New outfit", not
   // "projects" / "New project". Falls back to the plain module wording.
-  const heading = displayName ?? "projects";
-  const noun = itemNoun ?? "project";
-  const nounPlural = pluralise(noun);
-  usePageTitle(displayName ?? "Projects");
+  const heading = displayName ?? nounPlural.charAt(0).toUpperCase() + nounPlural.slice(1);
+  usePageTitle(heading);
   const qc = useQueryClient();
   // entityKind (`<instance>:item`, or `projects:project` for the default) MUST
   // be in the key — the API is instance-scoped, so without it sibling projects
@@ -177,7 +176,7 @@ export function ProjectsListPage() {
       }
     },
     onSuccess: () => {
-      toast.success(`Deleted ${selected.size} project${selected.size === 1 ? "" : "s"}`);
+      toast.success(`Deleted ${countOf(selected.size, nounWords)}`);
       setSelected(new Set());
       void qc.invalidateQueries({ queryKey: ["projects-list"] });
     },
@@ -200,7 +199,7 @@ export function ProjectsListPage() {
         hint={hint}
         kind={entityKind}
         exportQuery={query}
-        search={<SearchInput value={query} onChange={setQuery} placeholder="search…" aria-label="Search projects" wrapperClassName="w-48 max-sm:w-full max-sm:flex-1" />}
+        search={<SearchInput value={query} onChange={setQuery} placeholder="search…" aria-label={`Search ${nounPlural}`} wrapperClassName="w-48 max-sm:w-full max-sm:flex-1" />}
       />
 
       <div className="flex">
@@ -390,8 +389,8 @@ export function ProjectsListPage() {
             disabled={bulkDelete.isPending}
             onClick={async () => {
               const ok = await confirm({
-                title: `Delete ${selected.size} project${selected.size === 1 ? "" : "s"}?`,
-                message: "Tasks belonging to these projects stay (their project_id goes null). The project rows themselves are removed.",
+                title: `Delete ${countOf(selected.size, nounWords)}?`,
+                message: `Their tasks stay, no longer under ${withArticle(noun)}. The ${nounPlural} themselves are removed.`,
                 confirmLabel: "Delete",
                 destructive: true,
               });

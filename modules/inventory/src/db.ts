@@ -181,7 +181,23 @@ export interface InventoryPackageReceiptsTable {
   received_at: Generated<Date>;
 }
 
+/** One "what's still here?" run (stocktake.ts). The id lists are what it
+ *  touched, so its Undo puts back exactly those and nothing a later edit made. */
+export interface InventoryStocktakesTable {
+  id: Generated<string>;
+  scope: import("./stocktake.js").StocktakeScope;
+  scope_label: string;
+  kept: Generated<Array<{ id: string; kind: string; title: string }>>;
+  gone: Generated<Array<{ id: string; kind: string; title: string }>>;
+  counted: Generated<Array<{ id: string; kind: string; title: string; before: number; after: number }>>;
+  created_by: string | null;
+  created_at: Generated<Date>;
+  undone_at: Date | null;
+  undone_by: string | null;
+}
+
 export interface InventoryDB {
+  inventory_stocktakes: InventoryStocktakesTable;
   inventory_paste_storage: { part_id: string; state: import("./paste-lifecycle.js").PasteClock; revision: Generated<number>; updated_at: Generated<Date> };
   inventory_stock: { part_id: string; config: import("./stock-shapes.js").StockConfig; shape: Generated<import("./stock-shapes.js").StockShape>; used: Generated<string>; revision: Generated<number>; updated_at: Generated<Date> };
   inventory_stock_uses: { id: Generated<string>; part_id: string; source: string; verdict: "good" | "scrap" | "recount"; amount: string; unit: string; remaining: string; by_user: string | null; at: Generated<Date> };

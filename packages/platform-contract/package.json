@@ -1,10 +1,11 @@
 {
   "name": "@cobblr/platform-contract",
-  "version": "0.5.82",
+  "version": "0.5.84",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
   "exports": {
+    "./production-test": "./src/production-test.ts",
     "./decode-role": "./src/decode-role.ts",
     "./barcode-form": "./src/barcode-form.ts",
     "./sandbox-lifetime": "./src/sandbox-lifetime.ts",
@@ -43,6 +44,8 @@
     "./safe-font-url": "./src/safe-font-url.ts",
     "./workspace-room": "./src/workspace-room.ts",
     "./edge-channel": "./src/edge-channel.ts",
+    "./server-bridge": "./src/server-bridge.ts",
+    "./station-manifest": "./src/station-manifest.ts",
     "./category-reconcile": "./src/category-reconcile.ts",
     "./category-axis": "./src/category-axis.ts",
     "./resolvables": "./src/resolvables.ts",
@@ -116,6 +119,7 @@
     "./scan-source": "./src/scan-source.ts",
     "./document-images": "./src/document-images.ts",
     "./ai-refusal": "./src/ai-refusal.ts",
+    "./ai-models": "./src/ai-models.ts",
     "./ai-answer": "./src/ai-answer.ts",
     "./provider-reason": "./src/provider-reason.ts",
     "./table-fit": "./src/table-fit.ts",
@@ -136,6 +140,7 @@
     "./entity-saved": "./src/entity-saved.ts",
     "./library": "./src/library.ts",
     "./money": "./src/money.ts",
+    "./tracking-text": "./src/tracking-text.ts",
     "./field-meaning": "./src/field-meaning.ts",
     "./seller-upgrade": "./src/seller-upgrade.ts",
     "./field-choices": "./src/field-choices.ts",
@@ -146,11 +151,13 @@
     "./action-groups": "./src/action-groups.ts",
     "./action-groups-schema": "./src/action-groups-schema.ts",
     "./activity-summary": "./src/activity-summary.ts",
+    "./grouped-list": "./src/grouped-list.ts",
+    "./placement-count": "./src/placement-count.ts",
     "./outer-size": "./src/outer-size.ts",
     "./floorplan-format": "./src/floorplan-format.ts",
-    "./placement-count": "./src/placement-count.ts",
     "./laser-setup": "./src/laser-setup.ts",
     "./grouped-list": "./src/grouped-list.ts",
+    "./bridge-discovery": "./src/bridge-discovery.ts",
     "./cnc": "./src/cnc.ts",
     "./action-gate": "./src/action-gate.ts",
     "./field-aggregate": "./src/field-aggregate.ts",
@@ -158,6 +165,7 @@
     "./base64url-exact": "./src/base64url-exact.ts",
     "./instrument-reading": "./src/instrument-reading.ts",
     "./plan-draft": "./src/plan-draft.ts",
+    "./plan-clearance": "./src/plan-clearance.ts",
     "./secret-field": "./src/secret-field.ts",
     "./rate-limit": "./src/rate-limit.ts",
     "./secret-presence-sql": "./src/secret-presence-sql.ts",
@@ -165,13 +173,16 @@
     "./personal-documents": "./src/personal-documents.ts",
     "./self-api": "./src/self-api.ts",
     "./record-creation": "./src/record-creation.ts",
-    "./link-date-summary": "./src/link-date-summary.ts"
+    "./link-date-summary": "./src/link-date-summary.ts",
+    "./order-page-link": "./src/order-page-link.ts",
+    "./address-name": "./src/address-name.ts"
   },
   "types": "src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "re2js": "2.8.6",
     "zod": "^3.24.1"
   },
   "devDependencies": {

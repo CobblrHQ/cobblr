@@ -5,6 +5,7 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "action_predicate_reverted": "reset when you can use",
   "add": "added",
   "added_from_scan": "scanned in",
+  "ai_model_changed": "changed the AI model:",
   "allocation_consumed": "used reserved stock for",
   "allocation_released": "released reserved stock for",
   "allocation_reserved": "reserved",
@@ -104,6 +105,8 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "machine_updated": "updated",
   "make_created": "created",
   "firing_created": "created",
+  "test-run_created": "prepared",
+  "production-test_finished": "finished testing",
   "make_deleted": "deleted",
   "measurement_created": "created",
   "member_joined": "joined",
@@ -169,6 +172,7 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "record_created": "created",
   "record_deleted": "deleted",
   "record_given_away": "gave away",
+  "record_gone": "marked gone",
   "record_sent": "sent from another workspace",
   "record_handed_over": "gave you",
   "record_lost": "lost",
@@ -189,6 +193,8 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "sheet_import_partly_undone": "partly undid the import of",
   "sheet_import_undone": "undid the import of",
   "sheet_imported": "imported",
+  "stocktake_taken": "took stock of",
+  "stocktake_undone": "undid the stocktake of",
   "sheet_material_updated": "updated",
   "station_created": "created",
   "station_revoked": "revoked",
@@ -296,6 +302,14 @@ export function activityPresentation(e: SummaryEntry, slug: string, viewerId?: s
     title = typeof d.items === "number" && Number.isInteger(d.items) && d.items > 0 ? `${d.items} ${d.items === 1 ? "item" : "items"}` : "items";
     summary = `${actor} ${verb} ${title}`;
     subject = {...subject, kind: null, href: `/w/${encodeURIComponent(slug)}/configuration/sharing`};
+  } else if (e.action === "stocktake_taken" || e.action === "stocktake_undone") {
+    // One line for the whole run, never one per record: it says the counts
+    // and opens the stocktake, where its Undo is.
+    const n = (v: unknown) => (typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : 0);
+    summary = e.action === "stocktake_taken"
+      ? `${actor} took stock of ${title}: ${n(d.kept)} kept, ${n(d.gone)} marked gone`
+      : `${actor} undid the stocktake of ${title}`;
+    if (!resolved) subject = { ...subject, kind: null, href: `/w/${encodeURIComponent(slug)}/stocktakes/${encodeURIComponent(e.entity_id)}` };
   } else if (e.action === "record_sent") {
     verb = "sent";
     summary = `Sent from ${text(d.from) ?? "another workspace"} by ${actor}: ${title}`;

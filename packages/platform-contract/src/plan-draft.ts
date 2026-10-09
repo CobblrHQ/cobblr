@@ -11,6 +11,8 @@ export interface PlanRect {
   y_mm: number;
   w_mm: number;
   d_mm: number;
+  /** A quarter turn on the plan (plan-clearance.ts): w × d are as it stands. */
+  rot?: 90 | 180 | 270;
 }
 
 export interface PlanDraftBody {
@@ -66,7 +68,14 @@ export function placesUnderDraft<L extends { id: string; name: string; parent_id
     const m = draft.moves[p.id];
     if (!m) return p;
     const fp = { ...(((p.metadata as { floorplan?: unknown }).floorplan ?? {}) as Record<string, unknown>) };
-    if (m.rect) Object.assign(fp, m.rect);
+    if (m.rect) {
+      // A turn the draft takes back off (a rack turned all the way round)
+      // leaves no turn behind.
+      const { rot, ...at } = m.rect;
+      Object.assign(fp, at);
+      if (rot) fp.rot = rot;
+      else delete fp.rot;
+    }
     // The place's layout is the one key a draft changes; the rest of its metadata rides along.
     const metadata = Object.assign({}, p.metadata, { floorplan: fp });
     return { ...p, parent_id: m.parent_id ?? p.parent_id, metadata };

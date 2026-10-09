@@ -4,7 +4,16 @@ $CobblrUrl = '@@COBBLR_URL@@'
 $Root = Join-Path $env:LOCALAPPDATA 'Cobblr\bridge'
 $Binary = Join-Path $Root 'cobblr-edge-bridge.exe'
 $TaskName = 'Cobblr Edge Bridge'
-$Download = "$CobblrUrl/api/v1/desktop/bridge/windows/x64"
+$NativeArchitecture = $env:COBBLR_INSTALL_ARCH
+if (-not $NativeArchitecture) { $NativeArchitecture = $env:PROCESSOR_ARCHITEW6432 }
+if (-not $NativeArchitecture) { $NativeArchitecture = $env:PROCESSOR_ARCHITECTURE }
+switch ($NativeArchitecture.ToUpperInvariant()) {
+    'ARM64' { $Architecture = 'arm64' }
+    'AMD64' { $Architecture = 'x64' }
+    'X64' { $Architecture = 'x64' }
+    default { throw 'The Windows bridge needs x64 or ARM64 Windows.' }
+}
+$Download = "$CobblrUrl/api/v1/desktop/bridge/windows/$Architecture"
 if ($DryRun) {
     @{ directory = $Root; binary = $Binary; download = $Download; task = $TaskName; runLevel = 0; logonType = 3; trigger = 'current-user-logon'; administrator = $false; pairing = "& `"$Binary`" pair-lightburn 127.0.0.1"; uninstall = '-Uninstall' } | ConvertTo-Json
     return

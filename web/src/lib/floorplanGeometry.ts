@@ -4,21 +4,13 @@
 // See docs/design-decisions/location-floor-plan.md.
 
 import { fieldKindOf } from "@cobblr/platform-contract/kind-label";
+import { doorFitsWall, isEdge, isRotation, readCloset, wallSegments as contractWallSegments, type PlanOpening, type PlanWall, type Rotation } from "@cobblr/platform-contract/plan-clearance";
 
-export interface FpOpening {
-  at_mm: number;
-  w_mm: number;
-  /** What it is, when somebody said: a door, a window, or just an opening. */
-  kind?: "door" | "window" | "opening";
-}
+/** A door, a window or a plain opening in a wall; a door may say its leaf,
+ *  hinge and swing, a window its sill (plan-clearance.ts). */
+export type FpOpening = PlanOpening;
 
-export interface FpWall {
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  openings?: FpOpening[];
-}
+export type FpWall = PlanWall;
 
 export interface FpBound {
   w_mm: number;
@@ -37,6 +29,8 @@ export interface FpBound {
   /** The field this plan groups its pinned things by ("drive"), remembered
    *  with the plan; any measure or choice field their kinds declare. */
   group_by?: string;
+  /** The aisle a room's planner checks gaps against, mm; absent, it is off. */
+  aisle_mm?: number;
   walls?: FpWall[];
 }
 
@@ -46,6 +40,8 @@ export interface FpRect {
   w_mm: number;
   d_mm: number;
   wall_mounted?: boolean;
+  /** A quarter turn: w × d are as it stands on the plan. */
+  rot?: Rotation;
 }
 
 export const SNAP_MM = 100;
@@ -68,14 +64,30 @@ function boundFrom(fp: Record<string, unknown>): FpBound | null {
       if (x1 !== x2 && y1 !== y2) continue; // axis-aligned only
       const openings: FpOpening[] = [];
       if (Array.isArray(wl.openings)) {
-        for (const o of wl.openings) {
-          const at = num((o as Record<string, unknown>).at_mm);
-          const ow = num((o as Record<string, unknown>).w_mm);
-          const kind = (o as Record<string, unknown>).kind;
-          if (at !== null && ow !== null && ow > 0) openings.push({ at_mm: at, w_mm: ow, ...(kind === "door" || kind === "window" || kind === "opening" ? { kind } : {}) });
+        for (const raw of wl.openings) {
+          const o = raw as Record<string, unknown>;
+          const at = num(o.at_mm);
+          const ow = num(o.w_mm);
+          if (at === null || ow === null || ow <= 0) continue;
+          const kind = o.kind === "door" || o.kind === "window" || o.kind === "opening" ? o.kind : undefined;
+          const leaf = num(o.leaf_mm);
+          const sill = num(o.sill_mm);
+          const door = { hinge: isEdge(o.hinge) ? o.hinge : undefined, swing: isEdge(o.swing) ? o.swing : undefined };
+          // A hinge or swing that cannot go on this wall (left on a wall that
+          // runs down) is read as not said, never drawn the wrong way.
+          const fits = doorFitsWall({ x1, y1, x2, y2 }, door);
+          openings.push({
+            at_mm: at,
+            w_mm: ow,
+            ...(kind ? { kind } : {}),
+            ...(kind === "door" && fits && door.hinge ? { hinge: door.hinge } : {}),
+            ...(kind === "door" && fits && door.swing ? { swing: door.swing } : {}),
+            ...(kind === "door" && leaf ? { leaf_mm: leaf } : {}),
+            ...(kind === "window" && sill !== null ? { sill_mm: sill } : {}),
+          });
         }
       }
-      walls.push({ x1, y1, x2, y2, ...(openings.length ? { openings } : {}) });
+      walls.push({ x1, y1, x2, y2, ...(openings.length ? { openings } : {}), ...(typeof wl.closet === "string" && wl.closet ? { closet: wl.closet } : {}) });
     }
   }
   const grid = num(fp.grid_mm);
@@ -87,6 +99,7 @@ function boundFrom(fp: Record<string, unknown>): FpBound | null {
     ...(grid && grid >= 5 && grid <= 1000 ? { grid_mm: grid } : {}),
     ...(typeof fp.grid_on === "boolean" ? { grid_on: fp.grid_on } : {}),
     ...(typeof fp.group_by === "string" && fp.group_by ? { group_by: fp.group_by } : {}),
+    ...(num(fp.aisle_mm) ? { aisle_mm: num(fp.aisle_mm)! } : {}),
     ...(walls.length ? { walls } : {}),
   };
 }
@@ -113,7 +126,11 @@ export function readBound(metadata: Record<string, unknown> | null | undefined):
   const fp = blob(metadata);
   if (!fp) return null;
   const face = faceOf(fp);
-  return face ? boundFrom(face) : boundFrom(fp);
+  if (face) return boundFrom(face);
+  // A closet's size is where it stands in its room, not a plan of its own:
+  // what is put in it is drawn on the room's plan (plan-clearance.ts).
+  if (readCloset(fp)) return null;
+  return boundFrom(fp);
 }
 
 /** Does this location own a layout somebody set up (a face, a room's own
@@ -130,8 +147,8 @@ export function hasOwnLayout(metadata: Record<string, unknown> | null | undefine
   return fp.view !== undefined || fp.unit !== undefined || fp.grid_mm !== undefined || fp.grid_on !== undefined || Array.isArray(fp.walls);
 }
 
-const BOUND_KEYS = ["w_mm", "d_mm", "unit", "view", "grid_mm", "grid_on", "group_by", "walls"] as const;
-const RECT_KEYS = ["x_mm", "y_mm", "w_mm", "d_mm", "wall_mounted"] as const;
+const BOUND_KEYS = ["w_mm", "d_mm", "unit", "view", "grid_mm", "grid_on", "group_by", "aisle_mm", "walls"] as const;
+const RECT_KEYS = ["x_mm", "y_mm", "w_mm", "d_mm", "wall_mounted", "rot"] as const;
 
 function boundKeys(b: FpBound): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -186,6 +203,8 @@ export function withRect(
     Object.assign(fp, { x_mm: rect.x_mm, y_mm: rect.y_mm, w_mm: rect.w_mm, d_mm: rect.d_mm });
     if (rect.wall_mounted) fp.wall_mounted = true;
     else delete fp.wall_mounted;
+    if (rect.rot) fp.rot = rect.rot;
+    else delete fp.rot;
   } else {
     for (const k of RECT_KEYS) delete fp[k];
   }
@@ -213,7 +232,7 @@ export function readRect(metadata: Record<string, unknown> | null | undefined): 
   if (!fp) return null;
   const x = num(fp.x_mm), y = num(fp.y_mm), w = num(fp.w_mm), d = num(fp.d_mm);
   if (x === null || y === null || !w || !d) return null;
-  return { x_mm: x, y_mm: y, w_mm: w, d_mm: d, wall_mounted: fp.wall_mounted === true };
+  return { x_mm: x, y_mm: y, w_mm: w, d_mm: d, wall_mounted: fp.wall_mounted === true, ...(isRotation(fp.rot) ? { rot: fp.rot } : {}) };
 }
 
 export function partitionPlanRecords<
@@ -286,36 +305,9 @@ export function clampRect(rect: FpRect, bound: FpBound): FpRect {
 }
 
 /** A wall drawn minus its door openings: the visible sub-segments, in order.
- *  Openings are clamped to the segment and merged when overlapping. */
-export function wallSegments(wall: FpWall): Array<{ x1: number; y1: number; x2: number; y2: number }> {
-  const vertical = wall.x1 === wall.x2;
-  const start = vertical ? Math.min(wall.y1, wall.y2) : Math.min(wall.x1, wall.x2);
-  const end = vertical ? Math.max(wall.y1, wall.y2) : Math.max(wall.x1, wall.x2);
-  const len = end - start;
-  if (len <= 0) return [];
-  const gaps = (wall.openings ?? [])
-    .map((o) => ({ from: Math.max(0, o.at_mm), to: Math.min(len, o.at_mm + o.w_mm) }))
-    .filter((g) => g.to > g.from)
-    .sort((a, b) => a.from - b.from);
-  const merged: Array<{ from: number; to: number }> = [];
-  for (const g of gaps) {
-    const last = merged[merged.length - 1];
-    if (last && g.from <= last.to) last.to = Math.max(last.to, g.to);
-    else merged.push({ ...g });
-  }
-  const spans: Array<{ from: number; to: number }> = [];
-  let cursor = 0;
-  for (const g of merged) {
-    if (g.from > cursor) spans.push({ from: cursor, to: g.from });
-    cursor = Math.max(cursor, g.to);
-  }
-  if (cursor < len) spans.push({ from: cursor, to: len });
-  return spans.map((s) =>
-    vertical
-      ? { x1: wall.x1, y1: start + s.from, x2: wall.x1, y2: start + s.to }
-      : { x1: start + s.from, y1: wall.y1, x2: start + s.to, y2: wall.y1 },
-  );
-}
+ *  One implementation, the contract's, so the plan, the print and the
+ *  clearance checks agree on where a wall is solid. */
+export const wallSegments = contractWallSegments;
 
 /** Which zone (if any) contains the point — used for drop-to-reparent. When
  *  regions overlap, the smallest wins (the most specific zone). */

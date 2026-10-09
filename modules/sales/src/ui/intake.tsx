@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { FieldPack, fieldNeed, fieldPackControlClass, useToast, SearchInput } from "@cobblr/platform-web";
+import { FieldPack, fieldNeed, fieldPackControlClass, useToast, SearchInput, downloadBlob } from "@cobblr/platform-web";
+import { ownAddressName, ownAddressSentWords, ownAddressVCard } from "@cobblr/platform-contract/address-name";
 import type { SalesApi, IntakeView } from "./api.js";
 
 export function IntakeSettings({ api }: { api: SalesApi }) {
@@ -11,9 +12,22 @@ export function IntakeSettings({ api }: { api: SalesApi }) {
   if (!q.data) return <p>Loading order intake…</p>;
   return <><section className="space-y-2 border-t border-line pt-3" aria-label="Order emails">
     <h3 className="font-medium">Order emails</h3>
-    {address.data?.order_address ? <><p className="text-xs text-muted">Forward sales emails here. Each order becomes a draft with the email for you to review and confirm.</p><p className="text-sm break-all select-all">{address.data.order_address}</p></> : <p className="text-xs text-muted">Order email forwarding needs the operator's inbound email setup.</p>}
+    {address.data?.order_address ? <><p className="text-xs text-muted">Forward sales emails here. Each order becomes a draft with the email for you to review and confirm.</p><p className="text-sm break-all select-all">{address.data.order_address}</p><OrderAddressActions api={api} address={address.data.order_address} name={address.data.order_name ?? ownAddressName("orders", null)} /></> : <p className="text-xs text-muted">Order email forwarding needs the operator's inbound email setup.</p>}
     {address.isError && <p role="alert">The order email address could not be read.</p>}
   </section><IntakeForm key={`${q.data.setting?.connection ?? "new"}:${q.data.setting?.on}`} api={api} view={q.data} /></>;
+}
+/** "Email it to me" and "Add to contacts" for the orders address, so typing
+ *  "Cobblr" in a To field finds "Cobblr Orders" (#5462). */
+function OrderAddressActions({ api, address, name }: { api: SalesApi; address: string; name: string }) {
+  const toast = useToast();
+  const send = useMutation({ mutationFn: () => api.emailMyOrderAddress(), onError: (e) => toast.error(e.message) });
+  return <div className="space-y-1 text-xs">
+    {send.data && <p role="status" className="text-muted">{ownAddressSentWords(send.data.to, "orders")}</p>}
+    <p className="flex gap-3">
+      <button type="button" className="underline" disabled={send.isPending} onClick={() => send.mutate()}>{send.isPending ? "Sending…" : send.data ? "Resend" : "Email it to me"}</button>
+      <button type="button" className="underline" onClick={() => downloadBlob(new Blob([ownAddressVCard({ name, address })], { type: "text/vcard" }), `${name.replace(/[^\w ()'-]+/g, "").trim() || "Cobblr"}.vcf`)}>Add to contacts</button>
+    </p>
+  </div>;
 }
 function IntakeForm({ api, view }: { api: SalesApi; view: IntakeView }) {
   const qc = useQueryClient();

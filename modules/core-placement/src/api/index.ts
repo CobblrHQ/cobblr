@@ -39,7 +39,7 @@ const wrap =
     });
   };
 
-// GET /contents?container_kind=&container_id= — what's directly inside a container.
+// GET /contents?container_kind=&container_id=[&include_retired=true] — what's directly inside a container.
 router.get(
   "/contents",
   wrap(async (req, res) => {
@@ -52,7 +52,12 @@ router.get(
     const found = refs.length ? await platform().entities.lookupMany(orgId(req), refs.map(({ kind, id }) => ({ kind, id }))) : [];
     // Each thing with where it sits: the slot, and the pin a floor plan drew.
     const at = new Map(refs.map((r) => [r.id, r]));
-    const items = found.map((e) => ({ ...e, slot: at.get(e.id)?.slot ?? null, position: at.get(e.id)?.position ?? null }));
+    // A thing that left (sold, given away, gone in a stocktake) is no longer in
+    // the place, the same rule every list follows: shown only when asked.
+    const withRetired = req.query.include_retired === "true";
+    const items = found
+      .filter((e) => withRetired || !e.retired)
+      .map((e) => ({ ...e, slot: at.get(e.id)?.slot ?? null, position: at.get(e.id)?.position ?? null }));
     res.json({ items });
   }),
 );

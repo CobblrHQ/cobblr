@@ -21,7 +21,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-locations",
-  version: "0.11.0",
+  version: "0.12.0",
   displayName: "Locations",
   description:
     "Where your things live: rooms, shelves and bins, one inside another, and a floor plan to draw them on.",
@@ -293,14 +293,15 @@ export default defineModule({
         examples: ["in the draft, put the Prusa MK4 on rack 1's bottom shelf", "lay out the 3D printers on Rack 1 and Rack 2, biggest on the bottom shelf"],
         label: "Put things somewhere in a layout",
         description:
-          "In a planning layout (draft), put things on shelves or places. Nothing real moves. `draft_id`; `put`: a list of {kind, id, into, x_mm?} where `into` is a place id or a planned place (planned:<key>), and x_mm is how far from the shelf's left end (things stand side by side in x_mm order). Read plan-read first for each shelf's width and each thing's outer size, so what you propose fits.",
+          "In a planning layout (draft), put things on shelves or places, and move or turn racks on the room's floor. Nothing real moves. `draft_id`; `put`: a list of {kind, id, into, x_mm?} where `into` is a place id or a planned place (planned:<key>), and x_mm is how far from the shelf's left end (things stand side by side in x_mm order); `move`: a list of {id, x_mm?, y_mm?, turn?} for a rack (its place id or planned:<key>): its top-left on the floor, and `turn` 90, 180 or 270 to turn it clockwise about its middle (it stays inside the room). Read plan-read first for each shelf's width, each thing's outer size, each rack's spot, and the flags (a rack in a door's swing, before a window, or an aisle narrower than the room's), so what you propose fits and keeps the door clear.",
         icon: "layout",
         scope: "workspace" as const,
         invokeHandler: "core-locations.plan-put",
         userInvokable: false,
         argsSchema: {
           draft_id: { label: "The layout (draft_id)", type: "text" as const, required: true },
-          put: { label: "Things to put: [{kind, id, into, x_mm?}]", type: "json" as const, required: true },
+          put: { label: "Things to put: [{kind, id, into, x_mm?}]", type: "json" as const },
+          move: { label: "Racks to move or turn: [{id, x_mm?, y_mm?, turn?}]", type: "json" as const },
         },
       },
       {
@@ -333,7 +334,7 @@ export default defineModule({
         examples: ["does option A fit", "what is on each shelf in the draft"],
         label: "Read a layout",
         description:
-          "The room as a planning layout would make it: each shelf (real or planned) with its width and height, the things on it with their outer sizes, how much width they use and whether they fit, and the things it puts elsewhere. Changes nothing.",
+          "The room as a planning layout would make it: each shelf (real or planned) with its width and height, the things on it with their outer sizes, how much width they use and whether they fit, and the things it puts elsewhere; the room's size and walls (doors with their swing, windows with their sill, closets), each rack's spot, size and turn on the floor, and `flags`: a rack in a door's swing, a rack taller than a window's sill in front of it, and (when the room checks aisles) a gap narrower than its aisle. Changes nothing.",
         icon: "layout",
         scope: "workspace" as const,
         invokeHandler: "core-locations.plan-read",

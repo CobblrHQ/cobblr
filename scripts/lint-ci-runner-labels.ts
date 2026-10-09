@@ -144,6 +144,63 @@ if (seen.size === 0) {
   process.exit(1);
 }
 
+// MAIN'S LANE IS NEVER A PULL REQUEST'S (2026-10-09). Forgejo hands out the oldest waiting job a runner's
+// labels match, so a train batch's typecheck waited 31 minutes behind PR runs on the runners that shared
+// light-main with pr-check. The fleet now keeps a runner that carries light-main and no PR label
+// (server-setup forge-ci/fleet-policy.json `main_lane`, whose never_labels are PR_LANE_LABELS below). Two
+// things here keep that true from this side: a pull-request workflow never asks for a main-lane label
+// (it would queue on main's own runner), and every label a pull-request workflow asks for is in
+// PR_LANE_LABELS (a new one must be added there AND to the policy's pr_labels, or main's runner may
+// carry it and serve pull requests again).
+const MAIN_LANE_LABELS = new Set(["light-main", "ci-main"]);
+// A copy of main_lane.pr_labels in server-setup forge-ci/fleet-policy.json: change both together.
+const PR_LANE_LABELS = new Set(["ci-test", "pr-check", "image-pr", "fast-dispatch", "fast-light", "fast-test"]);
+/** The events a workflow runs on: `on: x`, `on: [x, y]`, or the keys of an `on:` block. */
+function triggers(src: string): string[] {
+  const lines = src.split("\n");
+  const i = lines.findIndex((l) => /^"?on"?:/.test(l));
+  if (i < 0) return [];
+  const inline = /^"?on"?:\s*(.+?)\s*$/.exec(lines[i]!)?.[1];
+  if (inline) return inline.replace(/[[\]]/g, "").split(",").map((t) => t.trim()).filter(Boolean);
+  const out: string[] = [];
+  for (let j = i + 1; j < lines.length && !/^\S/.test(lines[j]!); j++) {
+    const k = /^ {2}([a-z_]+):/.exec(lines[j]!)?.[1];
+    if (k) out.push(k);
+  }
+  return out;
+}
+/** Every runner label a workflow asks for, matrix legs expanded. */
+function labelsOf(src: string): { label: string; line: number }[] {
+  const out: { label: string; line: number }[] = [];
+  src.split("\n").forEach((l, i) => {
+    const m = /^\s*runs-on:\s*(.+?)\s*(?:#.*)?$/.exec(l);
+    if (!m) return;
+    const label = m[1]!.replace(/^["']|["']$/g, "");
+    const mx = /^\$\{\{\s*matrix\.([A-Za-z_][\w-]*)\s*\}\}$/.exec(label);
+    if (mx) {
+      const vals = new RegExp(`^\\s*${mx[1]}:\\s*\\[([^\\]]*)\\]`, "m").exec(src)?.[1] ?? "";
+      for (const v of vals.split(",").map((x) => x.trim().replace(/^["']|["']$/g, "")).filter(Boolean)) out.push({ label: v, line: i + 1 });
+    } else if (!label.startsWith("$")) out.push({ label, line: i + 1 });
+  });
+  return out;
+}
+function mainLaneErrors(file: string, src: string): string[] {
+  const errs: string[] = [];
+  const on = triggers(src);
+  if (!on.some((t) => t.startsWith("pull_request") || t === "issue_comment")) return errs;
+  for (const { label, line } of labelsOf(src)) {
+    if (MAIN_LANE_LABELS.has(label)) {
+      errs.push(`.forgejo/workflows/${file}:${line} runs on pull requests (${on.join(", ")}) but asks for "${label}", main's own lane: a pull request would take main's runner and a train batch would queue behind it. Use pr-check or ci-test.`);
+    } else if (!PR_LANE_LABELS.has(label)) {
+      errs.push(`.forgejo/workflows/${file}:${line} runs on pull requests (${on.join(", ")}) and asks for "${label}", which is not a pull-request label (PR_LANE_LABELS). If it is one now, add it there AND to main_lane.pr_labels in server-setup forge-ci/fleet-policy.json, so main's runner never carries it.`);
+    }
+  }
+  return errs;
+}
+for (const f of readdirSync(DIR).filter((n) => n.endsWith(".yml") || n.endsWith(".yaml"))) {
+  errors.push(...mainLaneErrors(f, readFileSync(join(DIR, f), "utf8")));
+}
+
 // pr-check RUNS ON THE TEST-ONLY BOXES (b550 and z87 until memtest passes, the lent XPS: owner,
 // 2026-10-07), so a job asking for it must never publish, push or ship anything: a flipped bit there
 // may turn a check red, never reach something shared. A step that does must be guarded to a push to

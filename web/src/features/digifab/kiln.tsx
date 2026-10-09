@@ -1,12 +1,10 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { NumberField, QueryError, SearchInput, useToast } from "@cobblr/platform-web";
+import { NumberField, QueryError, SearchInput, useToast, WorkspaceLink } from "@cobblr/platform-web";
 import { randomId } from "@cobblr/platform-contract/random-id";
 import { api, type PlatformResolvedEntity } from "../../lib/api";
 import type { EntityDetailPanelCtx } from "../../panels/types";
 import { readKiln, saveKiln, createFiring, finishFiring, controlFiring, type KilnProfile, type Segment, type FiringLog, type Piece } from "./kiln-api";
-import { countOf } from "@cobblr/platform-contract/plural";
 const button = "min-h-11 rounded border border-line px-3 py-2 text-sm disabled:opacity-50";
 const input = "input w-full min-h-11";
 const emptyProfile: KilnProfile = { connection_id: null, device_id: null, components: [], schedules: [] };
@@ -26,7 +24,7 @@ export function KilnRecords({ ctx, station = false }: { ctx: EntityDetailPanelCt
  const data = query.data, profile = data.profile, t = data.telemetry;
  if (!profile && !editing) return <details className="text-sm"><summary className="min-h-11 cursor-pointer flex items-center">Firing logs for a kiln</summary><p>Keep schedules, pieces and firing hours here, even without a connected controller.</p><button className={button} disabled={busy} onClick={() => setEditing(true)}>Set up firing logs</button></details>;
  return <section data-testid="kiln-records" className="rounded-lg border border-line p-3 space-y-4 text-content">
-  <header className="flex flex-wrap gap-2 items-center"><h3 className="flex-1 text-sm font-semibold">Firing logs</h3>{profile && <button className={button} onClick={() => setEditing(!editing)}>Kiln settings</button>}{profile && !station && <Link className={button} to={`/w/${slug}${stationPath}`}>Open kiln station</Link>}</header>
+  <header className="flex flex-wrap gap-2 items-center"><h3 className="flex-1 text-sm font-semibold">Firing logs</h3>{profile && <button className={button} onClick={() => setEditing(!editing)}>Kiln settings</button>}{profile && !station && <WorkspaceLink className={button} slug={slug} to={`${stationPath}`}>Open kiln station</WorkspaceLink>}</header>
   {editing && <ProfileForm slug={slug} profile={profile ?? emptyProfile} hours={data.firing_hours} busy={busy} save={p => void run(async () => { await saveKiln(slug, machine, p); setEditing(false); })} />}
   {profile && <>
    <p className="text-sm">{data.firing_hours.toFixed(1)} firing hours recorded</p>
@@ -103,7 +101,7 @@ function LogCard({ slug, log, busy, telemetryRunning, finish, control }: { slug:
  const [hours, setHours] = useState(log.duration_hours ?? 0), [peak, setPeak] = useState(log.peak_c ?? 0), [outcome, setOutcome] = useState("completed"), [confirm, setConfirm] = useState<"start" | "stop" | null>(null);
  useEffect(() => { if (!edited) { setHours(log.duration_hours ?? 0); setPeak(log.peak_c ?? 0); } }, [edited, log.duration_hours, log.peak_c]);
  return <article className="rounded border border-line p-3 space-y-2"><h4 className="font-semibold break-words">{log.name}</h4><p>{log.status} · {log.recipe.cone ? `cone ${log.recipe.cone}` : "No cone recorded"}</p>
-  <details><summary className="min-h-11 cursor-pointer flex items-center">Schedule and load ({countOf(log.recipe.pieces.length, "piece")})</summary><ol>{log.recipe.schedule.map((s, i) => <li key={i}>Segment {i + 1}: {s.ramp_c_per_hour} °C/hour to {s.target_c} °C, hold {s.hold_minutes} minutes.</li>)}</ol><ul>{log.recipe.pieces.map(p => <li key={`${p.kind}:${p.id}`}><PieceLink slug={slug} piece={p} /></li>)}</ul><p className="whitespace-pre-wrap break-words">{log.recipe.notes}</p>{log.recipe.glazes.map(g => <p key={g.part_id}>{g.ml} ml of glaze recorded</p>)}</details>
+  <details><summary className="min-h-11 cursor-pointer flex items-center">Schedule and load ({log.recipe.pieces.length} pieces)</summary><ol>{log.recipe.schedule.map((s, i) => <li key={i}>Segment {i + 1}: {s.ramp_c_per_hour} °C/hour to {s.target_c} °C, hold {s.hold_minutes} minutes.</li>)}</ol><ul>{log.recipe.pieces.map(p => <li key={`${p.kind}:${p.id}`}><PieceLink slug={slug} piece={p} /></li>)}</ul><p className="whitespace-pre-wrap break-words">{log.recipe.notes}</p>{log.recipe.glazes.map(g => <p key={g.part_id}>{g.ml} ml of glaze recorded</p>)}</details>
   {log.ended_at ? <p>{log.peak_c} °C peak · {log.duration_hours} hours · {new Date(log.ended_at).toLocaleDateString()}</p> : <>
    {control && <div className="flex flex-wrap gap-2">{log.status === "planned" && <button className={button} disabled={busy || telemetryRunning} onClick={() => setConfirm("start")}>Start this firing</button>}<button className={button} disabled={busy} onClick={() => setConfirm("stop")}>Stop kiln</button></div>}
    {confirm && <div role="alert" className="rounded border border-line p-3 space-y-2"><p>{confirm === "start" ? "Check the load, lid, ventilation and schedule at the kiln before starting." : "Stop the kiln's heating now?"}</p><div className="flex flex-wrap gap-2"><button className={button} disabled={busy} onClick={() => { control?.(confirm); setConfirm(null); }}>{confirm === "start" ? "Confirm Start at this station" : "Confirm Stop at this station"}</button><button className={button} onClick={() => setConfirm(null)}>Cancel</button></div></div>}
@@ -114,5 +112,5 @@ function LogCard({ slug, log, busy, telemetryRunning, finish, control }: { slug:
 function PieceLink({ slug, piece }: { slug: string; piece: Piece }) {
  const q = useQuery({ queryKey: ["kiln-piece", slug, piece.kind, piece.id], queryFn: () => api.lookupEntity(slug, piece.kind, piece.id) });
  const label = q.data?.title ?? piece.title ?? "Piece in this load";
- return q.data?.detailUrl ? <Link className="inline-flex min-h-11 items-center text-accent" to={`/w/${slug}${q.data.detailUrl}`}>{label}</Link> : <span>{label}</span>;
+ return q.data?.detailUrl ? <WorkspaceLink className="inline-flex min-h-11 items-center text-accent" slug={slug} to={`${q.data.detailUrl}`}>{label}</WorkspaceLink> : <span>{label}</span>;
 }

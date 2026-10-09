@@ -40,6 +40,9 @@ import { unprefixedRoutes } from "./lib/unprefixed-routes.ts";
 const ROOTS: { dir: string; file: RegExp; seam: string }[] = [
   { dir: "kiosk", file: /^guided-.*\.mjs$/, seam: "kiosk/lib.mjs" },
   { dir: "e2e", file: /\.mjs$/, seam: "e2e/prod-look.mjs" },
+  // The docs site's picture flows sit a folder down and were never read: one
+  // navigated to bare paths and a dark capture came out blank (2026-10-09).
+  { dir: "e2e/docs-shots/flows", file: /\.mjs$/, seam: "e2e/prod-look.mjs" },
 ];
 
 const ROUTES = unprefixedRoutes(readFileSync("web/src/App.tsx", "utf8"));

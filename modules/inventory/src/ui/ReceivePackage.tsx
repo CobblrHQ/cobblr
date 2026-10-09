@@ -85,6 +85,7 @@ export function ReceivePackage({ data }: { data: FamilyPayload }) {
     <button type="button" className="rounded border border-line px-3 py-1.5 text-sm" onClick={() => setOpen(true)}>Receive a package</button>
     <Modal open={open} onClose={() => setOpen(false)} title="Receive a package" size="md">
       <div className="space-y-3" data-testid="package-receiving">
+        {/* base-noun-ok: a distributor's label names an electronic part and its MPN */}
         <p className="text-sm text-muted">Scan the distributor’s 2D label. Review its part and count, then receive it and queue its QR label.</p>
         {error && <p role="alert" className="text-sm text-ember-700 dark:text-ember-300">{error}</p>}
         <form onSubmit={e => { e.preventDefault(); void decode(code); }} className="space-y-2">
@@ -96,6 +97,7 @@ export function ReceivePackage({ data }: { data: FamilyPayload }) {
         </form>
         {fields && !receipt && <form onSubmit={e => { e.preventDefault(); void receive(); }} className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+            {/* base-noun-ok: a distributor's label names an electronic part and its MPN */}
             <label>Manufacturer part number<input required className={input} value={mpn} onChange={e => setMpn(e.target.value)} /></label>
             <label>{label("manufacturer", "Manufacturer")}<input className={input} value={manufacturer} onChange={e => setManufacturer(e.target.value)} /></label>
             <label>Package quantity<input required type="number" min="1" step="1" className={input} value={quantity} onChange={e => setQuantity(e.target.value)} /></label>

@@ -14,7 +14,6 @@
 
 import type { Operation } from "../learned-commands.js";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 export interface CodePlan {
   id: string;
   template: string;
@@ -104,7 +103,7 @@ export function planCard(hit: CodePlan, message: string) {
     id: hit.id,
     template: hit.template,
     operations: hit.operations.length,
-    summary: hit.summary ?? `${countOf(hit.operations.length, "change")}`,
+    summary: hit.summary ?? `${hit.operations.length} changes`,
     message,
     ...(hit.lines ? { lines: hit.lines } : {}),
     // The sentence and the records it counts; the offer strip's hint to send

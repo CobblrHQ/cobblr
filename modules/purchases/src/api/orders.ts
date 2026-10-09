@@ -18,6 +18,9 @@ import { claimLine, stampLine } from "./line-subject.js";
 import { orderTotal } from "../order-total.js";
 import { editOrderLine } from "../line-edit.js";
 import { listShipments } from "../shipments.js";
+import { attachWaiting, orderPageSummary } from "../order-page/store.js";
+import { trackingNumberFromText } from "@cobblr/platform-contract/tracking-text";
+import { withCarrierNames } from "./shipments.js";
 
 export const ordersRouter = Router({ mergeParams: true });
 
@@ -44,7 +47,8 @@ const OrderCreate = z.object({
   status: OrderStatus.optional(),
   total_cost: z.number().nullable().optional(),
   shipping_cost: z.number().nullable().optional(),
-  tracking_number: z.string().max(160).nullable().optional(),
+  // A pasted tracking link is the number it points at (#5351).
+  tracking_number: z.preprocess((v) => (typeof v === "string" && v.trim() ? trackingNumberFromText(v) ?? v : v), z.string().max(160).nullable().optional()),
   notes: z.string().max(8_000).nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
   /** Whether the lines add their stock when the order arrives. Default on;
@@ -285,8 +289,11 @@ ordersRouter.get(
     const [priced] = await orderFigures(tenantContext(req).org.id, db, [order]);
     // The parcels it ships in, when more than one (#5351); a line names its
     // own by shipment_id.
-    const shipments = await listShipments(db, id);
-    res.json({ ...priced, shipments, items: items.map((i) => ({ ...i, currency: fieldCurrency(i.metadata, "unit_cost", priced!.currency) })) });
+    const shipments = await withCarrierNames(tenantContext(req).org.id, await listShipments(db, id));
+    // The store's own order page, when an order email carried it (#5461):
+    // which store and how following it is going. Never the link.
+    const order_page = await orderPageSummary(db, id);
+    res.json({ ...priced, shipments, order_page, items: items.map((i) => ({ ...i, currency: fieldCurrency(i.metadata, "unit_cost", priced!.currency) })) });
   }),
 );
 
@@ -331,6 +338,9 @@ ordersRouter.post(
       orgId: ctx.org.id,
       orderId: inserted.id,
     });
+    // An order email filed before this order existed may have left its
+    // store page waiting on this number.
+    if (inserted.order_number) await attachWaiting(db).catch((err: unknown) => console.error("[purchases] order page attach failed:", (err as Error).name));
     res.status(201).json(inserted);
   }),
 );

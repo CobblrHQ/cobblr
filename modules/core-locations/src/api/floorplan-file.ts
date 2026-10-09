@@ -15,6 +15,7 @@
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { platform } from "@cobblr/platform-contract";
 import { Router } from "express";
+import { isEdge, isRotation } from "@cobblr/platform-contract/plan-clearance";
 import { FLOORPLAN_FORMAT, problemSentence, readFloorplanFile, type FloorplanContainerT, type FloorplanFileT } from "@cobblr/platform-contract/floorplan-format";
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
@@ -51,14 +52,37 @@ const floorplanOf = (metadata: unknown): Fp => {
  *  some. Import and export both write them this way, so a round trip is
  *  exact. */
 type OpeningKind = "door" | "window" | "opening";
-function normWalls(walls: ReadonlyArray<{ x1: number; y1: number; x2: number; y2: number; openings?: ReadonlyArray<{ at_mm: number; w_mm: number; kind?: string }> }>, bound: { w_mm: number; d_mm: number }) {
+type OpeningIn = { at_mm: number; w_mm: number; kind?: string; swing?: string; hinge?: string; leaf_mm?: number; sill_mm?: number };
+/** An opening as stored: a door keeps its swing, hinge and leaf, a window
+ *  its sill, and nothing else keeps either. */
+function normOpening(o: OpeningIn) {
+  const kind = o.kind === "door" || o.kind === "window" || o.kind === "opening" ? (o.kind as OpeningKind) : undefined;
+  return {
+    at_mm: r(o.at_mm),
+    w_mm: r(o.w_mm),
+    ...(kind ? { kind } : {}),
+    ...(kind === "door" && isEdge(o.swing) ? { swing: o.swing } : {}),
+    ...(kind === "door" && isEdge(o.hinge) ? { hinge: o.hinge } : {}),
+    ...(kind === "door" && typeof o.leaf_mm === "number" && o.leaf_mm > 0 ? { leaf_mm: r(o.leaf_mm) } : {}),
+    ...(kind === "window" && typeof o.sill_mm === "number" && o.sill_mm >= 0 ? { sill_mm: r(o.sill_mm) } : {}),
+  };
+}
+function normWalls(walls: ReadonlyArray<{ x1: number; y1: number; x2: number; y2: number; openings?: ReadonlyArray<OpeningIn> }>, bound: { w_mm: number; d_mm: number }) {
   return walls.map((w) => ({
     x1: Math.max(0, Math.min(r(w.x1), bound.w_mm)),
     y1: Math.max(0, Math.min(r(w.y1), bound.d_mm)),
     x2: Math.max(0, Math.min(r(w.x2), bound.w_mm)),
     y2: Math.max(0, Math.min(r(w.y2), bound.d_mm)),
-    ...(w.openings?.length ? { openings: w.openings.map((o) => ({ at_mm: r(o.at_mm), w_mm: r(o.w_mm), ...(o.kind === "door" || o.kind === "window" || o.kind === "opening" ? { kind: o.kind as OpeningKind } : {}) })) } : {}),
+    ...(w.openings?.length ? { openings: w.openings.map(normOpening) } : {}),
   }));
+}
+/** A closet's door as stored on its zone: only what was said. */
+function normCloset(c: { door_mm?: number; hinge?: string; swing?: string }): Fp {
+  return {
+    ...(typeof c.door_mm === "number" && c.door_mm > 0 ? { door_mm: r(c.door_mm) } : {}),
+    ...(isEdge(c.hinge) ? { hinge: c.hinge } : {}),
+    ...(isEdge(c.swing) ? { swing: c.swing } : {}),
+  };
 }
 /** Equal as values: Postgres keeps a jsonb object's keys in its own order. */
 const canon = (v: unknown): unknown =>
@@ -148,6 +172,7 @@ export async function importFloorplan(orgId: string, plan: FloorplanFileT, opts:
       (cur) => {
         const want: Fp = { ...rect };
         if (onFloor) want.wall_mounted = c.wall_mounted === true;
+        if (onFloor && c.rot) want.rot = c.rot;
         if (faceH || shelves.length || kids.length) {
           const had = cur.face && typeof cur.face === "object" ? (cur.face as Fp) : null;
           want.face = had ? { ...had, d_mm: faceH ?? had.d_mm } : { w_mm: rect.w_mm, d_mm: faceH ?? rect.d_mm, view: "front", unit };
@@ -181,7 +206,9 @@ export async function importFloorplan(orgId: string, plan: FloorplanFileT, opts:
     }
     const roomId = await ensure(parent, room.name, "area", (cur) => ({ ...bound, unit: (cur.unit as string | undefined) ?? unit, view: "plan", walls }), path);
     for (const z of room.zones ?? []) {
-      await ensure(roomId, z.name, "area", clamp(z, bound, z.name, room.name, (s) => warnings.push(s)), `${path} › ${z.name}`);
+      const at: Fp = clamp(z, bound, z.name, room.name, (s) => warnings.push(s));
+      if (z.closet) at.closet = normCloset(z.closet);
+      await ensure(roomId, z.name, "area", at, `${path} › ${z.name}`);
     }
     for (const c of room.containers ?? []) await container(c, roomId, bound, room.name, `${path} › ${c.name}`, true);
   }
@@ -281,6 +308,7 @@ export async function exportFloorplan(orgId: string, rootId: string): Promise<Fl
     const out: FloorplanContainerT = { name: l.name, x_mm: Number(fp.x_mm), y_mm: Number(fp.y_mm), w_mm: Number(fp.w_mm), d_mm: Number(fp.d_mm) };
     if (h) out.h_mm = h;
     if (fp.wall_mounted !== undefined) out.wall_mounted = fp.wall_mounted === true;
+    if (isRotation(fp.rot)) out.rot = fp.rot;
     if (shelves.length && h) {
       out.face = {
         shelves: shelves
@@ -309,7 +337,13 @@ export async function exportFloorplan(orgId: string, rootId: string): Promise<Fl
         d_mm: Number(fp.d_mm),
         ...(Array.isArray(fp.walls) && fp.walls.length ? { walls: normWalls(fp.walls as never, { w_mm: Number(fp.w_mm), d_mm: Number(fp.d_mm) }) } : {}),
         ...(zones.length
-          ? { zones: zones.map((z) => { const f = floorplanOf(z.metadata); return { name: z.name, x_mm: Number(f.x_mm), y_mm: Number(f.y_mm), w_mm: Number(f.w_mm), d_mm: Number(f.d_mm) }; }) }
+          ? {
+              zones: zones.map((z) => {
+                const f = floorplanOf(z.metadata);
+                const closet = f.closet && typeof f.closet === "object" ? normCloset(f.closet as never) : null;
+                return { name: z.name, x_mm: Number(f.x_mm), y_mm: Number(f.y_mm), w_mm: Number(f.w_mm), d_mm: Number(f.d_mm), ...(closet ? { closet } : {}) };
+              }),
+            }
           : {}),
         ...(containers.length ? { containers: containers.map(containerOut) } : {}),
       };

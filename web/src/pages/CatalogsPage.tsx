@@ -13,7 +13,6 @@ import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web"
 import { ApiError, api, type Catalog } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 export function CatalogsPage() {
   usePageTitle("Catalogs");
   const { activeSlug } = useActiveOrg();
@@ -84,7 +83,7 @@ export function CatalogsPage() {
                 message:
                   c.source === "hosted"
                     ? `${c.name} will be removed from this workspace (its data stays in Cobblr's shared catalog). Existing matches from your entities to it will become dangling.`
-                    : `${c.name} and all ${countOf(c.entry_count, "entry")} will be removed. Existing matches from your entities to entries in this catalog will become dangling.`,
+                    : `${c.name} and all ${c.entry_count} entries will be removed. Existing matches from your entities to entries in this catalog will become dangling.`,
                 confirmLabel: "Delete",
                 destructive: true,
               });

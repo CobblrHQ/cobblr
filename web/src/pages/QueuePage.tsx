@@ -14,7 +14,6 @@ import { usePageTitle, usePageWidth } from "@cobblr/platform-web";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 import { FEED_SCROLL_PAGE_INNER } from "../lib/feed";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 const STATUSES = ["queued", "running", "done", "failed"] as const;
 type Status = (typeof STATUSES)[number];
 
@@ -48,7 +47,7 @@ export function QueuePage() {
     <div className="space-y-4">
       <ConfigHeaderActions>
         <span className="text-sm text-muted dark:text-slate-400">
-          {countOf(items.length, "job")}
+          {items.length} jobs
         </span>
         <select
           value={statusFilter}

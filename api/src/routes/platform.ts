@@ -1932,6 +1932,7 @@ platformOrgRouter.get("/:slug/ai-chain", requireAuth, withTenant, async (req, re
         label: s.label,
         provider_id: s.provider_id,
         model: s.model,
+        ...(s.model_label ? { model_label: s.model_label } : {}),
         floating: s.floating,
         ...(s.credential_id ? { credential_id: s.credential_id } : {}),
       };

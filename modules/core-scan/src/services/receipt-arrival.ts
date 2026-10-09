@@ -54,8 +54,16 @@ export function fileReceiptAs(
   /** The day that has arrived everywhere on earth - passed in so this stays a
    *  pure function a test can pin. */
   today?: string,
+  /** The receipt is an online order: an order confirmation email, or a
+   *  receipt that charged for shipping. It is on its way, not in hand, even
+   *  with no number and no promised day yet; the order says "no date yet"
+   *  rather than inventing one, and the arrival sweep asks once, a week on. */
+  ships?: boolean,
 ): ArrivalFiling {
   const tracking = (trackingNumber ?? "").trim();
+  if (!tracking && ships) {
+    return { tracking_number: undefined, arrived_at: undefined, status: "in-transit" };
+  }
   if (!tracking) {
     // A future promised date means the parcel is still coming even without a
     // number yet. Orders born at parse time always land here (nobody has had a

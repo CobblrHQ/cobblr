@@ -10,6 +10,7 @@ import { asyncHandler } from "./util.js";
 
 export interface BoardRevision extends BoardFiles {
   project_id: string; project_kind: string; revision: string; package_kind: string; blank_kind: string; stencil_kind: string;
+  placed_kind?: string;
   fingerprint: string; blank_part_id?: string; stencil_id?: string; stencil_style?: "framed" | "frameless";
 }
 const Project = z.object({ project_id: z.string().uuid(), project_kind: z.string().min(3).max(120) });
@@ -17,7 +18,7 @@ const Save = BoardImport.merge(Project).extend({ revision: z.string().trim().min
 const Check = z.object({ build_id: z.string().uuid(), boards: z.number().int().positive().max(1_000_000) });
 const FabOrder = z.object({ build_id: z.string().uuid(), vendor: z.enum(["JLCPCB", "PCBWay", "OSH Park"]), qty: z.number().int().positive().max(1_000_000), request_key: z.string().min(1).max(160), source_file_id: z.string().uuid(), expected_arrival: z.string().optional(), tracking_number: z.string().max(160).optional() });
 const Stencil = z.object({ build_id: z.string().uuid(), style: z.enum(["framed", "frameless"]), part_id: z.string().uuid().optional() });
-const CircuitConfig = z.object({ package_kind: z.string().min(3), blank_kind: z.string().min(3), stencil_kind: z.string().min(3) });
+const CircuitConfig = z.object({ package_kind: z.string().min(3), blank_kind: z.string().min(3), stencil_kind: z.string().min(3), placed_kind: z.string().min(3).optional() });
 const specOf = (metadata: unknown): BoardRevision | null => (metadata as { assembly?: BoardRevision } | null)?.assembly ?? null;
 export async function revision(db: Kysely<BuildsDB>, id: string) {
   const build = await db.selectFrom("builds_builds").selectAll().where("id", "=", id).executeTakeFirst();

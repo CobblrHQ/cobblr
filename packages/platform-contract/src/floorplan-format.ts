@@ -17,10 +17,16 @@ const mm = (what: string) => z.number({ invalid_type_error: `${what} is a number
 const size = (what: string) => mm(what).positive(`${what} is more than 0`);
 const name = z.string().trim().min(1, "a name is not empty").max(200);
 
+const side = z.enum(["top", "bottom", "left", "right"]);
+
 export const FloorplanOpening = z.object({
   at_mm: mm("at_mm").min(0).describe("How far along the wall from its first end, in mm."),
   w_mm: size("w_mm").describe("Its width, in mm."),
   kind: z.enum(["door", "window", "opening"]).optional().describe("door, window or opening."),
+  swing: side.optional().describe("A door: the side of the plan it opens toward (top or bottom for a wall running across, left or right for one running down). Without it the door is drawn as an opening."),
+  hinge: side.optional().describe("A door: the end its hinge is at (left or right for a wall running across, top or bottom for one running down)."),
+  leaf_mm: size("leaf_mm").optional().describe("A door: its leaf, when not the opening's width, in mm."),
+  sill_mm: mm("sill_mm").min(0).optional().describe("A window: the height of its sill above the floor, in mm."),
 });
 
 export const FloorplanWall = z.object({
@@ -37,6 +43,14 @@ export const FloorplanZone = z.object({
   y_mm: mm("y_mm"),
   w_mm: size("w_mm"),
   d_mm: size("d_mm"),
+  closet: z
+    .object({
+      door_mm: size("door_mm").optional().describe("Its door's width, in mm."),
+      hinge: side.optional(),
+      swing: side.optional(),
+    })
+    .optional()
+    .describe("A closet: a recess against one of the room's walls, drawn with its walls and a door on its front."),
 });
 
 export const FloorplanShelf = z.object({
@@ -52,6 +66,7 @@ export interface FloorplanContainerT {
   d_mm: number;
   h_mm?: number;
   wall_mounted?: boolean;
+  rot?: 90 | 180 | 270;
   face?: { shelves?: Array<{ name: string; from_bottom_mm: number }> };
   containers?: FloorplanContainerT[];
 }
@@ -67,6 +82,10 @@ export const FloorplanContainer: z.ZodType<FloorplanContainerT> = z.lazy(() =>
     d_mm: size("d_mm"),
     h_mm: size("h_mm").optional().describe("Its height, in mm: the height of its front face."),
     wall_mounted: z.boolean().optional(),
+    rot: z
+      .union([z.literal(90), z.literal(180), z.literal(270)])
+      .optional()
+      .describe("A quarter turn clockwise: w_mm and d_mm are as it stands on the plan, its front faces left at 90."),
     face: z.object({ shelves: z.array(FloorplanShelf).optional() }).optional(),
     containers: z.array(FloorplanContainer).optional(),
   }),
@@ -150,6 +169,14 @@ function toJson(t: z.ZodTypeAny, defs: Map<z.ZodTypeAny, string>, out: Json): Js
       return { type: "string", enum: def.values as string[], ...desc };
     case "ZodLiteral":
       return { const: def.value, ...desc };
+    case "ZodUnion": {
+      const options = def.options as z.ZodTypeAny[];
+      if (options.every((o) => (o._def as { typeName: string }).typeName === "ZodLiteral")) {
+        const values = options.map((o) => (o._def as { value: unknown }).value);
+        return { ...(values.every((v) => typeof v === "number") ? { type: "number" } : {}), enum: values, ...desc };
+      }
+      return { anyOf: options.map((o) => toJson(o, defs, out)), ...desc };
+    }
     default:
       throw new Error(`floorplanJsonSchema: ${def.typeName} is not mapped`);
   }
@@ -311,7 +338,10 @@ Then output ONE JSON object, and nothing else, following these rules exactly:
 - Each room has its own coordinates: x goes right and y goes down from the room's top-left corner, as if seen from above with the room's entry wall at the bottom.
 - A room's "w_mm" is its width (left to right) and "d_mm" its depth (top to bottom). Its outer walls are implied; "walls" lists only interior walls, as segments from (x1, y1) to (x2, y2).
 - Doors, windows and openings belong to a wall: "at_mm" is the distance from the wall's first end, "w_mm" is their width, and "kind" is "door", "window" or "opening". For an outer wall, add it to "walls" along the room's edge (e.g. y1 = y2 = d_mm for the bottom wall).
+- A door says which way it opens: "swing" is the side of the plan it opens toward (a door in the bottom wall that opens into the room swings "top") and "hinge" is the end its hinge is at ("left" or "right" on a wall running across, "top" or "bottom" on one running down). A window has "sill_mm", the height of its sill above the floor.
+- A closet is a zone with "closet": { "door_mm": its door's width }, standing against one of the room's walls; its walls and door are drawn from it, so don't add them to "walls".
 - "zones" are named regions of a room's floor (e.g. "Bench side"); "containers" are physical things that hold stuff (racks, shelves, cabinets, toolboxes), each with x_mm, y_mm (top-left corner), w_mm (width), d_mm (depth), h_mm (height) and "wall_mounted".
+- A container's front faces the bottom of the plan. One turned to face another way has "rot": 90 (its front faces left), 180 (top) or 270 (right), and its w_mm and d_mm are then as it stands on the plan.
 - A container's shelves go in "face": "shelves", each with "name" and "from_bottom_mm" (the height of the shelf's surface above the floor). Drawers or bins inside a container go in its own "containers" list, placed on its front face: x_mm from its left, y_mm down from its top, w_mm wide and d_mm tall.
 - Every name must be unique within its parent. Don't invent rooms or furniture I didn't mention.
 
@@ -325,8 +355,11 @@ The shape:
       "name": "Printer room", "level": "Basement",
       "w_mm": 4267, "d_mm": 3048,
       "walls": [ { "x1": 0, "y1": 3048, "x2": 4267, "y2": 3048,
-                   "openings": [ { "at_mm": 300, "w_mm": 815, "kind": "door" } ] } ],
-      "zones": [ { "name": "Bench side", "x_mm": 0, "y_mm": 0, "w_mm": 1500, "d_mm": 3048 } ],
+                   "openings": [ { "at_mm": 300, "w_mm": 815, "kind": "door", "swing": "top", "hinge": "left" } ] },
+                 { "x1": 0, "y1": 0, "x2": 4267, "y2": 0,
+                   "openings": [ { "at_mm": 1800, "w_mm": 900, "kind": "window", "sill_mm": 1000 } ] } ],
+      "zones": [ { "name": "Bench side", "x_mm": 0, "y_mm": 0, "w_mm": 1500, "d_mm": 3048 },
+                 { "name": "Closet", "x_mm": 3367, "y_mm": 0, "w_mm": 900, "d_mm": 1200, "closet": { "door_mm": 760 } } ],
       "containers": [
         { "name": "Rack 1", "x_mm": 100, "y_mm": 100, "w_mm": 1220, "d_mm": 610, "h_mm": 1830,
           "wall_mounted": false,

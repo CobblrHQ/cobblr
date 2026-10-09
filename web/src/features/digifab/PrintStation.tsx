@@ -6,6 +6,8 @@ import { Modal, usePageTitle } from "@cobblr/platform-web";
 import { MAIN_ID, SkipToContent } from "../../components/a11y/shell-landmarks";
 import { api, ApiError, type DigifabJobReview } from "../../lib/api";
 import { ToolTemperatures } from "./ToolTemperatures";
+import {StationInstall} from "./StationInstall";
+import {keepStationScreenAwake} from "../../lib/station-screen";
 
 const button = "min-h-12 rounded border border-line px-4 py-3 text-base disabled:opacity-50";
 export function PrintStation({ slug, connectionId, deviceId }: { slug: string; connectionId: string; deviceId: string }) {
@@ -27,13 +29,11 @@ export function PrintStation({ slug, connectionId, deviceId }: { slug: string; c
   currentContext.current = context;
   useEffect(() => { setCredential(readCredential()); setReview(null); }, [storageKey]);
   useEffect(() => { setReview(null); setError(""); setReviewRefused(false); }, [context]);
+  const keepAwake = busy || !!job && ["sent", "printing", "paused", "assigning", "awaiting-assignment"].includes(job.status);
   useEffect(() => {
-    let stopped = false;
-    let lock: WakeLockSentinel | undefined;
-    const acquire = async () => { if (document.visibilityState !== "visible" || !navigator.wakeLock || (lock && !lock.released)) return; try { const next = await navigator.wakeLock.request("screen"); if (stopped) await next.release(); else lock = next; } catch { /* Screen wake permission is optional. */ } };
-    void acquire(); document.addEventListener("visibilitychange", acquire);
-    return () => { stopped = true; document.removeEventListener("visibilitychange", acquire); void lock?.release(); };
-  }, []);
+    if (keepAwake) return keepStationScreenAwake(document, navigator.wakeLock);
+    return undefined;
+  }, [keepAwake]);
   const operation = useMutation({ mutationFn: async (work: () => Promise<void>) => {
     if (working.current) return;
     working.current = true; setBusy(true); setError("");
@@ -43,6 +43,7 @@ export function PrintStation({ slug, connectionId, deviceId }: { slug: string; c
   const currentReview = review?.context === context ? review.value : null;
   return <><SkipToContent /><main id={MAIN_ID} tabIndex={-1} data-testid="machine-station" className="min-h-screen max-w-5xl mx-auto bg-surface text-content p-4 sm:p-6 space-y-5">
     <header className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-2xl font-semibold">Printer station</h1><p className="break-words text-muted">{device?.name || "Snapmaker printer"}</p></div><Link className={button} to="/digifab">Exit to the fleet</Link></header>
+    {credential && <StationInstall />}
     {(!reviewRefused && error || q.error) && <p role="alert" className="rounded border border-red-500 p-4 break-words">{error || String(q.error)}</p>}
     {!credential ? <section className="rounded border border-line p-4 space-y-3"><h2 className="text-xl font-semibold font-mono uppercase tracking-wide">Set up this screen at the printer</h2><p>An owner or admin must authorize this screen before it can review and start a print. Keep it beside the machine.</p><button className={button} disabled={busy} onClick={() => void run(async () => { const result = await api.registerDigifabStation(slug, connectionId, deviceId); const next = { id: result.id, token: result.token }; localStorage.setItem(storageKey, JSON.stringify(next)); setCredential(next); })}>Authorize this machine station</button></section> : <button className={button} disabled={busy} onClick={() => void run(async () => { await api.revokeDigifabStation(slug, credential.id); localStorage.removeItem(storageKey); setCredential(null); setReview(null); })}>Revoke this screen</button>}
     <ToolTemperatures tools={device?.temps?.tools} />

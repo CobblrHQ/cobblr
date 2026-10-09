@@ -18,6 +18,7 @@
 // public GitHub release needed. Manifest path: env DESKTOP_UPDATES_FILE
 // (default ./data/desktop-releases.json).
 
+import {stationManifest} from "@cobblr/platform-contract/station-manifest";
 import { Router, type Response } from "express";
 import { z } from "zod";
 import { promises as fs } from "node:fs";
@@ -130,6 +131,11 @@ desktopUpdatesRouter.get("/manifest", requireAuth, requirePlatformAdmin, async (
   }
 });
 
+desktopUpdatesRouter.get("/station.webmanifest", (req, res) => {
+  try { res.type("application/manifest+json").set("cache-control","no-store").json(stationManifest(String(req.query.start || ""))); }
+  catch { res.status(400).json({error:{code:"bad_station",message:"Choose a machine station URL."}}); }
+});
+
 // ── public download for the headless bridge binary ──────────────────────────
 // GET /desktop/bridge/:os/:arch → streams the prebuilt standalone edge-bridge
 // binary for that platform. The binaries live as assets on the (PRIVATE)
@@ -138,7 +144,7 @@ desktopUpdatesRouter.get("/manifest", requireAuth, requirePlatformAdmin, async (
 // (public), on or off the tailnet. No-op (503) until the operator sets
 // EDGE_BRIDGE_REPO_API + EDGE_BRIDGE_REPO_TOKEN.
 const OS_OK = new Set(["linux", "darwin", "windows"]);
-const ARCH_OK = new Set(["x64", "arm64"]);
+const ARCH_OK = new Set(["x64", "arm64", "armv7"]);
 let assetCache: { at: number; map: Record<string, string> } | null = null;
 
 async function latestAssetUrls(repoApi: string, token: string): Promise<Record<string, string>> {
@@ -156,7 +162,7 @@ desktopUpdatesRouter.get("/bridge/:os/:arch", async (req, res, next) => {
   try {
     const os = String(req.params.os);
     const arch = String(req.params.arch);
-    if (!OS_OK.has(os) || !ARCH_OK.has(arch)) return void res.status(404).json({ error: { code: "bad_platform", message: "os ∈ linux|darwin|windows, arch ∈ x64|arm64" } });
+    if (!OS_OK.has(os) || !ARCH_OK.has(arch) || (arch === "armv7" && os !== "linux")) return void res.status(404).json({ error: { code: "bad_platform", message: "Choose Linux, Windows or macOS on x64 or arm64, or Linux on armv7." } });
     const repoApi = process.env.EDGE_BRIDGE_REPO_API;
     const token = process.env.EDGE_BRIDGE_REPO_TOKEN;
     if (!repoApi || !token)
@@ -170,7 +176,7 @@ desktopUpdatesRouter.get("/bridge/:os/:arch", async (req, res, next) => {
         },
       });
 
-    const assetName = `cobblr-bridge-${os}-${arch}${os === "windows" ? ".exe" : ""}`;
+    const assetName = `cobblr-bridge-${os}-${arch}${os === "windows" ? ".exe" : arch === "armv7" ? ".tar.gz" : ""}`;
     const map = await latestAssetUrls(repoApi, token);
     const url = map[assetName];
     if (!url) return void res.status(404).json({ error: { code: "no_asset", message: `no ${assetName} in the latest release` } });

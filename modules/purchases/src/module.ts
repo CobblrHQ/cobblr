@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "purchases",
-  version: "0.14.0",
+  version: "0.16.1",
   displayName: "Purchases",
   description:
     "Orders you placed and what they cost, with each line tied to the parts it bought and what they went into.",
@@ -22,7 +22,7 @@ export default defineModule({
   // core-scan joined when a receipt attached to a scan item started creating
   // this module's orders: contributing a panel into a module REQUIRES
   // declaring you operate on it, which is what keeps this list honest.
-  operatesOn: ["inventory", "core-scan"],
+  operatesOn: ["inventory", "core-scan", "assets"],
   // Operating on inventory does not make the orders themselves a tool: a
   // grown sidebar files Purchases with the collections a person keeps.
   navKind: "collection",
@@ -367,6 +367,31 @@ export default defineModule({
         surface: "entity-detail-panel" as const,
         target: "inventory:part",
         title: "Price history",
+      },
+      // Still on its way (#5351): a thing you bought says so on its own page
+      // ("On its way: Amazon Logistics TBA…, expected Oct 11", or "Not shipped
+      // yet") until it arrives, and so does the receipt's row in the scan
+      // inbox, before it is any record. Nothing at all once it is here.
+      {
+        id: "purchases:on-its-way",
+        surface: "entity-detail-panel" as const,
+        target: "inventory:part",
+        title: "On its way",
+        placement: "summary",
+      },
+      {
+        id: "purchases:on-its-way",
+        surface: "entity-detail-panel" as const,
+        target: "assets:asset",
+        title: "On its way",
+        placement: "summary",
+      },
+      {
+        id: "purchases:on-its-way",
+        surface: "entity-detail-panel" as const,
+        target: "core-scan:item",
+        title: "On its way",
+        placement: "summary",
       },
       // The rest of the receipt. Attaching a receipt to one item records every
       // line on the order, and the others are just sitting there unclaimed —

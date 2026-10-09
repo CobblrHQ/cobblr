@@ -12,12 +12,12 @@
 // descendants, so an in-header panel would be clipped. Same trick
 // the ModuleNav popover uses.
 
-import { type ReactNode, useRef, useState } from "react";
+import { type MouseEvent, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavPointer } from "../lib/navPointer";
 import { createPortal } from "react-dom";
 import { dismissOnEmptySpace } from "../lib/dismiss-on-empty";
 import { MoreAppsDoor } from "./MoreAppsDoor";
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink } from "react-router-dom";
 import { Menu, X, Moon, Sun, LogOut, Sliders, UserCog, Bell } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { LabelsBasket } from "./LabelsBasketLazy";
@@ -29,25 +29,19 @@ import { usePendingAiShares } from "../lib/usePendingAiShares";
 import { useAuth } from "../auth/AuthContext";
 import { COMMUNITY_HEADING, CommunityLinks } from "./CommunityLinks";
 import { useTheme } from "../theme/ThemeContext";
-import { useNavHasRow, useNavModules, NAVGROUP_PREFIX, navTargetFor, surfaceTops } from "./useNavModules";
+import { useNavHasRow, useNavModules, HEADING_PREFIX, INSTANCE_PREFIX, NAVGROUP_PREFIX, navTargetFor, stripNavStem, surfaceTops } from "./useNavModules";
+import { groupNavRows, isNavTool } from "./nav-groups";
+import { phoneMenuSections } from "./phone-menu";
 import { useNavBadges } from "./useNavBadges";
 import { NavCountBadge } from "./NavCountBadge";
-import { NavSplitRow, NavRowMenu } from "./NavSplitRow";
+import { NavRowMenu, type RowCollection } from "./NavSplitRow";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { OverlayLayer, useEscapeToClose, useLockPageScroll } from "@cobblr/platform-web";
 import { notificationKeys } from "../lib/notification-keys";
 
-/** The marker on a row that belongs to the group heading above it. It replaced
- *  the word "instance" on those rows: a dot under a heading already says
- *  "child of this", and the word was costing width that pushed longer names
- *  onto a second line. */
-function ChildDot() {
-  return <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-moss-300 dark:bg-moss-200" />;
-}
-
 export function MobileNav() {
   const { activeOrg, activeSlug } = useActiveOrg();
-  const { tops, childrenByParent, instanceGroups } = useNavModules(activeSlug);
+  const { tops, childrenByParent, instanceGroups, doorNames, placement } = useNavModules(activeSlug);
   // A locked managed app ("Cobblr for Yarn") shows ONLY its own surface. The
   // desktop nav already hid the platform rows; this menu did not, so a knitter
   // on a phone saw Dashboard, Calendar and Configuration and every tap bounced
@@ -60,8 +54,11 @@ export function MobileNav() {
   const pendingShares = usePendingAiShares(activeSlug, activeOrg?.role === "owner");
   const { logout, user } = useAuth();
   const { theme, toggle } = useTheme();
-  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
+  // The "…" on a row (split, join) is for rearranging, not for every visit:
+  // it shows in Arrange, switched on in the menu's header or by holding a row.
+  const [arranging, setArranging] = useState(false);
+  const hold = useLongPress(() => setArranging(true));
   // A table the person just got, pointed at once (navPointer.ts): a dot on the
   // closed menu button, then "New" beside it in the open menu.
   const pointer = useNavPointer(activeSlug);
@@ -95,51 +92,73 @@ export function MobileNav() {
   // Lock body scroll while the panel is open.
   useLockPageScroll(open);
 
-  function go(to: string) {
-    navigate(to);
-    setOpen(false);
-  }
-
   const linkClass =
-    "flex min-h-11 h-full min-w-0 items-center gap-2 px-3 text-sm " +
+    "flex min-h-11 h-full min-w-0 items-center gap-2 px-3 text-sm whitespace-nowrap " +
     "text-content dark:text-mortar-100 active:bg-subtle dark:active:bg-slate-800 transition";
   const standaloneLinkClass = linkClass + " border-b border-line dark:border-slate-800";
-  const childClass = linkClass + " w-full text-left pl-6 text-muted dark:text-slate-400";
+  const headerClass = "flex min-h-11 h-full items-end gap-2 bg-subtle/60 px-3 pb-1.5 pt-4 uppercase text-[10px] font-mono tracking-widest text-faint dark:bg-slate-800/40 dark:text-slate-500";
+  const close = () => setOpen(false);
+  const arrangeMenu = (label: string, members: RowCollection[]) =>
+    arranging ? <NavRowMenu slug={activeSlug} label={label} members={members} candidates={rowCandidates} className="flex w-11 self-stretch items-center justify-center normal-case tracking-normal" /> : null;
+  const row = (key: string, to: string, label: string, extra?: ReactNode, end?: ReactNode): MenuEntry => ({ key, content: (
+    <div className="flex h-full min-w-0 items-stretch">
+      <NavLink to={to} end={to === "/"} className={linkClass + " flex-1"} onClick={close}>
+        <span>{label}</span>
+        {extra}
+        <NavCountBadge count={badges.get(key)} label={label} className="ml-auto" />
+      </NavLink>
+      {end}
+    </div>
+  ) });
+  const header = (key: string, label: string, door?: string | null, end?: ReactNode): MenuEntry => ({ key, fullWidth: true, header: true, content: (
+    <div className="flex h-full items-stretch">
+      {door
+        ? <NavLink to={door} onClick={close} className={headerClass + " flex-1 hover:text-accent"}>{label}</NavLink>
+        : <div role="heading" aria-level={3} className={headerClass + " flex-1"}>{label}</div>}
+      {end && <div className="flex items-stretch bg-subtle/60 dark:bg-slate-800/40">{end}</div>}
+    </div>
+  ) });
   const entries: MenuEntry[] = [];
   if (!appMode) {
-    entries.push({ key: "home", content: <NavLink to="/" end className={linkClass} onClick={() => setOpen(false)}>Home</NavLink> });
-    entries.push({ key: "search", content: <NavLink to="/search" className={linkClass} onClick={() => setOpen(false)}>Search</NavLink> });
+    entries.push(row("home", "/", "Home"));
+    entries.push(row("search", "/search", "Search"));
   }
-  for (const m of visibleTops) {
-    if (m.name.startsWith(NAVGROUP_PREFIX)) {
-      const group = instanceGroups.get(m.name);
-      if (group) entries.push({ key: m.name, content: <NavSplitRow slug={activeSlug} group={group} candidates={rowCandidates} appMode={appMode} plain onNavigate={() => setOpen(false)} /> });
-      continue;
+  const isBlock = (t: { name: string }) => t.name.startsWith(NAVGROUP_PREFIX) || t.name.startsWith(HEADING_PREFIX) || (childrenByParent.get(t.name)?.length ?? 0) > 0;
+  const sections = phoneMenuSections(visibleTops, {
+    isBlock,
+    isTool: (t) => isNavTool(t, doorNames, placement),
+    grouped: groupNavRows(visibleTops, doorNames, { homeRow: !appMode, placement }).grouped,
+  });
+  const loose = (m: (typeof visibleTops)[number]) => row(m.name, navTargetFor(m.name, appMode), m.displayName,
+    pointed === m.displayName ? <NewInNav /> : undefined,
+    m.name.startsWith(INSTANCE_PREFIX) ? arrangeMenu(m.displayName, [m]) : undefined);
+  const block = (m: (typeof visibleTops)[number]) => {
+    const group = m.name.startsWith(NAVGROUP_PREFIX) ? instanceGroups.get(m.name) : undefined;
+    if (group) {
+      // A bundle's group (LEGO: Sets, Bricks): its label is the header and each
+      // member an ordinary row, never two links squeezed into one cell.
+      entries.push(header(m.name, group.label || "Collections", null, arrangeMenu(group.label || "Collections", group.members)));
+      for (const mem of group.members) {
+        // Under its header a row drops the group's word ("Filament vendors" → "Vendors"), and starts with a capital like every other row.
+        const label = stripNavStem(mem.displayName, group.label);
+        entries.push(row(mem.name, navTargetFor(mem.name, appMode), label.charAt(0).toUpperCase() + label.slice(1)));
+      }
+      return;
     }
-    const isHeading = m.name.startsWith("__heading__");
-    entries.push({ key: m.name, fullWidth: isHeading, content: isHeading ? (
-      <div className="flex min-h-11 h-full items-center px-3 text-faint dark:text-slate-500 uppercase text-[10px] font-mono tracking-widest">{m.displayName}</div>
-    ) : (
-      <div className="flex h-full min-w-0 items-stretch">
-        <NavLink to={navTargetFor(m.name, appMode)} className={linkClass + " flex-1"} onClick={() => setOpen(false)}>
-          <span className="truncate">{m.displayName}</span>
-          {pointed === m.displayName && <NewInNav />}
-          <NavCountBadge count={badges.get(m.name)} label={m.displayName} className="ml-auto" />
-        </NavLink>
-        {m.name.startsWith("__instance__") && <NavRowMenu slug={activeSlug} label={m.displayName} members={[m]} candidates={rowCandidates} className="flex w-7 items-center justify-center" />}
-      </div>
-    ) });
+    const isHeading = m.name.startsWith(HEADING_PREFIX);
+    entries.push(header(m.name, m.displayName, isHeading ? null : navTargetFor(m.name, appMode)));
     for (const k of childrenByParent.get(m.name) ?? []) {
-      const isInstance = k.name.startsWith("__instance__");
+      const isInstance = k.name.startsWith(INSTANCE_PREFIX);
       const to = isInstance ? navTargetFor(k.name, appMode) : isHeading ? `/${k.name}` : `/${m.name}?lens=${k.name}`;
-      entries.push({ key: k.name, content: <button type="button" onClick={() => go(to)} className={childClass}>
-        <ChildDot />
-        <span className="truncate">{k.displayName}</span>
-        {!isInstance && !isHeading && <span className="shrink-0 text-[10px] font-mono text-faint">lens</span>}
-      </button> });
+      entries.push(row(k.name, to, k.displayName, !isInstance && !isHeading ? <span className="shrink-0 text-[10px] font-mono text-faint">lens</span> : undefined));
     }
+  };
+  for (const s of sections) {
+    for (const m of s.blocks) block(m);
+    if (s.looseTitle) entries.push(header(`section:${s.looseTitle}`, s.looseTitle));
+    for (const m of s.loose) entries.push(loose(m));
   }
-  if (!appMode) entries.push({ key: "more-apps", fullWidth: true, content: <MoreAppsDoor plain onNavigate={() => setOpen(false)} className={linkClass} /> });
+  if (!appMode) entries.push({ key: "more-apps", fullWidth: true, content: <MoreAppsDoor plain onNavigate={close} className={linkClass} /> });
   // One cell of the pinned account footer. min-w-0 + flex-1 so five of them
   // share a 393px phone evenly without any one pushing the row wide.
   const footItem =
@@ -224,6 +243,16 @@ export function MobileNav() {
                     Cobblr
                   </span>
                 </span>
+                <span className="flex items-center gap-1">
+                <button
+                  type="button"
+                  aria-pressed={arranging}
+                  onClick={() => setArranging((a) => !a)}
+                  data-testid="menu-arrange"
+                  className={"min-h-11 rounded px-2 text-xs transition " + (arranging ? "font-medium text-accent" : "text-muted hover:text-accent dark:text-slate-400")}
+                >
+                  {arranging ? "Done" : "Arrange"}
+                </button>
                 <button
                   type="button"
                   onClick={() => setOpen(false)}
@@ -233,6 +262,7 @@ export function MobileNav() {
                 >
                   <X size={18} />
                 </button>
+                </span>
               </div>
 
               {/* The slack below the last destination is empty space, and a tap
@@ -242,7 +272,7 @@ export function MobileNav() {
                 className="flex-1 overflow-y-auto"
                 onClick={dismissOnEmptySpace(() => setOpen(false))}
               >
-              <MenuGrid entries={entries} />
+              <div {...hold}><MenuGrid entries={entries} /></div>
 
               {/* The label queue's count rides on the Labels row as a badge
                   (nav.count). This row is for a person who took Labels out of
@@ -380,28 +410,95 @@ function NewInNav() {
   );
 }
 
-type MenuEntry = { key: string; content: ReactNode; fullWidth?: boolean };
+type MenuEntry = { key: string; content: ReactNode; fullWidth?: boolean; header?: boolean };
 
+/** Holding a row switches Arrange on, the phone's way to a row's "…". The
+ *  press that did it does not also open the row. */
+function useLongPress(onHold: () => void) {
+  const timer = useRef<number | undefined>(undefined);
+  const held = useRef(false);
+  const clear = () => {
+    window.clearTimeout(timer.current);
+    timer.current = undefined;
+  };
+  useEffect(() => clear, []);
+  return {
+    onPointerDown: () => {
+      held.current = false;
+      clear();
+      timer.current = window.setTimeout(() => {
+        held.current = true;
+        onHold();
+      }, 500);
+    },
+    onPointerUp: clear,
+    onPointerLeave: clear,
+    onPointerCancel: clear,
+    onContextMenu: (e: MouseEvent) => {
+      e.preventDefault();
+      clear();
+      held.current = true;
+      onHold();
+    },
+    onClickCapture: (e: MouseEvent) => {
+      if (!held.current) return;
+      held.current = false;
+      e.preventDefault();
+      e.stopPropagation();
+    },
+  };
+}
+
+/** Rows of one or two cells. A header starts a new row; two neighbours share
+ *  a row only when both labels fit half the width, measured, so nothing is
+ *  ever cut short with "…"; a row left with one cell takes the full width
+ *  rather than leaving a hole. */
 function MenuGrid({ entries }: { entries: MenuEntry[] }) {
+  const grid = useRef<HTMLDivElement>(null);
+  const [wide, setWide] = useState<ReadonlySet<string>>(new Set());
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    const el = grid.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setWidth(el.clientWidth));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  // A new width can fit a pair that did not fit before: measure from scratch.
+  useLayoutEffect(() => setWide(new Set()), [width]);
+  useLayoutEffect(() => {
+    const over = [...(grid.current?.querySelectorAll<HTMLElement>("[data-menu-half]") ?? [])]
+      .filter((cell) => cell.scrollWidth > cell.clientWidth + 1)
+      .map((cell) => cell.dataset.menuHalf!)
+      .filter((key) => !wide.has(key));
+    if (over.length) setWide(new Set([...wide, ...over]));
+  });
   const rows: MenuEntry[][] = [];
   let pair: MenuEntry[] = [];
+  const flush = () => {
+    if (pair.length) rows.push(pair);
+    pair = [];
+  };
   for (const entry of entries) {
-    if (entry.fullWidth) {
-      if (pair.length) rows.push(pair);
+    if (entry.fullWidth || wide.has(entry.key)) {
+      flush();
       rows.push([entry]);
-      pair = [];
     } else {
       pair.push(entry);
-      if (pair.length === 2) { rows.push(pair); pair = []; }
+      if (pair.length === 2) flush();
     }
   }
-  if (pair.length) rows.push(pair);
-  return <div data-testid="menu-grid" className="grid grid-cols-2">
-    {rows.map((row) => <div key={row[0]!.key} data-menu-row className="col-span-2 grid grid-cols-subgrid border-b border-line dark:border-slate-800">
-      {row.map((entry) => <div key={entry.key} data-testid={entry.key === "more-apps" ? "menu-more-apps" : undefined} className={"min-h-11 min-w-0" + (entry.fullWidth ? " col-span-2" : "")}>
+  flush();
+  return <div ref={grid} data-testid="menu-grid" className="grid grid-cols-2">
+    {rows.map((row) => <div key={row[0]!.key} data-menu-row={row[0]!.header ? "header" : ""} className="col-span-2 grid grid-cols-subgrid border-b border-line dark:border-slate-800">
+      {row.map((entry) => <div
+        key={entry.key}
+        data-testid={entry.key === "more-apps" ? "menu-more-apps" : undefined}
+        data-menu-half={row.length === 2 ? entry.key : undefined}
+        className={"min-h-11 min-w-0" + (row.length === 1 ? " col-span-2" : " overflow-hidden")}
+      >
         {entry.content}
       </div>)}
-      {row.length === 1 && !row[0]!.fullWidth && <div aria-hidden="true" className="min-h-11 min-w-0" />}
     </div>)}
   </div>;
 }

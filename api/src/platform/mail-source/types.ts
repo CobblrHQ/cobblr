@@ -25,6 +25,8 @@ export interface MailMessage {
   text?: string;
   html?: string;
   attachments: MailAttachment[];
+  /** The source's own labels (Gmail: CATEGORY_PURCHASES and the rest), when it has them. */
+  labels?: string[];
 }
 
 export interface MailListPage {

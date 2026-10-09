@@ -33,7 +33,7 @@ import { EdgeBridgeSetup } from "../features/digifab/fleet";
 import { BambuConnectWizard } from "../components/BambuConnectWizard";
 import { BambuPrinterPicker } from "../components/BambuPrinterPicker";
 import { resolvePrinterKind, hiddenPrinterFields } from "../lib/printerKind";
-import { capitalise, machineKindOf, machineWordsFor, type MachineWords } from "../lib/machine-words";
+import { capitalise, machineKindOf, machineKindForRecord, machineWordsFor, type MachineWords } from "../lib/machine-words";
 
 // Printer "kind" options for the detail-modal selector (same ids as the
 // New-3D-printer picker). The kind drives which spec fields are relevant.
@@ -61,23 +61,22 @@ import {
 } from "@cobblr/platform-web";
 import { EntityAttachments } from "../components/EntityAttachments";
 import { LocationTreePicker } from "../components/LocationTreePicker";
-import { itemNounFor, pluralise } from "@cobblr/platform-contract/plural";
+import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract/plural";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 const ENTITY_KIND = "machines:machine";
 
 export function MachinesPage({
   instance,
   displayName,
   itemNoun,
+  itemNounPlural,
   hint,
-}: { instance?: string; displayName?: string; itemNoun?: string; hint?: string | null } = {}) {
+}: { instance?: string; displayName?: string; itemNoun?: string; itemNounPlural?: string; hint?: string | null } = {}) {
   // When `instance` is set we're rendering ONE named collection of machines
   // (e.g. "3D Printers"), reached at the clean /<instance> URL. Same rich page
   // as /machines — fields, detail/edit, digifab — just scoped to the instance's
   // items. No lens/specialisation grouping (the instance IS the focus), and the
   // detail modal opens via local state instead of a /machines/:id route.
-  usePageTitle(displayName ?? "Machines");
   // A wide table is the page here, so it gets the screen.
   usePageWidth("wide");
   const { activeSlug } = useActiveOrg();
@@ -89,6 +88,10 @@ export function MachinesPage({
   // collection. Machines has no per-instance kind here, so the base kind is
   // what itemNounFor reads when no noun was set.
   const noun = itemNounFor({ itemNoun, entityKind: instance ? `${instance}:item` : ENTITY_KIND });
+  const nounPlural = itemNounPlural?.trim() || pluralise(noun);
+  const words = { singular: noun, plural: nounPlural };
+  const heading = displayName ?? nounPlural.charAt(0).toUpperCase() + nounPlural.slice(1);
+  usePageTitle(heading);
 
   const [localSel, setLocalSel] = useState<string | null>(null);
   const selectedId = instance ? localSel : id ?? null;
@@ -193,13 +196,13 @@ export function MachinesPage({
   const allUnits = machineCount(allRows);
   usePublishChatContext({
     kind: instance ? `${instance}:item` : ENTITY_KIND,
-    label: instance ? `Machines (${instance})` : "Machines",
+    label: heading,
     // A record can count several identical machines: say the machines, and
     // the entries when they differ, so "how many printers" is answered right.
     summary:
       (allUnits !== allRows.length
-        ? `${allUnits} machine${allUnits === 1 ? "" : "s"} in ${allRows.length} entr${allRows.length === 1 ? "y" : "ies"}`
-        : `${allRows.length} machine${allRows.length === 1 ? "" : "s"}`) + (machineStates ? ` (${machineStates})` : ""),
+        ? `${countOf(allUnits, words)} in ${countOf(allRows.length, { singular: "entry", plural: "entries" })}`
+        : countOf(allRows.length, words)) + (machineStates ? ` (${machineStates})` : ""),
   });
   const rows = lensName
     ? allRows.filter((m) =>
@@ -369,7 +372,7 @@ export function MachinesPage({
       }
     },
     onSuccess: () => {
-      toastM.success(`Deleted ${selected.size} machine${selected.size === 1 ? "" : "s"}`);
+      toastM.success(`Deleted ${countOf(selected.size, words)}`);
       setSelected(new Set());
       void qcM.invalidateQueries({ queryKey: ["machines", activeSlug] });
     },
@@ -395,7 +398,7 @@ export function MachinesPage({
       }
     },
     onSuccess: () => {
-      toastM.success(`Tagged ${selected.size} machine${selected.size === 1 ? "" : "s"}`);
+      toastM.success(`Tagged ${countOf(selected.size, words)}`);
       setSelected(new Set());
       void qcM.invalidateQueries({ queryKey: ["machines", activeSlug] });
     },
@@ -405,8 +408,8 @@ export function MachinesPage({
   return (
     <div className="space-y-4">
       <CollectionHeader
-        title={displayName ?? "machines"}
-        count={`${filtered.length} of ${machines.data?.total ?? allRows.length}${allUnits !== allRows.length ? ` · ${machineCount(filtered)} machines` : ""}`}
+        title={heading}
+        count={`${filtered.length} of ${machines.data?.total ?? allRows.length}${allUnits !== allRows.length ? ` · ${countOf(machineCount(filtered), words)}` : ""}`}
         hint={hint} kind={instance ? `${instance}:item` : ENTITY_KIND}
         filters={
           <>
@@ -441,7 +444,7 @@ export function MachinesPage({
                   ? "border-accent text-accent bg-accent/5"
                   : "border-line dark:border-slate-600 text-muted hover:text-accent hover:border-accent")
               }
-              title="Show or hide machines by state"
+              title={`Show or hide ${nounPlural} by state`}
             >
               {hiddenStates.size ? `states · ${hiddenStates.size} hidden` : "states"}
             </button>
@@ -486,7 +489,7 @@ export function MachinesPage({
         {showContributedTabs && (
           <div className="h-9 inline-flex items-stretch rounded-md border border-line dark:border-slate-600 overflow-hidden text-xs">
             <button type="button" onClick={() => setPageTab("items")} className={"px-3 " + (pageTab === "items" ? "bg-cobble-600 text-white" : "text-muted hover:bg-subtle dark:hover:bg-slate-800")}>
-              {pluralise(noun)}
+              {nounPlural}
             </button>
             {contributedTabs.map((p) => (
               <button key={p.id} type="button" onClick={() => setPageTab(p.id)} className={"px-3 " + (pageTab === p.id ? "bg-cobble-600 text-white" : "text-muted hover:bg-subtle dark:hover:bg-slate-800")}>
@@ -502,7 +505,7 @@ export function MachinesPage({
               if (e.target.value) navigate(`/machines?lens=${encodeURIComponent(e.target.value)}`);
             }}
             className="input !h-9 !py-0 text-xs !w-auto"
-            title="Focus the table on one machine type's fields"
+            title={`Focus the table on one ${noun} type's fields`}
           >
             <option value="">lens…</option>
             {availableLenses.map((l) => (
@@ -514,7 +517,7 @@ export function MachinesPage({
         )}
           </>
         }
-        search={<SearchInput value={query} onChange={setQuery} placeholder="search…" aria-label={`Search ${pluralise(noun)}`} wrapperClassName="w-48 max-sm:w-full max-sm:flex-1" />}
+        search={<SearchInput value={query} onChange={setQuery} placeholder="search…" aria-label={`Search ${nounPlural}`} wrapperClassName="w-48 max-sm:w-full max-sm:flex-1" />}
         exportQuery={query}
         actions={
           <>
@@ -534,7 +537,7 @@ export function MachinesPage({
       {(instance || lensName) && pageTab !== "fleet" && (
         <div className="flex items-center gap-1.5 flex-wrap">
           <MachineViewChip active={!activeView} onClick={() => selectView(null)}>
-            All {pluralise(noun)}
+            All {nounPlural}
           </MachineViewChip>
           {views.map((v) => (
             <MachineViewChip key={v.id} active={activeView?.id === v.id} onClick={() => selectView(v.id)}>
@@ -564,7 +567,7 @@ export function MachinesPage({
         ) : (
           <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-10 text-center text-xs text-faint italic">
             {allRows.length === 0
-              ? `No ${pluralise(noun)} yet. Add one with New ${noun}.`
+              ? `No ${nounPlural} yet. Add one with New ${noun}.`
               : "No matches with the current filters."}
           </div>
         )
@@ -676,6 +679,7 @@ export function MachinesPage({
 
         machineId={selectedId}
         instance={instance}
+        noun={noun}
         specialisations={instance ? [] : availableLenses}
         onClose={closeDetail}
         onOpen={openDetail}
@@ -743,7 +747,7 @@ export function MachinesPage({
               disabled={bulkDelete.isPending}
               onClick={async () => {
                 const ok = await confirmM({
-                  title: `Delete ${selected.size} machine${selected.size === 1 ? "" : "s"}?`,
+                  title: `Delete ${countOf(selected.size, words)}?`,
                   message: "This removes the rows from the workspace permanently.",
                   confirmLabel: "Delete",
                   destructive: true,
@@ -912,7 +916,7 @@ function SaveViewModal({
             <div className="text-[10px] text-faint mt-1">
               {included.size === allStates.length
                 ? "All states: no filter, shows everything"
-                : `${included.size} of ${countOf(allStates.length, "state")}`}
+                : `${included.size} of ${allStates.length} states`}
             </div>
           </div>
         )}
@@ -946,7 +950,7 @@ function SaveViewModal({
 function LiveChip({ dev }: { dev: DigifabFleetDevice }) {
   const c = fleetStatusChip(dev);
   return (
-    <span className="inline-flex items-center gap-1 text-[10px] text-muted dark:text-slate-400 whitespace-nowrap" title="Live machine status">
+    <span className="inline-flex items-center gap-1 text-[10px] text-muted dark:text-slate-400 whitespace-nowrap" title="Live status">
       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${c.dot}`} />
       {c.label}
     </span>
@@ -1138,12 +1142,15 @@ export function MachineTileGrid({
 export function MachineDetailModal({
   machineId,
   instance,
+  noun: tableNoun,
   specialisations,
   onClose,
   onOpen,
 }: {
   machineId: string | null;
   instance?: string;
+  /** What one of this table's things is called ("printer"); the kind's own word when unset. */
+  noun?: string;
   specialisations: { name: string; label: string }[];
   onClose: () => void;
   /** Open another machine of this collection in place (a unit, its group). */
@@ -1153,6 +1160,8 @@ export function MachineDetailModal({
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
+  const noun = itemNounFor({ itemNoun: tableNoun, entityKind: instance ? `${instance}:item` : ENTITY_KIND });
+  const Noun = noun.charAt(0).toUpperCase() + noun.slice(1);
   // The state vocabulary is the kind's declared `state` choices, the one list a
   // board grouped by state also reads its columns from. A dropdown, not free
   // text; a stored value outside it is kept (EditSelect shows it first).
@@ -1187,7 +1196,7 @@ export function MachineDetailModal({
   const remove = useMutation({
     mutationFn: () => api.deleteMachine(activeSlug, machineId!, instance),
     onSuccess: () => {
-      toast.success("Machine deleted.");
+      toast.success(`${Noun} deleted.`);
       void qc.invalidateQueries({ queryKey: ["machines", activeSlug] });
       onClose();
     },
@@ -1232,7 +1241,7 @@ export function MachineDetailModal({
     const ok = await confirm({
       title: `Delete "${m.name}"?`,
       message: "You can restore this record from Recently deleted for 30 days.",
-      confirmLabel: "Delete machine",
+      confirmLabel: `Delete ${noun}`,
       destructive: true,
     });
     if (ok) remove.mutate();
@@ -1304,7 +1313,7 @@ export function MachineDetailModal({
                 )}
                 {specialisations.length > 0 && (
                   <label className="block">
-                    <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Machine type</span>
+                    <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{Noun} type</span>
                     <select
                       value={typeof m.metadata?.specialisation === "string" ? (m.metadata.specialisation as string) : ""}
                       onChange={(e) => update.mutate({ metadata: { specialisation: e.target.value || null } })}
@@ -1389,7 +1398,7 @@ export function MachineDetailModal({
               hints: {
                 printer_kind: typeof m.metadata?.printer_kind === "string" ? (m.metadata.printer_kind as string) : undefined,
                 collection: instance ? `${instance}:item` : undefined,
-                machine_kind: machineKindOf(instance),
+                machine_kind: machineKindForRecord(instance, m),
               },
             }}
           />

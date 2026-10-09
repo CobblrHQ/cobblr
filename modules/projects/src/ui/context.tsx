@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
-import type { FileIntakeDecl } from "@cobblr/platform-contract";
+import { pluralise, type CountWords, type FileIntakeDecl } from "@cobblr/platform-contract";
 import { ProjectsApi } from "./api";
 
 interface Ctx {
@@ -17,6 +17,11 @@ interface Ctx {
    *  the default /projects page. */
   displayName?: string;
   itemNoun?: string;
+  /** What one of this table's things is called, and many: the instance's own
+   *  words, else the base table's. Every sentence about them reads these. */
+  noun: string;
+  nounPlural: string;
+  nounWords: CountWords;
   fileIntake?: FileIntakeDecl;
   hint?: string | null;
   /** This table's records are patterns (a make's written instructions), so the
@@ -32,6 +37,7 @@ export function ProjectsProvider({
   instance,
   displayName,
   itemNoun,
+  itemNounPlural,
   fileIntake,
   hint,
   children,
@@ -41,6 +47,7 @@ export function ProjectsProvider({
   instance?: string;
   displayName?: string;
   itemNoun?: string;
+  itemNounPlural?: string;
   fileIntake?: FileIntakeDecl;
   hint?: string | null;
   children: ReactNode;
@@ -50,8 +57,11 @@ export function ProjectsProvider({
     [orgSlug, getToken, instance],
   );
   const entityKind = instance ? `${instance}:item` : "projects:project";
+  // base-noun-ok: the base table's own noun, when no instance names one
+  const noun = itemNoun?.trim() || "project";
+  const nounPlural = itemNounPlural?.trim() || pluralise(noun);
   return (
-    <Ctx.Provider value={{ orgSlug, getToken, api, instance, entityKind, displayName, itemNoun, fileIntake, hint, holdsPatterns: holdsPatterns(fileIntake) }}>
+    <Ctx.Provider value={{ orgSlug, getToken, api, instance, entityKind, displayName, itemNoun, noun, nounPlural, nounWords: { singular: noun, plural: nounPlural }, fileIntake, hint, holdsPatterns: holdsPatterns(fileIntake) }}>
       {children}
     </Ctx.Provider>
   );

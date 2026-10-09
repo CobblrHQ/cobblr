@@ -28,6 +28,8 @@ interface InventoryCtx {
    *  from the collection name at creation; falls back here for legacy instances.
    *  A skinnable instance's UI reads this so it never hardcodes "parts". */
   itemNounPlural: string;
+  /** The two together, for a count ("3 sets"): countOf(n, nounWords). */
+  nounWords: CountWords;
   /** Default unit for new items in this instance (e.g. "skein"). */
   qtyUnit?: string;
   /** The unit words this table declares, with their plurals (a bundle's noun
@@ -105,7 +107,7 @@ export function InventoryProvider({
   const nounPlural = itemNounPlural ?? pluralise(noun);
   return (
     <Ctx.Provider
-      value={{ orgSlug, getToken, api, instance, entityKind, itemNoun: noun, itemNounPlural: nounPlural, qtyUnit, countWords: countWords ?? [], parent, connectorImport, recordTemplates, receiptDraft, storageTracking, pasteTracking, basePath }}
+      value={{ orgSlug, getToken, api, instance, entityKind, itemNoun: noun, itemNounPlural: nounPlural, nounWords: { singular: noun, plural: nounPlural }, qtyUnit, countWords: countWords ?? [], parent, connectorImport, recordTemplates, receiptDraft, storageTracking, pasteTracking, basePath }}
     >
       {children}
     </Ctx.Provider>

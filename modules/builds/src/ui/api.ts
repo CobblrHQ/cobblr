@@ -153,6 +153,20 @@ export class BuildsApiError extends Error {
 }
 
 export class BuildsApi {
+  placementResources() { return this.req<Awaited<ReturnType<typeof import("../api/placement.js").placementResources>>>("GET", "/placement-resources"); }
+  placementProgram(id: string) { return this.req<Awaited<ReturnType<typeof import("../api/placement.js").placementProgram>>>("GET", `/assembly-orders/${id}/program`); }
+  async authorizeMachineStation(machineKind: string, machineId: string, purpose: "placement" | "reflow" | "inspection") {
+    const response = await fetch(`/api/v1/orgs/${this.slug}/modules/digifab/stations/machines`, { method: "POST", headers: this.headers(true), body: JSON.stringify({ machine_kind: machineKind, machine_id: machineId, purpose }) });
+    const result = await this.parse<{ id: string; label: string; token: string }>(response);
+    noteWorkspaceWrite(`/api/v1/orgs/${this.slug}/modules/digifab/stations`, response);
+    return result;
+  }
+  async revokeMachineStation(id: string) {
+    const response = await fetch(`/api/v1/orgs/${this.slug}/modules/digifab/stations/${id}`, { method: "DELETE", headers: this.headers() });
+    const result = await this.parse<{ ok: boolean }>(response);
+    noteWorkspaceWrite(`/api/v1/orgs/${this.slug}/modules/digifab/stations`, response);
+    return result;
+  }
   assemblyOrders(id: string) { return this.req<{ items: Array<{ id: string; qty: string; assembly: import("../api/assembly-orders.js").AssemblyOrder }> }>("GET", `/assembly-orders?${new URLSearchParams({ build_id: id })}`); }
   assemblyOrder(id: string) { return this.req<import("../api/assembly-orders.js").AssemblyOrderView>("GET", `/assembly-orders/${id}`); }
   constructor(private readonly slug: string, private readonly getToken: () => string | null) {}

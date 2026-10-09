@@ -1,5 +1,7 @@
+import { registerPasteUseActions } from "./paste-use.js";
 import { pasteRouter, registerPasteActions } from "./paste.js";
 import { registerKitActions } from "./kits.js";
+import { registerStocktakeActions, stocktakeRouter } from "./stocktake-actions.js";
 // Default-exported Router. The platform mounts this at
 // /api/v1/orgs/:slug/modules/inventory/ with requireAuth +
 // withTenant pre-applied, so handlers can rely on req.session +
@@ -45,11 +47,14 @@ registerSheetActions();
 registerShapedStockActions();
 registerStorageActions();
 registerPasteActions();
+registerPasteUseActions();
 registerKitActions();
 registerPackageReceiving();
 registerPlacementConsumption();
 registerSpoolmanWriteBack();
 registerHoldingActions();
+// "What's still here?": take stock of a place, the rest marked gone, one Undo.
+registerStocktakeActions();
 // Parts installed in things built from them: 2 of 4 sticks in a computer.
 registerInstalledParts();
 // A consumer's lines (a pattern's yarns) drawing on stock ball by ball.
@@ -154,6 +159,7 @@ partsRouter.use(packageReceivingRouter);
 partsRouter.use(familiesRouter);
 router.use("/parts", partsRouter);
 router.use("/allocations", allocationsRouter);
+router.use(stocktakeRouter);
 // What one place carries, and what is going off soon, across every collection.
 router.use("/stock/shapes", shapedStockRouter);
 router.use("/stock", stockRouter);

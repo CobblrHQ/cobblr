@@ -41,6 +41,7 @@ import { TokenManager } from "../components/TokenManager";
 import { SignInSettingsTab } from "../components/SignInSettingsTab";
 import { ScanResolversTab } from "../components/ScanResolversTab";
 import { PayloadView, usageLine } from "../components/PayloadView";
+import { AiCallModel } from "../components/AiCallModel";
 import { FeedbackCard, FEEDBACK_STATUSES, fbStatusLabel, type FeedbackSourceItem } from "@cobblr/platform-web";
 import { apiFeedbackSource } from "../lib/feedback-source-api";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
@@ -1523,7 +1524,7 @@ function AiActivityTab() {
                 <td className="px-3 py-1.5 text-content dark:text-mortar-200 whitespace-nowrap">{c.org_slug}</td>
                 <td className="px-3 py-1.5 text-content dark:text-mortar-200 whitespace-nowrap">{c.user_email ?? <span className="text-faint italic">system</span>}</td>
                 <td className="px-3 py-1.5"><span className="font-mono text-[11px]">{c.capability}</span></td>
-                <td className="px-3 py-1.5 text-muted whitespace-nowrap">{c.model ?? "—"}</td>
+                <td className="px-3 py-1.5 text-muted whitespace-nowrap"><AiCallModel model={c.model} served={c.served_model} /></td>
                 <td className="px-3 py-1.5 text-muted whitespace-nowrap">{(c.input_tokens ?? 0) + (c.output_tokens ?? 0) || "—"}</td>
                 <td className="px-3 py-1.5 text-muted whitespace-nowrap">{c.cost_cents != null ? formatStoredMoney(c.cost_cents, "cents") : "—"}</td>
                 <td className="px-3 py-1.5 text-faint whitespace-nowrap">{c.cached ? "cache" : c.source_kind ?? "—"}{c.ok ? "" : " ⚠"}</td>
@@ -1564,7 +1565,7 @@ function AiActivityDetailModal({ item, onClose }: { item: SuperAdminAiActivityIt
         <div className="grid grid-cols-2 gap-2 text-xs text-muted">
           <div><span className="text-faint">Workspace:</span> {item.org_name} ({item.org_slug})</div>
           <div><span className="text-faint">User:</span> {item.user_email ?? "system"}</div>
-          <div><span className="text-faint">Model:</span> {item.model ?? "—"} · {item.provider_id}</div>
+          <div><span className="text-faint">Model:</span> <AiCallModel model={item.model} served={item.served_model} /> · {item.provider_id}</div>
           <div><span className="text-faint">When:</span> {new Date(item.invoked_at).toLocaleString()}</div>
           <div title={usage.title}><span className="text-faint">Usage:</span> {usage.text}</div>
         </div>

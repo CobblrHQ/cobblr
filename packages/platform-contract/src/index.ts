@@ -23,6 +23,7 @@ export type { PlatformServices } from "@cobblr/platform-contract/services";
 import type { DateFieldDirection } from "@cobblr/platform-contract/date-field-direction";
 import { ORG_ROLES, type OrgRoleName } from "@cobblr/platform-contract/org-roles";
 import { centsFromAmount } from "@cobblr/platform-contract/money";
+import { isFloatingModel } from "@cobblr/platform-contract/ai-models";
 import { isJunkCategory } from "@cobblr/platform-contract/category-reconcile";
 import { measurePaths, measureTokens, type Measure } from "@cobblr/platform-contract/measure";
 
@@ -2249,6 +2250,30 @@ export interface PlatformDeletedRecords {
   registerLifecycle(kind: string, lifecycle: { restore(orgId: string, id: string): Promise<void>; purge(orgId: string, id: string): Promise<boolean> }): void;
 }
 
+/** The one door for a thing that is no longer the person's (sold, given away,
+ *  gone) and the way back. A module reaches it here so its batches land the
+ *  same way the record's own Mark gone does. */
+export interface PlatformDispositions {
+  /** All or nothing: refuses before writing when the kind cannot retire or a
+   *  record is missing. `quiet` leaves out the per-record activity line, for a
+   *  caller that writes one line for the whole batch. */
+  markGone(
+    orgId: string,
+    userId: string | null,
+    kind: string,
+    ids: readonly string[],
+    details: { how: Disposition; on?: string | null; price?: number | null; to?: string | null; note?: string | null },
+    opts?: { quiet?: boolean },
+  ): Promise<{ ok: true; done: Array<{ id: string; title: string }> } | { ok: false; error: string }>;
+  bringBack(
+    orgId: string,
+    userId: string | null,
+    kind: string,
+    ids: readonly string[],
+    opts?: { quiet?: boolean },
+  ): Promise<{ ok: true; done: Array<{ id: string; title: string }> } | { ok: false; error: string }>;
+}
+
 export interface HistoryWriter {
   /** The owning module's row table, for predicates applied before paging. */
   table?: string;
@@ -3032,6 +3057,8 @@ export interface PlatformEntities {
    *  platform().entities.registerScannable("inventory:part",
    *    { noun: "part", createEndpoint: "inventory/parts", qtyField: "qty" }). */
   registerScannable(kind: string, info: ScannableInfo): void;
+  registerLabelValuesProvider(name: string, provider: (orgId: string, kind: string, id: string) => Promise<string[]>): void;
+  labelValuesFor(orgId: string, kind: string, id: string): Promise<string[]>;
   /** The scan info for a kind, or null if it isn't a scan target. */
   getScannable(kind: string): ScannableInfo | null;
   /** The scan info for a MODULE, regardless of which of its kinds is asked for.
@@ -4400,13 +4427,9 @@ export function isChatTurn(capability: AiCapability | string): boolean {
   return capability === "chat" || capability === "plan-changes";
 }
 
-/** A model id that names whatever the provider currently points it at
- *  ("gemini-flash-lite-latest", an Ollama "llama3:latest"): it can change, or
- *  be overloaded for an hour, without anybody here touching anything, so the
- *  AI page says so beside it. */
-export function isFloatingModel(model: string): boolean {
-  return /(^|[-:])latest$/i.test(model.trim());
-}
+/** A model id that names whatever the provider currently points it at: the
+ *  AI page says so beside it. Kept with the rest of what a model id means. */
+export { isFloatingModel };
 
 /** The capabilities to try, in order, for one requested job. */
 export function aiCapabilityChain(capability: AiCapability): AiCapability[] {
@@ -4486,6 +4509,11 @@ export interface AiProviderDef {
    *  "gemini-flash-lite-latest" means nothing at a glance; "Flash Lite - 500
    *  free a day" is a decision. Optional; an id with no entry shows as its id. */
   modelNotes?: Record<string, { label: string; note?: string; short?: string }>;
+  /** How this provider's models are LISTED rather than written down (#5417):
+   *  its own models endpoint, family and version per id, a rule per job, and
+   *  the one fallback list for when it cannot be asked. A provider with a
+   *  catalog offers "latest" per family, resolved before every call. */
+  modelCatalog?: import("@cobblr/platform-contract/ai-models").AiModelCatalog;
   /** Whether a workspace that has configured NO provider may have this one
    *  auto-selected by the zero-config fallback. Default true — a managed,
    *  credential-less provider (instance key) is ready to use. A provider that
@@ -4582,6 +4610,13 @@ export interface AiProviderDef {
     input_tokens?: number;
     output_tokens?: number;
     cost_cents?: number;
+    /** The model the provider's response says answered, as it said it
+     *  (Anthropic's and an OpenAI-compatible `model`, Ollama's `model`).
+     *  A provider can serve another model than the one asked for, silently
+     *  (a deprecated model redirected to its successor), so the ledger
+     *  keeps both. Absent or null when the response did not say: never a
+     *  copy of the requested id. */
+    served_model?: string | null;
   }>;
   /** Optional health/test ping.
    *
@@ -4602,7 +4637,18 @@ export interface AiProviderDef {
 /** What a connection reported it serves (platform().ai.modelsReportedBy),
  *  with the model typed on the connection itself always among them: a pinned
  *  entry the person added stays choosable even when the list cannot be read. */
-export type AiReportedModels = { ok: true; models: string[] } | { ok: false; error: string; models: string[] };
+export type AiReportedModels =
+  | {
+      ok: true;
+      models: string[];
+      /** For a provider with a model catalog: the picker's entries for the
+       *  job asked about, "latest" per family first, then pins. */
+      choices?: import("@cobblr/platform-contract/ai-models").AiModelChoice[];
+      /** The listing could not be read and these came from the provider's
+       *  fallback list: why, for a "Refresh models" beside them. */
+      fallback?: string;
+    }
+  | { ok: false; error: string; models: string[] };
 
 export interface AiConnectionTest extends ConnectionTestOutcome {
   error?: string;
@@ -4659,6 +4705,9 @@ export interface AiChainStep {
    *  with a label; the provider's otherwise. */
   label: string;
   model: string;
+  /** What a person reads for the model ("Haiku · latest (5.5)"), when the
+   *  provider lists its models. */
+  model_label?: string;
   floating: boolean;
   source: "yours" | "shared" | "workspace" | "managed";
   credential_id?: string;
@@ -4704,7 +4753,18 @@ export interface PlatformAi {
    *  provider (`providerId`) or a personal connection routed here
    *  (`credentialId`). Null when the provider keeps a curated list instead
    *  (no listModels), or the connection is not one this caller may use. */
-  modelsReportedBy(orgId: string, userId: string | null, ref: { providerId?: string; credentialId?: string }, opts?: { fresh?: boolean }): Promise<AiReportedModels | null>;
+  modelsReportedBy(
+    orgId: string,
+    userId: string | null,
+    ref: { providerId?: string; credentialId?: string },
+    opts?: { fresh?: boolean; capability?: AiCapability },
+  ): Promise<AiReportedModels | null>;
+  /** The models a connection's calls asked for and were answered by
+   *  another model (requested id to served id): a provider redirecting a
+   *  deprecated model, learned from each call's served model. Any provider,
+   *  a curated list's too. Null when none, or when the caller may not use
+   *  the connection. */
+  modelRedirects(orgId: string, userId: string | null, ref: { providerId?: string; credentialId?: string }): Promise<Record<string, string> | null>;
   /** Single entry point for any module to use AI. Picks provider +
    *  model from the workspace's capability defaults, calls the
    *  cache, calls the provider, writes audit + cache rows, returns
@@ -4767,6 +4827,10 @@ export interface PlatformAi {
     output_tokens?: number;
     cost_cents?: number;
     duration_ms: number;
+    /** The model the provider said answered, when it said; `model` is the
+     *  one asked for (servedModelDiffers in ai-models says whether they are
+     *  different models). */
+    served_model?: string | null;
     /** The providers asked first that did not answer (busy, unreachable, a
      *  limit, a key), oldest first, when this answer came from the next
      *  provider the workspace lists (#3819). Absent when the first answered. */
@@ -5207,7 +5271,9 @@ export interface PlatformEgress {
   /** SSRF-guarded outbound fetch for a tenant. Link-local/metadata is always
    *  blocked. On a HOSTED instance (COBBLR_HOSTED=true) a private/internal target
    *  is blocked UNLESS a registered allow-provider permits it for this org (the
-   *  tenant's own registered edge endpoint); a self-hosted instance allows LAN. */
+   *  tenant's own registered edge endpoint); a self-hosted instance allows LAN.
+   *  `redirect: "manual"` hands back each redirect, still validated, for a
+   *  caller that walks the chain itself carrying a cookie. */
   guardedFetch(orgId: string, input: string | URL | Request, init?: RequestInit): Promise<Response>;
   /** Register a per-tenant allow-provider — e.g. the edge module exposing the
    *  org's registered bridge endpoints. Returns true to permit a private target. */
@@ -5867,19 +5933,22 @@ export interface PlatformPairings {
     }>,
   ): Promise<{ inserted: number }>;
   /** Bulk pairing lookup. "Given these N target entities, which
-   *  source-side entities of `sourceKind` point at them via
-   *  `relationshipKind`?" Returns an array of { sourceId, targetId }
-   *  tuples so the caller can group by target. Used by
-   *  bricklink-connector's wanted-list diff to fan out from N
-   *  catalog entries to the inventory:part rows matched to them in
-   *  one query. */
+   *  source-side entities point at them via `relationshipKind`?"
+   *  Returns { sourceId, sourceKind, targetId } so the caller can group
+   *  by target. `sourceKind` narrows it to one kind; left out, every
+   *  kind counts, because the pairing is what makes a row a match, not
+   *  the table it is on: a brick on the Lego bundle's Bricks table
+   *  (bricks:item) is matched to a part as surely as one on Parts
+   *  (#5434). Used by bricklink-connector's wanted-list diff to fan out
+   *  from N catalog entries to every record matched to them in one
+   *  query. */
   findByTargets(args: {
     orgId: string;
-    sourceKind: string;
+    sourceKind?: string;
     targetKind: string;
     targetIds: string[];
     relationshipKind: string;
-  }): Promise<Array<{ sourceId: string; targetId: string }>>;
+  }): Promise<Array<{ sourceId: string; sourceKind: string; targetId: string }>>;
   /** The inverse of findByTargets. "Given these N source entities,
    *  which target-side entities of `targetKind` do they point at via
    *  `relationshipKind`?" One SQL round-trip; caller groups by
@@ -6909,6 +6978,7 @@ export interface PlatformMoney {
 
 export interface Platform {
   deletedRecords: PlatformDeletedRecords;
+  dispositions: PlatformDispositions;
   money: PlatformMoney;
   activity: PlatformActivity;
   events: PlatformEvents;
@@ -7057,7 +7127,20 @@ export interface DeviceConnectionStore {
   setProbe(orgId: string, id: string, capabilities: Record<string, unknown>, status: string): Promise<void>;
 }
 
+export interface MachineStationRequest { machine_kind: string; machine_id: string; purpose: "placement" | "reflow" | "inspection"; token: string }
+export type MachineStationVerifier = (orgId: string, request: MachineStationRequest) => Promise<{ id: string; label: string }>;
+
+export interface MachineRecordsProvider {
+  list(orgId: string, userId?: string | null): Promise<Array<{ kind: string; record: ResolvedEntity }>>;
+  get(orgId: string, kind: string, id: string, userId?: string | null): Promise<ResolvedEntity | null>;
+}
+
 export interface PlatformDevices {
+  registerMachineRecords(provider: MachineRecordsProvider): void;
+  machineRecords(orgId: string, userId?: string | null): ReturnType<MachineRecordsProvider["list"]>;
+  machineRecord(orgId: string, kind: string, id: string, userId?: string | null): ReturnType<MachineRecordsProvider["get"]>;
+  registerStationVerifier(verifier: MachineStationVerifier): void;
+  authorizeAtStation(orgId: string, request: MachineStationRequest): Promise<{ id: string; label: string }>;
   /** The connection/driver owner registers this at boot (one provider). */
   registerDriverProvider(provider: DeviceDriverProvider, types?: readonly string[]): void;
   /** Resolve a connection ref to a driver via the registered provider. */

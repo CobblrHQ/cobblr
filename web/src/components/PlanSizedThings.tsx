@@ -8,6 +8,7 @@
 // offers to take its size. The pure part is lib/planFit.ts.
 // See docs/design-decisions/location-floor-plan.md, "Things at their real size".
 
+import { ownSize } from "@cobblr/platform-contract/plan-clearance";
 import { useMemo, useRef, useState } from "react";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { EntityPhoto, Modal, changeWorkspaceShape, useImageSrc, useToast } from "@cobblr/platform-web";
@@ -139,7 +140,9 @@ export function useSizedThings(opts: {
       things.push({ key, kind: t.kind, id: t.id, name: t.title, image_path: t.image_path ?? null, size, rect });
     }
     // How deep the shelves are: the rack's own footprint, when it stands on a floor.
-    const depth = readRect(room.metadata)?.d_mm ?? null;
+    // The rack's own depth, however it is turned on the room's floor.
+    const at = readRect(room.metadata);
+    const depth = at ? ownSize(at).d_mm : null;
     openShelves.forEach((s, i) => {
       const order = new Map((shelfContents[i] ?? []).map((c) => [`${fieldKindOf(c)}:${c.id}`, c.position?.x_mm ?? null]));
       const here = onShelves.filter((o) => o.location_id === s.loc.id);

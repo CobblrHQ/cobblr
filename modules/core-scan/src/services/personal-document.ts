@@ -207,7 +207,7 @@ async function readPictures(pictures: Buffer[], read: Set<string>): Promise<stri
   const out: string[] = [];
   let next = 0;
   await Promise.all(Array.from({ length: Math.min(4, sheets.length) }, async () => {
-    while (next < sheets.length) out.push((await ocrImageText(sheets[next++]!, { private: true }))?.text || "");
+    while (next < sheets.length) out.push((await ocrImageText(sheets[next++]!, { private: true, framePassOnly: true }))?.text || "");
   }));
   return out;
 }

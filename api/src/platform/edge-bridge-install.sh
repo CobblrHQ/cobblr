@@ -10,19 +10,21 @@
 #
 # Options (after the code):
 #   --system   install for the whole machine (needs root); default is this user
-#   --docker   run the bridge in Docker instead of as a service
+#   --docker   network-only Linux x64/arm64 bridge; USB needs the native service
 #
 # Linux (x64, arm64, 32-bit Raspberry Pi) and macOS. Nothing here listens on a
 # port: the bridge dials out to Cobblr.
 set -eu
 
 COBBLR_URL="${COBBLR_URL:-@@COBBLR_URL@@}"
-NODE_VERSION="${COBBLR_NODE_VERSION:-22.20.0}"
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'cobblr bridge: %s\n' "$*" >&2; exit 1; }
 
+INSTALL_OS=${COBBLR_INSTALL_OS:-$(uname -s)}
+INSTALL_ARCH=${COBBLR_INSTALL_ARCH:-$(uname -m)}
 NATIVE_DEFAULT=0
+[ "$INSTALL_OS" != Darwin ] || NATIVE_DEFAULT=1
 CODE=""; SYSTEM=0; DOCKER=0; MAC_NATIVE=${COBBLR_MAC_NATIVE:-$NATIVE_DEFAULT}; DRY_RUN=0
 for a in "$@"; do
   case "$a" in
@@ -34,6 +36,22 @@ for a in "$@"; do
     *) CODE="$a" ;;
   esac
 done
+case "$INSTALL_OS" in Linux) DOWNLOAD_OS=linux ;; Darwin) DOWNLOAD_OS=darwin ;; *) die "use the Windows PowerShell installer on Windows" ;; esac
+case "$INSTALL_ARCH" in
+  x86_64|amd64) DOWNLOAD_ARCH=x64 ;;
+  aarch64|arm64) DOWNLOAD_ARCH=arm64 ;;
+  armv7l|armhf) [ "$INSTALL_OS" = Linux ] || die "armv7 needs Linux"; DOWNLOAD_ARCH=armv7 ;;
+  *) die "unsupported bridge architecture $INSTALL_ARCH" ;;
+esac
+DOWNLOAD_URL="$COBBLR_URL/api/v1/desktop/bridge/$DOWNLOAD_OS/$DOWNLOAD_ARCH"
+if [ "$DOCKER" = 1 ]; then
+  [ "$INSTALL_OS" = Linux ] && [ "$DOWNLOAD_ARCH" != armv7 ] || die "Docker needs Linux x64 or arm64. Use the native installer for this computer."
+fi
+if [ "$DRY_RUN" = 1 ] && [ "$MAC_NATIVE" = 0 ]; then
+  say "$DOWNLOAD_URL"
+  if [ "$DOCKER" = 1 ]; then say "Network-only Docker bridge. USB needs the native installer."; else say "Complete USB runtime; starts as a systemd service. No pairing or download in dry run."; fi
+  exit 0
+fi
 MAC_HOME="$HOME/Library/Application Support/Cobblr/bridge"
 MAC_PLIST="$HOME/Library/LaunchAgents/xyz.cobblr.edge-bridge.plist"
 if [ "$MAC_NATIVE" = 1 ]; then
@@ -53,11 +71,11 @@ if [ "$MAC_NATIVE" = 1 ]; then
 fi
 [ -n "$CODE" ] || die "give the pairing code Cobblr shows you, e.g.: sh -s -- ABCD-2345"
 
-fetch() { # fetch URL [BEARER] -> stdout
+fetch() { # fetch URL -> stdout
   if command -v curl >/dev/null 2>&1; then
-    if [ -n "${2:-}" ]; then curl -fsSL -H "Authorization: Bearer $2" "$1"; else curl -fsSL "$1"; fi
+    curl -fsSL "$1"
   elif command -v wget >/dev/null 2>&1; then
-    if [ -n "${2:-}" ]; then wget -qO- --header="Authorization: Bearer $2" "$1"; else wget -qO- "$1"; fi
+    wget -qO- "$1"
   else die "this machine has neither curl nor wget"; fi
 }
 
@@ -122,6 +140,7 @@ if [ "$MAC_NATIVE" = 1 ]; then
   } > "$MAC_PLIST"
   chmod 600 "$MAC_PLIST"
   if [ "$DRY_RUN" = 1 ]; then
+    say "$DOWNLOAD_URL"
     say "cobblr-bridge-darwin-$MAC_ARCH: $MAC_HOME/cobblr-edge-bridge"
     say "$MAC_PLIST"
     cat "$MAC_PLIST"
@@ -137,23 +156,77 @@ fi
 # ── Docker, when asked for ──────────────────────────────────────────────────
 if [ "$DOCKER" = "1" ]; then
   command -v docker >/dev/null 2>&1 || die "--docker was given but docker is not installed"
-  docker rm -f cobblr-edge-bridge >/dev/null 2>&1 || true  # keeps-volumes: its state is the named cobblr-bridge-data volume
-  # shellcheck disable=SC2016 # the $ is for the container's shell
+  umask 077
+  DOCKER_ENV="$HOME/.config/cobblr-bridge-docker.env"
+  mkdir -p "$(dirname "$DOCKER_ENV")"
+  {
+    echo "BRIDGE_MODE=tunnel"
+    echo "BRIDGE_NETWORK_ONLY=true"
+    echo "BRIDGE_RELAY_URL=$RELAY_URL"
+    echo "BRIDGE_RELAY_TOKEN=$TOKEN"
+    echo "BRIDGE_ID=$BRIDGE_ID"
+    echo "BRIDGE_DOWNLOAD_URL=$DOWNLOAD_URL"
+    echo "BRIDGE_CACHE_DIR=/data/cache"
+  } > "$DOCKER_ENV"
+  docker rm -fv cobblr-edge-bridge >/dev/null 2>&1 || true
   docker run -d --name cobblr-edge-bridge --restart unless-stopped \
-    --hostname "$HOST_NAME" \
-    -v cobblr-bridge-data:/data -w /data \
-    -e BRIDGE_MODE=tunnel \
-    -e BRIDGE_RELAY_URL="$RELAY_URL" \
-    -e BRIDGE_RELAY_TOKEN="$TOKEN" \
-    ${BRIDGE_ID:+-e BRIDGE_ID="$BRIDGE_ID"} \
-    node:22-alpine \
-    sh -c 'wget -qO loader.mjs --header "Authorization: Bearer $BRIDGE_RELAY_TOKEN" "$BRIDGE_RELAY_URL/release/loader" || true; node loader.mjs' >/dev/null
-  say "Done. \"$NAME\" is starting in Docker and shows as online in Cobblr within a minute."
+    --network host --hostname "$HOST_NAME" --env-file "$DOCKER_ENV" \
+    -v cobblr-bridge-data:/data -w /data node:22-bookworm-slim \
+    sh -c 'node -e "const fs=require(\"node:fs\");fetch(process.env.BRIDGE_DOWNLOAD_URL).then(async r=>{if(!r.ok)throw Error(\"Bridge download unavailable\");const b=Buffer.from(await r.arrayBuffer());if(!b.length)throw Error(\"Empty bridge download\");fs.writeFileSync(\"/data/cobblr-bridge.tmp\",b,{mode:0o700});fs.renameSync(\"/data/cobblr-bridge.tmp\",\"/data/cobblr-bridge\")}).catch(()=>process.exit(1))" || test -x /data/cobblr-bridge; exec /data/cobblr-bridge' >/dev/null
+  say "Done. $NAME is starting as a network-only Docker bridge. USB machines need the native installer."
   exit 0
 fi
 
+serial_group() {
+  for device in /dev/ttyUSB0 /dev/ttyACM0 /dev/ttyS0 /dev/ttyAMA0; do
+    if [ -e "$device" ]; then
+      group=$(stat -c %G "$device")
+      case "$group" in dialout|uucp) printf '%s\n' "$group"; return ;; esac
+    fi
+  done
+  for group in dialout uucp; do
+    getent group "$group" >/dev/null 2>&1 && { printf '%s\n' "$group"; return; }
+  done
+  printf '%s\n' dialout
+}
+existing_groups() {
+  groups=""
+  for group in "$@"; do
+    getent group "$group" >/dev/null 2>&1 && groups="$groups $group"
+  done
+  printf '%s\n' "${groups# }"
+}
+setup_device_access() {
+  SERIAL_GROUP=$(serial_group)
+  if [ "$(id -u)" = 0 ]; then PRIV="";
+  elif command -v sudo >/dev/null 2>&1; then PRIV=sudo;
+  else die "USB access needs an administrator. Install sudo or ask an administrator to run the system installer."; fi
+  $PRIV groupadd -f cobblr-usb
+  getent group "$SERIAL_GROUP" >/dev/null 2>&1 || $PRIV groupadd "$SERIAL_GROUP"
+  if [ "$SYSTEM" = 1 ]; then
+    getent passwd cobblr-bridge >/dev/null 2>&1 || $PRIV useradd --system --home-dir "$HOME_DIR" --no-create-home --shell /usr/sbin/nologin --user-group cobblr-bridge
+    DEVICE_USER=cobblr-bridge
+  else DEVICE_USER=$(id -un); fi
+  DEVICE_GROUPS=$(existing_groups "$SERIAL_GROUP" cobblr-usb bluetooth)
+  $PRIV usermod -aG "$(printf '%s' "$DEVICE_GROUPS" | tr ' ' ',')" "$DEVICE_USER"
+  RULES=$(mktemp)
+  cat > "$RULES" <<'RULES'
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="9588", ATTR{idProduct}=="9899", MODE="0660", GROUP="cobblr-usb", TAG+="uaccess"
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="0b4d", MODE="0660", GROUP="cobblr-usb", TAG+="uaccess"
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", IMPORT{builtin}="usb_id"
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ENV{ID_USB_INTERFACES}=="*:fe03??:*", MODE="0660", GROUP="cobblr-usb", TAG+="uaccess"
+RULES
+  $PRIV install -D -m 0644 "$RULES" /etc/udev/rules.d/60-cobblr-bridge.rules
+  rm -f "$RULES"
+  if command -v udevadm >/dev/null 2>&1; then
+    $PRIV udevadm control --reload
+    $PRIV udevadm trigger --subsystem-match=usb
+  fi
+  [ "$SYSTEM" = 1 ] || say "Log out and back in, or reboot, so the bridge picks up its USB and serial groups."
+}
+
 # ── 2. Where it lives ───────────────────────────────────────────────────────
-OS=$(uname -s)
+OS=$INSTALL_OS
 if [ "$SYSTEM" = "1" ]; then
   [ "$(id -u)" = "0" ] || die "--system needs root: run it with sudo, or leave --system off"
   HOME_DIR=/opt/cobblr-bridge; ENV_FILE=/etc/cobblr-bridge.env
@@ -161,50 +234,31 @@ else
   HOME_DIR="$HOME/.local/share/cobblr-bridge"; ENV_FILE="$HOME/.config/cobblr-bridge.env"
 fi
 mkdir -p "$HOME_DIR/cache" "$(dirname "$ENV_FILE")"
+[ "$OS" != Linux ] || setup_device_access
+if [ "$SYSTEM" = 1 ]; then chmod 0755 "$HOME_DIR"; chown -R cobblr-bridge:cobblr-bridge "$HOME_DIR/cache"; fi
 
-# ── 3. Node: the one on this machine if it is new enough, else our own ──────
-NODE=""
-if command -v node >/dev/null 2>&1; then
-  major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
-  [ "$major" -ge 20 ] 2>/dev/null && NODE=$(command -v node)
+# ── 3. A complete runtime, including native USB access ─────────────────────
+umask 077
+BRIDGE="$HOME_DIR/cobblr-bridge"
+if [ "$DOWNLOAD_ARCH" = armv7 ]; then
+  fetch "$DOWNLOAD_URL" > "$HOME_DIR/runtime.tar.gz.tmp" || die "the ARMv7 bridge download is unavailable"
+  mkdir -p "$HOME_DIR/runtime.new"
+  tar -xzf "$HOME_DIR/runtime.tar.gz.tmp" -C "$HOME_DIR/runtime.new" || die "the ARMv7 bridge archive is invalid"
+  [ -x "$HOME_DIR/runtime.new/cobblr-bridge" ] && [ -s "$HOME_DIR/runtime.new/native/usb.node" ] || die "the bridge archive is incomplete"
+  rm -rf "$HOME_DIR/runtime.previous"
+  [ ! -d "$HOME_DIR/runtime" ] || mv "$HOME_DIR/runtime" "$HOME_DIR/runtime.previous"
+  mv "$HOME_DIR/runtime.new" "$HOME_DIR/runtime"
+  rm -f "$HOME_DIR/runtime.tar.gz.tmp"
+  chmod -R u+rwX,go+rX,go-w "$HOME_DIR/runtime"
+  BRIDGE="$HOME_DIR/runtime/cobblr-bridge"
+  "$HOME_DIR/runtime/bin/node" --version >/dev/null 2>&1 || die "The ARMv7 runtime cannot start. On Raspberry Pi OS, install libatomic1 and try again."
+else
+  fetch "$DOWNLOAD_URL" > "$BRIDGE.tmp" || die "the bridge download is unavailable"
+  [ -s "$BRIDGE.tmp" ] || die "the bridge download was empty"
+  chmod 0755 "$BRIDGE.tmp"
+  mv "$BRIDGE.tmp" "$BRIDGE"
 fi
-if [ -z "$NODE" ]; then
-  case "$OS" in Linux) nos=linux ;; Darwin) nos=darwin ;; *) die "no bridge install for $OS; use --docker" ;; esac
-  case "$(uname -m)" in
-    x86_64|amd64) narch=x64; base=https://nodejs.org/dist ;;
-    aarch64|arm64) narch=arm64; base=https://nodejs.org/dist ;;
-    armv7l|armhf) narch=armv7l; base=https://nodejs.org/dist ;;
-    # A Pi Zero or Pi 1: nodejs.org stopped building ARMv6, its unofficial
-    # builds carry on. The bridge runs there at about 50 MB.
-    armv6l) narch=armv6l; base=https://unofficial-builds.nodejs.org/download/release ;;
-    *) die "no Node build for $(uname -m); use --docker" ;;
-  esac
-  say "Fetching Node $NODE_VERSION for $nos-$narch ..."
-  mkdir -p "$HOME_DIR/node"
-  fetch "$base/v$NODE_VERSION/node-v$NODE_VERSION-$nos-$narch.tar.gz" | tar -xz -C "$HOME_DIR/node" --strip-components=1 \
-    || die "could not download Node for $nos-$narch"
-  NODE="$HOME_DIR/node/bin/node"
-fi
-
-# Node's ARM builds need libatomic, which a minimal Debian or Pi OS image can
-# lack; without it Node cannot start at all. Put it in when we can, and say
-# exactly what to run when we cannot, rather than install a bridge that never
-# runs.
-if ! "$NODE" -v >/dev/null 2>&1; then
-  if "$NODE" -v 2>&1 | grep -q libatomic; then
-    if command -v apt-get >/dev/null 2>&1; then
-      AS=""; [ "$(id -u)" = "0" ] || AS="sudo"
-      say "Installing libatomic1, which Node needs on this machine ..."
-      $AS apt-get install -y -qq libatomic1 >/dev/null 2>&1 || true
-    fi
-  fi
-  "$NODE" -v >/dev/null 2>&1 || die "Node cannot start here: $("$NODE" -v 2>&1 | head -n 1). On Debian or Raspberry Pi OS, run 'sudo apt-get install libatomic1' and run this again with a new code."
-fi
-
-# ── 4. The loader, from this Cobblr, with this bridge's token ───────────────
-fetch "$RELAY_URL/release/loader" "$TOKEN" > "$HOME_DIR/loader.mjs.tmp" \
-  || die "could not download the bridge from $COBBLR_URL"
-mv "$HOME_DIR/loader.mjs.tmp" "$HOME_DIR/loader.mjs"
+"$BRIDGE" --licenses >/dev/null || die "the bridge runtime cannot start. On Raspberry Pi OS, install libatomic1 and try again."
 
 umask 077
 {
@@ -215,6 +269,7 @@ umask 077
   echo "BRIDGE_CACHE_DIR=$HOME_DIR/cache"
   echo "BRIDGE_HOST_NAME=$HOST_NAME"
 } > "$ENV_FILE"
+chmod 0600 "$ENV_FILE"
 umask 022
 
 # ── 5. A service that restarts it (the loader exits to apply an update) ─────
@@ -227,7 +282,7 @@ if [ "$OS" = "Darwin" ]; then
     echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
     echo '<plist version="1.0"><dict>'
     echo '<key>Label</key><string>xyz.cobblr.bridge</string>'
-    echo "<key>ProgramArguments</key><array><string>/bin/sh</string><string>-c</string><string>set -a; . '$ENV_FILE'; exec '$NODE' '$HOME_DIR/loader.mjs'</string></array>"
+    echo "<key>ProgramArguments</key><array><string>/bin/sh</string><string>-c</string><string>set -a; . '$ENV_FILE'; exec '$BRIDGE'</string></array>"
     echo "<key>WorkingDirectory</key><string>$HOME_DIR</string>"
     echo '<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>'
     echo "<key>StandardErrorPath</key><string>$HOME_DIR/bridge.log</string>"
@@ -237,15 +292,23 @@ if [ "$OS" = "Darwin" ]; then
   launchctl load "$PLIST"
   LOGS="tail -f $HOME_DIR/bridge.log"
 elif command -v systemctl >/dev/null 2>&1; then
+  RUN_AS=""
+  if [ "$SYSTEM" = 1 ]; then
+    RUN_AS="User=cobblr-bridge
+Group=cobblr-bridge
+SupplementaryGroups=$DEVICE_GROUPS
+NoNewPrivileges=true"
+  fi
   UNIT="[Unit]
 Description=Cobblr edge bridge
 After=network-online.target
 Wants=network-online.target
 
 [Service]
+$RUN_AS
 EnvironmentFile=$ENV_FILE
 WorkingDirectory=$HOME_DIR
-ExecStart=$NODE $HOME_DIR/loader.mjs
+ExecStart="$BRIDGE"
 Restart=always
 RestartSec=5
 "
@@ -266,8 +329,9 @@ RestartSec=5
     LOGS="journalctl --user -u cobblr-bridge -f"
   fi
 else
+  [ "$SYSTEM" = 0 ] || die "--system needs systemd to run the bridge as its dedicated user"
   # No service manager (a container, a minimal image): run it in the background.
-  ( set -a; . "$ENV_FILE"; cd "$HOME_DIR"; nohup "$NODE" "$HOME_DIR/loader.mjs" > "$HOME_DIR/bridge.log" 2>&1 & )
+  ( set -a; . "$ENV_FILE"; cd "$HOME_DIR"; nohup "$BRIDGE" > "$HOME_DIR/bridge.log" 2>&1 & )
   LOGS="tail -f $HOME_DIR/bridge.log"
 fi
 
@@ -275,10 +339,10 @@ fi
 # bridge starts, and a bridge that died at once would otherwise read as done.
 started=0
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
-  if [ -f "$HOME_DIR/bridge.log" ] && grep -q '\[loader\] running bridge' "$HOME_DIR/bridge.log" 2>/dev/null; then started=1; break; fi
+  if [ -f "$HOME_DIR/bridge.log" ] && grep -q '\[loader\] running .*bridge' "$HOME_DIR/bridge.log" 2>/dev/null; then started=1; break; fi
   if command -v systemctl >/dev/null 2>&1 && [ "$OS" != "Darwin" ]; then
     if [ "$SYSTEM" = "1" ]; then j="journalctl -u cobblr-bridge"; else j="journalctl --user -u cobblr-bridge"; fi
-    $j --no-pager -n 50 2>/dev/null | grep -q '\[loader\] running bridge' && { started=1; break; }
+    $j --no-pager -n 50 2>/dev/null | grep -q '\[loader\] running .*bridge' && { started=1; break; }
   fi
   sleep 2
 done

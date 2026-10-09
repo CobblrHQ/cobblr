@@ -1,11 +1,13 @@
 import { z } from "zod";
-import { countOf } from "@cobblr/platform-contract/plural";
 export type Point = { x: number; y: number; c0?: Point; c1?: Point };
 export type Design = { width: number; height: number; paths: { layer: string; points: Point[]; closed: boolean; curves?: boolean[] }[] };
 export type Rect = { x: number; y: number; width: number; height: number };
-export type Sheet = { id: string; width: number; height: number; revision: number; free_rectangles: Rect[]; used_outlines?: Point[][]; outline?: Point[]; cut_capacity?: { shapes: number; vertices: number; sources: number } };
+/** A sheet to nest onto. `free_regions` is its usable leftover, each region
+ *  [outline, ...holes] (inventory's sheet geometry); an older reading has only
+ *  free_rectangles and used_outlines. */
+export type Sheet = { id: string; width: number; height: number; revision: number; free_rectangles: Rect[]; free_regions?: Point[][][]; used_outlines?: Point[][]; outline?: Point[]; cut_capacity?: { shapes: number; vertices: number; sources: number } };
 export type Placement = Rect & { rotated: boolean; number: number; footprint: Rect; angle?: number; translation?: Point; footprint_outline?: Point[] };
-export type LayoutSheet = Sheet & { parts: Placement[]; remaining: Rect[]; nesting?: "outline" | "rectangle"; nest_ms?: number; utilisation?: number };
+export type LayoutSheet = Sheet & { parts: Placement[]; remaining: Rect[]; nesting?: "outline" | "rectangle"; /** Why a part with an outline was nested by rectangle, said on the sheet. */ nesting_note?: string; nest_ms?: number; utilisation?: number };
 export function canRecordCuts(capacity: Sheet["cut_capacity"], rectangles: Rect[], outlines?: Point[][]): boolean {
  const shapes = outlines?.length ?? rectangles.length;
  const vertices = outlines ? outlines.reduce((n,p)=>n+p.length,0) : shapes*4;
@@ -55,7 +57,7 @@ export function nestParts(design: Pick<Design, "width" | "height">, quantity: nu
   if (next === quantity) return result;
  }
  if (partial) return result;
- throw new Error(next ? `There is room for ${next} of ${countOf(quantity, "part")}. Add another sheet or reduce the quantity.` : "This part is bigger than every free area. Choose a larger sheet or reduce the part size.");
+ throw new Error(next ? `There is room for ${next} of ${quantity} parts. Add another sheet or reduce the quantity.` : "This part is bigger than every free area. Choose a larger sheet or reduce the part size.");
 }
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
 const n = (v: number) => Number(v.toFixed(6));

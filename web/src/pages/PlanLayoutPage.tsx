@@ -22,6 +22,11 @@ import { useLayoutBoard } from "../lib/useLayoutBoard";
 import { reorderTo, shelfRow } from "../lib/planFit";
 import type { Board } from "../lib/layoutBoard";
 import { LayoutBoard, startThingDrag, type ThingDrop } from "../components/LayoutBoard";
+import { DEFAULT_AISLE_MM } from "@cobblr/platform-contract/plan-clearance";
+import { jsonbPatchBetween } from "@cobblr/platform-contract/jsonb-merge";
+import { readBound, withBound } from "../lib/floorplanGeometry";
+import { formatLength, parseLength } from "../lib/lengthUnits";
+import type { Location } from "../lib/api";
 
 const countOf = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
@@ -407,6 +412,7 @@ export function PlanLayoutPage() {
                   )}
                 </section>
               )}
+              {room && <AisleCheck slug={slug} room={room} />}
               <LayoutBoard board={board} editable={editable} onDrop={onDrop} onMoveRack={onMoveRack} />
               {fits.length > 0 && (
                 <ul data-testid="layout-fits" className="space-y-0.5 text-xs">
@@ -441,5 +447,64 @@ function TrayChip({ name, sized, thingKey, onDrop }: { name: string; sized: bool
       {name}
       {!sized && <span className="ml-1 text-faint">(no size)</span>}
     </span>
+  );
+}
+
+/** The aisle check: off, or on at a width (900 mm unless the room says
+ *  otherwise). Kept on the room, so every option is checked against the same
+ *  aisle; a gap narrower than it is listed under the floor. */
+function AisleCheck({ slug, room }: { slug: string; room: Location }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const bound = readBound(room.metadata);
+  const unit = bound?.unit ?? "mm";
+  const on = !!bound?.aisle_mm;
+  const [text, setText] = useState(formatLength(bound?.aisle_mm ?? DEFAULT_AISLE_MM, unit));
+  // The width as it is kept until somebody types one: shown in the room's
+  // unit, 900 mm reads "3 ft", which read back would be 914 mm.
+  const [typed, setTyped] = useState(false);
+  const width = () => (typed ? (parseLength(text, unit) ?? DEFAULT_AISLE_MM) : (bound?.aisle_mm ?? DEFAULT_AISLE_MM));
+  const save = useMutation({
+    mutationFn: (aisle: number | undefined) => {
+      const metadata = withBound(room.metadata, { ...bound!, aisle_mm: aisle }, "area");
+      return api.updateLocation(slug, room.id, { metadata: jsonbPatchBetween(room.metadata, metadata) });
+    },
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["core-locations", slug] }),
+    onError: (e) => toast.error(`Could not change the aisle check: ${e instanceof ApiError ? e.message : String(e)}`),
+  });
+  if (!bound) return null;
+  return (
+    <div data-testid="aisle-check" className="flex flex-wrap items-center gap-2 text-xs text-muted dark:text-slate-400">
+      <label className="inline-flex items-center gap-1.5">
+        <input
+          type="checkbox"
+          checked={on}
+          onChange={(e) => save.mutate(e.target.checked ? width() : undefined)}
+          className="accent-cobble-600"
+        />
+        Check aisles at least
+      </label>
+      <input
+        aria-label="Aisle width"
+        value={text}
+        onChange={(e) => {
+          setTyped(true);
+          setText(e.target.value);
+        }}
+        onBlur={() => {
+          if (!typed) return;
+          const mm = parseLength(text, unit);
+          if (mm && on && mm !== bound.aisle_mm) save.mutate(mm);
+          else if (!mm) {
+            setTyped(false);
+            setText(formatLength(bound.aisle_mm ?? DEFAULT_AISLE_MM, unit));
+          }
+        }}
+        onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+        className="w-24 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1.5 py-0.5 font-mono text-xs text-content dark:text-slate-200"
+      />
+      wide
+      {save.isError && <span className="text-ember-700 dark:text-ember-300">Not saved.</span>}
+    </div>
   );
 }

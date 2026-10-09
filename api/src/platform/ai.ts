@@ -27,6 +27,7 @@ import type {
   PlatformAi,
 } from "@cobblr/platform-contract";
 import { AI_JOB_PRIVACY, aiCapabilityChain, isChatTurn, isFloatingModel, type AiChainStep } from "@cobblr/platform-contract";
+import { ladderWithoutRedirects, servedModelOf } from "@cobblr/platform-contract/ai-models";
 import { getTenantDb } from "../db/tenant.js";
 import { meta } from "../db/meta.js";
 import * as integrationsImpl from "./integrations.js";
@@ -37,6 +38,7 @@ import { env } from "../env.js";
 import { fullText, thumbnailImages } from "./ai-log.js";
 import { isCooling, noteAnswered, noteBusy } from "./ai-busy-cooldown.js";
 import { aiAnswerText } from "@cobblr/platform-contract/ai-answer";
+import { concreteModel, connectionModelChoices, flushUpgradeNotice, knownModelLabel, listingKey, loadRedirects, noteServedModel, redirectsFor } from "./ai-model-listing.js";
 
 /** True when the chat input carries workspace tool defs (the AI wants to read
  *  the workspace) — the only case where the bridge MCP relay is relevant. */
@@ -168,6 +170,7 @@ interface InvokeResult {
   output_tokens?: number;
   cost_cents?: number;
   duration_ms: number;
+  served_model?: string | null;
 }
 
 /**
@@ -198,6 +201,8 @@ interface CapabilityDefaultRow {
   capability: string;
   provider_id: string;
   model: string;
+  /** A family's latest when that was chosen (core-ai migration 0016). */
+  model_follows?: string | null;
   config: Record<string, unknown>;
 }
 
@@ -239,7 +244,7 @@ async function workspaceJobChoice(
         select: (c: string[]) => {
           where: (a: string, b: string, c: unknown) => {
             executeTakeFirst: () => Promise<
-              { credential_id?: string | null; provider_id?: string | null; model?: string | null } | undefined
+              { credential_id?: string | null; provider_id?: string | null; model?: string | null; model_follows?: string | null } | undefined
             >;
           };
         };
@@ -253,14 +258,15 @@ async function workspaceJobChoice(
     for (const [i, served] of chain.entries()) {
       const row = await tdb
         .selectFrom("core_ai_capability_defaults")
-        .select(["credential_id", "provider_id", "model"])
+        .select(["credential_id", "provider_id", "model", "model_follows"])
         .where("capability", "=", served)
         .executeTakeFirst();
       if (!row) continue;
       return {
         credentialId: row.credential_id ?? null,
         providerId: row.provider_id ?? null,
-        model: i === 0 ? (row.model ?? null) : null,
+        // A family's latest when that was chosen; the call resolves it.
+        model: i === 0 ? (row.model_follows ?? row.model ?? null) : null,
       };
     }
     return null;
@@ -306,13 +312,13 @@ async function resolveProviderAndModel(
   if (!providerId) {
     const defaultRow = await tdb
       .selectFrom("core_ai_capability_defaults")
-      .select(["capability", "provider_id", "model", "config"])
+      .select(["capability", "provider_id", "model", "config", "model_follows"])
       .where("capability", "=", capability)
       .executeTakeFirst();
     if (defaultRow && !exclude?.has(defaultRow.provider_id)) {
       providerId = defaultRow.provider_id;
       picked = picked || !!defaultRow.model;
-      model = model ?? defaultRow.model;
+      model = model ?? defaultRow.model_follows ?? defaultRow.model;
     }
   }
   if (!providerId) {
@@ -759,6 +765,10 @@ export async function aiChainFor(
         /* the router's own model stands */
       }
       const isPersonal = String(row.id).startsWith("personal:");
+      // "Haiku · latest (5.5)", from the listing this process already holds.
+      const modelLabel = def?.modelCatalog
+        ? knownModelLabel(listingKey(orgId, { credentialId: isPersonal ? String(row.id).slice("personal:".length) : null, providerId: row.provider_id }), def.modelCatalog, model)
+        : null;
       return {
         step: {
           position,
@@ -766,6 +776,7 @@ export async function aiChainFor(
           provider_id: row.provider_id,
           label: nameOf(row),
           model,
+          ...(modelLabel ? { model_label: modelLabel } : {}),
           floating: isFloatingModel(model),
           source: isPersonal ? (personal && userId && personal.ownerUserId === userId ? "yours" : "shared") : String(row.id).startsWith("virtual:") ? "managed" : "workspace",
           ...(isPersonal && personal ? { credential_id: personal.credentialId, owner_user_id: personal.ownerUserId } : {}),
@@ -787,8 +798,32 @@ const invokeRaw = async (
   current: { rowId?: string; providerId?: string; model?: string; label?: string } = {},
 ): Promise<Omit<Awaited<ReturnType<PlatformAi["invoke"]>>, "text">> => {
   const next = await nextCandidate(req, tried);
-  const { row, model, picked } = next;
+  const { row, picked } = next;
   const personalCredentials = next.personalCredentials;
+  // A provider that lists its models has its "latest" resolved here, before
+  // the cache key, the entitlement check and the log see the model: every
+  // one of them names the model the call actually sends (#5417).
+  const requestedModel = next.model;
+  let model = requestedModel;
+  const catalog = req.privacy === "personal" ? undefined : providers.get(row.provider_id)?.modelCatalog;
+  let listedCredentials: Record<string, unknown> | undefined;
+  const concrete = async (fresh: boolean): Promise<string> => {
+    listedCredentials ??= personalCredentials ?? (row.credentials_enc ? await integrationsImpl.decryptCredentials(req.orgId, row.credentials_enc) : {});
+    const r = await concreteModel({
+      orgId: req.orgId,
+      providerId: row.provider_id,
+      key: listingKey(req.orgId, { credentialId: String(row.id).startsWith("personal:") ? String(row.id).slice("personal:".length) : null, providerId: row.provider_id }),
+      catalog: catalog!,
+      credentials: listedCredentials,
+      model: requestedModel,
+      fresh,
+    });
+    if (r.model === null) {
+      throw aiRefusal("provider_error", `core-ai invoke failed: ${r.reason}`, { reason: "model_unavailable", providerId: row.provider_id, providerLabel: nameOf(row), model: requestedModel });
+    }
+    return r.model;
+  };
+  if (catalog) model = await concrete(false);
   current.rowId = row.id;
   current.providerId = row.provider_id;
   current.model = model;
@@ -923,6 +958,8 @@ const invokeRaw = async (
         provider_label: nameOf(row),
         capability: req.capability,
         model,
+        // A cached reply keeps no served model: unknown, never the asked one.
+        served_model: null,
         cached: true,
         ok: true,
         cost_cents: 0,
@@ -974,6 +1011,7 @@ const invokeRaw = async (
           provider_label: nameOf(row),
           capability: req.capability,
           model,
+          served_model: shared.served_model ?? null,
           cached: true,
           ok: true,
           cost_cents: 0,
@@ -1004,6 +1042,7 @@ const invokeRaw = async (
   const credentials =
     personalCredentials ??
     earlyCredentials ??
+    listedCredentials ??
     (row.credentials_enc
       ? await integrationsImpl.decryptCredentials(req.orgId, row.credentials_enc)
       : {});
@@ -1024,14 +1063,21 @@ const invokeRaw = async (
   // floating alias, then pinned older versions). A rung that answered busy
   // lately is cooling down (ai-busy-cooldown.ts) and is skipped, so the call
   // starts where the last one was answered. A person's choice is always
-  // asked, and only it.
-  const ladder = resolved.chosen ? [resolved.model] : [...new Set([resolved.model, ...(def.busyAlternates?.(resolved.model, req.capability) ?? [])])];
+  // asked, and only it. A rung this connection's calls showed is redirected
+  // to a model already on the ladder is that model again, and is dropped.
+  const connKey = listingKey(req.orgId, { credentialId: String(row.id).startsWith("personal:") ? String(row.id).slice("personal:".length) : null, providerId: row.provider_id });
+  if (!resolved.chosen) await loadRedirects(connKey);
+  const ladder = resolved.chosen ? [resolved.model] : ladderWithoutRedirects([...new Set([resolved.model, ...(def.busyAlternates?.(resolved.model, req.capability) ?? [])])], redirectsFor(connKey));
   const rungs = resolved.chosen ? ladder : ladder.filter((m) => !isCooling(row.id, m, req.capability));
   let sent = rungs[0] ?? resolved.model;
   if (rungs.length && sent !== resolved.model) {
     console.warn(`[core-ai] ${req.capability} ${row.provider_id}: ${ladder.slice(0, ladder.indexOf(sent)).join(", ")} cooling down after "busy"; starting on ${sent}`);
   }
   let rung = 0;
+  // A "model not found" re-lists at once, and the call goes again once on
+  // what the fresh listing says (a pin retired since the last listing).
+  let relisted = false;
+  let movedByListing = false;
   // A busy provider is asked again inside this one call before anything
   // gives up (#3819): it answered, it is only turning calls away for now.
   // Only the first rung is asked again; a rung after it is asked once.
@@ -1069,6 +1115,7 @@ const invokeRaw = async (
     provider_label: nameOf(row),
     capability: req.capability,
     model: sent,
+    served_model: ok ? servedModelOf(payload.served_model) : null,
     cached: false,
     ok,
     cost_cents: payload.cost_cents ?? null,
@@ -1087,13 +1134,30 @@ const invokeRaw = async (
   if (ok) {
     // A real answer of this job is what proves the model free again.
     if (!resolved.chosen) noteAnswered(row.id, sent, req.capability);
-    if (sent !== resolved.model) console.warn(`[core-ai] ${req.capability} ${row.provider_id}/${resolved.model} busy; answered by ${sent}`);
+    // What answered, when the provider said: a model it redirects shows on
+    // this connection's picker, and latest counts it as served.
+    // Remembering it is never allowed to fail the call.
+    const served = servedModelOf(payload.served_model);
+    if (await noteServedModel(connKey, sent, served, catalog).catch((err) => (console.warn(`[core-ai] could not record that ${sent} is served as ${served}: ${(err as Error).message}`), false))) {
+      console.warn(`[core-ai] ${req.capability} ${row.provider_id}: asked for ${sent}, answered by ${served}; the provider redirects it`);
+    }
+    if (sent !== resolved.model && !movedByListing) console.warn(`[core-ai] ${req.capability} ${row.provider_id}/${resolved.model} busy; answered by ${sent}`);
     break;
   }
   const failedReason = providerReasonOf(failure);
   // Which provider, which model, and why: the line a person reading the log
   // needs, and the model was the part it never said.
   console.warn(`[core-ai] ${req.capability} ${row.provider_id}/${sent} failed (${failedReason ?? "unknown"}), attempt ${attempt + 1}: ${errMsg}`);
+  if (failedReason === "model_unavailable" && catalog && !relisted) {
+    relisted = true;
+    const again = await concrete(true).catch(() => sent);
+    if (again !== sent) {
+      console.warn(`[core-ai] ${req.capability} ${row.provider_id}/${sent} is no longer served; the fresh listing says ${again}`);
+      sent = again;
+      movedByListing = true;
+      continue;
+    }
+  }
   if (failedReason !== "busy") break;
   const pause = rung === 0 ? busyRetryDelaysMs[attempt] : undefined;
   if (pause === undefined) {
@@ -1135,8 +1199,9 @@ const invokeRaw = async (
     });
   }
 
-  // Cache write (only on success + not bypassed).
-  if (!req.bypass_cache) {
+  // Cache write (only on success + not bypassed, and under the model the key
+  // names: a call a fresh listing moved to another model is not that reply).
+  if (!req.bypass_cache && !movedByListing) {
     try {
       // Re-acquire the tenant pool: the provider call above can run for
       // minutes (a queued claude bridge), past the idle reaper — writing
@@ -1167,6 +1232,7 @@ const invokeRaw = async (
     output_tokens: payload.output_tokens,
     cost_cents: payload.cost_cents,
     duration_ms,
+    served_model: servedModelOf(payload.served_model),
   };
   };
 
@@ -1190,6 +1256,8 @@ async function writeAuditRow(
     provider_label: string;
     capability: string;
     model: string;
+    /** What the provider said answered; null when it did not say. */
+    served_model: string | null;
     cached: boolean;
     ok: boolean;
     cost_cents: number | null;
@@ -1251,7 +1319,7 @@ export async function modelsReportedBy(
   orgId: string,
   userId: string | null,
   ref: { providerId?: string; credentialId?: string },
-  opts: { fresh?: boolean } = {},
+  opts: { fresh?: boolean; capability?: AiCapability } = {},
 ): Promise<AiReportedModels | null> {
   let providerId = ref.providerId ?? null;
   let credentials: Record<string, unknown> | null = null;
@@ -1263,10 +1331,10 @@ export async function modelsReportedBy(
   }
   if (!providerId) return null;
   const def = providers.get(providerId);
-  if (!def?.listModels) return null;
-  const key = `${orgId}|${ref.credentialId ?? `ws:${providerId}`}`;
+  if (!def?.listModels && !def?.modelCatalog) return null;
+  const key = listingKey(orgId, { credentialId: ref.credentialId, providerId });
   const hit = reported.get(key);
-  if (hit && !opts.fresh && Date.now() - hit.at < REPORTED_TTL_MS) return hit.value;
+  if (!def.modelCatalog && hit && !opts.fresh && Date.now() - hit.at < REPORTED_TTL_MS) return hit.value;
   let value: AiReportedModels;
   try {
     if (!credentials) {
@@ -1279,11 +1347,44 @@ export async function modelsReportedBy(
       if (!row) return null;
       credentials = row.credentials_enc ? await integrationsImpl.decryptCredentials(orgId, row.credentials_enc) : {};
     }
-    const live = await def.listModels(credentials);
+    if (def.modelCatalog) {
+      // A provider that lists its own models: the per-connection listing,
+      // asked again when over an hour old (or now, for "Refresh models").
+      const answer = await connectionModelChoices({ key: listingKey(orgId, { credentialId: ref.credentialId, providerId }), catalog: def.modelCatalog, credentials, capability: opts.capability, fresh: opts.fresh });
+      if (answer.live) {
+        await flushUpgradeNotice(orgId, providerId, def.modelCatalog, { checkedAt: Date.now(), live: true, listed: answer.listed }).catch((err) =>
+          console.warn(`[core-ai] the upgrade notice for ${providerId} could not be said: ${(err as Error).message}`),
+        );
+      }
+      const { live: _live, listed: _listed, ...reportedAnswer } = answer;
+      return reportedAnswer;
+    }
+    const live = await def.listModels!(credentials);
     value = { ok: true, models: [...new Set([...live, ...pinnedOf(credentials)])] };
   } catch (err) {
     value = { ok: false, error: redactSecrets((err as Error)?.message ?? String(err), Object.values(credentials ?? {})), models: pinnedOf(credentials ?? {}) };
   }
   reported.set(key, { at: Date.now(), value });
   return value;
+}
+
+/**
+ * The models a connection was asked for and answered by another model, as
+ * its calls showed (requested id to served id): a provider redirecting a
+ * deprecated model. For any provider, a curated list's too, and for the same
+ * connections modelsReportedBy answers for. Null when none.
+ */
+export async function modelRedirects(
+  orgId: string,
+  userId: string | null,
+  ref: { providerId?: string; credentialId?: string },
+): Promise<Record<string, string> | null> {
+  if (ref.credentialId) {
+    const personal = await resolvePersonalProvider(orgId, userId, () => true, "ai-provider", "chat", ref.credentialId).catch(() => null);
+    if (!personal || personal.credentialId !== ref.credentialId) return null;
+  } else if (!ref.providerId) return null;
+  const key = listingKey(orgId, { credentialId: ref.credentialId, providerId: ref.providerId ?? "" });
+  await loadRedirects(key);
+  const served = redirectsFor(key);
+  return served ? { ...served } : null;
 }

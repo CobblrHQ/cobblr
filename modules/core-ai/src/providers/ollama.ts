@@ -25,6 +25,7 @@ import { promptFingerprint } from "./prompt-fingerprint.js";
 import { visionPromptFor } from "./identify-prompt.js";
 import { rankImagesPromptFor } from "./rank-images-prompt.js";
 import { namesOfTags, pickInstalledModel } from "./ollama-models.js";
+import { servedModelOf } from "@cobblr/platform-contract/ai-models";
 
 /** Optional bearer auth for the endpoint. Returns {} when no token is
  *  configured (a bare local Ollama). A remote endpoint behind a
@@ -320,6 +321,7 @@ export function register(): void {
             };
             prompt_eval_count?: number;
             eval_count?: number;
+            model?: unknown;
           };
           const calls = parseOllamaToolCalls(body.message ?? {});
           if (!calls && !String(body.message?.content ?? "").trim()) throw emptyReply(reqBody.model);
@@ -332,6 +334,9 @@ export function register(): void {
             input_tokens: body.prompt_eval_count,
             output_tokens: body.eval_count,
             cost_cents: 0,
+            // The model that answered: a missing one is swapped for an
+            // installed one above, and the log says which.
+            served_model: servedModelOf(body.model),
           };
         }
         case "summarise": {
@@ -351,9 +356,9 @@ export function register(): void {
           // Don't echo the upstream body — for a read-SSRF that body is the
           // exfil channel; the status alone is enough to diagnose.
           if (!res.ok) throw await failed(res);
-          const body = (await res.json()) as { message: { content: string } };
+          const body = (await res.json()) as { message: { content: string }; model?: unknown };
           if (!String(body.message?.content ?? "").trim()) throw emptyReply(ctx.model);
-          return { result: { text: body.message.content }, cost_cents: 0 };
+          return { result: { text: body.message.content }, cost_cents: 0, served_model: servedModelOf(body.model) };
         }
         case "split-image":
         case "identify-glance":
@@ -391,9 +396,9 @@ export function register(): void {
           // Don't echo the upstream body — for a read-SSRF that body is the
           // exfil channel; the status alone is enough to diagnose.
           if (!res.ok) throw await failed(res);
-          const body = (await res.json()) as { message: { content: string } };
+          const body = (await res.json()) as { message: { content: string }; model?: unknown };
           if (!String(body.message?.content ?? "").trim()) throw emptyReply(ctx.model);
-          return { result: { text: body.message.content }, cost_cents: 0 };
+          return { result: { text: body.message.content }, cost_cents: 0, served_model: servedModelOf(body.model) };
         }
         default:
           throw new Error(`ollama: capability ${ctx.capability} not implemented`);

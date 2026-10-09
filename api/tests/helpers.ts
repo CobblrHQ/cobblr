@@ -418,3 +418,5 @@ export async function ensureModule(s: { token: string; slug: string }, name: str
     throw new Error(`${name} did not turn ${on ? "on" : "off"} in ${s.slug}: the ${on ? "enable" : "disable"} answered ${said}`);
   }
 }
+
+export { mapLimit } from "./map-limit.js";

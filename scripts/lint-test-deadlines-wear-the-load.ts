@@ -21,7 +21,7 @@ import { join } from "node:path";
 
 /** Where the rule bites. Keep it narrow: a lint over the whole repo judges
  *  files whose authors never heard of it. */
-const ROOTS = ["api/tests", "scripts"];
+const ROOTS = ["api/tests", "api/src", "scripts"]; // api/src: its unit tests live beside the code since #5443
 
 /** One offending place. `line` is 1-based for a clickable path:line. */
 interface Violation {

@@ -1,3 +1,5 @@
+import type {BridgeDiscovery} from "@cobblr/platform-contract/bridge-discovery";
+import type {ServerBridgeState} from "@cobblr/platform-contract/server-bridge";
 import type { PersonalDocumentRead } from "@cobblr/platform-contract/personal-documents";
 import type { CutterProfile, CutterProgram } from "@cobblr/platform-contract/cutter-program";
 import type { StockView, StockDetail } from "@cobblr/inventory/ui";
@@ -39,6 +41,7 @@ import { bodyOf, type ImportRun, type SheetsBody, type SheetsPlan, type UndoRepo
 import type { ResolveOutcome as RegistryResolveOutcome } from "@cobblr/platform-contract/resolvables";
 import type { FieldRole, FieldDefType } from "@cobblr/platform-contract/field-vocabulary";
 import type { LiveControlPublic, AiConnectionTest } from "@cobblr/platform-contract";
+import type { AiReportedModels } from "@cobblr/platform-contract";
 import { describeUnreadableBody, sendUpload, uploadErrorOf, UploadError } from "@cobblr/platform-web";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 import { walkPages } from "./list-pages";
@@ -935,14 +938,57 @@ export interface Order {
    *  only). A line names its own by shipment_id; a line with none travels
    *  under the order's own tracking_number. */
   shipments?: OrderShipment[];
+  /** The store's own order page, when an order email carried its link
+   *  (detail only). Never the link itself. */
+  order_page?: OrderPage | null;
   created_at: string;
   updated_at: string;
+}
+
+/** How following the store's own order page is going (#5461). */
+export interface OrderPage {
+  /** The store's host, e.g. shop.example.org. */
+  store: string;
+  state: "waiting" | "following" | "done" | "expired" | "redacted" | "unsupported" | string;
+  last_read_at: string | null;
+  /** How many lines the page said had shipped, at the last read. */
+  shipped_lines: number | null;
+  /** Whether this instance reads store pages at all. */
+  reads_on: boolean;
+}
+
+/** What purchases did with a parcel (POST /orders/:id/shipments). */
+export interface ShipmentOutcome {
+  mode: "order" | "shipment";
+  shipment_id: string | null;
+  tracking_number: string;
+  lines: Array<{ id: string; description: string | null }>;
+  not_shipped: Array<{ id: string; description: string | null }>;
+  created: boolean;
+}
+
+/** A line still to arrive for one record, with its parcel when it has one. */
+export interface IncomingLine {
+  line_id: string;
+  description: string | null;
+  qty: number;
+  order_id: string;
+  vendor: string | null;
+  order_number: string | null;
+  tracking_number: string | null;
+  carrier_name: string | null;
+  shipment_state: string | null;
+  expected_arrival: string | null;
+  /** The order ships in parcels and none of them has this line yet. */
+  not_shipped: boolean;
 }
 
 /** One parcel of an order: its own number, state and day. */
 export interface OrderShipment {
   id: string;
   tracking_number: string;
+  /** The carrier, by name ("Amazon Logistics"), when the number names one. */
+  carrier_name?: string | null;
   shipment_state: string | null;
   shipment_checked_at: string | null;
   expected_arrival: string | null;
@@ -2305,6 +2351,17 @@ export const api = {
   syncMailSource: (id: string) =>
     request<{ ran: boolean; reason?: string; error?: string; result?: { delivered: number; listed: number; fetched: number } }>("POST", `/me/mail-sources/${id}/sync`, {}),
   /** The mailboxes feeding a workspace, for its Integrations page. */
+  // "Check my mailbox" (#5462): the order rules run over the whole mailbox, filing nothing.
+  startMailboxCheck: (id: string, range: { after?: string | null; before?: string | null } = {}) =>
+    request<MailboxCheck>("POST", `/me/mail-sources/${id}/checks`, range),
+  latestMailboxCheck: (id: string) => request<MailboxCheck | null>("GET", `/me/mail-sources/${id}/checks/latest`),
+  mailboxCheckStores: (id: string, check: string) => request<{ items: MailboxCheckStoreRow[] }>("GET", `/me/mail-sources/${id}/checks/${check}/stores`),
+  mailboxCheckItems: (id: string, check: string, list: MailboxCheckList, offset = 0) =>
+    request<{ items: MailboxCheckItem[]; total: number; limit: number; offset: number }>("GET", `/me/mail-sources/${id}/checks/${check}/items?list=${list}&limit=50&offset=${offset}`),
+  markMailboxCheckItem: (id: string, check: string, gmailId: string, isOrder: boolean) =>
+    request<{ ok: boolean; remembered_for: string | null }>("POST", `/me/mail-sources/${id}/checks/${check}/items/${encodeURIComponent(gmailId)}/verdict`, { is_order: isOrder }),
+  markedMailboxCheckItems: (id: string, check: string) => request<{ items: unknown[] }>("GET", `/me/mail-sources/${id}/checks/${check}/marked`),
+  stopMailboxCheck: (id: string, check: string) => request<MailboxCheck>("POST", `/me/mail-sources/${id}/checks/${check}/stop`, {}),
   workspaceMailSources: (slug: string) => request<{ items: WorkspaceMailSource[] }>("GET", `/orgs/${slug}/mail-sources`),
   /** The order of MY connections in a workspace, first to last. Only meaningful
    *  when more than one of mine is routed there; without it the newest edit
@@ -2639,6 +2696,16 @@ export const api = {
   /** A part's purchase history + price stats, from purchases' own full-fat
    *  /items route (the generic entities list can't carry unit_cost — costs
    *  aren't in the kind's exposableFields). Empty items = never bought. */
+  /** A parcel of an order: a number or a pasted tracking link, and the lines
+   *  in it (none: purchases decides from the whole order). */
+  addShipment: (slug: string, orderId: string, body: { tracking_number: string; line_ids?: string[] }) =>
+    request<ShipmentOutcome>("POST", `/orgs/${slug}/modules/purchases/orders/${orderId}/shipments`, body),
+  /** What is still on its way for one record, or for one order line. */
+  purchasesIncoming: (slug: string, q: { kind: string; id: string } | { line_id: string }) =>
+    request<{ items: IncomingLine[] }>(
+      "GET",
+      `/orgs/${slug}/modules/purchases/incoming?${new URLSearchParams(q as Record<string, string>).toString()}`,
+    ),
   purchasesPriceHistory: (slug: string, partId: string) =>
     request<PurchasePriceHistory>(
       "GET",
@@ -3223,6 +3290,20 @@ export const api = {
       { delta, ...(reason ? { reason } : {}) },
     ),
   materialCost: (slug: string, kind: string, id: string) => request<{ items: Array<{ id: string; name: string; instance: string; grams: number; cost: { amount: number; currency: string } | null }> }>("GET", `/orgs/${slug}/modules/inventory/material-cost/${encodeURIComponent(kind)}/${id}`),
+  /** What a stocktake would look through: everything still listed in a place
+   *  (and the places inside it), newest first. */
+  stocktakeScope: (slug: string, placeId: string) =>
+    request<{ label: string; items: StocktakeItem[] }>("GET", `/orgs/${slug}/modules/inventory/stocktake?place_id=${encodeURIComponent(placeId)}`),
+  /** A starting list from one photo of a shelf or door: the listed records it
+   *  saw, and what it saw that is not listed. Writes nothing. */
+  stocktakePhoto: (slug: string, placeId: string, fileId: string) =>
+    request<{ seen: number; matched: Array<{ id: string; seen: string }>; unmatched: Array<{ name: string; qty: number }> }>(
+      "POST",
+      `/orgs/${slug}/modules/inventory/stocktake/photo`,
+      { place_id: placeId, file_id: fileId },
+    ),
+  /** One stocktake: what it kept, marked gone and counted, and whether it was undone. */
+  stocktake: (slug: string, id: string) => request<Stocktake>("GET", `/orgs/${slug}/modules/inventory/stocktakes/${encodeURIComponent(id)}`),
   stockAt: (slug: string, locationId: string) =>
     request<StockAtPlace>("GET", `/orgs/${slug}/modules/inventory/stock/at/${locationId}?today=${dayHere()}`),
   /** Lots going off within `within` days, wherever they are, grouped by place. */
@@ -3638,6 +3719,9 @@ export const api = {
     request<{ ok: boolean; printer: string }>("POST", `/orgs/${slug}/modules/digifab/print-rules/test-fire`, body),
   runDigifabControl: (slug: string, connId: string, deviceId: string, id: string, params?: Record<string, unknown>) =>
     request<{ ok: boolean; ref?: string }>("POST", `/orgs/${slug}/modules/digifab/fleet/${connId}/${encodeURIComponent(deviceId)}/control`, { id, params }),
+  discoverBridgeDevices: (slug:string,bridge:string|null) => request<BridgeDiscovery>("GET", `/orgs/${slug}/edge/discovery${bridge?`?bridge=${encodeURIComponent(bridge)}`:""}`),
+  getServerBridge: (slug: string) => request<ServerBridgeState>("GET", `/orgs/${slug}/edge/server-bridge`),
+  setServerBridge: (slug: string, enabled: boolean) => request<ServerBridgeState>("POST", `/orgs/${slug}/edge/server-bridge`, {enabled}),
   /** Edge-bridge pane of glass: workspace agents + the caller's personal agent. */
   getEdgeStatus: (slug: string) =>
     request<{
@@ -5391,10 +5475,14 @@ export const api = {
   // The caller's per-workspace receipt-forwarding address (null/unconfigured
   // when the operator hasn't wired up the receipts@ Email Worker).
   getReceiptAddress: (slug: string) =>
-    request<{ configured: boolean; address: string | null }>(
+    request<{ configured: boolean; address: string | null; order_address?: string | null; receipt_name?: string | null; order_name?: string | null }>(
       "GET",
       `/orgs/${slug}/receipt-address`,
     ),
+  /** Mail the person their own receipts (or orders) address, FROM that
+   *  address, so their mail client learns its name (#5462). */
+  emailMyAddress: (slug: string, which: "receipts" | "orders" = "receipts") =>
+    request<{ sent: boolean; to: string; name: string }>("POST", `/orgs/${slug}/receipt-address/email-me`, { which }),
   // Parse an uploaded receipt (CSV / PDF / photo) into one inbox row per line
   // item — each then triages into a part via the normal confirm flow. CSV and
   // text-PDF tables parse deterministically (no AI); everything else falls to AI.
@@ -6034,8 +6122,8 @@ export const api = {
       body,
     ),
   /** What a connection reports it serves; null for a curated list. */
-  aiReportedModels: (slug: string, ref: { provider_id?: string; credential_id?: string }, fresh = false) =>
-    request<{ reported: { ok: true; models: string[] } | { ok: false; error: string; models: string[] } | null }>(
+  aiReportedModels: (slug: string, ref: { provider_id?: string; credential_id?: string; capability?: string }, fresh = false) =>
+    request<{ reported: AiReportedModels | null; redirects?: Record<string, string> | null }>(
       "GET",
       `/orgs/${slug}/modules/core-ai/capability-defaults/models?${new URLSearchParams({ ...ref, ...(fresh ? { fresh: "1" } : {}) } as Record<string, string>).toString()}`,
     ),
@@ -7084,6 +7172,54 @@ export interface AiProviderDef {
 
 /** One of my connected mailboxes (a `mail-source` connection) with the state
  *  the sync leaves beside it. Never the grant. */
+/** A "Check my mailbox" run (#5462). */
+export interface MailboxCheck {
+  id: string;
+  status: "running" | "done" | "stopped" | "failed";
+  query: string;
+  seen: number;
+  pages: number;
+  started_at: string;
+  finished_at: string | null;
+  last_error: string | null;
+  /** By verdict: order, shipment, not-order, ask-ai. */
+  totals: Record<string, number>;
+  /** By what decided it: schema.org, platform, heuristics, remembered, none. */
+  by: Record<string, number>;
+  previous: { id: string; totals: Record<string, number> } | null;
+}
+
+export interface MailboxCheckStoreRow {
+  year: number | null;
+  store: string;
+  candidates: number;
+  orders: number;
+  shipments: number;
+  not_orders: number;
+  ask_ai: number;
+  by_schema: number;
+  by_platform: number;
+  by_heuristics: number;
+  by_remembered: number;
+}
+
+export type MailboxCheckList = "misses" | "false-hits" | "ask-ai" | "orders" | "all";
+
+export interface MailboxCheckItem {
+  gmail_id: string;
+  received_at: string | null;
+  sender: string | null;
+  sender_domain: string | null;
+  subject: string | null;
+  purchases_label: boolean;
+  verdict: "order" | "shipment" | "not-order" | "ask-ai";
+  decided_by: string;
+  strength: string | null;
+  platform: string | null;
+  found: { orderNumber?: string | null; tracking?: Array<{ number: string; carrier: string | null }>; merchant?: string | null; expected?: string | null };
+  person_verdict: "order" | "not-order" | null;
+}
+
 export interface MailSourceView {
   id: string;
   provider_id: string;
@@ -7253,6 +7389,14 @@ export interface WorkspaceAiOffer {
   is_own: boolean;
 }
 
+/** What a connection reports it serves (platform().ai.modelsReportedBy).
+ *  `choices` is a provider that lists its models: each family's "latest"
+ *  first, then exact versions to pin; `fallback` says the list could not be
+ *  read and these are the provider's usual models. */
+/** The platform's own shape, so a field it adds (the redirects a
+ *  connection's calls showed) reaches the picker without a second copy. */
+export type { AiReportedModels };
+
 export interface AiCapabilityDefault {
   capability: string;
   provider_id: string;
@@ -7268,6 +7412,8 @@ export interface AiCall {
   provider_id: string;
   capability: string;
   model: string | null;
+  /** The model the provider said answered; null when it did not say. */
+  served_model?: string | null;
   input_summary: string | null;
   output_summary: string | null;
   input_tokens: number | null;
@@ -8539,6 +8685,8 @@ export interface AiActivityItem {
   /** The connection's own name when the call was made; null on older rows. */
   provider_label?: string | null;
   model: string | null;
+  /** The model the provider said answered; null when it did not say. */
+  served_model?: string | null;
   input_summary: string | null;
   output_summary: string | null;
   input_tokens: number | null;
@@ -8877,7 +9025,7 @@ export type BambuLoginResponse =
 export interface DigifabFleetDevice {
   monitor_only?: boolean;
   print_process?: "resin" | null;
-  station_kind?: "laser" | "print" | "cnc" | "cutter";
+  station_kind?: "laser" | "print" | "cnc" | "cutter" | "bench" | "production-test";
   laser_backend?: "gcode" | "ruida" | "galvo" | null;
   laser_setup?: boolean;
   lightburn_readiness?: { api: { ready: boolean; fix: string }; paired: { ready: boolean; fix: string }; udp: { ready: boolean; fix: string } } | null;
@@ -9070,7 +9218,7 @@ export interface ResinStockChoice { id: string; kind: string; name: string; shap
 export interface MachineStationView {
   resin?: { station: string; loaded: ResinStockChoice[]; canStart: boolean; warning: string; stockError: string | null; postprocess: Array<{ job_id: string; file_ref: string; metadata?: Record<string, unknown>; wash_done: boolean; cure_done: boolean }> };
   kind?: string | null;
-  screen_kind?: "laser" | "print" | "cnc" | "cutter" | "resin" | "large-format" | "bench" | null;
+  screen_kind?: "laser" | "print" | "cnc" | "cutter" | "resin" | "large-format" | "bench" | "production-test" | null;
   machine_id?:string|null;
   job: (DigifabJob & { sent_at?: string | null }) | null;
   library: DigifabLibraryItem | null;
@@ -10352,7 +10500,7 @@ export interface PlatformBundleInstance {
    *  pairing. `instance` is the parent instance name. */
   paste_tracking?: boolean;
   package_receiving?: { identity_field: string; storage_tracking?: boolean };
-  board_revisions?: { package_kind: string; blank_kind: string; stencil_kind: string };
+  board_revisions?: { package_kind: string; blank_kind: string; stencil_kind: string; placed_kind?: string };
   parent?: {
     instance: string;
     label?: string;
@@ -10554,6 +10702,26 @@ export interface ApprovalRequestView {
 }
 
 /** One record at a place, as the place's own view reads it. */
+export interface StocktakeItem {
+  id: string;
+  kind: string;
+  title: string;
+  qty: number;
+  unit: string;
+  image_path: string | null;
+  created_at: string;
+}
+
+export interface Stocktake {
+  id: string;
+  label: string;
+  kept: Array<{ id: string; kind: string; title: string }>;
+  gone: Array<{ id: string; kind: string; title: string }>;
+  counted: Array<{ id: string; kind: string; title: string; before: number; after: number }>;
+  created_at: string;
+  undone_at: string | null;
+}
+
 export interface StockPlaceRow {
   id: string;
   card_id: string | null;
@@ -10594,7 +10762,7 @@ export interface LaserPoint { x: number; y: number; c0?: { x: number; y: number 
 export interface LaserDesign { width: number; height: number; paths: Array<{ layer: string; points: LaserPoint[]; closed: boolean; curves?: boolean[] }> }
 export interface LaserSheet { id: string; name: string; spec: { width_mm: number; height_mm: number; material: string; thickness_mm: number }; revision: number; offcut: boolean; percent_left: number; free_rectangles: LaserRect[] }
 export interface LaserPlacement extends LaserRect { number: number; rotated: boolean; footprint: LaserRect; angle?: number; translation?: { x: number; y: number }; footprint_outline?: Array<{ x: number; y: number }> }
-export interface LaserLayoutSheet { id: string; name?: string; width: number; height: number; revision: number; free_rectangles: LaserRect[]; parts: LaserPlacement[]; remaining: LaserRect[]; svg?: string; nesting?: "outline" | "rectangle"; nest_ms?: number; utilisation?: number; used_outlines?: Array<Array<{ x: number; y: number }>> }
+export interface LaserLayoutSheet { id: string; name?: string; width: number; height: number; revision: number; free_rectangles: LaserRect[]; parts: LaserPlacement[]; remaining: LaserRect[]; svg?: string; nesting?: "outline" | "rectangle"; nesting_note?: string; nest_ms?: number; utilisation?: number; used_outlines?: Array<Array<{ x: number; y: number }>> }
 export interface LaserPlanRecord { id: string; connection_id: string; remote_device_id: string; run_id: string | null; plan: { name: string; quantity: number; material: string; thickness_mm: number; estimated_sec: number; design: LaserDesign; sheets: LaserLayoutSheet[] } }
 export interface LaserJobLayout { plan_id: string; sheet_id: string; quantity: number; design: LaserDesign; parts: LaserPlacement[]; footprints: LaserRect[]; expected?: Array<LaserProfileRecord["profile"] & { index: number; layer: string }> }
 

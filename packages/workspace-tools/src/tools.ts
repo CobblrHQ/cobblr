@@ -30,7 +30,6 @@ import { asMeasure, measureMatches, measureTokens, type Measure } from "@cobblr/
 import { CURSOR_PARAM, decodeCursor, pageEnd, type Paging } from "./paging.js";
 import { pairingResultPresentation } from "@cobblr/platform-contract/pairing-presentation";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 export type ToolMode = "read" | "write";
 
 interface WorkspaceToolBase {
@@ -53,6 +52,11 @@ interface WorkspaceToolBase {
    *  every-turn budget holds the kernel's tools and each module's own set
    *  grows apart from it (lint:tool-descriptions). Absent: a kernel tool. */
   module?: string;
+  /** Why this result must reach the model whole: a caller that trims tool
+   *  results to a budget (the chat loop's clampJson) leaves this one entire.
+   *  For a menu the model chooses from, where a trimmed tail is not "less
+   *  detail" but options that silently stop existing. Absent: trimmed as usual. */
+  wholeResult?: string;
   execute(api: WorkspaceApi, args: Record<string, unknown>): Promise<ToolResult>;
 }
 
@@ -172,7 +176,7 @@ function severalMatch(items: unknown[], q: string): { several_match: string } | 
     return String(r.title ?? f.name ?? r.name ?? "");
   });
   return {
-    several_match: `${countOf(named.length, "record")} match "${q}" by name (${names.join("; ")}). Before stating a quantity, place or detail, ask which one the person means, or answer about each by name; never report on one as if it were the only one.`,
+    several_match: `${named.length} records match "${q}" by name (${names.join("; ")}). Before stating a quantity, place or detail, ask which one the person means, or answer about each by name; never report on one as if it were the only one.`,
   };
 }
 
@@ -307,7 +311,7 @@ async function scanByText(
   const end = offset + items.length;
   const notes: string[] = [];
   if (end < hits.length) notes.push(`PARTIAL: records ${offset + 1}-${end} of ${hits.length}. Do not count, rank, or say "none" from this page; call again with cursor = next_cursor for the rest, or use count_records for exact totals.`);
-  if (!walked.complete) notes.push(`scanned the first ${walked.items.length} of ${countOf(walked.total, "record")} only`);
+  if (!walked.complete) notes.push(`scanned the first ${walked.items.length} of ${walked.total} records only`);
   const body = {
     shown: items.length,
     total: hits.length,
@@ -344,7 +348,7 @@ export function pageWithTruth(body: unknown, limit: number, offset = 0): unknown
   const partial = offset > 0 || (known ? shown < (total as number) : shown === limit);
   const range = `records ${offset + 1}-${offset + shown}`;
   const extent = known
-    ? offset > 0 ? `${range} of ${total}` : `${shown} of ${countOf(total ?? 0, "record")}`
+    ? offset > 0 ? `${range} of ${total}` : `${shown} of ${total} records`
     : offset > 0 ? `${range}, there may be more` : `the first ${shown} records, there may be more`;
   return {
     shown,
@@ -1375,6 +1379,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       "Discover actions: no filter returns an index mapping action ids to labels. Pass action_id for its arguments, or kind for applicable actions and arguments. Run invoke_action; send_targets lists destinations and recent sends.",
     mode: "read",
     paging: { by: "one-call", why: "every action the workspace registers; the registry is small and whole" },
+    wholeResult: "the index is the menu of every action Cobb can offer; a trimmed index drops actions that exist",
     params: {
       send_targets: z.boolean().optional().describe("Send destinations and your sends"),
       kind: z.string().optional().describe("Only entity actions applicable to this kind id (workspace actions still included)"),
@@ -1892,7 +1897,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         items: page.map((it) => summarizeScanItem(it, batches)),
         ...(typeof total === "number" ? { total_in_facet: total } : {}),
         matched: matched.length,
-        ...(scannedAll ? {} : { note: `searched the newest ${countOf(all.length, "capture")} only; narrow the facet to reach older ones` }),
+        ...(scannedAll ? {} : { note: `searched the newest ${all.length} captures only; narrow the facet to reach older ones` }),
         ...pageEnd("list_scan_inbox", end < matched.length ? { f: facet, l: limit, q, o: end } : null),
       });
     },
@@ -1918,17 +1923,23 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "get_workspace_setup",
     description:
-      "Read instances, saved views, wires, apps, templates and units before changing setup. Choose part or omit it for all.",
+      "Read setup. Use part=devices to discover bridge machines.",
     mode: "read",
     paging: { by: "one-call", why: "a description of the setup, one area or a summary of all" },
     params: {
       part: z
-        .enum(["all", "instances", "views", "automations", "apps", "templates", "units"])
+        .enum(["all", "instances", "views", "automations", "apps", "templates", "units", "devices"])
         .optional()
-        .describe("Which area of the setup (default: a summary of all of them)"),
+        .describe("Area; default all"),
+      bridge:z.string().max(60).optional().describe("Devices: bridge name; omit for default"),
     },
     execute: async (api, args) => {
       const part = typeof args.part === "string" && args.part ? args.part : "all";
+      if(part === "devices") {
+        const res=await api.request("GET",`/edge/discovery${args.bridge?`?bridge=${encodeURIComponent(String(args.bridge))}`:""}`);
+        if(res.status>=400)return toolFail(apiErrorMessage(res,"Could not discover devices"));
+        return toolOk(res.body);
+      }
       const want = (p: string) => part === "all" || part === p;
       // Each area is optional: a workspace that has not enabled a module 404s
       // that one, and the honest answer is "that area is not set up here" — not
@@ -2514,4 +2525,11 @@ export function toolFromMcpName(mcpName: string): WorkspaceTool | undefined {
   return mcpName.startsWith(MCP_TOOL_PREFIX)
     ? getTool(mcpName.slice(MCP_TOOL_PREFIX.length))
     : undefined;
+}
+
+/** The most characters a result of `name` may be trimmed to, given the
+ *  caller's usual budget: unlimited for a tool that must arrive whole. One
+ *  answer for the chat loop and the bench, so neither trims what the other keeps. */
+export function resultBudgetFor(name: string, usual: number): number {
+  return WORKSPACE_TOOLS.find((t) => t.name === name)?.wholeResult ? Number.POSITIVE_INFINITY : usual;
 }

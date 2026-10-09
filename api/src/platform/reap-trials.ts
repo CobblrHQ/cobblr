@@ -41,7 +41,6 @@
 import type { AuthEmailMessage } from "@cobblr/platform-contract";
 import { runExclusive } from "./exclusive.js";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 export type ReapMode = "off" | "dry" | "live";
 
 /** off | dry | live from COBBLR_TRIAL_REAP (default off; unknown → off). Pure. */
@@ -288,7 +287,7 @@ export async function reapExpiredTrials(deps: ReapDeps = {}): Promise<ReapResult
   const maxPerSweep = deps.maxPerSweep ?? reapMaxPerSweep();
   if (maxPerSweep > 0 && reapable.length > maxPerSweep) {
     console.error(
-      `[reap-trials] REFUSING live sweep: ${countOf(reapable.length, "workspace")} are reapable, over the ` +
+      `[reap-trials] REFUSING live sweep: ${reapable.length} workspaces are reapable, over the ` +
         `${maxPerSweep} cap. This is almost certainly a mistake. Review with COBBLR_TRIAL_REAP=dry, ` +
         `then raise COBBLR_TRIAL_REAP_MAX_PER_SWEEP if it's genuinely intended.`,
     );

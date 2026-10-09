@@ -341,6 +341,14 @@ export interface DigifabLaserPlansTable {
   plan: import("./laser-plans.js").LaserPlan; run_id: string | null; created_at: Generated<Date>;
 }
 export interface DigifabDB {
+  digifab_test_numbering: import("./production-store.js").TestNumbering;
+  digifab_test_delivery: import("./production-store.js").TestDelivery;
+  digifab_test_plans: import("./production-store.js").TestPlanHead;
+  digifab_test_plan_versions: import("./production-store.js").TestPlanVersion;
+  digifab_test_units: import("./production-store.js").TestUnit;
+  digifab_test_jigs: import("./production-store.js").TestJig;
+  digifab_test_runs: import("./production-store.js").TestRun;
+  digifab_test_dispositions: import("./production-store.js").TestDisposition;
   digifab_kiln_profiles: { machine_id: string; connection_id: string | null; device_id: string | null; schedules: ColumnType<Array<{ name: string; segments: import("./kilns/model.js").Firing["schedule"] }>, string, string>; components: ColumnType<import("./kilns/model.js").Component[], string, string> };
   digifab_firings: { id: string; machine_id: string; name: string; recipe: ColumnType<import("./kilns/model.js").Firing, string, string>; status: Generated<string>; connection_id: string | null; device_id: string | null; peak_c: number | null; duration_hours: number | null; started_at: Date | null; ended_at: Date | null; created_at: Generated<Date> };
   digifab_large_prints: {job_id:string;connection_id:string;device_id:string;plan:import("./large-format/service.js").LargePrintPlan;started_at:Generated<Date|null>;report:Generated<import("./large-format/service.js").PrintOutcome|null>;consumed_at:Generated<Date|null>;created_at:Generated<Date>};
@@ -365,9 +373,12 @@ export interface DigifabDB {
   digifab_laser_sheet_claims: { part_id: string; plan_id: string | null; job_id: Generated<string | null> };
   digifab_stations: {
     id: Generated<string>;
-    connection_id: string;
+    connection_id: string | null;
     remote_device_id: string;
     label: string;
+    purpose: Generated<string>;
+    machine_kind: string | null;
+    machine_id: string | null;
     token_hash: string;
     revoked_at: Date | null;
     created_at: Generated<Date>;

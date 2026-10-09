@@ -19,12 +19,12 @@
 // "✓ done — Undo" cards. Read results are clamped so a big list can't blow the
 // prompt; the round cap keeps a confused model from ping-ponging forever.
 
+import { resultBudgetFor } from "@cobblr/workspace-tools";
 import type { ToolCall, ChatTurn } from "../providers/tool-wire.js";
 import { scrubIds, namesFromToolResults } from "./scrub-ids.js";
 import { stripStageDirections } from "./stage-directions.js";
 import { actionToolCall } from "./action-tool-call.js";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 export interface LoopModelResult {
   content: string;
   tool_calls?: ToolCall[];
@@ -171,7 +171,7 @@ export function clampJson(value: unknown, maxChars: number): string {
     while (keep > 0) {
       const partial = {
         ok: (value as { ok?: unknown }).ok,
-        PARTIAL: `showing ${keep} of ${countOf(total, "record")}. This is NOT the whole set: do not count, rank, or say "none" from it. Narrow with q, or use count_records for totals by field.`,
+        PARTIAL: `showing ${keep} of ${total} records. This is NOT the whole set: do not count, rank, or say "none" from it. Narrow with q, or use count_records for totals by field.`,
         data: { ...holder, items: items.slice(0, keep), shown: keep, total },
       };
       out = str(partial);
@@ -355,7 +355,9 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
         let resultText: string;
         let ok = true;
         try {
-          resultText = clampJson(await deps.executeRead(call.name, call.args), maxChars);
+          // A menu the model chooses from arrives whole (wholeResult): trimming
+          // the action index dropped actions that exist.
+          resultText = clampJson(await deps.executeRead(call.name, call.args), resultBudgetFor(call.name, maxChars));
         } catch (err) {
           ok = false;
           resultText = clampJson({ ok: false, error: (err as Error)?.message ?? "tool failed" }, maxChars);

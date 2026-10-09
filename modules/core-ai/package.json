@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/core-ai",
-  "version": "0.17.79",
+  "version": "0.17.80",
   "private": true,
   "type": "module",
   "main": "dist/module.js",
@@ -12,6 +12,14 @@
     "./providers/identify-prompt.js": {
       "types": "./src/providers/identify-prompt.ts",
       "import": "./dist/providers/identify-prompt.js"
+    },
+    "./providers/anthropic-models.js": {
+      "types": "./src/providers/anthropic-models.ts",
+      "import": "./dist/providers/anthropic-models.js"
+    },
+    "./providers/openai-models.js": {
+      "types": "./src/providers/openai-models.ts",
+      "import": "./dist/providers/openai-models.js"
     }
   },
   "scripts": {

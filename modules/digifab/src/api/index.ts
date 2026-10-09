@@ -14,6 +14,9 @@ import { registerResinPostprocessAction } from "../resin-postprocess.js";
 
 import { Router } from "express";
 import { platform } from "@cobblr/platform-contract";
+import { productionRouter } from "./production.js";
+import { registerProductionTest } from "../production-actions.js";
+import { registerProductionReconcile } from "../production-reconcile.js";
 import { benchRouter } from "./bench.js";
 import { registerBench } from "../bench.js";
 import { connectionsRouter } from "./connections.js";
@@ -37,6 +40,7 @@ import { loadedRouter } from "./loaded.js";
 import { kilnsRouter } from "./kilns.js";
 import { registerKilnActions } from "../kilns/actions.js";
 import { laserRouter } from "./laser.js";
+import { registerMachineStationVerifier } from "./machine-stations.js";
 import { stationsRouter } from "./stations.js";
 import { snapmakerRouter } from "./snapmaker.js";
 import { registerSnapmakerDiscovery } from "../snapmaker.js";
@@ -60,7 +64,10 @@ import { asyncHandler } from "./util.js";
 import { tenantContext } from "../db.js";
 import { extractPlateMetadata } from "../library/extract-metadata.js";
 
+registerMachineStationVerifier();
 registerBench();
+registerProductionTest();
+registerProductionReconcile();
 registerFarmResolvers();
 registerMakeActions();
 registerLaserActions();
@@ -100,6 +107,7 @@ platform().edge.registerConsumer({
 
 const router = Router({ mergeParams: true });
 router.use("/bench",benchRouter);
+router.use("/production", productionRouter);
 router.use("/connections", connectionsRouter);
 router.use("/stations", stationsRouter);
 router.use("/resin", resinRouter);

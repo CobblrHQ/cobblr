@@ -11,7 +11,6 @@ import { ApiError, api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 interface ParsedItem {
   item_type: "P" | "S" | "M" | "B" | "G" | "C" | "I" | "O";
   item_id: string;
@@ -34,6 +33,7 @@ interface DiffEntry {
   total_in_stock: number;
   by_color: Record<string, number>;
   part_ids: string[];
+  records?: Array<{ kind: string; id: string }>;
   catalog_entry_id: string | null;
   catalog_name: string | null;
   color_satisfied: boolean | null;
@@ -590,7 +590,7 @@ function ParsedOrderTable({ result }: { result: ParseOrderResponse }) {
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
       <div className="px-4 py-2 bg-subtle/50 dark:bg-slate-800/40 border-b border-line dark:border-slate-700 flex flex-wrap items-center gap-3">
         <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
-          {countOf(result.summary.line_count, "line")}
+          {result.summary.line_count} lines
         </span>
         {result.summary.order_id && (
           <span className="text-[10px] font-mono uppercase tracking-widest text-accent">

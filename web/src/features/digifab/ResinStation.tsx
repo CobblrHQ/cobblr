@@ -1,3 +1,5 @@
+import {StationInstall} from "./StationInstall";
+import {keepStationScreenAwake} from "../../lib/station-screen";
 import { jobDisplayName } from "./jobDisplayName";
 import { ResinStockPanel } from "./ResinStockPanel";
 import { useEffect, useRef, useState } from "react";
@@ -26,13 +28,11 @@ export function ResinStation({ slug, connectionId, deviceId }: { slug: string; c
   currentContext.current = context;
   useEffect(() => { setCredential(readCredential()); setReview(null); }, [storageKey]);
   useEffect(() => { setReview(null); setError(""); }, [context]);
+  const keepAwake = busy || !!job && ["sent", "printing", "paused", "assigning", "awaiting-assignment"].includes(job.status);
   useEffect(() => {
-    let stopped = false;
-    let lock: WakeLockSentinel | undefined;
-    const acquire = async () => { if (document.visibilityState !== "visible" || !navigator.wakeLock || (lock && !lock.released)) return; try { const next = await navigator.wakeLock.request("screen"); if (stopped) await next.release(); else lock = next; } catch { /* Screen wake permission is optional. */ } };
-    void acquire(); document.addEventListener("visibilitychange", acquire);
-    return () => { stopped = true; document.removeEventListener("visibilitychange", acquire); void lock?.release(); };
-  }, []);
+    if (keepAwake) return keepStationScreenAwake(document, navigator.wakeLock);
+    return undefined;
+  }, [keepAwake]);
   const operation = useMutation({ mutationFn: async (work: () => Promise<void>) => {
     if (working.current) return;
     working.current = true; setBusy(true); setError("");
@@ -59,6 +59,7 @@ export function ResinStation({ slug, connectionId, deviceId }: { slug: string; c
     <header className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-2xl font-semibold">Resin station</h1><p className="break-words text-muted">{device?.name || "Resin printer"}</p></div><Link className={button} to="/digifab">Exit to the fleet</Link></header>
     {(error || q.error) && <p role="alert" className="rounded border border-red-500 p-4 break-words">{error || String(q.error)}</p>}
     {!credential ? <section className="rounded border border-line p-4 space-y-3"><h2 className="text-xl font-semibold font-mono uppercase tracking-wide">Set up this screen at the printer</h2><p>An owner or admin must authorize this screen before it can review and start a print. Keep it beside the machine.</p><button className={button} disabled={busy} onClick={() => void run(async () => { const result = await api.registerDigifabStation(slug, connectionId, deviceId); const next = { id: result.id, token: result.token }; localStorage.setItem(storageKey, JSON.stringify(next)); setCredential(next); })}>Authorize this machine station</button></section> : <button className={button} disabled={busy} onClick={() => void run(async () => { await api.revokeDigifabStation(slug, credential.id); localStorage.removeItem(storageKey); setCredential(null); setReview(null); })}>Revoke this screen</button>}
+    {credential && <StationInstall />}
     {controls}
     {q.data?.resin?.warning && <p role="alert" className="rounded border border-amber-500 p-4">{q.data.resin.warning}</p>}
     {q.data?.resin?.stockError && <p role="alert" className="rounded border border-red-500 p-4">{q.data.resin.stockError}</p>}

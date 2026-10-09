@@ -3,7 +3,7 @@
 // workspace's AI page; this is where a person holding several connections
 // across several workspaces sees it without opening each one.
 import { useQueries } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { WorkspaceLink } from "@cobblr/platform-web";
 import { api } from "../lib/api";
 import { aiAvailabilityKeys } from "../lib/ai-availability-keys";
 import { AI_JOB_GROUPS, chainSummary } from "../lib/ai-chain";
@@ -37,9 +37,9 @@ export function WorkspaceChainSummaries({ workspaces }: { workspaces: Array<{ id
                 </span>
               );
             })}
-            <Link to={`/w/${w.slug}/configuration/ai#${WHO_ANSWERS_ANCHOR}`} className="text-accent hover:underline">
+            <WorkspaceLink slug={w.slug} to={`/configuration/ai#${WHO_ANSWERS_ANCHOR}`} className="text-accent hover:underline">
               Change the order
-            </Link>
+            </WorkspaceLink>
           </li>
         ))}
       </ul>

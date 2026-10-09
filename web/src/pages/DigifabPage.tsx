@@ -176,6 +176,7 @@ export function DigifabPage({
       {/* ── FLOOR — the operate surface: what runs, what's queued, what to print. ── */}
       {!setupOnly && tab === "floor" && (
         <>
+          <Link to="/digifab/production" className="inline-flex min-h-11 items-center rounded border border-line px-4 py-2">Production test</Link>
           <Link to="/digifab/embroidery" className="inline-flex min-h-11 items-center rounded border border-line px-4 py-2">Embroidery</Link>
           <Link to="/digifab/manager" className="inline-flex min-h-11 items-center rounded border border-line px-4 py-2">Floor manager</Link>
           {items.length === 0 && !list.isLoading && (

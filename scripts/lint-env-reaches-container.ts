@@ -38,6 +38,10 @@ const AMBIENT = new Set(["NODE_ENV", "API_PORT", "PORT"]);
  * carrying it would be wrong, not merely if nobody has got round to it.
  */
 const WITHHELD: Record<string, string> = {
+  COBBLR_SERVER_BRIDGE_ENABLED: "self-host compose profile only; cloud deployments must not enroll a LAN bridge",
+  COBBLR_SERVER_BRIDGE_DIR: "private self-host enrollment mount, absent on cloud deployments",
+  COBBLR_SERVER_BRIDGE_CACHE_DIR: "private self-host bridge service cache, absent on cloud deployments",
+  COBBLR_SERVER_BRIDGE_ORIGIN: "self-host service origin; the cloud server bridge is always off",
   COBBLR_TEST_ORG_POOL:
     "test rig only — it registers a token-minting route, so it must be impossible to switch on from a prod .env",
   COBBLR_TEST_ORG_POOL_SIZE: "sizes the test-only pool above; meaningless without it",

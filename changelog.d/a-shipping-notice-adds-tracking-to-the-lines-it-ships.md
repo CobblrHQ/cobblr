@@ -3,6 +3,7 @@ type: feature
 scope: purchases
 date: 2026-10-08
 docs_target: docs/USER_GUIDE.md#Tracking a parcel
+docs_published: 2026-10-10
 ---
 A forwarded shipping notice for an order you already imported now adds its tracking number to that order instead of answering "you already imported this receipt". When a store ships an order in several boxes, each notice's number goes on the lines in that box, the rest show "Not shipped yet", and each box is followed and confirmed on its own. Amazon Logistics numbers (TBA…) are now followed too, for free, with nothing to set up.
 

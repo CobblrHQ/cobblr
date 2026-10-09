@@ -48,6 +48,7 @@ activityRouter.get(
         "provider_id",
         "provider_label",
         "model",
+        "served_model",
         "input_summary",
         "output_summary",
         "input_tokens",

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { canContain, platform, type EntityRef, countOf } from "@cobblr/platform-contract";
+import { canContain, platform, type EntityRef } from "@cobblr/platform-contract";
 import { nfcUid, stationControl, type ScanStation, type StationCommand, type StationPlacement, type StationRef } from "@cobblr/platform-contract/scan-station";
 import { actionActed } from "@cobblr/platform-contract/action-result";
 import { qrTokenFromScan } from "@cobblr/platform-contract/qr-token";
@@ -113,7 +113,7 @@ function ports(caller: StationCaller, device: ScanStation): StationPorts {
     async notify(s) {
       const filed = s.actions.filter((a) => a.status === "done" && (a.type === "file" || a.type === "inbox"));
       const places = new Set(filed.map((a) => `${a.after?.container?.kind}:${a.after?.container?.id}`));
-      const message = `${s.device_name}: ${countOf(filed.length, "thing")} filed into ${countOf(places.size, "place")}. Review`;
+      const message = `${s.device_name}: ${filed.length} things filed into ${places.size} places. Review`;
       // OUTSIDE-RECORD-ADDRESS: a station session is an app review page, not an entity record; notification delivery qualifies it for the workspace
       await platform().notifications.dispatch({
         orgId, userId: caller.userId, eventType: "scan.station.review", priority: "normal", message,

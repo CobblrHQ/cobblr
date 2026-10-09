@@ -13,7 +13,6 @@ import { api, type CrossOrgActivityEntry } from "../lib/api";
 import { QueryError } from "../components/QueryError";
 import { usePageTitle } from "@cobblr/platform-web";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 export function MeActivityPage() {
   usePageTitle("Your activity");
   const { orgs } = useAuth();
@@ -71,7 +70,7 @@ export function MeActivityPage() {
     <div className="space-y-4">
       <div className="flex items-baseline gap-3 pb-1 flex-wrap">
         <span className="text-sm text-muted dark:text-slate-400">
-          {items.length >= total ? `${countOf(total, "action")}` : `${items.length} of ${countOf(total, "action")}`}
+          {items.length >= total ? `${total} actions` : `${items.length} of ${total} actions`}
         </span>
         <div className="flex-1" />
         <select

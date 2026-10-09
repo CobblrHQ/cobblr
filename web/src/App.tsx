@@ -38,6 +38,7 @@ import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { useTheme } from "./theme/ThemeContext";
 import { themePrefToApply } from "./theme/pref-to-apply";
 import { ActiveOrgProvider, useActiveOrg, pickDefaultOrg, urlHandleFor } from "./auth/ActiveOrgContext";
+import {BrowserLaserProvider} from "./features/digifab/BrowserLaser";
 import { shellForRole } from "@cobblr/platform-contract/org-roles";
 import { deepPathAfterWorkspace } from "./lib/deep-path";
 import { AuthPage } from "./pages/AuthPage";
@@ -127,13 +128,18 @@ const PhotoConsentPage = lazy(() => import("./pages/PhotoConsentPage").then((m) 
 const MyFeedbackPage = lazy(() => import("./pages/MyFeedbackPage").then((m) => ({ default: m.MyFeedbackPage })));
 const DriveSettingsPage = lazy(() => import("./pages/DriveSettingsPage").then((m) => ({ default: m.DriveSettingsPage })));
 const ConnectionsPage = lazy(() => import("./pages/ConnectionsPage").then((m) => ({ default: m.ConnectionsPage })));
+const MailboxCheckPage = lazy(() => import("./pages/MailboxCheckPage").then((m) => ({ default: m.MailboxCheckPage })));
 const ApiTokensPage = lazy(() => import("./pages/ApiTokensPage").then((m) => ({ default: m.ApiTokensPage })));
 const ActivityPage = lazy(() => import("./pages/ActivityPage").then((m) => ({ default: m.ActivityPage })));
+const StocktakePage = lazy(() => import("./pages/StocktakePage").then((m) => ({ default: m.StocktakePage })));
 const SurfacesPage = lazy(() => import("./pages/SurfacesPage").then((m) => ({ default: m.SurfacesPage })));
+const ProductionTestPage = lazy(() => import("./pages/ProductionTestPage").then(m => ({ default: m.ProductionTestPage })));
+const ProductionStationPage = lazy(() => import("./pages/ProductionStationPage").then(m => ({ default: m.ProductionStationPage })));
 const DigifabPage = lazy(() => import("./pages/DigifabPage").then((m) => ({ default: m.DigifabPage })));
 const PrinterStationPage = lazy(() => import("./pages/PrinterStationPage").then((m) => ({ default: m.PrinterStationPage })));
 const EmbroideryPage = lazy(() => import("./pages/EmbroideryPage").then(m => ({ default: m.EmbroideryPage })));
 const FloorManagerPage = lazy(() => import("./pages/FloorManagerPage").then(m => ({ default: m.FloorManagerPage })));
+const AssemblyStationPage = lazy(() => import("./pages/AssemblyStationPage").then(m => ({ default: m.AssemblyStationPage })));
 const KilnStationPage = lazy(() => import("./pages/KilnStationPage").then(m => ({ default: m.KilnStationPage })));
 const StockStationPage = lazy(() => import("./pages/StockStationPage").then((m) => ({ default: m.StockStationPage })));
 const MachineStationPage = lazy(() => import("./pages/MachineStationPage").then((m) => ({ default: m.MachineStationPage })));
@@ -570,7 +576,7 @@ function WorkspaceRoutes({ urlHandle }: { urlHandle: string }) {
   if (user.must_reset_password) return <ForcePasswordResetPage />;
   return (
     <ActiveOrgProvider urlHandle={urlHandle}>
-      <ActiveOrgScopedRoutes />
+      <BrowserLaserProvider><ActiveOrgScopedRoutes /></BrowserLaserProvider>
     </ActiveOrgProvider>
   );
 }
@@ -690,9 +696,11 @@ function ActiveOrgScopedRoutes() {
       <Routes>
         <Route path="/station/stock/:station" element={<StockStationPage />} />
         <Route element={<ModuleOffGate><Outlet /></ModuleOffGate>}>
+          <Route path="/station/assembly/:machineId/:orderId" element={<AssemblyStationPage />} />
           <Route path="/station/floor" element={<FloorManagerPage screen />} />
           <Route path="/station/kiln/:machineId" element={<KilnStationPage />} />
           <Route path="/station/printer/:machineId" element={<PrinterStationPage />} />
+          <Route path="/station/production/:connectionId" element={<ProductionStationPage />} />
           <Route path="/station/machine/:connectionId/:deviceId" element={<MachineStationPage />} />
         </Route>
         <Route element={<AppLayout activeSlug={activeSlug} />}>
@@ -906,6 +914,7 @@ function ActiveOrgScopedRoutes() {
             <Route path="/bundles/compose" element={<BundleComposerPage />} />
             <Route path="/fields" element={<FieldsAndFormsPage />} />
             <Route path="/activity" element={<ActivityPage />} />
+            <Route path="/stocktakes/:id" element={<StocktakePage />} />
           </Route>
           {/* Browse surfaces — data you look at, so they wear normal workspace
               chrome and own one canonical URL each. They reach the nav through
@@ -927,6 +936,7 @@ function ActiveOrgScopedRoutes() {
           {/* digifab is a domain (bare module name) → the navbar links to its
               top path `/digifab`. Route it there as well as the Configuration
               deep-link, or the nav entry falls through to the home redirect. */}
+          <Route path="/digifab/production" element={<ProductionTestPage />} />
           <Route path="/digifab/embroidery" element={<EmbroideryPage />} />
           <Route path="/digifab/manager" element={<FloorManagerPage />} />
           <Route path="/digifab" element={<DigifabPage />} />
@@ -986,6 +996,7 @@ function ActiveOrgScopedRoutes() {
             <Route path="/me/appearance" element={<MeAppearancePage />} />
             <Route path="/me/connections" element={<ConnectionsPage />} />
             <Route path="/me/connections/new" element={<ConnectionsPage startAdding />} />
+            <Route path="/me/connections/mailbox-check/:id" element={<MailboxCheckPage />} />
             {/* Inside the managed-app surface on purpose: a locked app prints labels
                 from the camera, and this is the only door where a Bluetooth printer
                 can be paired (Configuration → Devices is outside it). */}

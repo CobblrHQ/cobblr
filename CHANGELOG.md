@@ -2,6 +2,26 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-10-09
+
+### Features
+- A Shopify store's order email is now read from the store's own order page when the AI can't read it: the order number, the store and every line come from the page, the order is filed in Purchases, and its order page follows from there. An order email already showing "Couldn't be read" is filed by Read again.
+- A Shopify store's order email has a View order link to the order's own page, which lists each line with its own tracking number. Cobblr keeps that link, sealed, and reads the page until everything is delivered, so each line gets its own number with nothing forwarded or typed.
+- Check my mailbox, on the Gmail connection, runs Cobblr's order rules over your whole mailbox and shows what they would file, store by store and year by year, without filing anything or asking any AI. Mark any email "Is an order" or "Isn't an order" and the next check remembers it for that sender.
+- Your receipts address now has a name: every email Cobblr sends about a forwarded receipt comes from that address as "Cobblr Receipts", so typing "Cobblr" in Gmail's To field finds it. The address card can email it to you or add it to your contacts, and Sales' order address is "Cobblr Orders".
+- Lay out a room like a puzzle: windows and doors that show their swing, closets, racks you can turn a quarter, the gap to the nearest wall while you drag, and an aisle check, on the floor plan and in Plan a layout.
+- A kitchen station that reads jars held up to the tablet's own camera. A station can now show the front or back camera on its Ready screen, so a wall tablet with no scanner reads a barcode you hold up and shows that item's buttons (used one, opened, used up, threw it out) with Undo. Each tablet can flip its own camera, and a station opened from a Home Assistant dashboard shows a button back to it. A printed QR opens the station on a phone: anyone signed in uses it as themselves, and the owner can let people without an account press a few chosen buttons, until a new label is printed.
+- What's still here? A place's Stock here panel lists everything still recorded in it. Tick what is really there, set what is left of a part-used one, and the rest is marked gone in one go, with one Undo. Gone means gone by today, not recorded how, so it never teaches Cobblr how long food keeps.
+
+### Improvements
+- Your receipts address is now named "Cobblr Receipts" and your workspace's name, as in "Cobblr Receipts Alex's Workshop", from the start, so the contact you save never changes. Only that address ever goes by that name: Cobblr's no-reply mail is just "Cobblr", so typing "Cobblr Receipts" in Gmail always finds the address that files receipts. After "Email it to me", the card says where it went and, if it isn't in your inbox within a minute, to look in Spam or Promotions and mark it "Not spam"; Resend and Add to contacts sit right beside it.
+
+### Fixes
+- A pattern photo that could not be pulled says why. When a design's photo could not be saved or attached from its pattern PDF, the panel kept saying "reading the pattern" and every visit started the pull again. A failed pull is now recorded, the panel says what went wrong, and Try again runs it once more.
+- A table's things are called what the table calls them. In a Lego workspace the Sets table no longer offers "Delete part" or "Deleted 2 parts" for whole sets, and the Bricks table speaks of bricks. The same goes for every table built on Inventory, Projects, Machines, Assets and Records: the delete buttons and confirmations, the counts after a bulk delete or tag, the page title, the search box, the empty state and a record's own page now use the table's word, including a plural it declares ("2 shelves").
+- The AI log now shows which model actually answered each call, beside the one asked for ("gemini-3.5-flash → gemini-3.6-flash"), and the model picker marks a model the provider redirects to a newer one.
+- Sharing a thing, or changing a share, no longer answers "their Cobblr has not taken the change yet" when the friend's Cobblr was busy for a moment checking its copy for edits. The change now waits that moment and arrives before you are told it is done.
+
 ## 2026-10-08
 
 ### Features

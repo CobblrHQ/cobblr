@@ -31,7 +31,6 @@ import { useToast } from "@cobblr/platform-web";
 import { ApiError, api, type CustomRole, type GrantableAction, type PermissionsMember } from "../lib/api";
 import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 /** Stock roles that carry every capability without being granted anything:
  *  the admin tier, by rank — the same answer the server enforces. */
 function isImplicit(role: PermissionsMember["role"]): boolean {
@@ -203,7 +202,7 @@ export function CapabilityMatrix({
                 onClick={() => setForceShow(true)}
                 className="underline hover:text-accent"
               >
-                Show the {countOf(actions.length, "capability")} anyway
+                Show the {actions.length} capabilities anyway
               </button>
             </div>
           </div>

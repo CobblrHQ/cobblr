@@ -16,6 +16,8 @@ import { registerPurchasesResolvers } from "./resolvers.js";
 import { registerPurchasesActionHandlers } from "./action-handlers.js";
 import { registerPurchasesCalendarSource } from "./calendar-source.js";
 import { startArrivalSweeper } from "../arrival-sweeper.js";
+import { registerOrderPageReads } from "../order-page/store.js";
+import { orderPagesRouter } from "./order-pages.js";
 
 registerPlannedOrderAction();
 registerReturnActions();
@@ -27,6 +29,10 @@ registerPurchasesCalendarSource();
 // Asks "did it turn up?" on the day an order was due. Cheap when nothing is
 // due: one indexed read per workspace that has purchases enabled.
 startArrivalSweeper();
+// Reads a store's own order page (a Shopify "View order" link from the
+// order email) until every line is delivered (#5461). Off unless the
+// instance turns it on (COBBLR_ORDER_PAGE_READS).
+registerOrderPageReads();
 
 // Per-instance item count — lets the nav hide an empty auto-created default
 // instance once the workspace has named ones (orders are the primary entity).
@@ -40,6 +46,7 @@ const router = Router({ mergeParams: true });
 
 router.use("/", returnsRouter);
 router.use("/", shipmentsRouter);
+router.use("/", orderPagesRouter);
 router.use("/orders", ordersRouter);
 router.use("/items", itemsRouter);
 router.use("/vendors", vendorsRouter);

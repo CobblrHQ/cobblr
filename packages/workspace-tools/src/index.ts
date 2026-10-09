@@ -32,5 +32,5 @@ export {
 } from "./kinds.js";
 export { jsonSchemaOf } from "./schema.js";
 export { offerableToAssistant, READ_TOOLS_THAT_POST, lookOnlyCanRun } from "./tools.js";
-export { pageWithTruth } from "./tools.js";
+export { pageWithTruth, resultBudgetFor } from "./tools.js";
 export { PLACED_IN, placementAsked } from "./tools.js";

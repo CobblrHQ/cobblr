@@ -15,7 +15,6 @@ import type { CardRollup } from "@cobblr/platform-contract/holdings";
 import type { HoldingLot, HoldingRow } from "./api";
 import { QtyStepper } from "./QtyStepper";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 function fmt(n: number): string {
   return Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3)));
 }
@@ -60,7 +59,7 @@ function LotsToggle({ lots }: { lots: HoldingLot[] }) {
   return (
     <div className="basis-full">
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="text-[11px] text-accent hover:underline">
-        {open ? "Hide" : "Show"} {countOf(lots.length, "lot")}
+        {open ? "Hide" : "Show"} {lots.length} lots
       </button>
       {open && (
         <ul className="mt-1 space-y-0.5 pl-4 text-[11px] font-mono text-muted dark:text-slate-400" data-testid="holding-lots">

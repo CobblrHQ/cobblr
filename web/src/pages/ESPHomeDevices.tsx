@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { SearchInput, SecretInput, useToast } from "@cobblr/platform-web";
+import { SearchInput, SecretInput, useToast, WorkspaceLink } from "@cobblr/platform-web";
 import type { DeviceConnectionPublic } from "@cobblr/platform-contract";
 import { api, type SearchHit } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -56,7 +55,7 @@ function Device({ slug, connection }: { slug: string; connection: DeviceConnecti
       {entities.isError && <p role="alert">ESPHome did not answer. Check the bridge configuration and native API key. <button type="button" className={button} onClick={() => void entities.refetch()}>Try again</button></p>}
       {entities.data?.items.map(entity => <div key={entity.id} className="border-t border-line pt-3 space-y-2">
         <p className="font-medium">{entity.name} <span className="text-xs text-muted">{entity.id}</span></p>
-        {entity.id.startsWith("light-") ? <p className="text-sm">Choose this connection and entity in a <Link className="text-accent" to={`/w/${slug}/locations`}>place's Light settings</Link>.</p> : entity.id.startsWith("sensor-") || entity.id.startsWith("binary_sensor-") ? <AttachSensor slug={slug} connection={connection.id} device={entity.id} /> : <EntityAction slug={slug} connection={connection} entity={entity.id} />}
+        {entity.id.startsWith("light-") ? <p className="text-sm">Choose this connection and entity in a <WorkspaceLink className="text-accent" slug={slug} to={`/locations`}>place's Light settings</WorkspaceLink>.</p> : entity.id.startsWith("sensor-") || entity.id.startsWith("binary_sensor-") ? <AttachSensor slug={slug} connection={connection.id} device={entity.id} /> : <EntityAction slug={slug} connection={connection} entity={entity.id} />}
         {links.data?.items.filter(link => link.device === entity.id).map(link => <AttachedReading key={link.id} slug={slug} connection={connection.id} link={link} />)}
       </div>)}
       {links.isError && <p role="alert">Sensor attachments could not be loaded.</p>}
@@ -93,7 +92,7 @@ function AttachedReading({ slug, connection, link }: { slug: string; connection:
   const detailRoute = useDetailRoute(slug);
   const href = detailRoute(link.entity_kind, link.entity_id, record.data?.detailUrl);
   const unlink = useMutation({ mutationFn: () => api.unlinkDevice(slug, link.id), onSuccess: () => { void qc.invalidateQueries({ queryKey: ["device-links", slug, connection] }); }, onError: e => toast.error(e.message) });
-  return <p className="text-sm">{href ? <Link className="text-accent" to={`/w/${slug}${href}`}>{record.data?.title || "Attached record"}</Link> : <span>{record.data?.title || "Attached record"}</span>}: {link.value === null ? "Waiting for a reading" : `${link.value} ${link.unit || ""}`}{link.sampled_at && ` · ${new Date(link.sampled_at).toLocaleString()}`} <button type="button" className={button} disabled={unlink.isPending} onClick={() => unlink.mutate()}>Detach sensor</button></p>;
+  return <p className="text-sm">{href ? <WorkspaceLink className="text-accent" slug={slug} to={`${href}`}>{record.data?.title || "Attached record"}</WorkspaceLink> : <span>{record.data?.title || "Attached record"}</span>}: {link.value === null ? "Waiting for a reading" : `${link.value} ${link.unit || ""}`}{link.sampled_at && ` · ${new Date(link.sampled_at).toLocaleString()}`} <button type="button" className={button} disabled={unlink.isPending} onClick={() => unlink.mutate()}>Detach sensor</button></p>;
 }
 
 function EntityAction({ slug, connection, entity }: { slug: string; connection: DeviceConnectionPublic; entity: string }) {

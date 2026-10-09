@@ -119,6 +119,17 @@ const Schema = z.object({
     .preprocess((v) => (v === "" ? undefined : v), z.enum(["true", "false"]).default("false"))
     .transform((v) => v === "true"),
 
+  // Reading a store's own order page (a Shopify "View order" link kept from
+  // the order email) on a schedule, for each line's tracking (#5461). Off
+  // keeps every link but reads none. Off by default in code: a hosted
+  // instance reads every user's stores from one address, and a store that
+  // bans it bans everyone there, so each deploy says it explicitly (the
+  // self-host compose files say true). Read by Purchases as the raw string,
+  // which this parse has already held to "true" or "false".
+  COBBLR_ORDER_PAGE_READS: z
+    .preprocess((v) => (v === "" ? undefined : v), z.enum(["true", "false"]).default("false"))
+    .transform((v) => v === "true"),
+
   // Drop `maturity: "experimental"` modules at load (public / trial deploys
   // set this; self-host default is off so an install is never surprised by a
   // module vanishing). Validated here because the loader used to read it raw
@@ -152,6 +163,11 @@ const Schema = z.object({
   // refusal names this deployment's real number instead of the proxy cutting
   // the upload off (the hosted app and try: 100, Cloudflare's request limit).
   COBBLR_UPLOAD_DESIGN_MAX_MB: z.coerce.number().int().min(25).max(1024).default(200),
+
+  COBBLR_SERVER_BRIDGE_ENABLED: z.enum(["true", "false"]).default("false").transform(value => value === "true"),
+  COBBLR_SERVER_BRIDGE_DIR: z.string().default(""),
+  COBBLR_SERVER_BRIDGE_CACHE_DIR: z.string().default(""),
+  COBBLR_SERVER_BRIDGE_ORIGIN: z.string().default(""),
 
   // ── the no-account sandbox (docs/design-decisions/try-sandbox.md) ──────────
   // OFF unless COBBLR_TRY_SANDBOX=true, so prod / staging / self-host never

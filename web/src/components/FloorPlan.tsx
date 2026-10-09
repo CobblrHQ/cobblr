@@ -1,4 +1,4 @@
-import { RecordFormModal, Modal, useImageSrc, useToast } from "@cobblr/platform-web";
+import { RecordFormModal, Modal, isShortcut, useImageSrc, useToast } from "@cobblr/platform-web";
 // The floor plan — a location's children drawn where they physically stand.
 // Third lens on the same hierarchy the tree and the scanner use; every rect
 // IS a location record. Spec: docs/design-decisions/location-floor-plan.md.
@@ -12,7 +12,7 @@ import { RecordFormModal, Modal, useImageSrc, useToast } from "@cobblr/platform-
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Flame, Grid3x3, LayoutGrid, Loader2, MapPin, Pencil, Plus, Printer, Redo2, ScanLine, Sparkles, Tag, Undo2, X } from "lucide-react";
+import { Check, Flame, Grid3x3, LayoutGrid, Loader2, MapPin, Pencil, Plus, Printer, Redo2, RotateCw, ScanLine, Sparkles, Tag, Undo2, X } from "lucide-react";
 import { diffPlaces, historyKey, planHistoryFor, type PlanChange, type PlanStep } from "../lib/planHistory";
 import { ApiError, api, type Location, type TagAttachment, type TagRecord } from "../lib/api";
 import { totalUsage, useLocationUsage } from "../lib/useLocationUsage";
@@ -35,6 +35,7 @@ import {
   withRect,
   zoneAt,
   type FpBound,
+  type FpOpening,
   type FpRect,
   type FpWall,
 } from "../lib/floorplanGeometry";
@@ -57,8 +58,10 @@ import { GROUP_COLOURS, PLAN_COLOUR_STYLE } from "../lib/planColourStyles";
 import { groupPins, groupableFields, shortFor } from "../lib/pinGroups";
 import { fieldKindOf } from "@cobblr/platform-contract/kind-label";
 import { jsonbPatchBetween } from "@cobblr/platform-contract/jsonb-merge";
+import { withArticle } from "@cobblr/platform-contract/plural";
+import { DEFAULT_SILL_MM, closetWalls, doorFitsWall, edgeOf, frontEdge, intoRoom, planFlags, readCloset, roomWalls, rotated, type ClosetDoor, type Edge, type PlanItem } from "@cobblr/platform-contract/plan-clearance";
+import { GapReadout, PlanFlagList, PlanSymbols } from "./PlanSymbols";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 type PlaceOutline = { key: string; label: string; colour: string | null; border: string; swatch: string; tagId?: string };
 
 function outlineFor(loc: Location, attachments: TagAttachment[], tags: TagRecord[]): PlaceOutline | null {
@@ -96,6 +99,10 @@ interface PlanEntity {
 }
 
 const pct = (v: number, total: number) => `${(v / total) * 100}%`;
+/** How long a finger held still on a rack turns it. */
+const LONG_PRESS_MS = 550;
+/** The side a rack is reached from, drawn heavier in Edit layout. */
+const FRONT_EDGE: Record<Edge, string> = { bottom: "!border-b-4", top: "!border-t-4", left: "!border-l-4", right: "!border-r-4" };
 
 /** Dispatcher: a location with its own bound renders ONE plan (PlanFor). A
  *  location with no bound whose child areas own plans is a BUILDING — floors
@@ -609,7 +616,7 @@ function PlanFor({
   const saveRect = (loc: Location, rect: FpRect | null) => {
     const metadata = rectFor(loc, rect);
     const was = readRect(loc.metadata);
-    note(!rect ? `Took ${loc.name} off the plan` : !was ? `Put ${loc.name} on the plan` : was.x_mm === rect.x_mm && was.y_mm === rect.y_mm ? `Resized ${loc.name}` : `Moved ${loc.name}`, [
+    note(!rect ? `Took ${loc.name} off the plan` : !was ? `Put ${loc.name} on the plan` : was.rot !== rect.rot ? `Turned ${loc.name}` : was.x_mm === rect.x_mm && was.y_mm === rect.y_mm ? `Resized ${loc.name}` : `Moved ${loc.name}`, [
       { kind: "place", id: loc.id, before: { metadata: loc.metadata }, after: { metadata } },
     ]);
     saveMeta.mutate({ id: loc.id, before: loc.metadata, metadata });
@@ -763,11 +770,38 @@ function PlanFor({
     e.stopPropagation();
     setSel({ type: "item", id: loc.id });
     const scale = mmPerPx();
-    const startX = e.clientX;
-    const startY = e.clientY;
-    const orig = { ...rect };
+    let startX = e.clientX;
+    let startY = e.clientY;
+    let atX = e.clientX;
+    let atY = e.clientY;
+    let orig = { ...rect };
     let last = rect;
+    // A rack is turned a quarter while it is carried: R on a keyboard, or a
+    // finger held still on it. It turns about its middle and stays inside.
+    const canTurn = mode === "move" && loc.kind !== "area" && bound.view !== "front";
+    let still = true;
+    const turn = () => {
+      const r = rotated(last, bound);
+      if (!r) {
+        toast.error(`${loc.name} is longer than ${room.name} is wide, so it cannot turn here.`);
+        return;
+      }
+      orig = r;
+      last = r;
+      startX = atX;
+      startY = atY;
+      setLive({ id: loc.id, rect: r });
+    };
+    const onKey = (ev: KeyboardEvent) => {
+      if (!isShortcut(ev, "turn")) return;
+      ev.preventDefault();
+      turn();
+    };
+    const hold = canTurn && e.pointerType === "touch" ? window.setTimeout(() => still && turn(), LONG_PRESS_MS) : null;
     const onMove = (ev: PointerEvent) => {
+      atX = ev.clientX;
+      atY = ev.clientY;
+      if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) > 8) still = false;
       const dx = (ev.clientX - startX) * scale;
       const dy = (ev.clientY - startY) * scale;
       const g = snapStep();
@@ -781,8 +815,10 @@ function PlanFor({
     const onUp = () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      if (canTurn) window.removeEventListener("keydown", onKey);
+      if (hold !== null) window.clearTimeout(hold);
       setLive(null);
-      if (last.x_mm !== rect.x_mm || last.y_mm !== rect.y_mm || last.w_mm !== rect.w_mm || last.d_mm !== rect.d_mm) {
+      if (last.x_mm !== rect.x_mm || last.y_mm !== rect.y_mm || last.w_mm !== rect.w_mm || last.d_mm !== rect.d_mm || last.rot !== rect.rot) {
         let rectToSave = last;
         // Drop = reparent: the plan is the filing UI. Containers only —
         // zones/rooms never re-file themselves.
@@ -818,7 +854,73 @@ function PlanFor({
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    if (canTurn) window.addEventListener("keydown", onKey);
   }
+
+  /** A door or a window on one of the room's own walls (the edge is a wall
+   *  of its own once something is in it), or a closet against it. */
+  const addOnWall = (side: Edge, what: "door" | "window" | "closet") => {
+    if (!bound) return;
+    if (what === "closet") {
+      void addCloset(side);
+      return;
+    }
+    const across = side === "top" || side === "bottom";
+    const along = across ? bound.w_mm : bound.d_mm;
+    const list = [...(bound.walls ?? [])];
+    let idx = list.findIndex((w) => edgeOf(w, bound) === side && Math.abs(Math.abs(across ? w.x2 - w.x1 : w.y2 - w.y1) - along) < 1);
+    if (idx < 0) {
+      list.push(
+        side === "top" ? { x1: 0, y1: 0, x2: bound.w_mm, y2: 0 }
+        : side === "bottom" ? { x1: 0, y1: bound.d_mm, x2: bound.w_mm, y2: bound.d_mm }
+        : side === "left" ? { x1: 0, y1: 0, x2: 0, y2: bound.d_mm }
+        : { x1: bound.w_mm, y1: 0, x2: bound.w_mm, y2: bound.d_mm },
+      );
+      idx = list.length - 1;
+    }
+    const wall = list[idx]!;
+    const o = newOpening(wall, bound, what);
+    list[idx] = { ...wall, openings: [...(wall.openings ?? []), { ...o, at_mm: Math.max(0, snap((along - o.w_mm) / 2)) }] };
+    saveBound({ ...bound, walls: list }, `Added ${withArticle(what)} to the ${side} wall`);
+    setSel({ type: "wall", idx });
+  };
+
+  /** A closet against one of the room's walls: an ordinary part of the room
+   *  (things put in it are filed in it), drawn with its walls and a door. */
+  const addCloset = async (side: Edge) => {
+    if (!bound) return;
+    const across = side === "top" || side === "bottom";
+    const along = across ? bound.w_mm : bound.d_mm;
+    const deep = across ? bound.d_mm : bound.w_mm;
+    const len = Math.max(SNAP_MM, Math.min(1500, snap(along * 0.4)));
+    const depth = Math.max(SNAP_MM, Math.min(750, snap(deep / 3)));
+    const box: FpRect =
+      side === "top" ? { x_mm: snap((bound.w_mm - len) / 2), y_mm: 0, w_mm: len, d_mm: depth }
+      : side === "bottom" ? { x_mm: snap((bound.w_mm - len) / 2), y_mm: bound.d_mm - depth, w_mm: len, d_mm: depth }
+      : side === "left" ? { x_mm: 0, y_mm: snap((bound.d_mm - len) / 2), w_mm: depth, d_mm: len }
+      : { x_mm: bound.w_mm - depth, y_mm: snap((bound.d_mm - len) / 2), w_mm: depth, d_mm: len };
+    const taken = new Set(items.filter((l) => l.parent_id === room.id).map((l) => l.name.toLowerCase()));
+    let name = "Closet";
+    for (let i = 2; taken.has(name.toLowerCase()); i++) name = `Closet ${i}`;
+    try {
+      const made = await api.createLocation(slug, { name, parent_id: room.id, kind: "area", metadata: withDecor(withRect({}, box), { closet: { door_mm: 760 } }) });
+      history.record({ label: `Added ${name}`, changes: [{ kind: "added", id: made.id }] });
+      toast.success(`${name} is against the ${side} wall`);
+      invalidate();
+      setSel({ type: "item", id: made.id });
+    } catch (e) {
+      toast.error(`Could not add the closet: ${e instanceof ApiError ? e.message : String(e)}`);
+    }
+  };
+
+  /** The selected rack turned a quarter where it stands (the panel's Turn). */
+  const turnPlace = (loc: Location) => {
+    const r = readRect(loc.metadata);
+    if (!r || !bound) return;
+    const next = rotated(r, bound);
+    if (!next) toast.error(`${loc.name} is longer than ${room.name} is wide, so it cannot turn here.`);
+    else saveRect(loc, next);
+  };
 
   function startWallDrag(e: React.PointerEvent, idx: number) {
     if (!edit || !bound) return;
@@ -905,6 +1007,29 @@ function PlanFor({
   const walls = liveWall
     ? (bound.walls ?? []).map((w, i) => (i === liveWall.idx ? liveWall.wall : w))
     : (bound.walls ?? []);
+  // A closet's walls are drawn from where the closet stands, so they follow
+  // it while it is dragged and go with it when it is taken off the plan.
+  const allWalls = roomWalls(
+    { ...bound, walls },
+    zoneRegions.map((z) => ({ id: z.id, box: live?.id === z.id ? live.rect : z.rect, closet: readCloset(byId.get(z.id)?.metadata?.floorplan) })),
+  );
+  // What stands on this floor, for what is in a door's way, in front of a
+  // window, and the gaps while one is dragged. A rack's height is its face's.
+  const floorItems: PlanItem[] = onFloor
+    ? [
+        ...placed
+          .filter((p) => p.loc.kind !== "area" && !p.rect.wall_mounted)
+          .map((p) => ({
+            id: p.loc.id,
+            name: p.loc.name,
+            box: live?.id === p.loc.id ? live.rect : p.rect,
+            h_mm: hasOwnLayout(p.loc.metadata) ? (readBound(p.loc.metadata)?.d_mm ?? null) : null,
+          })),
+        ...sized.things.filter((t) => !t.shelfId).map((t) => ({ id: t.key, name: t.name, box: live?.id === t.key ? live.rect : t.rect, h_mm: t.size.h_mm ?? null })),
+      ]
+    : [];
+  const flags = onFloor ? planFlags({ room: { ...bound, walls: allWalls }, items: floorItems }) : [];
+  const flagsOf = (id: string) => flags.filter((f) => f.ids.includes(id));
 
   const content = (
     <div className="space-y-3">
@@ -1179,6 +1304,8 @@ function PlanFor({
             );
           }),
         )}
+        {/* windows, doors with their swing, and a closet's walls */}
+        <PlanSymbols room={bound} walls={allWalls} boxes={floorItems.map((i) => i.box)} solid={(w) => !!w.closet} />
 
         {/* ROOMS — placed areas that own their own plan: visible rects that
             drill into their plan (peek modal) in view mode. Distinct from
@@ -1294,8 +1421,9 @@ function PlanFor({
                   )}
                 </div>
               )}
-              {(showZones || edit || placing) && (
+              {(showZones || edit || placing || !!readCloset(byId.get(z.id)?.metadata?.floorplan)) && (
                 <span
+                  data-zone-label={z.name}
                   className="absolute font-mono text-[10px] uppercase tracking-[.2em] text-cobble-600/40 dark:text-cobble-300/30 pointer-events-none -translate-x-1/2 -translate-y-1/2"
                   style={{ left: pct(r.x_mm + r.w_mm / 2, bound.w_mm), top: pct(r.y_mm + r.d_mm / 2, bound.d_mm) }}
                 >
@@ -1319,10 +1447,12 @@ function PlanFor({
             // Street-name rule: a narrow vertical box reads along its long axis.
             const rotate = r.wall_mounted ? pxW < 40 : pxW < 56 && pxH > pxW * 1.4;
             const selected = sel?.type === "item" && sel.id === loc.id;
+            const inTheWay = flagsOf(loc.id);
+            const front = edit && onFloor && !r.wall_mounted ? frontEdge(r.rot) : null;
             return (
               <button
                 type="button"
-                aria-label={loc.name}
+                aria-label={inTheWay.length ? `${loc.name}: ${inTheWay.map((f) => f.text).join("; ")}` : loc.name}
                 key={loc.id}
                 onPointerDown={(e) => startDrag(e, loc, r, "move")}
                 onClick={(e) => {
@@ -1340,9 +1470,11 @@ function PlanFor({
                     setPeekId(loc.id);
                   } else navigate(`/locations/${loc.id}`);
                 }}
-                title={loc.name}
+                title={inTheWay.length ? `${loc.name}: ${inTheWay.map((f) => f.text).join("; ")}` : loc.name}
                 {...(placing ? { [PLACE_TARGET]: loc.id } : {})}
                 data-collides={colliding.has(loc.id) ? "true" : undefined}
+                data-in-the-way={inTheWay.length ? inTheWay.map((f) => f.kind).join(" ") : undefined}
+                data-rot={r.rot}
                 data-plan-colour={outlines.get(loc.id)?.tagId ? outlines.get(loc.id)?.colour ?? undefined : planColourOf(loc.metadata) ?? undefined}
                 data-plan-tag={outlines.get(loc.id)?.tagId}
                 className={`absolute rounded overflow-hidden text-left content-start focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent text-[11px] leading-tight px-1 py-0.5
@@ -1350,6 +1482,8 @@ function PlanFor({
                   ${outlines.get(loc.id)?.border ?? "border border-slate-400 dark:border-slate-500"} text-content dark:text-slate-200
                   ${edit ? "cursor-move touch-none" : "cursor-pointer hover:border-accent hover:text-accent"}
                   ${colliding.has(loc.id) ? "border-dashed !border-ember-500 ring-1 ring-ember-500/60" : ""}
+                  ${inTheWay.some((f) => f.kind === "door") ? "!border-ember-500 ring-2 ring-ember-500/60" : inTheWay.length ? "ring-2 ring-amber-500/60" : ""}
+                  ${front ? FRONT_EDGE[front] : ""}
                   ${selected ? "ring-1 ring-accent border-accent" : ""}
                   ${placing?.over === loc.id ? "ring-2 ring-accent border-accent" : ""}`}
                 style={{
@@ -1523,8 +1657,14 @@ function PlanFor({
         {sized.fits.map((f) => (
           <ShelfFitLabel key={`fit:${f.shelfId}`} fit={f} bound={bound} />
         ))}
+        {/* While something is dragged on a floor: the clear floor to the
+            nearest thing or wall on each side. */}
+        {live && onFloor && edit && (
+          <GapReadout room={bound} walls={allWalls} box={live.rect} others={floorItems.filter((i) => i.id !== live.id)} />
+        )}
       </div>
       <ShelfFitList fits={sized.fits} names={new Map(shelvesHere.map((s) => [s.loc.id, s.loc.name]))} rack={room.name} />
+      <PlanFlagList flags={flags} />
       {sized.unsized.length > 0 && !placing && (
         <p data-testid="plan-unsized" className="mt-2 text-center text-xs text-muted dark:text-slate-400">
           {sized.unsized.length === 1 ? `${sized.unsized[0]!.name} has no size yet.` : `${sized.unsized.length} things here have no size yet.`}{" "}
@@ -1603,6 +1743,8 @@ function PlanFor({
             rename.mutate({ id: loc.id, name });
           }}
           onOpen={(loc) => setPeekId(loc.id)}
+          onTurn={turnPlace}
+          onAddOnWall={addOnWall}
           onAddDrawers={(loc) => {
             // No face yet: give it one on the spot (as wide as it stands,
             // three quarters as tall), so adding drawers is one step; its
@@ -1841,6 +1983,8 @@ function EditPanel({
   onRename,
   onOpen,
   onAddDrawers,
+  onTurn,
+  onAddOnWall,
 }: {
   slug: string;
   bound: FpBound;
@@ -1849,7 +1993,7 @@ function EditPanel({
   grid: number;
   sel: Sel;
   byId: Map<string, Location>;
-  onBound: (b: FpBound) => void;
+  onBound: (b: FpBound, label?: string) => void;
   onRect: (loc: Location, r: FpRect | null) => void;
   onFloorplanPatch: (loc: Location, patch: Record<string, unknown>, previousGroup?: string) => void;
   onDeleteWall: (idx: number) => void;
@@ -1857,6 +2001,10 @@ function EditPanel({
   /** Open a place's own plan or face in place. */
   onOpen: (loc: Location) => void;
   onAddDrawers: (loc: Location) => void;
+  /** Turn a rack a quarter where it stands. */
+  onTurn: (loc: Location) => void;
+  /** Put a door, a window or a closet on one of the room's walls. */
+  onAddOnWall: (side: Edge, what: "door" | "window" | "closet") => void;
 }) {
   const secondAxis = view === "front" ? "tall" : "deep";
 
@@ -1906,41 +2054,38 @@ function EditPanel({
         />
         <span className="text-xs text-faint">openings:</span>
         {(wall.openings ?? []).map((o, oi) => (
-          <span key={oi} className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 px-1.5 py-0.5">
-            <DimInput label="at" mm={o.at_mm} unit={unit} onCommit={(v) => {
+          <OpeningEditor
+            key={oi}
+            wall={wall}
+            o={o}
+            room={bound}
+            unit={unit}
+            onChange={(next) => {
               const openings = [...(wall.openings ?? [])];
-              openings[oi] = { ...o, at_mm: v };
+              openings[oi] = next;
               patchWall({ openings });
-            }} />
-            <DimInput label="w" mm={o.w_mm} unit={unit} onCommit={(v) => {
+            }}
+            onRemove={() => {
               const openings = [...(wall.openings ?? [])];
-              openings[oi] = { ...o, w_mm: v };
+              openings.splice(oi, 1);
               patchWall({ openings });
-            }} />
-            <button
-              type="button"
-              onClick={() => {
-                const openings = [...(wall.openings ?? [])];
-                openings.splice(oi, 1);
-                patchWall({ openings });
-              }}
-              className="text-faint hover:text-ember-500"
-              title="Remove opening"
-            >
-              <X size={12} />
-            </button>
-          </span>
+            }}
+          />
         ))}
-        <button
-          type="button"
-          onClick={() => {
-            const len = Math.abs(vertical ? wall.y2 - wall.y1 : wall.x2 - wall.x1);
-            patchWall({ openings: [...(wall.openings ?? []), { at_mm: snap(len / 2), w_mm: 900 }] });
-          }}
-          className="inline-flex items-center gap-1 text-xs text-muted hover:text-accent"
-        >
-          <Plus size={12} /> door
-        </button>
+        {(["door", "window", "opening"] as const).map((k) => (
+          <button
+            key={k}
+            type="button"
+            onClick={() => {
+              const len = Math.abs(vertical ? wall.y2 - wall.y1 : wall.x2 - wall.x1);
+              const o = newOpening(wall, bound, k);
+              patchWall({ openings: [...(wall.openings ?? []), { ...o, at_mm: Math.max(0, snap((len - o.w_mm) / 2)) }] });
+            }}
+            className="inline-flex items-center gap-1 text-xs text-muted hover:text-accent"
+          >
+            <Plus size={12} /> {k}
+          </button>
+        ))}
         <div className="flex-1" />
         <button type="button" onClick={() => onDeleteWall(sel.idx)} className="text-xs text-faint hover:text-ember-500">
           delete wall
@@ -1966,6 +2111,26 @@ function EditPanel({
         )}
         <DimInput label="wide" mm={rect.w_mm} unit={unit} onCommit={(v) => onRect(loc, { ...rect, w_mm: v })} />
         <DimInput label={secondAxis} mm={rect.d_mm} unit={unit} onCommit={(v) => onRect(loc, { ...rect, d_mm: v })} />
+        {loc.kind !== "area" && view === "plan" && !rect.wall_mounted && (
+          <button
+            type="button"
+            data-testid="plan-turn"
+            onClick={() => onTurn(loc)}
+            title="Turn it a quarter where it stands (or press R while dragging it, or hold a finger on it)"
+            className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
+          >
+            <RotateCw size={12} /> Turn 90°
+          </button>
+        )}
+        {loc.kind === "area" && readCloset(loc.metadata?.floorplan) && (
+          <ClosetDoorControls
+            closet={readCloset(loc.metadata?.floorplan)!}
+            box={rect}
+            room={bound}
+            unit={unit}
+            onChange={(closet) => onFloorplanPatch(loc, { closet })}
+          />
+        )}
         {bound.grid_mm && (
           <span className="font-mono text-[10px] text-faint" title={`in ${bound.grid_mm}mm grid units`}>
             {Math.round(rect.w_mm / bound.grid_mm)} × {Math.round(rect.d_mm / bound.grid_mm)} u
@@ -2052,10 +2217,139 @@ function EditPanel({
         unit="mm"
         onCommit={(v) => onBound({ ...bound, grid_mm: Math.max(5, Math.min(1000, v)) })}
       />
+      {view === "plan" && <AddOnWall onAdd={onAddOnWall} />}
       <span className="text-[11px] text-faint italic">
         numbers live here in edit mode only - the plan itself stays clean
       </span>
     </div>
+  );
+}
+
+/** Put a door, a window or a closet on one of the room's own walls. */
+function AddOnWall({ onAdd }: { onAdd: (side: Edge, what: "door" | "window" | "closet") => void }) {
+  const [side, setSide] = useState<Edge>("bottom");
+  return (
+    <span data-testid="plan-add-on-wall" className="inline-flex flex-wrap items-center gap-1.5 text-xs text-muted dark:text-slate-400">
+      on the
+      <select
+        aria-label="Which wall"
+        value={side}
+        onChange={(e) => setSide(e.target.value as Edge)}
+        className="rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1 py-0.5 text-xs text-content dark:text-slate-200"
+      >
+        <option value="top">top</option>
+        <option value="bottom">bottom</option>
+        <option value="left">left</option>
+        <option value="right">right</option>
+      </select>
+      wall:
+      {(["door", "window", "closet"] as const).map((k) => (
+        <button key={k} type="button" onClick={() => onAdd(side, k)} className="inline-flex items-center gap-0.5 rounded border border-line dark:border-slate-600 px-1.5 py-0.5 text-content dark:text-slate-200 hover:border-accent hover:text-accent">
+          <Plus size={11} /> {k}
+        </button>
+      ))}
+    </span>
+  );
+}
+
+/** A new opening of this kind, as wide as one usually is, a door swinging
+ *  into the room (on an inside wall, toward the right or the bottom), a
+ *  window with its sill at the usual height. */
+function newOpening(wall: FpWall, room: { w_mm: number; d_mm: number }, kind: "door" | "window" | "opening"): FpOpening {
+  const vertical = wall.x1 === wall.x2;
+  if (kind === "window") return { at_mm: 0, w_mm: 1000, kind, sill_mm: DEFAULT_SILL_MM };
+  if (kind === "opening") return { at_mm: 0, w_mm: 900, kind };
+  return { at_mm: 0, w_mm: 815, kind, hinge: vertical ? "top" : "left", swing: intoRoom(wall, room) ?? (vertical ? "right" : "bottom") };
+}
+
+const SIDE_WORD: Record<Edge, string> = { top: "up", bottom: "down", left: "left", right: "right" };
+
+/** One opening in a wall: what it is, where and how wide, which way a door
+ *  opens and where its hinge is, how high a window's sill is. */
+function OpeningEditor({ wall, o, room, unit, onChange, onRemove }: { wall: FpWall; o: FpOpening; room: { w_mm: number; d_mm: number }; unit: LengthUnit; onChange: (o: FpOpening) => void; onRemove: () => void }) {
+  const vertical = wall.x1 === wall.x2;
+  const kind = o.kind ?? "opening";
+  const inward = intoRoom(wall, room);
+  const swings: Edge[] = vertical ? ["left", "right"] : ["top", "bottom"];
+  const hinges: Edge[] = vertical ? ["top", "bottom"] : ["left", "right"];
+  const select = "rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1 py-0.5 text-xs text-content dark:text-slate-200";
+  return (
+    <span data-opening-editor={kind} className="inline-flex flex-wrap items-center gap-1.5 rounded border border-line dark:border-slate-600 px-1.5 py-0.5">
+      <select
+        aria-label="What it is"
+        value={kind}
+        onChange={(e) => {
+          const k = e.target.value as "door" | "window" | "opening";
+          const fresh = newOpening(wall, room, k);
+          onChange({ ...fresh, at_mm: o.at_mm, w_mm: o.w_mm });
+        }}
+        className={select}
+      >
+        <option value="door">door</option>
+        <option value="window">window</option>
+        <option value="opening">opening</option>
+      </select>
+      <DimInput label="at" mm={o.at_mm} unit={unit} onCommit={(v) => onChange({ ...o, at_mm: v })} />
+      <DimInput label="w" mm={o.w_mm} unit={unit} onCommit={(v) => onChange({ ...o, w_mm: v })} />
+      {kind === "door" && (
+        <>
+          <label className="inline-flex items-center gap-1 text-xs text-muted dark:text-slate-400">
+            opens
+            <select aria-label="Which way it opens" value={o.swing ?? ""} onChange={(e) => onChange({ ...o, swing: (e.target.value || undefined) as Edge | undefined })} className={select}>
+              <option value="">not shown</option>
+              {swings.map((sw) => (
+                <option key={sw} value={sw}>
+                  {inward ? (sw === inward ? "into the room" : "out of the room") : SIDE_WORD[sw]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="inline-flex items-center gap-1 text-xs text-muted dark:text-slate-400">
+            hinge
+            <select aria-label="Hinge side" value={o.hinge && doorFitsWall(wall, { hinge: o.hinge }) ? o.hinge : hinges[0]} onChange={(e) => onChange({ ...o, hinge: e.target.value as Edge })} className={select}>
+              {hinges.map((h) => (
+                <option key={h} value={h}>
+                  {h}
+                </option>
+              ))}
+            </select>
+          </label>
+        </>
+      )}
+      {kind === "window" && <DimInput label="sill" mm={o.sill_mm ?? DEFAULT_SILL_MM} unit={unit} onCommit={(v) => onChange({ ...o, sill_mm: v })} />}
+      <button type="button" onClick={onRemove} className="text-faint hover:text-ember-500" title="Remove it">
+        <X size={12} />
+      </button>
+    </span>
+  );
+}
+
+/** A closet's door: how wide, which side its hinge is on, and whether it
+ *  opens out into the room or into the closet. */
+function ClosetDoorControls({ closet, box, room, unit, onChange }: { closet: ClosetDoor; box: FpRect; room: { w_mm: number; d_mm: number }; unit: LengthUnit; onChange: (c: ClosetDoor) => void }) {
+  const front = closetWalls("", box, room, closet).find((w) => w.openings?.length)!;
+  const door = front.openings![0]!;
+  const vertical = front.x1 === front.x2;
+  const hinges: Edge[] = vertical ? ["top", "bottom"] : ["left", "right"];
+  const swings: Edge[] = vertical ? ["left", "right"] : ["top", "bottom"];
+  const intoRoomSide = closetWalls("", box, room, {}).find((w) => w.openings?.length)!.openings![0]!.swing!;
+  const select = "rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1 py-0.5 text-xs text-content dark:text-slate-200";
+  return (
+    <span data-testid="closet-door" className="inline-flex flex-wrap items-center gap-1.5 text-xs text-muted dark:text-slate-400">
+      closet door
+      <DimInput label="w" mm={door.w_mm} unit={unit} onCommit={(v) => onChange({ ...closet, door_mm: v })} />
+      <select aria-label="Which way the closet door opens" value={door.swing === intoRoomSide ? "room" : "closet"} onChange={(e) => onChange({ ...closet, swing: e.target.value === "room" ? intoRoomSide : swings.find((sw) => sw !== intoRoomSide) })} className={select}>
+        <option value="room">opens into the room</option>
+        <option value="closet">opens into the closet</option>
+      </select>
+      <select aria-label="Closet door hinge side" value={door.hinge} onChange={(e) => onChange({ ...closet, hinge: e.target.value as Edge })} className={select}>
+        {hinges.map((h) => (
+          <option key={h} value={h}>
+            hinge {h}
+          </option>
+        ))}
+      </select>
+    </span>
   );
 }
 
@@ -2420,7 +2714,7 @@ function DrawersModal({
           changes.push(await onPlaced(ordered[i]!, rects[i]!));
           setProgress(i + 1);
         }
-        toast.success(`${countOf(ordered.length, "drawer")} arranged in ${room.name}`);
+        toast.success(`${ordered.length} drawers arranged in ${room.name}`);
       } else {
         if (clear) for (const o of onFace) changes.push(await onPlaced(o, null));
         for (let i = 0; i < rects.length; i++) {
@@ -2527,7 +2821,7 @@ function DrawersModal({
             {busy
               ? `${mode === "arrange" ? "Arranging" : "Making"} ${progress}/${count}…`
               : mode === "arrange"
-                ? `Arrange ${countOf(count, "drawer")}`
+                ? `Arrange ${count} drawers`
                 : `Make ${count} ${noun}`}
           </button>
         </div>

@@ -13,9 +13,38 @@ export const StockConfig = z.discriminatedUnion("shape", [
 export type StockConfig = z.infer<typeof StockConfig>;
 export type StockShape = StockConfig["shape"];
 export type StockSheet = SheetArea & { spec: SheetSpec };
+/** How each measured stock unit is written: the unit catalog's symbol
+ *  (core-units BUILTIN_UNITS), so a record panel, a station and the Inventory
+ *  list spell a unit the same way (#5296 read "640 mL" beside "640 ml").
+ *  scripts/a-stock-unit-is-spelled-the-way-the-unit-catalog-spells-it.test.ts
+ *  holds the two together. The stored code stays as it is. */
+export const STOCK_UNIT_SYMBOL: Record<string, string> = { m: "m", g: "g", ml: "ml", h: "h", "mm²": "mm²", kg: "kg", mm: "mm", cm: "cm", l: "L", min: "min" };
 export function formatStockAmount(value: number, unit: string): string {
-  const measured = ["m", "g", "ml", "h", "mm²", "kg", "mm", "cm", "l", "min"].includes(unit);
-  return quantityWithUnit(value, unit, measured ? { symbol: unit, name: unit, plural: unit, category: "measure" } : null, [{ singular: "use", plural: "uses" }, { singular: "each", plural: "each" }], 9);
+  const symbol = STOCK_UNIT_SYMBOL[unit];
+  return quantityWithUnit(value, unit, symbol ? { symbol, name: symbol, plural: symbol, category: "measure" } : null, [{ singular: "use", plural: "uses" }, { singular: "each", plural: "each" }], 9);
+}
+/** A stock unit as a picker labels it: the symbol, the code as its value. */
+export const stockUnitLabel = (unit: string) => STOCK_UNIT_SYMBOL[unit] ?? unit;
+
+type ListedStock = { shape: StockShape; remaining: number; unit: string; sheet?: { spec: { width_mm: number; height_mm: number } } };
+/** What an Inventory row shows for its stock, by shape. A sheet and a wearing
+ *  tool are counted as one thing each, so their count is not what is left:
+ *  the row reads the area or the hours instead, and offers no stepper (#5296).
+ *  null: the count IS the amount, and the row steps it. A new shape has to
+ *  say which it is here before it typechecks. */
+const LIST_READING: Record<StockShape, (s: ListedStock) => string | null> = {
+  sheet: (s) => {
+    const area = s.sheet ? s.sheet.spec.width_mm * s.sheet.spec.height_mm : 0;
+    return `About ${area > 0 ? Math.round((s.remaining / area) * 100) : 0}% left`;
+  },
+  "wearing-tool": (s) => `${formatStockAmount(s.remaining, s.unit)} left`,
+  roll: () => null,
+  spool: () => null,
+  liquid: () => null,
+  count: () => null,
+};
+export function listStockReading(stock: ListedStock | null | undefined): string | null {
+  return stock ? LIST_READING[stock.shape](stock) : null;
 }
 const round = (n: number) => Math.round(n * 1e9) / 1e9;
 export function stockReading(config: StockConfig, qty: number, used: number, sheet?: StockSheet) {

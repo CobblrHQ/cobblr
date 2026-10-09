@@ -169,7 +169,9 @@ export interface IntakeView { setting: IntakeSetting | null; connections: Array<
 
 export class SalesApi {
   get workspace() { return this.slug; }
-  async orderEmailAddress() { return this.parse<{ order_address: string | null }>(await fetch(`/api/v1/orgs/${this.slug}/receipt-address`, { headers: this.headers() })); }
+  async orderEmailAddress() { return this.parse<{ order_address: string | null; order_name?: string | null }>(await fetch(`/api/v1/orgs/${this.slug}/receipt-address`, { headers: this.headers() })); }
+  /** Mail the person their orders address, from it, so their mail client learns "Cobblr Orders" (#5462). */
+  async emailMyOrderAddress() { return this.parse<{ sent: boolean; to: string; name: string }>(await fetch(`/api/v1/orgs/${this.slug}/receipt-address/email-me`, { method: "POST", headers: this.headers(true), body: JSON.stringify({ which: "orders" }) })); }
   intake() { return this.req<IntakeView>("GET", "/intake"); }
   setIntake(config: { on: boolean; connection: string; mapping: Record<string, string> }) { return this.req<IntakeSetting>("PUT", "/intake", config); }
   checkIntake() { return this.req<IntakeSetting | null>("POST", "/intake/check", {}); }

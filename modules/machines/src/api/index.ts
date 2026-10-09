@@ -7,6 +7,24 @@ import { registerMachinesActionHandlers } from "./action-handlers.js";
 import { registerMachinesWriter } from "./sync-writer.js";
 
 registerMachinesResolvers();
+platform().devices.registerMachineRecords({
+  get: async (orgId, kind, id, userId) => {
+    if (await platform().entities.baseKindOf(orgId, kind) !== "machines:machine") return null;
+    const record = await platform().entities.lookup(orgId, kind, id, { userId: userId ?? undefined });
+    return record && !record.retired ? record : null;
+  },
+  list: async (orgId, userId) => {
+    const records: Array<{ kind: string; record: import("@cobblr/platform-contract").ResolvedEntity }> = [];
+    for (const instance of await platform().instances.list(orgId)) {
+      if (instance.module_name !== "machines") continue;
+      const kind = instance.is_default ? "machines:machine" : `${instance.instance_name}:item`;
+      const page = await platform().entities.listAll(orgId, kind, {}, { userId: userId ?? undefined });
+      if (!page.complete) throw new Error("Narrow the machine collection before preparing this job.");
+      records.push(...page.items.filter(record => !record.retired).map(record => ({ kind, record })));
+    }
+    return records;
+  },
+});
 registerMachinesActionHandlers();
 registerMachinesWriter(); // opt in as a sync target (e.g. mirror an external system's printers)
 // Declare machines:machine as a scan target. (Audit 2026-06-26 follow-up — was

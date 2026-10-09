@@ -31,7 +31,11 @@ export function hasAuthEmailSender(): boolean {
 export async function sendAuthEmail(msg: AuthEmailMessage): Promise<boolean> {
   if (!authEmailSender) return false;
   try {
-    await authEmailSender(msg);
+    // Every email goes out through here, so this is where the "Cobblr
+    // Receipts" / "Cobblr Orders" name is held to its own address (#5462).
+    const { ownAddressFrom } = await import("./own-address.js");
+    const from = await ownAddressFrom(msg.from);
+    await authEmailSender(from === msg.from ? msg : { ...msg, from });
     return true;
   } catch (err) {
     console.warn(`[auth-email] ${msg.kind} send failed:`, (err as Error).message);

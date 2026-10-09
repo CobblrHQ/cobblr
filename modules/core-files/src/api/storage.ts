@@ -310,6 +310,16 @@ export async function storeUpload(
   };
 }
 
+/** Replace a stored original's bytes in place, same id and same path: for a
+ *  text whose words must change (a store sign-in link taken out, #5461) where
+ *  a new file would leave every holder of the old id pointing at the old
+ *  bytes. Answers the new fingerprint for the row. */
+export async function rewriteOriginalBytes(orgId: string, fileId: string, variants: FileVariants, bytes: Uint8Array): Promise<{ variants: FileVariants; sha256: string; size: number }> {
+  await driver().put(orgId, fileId, variants.original.path, bytes);
+  const fp = await fingerprintOf(bytes);
+  return { variants: { ...variants, original: { ...variants.original, bytes: fp.size } }, sha256: fp.sha256, size: fp.size };
+}
+
 /** Best-effort: remove the file's on-disk directory. Soft-deleted
  *  rows can call this on the way to permanent purge. */
 export async function removeStoredFile(orgId: string, fileId: string): Promise<void> {

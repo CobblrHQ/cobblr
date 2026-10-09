@@ -1,6 +1,5 @@
-import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { MutationError } from "@cobblr/platform-web";
+import { MutationError, WorkspaceLink } from "@cobblr/platform-web";
 import { useInventory } from "./context.js";
 import { useDisclosure } from "./useDisclosure.js";
 import { useFieldPresentation } from "./useFieldPresentation.js";
@@ -32,7 +31,7 @@ export function LowStockAlerts() {
             {enabled ? "Turn off low-stock alerts" : "Turn on low-stock alerts"}
           </button>
         )}
-        <Link to={`/w/${orgSlug}/lists`} className="text-accent hover:underline">Add running-low items to a shopping list</Link>
+        <WorkspaceLink slug={orgSlug} to={`/lists`} className="text-accent hover:underline">Add running-low items to a shopping list</WorkspaceLink>
       </div>
       <MutationError mutation={save} />
     </div>

@@ -26,6 +26,7 @@ import { rankImagesPromptFor } from "./rank-images-prompt.js";
 import { toolsOf, turnsOf, openAiToolsOf, ollamaMessagesOf, parseOllamaToolCalls, bridgeUsage } from "./tool-wire.js";
 import { promptFingerprint } from "./prompt-fingerprint.js";
 import { namesOfTags } from "./ollama-models.js";
+import { servedModelOf } from "@cobblr/platform-contract/ai-models";
 
 /** The personal-connections resolver injects the channel owner's user id here. */
 const CONNECTION_USER_KEY = "__connection_user_id";
@@ -223,7 +224,7 @@ export function register(): void {
             prompt: input,
           });
           const embedding = (body as { embedding?: number[] }).embedding ?? [];
-          return { result: { vector: embedding }, cost_cents: 0 };
+          return { result: { vector: embedding }, cost_cents: 0, served_model: servedModelOf(body.model) };
         }
         // The builder sends a conversation like chat does (no tools), and reads
         // the answer the same way.
@@ -279,6 +280,7 @@ export function register(): void {
             },
             ...bridgeUsage(body),
             cost_cents: 0,
+            served_model: servedModelOf(body.model),
           };
         }
         case "summarise": {
@@ -296,7 +298,7 @@ export function register(): void {
             ],
           });
           const content = (body as { message?: { content?: string } }).message?.content ?? "";
-          return { result: { text: content }, cost_cents: 0 };
+          return { result: { text: content }, cost_cents: 0, served_model: servedModelOf(body.model) };
         }
         case "classify-image":
         case "extract-text":
@@ -338,7 +340,7 @@ export function register(): void {
             messages: [msg],
           });
           const content = (body as { message?: { content?: string } }).message?.content ?? "";
-          return { result: { text: content }, cost_cents: 0 };
+          return { result: { text: content }, cost_cents: 0, served_model: servedModelOf(body.model) };
         }
         default:
           throw new Error(`edge bridge: capability ${ctx.capability} not implemented`);

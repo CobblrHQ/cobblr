@@ -31,7 +31,6 @@ import {
 } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 interface ManifestWire {
   source_kind: string;
   action_id: string;
@@ -442,7 +441,7 @@ export function BundleComposerPage() {
                   // preview
                 </div>
                 <div className="text-[10px] font-mono text-faint">
-                  {countOf(selectedWires.size, "wire")} · {countOf(selectedFields.size, "field")}
+                  {selectedWires.size} wires · {selectedFields.size} fields
                 </div>
               </div>
               <pre className="max-h-96 overflow-auto text-[10px] font-mono p-3 rounded bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 text-content dark:text-mortar-200">

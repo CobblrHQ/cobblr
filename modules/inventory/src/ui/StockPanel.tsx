@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MutationError, QueryError } from "@cobblr/platform-web";
-import { StockConfig, formatStockAmount, type StockShape } from "../stock-shapes";
+import { StockConfig, formatStockAmount, stockUnitLabel, type StockShape } from "../stock-shapes";
 import type { StockDetail } from "./api";
 import { useInventory } from "./context";
 import { AddToListButton } from "./AddToListButton";
@@ -68,11 +68,11 @@ function StockForm({ view, hideThreshold, onDone, onCancel }: { view: StockDetai
     return api.configureStock(view.id, { config, revision, ...(shape === "wearing-tool" ? { used: Number(used) } : shape === "sheet" ? { sheet: { material, thickness_mm: Number(thickness), width_mm: Number(sheetWidth), height_mm: Number(height) } } : { remaining: Number(remaining) }) });
   }, onSuccess: result => { if (result.warning) setWarning(result.warning); else onDone(); } });
   const numeric = (label: string, value: string, setDraft: (v: string) => void, optional = false) => <label className="text-sm" key={label}>{label}<input aria-label={label} type="number" min="0" step="any" required={!optional} className="input min-h-11 w-full" value={value} onChange={e => setDraft(e.target.value)} /></label>;
-  const actualUnit = shape === "sheet" ? "mm²" : shape === "roll" ? "m" : shape === "liquid" ? "ml" : shape === "count" ? "each" : unit;
+  const actualUnit = stockUnitLabel(shape === "sheet" ? "mm²" : shape === "roll" ? "m" : shape === "liquid" ? "ml" : shape === "count" ? "each" : unit);
   return <form className="space-y-3" onSubmit={e => { e.preventDefault(); save.mutate(); }}>
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
       <label className="text-sm">Shape<select aria-label="Stock shape" className="input min-h-11 w-full" value={shape} onChange={e => { const next = e.target.value as StockShape; setShape(next); setUnit(next === "spool" ? "g" : next === "wearing-tool" ? "h" : "each"); }}>{shapes.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</select></label>
-      {(shape === "spool" || shape === "wearing-tool") && <label className="text-sm">Unit<select aria-label="Stock unit" className="input min-h-11 w-full" value={unit} onChange={e => setUnit(e.target.value as typeof unit)}>{(shape === "spool" ? ["g", "m"] : ["h", "uses", "m"]).map(u => <option key={u} value={u}>{u}</option>)}</select></label>}
+      {(shape === "spool" || shape === "wearing-tool") && <label className="text-sm">Unit<select aria-label="Stock unit" className="input min-h-11 w-full" value={unit} onChange={e => setUnit(e.target.value as typeof unit)}>{(shape === "spool" ? ["g", "m"] : ["h", "uses", "m"]).map(u => <option key={u} value={u}>{stockUnitLabel(u)}</option>)}</select></label>}
       {shape !== "sheet" && shape !== "wearing-tool" && numeric(`Remaining (${actualUnit})`, remaining, setRemaining)}
       {!hideThreshold && numeric(`Low-stock threshold (${actualUnit})`, threshold, setThreshold)}
       {shape === "roll" && <>{numeric("Roll width (mm)", width, setWidth)}{numeric("Waste per job (m)", waste, setWaste)}</>}
@@ -99,7 +99,7 @@ function UseForm({ view, onDone, onCancel }: { view: StockDetail; onDone: () => 
   return <form className="space-y-3" onSubmit={e => { e.preventDefault(); save.mutate(); }}>
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
       <label className="text-sm">Amount used<input aria-label="Amount used" className="input min-h-11 w-full" type="number" min="0.000001" step="any" required value={amount} onChange={e => setAmount(e.target.value)} /></label>
-      <label className="text-sm">Unit<select aria-label="Use unit" className="input min-h-11 w-full" value={unit} onChange={e => setUnit(e.target.value)}>{units.map(u => <option key={u}>{u}</option>)}</select></label>
+      <label className="text-sm">Unit<select aria-label="Use unit" className="input min-h-11 w-full" value={unit} onChange={e => setUnit(e.target.value)}>{units.map(u => <option key={u} value={u}>{stockUnitLabel(u)}</option>)}</select></label>
       {view.config.shape === "roll" && <label className="text-sm">Measured waste (m, optional)<input aria-label="Measured waste (m, optional)" className="input min-h-11 w-full" type="number" min="0" step="any" placeholder={String(view.config.waste)} value={waste} onChange={e => setWaste(e.target.value)} /><span className="text-muted">Leave blank to use the waste allowance.</span></label>}
       <label className="text-sm">Job or use reference<input aria-label="Job or use reference" className="input min-h-11 w-full" required maxLength={160} value={source} onChange={e => setSource(e.target.value)} /></label>
       <label className="text-sm">Result<select aria-label="Job result" className="input min-h-11 w-full" value={verdict} onChange={e => setVerdict(e.target.value as typeof verdict)}><option value="good">Came out good</option><option value="scrap">Scrap</option></select></label>

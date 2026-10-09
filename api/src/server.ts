@@ -84,6 +84,7 @@ import { feedbackRouter, feedbackInboundRouter } from "./routes/feedback.js";
 import { receiptInboundRouter, receiptAddressRouter } from "./routes/receipt-ingest.js";
 import { inboundEmailRouter } from "./routes/inbound-email.js";
 import { mailSourcesRouter, workspaceMailSourcesRouter } from "./routes/mail-sources.js";
+import { mailboxCheckRouter } from "./routes/mailbox-check.js";
 import { sandboxInstallRouter } from "./routes/sandbox-install.js";
 import { registryRouter, registryPublicRouter, externalRegistry } from "./routes/registry.js";
 import { listFlagshipManifests } from "./lib/flagship-bundles.js";
@@ -472,6 +473,7 @@ export function createApp(): AppHandles {
   // routes/inbound-email.ts + docs/operations/email-inbound-capture.md.
   v1.use(inboundEmailRouter);
   v1.use(mailSourcesRouter);
+  v1.use(mailboxCheckRouter);
   // The two single-purpose inbound routes are kept for direct/legacy callers and
   // as the handlers the dispatcher reuses; both authenticate with the same
   // COBBLR_INBOUND_EMAIL_SECRET. See routes/feedback.ts + routes/receipt-ingest.ts.

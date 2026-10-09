@@ -8,8 +8,8 @@
 #     access over HTTPS (or localhost), never over a plain http:// LAN IP.
 #     Caddy gets a real, auto-renewing cert via a DNS challenge (see the
 #     Caddyfile), so there's nothing to install on your phone.
-#   - db / api / web: host ports dropped. Only Caddy is published (80/443);
-#     everything else talks over the internal compose network.
+#   - db / web: host ports dropped. Caddy is published (80/443); the api
+#     has a loopback-only relay port for the host-networked bridge.
 #
 # Copy deploy/selfhost/.env.example to .env and fill it in first.
 
@@ -36,13 +36,47 @@ services:
     environment:
       NODE_ENV: production
       COBBLR_ENV: ${COBBLR_ENV:-self-hosted}
-    # The web container fronts the api; no host port.
-    ports: !reset []
+      # Keep each order's lines' tracking current from the store's own order
+      # page (a Shopify "View order" link in the order email). A self-hosted
+      # instance reads from its own address, so it is on here; false keeps the
+      # links and reads none.
+      COBBLR_ORDER_PAGE_READS: ${COBBLR_ORDER_PAGE_READS:-true}
+      COBBLR_SERVER_BRIDGE_ENABLED: ${COBBLR_SERVER_BRIDGE_ENABLED:-false}
+      COBBLR_SERVER_BRIDGE_DIR: /var/cobblr/server-bridge/workspaces
+      COBBLR_SERVER_BRIDGE_ORIGIN: http://127.0.0.1:${COBBLR_BRIDGE_API_PORT:-14000}
+    # Only the host bridge reaches this loopback API port.
+    ports: !override
+      - "127.0.0.1:${COBBLR_BRIDGE_API_PORT:-14000}:4000"
+    volumes:
+      - ./data/server-bridge/workspaces:/var/cobblr/server-bridge/workspaces
 
   web:
     # Caddy fronts the web container over the compose network; drop the host
     # port so the only thing listening on the LAN is Caddy (HTTPS).
     ports: !reset []
+
+  bridge:
+    profiles: [bridge]
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    command: [node, dist/bin/server-bridge.js]
+    # LAN multicast and broadcast discovery need the host network.
+    network_mode: host
+    environment:
+      COBBLR_HOSTED: ${COBBLR_HOSTED:-false}
+      COBBLR_SERVER_BRIDGE_ENABLED: ${COBBLR_SERVER_BRIDGE_ENABLED:-false}
+      COBBLR_SERVER_BRIDGE_DIR: /var/cobblr/server-bridge/workspaces
+      COBBLR_SERVER_BRIDGE_CACHE_DIR: /var/cobblr/server-bridge/cache
+    volumes:
+      - ./data/server-bridge/workspaces:/var/cobblr/server-bridge/workspaces:ro
+      - ./data/server-bridge/cache:/var/cobblr/server-bridge/cache
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    restart: unless-stopped
 
   # ─── Caddy: automatic HTTPS in front of the app ──────────────────────
   caddy:

@@ -92,9 +92,9 @@ export function registerSheetActions() {
         const p = parsed.data;
         if (p.operation === "cut" && p.source && state.sources.includes(p.source)) return { ok: true };
         if (p.revision !== revision) throw new ActionRefusal("This sheet changed. Reload it before saving.");
-        if (p.outlines && (p.operation !== "cut" || p.rectangles?.length || p.kerf_mm || p.spacing_mm)) throw new ActionRefusal("Cut outlines must already include kerf and spacing, without rectangles.");
+        if (p.outlines && (p.operation !== "cut" || p.rectangles?.length)) throw new ActionRefusal("Record cut outlines on their own, without rectangles.");
         let next;
-        try { next = p.operation === "undo" ? undoFreeEdit(state) : p.operation === "edit" ? editFreeArea(spec, state, p.rectangles ?? []) : p.outlines ? recordOutlineCut(spec, state, p.outlines, p.source) : recordCut(spec, state, p.rectangles ?? [], p.kerf_mm, p.spacing_mm, p.source); }
+        try { next = p.operation === "undo" ? undoFreeEdit(state) : p.operation === "edit" ? editFreeArea(spec, state, p.rectangles ?? []) : p.outlines ? recordOutlineCut(spec, state, p.outlines, p.source, (p.kerf_mm + p.spacing_mm) / 2) : recordCut(spec, state, p.rectangles ?? [], p.kerf_mm, p.spacing_mm, p.source); }
         catch (e) { if (e instanceof Error) throw new ActionRefusal(e.message); throw e; }
         if (p.operation === "cut") {
           const beforeArea = sheetArea(spec, state), afterArea = sheetArea(spec, next);

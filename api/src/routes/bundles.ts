@@ -336,7 +336,7 @@ const InstanceEntry = z.object({
   renewal_fields: RenewalBindingSchema.optional(),
   record_templates: z.array(RecordTemplateSchema).max(30).optional(),
   receipt_draft: ReceiptDraftSchema.optional(),
-  board_revisions: z.object({ package_kind: z.string().min(3).max(120), blank_kind: z.string().min(3).max(120), stencil_kind: z.string().min(3).max(120) }).optional(),
+  board_revisions: z.object({ package_kind: z.string().min(3).max(120), blank_kind: z.string().min(3).max(120), stencil_kind: z.string().min(3).max(120), placed_kind: z.string().min(3).max(120).optional() }).optional(),
   paste_tracking: z.boolean().optional(),
   package_receiving: z.object({ identity_field: z.string().min(1).max(80), storage_tracking: z.boolean().default(false) }).optional(),
   parent: z

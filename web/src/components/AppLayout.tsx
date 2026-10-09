@@ -67,7 +67,7 @@ const GuidedTour = lazy(() => import("../tour/GuidedTour").then((m) => ({ defaul
 import { useTour } from "../tour/useTour";
 import { DASHBOARD_TOUR } from "../tour/tour.config";
 import { useTheme } from "../theme/ThemeContext";
-import { FloatingChrome, useToast } from "@cobblr/platform-web";
+import { FloatingChrome, useScrollToHash, useToast } from "@cobblr/platform-web";
 import { QuickAddSheet } from "./QuickAddSheet";
 import { ShortcutsSheet } from "./ShortcutsSheet";
 import { AiNoticeGiven, useAiStatus } from "./AiStatusNotice";
@@ -75,6 +75,8 @@ import { readOpenOn, readOpenTab, restoresOn, writeOpenOn, writeOpenTab } from "
 
 export function AppLayout({ activeSlug }: { activeSlug: string }) {
   const location = useLocation();
+  // A link to a section (#who-answers) lands on it, once the page has drawn it.
+  useScrollToHash();
   // Ask-Cobblr panel open state, lifted here so the main content shifts left
   // (into its centering margin) when the panel opens, instead of being overlaid.
   //

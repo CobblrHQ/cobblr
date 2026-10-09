@@ -25,13 +25,14 @@ import { escortCoveredByAction, resolveActionId, ESCORT_COVERAGE } from "./act-d
 import { buildSystemPrompt, situationalSuffix, type PromptWorkspace, type PromptOptions } from "./system-prompt.js";
 import { GROUNDING_RULES, PLAIN_ANSWER_RULES, TOOL_USE_RULES } from "./prompt-rules.js";
 import { z } from "zod";
-import { CHAT_HISTORY_MESSAGES, platform, type AiChainStep, countOf } from "@cobblr/platform-contract";
+import { CHAT_HISTORY_MESSAGES, platform, type AiChainStep } from "@cobblr/platform-contract";
 import { kindWordsFrom } from "@cobblr/platform-contract/kind-label";
 import { matchCommand } from "./basics.js";
 import { replyDespiteRefusal, withPlanCard } from "./plan-card.js";
 import { withDeleteThisCard } from "./delete-this.js";
 import { tenantContext, sessionUserId, sessionDisplayName, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { chosenModel, storedModel } from "./model-follows.js";
 import {
   WORKSPACE_TOOLS,
   WRITE_TOOLS,
@@ -212,7 +213,7 @@ async function chatPrefsOf(req: Parameters<typeof tenantDb>[0]): Promise<ChatToo
   try {
     const row = await tenantDb(req)
       .selectFrom("core_ai_chat_prefs")
-      .select(["read_tools", "write_mode", "provider_id", "model", "credential_id"])
+      .select(["read_tools", "write_mode", "provider_id", "model", "credential_id", "model_follows"])
       .where("user_id", "=", sessionUserId(req) ?? "")
       .executeTakeFirst();
     if (!row) return DEFAULT_PREFS;
@@ -223,7 +224,8 @@ async function chatPrefsOf(req: Parameters<typeof tenantDb>[0]): Promise<ChatToo
       row.model && (row.provider_id || row.credential_id)
         ? {
             provider_id: (row.provider_id as string | null) ?? null,
-            model: row.model as string,
+            // A family's latest, when that was picked (model-follows.ts).
+            model: (row.model_follows as string | null) ?? (row.model as string),
             credential_id: (row.credential_id as string | null) ?? null,
           }
         : {};
@@ -1350,7 +1352,7 @@ chatRouter.post(
     const suggestion = hit
       ? {
           template: hit.template,
-          summary: hit.summary ?? `${countOf(hit.operations.length, "change")}`,
+          summary: hit.summary ?? `${hit.operations.length} changes`,
           operations: hit.operations.length,
           ...(hit.note ? { note: hit.note } : {}),
           ...(hit.leftHeading ? { leftHeading: hit.leftHeading } : {}),
@@ -1850,10 +1852,11 @@ chatRouter.put(
     // The model choice, only when the body spoke to it: a pill toggling
     // "read my data" must not wipe the model somebody picked a minute ago.
     const spoke = "provider_id" in parsed.data || "model" in parsed.data || "credential_id" in parsed.data;
+    const stored = parsed.data.model ? storedModel(parsed.data.model, { providerId: parsed.data.provider_id ?? null }) : { model: null, model_follows: null };
     const pick = spoke
       ? {
           provider_id: parsed.data.provider_id ?? null,
-          model: parsed.data.model ?? null,
+          ...stored,
           credential_id: parsed.data.credential_id ?? null,
         }
       : {};
@@ -1929,7 +1932,7 @@ chatRouter.get(
       // the same first step the resolver takes.
       tenantDb(req)
         .selectFrom("core_ai_capability_defaults")
-        .select(["provider_id", "model", "credential_id"])
+        .select(["provider_id", "model", "credential_id", "model_follows"])
         .where("capability", "=", "chat")
         .executeTakeFirst()
         .catch(() => undefined),
@@ -1943,7 +1946,7 @@ chatRouter.get(
     }));
     const firstEnabled = rows[0] ? providers.find((p) => p.id === rows[0]!.provider_id) : undefined;
     const workspaceDefault = chatDefault?.provider_id && chatDefault.model
-      ? { provider_id: chatDefault.credential_id ? (routed.find((c) => c.credentialId === chatDefault.credential_id)?.providerId ?? chatDefault.provider_id) : chatDefault.provider_id, model: chatDefault.model }
+      ? { provider_id: chatDefault.credential_id ? (routed.find((c) => c.credentialId === chatDefault.credential_id)?.providerId ?? chatDefault.provider_id) : chatDefault.provider_id, model: chosenModel(chatDefault) }
       : firstEnabled?.defaultModel
         ? { provider_id: firstEnabled.id, model: firstEnabled.defaultModel }
         : null;
@@ -1956,7 +1959,7 @@ chatRouter.get(
       ...routedConns.filter((c) => c.approved).map((c) => [c.credentialId, { credentialId: c.credentialId }] as [string, { credentialId: string }]),
     ];
     const answers = await Promise.all(
-      askable.map(async ([key, ref]) => [key, await platform().ai.modelsReportedBy(orgId, userId || null, ref, { fresh }).catch(() => null)] as const),
+      askable.map(async ([key, ref]) => [key, await platform().ai.modelsReportedBy(orgId, userId || null, ref, { fresh, capability: "chat" }).catch(() => null)] as const),
     );
     const reported: ReportedModels = Object.fromEntries(answers.filter((a): a is readonly [string, NonNullable<(typeof a)[1]>] => a[1] !== null));
     const menu = chatModelMenu({

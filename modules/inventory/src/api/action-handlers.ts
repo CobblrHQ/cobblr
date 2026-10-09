@@ -36,7 +36,6 @@ import {
 } from "../batches.js";
 import { observation, swapFreshObservations, type StockObservation } from "../observations.js";
 import { arrivedToday, freshLotStamps, shelfLifeDaysOf, startsFreshLot } from "../fresh-lot.js";
-import { isLowStock, modelIsLow, modelOfUnit, onHandCount, openUnitsFor } from "../on-hand.js";
 import { BELOW_ZERO, NOTHING_ON_HAND, floorDelta } from "../stock-floor.js";
 import { dayIn } from "@cobblr/platform-contract/day";
 import { stillGoodPatch } from "../still-good.js";

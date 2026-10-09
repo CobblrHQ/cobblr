@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "digifab",
-  version: "0.33.0",
+  version: "0.34.1",
   displayName: "Digital Fabrication",
   description:
     "Send a design to the software that runs your machine (FDM Monster, OctoPrint and others) and follow the job until it is done.",
@@ -74,6 +74,12 @@ export default defineModule({
 
   provides: {
     entityKinds: [
+      {
+        // AI-CRUD: immutable attempts are prepared and finished by production-test, never edited or deleted.
+        id: "digifab:test-run", displayName: "Production test attempt", displayNamePlural: "Production test attempts", icon: "activity", profile: "work-item",
+        fields: [{ name: "name", type: "text", role: "title" }, { name: "status", type: "text" }, { name: "plan_version", type: "number" }, { name: "plan_hash", type: "text" }, { name: "result", type: "object" }, { name: "unit_kind", type: "text" }, { name: "unit_id", type: "text" }, { name: "operator_id", type: "text" }, { name: "station", type: "text" }, { name: "jig_id", type: "text" }, { name: "jig_cycle", type: "number" }],
+        exposableFields: ["name", "status", "plan_version", "plan_hash", "result", "unit_kind", "unit_id", "operator_id", "station", "jig_id", "jig_cycle"], detailRoute: "/digifab/production?run={id}",
+      },
       {
         // AI-CRUD: no create/update/delete: creation and completion share the kiln-log action; firing recipes stay immutable.
         id: "digifab:firing", displayName: "Firing", displayNamePlural: "Firings", icon: "flame", profile: "work-item",
@@ -238,6 +244,32 @@ export default defineModule({
       { eventType: "digifab.make.ready", label: "A print is ready to start", description: "Print this has sliced a model for a printer; the print waits on its Make for someone to start it." },
     ],
     actions: [
+      {
+        // UI-SCREEN: /digifab/production
+        id: "digifab:production-test", label: "Manage production tests", scope: "workspace", group: "more", userInvokable: false, effect: "writes", undoable: false,
+        runBy: "member",
+        description: "Save a new immutable test-plan version; register a native jig asset and maintenance interval; mint a quantity-one inventory unit without changing its model quantity; prepare an exact unit/plan_version/jig_id/station/bridge_connection_id attempt; sync offline evidence; record reworked or scrapped dispositions; export unit or filtered product/customer/lot PDF or JSON certificates through Files. Admin required for save_plan, save_jig and mint_unit. Other operations require a member. fields is the operation's JSON object.",
+        invokeHandler: "digifab.production-test", argsSchema: { operation: { label: "Operation", type: "text", required: true, choices: ["save_plan", "save_jig", "mint_unit", "prepare", "sync", "disposition", "export"].map(value => ({ value, label: value })) }, fields: { label: "Production fields", type: "json", required: true } },
+      },
+      {
+        // UI-SCREEN: /station/production/:connectionId
+        id: "digifab:production-control", label: "Run a production test", scope: "workspace", group: "more", userInvokable: false, effect: "physical", undoable: false,
+        runBy: "member",
+        description: "Start a prepared production attempt with fields id, confirmed:true and the scanned jig_id, or answer its current operator prompt with id, step_id, value and optional photo. Uses the exact saved plan and approved bridge. All controlled supplies must be owner-enabled. Abort is the separate production-abort stop action.",
+        invokeHandler: "digifab.production-control", argsSchema: { operation: { label: "Operation", type: "text", required: true, choices: ["start", "answer"].map(value => ({ value, label: value })) }, fields: { label: "Run or answer fields", type: "json", required: true } },
+      },
+      {
+        // UI-SCREEN: /station/production/:connectionId
+        id: "digifab:production-abort", label: "Abort a production test", scope: "workspace", group: "more", userInvokable: false, effect: "stops", undoable: false,
+        runBy: "member",
+        description: "Stop the prepared or active attempt immediately and turn every declared supply off. Requires a member; no confirmation is needed.", invokeHandler: "digifab.production-abort", argsSchema: { id: { label: "Attempt id", type: "text", required: true } },
+      },
+      {
+        // UI-SCREEN: /digifab/production
+        id: "digifab:production-read", label: "Read production test evidence", scope: "workspace", group: "more", userInvokable: false, effect: "none", undoable: false,
+        runBy: "member",
+        description: "Read a serialized unit's full history (fields kind/id), product/customer/lot statistics (fields product_id/customer_id/lot), or a production bridge's cached attempts (fields connection_id). Reports first-pass yield, step failures, measured spreads and drift, and operator/jig failure rates. Requires a workspace member.", invokeHandler: "digifab.production-read", argsSchema: { operation: { label: "Read", type: "text", required: true, choices: ["history", "report", "artifact", "bridge"].map(value => ({ value, label: value })) }, fields: { label: "Scope", type: "json", required: true } },
+      },
       {
         // UI-SCREEN: /machines
         id: "digifab:kiln-log", label: "Record kiln firings", scope: "workspace", group: "more", userInvokable: false, effect: "writes", undoable: false,

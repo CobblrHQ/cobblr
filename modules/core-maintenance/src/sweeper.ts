@@ -18,7 +18,7 @@
 
 import type { NotificationAction, NotificationCardRow } from "@cobblr/platform-contract";
 import { Kysely, sql } from "kysely";
-import { platform, countOf } from "@cobblr/platform-contract";
+import { platform } from "@cobblr/platform-contract";
 import type { CoreMaintenanceDB } from "./db.js";
 import { reconcileSchedules } from "./schedules-store.js";
 import { calendarDue, shouldNotify, cancelBy, type Reminder } from "./schedule.js";
@@ -212,7 +212,7 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
       const message =
         lines.length === 1
           ? lines[0]!
-          : `${countOf(lines.length, "thing")} need maintenance:\n${lines.join("\n")}`;
+          : `${lines.length} things need maintenance:\n${lines.join("\n")}`;
       // WHERE IT TAKES YOU. One entry → the thing that needs servicing, which
       // is where you would go to deal with it; several → the maintenance page,
       // which lists exactly what is due. It used to carry no link at all, so

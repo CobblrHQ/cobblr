@@ -1,12 +1,17 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MutationError, QueryError, NumberField } from "@cobblr/platform-web";
-import { sheetSpec, type Rect } from "../sheet-area";
+import { sheetSpec, type Rect } from "../sheet-spec";
 import { useInventory } from "./context";
 
 // A free area edge is a sum with kerf and spacing, so 120 + 1.1 can read 121.10000000000001.
 const mm = (n: number) => Math.round(n * 10) / 10;
 const button = "min-h-11 rounded border border-line px-3 py-2 text-sm disabled:opacity-50";
+/** A leftover region's extent, for the line that names it. */
+function boundsOf(ring: { x: number; y: number }[]): Rect {
+  const xs = ring.map(p => p.x), ys = ring.map(p => p.y);
+  return { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
+}
 export function SheetPanel({ id, metadata }: { id: string; metadata: Record<string, unknown> }) {
   const { api, orgSlug } = useInventory();
   const qc = useQueryClient();
@@ -34,17 +39,18 @@ export function SheetPanel({ id, metadata }: { id: string; metadata: Record<stri
         <rect x={0} y={0} width={view.spec.width_mm} height={view.spec.height_mm} className="fill-slate-50 stroke-slate-300 dark:fill-slate-900 dark:stroke-slate-700" strokeWidth={1} vectorEffect="non-scaling-stroke" data-testid="sheet-outline" />
         <g transform={`translate(0 ${view.spec.height_mm}) scale(1 -1)`}>
           <path d={view.used_outlines.map(points => `M ${points.map(p => `${p.x},${p.y}`).join(" L ")} Z`).join(" ")} fill="#94a3b8" fillRule="evenodd" />
-          {view.free_rectangles.map((r, i) => <rect key={i} {...r} fill="none" stroke="#2563eb" strokeWidth={Math.max(view.spec.width_mm, view.spec.height_mm) / 250} />)}
+          <path d={view.free_regions.flat().map(ring => `M ${ring.map(p => `${p.x},${p.y}`).join(" L ")} Z`).join(" ")} fill="none" fillRule="evenodd" stroke="#2563eb" strokeWidth={Math.max(view.spec.width_mm, view.spec.height_mm) / 250} data-testid="free-regions" />
         </g>
       </svg>
-      <p className="text-sm text-muted">Grey is used. Blue outlines show room for another piece. Gaps under {view.spec.minimum_usable_mm} mm are left out.</p>
-      <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm">{view.free_rectangles.map((r, i) => <li key={i}>{mm(r.width)} × {mm(r.height)} mm at {mm(r.x)}, {mm(r.y)}</li>)}{!view.free_rectangles.length && <li>No usable area left.</li>}</ul>
+      <p className="text-sm text-muted">Grey is used. Blue outlines show the room left for another piece, in its real shape. Gaps under {view.spec.minimum_usable_mm} mm are left out.</p>
+      <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm">{view.free_regions.map(([outer], i) => { const r = boundsOf(outer!); return <li key={i}>{mm(r.width)} × {mm(r.height)} mm at {mm(r.x)}, {mm(r.y)}</li>; })}{!view.free_regions.length && <li>No usable area left.</li>}</ul>
       {!mode && <div className="flex flex-wrap gap-2">
         <button className={button} onClick={() => { setMode("cut"); setRevision(view.revision); setRectangles([{ x: 0, y: 0, width: Math.min(100, view.spec.width_mm), height: Math.min(100, view.spec.height_mm) }]); save.reset(); }}>Record a cut</button>
         <button className={button} onClick={() => { setMode("edit"); setRevision(view.revision); setRectangles(view.free_rectangles.map(r => ({ ...r }))); save.reset(); }}>Edit free area</button>
         <button className={button} disabled={!view.can_undo || save.isPending} onClick={() => save.mutate(true)}>Undo hand edit</button>
       </div>}
       {mode && <form className="space-y-3" onSubmit={e => { e.preventDefault(); save.mutate(false); }}>
+        {/* base-noun-ok: a laser cut's placed part, the cut shape, not the table's thing */}
         <p className="text-sm">{mode === "cut" ? "Enter each placed part's bounding box. Kerf and spacing are added around it." : "Keep only the rectangles still on the sheet. A hand edit can remove area, and Undo brings it back."} Measure X and Y from the lower left corner, in millimetres.</p>
         {rectangles.map((r, index) => <div key={index} className="rounded border border-line p-2 space-y-2">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">{(["x", "y", "width", "height"] as const).map(field => <label key={field} className="text-sm">{field === "x" || field === "y" ? field.toUpperCase() : field[0]!.toUpperCase() + field.slice(1)} (mm)<NumberField label={`Area ${index + 1} ${field} (mm)`} className="input w-full min-h-11" min={field === "x" || field === "y" ? 0 : 0.001} required value={r[field]} onChange={n => setRectangles(old => old.map((p, i) => i === index ? { ...p, [field]: n } : p))} /></label>)}</div>

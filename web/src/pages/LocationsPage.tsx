@@ -1351,7 +1351,7 @@ export function LocationFormModal({
           await api.reorderLocations(slug, bottomUpDisplayOrder(created));
         }
         toast.success(
-          `Created ${countOf(created.length, "location")}: ${expansion.names.join(", ")}` +
+          `Created ${created.length} locations: ${expansion.names.join(", ")}` +
             (stacked && bottomUp ? ` (${expansion.names[0]} at the bottom)` : ""),
         );
       } else {
@@ -1408,7 +1408,7 @@ export function LocationFormModal({
                 />
                 {expansion && expansion.names.length > 1 && (
                   <div className="text-[11px] text-accent dark:text-cobble-300 mt-1">
-                    → will create {countOf(expansion.names.length, "location")}: {expansion.preview}
+                    → will create {expansion.names.length} locations: {expansion.preview}
                   </div>
                 )}
                 {stacked && expansion && (

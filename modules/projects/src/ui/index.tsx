@@ -13,6 +13,7 @@ import { ProjectDetailPage } from "./ProjectDetailPage";
 import { TaskAddress } from "./TaskAddress";
 
 export const navItems = [
+  // base-noun-ok: the module's own nav entry, for its base table
   { label: "Projects", path: "/projects", icon: Layers },
 ];
 
@@ -25,6 +26,7 @@ interface ProjectsUIProps {
    *  page reads as the user's thing, not "projects" / "New project". */
   displayName?: string;
   itemNoun?: string;
+  itemNounPlural?: string;
   /** The table's file intake, when its bundle declares one (Patterns: each
    *  PDF dropped on it becomes a pattern). */
   fileIntake?: FileIntakeDecl;
@@ -32,9 +34,9 @@ interface ProjectsUIProps {
   hint?: string | null;
 }
 
-export function ProjectsUI({ orgSlug, getToken, instance, displayName, itemNoun, fileIntake, hint }: ProjectsUIProps) {
+export function ProjectsUI({ orgSlug, getToken, instance, displayName, itemNoun, itemNounPlural, fileIntake, hint }: ProjectsUIProps) {
   return (
-    <ProjectsProvider orgSlug={orgSlug} getToken={getToken} instance={instance} displayName={displayName} itemNoun={itemNoun} fileIntake={fileIntake} hint={hint}>
+    <ProjectsProvider orgSlug={orgSlug} getToken={getToken} instance={instance} displayName={displayName} itemNoun={itemNoun} itemNounPlural={itemNounPlural} fileIntake={fileIntake} hint={hint}>
       <Routes>
         <Route index element={<ProjectsListPage />} />
         {/* Bundle setup-cards / next-steps deep-link to

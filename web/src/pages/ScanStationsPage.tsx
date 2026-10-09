@@ -7,7 +7,6 @@ import { stationApi, stationKeys } from "../lib/scan-stations";
 import type { StationMode } from "@cobblr/platform-contract/scan-station";
 import QRCode from "qrcode";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 const button = "rounded-md border border-line dark:border-slate-600 px-3 py-2 text-sm disabled:opacity-50";
 const input = "w-full rounded-md border border-line dark:border-slate-600 bg-transparent p-2 text-base";
 const modes: Array<{ value: StationMode; label: string }> = [{ value: "file", label: "File" }, { value: "print", label: "Print" }, { value: "navigate", label: "Open" }];
@@ -106,7 +105,7 @@ export function ScanStationsPage() {
       </section>}
       <h2 className="text-sm font-mono uppercase tracking-widest text-accent">Sessions</h2>
       <ul className="space-y-3">{sessions.data?.pages.flatMap((page) => page.items).map((s) => <li key={s.id}>
-        <Link to={`/scan/stations/${id}/sessions/${s.id}`} className="text-accent underline">{new Date(s.started_at).toLocaleString()} · {countOf(s.count, "action")} · {s.ended_at ? "Review" : "Active"}</Link>
+        <Link to={`/scan/stations/${id}/sessions/${s.id}`} className="text-accent underline">{new Date(s.started_at).toLocaleString()} · {s.count} actions · {s.ended_at ? "Review" : "Active"}</Link>
       </li>)}</ul>
       {sessions.hasNextPage && <button className={button} disabled={sessions.isFetchingNextPage} onClick={() => void sessions.fetchNextPage()}>Older sessions</button>}
     </> : <p role="status">Getting station…</p>}

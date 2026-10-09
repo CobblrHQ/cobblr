@@ -8,6 +8,8 @@
 
 import { labelFor, type Board, type BoardRack } from "../lib/layoutBoard";
 import { wallSegments, type FpBound } from "../lib/floorplanGeometry";
+import { doorSwing } from "@cobblr/platform-contract/plan-clearance";
+import { arcTo } from "./PlanSymbols";
 import { nameUnder } from "../lib/planFit";
 import { nearestWalls, printScale, scaleBarMm } from "../lib/layoutPrint";
 
@@ -82,7 +84,7 @@ function Floor({ board, bound }: { board: Board; bound: FpBound }) {
         <rect x={0} y={0} width={bound.w_mm} height={bound.d_mm} fill="none" stroke="black" strokeWidth={0.8 * s} />
         {/* Interior walls, drawn minus their openings; an opening on the
             outer wall is a white gap in it. Each opening says what and how wide. */}
-        {(bound.walls ?? []).map((w, i) => {
+        {board.room.walls.map((w, i) => {
           const onEdge = (w.x1 === w.x2 && (w.x1 === 0 || w.x1 === bound.w_mm)) || (w.y1 === w.y2 && (w.y1 === 0 || w.y1 === bound.d_mm));
           const vertical = w.x1 === w.x2;
           const start = vertical ? Math.min(w.y1, w.y2) : Math.min(w.x1, w.x2);
@@ -93,10 +95,31 @@ function Floor({ board, bound }: { board: Board; bound: FpBound }) {
                 const a = start + o.at_mm, b = a + o.w_mm;
                 const [x1, y1, x2, y2] = vertical ? [w.x1, a, w.x1, b] : [a, w.y1, b, w.y1];
                 const said = OPENING_WORDS[o.kind ?? "opening"];
+                const sw = doorSwing(w, o);
+                const across = vertical ? [1, 0] : [0, 1];
                 return (
                   <g key={`o${k}`}>
                     <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="white" strokeWidth={1.4 * s} />
-                    <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="black" strokeWidth={thin} strokeDasharray={`${s} ${s}`} />
+                    {o.kind === "window" ? (
+                      // A window: two thin lines in the wall.
+                      [-0.35, 0.35].map((f) => (
+                        <line key={f} x1={x1 + across[0]! * f * s} y1={y1 + across[1]! * f * s} x2={x2 + across[0]! * f * s} y2={y2 + across[1]! * f * s} stroke="black" strokeWidth={thin} />
+                      ))
+                    ) : sw ? (
+                      // A door: its leaf open, and the quarter circle it sweeps.
+                      <g data-print-door="">
+                        <line x1={sw.hinge.x_mm} y1={sw.hinge.y_mm} x2={sw.open.x_mm} y2={sw.open.y_mm} stroke="black" strokeWidth={thin * 2} />
+                        <path
+                          d={`M ${sw.shut.x_mm} ${sw.shut.y_mm} ${arcTo(sw)}`}
+                          fill="none"
+                          stroke="black"
+                          strokeWidth={thin}
+                          strokeDasharray={`${s} ${s}`}
+                        />
+                      </g>
+                    ) : (
+                      <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="black" strokeWidth={thin} strokeDasharray={`${s} ${s}`} />
+                    )}
                     <text
                       data-print-text=""
                       x={(x1 + x2) / 2 + (vertical ? font * 0.6 : 0)}
@@ -186,6 +209,13 @@ function Floor({ board, bound }: { board: Board; bound: FpBound }) {
           </text>
         </g>
       </svg>
+      {board.flags.length > 0 && (
+        <ul data-print-flags="" className="mt-1 text-[10px]">
+          {board.flags.map((f, i) => (
+            <li key={i}>{f.text}</li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }

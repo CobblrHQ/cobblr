@@ -22,3 +22,8 @@ export function checkKitReservation(lines: readonly KitLine[], stock: readonly {
     if (!Number.isSafeInteger(part.qty) || !Number.isFinite(part.reserved) || part.reserved < 0 || part.qty - part.reserved < line.qty) throw new Error("There is not enough free stock for this kit. Check the count and other reservations.");
   }
 }
+export function checkKitOutput(blanks: number, output: { qty: number; unit: string; available: boolean }) {
+  if (!output.available) throw new Error("Choose an available placed-board stock record.");
+  if (output.unit !== "each") throw new Error("Placed boards must be count stock measured in each.");
+  if (!Number.isSafeInteger(blanks) || blanks < 1 || output.qty !== blanks) throw new Error("Placed boards must match the blank boards reserved in this kit.");
+}

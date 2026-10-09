@@ -57,7 +57,6 @@ import { RailTabContent, useRailTab } from "./SideRail";
 import { ContextChip, PopoverLayer, useEscapeToClose } from "@cobblr/platform-web";
 import { ServiceJobCard } from "./ServiceJobCard";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 // Shown only if the basic-mode endpoint itself is unreachable (network error) —
 // the server otherwise always returns a reply (its own no-match nudge).
 const BASIC_FALLBACK =
@@ -1295,7 +1294,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
               });
               relayApplied.current.push({
                 role: "assistant",
-                content: String(data.summary ?? `Made ${countOf(bulkIds.length, "change")}.`),
+                content: String(data.summary ?? `Made ${bulkIds.length} changes.`),
                 resolved: true,
                 ...(relayRefs.length ? { refs: relayRefs } : {}),
                 ...(data.destination && typeof data.destination === "object" ? { destination: data.destination as { kind: string; label: string } } : {}),

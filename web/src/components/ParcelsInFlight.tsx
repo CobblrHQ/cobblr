@@ -23,7 +23,6 @@ import { PackageCheck, Truck } from "lucide-react";
 import { api } from "../lib/api";
 import { trimEcho } from "../lib/parcelDetail";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 /** The carrier vocabulary in words a person uses. */
 const LABEL: Record<string, string> = {
   pre_transit: "Label created",
@@ -193,7 +192,7 @@ export function ParcelsInFlight({
                   Without this a named row loses the vendor entirely. */}
               {p.from && <span className="text-[11px] text-faint shrink-0 hidden sm:inline">{p.from}</span>}
               {p.count != null && p.count > 1 && (
-                <span className="text-[11px] text-faint shrink-0 hidden sm:inline">{countOf(p.count, "item")}</span>
+                <span className="text-[11px] text-faint shrink-0 hidden sm:inline">{p.count} items</span>
               )}
               <span
                 className={`text-xs shrink-0 ${

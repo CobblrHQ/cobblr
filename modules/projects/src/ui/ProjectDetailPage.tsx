@@ -87,6 +87,7 @@ function AutoGrowTextarea({
 
 /** The description, a draft over the record like ProjectInput. */
 function DescriptionField({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
+  const { noun } = useProjects();
   const f = useFieldDraft(value);
   return (
     <AutoGrowTextarea
@@ -99,7 +100,7 @@ function DescriptionField({ value, onCommit }: { value: string; onCommit: (v: st
         onCommit(v);
       }}
       minRows={3}
-      placeholder="What is this project about?"
+      placeholder={`What is this ${noun} about?`}
       className="input text-sm w-full resize-y"
     />
   );
@@ -107,7 +108,8 @@ function DescriptionField({ value, onCommit }: { value: string; onCommit: (v: st
 
 export function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { api, orgSlug, entityKind, instance, displayName, holdsPatterns } = useProjects();
+  const { api, orgSlug, entityKind, instance, displayName, holdsPatterns, noun } = useProjects();
+  const Noun = noun.charAt(0).toUpperCase() + noun.slice(1);
   // Route "back" to the collection the user actually came from: a Designs (or
   // any named) instance lives at /instances/<name>, not the empty base
   // /projects. Mirrors ProjectsListPage's basePath.
@@ -126,7 +128,7 @@ export function ProjectDetailPage() {
     queryFn: () => api.getProject(id!),
     enabled: !!id,
   });
-  usePageTitle(project.data?.name ?? "Project");
+  usePageTitle(project.data?.name ?? Noun);
   // The same read as "what this pattern needs" (shared cache): where it lists
   // yarn or a hook, the older empty panels below would only contradict it.
   const needs = useQuery({
@@ -187,7 +189,7 @@ export function ProjectDetailPage() {
   }
 
   if (project.isLoading) return <div className="text-sm text-faint dark:text-slate-500">loading…</div>;
-  if (!project.data) return <div className="text-sm text-ember-500">Project not found.</div>;
+  if (!project.data) return <div className="text-sm text-ember-500">{Noun} not found.</div>;
   const listed = (project.data.metadata as Record<string, unknown> | null)?.hooks_needed;
   const hooksNeeded = Array.isArray(listed) ? (listed as string[]) : [];
   // The collection's presentation decides the fields; nothing generic is drawn

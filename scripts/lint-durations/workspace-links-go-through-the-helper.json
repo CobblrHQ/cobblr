@@ -1,0 +1,10 @@
+{
+  "lint": "lint:workspace-links-go-through-the-helper",
+  "run": "node scripts/lint-workspace-links-go-through-the-helper.ts",
+  "rows": [
+    "generic-web-component"
+  ],
+  "ms": 990,
+  "recorded": "2026-10-08",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

@@ -115,8 +115,28 @@ export interface PurchasesOrderShipmentsTable {
   updated_at: Generated<Date>;
 }
 
+/** An order's own page at its store (0013). link_sealed is the sign-in link
+ *  sealed with the workspace key; no route ever returns it. */
+export interface PurchasesOrderPagesTable {
+  id: Generated<string>;
+  order_id: string | null;
+  order_number: string | null;
+  store_host: string;
+  link_sealed: string;
+  state: Generated<string>;
+  next_read_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null | undefined>;
+  last_read_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null | undefined>;
+  last_outcome: string | null;
+  refusals: Generated<number>;
+  shipped_lines: number | null;
+  captured_by_user_id: string | null;
+  captured_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
 export interface PurchasesDB {
   purchases_vendors: PurchasesVendorsTable;
+  purchases_order_pages: PurchasesOrderPagesTable;
   purchases_order_shipments: PurchasesOrderShipmentsTable;
   purchases_returns: PurchasesReturnsTable;
   purchases_orders: PurchasesOrdersTable;

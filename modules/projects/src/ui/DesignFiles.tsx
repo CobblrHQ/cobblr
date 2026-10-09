@@ -154,8 +154,20 @@ export function DesignFiles({ designId }: { designId: string }) {
     onError: (e) => toast.error(`Couldn't use that image: ${(e as Error).message}`),
   });
 
+  // A pull that failed says why and offers the explicit re-run (#5475); it
+  // used to read as "reading the pattern" forever, or as nothing at all.
+  const retryPull = useMutation({
+    mutationFn: () => api.extractPatternImages(designId),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: patternKey });
+      void qc.invalidateQueries({ queryKey: filesKey });
+    },
+    onError: (e) => toast.error(`Couldn't read the pattern again: ${(e as Error).message}`),
+  });
+
   const state = pattern.data;
   const offersChoice = stripOffersChoice(state);
+  const pullFailed = state?.status === "ready" && !!state.error;
   const belowFloor = state?.status === "ready" && state.extracted > 0 && state.hero_index === null && state.used_index === null;
 
   return (
@@ -209,6 +221,19 @@ export function DesignFiles({ designId }: { designId: string }) {
         <p className="text-xs text-faint dark:text-slate-500 italic">
           No pattern or photos yet - upload the pattern PDF or a photo of the make.
         </p>
+      )}
+      {pullFailed && state && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-muted dark:text-slate-400" data-testid="pattern-photo-failed">
+          <span>Couldn't take a photo from the pattern ({state.error}).</span>
+          <button
+            type="button"
+            onClick={() => retryPull.mutate()}
+            disabled={retryPull.isPending}
+            className="text-accent underline underline-offset-2 hover:text-content disabled:opacity-50 dark:hover:text-mortar-100"
+          >
+            {retryPull.isPending ? "Trying again…" : "Try again"}
+          </button>
+        </div>
       )}
       {belowFloor && !stripOpen && (
         <p className="text-xs text-faint dark:text-slate-500 italic mb-3" data-testid="pattern-photo-below-floor">

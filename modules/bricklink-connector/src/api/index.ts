@@ -106,16 +106,12 @@ router.post("/diff-wanted-list", async (req, res, next) => {
       res.status(500).json({ error: { code: "no_tenant", message: "tenant context missing" } });
       return;
     }
-    const loader: LoadInventoryParts = async (orgId, partIds) => {
-      if (partIds.length === 0) return [];
-      // Go through the kernel's entity registry — inventory:part
-      // exposes { qty, metadata } in its exposableFields, so this
-      // is a layering-clean cross-module read. No more reaching
-      // into inventory_parts.
-      const resolved = await platform().entities.lookupMany(
-        orgId,
-        partIds.map((id) => ({ kind: "inventory:part", id })),
-      );
+    const loader: LoadInventoryParts = async (orgId, refs) => {
+      if (refs.length === 0) return [];
+      // Through the kernel's entity registry, each record by its own kind
+      // (inventory:part, or an instance's item such as bricks:item): a
+      // layering-clean cross-module read.
+      const resolved = await platform().entities.lookupMany(orgId, refs);
       return resolved.map((r) => ({
         id: r.id,
         qty: Number((r.fields as { qty?: number | string }).qty ?? 0) || 0,
@@ -135,8 +131,10 @@ function extractColorId(metadata: Record<string, unknown> | null): number {
   if (!metadata) return -1;
   // Conventional shape: metadata.lego.color_id (Rebrickable id).
   const lego = metadata["lego"] as { color_id?: number | string } | undefined;
-  if (lego && lego.color_id !== undefined) {
-    const n = Number(lego.color_id);
+  // The Lego bundle's Bricks table keeps it as its own color_id field.
+  const raw = lego?.color_id ?? (metadata["color_id"] as number | string | undefined);
+  if (raw !== undefined && raw !== null && raw !== "") {
+    const n = Number(raw);
     return Number.isFinite(n) ? n : -1;
   }
   return -1;

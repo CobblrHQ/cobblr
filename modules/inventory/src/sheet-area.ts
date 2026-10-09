@@ -1,9 +1,26 @@
 import polygonClipping from "polygon-clipping";
-export interface Rect { x: number; y: number; width: number; height: number }
-export interface Point { x: number; y: number }
-export interface SheetSpec { material: string; thickness_mm: number; width_mm: number; height_mm: number; minimum_usable_mm: number; offcut_percent: number }
-export interface SheetState { used: Rect[]; edits: Rect[][]; sources: string[]; polygons?: Point[][] }
-export interface SheetArea { free_rectangles: Rect[]; used_outlines: Point[][]; percent_left: number; offcut: boolean; cut_capacity: { shapes: number; vertices: number; sources: number } }
+import { createHash } from "node:crypto";
+import { UNIT, freeRegions, regionSlabs, regionsArea, regionsOfRectangles, type Region } from "./sheet-geometry.js";
+import type { Point, Rect, SheetSpec } from "./sheet-spec.js";
+export { sheetSpec, type Point, type Rect, type SheetSpec } from "./sheet-spec.js";
+export type { Region } from "./sheet-geometry.js";
+/** A sheet's cuts as stored. `polygon_margins[i]` is the kerf-and-spacing
+ *  margin outline i was cut with; an outline recorded before margins were kept
+ *  has none and keeps 0, so an existing sheet never shrinks on read. */
+export interface SheetState { used: Rect[]; edits: Rect[][]; sources: string[]; polygons?: Point[][]; polygon_margins?: number[] }
+export interface SheetArea {
+  /** What is left that can hold a part: each region is [outline, ...holes]. */
+  free_regions: Region[];
+  /** Rectangles inside free_regions, for callers that only take rectangles. */
+  free_rectangles: Rect[];
+  used_outlines: Point[][];
+  percent_left: number;
+  offcut: boolean;
+  /** "regions": the real leftover shape. "rectangles": the sheet was past the
+   *  geometry caps and is read as rectangles, outlines by their bounds. */
+  model: "regions" | "rectangles";
+  cut_capacity: { shapes: number; vertices: number; sources: number };
+}
 export const emptySheetState = (): SheetState => ({ used: [], edits: [], sources: [] });
 const edgeX = (r: Rect) => r.x + r.width;
 const edgeY = (r: Rect) => r.y + r.height;
@@ -12,15 +29,6 @@ const overlaps = (a: Rect, b: Rect) => a.x < edgeX(b) && edgeX(a) > b.x && a.y <
 const whole = (s: SheetSpec): Rect => ({ x: 0, y: 0, width: s.width_mm, height: s.height_mm });
 const clipped = (r: Rect, s: Rect): Rect => ({ x: Math.max(r.x, s.x), y: Math.max(r.y, s.y), width: Math.min(edgeX(r), edgeX(s)) - Math.max(r.x, s.x), height: Math.min(edgeY(r), edgeY(s)) - Math.max(r.y, s.y) });
 const positive = (r: Rect) => r.width > 0 && r.height > 0;
-
-export function sheetSpec(metadata: Record<string, unknown>): SheetSpec | null {
-  const legacy = metadata.laser_sheet as Record<string, unknown> | undefined;
-  const native = metadata.material != null && metadata.width_mm != null ? metadata : legacy;
-  if (!native || typeof native.material !== "string" || !native.material.trim()) return null;
-  const n = (key: string, fallback?: number) => native[key] == null || native[key] === "" ? fallback! : Number(native[key]);
-  const s = { material: native.material.trim(), thickness_mm: n("thickness_mm"), width_mm: n("width_mm"), height_mm: n("height_mm"), minimum_usable_mm: Number(metadata.minimum_usable_mm ?? 20), offcut_percent: Number(metadata.offcut_percent ?? 25) };
-  return [s.thickness_mm, s.width_mm, s.height_mm, s.minimum_usable_mm].every(v => Number.isFinite(v) && v > 0 && v <= 100000) && Number.isFinite(s.offcut_percent) && s.offcut_percent >= 0 && s.offcut_percent <= 100 ? s : null;
-}
 
 export function subtractRectangles(free: Rect[], used: Rect[], maximal = true): Rect[] {
   for (const cut of used) {
@@ -105,12 +113,73 @@ function outlines(rectangles: Rect[]): Point[][] {
   return strips.map(r => [{ x: r.x, y: r.y }, { x: edgeX(r), y: r.y }, { x: edgeX(r), y: edgeY(r) }, { x: r.x, y: edgeY(r) }]);
 }
 
+/** What a later job can still cut from a sheet, the one place it is worked
+ *  out: the real leftover shape (free_regions, sheet-geometry.ts), the share
+ *  of the sheet it is (percent_left), and rectangles inside it for callers
+ *  that only take rectangles (free_rectangles, read by fitsSheet and Find a
+ *  sheet). One source, so "how much is left", "does it fit" and the drawing
+ *  never disagree (#5411, #5414). A sheet past the geometry caps is read as
+ *  rectangles, outlines by their bounds, and says so in `model`. */
+function usableArea(s: SheetSpec, used: Rect[], polygons: Point[][], margins: number[]): { regions: Region[]; free: Rect[]; percent: number; model: SheetArea["model"] } {
+  const sheet = s.width_mm * s.height_mm;
+  const usable = (r: Rect) => r.width >= s.minimum_usable_mm && r.height >= s.minimum_usable_mm;
+  const regions = freeRegions(s, used, polygons, margins);
+  if (regions) {
+    try {
+      // Worked in whole micrometres, so slabs meet exactly, then read in mm.
+      const inMicrons = { ...s, width_mm: Math.round(s.width_mm * UNIT), height_mm: Math.round(s.height_mm * UNIT) };
+      const free = rectanglesInside(inMicrons, regionSlabs(s, regions)).map(r => ({ x: r.x / UNIT, y: r.y / UNIT, width: r.width / UNIT, height: r.height / UNIT }));
+      return { regions, free: free.filter(usable), percent: regionsArea(regions) / sheet * 100, model: "regions" };
+    } catch { /* Too many separate areas to list as rectangles: read the sheet as rectangles. */ }
+  }
+  const free = subtractRectangles([whole(s)], [...used, ...polygons.map(polygonBounds)]).filter(usable);
+  return { regions: regionsOfRectangles(free), free, percent: unionArea(free) / sheet * 100, model: "rectangles" };
+}
+
+/** The maximal rectangles inside a staircase of slab rectangles. */
+function rectanglesInside(s: SheetSpec, slabs: Rect[]): Rect[] {
+  if (!slabs.length) return [];
+  const blocked: Rect[] = [];
+  const rows = new Map<string, Rect[]>();
+  for (const r of slabs) rows.set(`${r.y}:${r.height}`, [...(rows.get(`${r.y}:${r.height}`) ?? []), r]);
+  const low = Math.min(...slabs.map(r => r.y)), high = Math.max(...slabs.map(edgeY));
+  if (low > 0) blocked.push({ x: 0, y: 0, width: s.width_mm, height: low });
+  if (high < s.height_mm) blocked.push({ x: 0, y: high, width: s.width_mm, height: s.height_mm - high });
+  for (const row of rows.values()) {
+    const { y, height } = row[0]!;
+    let x = 0;
+    for (const r of row.sort((a, b) => a.x - b.x)) {
+      if (r.x > x) blocked.push({ x, y, width: r.x - x, height });
+      x = Math.max(x, edgeX(r));
+    }
+    if (x < s.width_mm) blocked.push({ x, y, width: s.width_mm - x, height });
+  }
+  // A slab height with no piece at all is blocked whole.
+  const ys = [...new Set(slabs.flatMap(r => [r.y, edgeY(r)]))].sort((a, b) => a - b);
+  for (let i = 1; i < ys.length; i++) if (!slabs.some(r => r.y < ys[i]! && edgeY(r) > ys[i - 1]!)) blocked.push({ x: 0, y: ys[i - 1]!, width: s.width_mm, height: ys[i]! - ys[i - 1]! });
+  return subtractRectangles([whole(s)], blocked);
+}
+
+/** The leftover of the sheets read lately, by their spec and cuts: a list
+ *  reads every sheet on its page each time, and the cuts change only when one
+ *  is recorded. */
+const leftovers = new Map<string, ReturnType<typeof usableArea>>();
+const LEFTOVERS_KEPT = 512;
+function usableAreaOnce(s: SheetSpec, used: Rect[], polygons: Point[][], margins: number[]): ReturnType<typeof usableArea> {
+  const key = createHash("sha1").update(JSON.stringify([s, used, polygons, margins])).digest("base64");
+  const kept = leftovers.get(key);
+  if (kept) { leftovers.delete(key); leftovers.set(key, kept); return kept; }
+  const fresh = usableArea(s, used, polygons, margins);
+  leftovers.set(key, fresh);
+  if (leftovers.size > LEFTOVERS_KEPT) leftovers.delete(leftovers.keys().next().value!);
+  return fresh;
+}
+
 export function sheetArea(s: SheetSpec, state: SheetState): SheetArea {
   const used = state.used.map(r => clipped(r, whole(s))).filter(positive);
   const polygons = state.polygons ?? [];
-  const free = subtractRectangles([whole(s)], [...used, ...polygons.map(polygonBounds)]).filter(r => r.width >= s.minimum_usable_mm && r.height >= s.minimum_usable_mm);
-  const percent = polygons.length ? (s.width_mm * s.height_mm - occupiedArea([...used.map(rectPoints), ...polygons])) / (s.width_mm * s.height_mm) * 100 : unionArea(free) / (s.width_mm * s.height_mm) * 100;
-  return { cut_capacity: { shapes: Math.max(0,512-state.used.length-polygons.length), vertices: Math.max(0,32768-state.used.length*4-polygons.reduce((n,p)=>n+p.length,0)), sources: Math.max(0,512-state.sources.length) }, free_rectangles: free, used_outlines: polygons.length ? [...used.map(rectPoints), ...polygons] : outlines(used), percent_left: percent, offcut: percent <= s.offcut_percent };
+  const { regions, free, percent, model } = usableAreaOnce(s, used, polygons, state.polygon_margins ?? []);
+  return { cut_capacity: { shapes: Math.max(0,512-state.used.length-polygons.length), vertices: Math.max(0,32768-state.used.length*4-polygons.reduce((n,p)=>n+p.length,0)), sources: Math.max(0,512-state.sources.length) }, free_regions: regions, free_rectangles: free, model, used_outlines: polygons.length ? [...used.map(rectPoints), ...polygons] : outlines(used), percent_left: percent, offcut: percent <= s.offcut_percent };
 }
 export function fitsSheet(area: SheetArea, width: number, height: number, rotate = true): boolean {
   return area.free_rectangles.some(r => r.width >= width && r.height >= height || rotate && r.width >= height && r.height >= width);
@@ -149,15 +218,20 @@ const polygonBounds = (p: Point[]): Rect => { const x=Math.min(...p.map(v=>v.x))
 const multiArea = (polygons: polygonClipping.MultiPolygon) => polygons.reduce((n,p)=>n+p.reduce((sum,r,i)=>sum+(i?-1:1)*Math.abs(r.reduce((a,v,j)=>{const b=r[(j+1)%r.length]!;return a+v[0]*b[1]-v[1]*b[0];},0))/2,0),0);
 const occupiedArea = (p: Point[][]) => p.length ? multiArea(polygonClipping.union(...p.map(v=>[ring(v)] as polygonClipping.Polygon) as [polygonClipping.Polygon,...polygonClipping.Polygon[]])) : 0;
 const intersects = (a: Point[], b: Point[]) => multiArea(polygonClipping.intersection([ring(a)],[ring(b)])) > 1e-5;
-export function recordOutlineCut(s: SheetSpec, state: SheetState, polygons: Point[][], source?: string): SheetState {
+/** Record outline cuts. `margin` is half of kerf plus spacing, kept per
+ *  outline: an outline that already includes them (a nest's footprint) is cut
+ *  with 0. */
+export function recordOutlineCut(s: SheetSpec, state: SheetState, polygons: Point[][], source?: string, margin = 0): SheetState {
  if (source && state.sources.includes(source)) return state;
+ if (!Number.isFinite(margin) || margin < 0 || margin > 1000) throw new Error("Give kerf and spacing in millimetres.");
  if (!polygons.length || polygons.length > 128 || polygons.some(p=>p.length<3||p.length>256||p.some(v=>!Number.isFinite(v.x)||!Number.isFinite(v.y)||v.x < -0.0001||v.y < -0.0001||v.x>s.width_mm+0.0001||v.y>s.height_mm+0.0001))) throw new Error("Use up to 128 cut outlines with 3 to 256 vertices inside the sheet.");
  const clean=polygons.map(p=>p.map(v=>({x:Math.max(0,Math.min(s.width_mm,v.x)),y:Math.max(0,Math.min(s.height_mm,v.y))})));
  const prior=[...state.used.map(rectPoints),...(state.polygons??[])];
  if (clean.some(p=>occupiedArea([p])<=1e-5 || prior.some(q=>intersects(p,q)))) throw new Error("This cut reaches an area already used or has an invalid outline. Check its position.");
  const all=[...(state.polygons??[]),...clean];
  if (state.used.length+all.length>512 || state.used.length*4+all.reduce((n,p)=>n+p.length,0)>32768 || state.sources.length>=512) throw new Error("This sheet has too many recorded cut outlines.");
- const next={...state,polygons:all,edits:[],sources:source?[...state.sources,source]:state.sources};
+ const margins=[...(state.polygons??[]).map((_,i)=>state.polygon_margins?.[i]??0),...clean.map(()=>margin)];
+ const next={...state,polygons:all,polygon_margins:margins,edits:[],sources:source?[...state.sources,source]:state.sources};
  sheetArea(s,next);
  return next;
 }

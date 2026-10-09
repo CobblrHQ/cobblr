@@ -19,7 +19,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-files",
-  version: "0.8.2",
+  version: "0.8.3",
   displayName: "Files",
   description:
     "Keep photos, manuals and other files with the things they belong to.",
@@ -107,6 +107,8 @@ export default defineModule({
       "core-files.file.restored",
       "core-files.attachment.created",
       "core-files.attachment.deleted",
+      // A receipt text file held a store sign-in link (#5461): only its id, never the link.
+      "core-files.file.sign_in_found",
     ],
     actions: [
       {
@@ -153,6 +155,8 @@ export default defineModule({
       // they repeat (see heal-same-bytes.ts for the retirement condition).
       const { registerSameBytesHeal } = await import("./heal-same-bytes.js");
       registerSameBytesHeal();
+      const { registerSignInTextHeal } = await import("./heal-sign-in-text.js");
+      registerSignInTextHeal();
       // Recently deleted files are purged once their days run out.
       const { registerPurgeSweep, registerRestoreAction } = await import("./purge.js");
       registerPurgeSweep();

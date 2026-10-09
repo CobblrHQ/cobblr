@@ -36,7 +36,7 @@ import { confirmServiceJob, registerServiceConfirm } from "./platform/service-co
 import { registerServiceSupervisor } from "./platform/service-supervisor.js";
 import { openServicesTestDoors } from "./platform/services-test-doors.js";
 import { testDoorsEnabled } from "./platform/test-doors.js";
-import { setPlatform, canContain, canBeContained, likeEscape, platform as platformSeams, EntityKindIdRegex, isInstallHolder, countOf } from "@cobblr/platform-contract";
+import { setPlatform, canContain, canBeContained, likeEscape, platform as platformSeams, EntityKindIdRegex, isInstallHolder } from "@cobblr/platform-contract";
 import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { describeBlock, describeCapabilityBlock } from "./platform/approvals.js";
 import { atVersion, mergeJsonb, rowVersion } from "./platform/jsonb-merge.js";
@@ -62,6 +62,7 @@ import { comparePlacementRemove, comparePlacementWrite } from "./platform/placem
 import { registerSendFileSourceRecovery } from "./platform/record-send-file-confirm.js";
 import { registerOwnSendRecovery, recordOwnSendFiling } from "./platform/record-send.js";
 import { startDeliverySweeper } from "./platform/delivery-sweeper.js";
+import { startMailboxCheckRunner } from "./platform/mail-source/check.js";
 import { ensureVapidKeys } from "./platform/push-keys.js";
 import { registerShareLinkOps } from "./platform/share-links.js";
 import { addShareSyncPass, startShareSync } from "./platform/share-sync.js";
@@ -93,6 +94,7 @@ import * as devices from "./platform/devices.js";
 import * as entities from "./platform/entities.js";
 import * as counters from "./platform/counters.js";
 import * as deletedRecords from "./platform/deleted-records.js";
+import * as dispositions from "./platform/dispositions.js";
 import { registerIssuedUndosSweep } from "./platform/issued-undos.js";
 import { registerHistoryWriter } from "./platform/history-store.js";
 import { announceWrites } from "./platform/entity-saved.js";
@@ -170,6 +172,8 @@ import { reconcileShareSpaces } from "./platform/reconcile-share-spaces.js";
 import { reconcileScanCategoryFields, retireScanCategoryPlaceholders } from "./platform/reconcile-scan-category.js";
 import { reconcileAppScanFallback } from "./platform/reconcile-app-scan-fallback.js";
 import { backfillBundleClaims } from "./platform/backfill-bundle-claims.js";
+import { scheduleOrderPageLinkHeal } from "./platform/heal-order-page-links.js";
+import { handOrderPageLink } from "./routes/receipt-ingest.js";
 import { healListRenames } from "./platform/heal-list-renames.js";
 import { backfillInstallSideEffectClaims } from "./platform/backfill-install-side-effect-claims.js";
 import {
@@ -418,6 +422,7 @@ async function boot() {
   // registrations, action handler registrations) can call into it.
   setPlatform({
     deletedRecords,
+    dispositions: { markGone: dispositions.markGone, bringBack: dispositions.bringBack },
     money,
     activity: { log: activity.log, registerHistoryWriter },
     events: { emit: events.emit, on: events.on },
@@ -526,6 +531,8 @@ async function boot() {
       registerDeviceApply: deviceApply.registerDeviceApply,
       applyDevice: deviceApply.applyDevice,
       registerScannable: scanRegistry.registerScannable,
+      registerLabelValuesProvider: scanRegistry.registerLabelValuesProvider,
+      labelValuesFor: scanRegistry.labelValuesFor,
       getScannable: scanRegistry.getScannable,
       getScannableForModule: scanRegistry.getScannableForModule,
       listScannable: scanRegistry.listScannable,
@@ -568,6 +575,11 @@ async function boot() {
       applicable: live.applicable,
     },
     devices: {
+      registerMachineRecords: devices.registerMachineRecords,
+      machineRecords: devices.machineRecords,
+      machineRecord: devices.machineRecord,
+      registerStationVerifier: devices.registerStationVerifier,
+      authorizeAtStation: devices.authorizeAtStation,
       registerDriverProvider: devices.registerDriverProvider,
       getDriver: devices.getDriver,
       registerConnectionStore: devices.registerConnectionStore,
@@ -691,6 +703,7 @@ async function boot() {
       getProvider: aiImpl.getProvider,
       chainFor: aiImpl.aiChainFor,
       modelsReportedBy: aiImpl.modelsReportedBy,
+      modelRedirects: aiImpl.modelRedirects,
       invoke: aiImpl.invoke,
     },
     edge: {
@@ -1007,16 +1020,16 @@ async function boot() {
       },
       findByTargets: async ({ orgId, sourceKind, targetKind, targetIds, relationshipKind }) => {
         if (targetIds.length === 0) return [];
-        const rows = await meta
+        let q = meta
           .selectFrom("entity_pairings")
-          .select(["source_id as sourceId", "target_id as targetId"])
+          .select(["source_id as sourceId", "source_kind as sourceKind", "target_id as targetId"])
           .where("org_id", "=", orgId)
-          .where("source_kind", "=", sourceKind)
           .where("target_kind", "=", targetKind)
           .where("relationship_kind", "=", relationshipKind)
-          .where("target_id", "in", targetIds)
-          .execute();
-        return rows;
+          .where("target_id", "in", targetIds);
+        // No source kind: every kind matched to these targets (#5434).
+        if (sourceKind !== undefined) q = q.where("source_kind", "=", sourceKind);
+        return q.execute();
       },
       findBySources: async ({ orgId, sourceKind, sourceIds, targetKind, relationshipKind }) => {
         if (sourceIds.length === 0) return [];
@@ -1951,6 +1964,11 @@ async function boot() {
   // which is the failure this exists to prevent. Costs nothing on a box where
   // nobody has set a window (one indexed "any pending?" read per tick).
   startDeliverySweeper();
+  // "Check my mailbox" dry runs (#5462): a few pages each every 20 s, one process at a time.
+  startMailboxCheckRunner();
+  // Order emails filed before #5461: seal their store page links onto their
+  // orders and scrub the archive (one-shot, after the api is listening).
+  scheduleOrderPageLinkHeal(handOrderPageLink);
   await registerTidySweep();
   registerDeletedRelations();
   deletedRecords.registerDeletedRecordsSweep();
@@ -2191,7 +2209,7 @@ async function boot() {
   if (poolEnabled() && env.COBBLR_TEST_ORG_POOL_SIZE) {
     const target = env.COBBLR_TEST_ORG_POOL_SIZE;
     void bakeTestOrgPool(target)
-      .then((r) => console.log(`[test-org-pool] boot bake done: ${countOf(r.total, "org")} ready`))
+      .then((r) => console.log(`[test-org-pool] boot bake done: ${r.total} orgs ready`))
       .catch((err) => console.error("[test-org-pool] boot bake failed:", (err as Error).message));
   }
 

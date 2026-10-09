@@ -36,6 +36,7 @@ interface GmailPart {
 interface GmailMessage {
   id: string;
   internalDate?: string;
+  labelIds?: string[];
   payload?: GmailPart;
 }
 
@@ -181,6 +182,7 @@ export function decodeGmailMessage(m: GmailMessage): DecodedGmail {
       ...(text ? { text } : {}),
       ...(html ? { html } : {}),
       attachments: inline,
+      ...(m.labelIds?.length ? { labels: m.labelIds } : {}),
     },
     pendingAttachments: pending,
   };

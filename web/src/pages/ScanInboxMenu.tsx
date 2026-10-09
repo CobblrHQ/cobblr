@@ -31,6 +31,8 @@ export interface ScanInboxMenuProps {
   onExport: () => void;
   onImport: () => void;
   receiptAddress: string | null;
+  /** What the receipts address sends as (#5462). */
+  receiptName?: string;
   onOrganizeUnplaced: () => void;
   scanDrive: { on: boolean; toggle: () => void };
   /** Owner/admin: the two capture toggles. `data` is undefined until loaded. */
@@ -169,7 +171,7 @@ export function ScanInboxMenu(p: ScanInboxMenuProps) {
               2026-08-10). */}
           {p.receiptAddress && (
             <span className="sm:hidden">
-              <ReceiptAddressMenuBlock address={p.receiptAddress} onCopied={close} />
+              <ReceiptAddressMenuBlock address={p.receiptAddress} name={p.receiptName} onCopied={close} />
             </span>
           )}
           <MenuSep />

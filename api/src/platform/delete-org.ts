@@ -12,6 +12,7 @@ import { metaPool } from "../db/meta.js";
 import { env } from "../env.js";
 import { evictTenantPool, withTenantDeleting } from "../db/tenant.js";
 import { getSandboxedModuleInfo } from "../sandbox/sandboxed-module-info.js";
+import {removeServerBridgeEnrollment} from "./server-bridge-files.js";
 import { dropModuleRole } from "../sandbox/module-role.js";
 
 // How long a delete waits for clients a request still holds on the tenant
@@ -134,4 +135,5 @@ async function deleteOrg(orgId: string): Promise<void> {
     .where("org_id", "=", orgId)
     .execute();
   await meta.deleteFrom("orgs").where("id", "=", orgId).execute();
+  await removeServerBridgeEnrollment(orgId);
 }

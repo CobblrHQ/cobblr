@@ -43,14 +43,14 @@ export function RecordsPage({
   instance,
   displayName,
   itemNoun,
+  itemNounPlural,
   hint,
-}: { instance?: string; displayName?: string; itemNoun?: string; hint?: string | null } = {}) {
+}: { instance?: string; displayName?: string; itemNoun?: string; itemNounPlural?: string; hint?: string | null } = {}) {
   const later = useLater();
   // When `instance` is set we render ONE named collection of records (e.g.
   // "Bookshelf"), reached at the clean /<instance> URL — the SAME page as
   // /records (thumbnails, views, detail/edit), just scoped to the instance's
   // items. Detail is local state (no /<instance>/:id route). Mirrors AssetsPage.
-  usePageTitle(displayName ?? "Records");
   // A wide table is the page here, so it gets the screen.
   usePageWidth("wide");
   const { activeSlug } = useActiveOrg();
@@ -67,6 +67,10 @@ export function RecordsPage({
   // deliberately never guesses from the collection's own name: a Bookshelf
   // holds books, not bookshelves. Set the real word in instance settings.
   const noun = itemNounFor({ itemNoun, entityKind });
+  const nounPlural = itemNounPlural?.trim() || pluralise(noun);
+  const words = { singular: noun, plural: nounPlural };
+  const heading = displayName ?? nounPlural.charAt(0).toUpperCase() + nounPlural.slice(1);
+  usePageTitle(heading);
 
   // Detail selection: URL param on /records, local state (+ deep-link
   // ?record=id) on an instance page.
@@ -145,10 +149,10 @@ export function RecordsPage({
         // real debugging session down the wrong path (reported 2026-07-18).
         if (r.unresolved > 0)
           toast.error(
-            `Couldn't read ${countOf(r.unresolved, noun)}. That's a bug on our side, not your data.`,
+            `Couldn't read ${countOf(r.unresolved, words)}. That's a bug on our side, not your data.`,
           );
         else if (r.unnamed > 0)
-          toast.error(`Nothing to look up: these ${pluralise(noun)} need a name first.`);
+          toast.error(`Nothing to look up: these ${nounPlural} need a name first.`);
         else toast.success(`Every ${noun} already has an image.`);
         return;
       }
@@ -168,10 +172,10 @@ export function RecordsPage({
   return (
     <div className="space-y-4">
       <CollectionHeader
-        title={displayName ?? "records"}
+        title={heading}
         count={`${filtered.length} of ${list.data?.total ?? allRows.length}`}
         hint={hint} kind={instance ? `${instance}:item` : ENTITY_KIND}
-        search={<SearchInput value={query} onChange={setQuery} placeholder="search…" aria-label={`Search ${pluralise(noun)}`} wrapperClassName="w-48 max-sm:w-full max-sm:flex-1" />}
+        search={<SearchInput value={query} onChange={setQuery} placeholder="search…" aria-label={`Search ${nounPlural}`} wrapperClassName="w-48 max-sm:w-full max-sm:flex-1" />}
         exportQuery={query}
         actions={
           <>
@@ -179,7 +183,7 @@ export function RecordsPage({
               <button
                 onClick={() => backfill.mutate()}
                 disabled={backfill.isPending}
-                title={`Look up an image for the ${countOf(missingCovers, noun)} without one`}
+                title={`Look up an image for the ${countOf(missingCovers, words)} without one`}
                 className={`${headerButton("secondary")} text-xs text-muted hover:text-content disabled:opacity-50`}
               >
                 <ImageIcon size={13} />
@@ -202,7 +206,7 @@ export function RecordsPage({
         ) : (
           <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-12 text-center text-xs text-faint dark:text-slate-500 italic">
             {allRows.length === 0
-              ? `No ${pluralise(noun)} yet. Add one with New ${noun}.`
+              ? `No ${nounPlural} yet. Add one with New ${noun}.`
               : "No matches with the current filters."}
           </div>
         )
@@ -375,7 +379,7 @@ export function RecordDetailModal({
     if (!r) return;
     const ok = await confirm({
       title: `Delete "${r.name}"?`,
-      message: "You can restore this record from Recently deleted for 30 days.",
+      message: `You can restore this ${noun} from Recently deleted for 30 days.`,
       confirmLabel: `Delete ${noun}`,
       destructive: true,
     });

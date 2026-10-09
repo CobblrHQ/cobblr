@@ -1,7 +1,7 @@
 import { handedRecord } from "./handed-record.js";
 import { randomUUID } from "node:crypto";
 import { sql } from "kysely";
-import { platform, type DefinedField, type EntityViewer, type EntityWriter, countOf } from "@cobblr/platform-contract";
+import { platform, type DefinedField, type EntityViewer, type EntityWriter } from "@cobblr/platform-contract";
 import { canUndoOwnMove, sameSendSnapshot, mapOfferedFields, type OfferedThing } from "@cobblr/platform-contract/share-offer";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { createCapabilityForModule } from "@cobblr/platform-contract/create-capability";
@@ -256,7 +256,7 @@ export async function sendRecords(orgId: string, userId: string, p: SendRequest)
         const target = await membership(p.target_org, userId);
         if (!roleSatisfies(target.role, ["member"])) throw new SendError("You cannot create records in the target workspace.");
         if (done.length !== p.ids.length || done.some((r) => r.target_org_id !== target.id || object(r.source).org_id !== orgId || object(r.source).kind !== p.entity_kind || !p.ids.includes(String(object(r.source).id)) || object(r.transfer).mode !== p.mode)) throw new SendError("That request id belongs to a different send.");
-        return { ok: true, sent: done.length, offer_ids: p.ids.map((id) => done.find((r) => object(r.source).id === id)!.id), summary: `${countOf(done.length, "item")} ${p.mode === "copy" ? "copied" : "sent"} to ${target.name}.` };
+        return { ok: true, sent: done.length, offer_ids: p.ids.map((id) => done.find((r) => object(r.source).id === id)!.id), summary: `${done.length} items ${p.mode === "copy" ? "copied" : "sent"} to ${target.name}.` };
       }
     }
     const first = await prepare(orgId, userId, p);

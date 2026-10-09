@@ -9,9 +9,11 @@ import { readBoardStock, revision } from "./board-revisions.js";
 import { asyncHandler } from "./util.js";
 export interface AssemblyKitLine { part_id: string; kind: string; qty: number; placements: number; role: "component" | "blank"; lot_code?: string | null; allocation_id?: string }
 export interface AssemblyOrder {
-  request_key: string; state: "draft" | "kitted" | "released" | "pasted" | "placed" | "reflowed" | "tested" | "cancelled";
+  request_key: string; state: "draft" | "kitted" | "released" | "pasted" | "placing" | "placed" | "reflowed" | "tested" | "cancelled";
   kit_plan?: AssemblyKitLine[]; released_by?: string | null; released_at?: string;
-  paste?: { part_id: string; lot_code: string; amount_ml: number; applied_at: string };
+  paste_intent?: NonNullable<AssemblyOrder["paste"]> & { handling_revision: number; applied_by: string | null };
+  paste?: { part_id: string; kind: string; lot_code: string; amount_ml: number; applied_at: string; stencil_id: string; source: string };
+  placement?: { machine_kind: string; machine_id: string; profile: import("../placement-program.js").PlacementProfile; feeders: import("../placement-program.js").FeederAssignment[]; signature: string; verified: Record<string, { part_id: string; station_id: string; at: string }>; sides: Partial<Record<"top" | "bottom", { started_at: string; operator_id: string | null; station_id: string; completed_at?: string }>>; output_kind: string; output_id: string };
 }
 const Create = z.object({ build_id: z.string().uuid(), boards: z.number().int().positive().max(1_000_000), request_key: z.string().trim().min(1).max(160), notes: z.string().max(2000).optional() });
 const Change = z.object({ order_id: z.string().uuid(), operation: z.enum(["kit", "release", "cancel"]) });

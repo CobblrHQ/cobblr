@@ -59,6 +59,10 @@ registerDetailPanel(
   lazy(() => import("../features/purchases/priceHistory").then((m) => ({ default: m.PriceHistoryPanel }))),
 );
 registerDetailPanel(
+  "purchases:on-its-way",
+  lazy(() => import("../features/purchases/onItsWay").then((m) => ({ default: m.OnItsWayPanel }))),
+);
+registerDetailPanel(
   "purchases:receipt-lines",
   lazy(() => import("../features/purchases/receiptLines").then((m) => ({ default: m.ReceiptLinesPanel }))),
 );

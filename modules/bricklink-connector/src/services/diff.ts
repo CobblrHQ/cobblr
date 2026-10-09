@@ -5,9 +5,10 @@
 //   1. Find the rebrickable-parts catalog (semantic_type "lego.part").
 //   2. Fetch the catalog entries whose payload.part_num matches a
 //      wanted item_id — one query, externalIdIn batch.
-//   3. Fetch the inventory:part rows matched to those entries via
-//      the "matches" pairing — one query, target_id IN batch.
-//   4. Pull each matched part's qty + color metadata.
+//   3. Fetch every record matched to those entries via the "matches"
+//      pairing, whatever table it is on (Parts, the Lego bundle's
+//      Bricks, any inventory instance: #5434) — one query.
+//   4. Pull each matched record's qty + color.
 //   5. Bucket each wanted item: have / partial / need.
 //
 // Wanted-list color matters but inventory doesn't have to. We
@@ -29,8 +30,10 @@ export interface DiffEntry {
   total_in_stock: number;
   /** Per-color breakdown: { [color_id]: qty }. -1 = unknown color. */
   by_color: Record<string, number>;
-  /** inventory:part entity ids that contribute to the stock. */
+  /** Ids of the records that contribute to the stock. */
   part_ids: string[];
+  /** The same records with their kinds (inventory:part, bricks:item…). */
+  records: Array<{ kind: string; id: string }>;
   /** The Rebrickable catalog entry id that backs the match, if any. */
   catalog_entry_id: string | null;
   /** Rebrickable's canonical name for the part (when matched). */
@@ -57,12 +60,12 @@ interface InventoryPartLite {
   color_id: number;
 }
 
-// Loader for inventory rows. Injected so the unit test doesn't have
-// to spin up a tenant DB — the api/index.ts caller wires the real
-// platform().tenants.getDb implementation.
+// Loader for the matched records, of whatever kind each is. Injected so
+// the unit test doesn't have to spin up a tenant DB; the api caller reads
+// them through the entity registry.
 export type LoadInventoryParts = (
   orgId: string,
-  partIds: string[],
+  refs: Array<{ kind: string; id: string }>,
 ) => Promise<InventoryPartLite[]>;
 
 export async function diffWantedList(
@@ -89,6 +92,7 @@ export async function diffWantedList(
         total_in_stock: 0,
         by_color: {},
         part_ids: [],
+        records: [],
         catalog_entry_id: null,
         catalog_name: null,
         color_satisfied: null,
@@ -111,25 +115,30 @@ export async function diffWantedList(
     if (partNum) entriesByPartNum.set(partNum, e);
   }
 
-  // 3. Find inventory:part rows pointing at these catalog entries via
-  //    the "matches" pairing.
+  // 3. Every record pointing at these catalog entries via the "matches"
+  //    pairing, of any kind: a brick on the Lego bundle's Bricks table is
+  //    a bricks:item, and asking for inventory:part alone never saw it.
   const catalogEntryIds = catalogEntries.map((e) => e.id);
   const pairings = await platform().pairings.findByTargets({
     orgId,
-    sourceKind: "inventory:part",
     targetKind: "core-catalogs:entry",
     targetIds: catalogEntryIds,
     relationshipKind: "matches",
   });
-  // group inventory part ids by the catalog entry they match
-  const partIdsByEntryId: Record<string, string[]> = {};
+  const refsByEntryId: Record<string, Array<{ kind: string; id: string }>> = {};
+  const seen = new Set<string>();
+  const allRefs: Array<{ kind: string; id: string }> = [];
   for (const p of pairings) {
-    (partIdsByEntryId[p.targetId] ||= []).push(p.sourceId);
+    const ref = { kind: p.sourceKind, id: p.sourceId };
+    (refsByEntryId[p.targetId] ||= []).push(ref);
+    if (!seen.has(`${ref.kind}:${ref.id}`)) {
+      seen.add(`${ref.kind}:${ref.id}`);
+      allRefs.push(ref);
+    }
   }
-  const allPartIds = [...new Set(pairings.map((p) => p.sourceId))];
 
-  // 4. Hydrate inventory rows.
-  const inventoryRows = await loadInventoryParts(orgId, allPartIds);
+  // 4. Hydrate the matched records.
+  const inventoryRows = await loadInventoryParts(orgId, allRefs);
   const inventoryById = new Map<string, InventoryPartLite>();
   for (const r of inventoryRows) inventoryById.set(r.id, r);
 
@@ -143,13 +152,15 @@ export async function diffWantedList(
         total_in_stock: 0,
         by_color: {},
         part_ids: [],
+        records: [],
         catalog_entry_id: null,
         catalog_name: null,
         color_satisfied: null,
       });
       continue;
     }
-    const partIds = partIdsByEntryId[entry.id] ?? [];
+    const refs = refsByEntryId[entry.id] ?? [];
+    const partIds = refs.map((r) => r.id);
     const rows = partIds
       .map((id) => inventoryById.get(id))
       .filter((r): r is InventoryPartLite => !!r);
@@ -174,6 +185,7 @@ export async function diffWantedList(
       total_in_stock: total,
       by_color: byColor,
       part_ids: partIds,
+      records: refs,
       catalog_entry_id: entry.id,
       catalog_name: (entry.payload?.["name"] as string | undefined) ?? null,
       color_satisfied: colorSat,
@@ -190,6 +202,7 @@ export async function diffWantedList(
       total_in_stock: 0,
       by_color: {},
       part_ids: [],
+      records: [],
       catalog_entry_id: null,
       catalog_name: null,
       color_satisfied: null,

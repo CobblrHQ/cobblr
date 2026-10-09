@@ -21,8 +21,12 @@
 import { platform } from "@cobblr/platform-contract";
 import { authHeadersFor, buildCompatProvider } from "./openai-compat.js";
 import type { AiCapability } from "@cobblr/platform-contract";
+import { servedModelOf } from "@cobblr/platform-contract/ai-models";
+import { createHash } from "node:crypto";
 
 export const GOOGLE_AI_STUDIO_BASE = "https://generativelanguage.googleapis.com/v1beta/openai";
+/** Google's own (native) API, which says which model answered. */
+export const GOOGLE_NATIVE_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
 // LITE, not Flash, and the reason is the free tier's daily cap rather than quality.
 // Measured on a real free-tier account: Flash allows 20 requests PER DAY (5/min), Lite
@@ -152,6 +156,81 @@ export function isLiteModel(model: string): boolean {
   return /(^|-)lite(-|$)/i.test(model);
 }
 
+// WHICH MODEL ANSWERED. Google redirects a deprecated model to its successor
+// with no error ("all traffic is automatically redirected to Gemini 3.6
+// Flash"), and the OpenAI-compatible endpoint this preset calls ECHOES the
+// requested id in `model`: asked for gemini-3.5-flash it says
+// gemini-3.5-flash while the native generateContent for the same model says
+// `modelVersion: "gemini-3.6-flash"`. So the compatible `model` is never
+// recorded as the served model. Instead one native call per key and model, at
+// most once a day, asks with a
+// one-token reply, and its `modelVersion` is what
+// the call reports as served. It runs beside the call, so the call never
+// waits on it longer than SERVED_PROBE_WAIT_MS; until it has answered, the
+// served model is unknown (null).
+// Once a day per key and model: a free key can have 20 Flash calls a day, and
+// a probe every 6 h spent a fifth of them on bookkeeping. Redirects are rare
+// and announced, so a day's lag in noticing one costs less than that.
+export const SERVED_PROBE_MS = 24 * 3600_000;
+const SERVED_PROBE_RETRY_MS = 3600_000;
+const SERVED_PROBE_WAIT_MS = 2_000;
+let probeNow = () => Date.now();
+// single-flight: one native probe per key and model in `probing`; its answer is kept a day in `servedProbes`
+const servedProbes = new Map<string, { at: number; served: string | null }>();
+const probing = new Map<string, Promise<void>>();
+
+function probeKeyOf(credentials: Record<string, unknown>, model: string): string {
+  return `${createHash("sha256").update(String(credentials.api_key ?? "")).digest("hex").slice(0, 16)}|${model}`;
+}
+
+/** Ask Google's native API once which model answers `model` for this key:
+ *  the `modelVersion` of a one-token reply. Null when it did not say. */
+export async function askServedModel(credentials: Record<string, unknown>, model: string): Promise<string | null> {
+  const res = await fetch(`${GOOGLE_NATIVE_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-goog-api-key": String(credentials.api_key ?? "") },
+    body: JSON.stringify({ contents: [{ parts: [{ text: "ok" }] }], generationConfig: { maxOutputTokens: 1 } }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) throw new Error(`generateContent answered ${res.status}`);
+  return servedModelOf(((await res.json()) as { modelVersion?: unknown }).modelVersion);
+}
+
+/** Start the probe for this key and model when it is due; the promise
+ *  settles when the answer (or the failure) is kept. */
+function probeServed(credentials: Record<string, unknown>, model: string): Promise<void> {
+  const key = probeKeyOf(credentials, model);
+  const hit = servedProbes.get(key);
+  if (hit && probeNow() - hit.at < SERVED_PROBE_MS) return Promise.resolve();
+  const flight = probing.get(key);
+  if (flight) return flight;
+  const p = (async () => {
+    try {
+      servedProbes.set(key, { at: probeNow(), served: await askServedModel(credentials, model) });
+    } catch (err) {
+      console.warn(`[core-ai] google-ai-studio: asking which model serves ${model} failed (${(err as Error).message}); asked again in an hour`);
+      servedProbes.set(key, { at: probeNow() - SERVED_PROBE_MS + SERVED_PROBE_RETRY_MS, served: hit?.served ?? null });
+    } finally {
+      probing.delete(key);
+    }
+  })();
+  probing.set(key, p);
+  return p;
+}
+
+/** What the native API last said serves this model for this key, or null. */
+export function servedByGoogle(credentials: Record<string, unknown>, model: string): string | null {
+  return servedProbes.get(probeKeyOf(credentials, model))?.served ?? null;
+}
+
+export function setServedProbesForTest(opts: { clock?: (() => number) | null; reset?: boolean }): void {
+  if (opts.clock !== undefined) probeNow = opts.clock ?? (() => Date.now());
+  if (opts.reset) {
+    servedProbes.clear();
+    probing.clear();
+  }
+}
+
 /** The preset itself, so the router's own tests can run Google's real model
  *  choice and busy ladder with only the network call faked. */
 export function googleAiStudioProvider(): ReturnType<typeof buildCompatProvider> {
@@ -161,7 +240,16 @@ export function googleAiStudioProvider(): ReturnType<typeof buildCompatProvider>
     ...def,
     invoke: async (ctx) => {
       await refreshPinned(ctx.credentials);
-      return invoke(ctx);
+      // An embedding is not a generation: generateContent cannot be asked.
+      const probe = ctx.capability === "embed-text" ? null : probeServed(ctx.credentials, ctx.model);
+      const out = await invoke(ctx);
+      if (probe) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([probe, new Promise((r) => (timer = setTimeout(r, SERVED_PROBE_WAIT_MS)))]);
+        clearTimeout(timer);
+      }
+      // The compatible endpoint's `model` echoes the request: never evidence.
+      return { ...out, served_model: probe ? servedByGoogle(ctx.credentials, ctx.model) : null };
     },
   };
 }

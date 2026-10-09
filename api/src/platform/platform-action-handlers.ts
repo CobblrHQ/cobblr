@@ -391,14 +391,14 @@ export function registerPlatformActionHandlers(): void {
     if (!parsed.success) return { error: "Choose between 1 and 500 records, each with a kind and id." };
     const lines: string[] = [];
     for (const r of parsed.data) lines.push((await lookup(ctx.orgId, r.kind, r.id))?.title ?? "A record that is no longer available");
-    return { title: `Set ${String(ctx.args?.field ?? "a field")} on ${countOf(lines.length, "record")}`, lines };
+    return { title: `Set ${String(ctx.args?.field ?? "a field")} on ${lines.length} records`, lines };
   });
   registerHandler("platform.set-field-on-records", async (ctx) => {
     const parsed = refsSchema.safeParse(ctx.args?.records);
     if (!parsed.success || typeof ctx.args?.field !== "string" || !("value" in ctx.args)) return { ok: false, error: "Choose records, a field and a value, or null to clear it." };
     try {
       const data = await setBulkField(ctx.orgId, ctx.userId, parsed.data, ctx.args.field, ctx.args.value);
-      return { ok: true, data: { field: ctx.args.field, ...data }, summary: `${countOf(data.done.length, "record")} changed.${data.failed.length ? ` ${data.failed.length} skipped.` : ""}` };
+      return { ok: true, data: { field: ctx.args.field, ...data }, summary: `${data.done.length} records changed.${data.failed.length ? ` ${data.failed.length} skipped.` : ""}` };
     } catch (e) { return { ok: false, error: (e as Error).message }; }
   });
   registerUndo("platform.set-field-on-records", (result) => {
@@ -414,7 +414,7 @@ export function registerPlatformActionHandlers(): void {
     const parsed = changesSchema.safeParse(ctx.args?.changes);
     if (!parsed.success || typeof ctx.args?.field !== "string") return { ok: false, error: "The batch's changes are missing." };
     const data = await restoreBulkField(ctx.orgId, ctx.userId, ctx.args.field, parsed.data.map((r) => ({ ...r, before: r.before ?? null, after: r.after ?? null })));
-    return { ok: true, data, summary: `${countOf(data.done.length, "record")} restored.${data.failed.length ? ` ${data.failed.length} skipped.` : ""}` };
+    return { ok: true, data, summary: `${data.done.length} records restored.${data.failed.length ? ` ${data.failed.length} skipped.` : ""}` };
   });
 
   registerHandler("platform.add-field", async (ctx: ActionInvokeContext) => {

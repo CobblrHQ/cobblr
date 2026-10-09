@@ -120,6 +120,13 @@ export const SHORTCUTS: readonly Shortcut[] = [
     binds: ["Backspace"],
   },
   {
+    id: "turn",
+    keys: ["R"],
+    does: "Turn the rack you are dragging a quarter, staying inside the room",
+    where: "A floor plan in Edit layout, and Plan a layout, while you drag a rack",
+    binds: ["r", "R"],
+  },
+  {
     id: "tab",
     keys: ["Tab"],
     does: "The next control, Shift+Tab the one before; in the chat box, take the suggested wording",

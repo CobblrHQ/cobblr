@@ -6,7 +6,6 @@ import { formatStoredMoney } from "@cobblr/platform-contract/money";
 import { api, type MaintenanceTerm, type MaintenanceTermPatch } from "../../lib/api";
 import { openAuthedFile } from "../../lib/authed-file";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 const input = "w-full rounded-md border border-line bg-surface px-3 py-2 text-base";
 const date = (v: string | null) => v ? new Date(v.slice(0, 10) + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "Date unknown";
 export function TermHistory({ slug, entityId, refresh }: { slug: string; entityId: string; refresh: () => void }) {
@@ -24,7 +23,7 @@ export function TermHistory({ slug, entityId, refresh }: { slug: string; entityI
     {terms.map((t) => <article key={t.id} className="rounded-lg border border-line p-3 space-y-2" data-testid="renewal-term">
       <div className="flex flex-wrap justify-between gap-2"><p className="text-sm font-medium">{t.name}</p><button type="button" className="text-sm text-accent" onClick={() => setEditing(t)}>Edit term</button></div>
       <p className="text-sm">{date(t.term_start)} to {date(t.term_end)}{t.term_start && t.term_end && t.term_start.slice(0, 10) <= dayHere() && t.term_end.slice(0, 10) > dayHere() ? " · Current term" : ""}</p>
-      <p className="text-sm">{t.cost_cents == null || !Object.hasOwn(t, "currency") ? "Cost unknown" : formatStoredMoney(t.cost_cents, "cents", { currency: t.currency })}{t.quantity != null ? ` · ${countOf(t.quantity, "seat")} or units` : ""}</p>
+      <p className="text-sm">{t.cost_cents == null || !Object.hasOwn(t, "currency") ? "Cost unknown" : formatStoredMoney(t.cost_cents, "cents", { currency: t.currency })}{t.quantity != null ? ` · ${t.quantity} seats or units` : ""}</p>
       {t.reference && <p className="text-sm break-words">Reference: {t.reference}</p>}
       {t.renewed_by && <p className="text-xs text-muted">Renewed by {t.renewed_by}</p>}
       {t.attachments?.map((f) => <button type="button" key={f.fileId} className="block max-w-full break-all text-sm text-accent underline" onClick={() => { void openAuthedFile(slug, f.fileId, { filename: f.filename }); }}>{f.filename}</button>)}

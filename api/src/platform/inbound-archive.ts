@@ -9,6 +9,7 @@
 // null for a message we couldn't attribute (which is exactly the kind worth
 // keeping — we can still inspect and replay it).
 
+import { findOrderPageLink, withoutSignInLinks } from "@cobblr/platform-contract/order-page-link";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { trimForArchive, type InboundAttachment, type InboundPayload } from "./inbound-archive-shape.js";
@@ -32,8 +33,10 @@ export async function archiveInboundEmail(p: InboundPayload): Promise<string | n
       .values({
         to_addr: Array.isArray(p.to) ? p.to.join(", ") : (p.to ?? null),
         from_email: p.from_email ?? null,
-        text_body: p.text ?? null,
-        html_body: p.html ?? null,
+        // A store's "View order" link signs its buyer in (#5461): the archive
+        // keeps the email without it, and the ingest hands it to Purchases sealed.
+        text_body: p.text == null ? null : withoutSignInLinks(p.text, findOrderPageLink(p.html, p.from_email)),
+        html_body: p.html == null ? null : withoutSignInLinks(p.html, findOrderPageLink(p.html, p.from_email)),
         subject: p.subject ?? null,
         message_id: p.message_id ?? null,
         attachments: sql`${JSON.stringify(attachments)}::jsonb`,

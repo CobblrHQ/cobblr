@@ -11,7 +11,7 @@ import { Router } from "express";
 import { groupWritesByRequest } from "./group-writes.js";
 import { z } from "zod";
 import { sql } from "kysely";
-import { PLATFORM_OWNER, platform, pluralise, countOf } from "@cobblr/platform-contract";
+import { PLATFORM_OWNER, platform, pluralise } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext, sessionUserId } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { matchBasics, normalize } from "../basics-match.js";
@@ -1083,7 +1083,7 @@ async function countAnswer(
   if (hits.length === 1) return phraseCountText(q, hits[0]!.kind, hits[0]!.r);
   const total = hits.reduce((n, h) => n + h.r.total, 0);
   return {
-    answer: `${countOf(total, "thing")} mention "${q.needle}"`,
+    answer: `${total} things mention "${q.needle}"`,
     detail: hits.map((h) => `${h.r.total} ${h.r.total === 1 ? h.kind.singular : h.kind.plural}`).join(", "),
   };
 }
@@ -1222,7 +1222,7 @@ basicsRouter.post(
         const answer =
           hits.length === 1
             ? { answer: hits[0]!.title ?? q.name, detail: hits[0]!.subtitle ?? "found in your workspace" }
-            : { answer: `${countOf(hits.length, "thing")} match "${q.name}"`, detail: hits.map((h) => h.title).filter(Boolean).join(", ") };
+            : { answer: `${hits.length} things match "${q.name}"`, detail: hits.map((h) => h.title).filter(Boolean).join(", ") };
         const named = namedRecords(`${answer.answer}\n${answer.detail}`, found).named;
         res.json({ ...answer, ...(named.length ? { mentions: named } : {}) });
         return;

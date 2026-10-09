@@ -105,6 +105,8 @@ export interface ScanItemScreenProps {
   actions: ScanItemScreenAction[];
   slots: {
     nameIt?: ReactNode;
+    /** What other modules contribute to a scan item (a receipt row's parcel). */
+    panels?: ReactNode;
     tracked?: ReactNode;
     strip?: ReactNode;
     form: ReactNode;
@@ -403,6 +405,7 @@ export function ScanItemScreen(p: ScanItemScreenProps) {
             </div>
           )}
           {p.slots.nameIt}
+          {p.slots.panels}
           {p.slots.tracked}
           {p.multi && (
             <div className="rounded-lg border border-cobble-500/50 bg-cobble-600/10 px-3 py-2 text-sm">

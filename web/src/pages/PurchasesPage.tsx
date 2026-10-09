@@ -24,7 +24,8 @@ import { receiptGroupSummary } from "./receiptLabel";
 import { ReceiptAddressChip } from "../components/ReceiptAddressChip";
 import { UnconfirmedReceiptsBanner } from "./UnconfirmedReceipts";
 import { OrderReturns } from "./OrderReturns";
-import { AddOrderLine, AddToStockChoice, OrderLineControls } from "./OrderLines";
+import { AddOrderLine, AddToStockChoice, AddTrackingSheet, OrderLineControls } from "./OrderLines";
+import { OrderPageStatus } from "../features/purchases/orderPageStatus";
 
 function fmtOrderDate(d: string | null): string | null {
   if (!d) return null;
@@ -356,7 +357,7 @@ export function PurchasesPage() {
           <>
             {/* Receipt intake sits with the other controls, not on a line of
                 its own: the same chip the scan header carries. */}
-            {receiptAddress && <ReceiptAddressChip address={receiptAddress} />}
+            {receiptAddress && <ReceiptAddressChip address={receiptAddress} name={receiptAddrQ.data?.receipt_name ?? undefined} />}
             <button onClick={() => setVendorsOpen(true)} aria-label="Vendors" className={headerButton()}>
               <Store size={14} /> <span className="hidden lg:inline">Vendors</span>
             </button>
@@ -700,6 +701,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
   const [receiptView, setReceiptView] = useState<"none" | "render" | "original">("none");
   // The line a return is being started for ("" = the form, no line chosen).
   const [returnLine, setReturnLine] = useState<string | null>(null);
+  const [addingTracking, setAddingTracking] = useState(false);
 
   const o = order.data;
   const items: OrderItem[] = o?.items ?? [];
@@ -837,6 +839,8 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
             </p>
           ) : null}
 
+          <OrderPageStatus page={o.order_page} />
+
           {/* The order's own fields: whatever a bundle or a person adds to a
               purchase order on /fields, editable here. */}
           <CustomFieldsPanel
@@ -862,9 +866,17 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
           />
 
           <div>
-            <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
-              // line items ({items.length})
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
+                // line items ({items.length})
+              </div>
+              {o.status !== "arrived" && o.status !== "cancelled" && items.some((i) => !i.received_at) && !addingTracking && (
+                <button type="button" onClick={() => setAddingTracking(true)} className="text-xs text-accent hover:underline">
+                  + Add tracking
+                </button>
+              )}
             </div>
+            {addingTracking && <AddTrackingSheet slug={activeSlug} order={o} items={items} onClose={() => setAddingTracking(false)} />}
             {items.length === 0 ? (
               <div className="text-xs text-faint italic">No items on this order.</div>
             ) : (

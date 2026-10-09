@@ -48,6 +48,8 @@ services:
       com.centurylinklabs.watchtower.enable: "true"
 
   api:
+    ports:
+      - "127.0.0.1:${COBBLR_BRIDGE_API_PORT:-14000}:4000"
     image: ghcr.io/cobblrhq/cobblr-api:${COBBLR_VERSION:-latest}
     env_file: .env # the whole config surface (secrets, email, privacy, …)
     environment:
@@ -69,12 +71,21 @@ services:
       # report it. Runtime-only on purpose: a stable cut re-tags a nightly
       # digest bit-for-bit, so a version can never be baked into the image.
       COBBLR_VERSION: ${COBBLR_VERSION:-}
+      # Keep each order's lines' tracking current from the store's own order
+      # page (a Shopify "View order" link in the order email). A self-hosted
+      # instance reads from its own address, so it is on here; false keeps the
+      # links and reads none.
+      COBBLR_ORDER_PAGE_READS: ${COBBLR_ORDER_PAGE_READS:-true}
+      COBBLR_SERVER_BRIDGE_ENABLED: ${COBBLR_SERVER_BRIDGE_ENABLED:-false}
+      COBBLR_SERVER_BRIDGE_DIR: /var/cobblr/server-bridge/workspaces
+      COBBLR_SERVER_BRIDGE_ORIGIN: http://127.0.0.1:${COBBLR_BRIDGE_API_PORT:-14000}
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - ${COBBLR_DATA_ROOT:-./data}/files:/var/cobblr/files
       - ${COBBLR_DATA_ROOT:-./data}/modules:/var/cobblr/sandboxed-modules
+      - ${COBBLR_DATA_ROOT:-./data}/server-bridge/workspaces:/var/cobblr/server-bridge/workspaces
     # So `web` waits for the api to actually SERVE, not merely to start: without
     # it, during a long first-boot migration the web fronts the api and returns
     # 502s with no signal (audit L-APINEALTH). node's global fetch is always
@@ -90,6 +101,29 @@ services:
     labels:
       com.centurylinklabs.watchtower.enable: "true"
 
+
+  bridge:
+    profiles: [bridge]
+    image: ghcr.io/cobblrhq/cobblr-api:${COBBLR_VERSION:-latest}
+    command: [node, dist/bin/server-bridge.js]
+    # LAN multicast and broadcast discovery need the host network.
+    network_mode: host
+    environment:
+      COBBLR_HOSTED: ${COBBLR_HOSTED:-false}
+      COBBLR_SERVER_BRIDGE_ENABLED: ${COBBLR_SERVER_BRIDGE_ENABLED:-false}
+      COBBLR_SERVER_BRIDGE_DIR: /var/cobblr/server-bridge/workspaces
+      COBBLR_SERVER_BRIDGE_CACHE_DIR: /var/cobblr/server-bridge/cache
+    volumes:
+      - ${COBBLR_DATA_ROOT:-./data}/server-bridge/workspaces:/var/cobblr/server-bridge/workspaces:ro
+      - ${COBBLR_DATA_ROOT:-./data}/server-bridge/cache:/var/cobblr/server-bridge/cache
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    restart: unless-stopped
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
 
   # ─── Nightly database dumps ──────────────────────────────────────────
   # Copying the data tree is NOT a complete backup on its own: a Postgres data

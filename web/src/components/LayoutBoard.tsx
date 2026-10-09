@@ -6,9 +6,13 @@
 // lib/layoutBoard.ts; this only draws it and reports drags.
 
 import { useRef, useState } from "react";
+import { RotateCw } from "lucide-react";
+import { isShortcut } from "@cobblr/platform-web";
+import { frontEdge, ownSize, rotated, type Edge, type PlanFlag } from "@cobblr/platform-contract/plan-clearance";
 import { faceWidthPx, labelFor, type Board, type BoardRack, type BoardThing } from "../lib/layoutBoard";
 import { nameUnder } from "../lib/planFit";
 import type { FpBound, FpRect } from "../lib/floorplanGeometry";
+import { GapReadout, PlanFlagList, PlanSymbols } from "./PlanSymbols";
 
 const pct = (v: number, total: number) => `${(v / total) * 100}%`;
 const mm = (v: number) => `${Math.round(v).toLocaleString("en-US")} mm`; // count-unit-ok: mm is a length symbol
@@ -174,38 +178,107 @@ function RackFace({ rack, editable, onDrop, print, maxHeight, faceWidth }: { rac
   );
 }
 
-function FloorRack({ rack, bound, editable, onMoveRack, print }: { rack: BoardRack; bound: FpBound; editable: boolean; onMoveRack: (id: string, rect: FpRect) => void; print: boolean }) {
+/** How long a finger held still on a rack turns it. */
+const LONG_PRESS_MS = 550;
+/** The side a rack is reached from, drawn heavier while it can be moved. */
+const FRONT_EDGE: Record<Edge, string> = { bottom: "border-b-4", top: "border-t-4", left: "border-l-4", right: "border-r-4" };
+
+function FloorRack({
+  rack,
+  bound,
+  editable,
+  onMoveRack,
+  onLive,
+  selected,
+  onSelect,
+  flags,
+  print,
+}: {
+  rack: BoardRack;
+  bound: FpBound;
+  editable: boolean;
+  onMoveRack: (id: string, rect: FpRect) => void;
+  /** Where it is while it is carried (null when let go). */
+  onLive: (id: string, rect: FpRect | null) => void;
+  selected: boolean;
+  onSelect: (id: string) => void;
+  flags: readonly PlanFlag[];
+  print: boolean;
+}) {
   const ref = useRef<HTMLDivElement>(null);
-  const [dx, setDx] = useState({ x: 0, y: 0 });
-  const r = rack.rect!;
+  const [live, setLive] = useState<FpRect | null>(null);
+  const r = live ?? rack.rect!;
   const down = (e: React.PointerEvent) => {
     if (!editable) return;
     e.preventDefault();
+    onSelect(rack.id);
     const parent = ref.current!.parentElement!.getBoundingClientRect();
-    const sx = e.clientX, sy = e.clientY;
     const perX = bound.w_mm / parent.width, perY = bound.d_mm / parent.height;
-    const move = (ev: PointerEvent) => setDx({ x: ev.clientX - sx, y: ev.clientY - sy });
-    const up = (ev: PointerEvent) => {
+    let sx = e.clientX, sy = e.clientY, atX = e.clientX, atY = e.clientY;
+    let base = rack.rect!;
+    let last = base;
+    let still = true;
+    const show = (next: FpRect) => {
+      last = next;
+      setLive(next);
+      onLive(rack.id, next);
+    };
+    // Turned a quarter while it is carried: R on a keyboard, or a finger
+    // held still on it. It turns about its middle and stays in the room.
+    const turn = () => {
+      const t = rotated(last, bound);
+      if (!t) return;
+      base = t;
+      sx = atX;
+      sy = atY;
+      show(t);
+    };
+    const key = (ev: KeyboardEvent) => {
+      if (!isShortcut(ev, "turn")) return;
+      ev.preventDefault();
+      turn();
+    };
+    const hold = e.pointerType === "touch" ? window.setTimeout(() => still && turn(), LONG_PRESS_MS) : null;
+    const move = (ev: PointerEvent) => {
+      atX = ev.clientX;
+      atY = ev.clientY;
+      if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) > 8) still = false;
+      const nx = Math.max(0, Math.min(bound.w_mm - base.w_mm, Math.round((base.x_mm + (ev.clientX - sx) * perX) / 10) * 10));
+      const ny = Math.max(0, Math.min(bound.d_mm - base.d_mm, Math.round((base.y_mm + (ev.clientY - sy) * perY) / 10) * 10));
+      show({ ...base, x_mm: nx, y_mm: ny });
+    };
+    const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
-      setDx({ x: 0, y: 0 });
-      const nx = Math.max(0, Math.min(bound.w_mm - r.w_mm, Math.round((r.x_mm + (ev.clientX - sx) * perX) / 10) * 10));
-      const ny = Math.max(0, Math.min(bound.d_mm - r.d_mm, Math.round((r.y_mm + (ev.clientY - sy) * perY) / 10) * 10));
-      if (nx !== r.x_mm || ny !== r.y_mm) onMoveRack(rack.id, { ...r, x_mm: nx, y_mm: ny });
+      window.removeEventListener("keydown", key);
+      if (hold !== null) window.clearTimeout(hold);
+      setLive(null);
+      onLive(rack.id, null);
+      const was = rack.rect!;
+      if (last.x_mm !== was.x_mm || last.y_mm !== was.y_mm || last.rot !== was.rot) onMoveRack(rack.id, last);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+    window.addEventListener("keydown", key);
   };
+  const blocksDoor = flags.some((f) => f.kind === "door");
+  const said = flags.map((f) => f.text).join("; ");
   return (
     <div
       ref={ref}
       data-layout-floor-rack={rack.id}
       data-moved={rack.moved ? "true" : undefined}
+      data-rot={r.rot}
+      data-in-the-way={flags.length ? flags.map((f) => f.kind).join(" ") : undefined}
+      data-rect-mm={`${r.x_mm},${r.y_mm},${r.w_mm},${r.d_mm}`}
+      title={said ? `${rack.name}: ${said}` : rack.name}
       onPointerDown={down}
       className={`absolute flex items-center justify-center overflow-hidden rounded-sm border text-[10px] leading-tight text-center ${
-        print ? "border-black bg-white text-black" : `${rack.planned ? "border-dashed border-accent" : rack.moved ? "border-accent" : "border-slate-500 dark:border-slate-400"} bg-surface dark:bg-slate-800 text-content dark:text-slate-200`
-      } ${editable ? "cursor-move touch-none select-none" : ""}`}
-      style={{ left: pct(r.x_mm, bound.w_mm), top: pct(r.y_mm, bound.d_mm), width: pct(r.w_mm, bound.w_mm), height: pct(r.d_mm, bound.d_mm), transform: `translate(${dx.x}px, ${dx.y}px)` }}
+        print
+          ? "border-black bg-white text-black"
+          : `${blocksDoor ? "border-ember-500 ring-2 ring-ember-500/60" : flags.length ? "ring-2 ring-amber-500/60" : ""} ${rack.planned ? "border-dashed border-accent" : rack.moved ? "border-accent" : "border-slate-500 dark:border-slate-400"} bg-surface dark:bg-slate-800 text-content dark:text-slate-200`
+      } ${editable ? `cursor-move touch-none select-none ${FRONT_EDGE[frontEdge(r.rot)]}` : ""} ${selected ? "outline outline-2 outline-accent" : ""}`}
+      style={{ left: pct(r.x_mm, bound.w_mm), top: pct(r.y_mm, bound.d_mm), width: pct(r.w_mm, bound.w_mm), height: pct(r.d_mm, bound.d_mm) }}
     >
       <span>
         {rack.name}
@@ -236,6 +309,15 @@ export function LayoutBoard({
 }) {
   const b = board.room.bound;
   const faces = board.racks.filter((r) => r.face && r.shelves.length);
+  const [sel, setSel] = useState<string | null>(null);
+  const [live, setLive] = useState<{ id: string; rect: FpRect } | null>(null);
+  const selRack = editable ? board.racks.find((r) => r.id === sel && r.rect) : undefined;
+  const flagsOf = (id: string) => board.flags.filter((f) => f.ids.includes(id));
+  // Everything on the floor, as it stands while one is carried.
+  const onFloor = [
+    ...board.racks.filter((r) => r.rect && !r.rect.wall_mounted).map((r) => ({ id: r.id, name: r.name, box: live?.id === r.id ? live.rect : r.rect! })),
+    ...board.floor.filter((t) => t.rect).map((t) => ({ id: t.key, name: t.name, box: t.rect! })),
+  ];
   return (
     <div data-layout-board={board.room.id} className="flex flex-col gap-4">
       {b && (
@@ -243,6 +325,27 @@ export function LayoutBoard({
           <h3 className={`mb-1 text-xs font-medium ${print ? "text-black" : "text-muted dark:text-slate-400"}`}>
             Floor{print ? `: ${mm(b.w_mm)} × ${mm(b.d_mm)}` : ""}
           </h3>
+          {selRack && (
+            <div data-testid="layout-rack-tools" className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted dark:text-slate-400">
+              <span className="font-medium text-content dark:text-slate-200">{selRack.name}</span>
+              <span>
+                {mm(ownSize(selRack.rect!).w_mm)} wide, {mm(ownSize(selRack.rect!).d_mm)} deep
+              </span>
+              <button
+                type="button"
+                data-testid="layout-turn"
+                onClick={() => {
+                  const t = rotated(selRack.rect!, b);
+                  if (t) onMoveRack(selRack.id, t);
+                }}
+                disabled={!rotated(selRack.rect!, b)}
+                title={rotated(selRack.rect!, b) ? "Turn it a quarter where it stands (or press R while dragging it, or hold a finger on it)" : `${selRack.name} is longer than the room is wide, so it cannot turn here`}
+                className="inline-flex items-center gap-1 rounded border border-line dark:border-slate-600 px-2 py-0.5 text-content dark:text-slate-200 hover:border-accent hover:text-accent disabled:opacity-50"
+              >
+                <RotateCw size={12} /> Turn 90°
+              </button>
+            </div>
+          )}
           <div
             {...{ [DROP]: board.room.id }}
             data-drop-mm={`${b.w_mm}x${b.d_mm}`}
@@ -250,14 +353,39 @@ export function LayoutBoard({
             // The whole floor on one screen: as wide as half the screen's height allows.
             style={{ aspectRatio: `${b.w_mm} / ${b.d_mm}`, maxWidth: print ? undefined : `min(48rem, calc(50vh * ${b.w_mm / b.d_mm}))` }}
           >
+            {!print && <PlanSymbols room={b} walls={board.room.walls} boxes={onFloor.map((o) => o.box)} solid={() => true} />}
+            {!print &&
+              board.room.closets.map((c) => (
+                <span
+                  key={c.id}
+                  data-layout-closet={c.id}
+                  className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 font-mono text-[9px] uppercase tracking-[.15em] text-muted dark:text-slate-500"
+                  style={{ left: pct(c.rect.x_mm + c.rect.w_mm / 2, b.w_mm), top: pct(c.rect.y_mm + c.rect.d_mm / 2, b.d_mm) }}
+                >
+                  {c.name}
+                </span>
+              ))}
             {board.racks.filter((r) => r.rect).map((r) => (
-              <FloorRack key={r.id} rack={r} bound={b} editable={editable} onMoveRack={onMoveRack} print={print} />
+              <FloorRack
+                key={r.id}
+                rack={r}
+                bound={b}
+                editable={editable}
+                onMoveRack={onMoveRack}
+                onLive={(id, rect) => setLive(rect ? { id, rect } : null)}
+                selected={sel === r.id}
+                onSelect={setSel}
+                flags={flagsOf(r.id)}
+                print={print}
+              />
             ))}
+            {live && editable && <GapReadout room={b} walls={board.room.walls} box={live.rect} others={onFloor.filter((o) => o.id !== live.id)} />}
             {board.floor.filter((t) => t.rect).map((t) => (
               <ThingBox key={t.key} t={t} bound={b} editable={editable} onDrop={onDrop} print={print} pxPerMm={null} />
             ))}
           </div>
           {print && <ScaleBar bound={b} />}
+          {!print && <PlanFlagList flags={board.flags} />}
         </section>
       )}
       {faces.length > 0 && (

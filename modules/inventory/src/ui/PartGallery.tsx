@@ -33,7 +33,7 @@ interface Props {
 }
 
 export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
-  const { orgSlug, getToken } = useInventory();
+  const { orgSlug, getToken, itemNoun } = useInventory();
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
@@ -267,7 +267,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
                     onClick={async () => {
                       const ok = await confirm({
                         title: "Remove photo?",
-                        message: "The file stays in your library; only the attachment to this part is removed.",
+                        message: `The file stays in your library; only the attachment to this ${itemNoun} is removed.`,
                         confirmLabel: "Remove",
                         destructive: true,
                       });

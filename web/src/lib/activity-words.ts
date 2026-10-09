@@ -1,4 +1,4 @@
-import { dedupeActivity } from "@cobblr/platform-contract/activity-summary";
+import { ACTIVITY_VERBS, dedupeActivity } from "@cobblr/platform-contract/activity-summary";
 import type { ActivityEntry, SaidChange } from "./api";
 // What a Recent-activity row says, in words a first-timer can read.
 //
@@ -163,6 +163,10 @@ export function activityVerb(a: string): string {
     wire_failed: "automation failed",
     // A trial brought in from the demo box; the row's title is the trial's name.
     carry_replayed: "brought in their trial:",
+    // Which model the AI uses moved: a family's latest found a newer model,
+    // a retired pin healed, or the upgrade to "latest" (#5417). The row's
+    // title is the sentence that says which.
+    ai_model_changed: "changed the AI model:",
     // One thing added from a scan, its create and follow-up rows folded in
     // (foldOneThingsRows).
     added_from_scan: "scanned in",
@@ -176,6 +180,9 @@ export function activityVerb(a: string): string {
     part_storage_changed: "changed storage for",
     // A spreadsheet import is one row for the whole run; its title is the file.
     sheet_imported: "imported",
+    // A stocktake is one row for the whole run; its title is the place.
+    stocktake_taken: "took stock of",
+    stocktake_undone: "undid the stocktake of",
     // A thing that left, and came back (platform:mark-gone / bring-back).
     record_sold: "sold",
     record_given_away: "gave away",
@@ -184,6 +191,7 @@ export function activityVerb(a: string): string {
     record_traded: "traded",
     record_lost: "lost",
     record_scrapped: "disposed of",
+    record_gone: "marked gone",
     record_brought_back: "got back",
     // A thing handed over through a share, filed: the friend gave it (#4683).
     record_sent: "sent from another workspace",
@@ -204,6 +212,8 @@ export function activityVerb(a: string): string {
     order_shipped: "shipped",
     order_emailed: "emailed the customer about",
     order_make_started: "started making for",
+    // A purchase order's parcel, on the order's own history (#5351).
+    order_shipment_added: "added a parcel",
     // A document from a document system (core-documents); the row says which
     // (documentWords).
     document_linked: "linked a document:",
@@ -220,6 +230,10 @@ export function activityVerb(a: string): string {
   // verb is its last word.
   const verb = a.includes(".") ? a.slice(a.lastIndexOf(".") + 1) : a;
   if (map[verb]) return map[verb];
+  // The platform's sentence table, which every module's activity is held to
+  // (every-activity-event-has-a-readable-sentence): a row this map does not
+  // know still reads as its module wrote it, never as "order shipment added".
+  if (ACTIVITY_VERBS[verb]) return ACTIVITY_VERBS[verb];
   // 'task_created' → 'created task' (the entity_type is already
   // rendered on the row, so we just need the verb).
   if (verb.endsWith("_created")) return "created";

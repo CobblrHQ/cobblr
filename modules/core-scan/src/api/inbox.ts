@@ -1,4 +1,5 @@
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
+import { trackingNumberFromText } from "@cobblr/platform-contract/tracking-text";
 import { finishOwnSend } from "../services/offer-intake.js";
 import { mapOfferedFields, type OfferedThing } from "@cobblr/platform-contract/share-offer";
 // /api/v1/orgs/:slug/modules/core-scan
@@ -82,7 +83,8 @@ import {
   traitAxisValue,
   type DecodeFillTarget,
   isActionStep,
-  type ActionUndoStep, countOf } from "@cobblr/platform-contract";
+  type ActionUndoStep,
+} from "@cobblr/platform-contract";
 import { decodeKeysetCursor, encodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
 import { splitEntityKind, entityKindOf } from "@cobblr/platform-contract/entity-kind";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
@@ -1769,6 +1771,9 @@ const ReceiptBody = z.object({
   queue_if_busy: z.boolean().optional(),
   /** A queued read that finished: its answer is collected, not asked again. */
   hosted_job_id: z.string().uuid().optional(),
+  /** The email this came in was an order confirmation: an online order, on
+   *  its way rather than in hand (the email ingest knows the subject). */
+  order_confirmation: z.boolean().optional(),
 });
 
 // AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
@@ -2076,6 +2081,9 @@ inboxRouter.post(
           expectedArrival: receipt.expected_arrival ?? awaiting?.expected_arrival ?? null,
           total: priceOk ? receipt.total : null,
           groupId: receiptGroupId,
+          // An online order is on its way, not in hand: the email said it was
+          // an order confirmation, or the receipt charged for shipping.
+          ships: parsed.data.order_confirmation === true || (receipt.totals?.shipping ?? 0) > 0,
           sourceFileId: parsed.data.file_id,
           // NET of the coupon printed under each line: the order records what
           // was paid, not the shelf price. Without this a receipt's lines sum to
@@ -2262,7 +2270,7 @@ inboxRouter.patch(
     const db = tenantDb(req);
     const batch = await db
       .selectFrom("core_scan_batches")
-      .select(["id", "vendor", "label"])
+      .select(["id", "vendor", "label", "purchases_order_id"])
       .where("id", "=", req.params.batchId ?? "")
       .executeTakeFirst();
     if (!batch) {
@@ -2277,6 +2285,23 @@ inboxRouter.patch(
       .set({ order_ref: ref, vendor, label })
       .where("id", "=", batch.id)
       .execute();
+    // The order exists from the read, so the number goes to it as well, the
+    // way the tracking number does below: a fixed number that stayed on the
+    // session left the order's own Order # blank (#5351 walk).
+    if (batch.purchases_order_id) {
+      const ctx = tenantContext(req);
+      const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+      try {
+        await apiFetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/purchases/orders/${batch.purchases_order_id}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${bearer(req)}`, "Content-Type": "application/json" },
+          // jsonb-replace-ok: an HTTP request body, not a jsonb column.
+          body: JSON.stringify({ order_number: ref }),
+        });
+      } catch (err) {
+        console.warn("[core-scan] the order number did not reach the order:", (err as Error).message);
+      }
+    }
     res.json({ id: batch.id, label, order_ref: ref });
   }),
 );
@@ -2287,7 +2312,9 @@ inboxRouter.patch(
 // person is LOOKING at the receipt, so it is where they have the number in hand.
 // Making them file the receipt first, find the order, and edit it there is three
 // screens to record one string they are already holding.
-const TrackingBody = z.object({ tracking_number: z.string().max(64).nullable() });
+// A number, or the carrier's "Track your package" link pasted whole: the
+// link is the number it points at (trackingNumberFromText).
+const TrackingBody = z.object({ tracking_number: z.string().max(2000).nullable() });
 
 // AI-REACH: exempt (scan-inbox metadata edit from the UI, same as the order-ref
 // route above — it writes a transient staging row that exists only until the
@@ -2312,8 +2339,11 @@ inboxRouter.patch(
     }
     // Carriers print numbers with spaces for legibility; nobody types them
     // consistently. Strip whitespace so the same parcel is the same string.
-    const raw = (parsed.data.tracking_number ?? "").replace(/\s+/g, "");
-    const tracking = raw.length > 0 ? raw : null;
+    const tracking = trackingNumberFromText(parsed.data.tracking_number);
+    if (parsed.data.tracking_number?.trim() && !tracking) {
+      res.status(422).json({ error: { code: "no_tracking_number", message: "That link has no tracking number in it. Paste the number itself." } });
+      return;
+    }
     await db
       .updateTable("core_scan_batches")
       // Whoever types the number owns the parcel: its arrival interrupts THEM,
@@ -2719,7 +2749,7 @@ async function sessionTheme(req: Request, res: Response, batchId: string, asked:
       const r = await platform().ai.invoke({
         orgId: ctx.org.id,
         capability: "chat",
-        input: { messages: [{ role: "system", content: system }, { role: "user", content: `The ${countOf(items.length, "pending item")}:\n${list}` }] },
+        input: { messages: [{ role: "system", content: system }, { role: "user", content: `The ${items.length} pending items:\n${list}` }] },
         source: { kind: "core-scan:session-theme", id: ctx.org.id },
         userId: sessionUser(req).id,
       });
@@ -8313,13 +8343,13 @@ inboxRouter.post(
           split_into: children.map((c) => (c as { id: string }).id),
           split_prior_notes: row.ai_notes ?? null,
         }) as never,
-        ai_notes: `Split into ${countOf(children.length, "item")}.`,
+        ai_notes: `Split into ${children.length} items.`,
         resolved_at: new Date(),
         updated_at: new Date(),
       })
       .where("id", "=", id ?? "")
       .execute();
-    await appendScanHistory(db, id ?? "", { action: "split", note: `${countOf(children.length, "item")}; crops: ${cropReport.join(", ")}` });
+    await appendScanHistory(db, id ?? "", { action: "split", note: `${children.length} items; crops: ${cropReport.join(", ")}` });
     res.json({ children });
   }),
 );
@@ -9040,7 +9070,7 @@ inboxRouter.post(
         others.map((o) => o.id),
       )
       .execute();
-    await appendScanHistory(db, primary.id, { action: "combine", note: `${countOf(rows.length, "item")}` });
+    await appendScanHistory(db, primary.id, { action: "combine", note: `${rows.length} items` });
     res.json(await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", primary.id).executeTakeFirst());
   }),
 );

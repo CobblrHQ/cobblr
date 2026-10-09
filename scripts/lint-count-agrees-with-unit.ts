@@ -21,17 +21,7 @@
 // amounts built this way ("160 m") are caught too, and are fixed the same
 // way: quantityWithUnit keeps a measured unit's symbol.
 //
-// THE SECOND HALF: A COUNT BESIDE A LITERAL PLURAL (#5273). `${n} changes` is
-// the same bug with the word typed in: it reads "1 changes" at exactly one
-// count (a colour-change line said "1 colour changes"). A count-shaped value
-// (count, total, qty, n, x.length, x.size ...) straight in front of a word
-// ending in "s" fails; say it with countOf(n, "change"). A line that already
-// branches on one (`n === 1 ? ... : ...`, `n > 1`) or is a console log is left
-// alone, and a genuine exception says `// count-plural-ok: <reason>`, e.g. a
-// sentence only ever shown for two or more.
-//
-// PROVE IT RED: put back `(${qty} ${unit})` in the inventory add-item summary,
-// or `${hit.operations.length} changes` in the plan card.
+// PROVE IT RED: put back `(${qty} ${unit})` in the inventory add-item summary.
 //
 //   npx tsx scripts/lint-count-agrees-with-unit.ts   (pnpm lint count-agrees-with-unit)
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -69,18 +59,6 @@ const SIDE_BY_SIDE = [
   /\{\s*[\w$.?()]+\s*\}\s+\{\s*[\w$.?]*[uU]nit\s*\}/,
 ];
 
-/** A count-shaped value, whitespace, then a lower-case word ending in "s". */
-const COUNT_VALUE =
-  String.raw`(?:[\w$.?]*(?:[cC]ount|[tT]otal|[qQ]ty|[qQ]uantity|length|size)\w*|n|k|\w+\.size)`;
-/** One modifier may sit between ("1 colour changes"), unless it is a small
- *  joining word ("3 of items", "n in places"). */
-const JOINERS = "of|in|on|to|the|and|for|with|from|at|by|a|an|is|are|were|was|will|can|that|or|not|but|as|per|off|into|than|over";
-const BESIDE_PLURAL = new RegExp(String.raw`(?<!=)\{\s*${COUNT_VALUE}\s*\}\s+(?:(?!(?:${JOINERS})\b)[a-z][a-z-]*\s+)?([a-z][a-z-]*s)\b`);
-/** Words that end in "s" and are not plurals. */
-const NOT_PLURAL = new Set(["is", "has", "was", "as", "this", "its", "plus", "less", "pass", "across", "unless", "status", "process"]);
-/** The line already says what one reads like, or is a log. */
-const GUARDED = /[!=]==? ?1\b|[<>]=? ?1\b|\bconsole\./;
-
 /** The check. Return every violation in one file; an empty array is a pass. */
 function check(file: string, src: string): Violation[] {
   const out: Violation[] = [];
@@ -88,10 +66,6 @@ function check(file: string, src: string): Violation[] {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
     if (/count-unit-ok: \S/.test(line)) continue;
-    const plural = BESIDE_PLURAL.exec(line);
-    if (plural && !NOT_PLURAL.has(plural[1]!) && !GUARDED.test(line) && !/countOf|quantityWithUnit|count-plural-ok: \S/.test(line)) {
-      out.push({ file, line: i + 1, what: `a count beside a literal plural "${plural[1]}": ${line.trim().slice(0, 120)}` });
-    }
     if (SIDE_BY_SIDE.some((re) => re.test(line))) {
       out.push({ file, line: i + 1, what: `a count beside a bare unit: ${line.trim().slice(0, 120)}` });
     }

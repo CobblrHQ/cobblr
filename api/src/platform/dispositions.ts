@@ -66,6 +66,7 @@ export async function markGone(
   kind: string,
   ids: readonly string[],
   details: GoneDetails,
+  opts: { quiet?: boolean } = {},
 ): Promise<{ ok: true; done: GoneOutcome[] } | { ok: false; error: string }> {
   const writer = await platform().entities.getWriter(orgId, kind);
   if (!writer?.retire || !writer.unretire) {
@@ -91,7 +92,7 @@ export async function markGone(
     };
     await writer.retire(orgId, ent.id, { disposition: d.how });
     await platform().entities.mergeMetadata(orgId, kind, ent.id, { [DISPOSITION_KEY]: d });
-    await activity.log({
+    if (!opts.quiet) await activity.log({
       orgId,
       userId,
       action: actionFor(d.how),
@@ -109,6 +110,7 @@ export async function bringBack(
   userId: string | null,
   kind: string,
   ids: readonly string[],
+  opts: { quiet?: boolean } = {},
 ): Promise<{ ok: true; done: GoneOutcome[] } | { ok: false; error: string; blocked?: BlockedAction }> {
   const writer = await platform().entities.getWriter(orgId, kind);
   if (!writer?.unretire) return { ok: false, error: `${kind} records cannot be brought back.` };
@@ -142,7 +144,7 @@ export async function bringBack(
     // caught a Send back read in that window, run 36927).
     await platform().entities.mergeMetadata(orgId, kind, ent.id, { [DISPOSITION_KEY]: null });
     await writer.unretire(orgId, ent.id);
-    await activity.log({
+    if (!opts.quiet) await activity.log({
       orgId,
       userId,
       action: BROUGHT_BACK,

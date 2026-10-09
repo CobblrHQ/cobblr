@@ -39,6 +39,21 @@ function words(s: string | null | undefined): Set<string> {
   );
 }
 
+/** The lines a new parcel carries: the ones named, or the ones a notice's
+ *  items match. A parcel added by hand naming nothing, on an order already
+ *  shipping in parcels, carries the lines no parcel has yet, never none and
+ *  never one already in another parcel. */
+export function parcelLines(
+  input: { line_ids?: string[]; items?: readonly ShippedItem[] },
+  open: ReadonlyArray<OrderLine & { shipment_id: string | null }>,
+  known: ReadonlySet<string>,
+  hasParcels: boolean,
+): string[] {
+  if (input.line_ids?.length) return input.line_ids.filter((id) => known.has(id));
+  if (input.items?.length) return matchShippedLines(input.items, open);
+  return hasParcels ? open.filter((l) => !l.shipment_id).map((l) => l.id) : [];
+}
+
 /** Which order lines the notice's items are, by the words that set each line
  *  apart from the others. An item matches the one line it shares the most
  *  telling words with, and only when no other line ties it; each line is
@@ -160,9 +175,7 @@ export async function recordShipment(
 
   const open = lines.filter((l) => !l.received_at);
   const known = new Set(lines.map((l) => l.id));
-  const picked = input.line_ids?.length
-    ? input.line_ids.filter((id) => known.has(id))
-    : matchShippedLines(input.items ?? [], open);
+  const picked = parcelLines(input, open, known, existing.length > 0);
 
   const state = input.shipment_state ?? null;
   const eta = input.expected_arrival ?? null;

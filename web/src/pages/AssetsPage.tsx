@@ -54,14 +54,14 @@ export function AssetsPage({
   instance,
   displayName,
   itemNoun,
+  itemNounPlural,
   hint,
-}: { instance?: string; displayName?: string; itemNoun?: string; hint?: string | null } = {}) {
+}: { instance?: string; displayName?: string; itemNoun?: string; itemNounPlural?: string; hint?: string | null } = {}) {
   // When `instance` is set we render ONE named collection of assets (e.g.
   // "Vehicles"), reached at the clean /<instance> URL — the SAME rich page as
   // /assets (thumbnails, views, detail/edit), just scoped to the instance's
   // items. No lens/instance-chooser (the instance IS the focus), and detail is
   // local state (no /<instance>/:id route). Mirrors MachinesPage.
-  usePageTitle(displayName ?? "Assets");
   // A wide table is the page here, so it gets the screen.
   usePageWidth("wide");
   const { activeSlug } = useActiveOrg();
@@ -78,6 +78,10 @@ export function AssetsPage({
   // read "New asset" regardless of what it holds. itemNounFor asks the noun
   // somebody set, then the kind, and stops at the neutral "item".
   const noun = itemNounFor({ itemNoun, entityKind });
+  const nounPlural = itemNounPlural?.trim() || pluralise(noun);
+  const words = { singular: noun, plural: nounPlural };
+  const heading = displayName ?? nounPlural.charAt(0).toUpperCase() + nounPlural.slice(1);
+  usePageTitle(heading);
 
   // Detail selection: URL param on /assets, local state (+ deep-link ?asset=id)
   // on an instance page.
@@ -223,7 +227,7 @@ export function AssetsPage({
       }
     },
     onSuccess: () => {
-      toast.success(`Deleted ${selected.size} asset${selected.size === 1 ? "" : "s"}`);
+      toast.success(`Deleted ${countOf(selected.size, words)}`);
       setSelected(new Set());
       void qc.invalidateQueries({ queryKey: ["assets", activeSlug] });
     },
@@ -256,7 +260,7 @@ export function AssetsPage({
       }
     },
     onSuccess: () => {
-      toast.success(`Tagged ${selected.size} asset${selected.size === 1 ? "" : "s"}`);
+      toast.success(`Tagged ${countOf(selected.size, words)}`);
       setSelected(new Set());
       void qc.invalidateQueries({ queryKey: ["assets", activeSlug] });
     },
@@ -266,7 +270,7 @@ export function AssetsPage({
   return (
     <div className="space-y-4">
       <CollectionHeader
-        title={displayName ?? "assets"}
+        title={heading}
         count={showArchived ? `${list.data?.total ?? allRows.length} gone or put away` : `${filtered.length} of ${list.data?.total ?? allRows.length}${paidTotal > 0 ? ` · paid ${formatMoney(paidTotal, { currency: list.data?.money_total?.currency })} in all` : ""}`}
         hint={hint} kind={instance ? `${instance}:item` : ENTITY_KIND}
         filters={
@@ -289,7 +293,7 @@ export function AssetsPage({
             </Link>
           ) : undefined
         }
-        search={<SearchInput value={query} onChange={setQuery} placeholder="search…" aria-label={`Search ${pluralise(noun)}`} wrapperClassName="w-48 max-sm:w-full max-sm:flex-1" />}
+        search={<SearchInput value={query} onChange={setQuery} placeholder="search…" aria-label={`Search ${nounPlural}`} wrapperClassName="w-48 max-sm:w-full max-sm:flex-1" />}
         exportQuery={query}
         actions={
           <>
@@ -326,9 +330,9 @@ export function AssetsPage({
         ) : (
           <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-12 text-center text-xs text-faint dark:text-slate-500 italic">
             {allRows.length === 0
-              ? `No ${pluralise(noun)} yet. Add one with New ${noun}.`
+              ? `No ${nounPlural} yet. Add one with New ${noun}.`
               : activeView
-                ? `Nothing in “${activeView.name}” yet. Add your first with New asset.`
+                ? `Nothing in “${activeView.name}” yet. Add your first with New ${noun}.`
                 : "No matches with the current filters."}
           </div>
         )
@@ -380,6 +384,7 @@ export function AssetsPage({
         assetId={selectedId}
         onClose={closeDetail}
         instance={instance}
+        noun={noun}
       />
       <NewAssetModal open={newOpen} onClose={() => setNewOpen(false)} instance={instance} noun={noun} />
 
@@ -407,7 +412,7 @@ export function AssetsPage({
                     onClose={close}
                     onMoved={(n, where, undo) => {
                       const tickAgain = clearTicks();
-                      toast.action(`Moved ${countOf(n, noun)} to ${where}.`, {
+                      toast.action(`Moved ${countOf(n, words)} to ${where}.`, {
                         actionLabel: "Undo",
                         duration: 10_000,
                         onAction: async () => {
@@ -451,7 +456,7 @@ export function AssetsPage({
               disabled={bulkDelete.isPending}
               onClick={async () => {
                 const ok = await confirm({
-                  title: `Delete ${selected.size} asset${selected.size === 1 ? "" : "s"}?`,
+                  title: `Delete ${countOf(selected.size, words)}?`,
                   message: "This is permanent, the rows will be removed from the workspace.",
                   confirmLabel: "Delete",
                   destructive: true,
@@ -637,11 +642,14 @@ export function AssetDetailModal({
   assetId,
   onClose,
   instance,
-}: { assetId: string | null; onClose: () => void; instance?: string }) {
+  noun: tableNoun,
+}: { assetId: string | null; onClose: () => void; instance?: string; noun?: string }) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
+  const noun = itemNounFor({ itemNoun: tableNoun, entityKind: instance ? `${instance}:item` : ENTITY_KIND });
+  const Noun = noun.charAt(0).toUpperCase() + noun.slice(1);
   // On an instance page the item lives under /instances/<name>/items and its
   // custom fields are keyed to the instance ("vehicles:item"), NOT the base
   // assets:asset — reading/writing without the instance 404s (the modal then
@@ -694,7 +702,7 @@ export function AssetDetailModal({
   const remove = useMutation({
     mutationFn: () => api.deleteAsset(activeSlug, assetId!, instance),
     onSuccess: () => {
-      toast.success("Asset deleted.");
+      toast.success(`${Noun} deleted.`);
       void qc.invalidateQueries({ queryKey: ["assets", activeSlug] });
       onClose();
     },
@@ -708,7 +716,7 @@ export function AssetDetailModal({
     const ok = await confirm({
       title: `Delete "${a.name}"?`,
       message: "You can restore this record from Recently deleted for 30 days.",
-      confirmLabel: "Delete asset",
+      confirmLabel: `Delete ${noun}`,
       destructive: true,
     });
     if (ok) remove.mutate();
@@ -874,7 +882,7 @@ export function AssetDetailModal({
                 onClick={handleDelete}
                 className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
               >
-                <Trash2 size={11} /> delete asset
+                <Trash2 size={11} /> delete {noun}
               </button>
               <button
                 onClick={() => setMoveOpen(true)}
@@ -913,7 +921,7 @@ export function AssetDetailModal({
         // went wrong + offer a retry, so it's never a silent mystery.
         <div className="space-y-2 py-2 text-sm">
           <div className="text-ember-600 dark:text-ember-400">
-            Couldn't load this {instance ? "record" : "asset"}
+            Couldn't load this {noun}
             {asset.error instanceof ApiError ? `: ${asset.error.message}` : "."}
           </div>
           <button

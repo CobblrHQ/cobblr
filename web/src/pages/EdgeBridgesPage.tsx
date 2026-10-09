@@ -1,3 +1,4 @@
+import {BrowserLaserOption} from "../features/digifab/BrowserLaserOption";
 // /configuration/edge — the edge-bridge pane of glass. GENERIC by design: a
 // bridge is kernel infrastructure (one tunnel from your site), and modules are
 // merely its consumers. So this page renders three data-driven sections and
@@ -21,6 +22,8 @@ import { Link } from "react-router-dom";
 import { Activity, Cable, CheckCircle2, ChevronRight, Plug, User, XCircle } from "lucide-react";
 import { api, type EdgeBridge } from "../lib/api";
 import { bridgeDisplayName } from "../lib/bridge-choice";
+import {FoundDevices} from "../features/edge/FoundDevices";
+import {ServerBridge} from "../features/edge/ServerBridge";
 import { DriverPackages } from "../features/edge/DriverPackages";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { changeWorkspaceShape, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
@@ -171,6 +174,10 @@ export function EdgeBridgesPage({ embedded = false }: { embedded?: boolean } = {
           </p>
         )}
       </section>
+
+      <ServerBridge slug={slug} />
+      <FoundDevices slug={slug} bridges={tunnel}/>
+      {on?.has("digifab")&&<BrowserLaserOption/>}
 
       {/* Set up a bridge — right here, no module required */}
       <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-2">

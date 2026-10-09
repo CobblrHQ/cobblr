@@ -1,4 +1,4 @@
-import { RecordFormModal, NewFromTemplateButton, useLater, useImageSrc, EntityPhoto, useOverlayOpenFlag, useToast, colorSwatch, wantsSwatch, ColourInput, valueFromInput, PopoverLayer, BackdropLayer, FieldPack, fieldNeed, fieldControl, fieldPackControlClass, type FieldType, relativeTime, SearchInput, ChoiceCombobox, ChoiceField, offersClarifier, noteKey } from "@cobblr/platform-web";
+import { RecordFormModal, NewFromTemplateButton, useLater, useImageSrc, EntityPhoto, useOverlayOpenFlag, useToast, colorSwatch, wantsSwatch, ColourInput, valueFromInput, PopoverLayer, BackdropLayer, FieldPack, fieldNeed, fieldControl, fieldPackControlClass, type FieldType, relativeTime, SearchInput, ChoiceCombobox, ChoiceField, offersClarifier, noteKey, WorkspaceLink } from "@cobblr/platform-web";
 // The scan inbox's DESKTOP card, and the pieces only it renders: the
 // collapsed strip (photo column, title, facts, filing pair, tool rail), the
 // expanded triage surface (photos beside intel, the confirm form, the AI
@@ -131,7 +131,6 @@ import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 /** Base-kind fallback for when the scan menu can't load — the menu
  *  (GET /modules/core-scan/menu) is the real source of truth and lists
  *  the workspace's ACTUAL tables ("Yarn"), not module names. */
@@ -1451,7 +1450,7 @@ export function InboxCard({
   const split = useMutation({
     mutationFn: () => api.splitScanItem(activeSlug, item.id),
     onSuccess: (r) => {
-      toast.success(`Split into ${countOf(r.children.length, "item")}`);
+      toast.success(`Split into ${r.children.length} items`);
       invalidateInbox();
     },
     onError: onErr,
@@ -2488,12 +2487,47 @@ export function InboxCard({
       </>
     );
   }
+  // Whatever other modules declared into a scan item: the card's body and
+  // the phone's item sheet show the same ones, so a receipt row says where
+  // its parcel is on either.
+  const contributedPanels = receiptGroupId ? (
+    <ContributedDetailPanels
+      target="core-scan:item"
+      // NOT the universal side-cars. An inbox row is not a record: its
+      // id belongs to the scan item, and filing it creates a DIFFERENT
+      // record with a different id. A conversation or a tag attached
+      // here is silently orphaned the moment somebody acts on the row,
+      // which is worse than not offering one.
+      //
+      // This slot was built for one named contributor (the receipt
+      // lines banner) and is gated on a receipt group for that reason.
+      universal={false}
+      ctx={{
+        slug: activeSlug,
+        entityId: item.id,
+        entityTitle: item.suggested_name ?? "this item",
+        hints: {
+          receipt_group_id: receiptGroupId,
+          // A line that came OFF this receipt sits in the inbox beside
+          // its siblings, so a panel counting them is describing the
+          // rows immediately above and below it. The panel that earns
+          // its place is the other case: a receipt attached to an item
+          // you already had, where the rest of the order is nowhere on
+          // screen. Say which case this is and let the panel decide.
+          siblings_visible: item.source_kind === "receipt" ? "yes" : "no",
+          // The order line this row came from, when the read recorded
+          // one: where its parcel is, before it is any record.
+          receipt_order_item_id: typeof item.suggested_metadata?.receipt_order_item_id === "string" ? item.suggested_metadata.receipt_order_item_id : undefined,
+        },
+      }}
+    />
+  ) : null;
   if (sheet) {
     const actions: ScanItemScreenAction[] = [];
     if (item.status === "pending") {
       if (item.image_file_id && !multiItem && toolSplit) actions.push({ ...toolSplit, tool: "split", label: "Split into items", icon: screenIcons.split, hint: "Several different things in one photo", busy: split.isPending, onClick: () => split.mutate() });
       if (item.image_file_id && toolReceipt) actions.push({ ...toolReceipt, tool: "receipt", label: "Read as a receipt", icon: screenIcons.receipt, hint: "This photo is a receipt: split into its lines", busy: asReceipt.isPending, onClick: () => asReceipt.mutate() });
-      if (combinedCount) actions.push({ label: SCAN_UNDO_ACTIONS.undoCombine, icon: screenIcons.undo, hint: `Put the ${countOf(combinedCount, "scan")} back as they were`, busy: uncombine.isPending, onClick: () => uncombine.mutate() });
+      if (combinedCount) actions.push({ label: SCAN_UNDO_ACTIONS.undoCombine, icon: screenIcons.undo, hint: `Put the ${combinedCount} scans back as they were`, busy: uncombine.isPending, onClick: () => uncombine.mutate() });
       if ((item.suggested_metadata as { split_from?: string } | null)?.split_from) actions.push({ label: SCAN_UNDO_ACTIONS.undoSplit, icon: screenIcons.undo, hint: "Put the group photo back; every piece goes to Recently deleted", busy: unsplit.isPending, onClick: () => unsplit.mutate() });
       if (hasLocations && toolBin) actions.push({ ...toolBin, tool: "bin", label: "Turn into a bin", hint: "This IS a container: make it a location you can scan into", onClick: () => setMakeBinOpen(true) });
       if (toolBox) actions.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "empty-box" ? "Not an empty box" : "Empty box", hint: BOX_STATE_EFFECT["empty-box"], busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "empty-box" ? null : "empty-box") });
@@ -2576,6 +2610,7 @@ export function InboxCard({
         actions={actions}
         slots={{
           nameIt: cantIdentify ? <NameItInline slug={activeSlug} itemId={item.id} /> : undefined,
+          panels: contributedPanels,
           tracked:
             item.status === "pending" ? (
               <>
@@ -2666,7 +2701,7 @@ export function InboxCard({
       more.push({ label: "Replay processing", hint: "Free: keeps the identification, re-applies routing and fields", busy: aiWorking, onClick: () => rerun.mutate({ noAi: true }) });
       if (item.image_file_id && !multiItem && toolSplit) more.push({ ...toolSplit, tool: "split", label: "Split into items", hint: "Several different things in one photo", busy: split.isPending, onClick: () => split.mutate() });
       if (item.image_file_id && toolReceipt) more.push({ ...toolReceipt, tool: "receipt", label: "Read as a receipt", hint: "This photo is a receipt: split into its lines", busy: asReceipt.isPending, onClick: () => asReceipt.mutate() });
-      if (combinedCount) more.push({ label: SCAN_UNDO_ACTIONS.undoCombine, hint: `Put the ${countOf(combinedCount, "scan")} back as they were`, busy: uncombine.isPending, onClick: () => uncombine.mutate() });
+      if (combinedCount) more.push({ label: SCAN_UNDO_ACTIONS.undoCombine, hint: `Put the ${combinedCount} scans back as they were`, busy: uncombine.isPending, onClick: () => uncombine.mutate() });
       if (splitFrom) more.push({ label: SCAN_UNDO_ACTIONS.undoSplit, hint: "Put the group photo back; every piece goes to Recently deleted", busy: unsplit.isPending, onClick: () => unsplit.mutate() });
       if (hasLocations && toolBin) more.push({ ...toolBin, tool: "bin", label: "Turn into a bin", hint: "This IS a container: make it a location you can scan into", onClick: () => setMakeBinOpen(true) });
       if (toolBox) more.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "empty-box" ? "Not an empty box" : "Empty box", hint: BOX_STATE_EFFECT["empty-box"], busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "empty-box" ? null : "empty-box") });
@@ -2935,9 +2970,9 @@ export function InboxCard({
                 {namelessSays.action === "set-up-ai" && (
                   <>
                     {" ("}
-                    <Link to={`/w/${activeSlug}/ai`} className="underline hover:text-content" onClick={(e) => e.stopPropagation()}>
+                    <WorkspaceLink slug={activeSlug} to={`/ai`} className="underline hover:text-content" onClick={(e) => e.stopPropagation()}>
                       {namelessSays.actionLabel}
-                    </Link>
+                    </WorkspaceLink>
                     {")"}
                   </>
                 )}
@@ -3109,7 +3144,7 @@ export function InboxCard({
               if (combinedCount && item.status === "pending")
                 segs.push(
                   <span className="text-accent">
-                    ⧉ {countOf(combinedCount, "scan")} combined
+                    ⧉ {combinedCount} scans combined
                     <button
                       type="button"
                       data-testid="undo-combine"
@@ -3337,35 +3372,7 @@ export function InboxCard({
               hint, which is the contributor's to interpret. Same seam that
               puts price history on a part page without inventory naming
               purchases — see docs/architecture/module-coupling-census.md. */}
-          {receiptGroupId && (
-            <ContributedDetailPanels
-              target="core-scan:item"
-              // NOT the universal side-cars. An inbox row is not a record: its
-              // id belongs to the scan item, and filing it creates a DIFFERENT
-              // record with a different id. A conversation or a tag attached
-              // here is silently orphaned the moment somebody acts on the row,
-              // which is worse than not offering one.
-              //
-              // This slot was built for one named contributor (the receipt
-              // lines banner) and is gated on a receipt group for that reason.
-              universal={false}
-              ctx={{
-                slug: activeSlug,
-                entityId: item.id,
-                entityTitle: item.suggested_name ?? "this item",
-                hints: {
-                  receipt_group_id: receiptGroupId,
-                  // A line that came OFF this receipt sits in the inbox beside
-                  // its siblings, so a panel counting them is describing the
-                  // rows immediately above and below it. The panel that earns
-                  // its place is the other case: a receipt attached to an item
-                  // you already had, where the rest of the order is nowhere on
-                  // screen. Say which case this is and let the panel decide.
-                  siblings_visible: item.source_kind === "receipt" ? "yes" : "no",
-                },
-              }}
-            />
-          )}
+          {contributedPanels}
           {cantIdentify && <NameItInline slug={activeSlug} itemId={item.id} guess={nameGuess} />}
           {/* One-tap correction: a barcode whose name looks wrong (always
               available, nudged for low-trust short codes). Renaming reports the

@@ -11,7 +11,7 @@ import { useEffect, useState } from "react";
 import { leadYours, rowPictures, scanFileUrl, yourPictures } from "../lib/rowPictures";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, Check, CheckCircle, Loader2, MapPin, Plus, Printer, ScanLine, Trash2 } from "lucide-react";
-import { useToast, EntityPhoto } from "@cobblr/platform-web";
+import { useToast, EntityPhoto, WorkspaceLink } from "@cobblr/platform-web";
 import { ApiError, api, type ScanInboxItem, type TrackedMatch } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useScanQuantity } from "../lib/scanQuantity";
@@ -22,7 +22,7 @@ import { useTrackedMatchList } from "../lib/useTrackedMatchList";
 import { EntityActionChip } from "../components/EntityActionChip";
 import { useAiStatus } from "./ScanPage";
 import { AiOffMissHint } from "./ScanInboxCard";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { filedIntoOf, needsScanReview, scanReviewQuestions, scanReviewReason, scanRowState, scanTrackedMatch, scanDeclinesRecord } from "@cobblr/platform-contract/scan-triage";
 import { NO_MATCH_ASK_FOR_PHOTO, PHOTO_CHECK_NOTE, classifiedCodeOf, photoCheckIsLive } from "@cobblr/platform-contract/scan-copy";
 import { itemEnriching } from "./scan-status";
@@ -530,12 +530,13 @@ export function ScanResultModal({
         {needsName && (
           <div data-testid="sheet-name-it" onClick={(e) => e.stopPropagation()}>
             <ScanNameItInline slug={activeSlug} itemId={item!.id} guess={nameGuess} onNamed={(row) => setItem(row)} />
-            <Link
-              to={`/w/${activeSlug}/scan${item!.scan_batch_id ? `?batch=${item!.scan_batch_id}` : ""}`}
+            <WorkspaceLink
+              slug={activeSlug}
+              to={`/scan${item!.scan_batch_id ? `?batch=${item!.scan_batch_id}` : ""}`}
               className="mt-1 inline-block text-[11px] text-muted underline decoration-dotted underline-offset-2"
             >
               Review it in the inbox
-            </Link>
+            </WorkspaceLink>
           </div>
         )}
 

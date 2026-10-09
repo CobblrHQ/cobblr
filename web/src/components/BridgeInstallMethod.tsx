@@ -91,7 +91,7 @@ export function BridgeInstallMethod({
               >
                 {pair.isPending ? "Making a code…" : "Get an install code"}
               </button>
-              <p className="text-[11px] text-faint">{method === "mac" ? "Native Mac bridge. Starts at login, without an administrator password." : method === "windows" ? "Windows x64 bridge. Starts when you sign in, without an administrator password." : method === "desktop" ? "Use Cobblr Desktop on this computer. Its bridge updates automatically." : "For Linux, macOS and Raspberry Pi (including 32-bit Pi OS and a Pi Zero)."}</p>
+              <p className="text-[11px] text-faint">{method === "mac" ? "Native Mac bridge. Starts at login, without an administrator password." : method === "windows" ? "Windows x64 or ARM64 bridge. Starts when you sign in, without an administrator password." : method === "desktop" ? "Use Cobblr Desktop on this computer. Its bridge updates automatically." : "For Linux x64 or ARM64, and Raspberry Pi OS on ARM64 or ARMv7."}</p>
             </div>
           ) : (
             <div className="space-y-1.5">
@@ -108,7 +108,7 @@ export function BridgeInstallMethod({
               </div>}
               {method === "desktop" ? <DesktopConnect code={pairing.code} /> : <pre data-testid="one-line-install" className="text-[11px] leading-relaxed bg-subtle dark:bg-slate-950 border border-line dark:border-slate-700 rounded p-2 overflow-x-auto whitespace-pre text-content dark:text-mortar-200">{oneLine}</pre>}
               <p className="text-[11px] text-faint">
-                {method === "desktop" ? "Connect this Desktop bridge to your workspace, then pair LightBurn below." : method === "windows" ? "It keeps this bridge's key on your computer and installs a startup task for your account. It downloads the native Windows x64 bridge and keeps its code up to date." : method === "mac" ? "It trades the code for this bridge's own key, which stays on your Mac, installs a native service that starts at login, and keeps its code up to date." : <>It trades the code for this bridge's own key, which stays on that box, installs it as a service that starts at boot, and keeps it up to date. Add <code>--system</code> to install it for the whole machine, or <code>--docker</code> to run it in Docker.</>}
+                {method === "desktop" ? "Connect this Desktop bridge to your workspace, then pair LightBurn below." : method === "windows" ? "It keeps this bridge's key on your computer and installs a startup task for your account. It downloads the native Windows x64 or ARM64 bridge and keeps its code up to date." : method === "mac" ? "It trades the code for this bridge's own key, which stays on your Mac, installs a native service that starts at login, and keeps its code up to date." : <>It trades the code for this bridge's own key, which stays on that box, installs it as a service that starts at boot, and keeps it up to date. Add <code>--system</code> to install it for the whole machine, or <code>--docker</code> for a network-only Linux bridge. USB machines need the native installer.</>}
               </p>
               <button type="button" onClick={() => pair.mutate()} className="text-[11px] text-accent hover:underline">
                 Make a new code

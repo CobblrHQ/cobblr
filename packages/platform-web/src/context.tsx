@@ -133,6 +133,11 @@ export function useViewerRole(): string | null {
   return useContext(Ctx)?.role ?? null;
 }
 
+/** The workspace the surface is drawn for, or null outside a provider. */
+export function useActiveWorkspaceSlug(): string | null {
+  return useContext(Ctx)?.orgSlug ?? null;
+}
+
 export function usePlatformWeb(): PlatformWebCtx {
   const v = useContext(Ctx);
   if (!v) throw new Error("usePlatformWeb called outside PlatformWebProvider");

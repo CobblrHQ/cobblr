@@ -6,7 +6,7 @@ import { CutterStation } from "../features/digifab/CutterStation";
 import { fabricationMachineName, fabricationBridgeName, fabricationFullName } from "../lib/fabrication-display";
 import { LaserDrawing } from "../features/digifab/LaserLayout";
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, Navigate, useParams } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { EntityPhoto, Modal, SearchInput, useImageSrc, usePageTitle, useRunAction } from "@cobblr/platform-web";
 import { MAIN_ID, SkipToContent } from "../components/a11y/shell-landmarks";
@@ -24,6 +24,9 @@ import { LaserMaterialForm } from "../features/digifab/laserMaterial";
 import { CncStation } from "../features/digifab/CncStation";
 import { ResinStation } from "../features/digifab/ResinStation";
 import { PrintStation } from "../features/digifab/PrintStation";
+import {BrowserLaserStationNote} from "../features/digifab/BrowserLaserOption";
+import {StationInstall} from "../features/digifab/StationInstall";
+import {keepStationScreenAwake} from "../lib/station-screen";
 
 const button = "inline-flex items-center justify-center min-h-12 rounded border border-line px-4 py-3 text-base disabled:opacity-50";
 const errorText = (e: unknown) => e instanceof ApiError ? e.message : String(e);
@@ -36,6 +39,7 @@ export function MachineStationPage() {
   if (q.error && !q.data) return <UnavailableMachineStation error={q.error} />;
   const screenKind = q.data?.screen_kind === undefined ? q.data?.kind : q.data.screen_kind;
   switch (screenKind === q.data?.kind ? screenKind : null) {
+    case "production-test": return <Navigate to={`/station/production/${connectionId}`} replace />;
     case "bench": return <BenchMachineStation slug={slug} machineId={q.data?.machine_id} />;
     case "laser": return <LaserMachineStationPage />;
     case "cnc": return <CncStation slug={slug} connectionId={connectionId} deviceId={deviceId} />;
@@ -116,14 +120,11 @@ function LaserMachineStationPage() {
 
   useEffect(() => { try { setCredential(JSON.parse(localStorage.getItem(storageKey) || "null")); } catch { setCredential(null); } setConfirmed(null); setReview(null); setPick(""); }, [storageKey]);
   useEffect(() => { setConfirmed(null); setReview(null); setSuggestion(undefined); setError(""); }, [job?.id, job?.status, JSON.stringify(material)]);
+  const keepAwake = busy || !!job && ["sent", "printing", "paused", "assigning", "awaiting-assignment"].includes(job.status);
   useEffect(() => {
-    let stopped = false;
-    let lock: WakeLockSentinel | undefined;
-    const acquire = async () => { if (document.visibilityState !== "visible" || !navigator.wakeLock) return; try { const next = await navigator.wakeLock.request("screen"); if (stopped) await next.release(); else lock = next; } catch { /* the tablet can deny staying awake */ } };
-    void acquire();
-    document.addEventListener("visibilitychange", acquire);
-    return () => { stopped = true; document.removeEventListener("visibilitychange", acquire); void lock?.release(); };
-  }, []);
+    if (keepAwake) return keepStationScreenAwake(document, navigator.wakeLock);
+    return undefined;
+  }, [keepAwake]);
 
   const run = async (work: () => Promise<void>) => {
     if (working.current) return;
@@ -167,6 +168,8 @@ function LaserMachineStationPage() {
   return <><SkipToContent /><main id={MAIN_ID} tabIndex={-1} className="min-h-screen bg-surface text-content p-4 sm:p-6 max-w-5xl mx-auto space-y-5" data-testid="machine-station">
     <GlobalScanWedge activeSlug={slug} />
     <header className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-2xl font-semibold">Laser station</h1><p className="text-muted break-all">{connection && device ? fabricationFullName(fabricationMachineName(connection, device), fabricationBridgeName(connection, bridges.data?.bridges ?? [])) : "Laser"}</p></div><details className="text-sm"><summary className="cursor-pointer min-h-11 flex items-center">Station settings</summary><div className="space-y-3 py-3"><Link to="/digifab" className="block">Exit to the fleet</Link><button className={button} onClick={() => void run(async () => { await navigator.clipboard.writeText(`${window.location.origin}/w/${slug}${stationPath}`); })}>Copy station link</button>{credential && <button className={button} disabled={busy} onClick={() => void run(async () => { await api.revokeDigifabStation(slug, credential.id); localStorage.removeItem(storageKey); setCredential(null); setReview(null); setConfirmed(null); await screens.refetch(); })}>Revoke this screen</button>}{screens.data?.items.filter(s => s.connection_id === connectionId && s.remote_device_id === deviceId && !s.revoked_at).map(s => <div key={s.id} className="flex flex-wrap gap-2 items-center"><span>{s.label} · {s.id.slice(0, 8)}</span><button className={button} disabled={busy} onClick={() => void run(async () => { await api.revokeDigifabStation(slug, s.id); if (credential?.id === s.id) { localStorage.removeItem(storageKey); setCredential(null); setReview(null); setConfirmed(null); } await screens.refetch(); })}>Revoke screen</button></div>)}</div></details></header>
+    <BrowserLaserStationNote connectionId={connectionId}/>
+    {credential && <StationInstall />}
     {(error || q.error) && <p role="alert" className="rounded border border-red-500 bg-red-50 dark:bg-red-950 p-4 break-words">{error || errorText(q.error)}</p>}
     {startNeedsAttention && !direct && <p role="alert" className="rounded border border-line p-4">LightBurn needs attention on its screen. Start was sent, but running has not been reported. Check the screen and machine before continuing.</p>}
     {direct && !review && <DirectLaserControls atStation slug={slug} connectionId={connectionId} deviceId={deviceId} status={job?.status} onAccepted={() => {setSetupEpoch(v=>v+1);void q.refetch();}} />}

@@ -9,7 +9,6 @@ import { FileUp, CheckCircle2, AlertTriangle } from "lucide-react";
 import { Modal, useToast } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 type Preview = Awaited<ReturnType<typeof api.scanImportPreview>>;
 type Summary = Awaited<ReturnType<typeof api.scanImport>>;
 
@@ -206,7 +205,7 @@ export function ScanImportModal({ slug, open, onClose, onImported }: {
                 onClick={() => void runImport()}
                 className="px-3 py-1.5 rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
               >
-                {busy ? "Importing…" : dryRun ? `Dry-run ${countOf(preview.count, "item")}` : `Import ${countOf(preview.count, "item")}`}
+                {busy ? "Importing…" : dryRun ? `Dry-run ${preview.count} items` : `Import ${preview.count} items`}
               </button>
             </div>
           </>

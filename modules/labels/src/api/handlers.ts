@@ -16,6 +16,12 @@ let registered = false;
 export function registerLabelsHandlers(): void {
   if (registered) return;
   registered = true;
+  platform().entities.registerLabelValuesProvider("labels.qr", async (orgId, kind, id) => {
+    const base = await platform().entities.baseKindOf(orgId, kind);
+    const meta = platform().db.meta as unknown as Kysely<{ core_labels_qr_tokens: { token: string; org_id: string; entity_kind: string; entity_id: string; mode: string; revoked_at: Date | null } }>;
+    const rows = await meta.selectFrom("core_labels_qr_tokens").select("token").where("org_id", "=", orgId).where("entity_kind", "in", [base, kind]).where("entity_id", "=", id).where("mode", "=", "navigate").where("revoked_at", "is", null).limit(1000).execute();
+    return rows.map(row => row.token);
+  });
 
   // labels:print — queue a label for any entity. Generic — no
   // knowledge of what "inventory:part" or "projects:task" is.

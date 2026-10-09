@@ -75,7 +75,19 @@ export interface MenuGroup {
 
 /** What a connection reported, by group key: "ws:<provider_id>" for the
  *  workspace's own, the credential id for a personal one. */
-export type ReportedModels = Record<string, { ok: true; models: string[] } | { ok: false; error: string; models?: string[] }>;
+export type ReportedModels = Record<
+  string,
+  | { ok: true; models: string[]; choices?: Array<{ id: string; label: string; short: string; latest?: { family: string; resolves: string } }>; fallback?: string }
+  | { ok: false; error: string; models?: string[] }
+>;
+
+/** A reported model's words: the connection's own entry when it gave one
+ *  ("Haiku · latest (5.5)", short "Haiku"), else the label rule below. */
+function reportedLabel(prov: MenuProvider | undefined, live: ReportedModels[string] | undefined, model: string): { label: string; short: string; note?: string } {
+  const choice = live?.ok ? live.choices?.find((c) => c.id === model) : undefined;
+  if (choice) return { label: choice.label, short: choice.short, ...(choice.latest ? { note: "moves to each new version" } : {}) };
+  return modelLabel(prov, model, { asReported: !!live });
+}
 
 export interface ChatModelMenu {
   groups: MenuGroup[];
@@ -137,7 +149,7 @@ export function chatModelMenu(args: {
     const menu = live ? (live.models ?? []) : prov.models.filter((m) => m !== "default");
     const models = menu.length ? menu : row.model ? [row.model] : [];
     for (const m of models) {
-      const { label, short, note } = modelLabel(prov, m, { asReported: !!live });
+      const { label, short, note } = reportedLabel(prov, live, m);
       ws.push({
         key: `ws:${row.provider_id}:${m}`,
         label,
@@ -163,7 +175,7 @@ export function chatModelMenu(args: {
     if (menu.length === 0 && !(live && !live.ok)) continue;
     const mine = c.ownerUserId === args.viewerUserId;
     const options: MenuOption[] = menu.map((m) => {
-      const { label, short, note } = modelLabel(prov, m, { asReported: !!live });
+      const { label, short, note } = reportedLabel(prov, live, m);
       return {
         key: `me:${c.credentialId}:${m}`,
         label,
@@ -201,6 +213,9 @@ export function chatModelMenu(args: {
   }
 
   const wd = args.workspaceDefault;
-  const dl = wd ? modelLabel(byId.get(wd.provider_id), wd.model) : null;
+  // A default the menu itself offers reads as the menu does ("Haiku · latest
+  // (5.5)"), not as its id.
+  const offered = wd ? all.find((o) => o.choice.model === wd.model) : undefined;
+  const dl = offered ? { label: offered.label, short: offered.short } : wd ? modelLabel(byId.get(wd.provider_id), wd.model) : null;
   return { groups, current, defaultLabel: dl?.label ?? null, defaultShort: dl?.short ?? "Default" };
 }

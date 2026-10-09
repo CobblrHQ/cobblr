@@ -1,0 +1,11 @@
+{
+  "_recorded": {
+    "what": "Which model Google's native generateContent says answered (modelVersion) when asked for each model, measured with a Google AI Studio key on 2026-10-09. The OpenAI-compatible endpoint echoes the requested id instead, so only modelVersion counts.",
+    "when": "2026-10-09",
+    "refresh": "Re-measure deliberately: POST https://generativelanguage.googleapis.com/v1beta/models/<model>:generateContent with x-goog-api-key and a one-token reply, and record modelVersion."
+  },
+  "served": [
+    { "requested": "gemini-3.5-flash", "modelVersion": "gemini-3.6-flash" },
+    { "requested": "gemini-3.5-flash-lite", "modelVersion": "gemini-3.5-flash-lite" }
+  ]
+}

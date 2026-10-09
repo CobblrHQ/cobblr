@@ -1,7 +1,6 @@
 [
   "modules/lists/src/ui/index.tsx::Add an item…",
   "modules/projects/src/ui/ProjectDetailPage.tsx::No tasks yet",
-  "modules/projects/src/ui/ProjectDetailPage.tsx::What is this project about?",
   "modules/projects/src/ui/ProjectDetailPage.tsx::new task…",
   "modules/sales/src/ui/index.tsx::Search a part, or type a free-text item…",
   "web/src/components/WhatToDoPanel.tsx::Add your first thing",

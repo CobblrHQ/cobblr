@@ -135,7 +135,6 @@ import { FiledRowView, FiledSummaryView } from "./ScanFiledRow";
 import { useFiledRows, withFiledRows } from "../lib/filedRows";
 import { type ScanTarget } from "./scanInboxShared";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
-import { countOf } from "@cobblr/platform-contract/plural";
 export type { ScanTarget } from "./scanInboxShared";
 
 interface ScanDrive {
@@ -909,7 +908,7 @@ export function ScanPage() {
               the combine was the longest thing on the card). What the tap
               does is on the button, beside it, and in full on hover. */}
           <span className="font-medium text-content dark:text-mortar-100">
-            Same {isUnique ? clusterNoun : "product"} {cluster.items.length === 2 ? "twice" : `${countOf(cluster.items.length, "time")}`}
+            Same {isUnique ? clusterNoun : "product"} {cluster.items.length === 2 ? "twice" : `${cluster.items.length} times`}
           </span>
           <span className="text-muted"> · {cluster.items.map((c) => displayName(c)).filter(Boolean).join(" · ")}</span>
         </div>
@@ -918,7 +917,7 @@ export function ScanPage() {
             type="button"
             disabled={combineMut.isPending}
             onClick={() => combineMut.mutate({ ids, ...(isUnique ? {} : { keepId: keep.id }) })}
-            title={`Combines these ${countOf(cluster.items.length, "pending row")} into one row in this inbox${isUnique ? " with all their details" : ` at ×${totalQty}`}. The other ${cluster.items.length > 2 ? "rows go" : "row goes"} to Recently deleted, where it can be restored. Nothing already filed changes.`}
+            title={`Combines these ${cluster.items.length} pending rows into one row in this inbox${isUnique ? " with all their details" : ` at ×${totalQty}`}. The other ${cluster.items.length > 2 ? "rows go" : "row goes"} to Recently deleted, where it can be restored. Nothing already filed changes.`}
             className="shrink-0 rounded bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50 min-h-9 sm:min-h-0"
           >
             {isUnique ? "Combine" : `Combine, ×${totalQty}`}
@@ -2797,7 +2796,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             overflow rather than vanishing. The chip itself is shared with the
             Purchases header - see ReceiptAddressChip. */}
         {receiptAddress && (
-          <ReceiptAddressChip address={receiptAddress} className="hidden sm:inline-flex" />
+          <ReceiptAddressChip address={receiptAddress} name={receiptAddrQ.data?.receipt_name ?? undefined} className="hidden sm:inline-flex" />
         )}
 
         {/* Everything that is real but rare: ScanInboxMenu.tsx. */}
@@ -2840,6 +2839,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
           onExport={() => setExportOpen(true)}
           onImport={() => setImportOpen(true)}
           receiptAddress={receiptAddress}
+          receiptName={receiptAddrQ.data?.receipt_name ?? undefined}
           onOrganizeUnplaced={() => setOrganizeUnplacedOpen(true)}
           scanDrive={scanDrive}
           photoRank={{ can: canSetPhotoRank, data: photoRank.data, pending: setPhotoRank.isPending, set: (v) => setPhotoRank.mutate(v) }}
@@ -4052,7 +4052,10 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                             if (e.key === "Enter" && !setTracking.isPending)
                               setTracking.mutate({ batchId: g.batchId!, tracking: trackingInput.trim() || null });
                           }}
-                          placeholder="tracking #"
+                          placeholder="tracking # or link"
+                          // The carrier's tracking link pasted whole works too:
+                          // the server reads the number out of it (#5351).
+                          title="The tracking number, or the tracking link from the store's email"
                           // Same growing-field reasoning as the order number: a
                           // tracking number is 12 to 22 characters and the whole
                           // point is checking the one you just typed.

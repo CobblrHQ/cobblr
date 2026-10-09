@@ -8,7 +8,7 @@ import { DISPOSITIONS, DISPOSITION_LABELS } from "@cobblr/platform-contract/disp
 
 export default defineModule({
   name: "assets",
-  version: "0.6.1",
+  version: "0.6.2",
   displayName: "Assets",
   description:
     "Keep track of the things you own one at a time: tools, appliances, collections, anything worth knowing about individually.",

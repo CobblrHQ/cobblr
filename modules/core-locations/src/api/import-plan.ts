@@ -1,4 +1,3 @@
-import { countOf } from "@cobblr/platform-contract/plural";
 // The plan an import follows: which row creates, which updates, and under
 // which parent, decided once and used by both the preview and the commit.
 //
@@ -155,7 +154,7 @@ export function planByName(rows: ImportRow[], existing: ExistingPlace[]): Import
         if (count > 1) {
           if (rowsHere.some((j) => !drafts[j]!.path && !drafts[j]!.error)) return; // wait until their paths are known
           const options = [...rowsHere.map(describe), ...existingHere.map((id) => existingPath(id).join(PATH_SEPARATOR))];
-          d.error = `${countOf(count, "place")} are called "${d.parentSegs[0]}": write the parent as its path, one of ${options.map((o) => `"${o}"`).join(", ")}`;
+          d.error = `${count} places are called "${d.parentSegs[0]}": write the parent as its path, one of ${options.map((o) => `"${o}"`).join(", ")}`;
           progress = true;
           return;
         }

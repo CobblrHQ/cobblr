@@ -1,4 +1,4 @@
-import { platform, type ResolvedEntity, type TidyCandidate, type TidyFinderContext, countOf } from "@cobblr/platform-contract";
+import { platform, type ResolvedEntity, type TidyCandidate, type TidyFinderContext } from "@cobblr/platform-contract";
 import { scanBetterTable } from "@cobblr/platform-contract/scan-triage";
 import { assembleMergedMenu, heuristicMatch, type PerceivedItem, type ScanMenuEntry } from "./matchmaker.js";
 import { destinationTables } from "./destination.js";
@@ -62,7 +62,7 @@ async function bestHomes(ctx: TidyFinderContext): Promise<TidyCandidate[]> {
   }
   return [
     ...[...groups].map(([key, g]): TidyCandidate => ({ id: `move:${key}`, kind: "better-home", records: g.records.map(ref), why: `Move ${g.records.length} ${g.records.length === 1 ? "thing" : "things"} to ${g.to.label}.`, priority: 25, action: { route: `/instances/${g.to.instance ?? g.to.module}`, steps: [...g.sources].map(([from, rows]) => ({ action_id: "platform:move-records", args: { ids: rows.map((r) => r.id), from, to: g.to.instance ?? g.to.module } })) } })),
-    ...[...bundles].filter(([, g]) => g.records.length >= 5).map(([id, g]): TidyCandidate => ({ id: `bundle:${id}`, kind: "fitting-bundle", records: g.records.map(ref), why: `Consider ${g.to.label} for ${countOf(g.records.length, "thing")} you keep.`, priority: 35, action: { route: "/bundles", bundle_id: id } })),
+    ...[...bundles].filter(([, g]) => g.records.length >= 5).map(([id, g]): TidyCandidate => ({ id: `bundle:${id}`, kind: "fitting-bundle", records: g.records.map(ref), why: `Consider ${g.to.label} for ${g.records.length} things you keep.`, priority: 35, action: { route: "/bundles", bundle_id: id } })),
   ];
 }
 
@@ -71,6 +71,6 @@ export function registerScanTidyFinders(): void {
   platform().tidy.registerFinder({ id: "core-scan.unfiled", module: "core-scan", async find(ctx) {
     const db = await platform().tenants.getDb(ctx.orgId) as Kysely<CoreScanDB>;
     const rows = await db.selectFrom("core_scan_inbox_items").select(["id", "suggested_name"]).where("status", "=", "pending").where("created_at", "<", new Date(ctx.now.getTime() - 3 * 86400000)).execute();
-    return rows.length ? [{ id: "unfiled-scans", kind: "unfiled-scan", records: rows.map((r) => ({ kind: "core-scan:inbox-item", id: r.id, name: r.suggested_name ?? "A capture" })), why: `File ${countOf(rows.length, "capture")} waiting more than three days.`, priority: 30, action: { route: "/scan" } }] : [];
+    return rows.length ? [{ id: "unfiled-scans", kind: "unfiled-scan", records: rows.map((r) => ({ kind: "core-scan:inbox-item", id: r.id, name: r.suggested_name ?? "A capture" })), why: `File ${rows.length} captures waiting more than three days.`, priority: 30, action: { route: "/scan" } }] : [];
   } });
 }

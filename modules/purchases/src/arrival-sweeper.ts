@@ -28,6 +28,17 @@ const MAX_ASKS = 2;
 /** How long after its date an unanswered order is still a live QUESTION rather
  *  than history. Past this and a first contact stays quiet. */
 const STALE_AFTER_DAYS = 30;
+/** An online order with no promised day and no tracking number is asked
+ *  about once this long after it was recorded. No date is invented for it:
+ *  an invented day reads as a promise on the card, the calendar and in "late"
+ *  alerts. A real date (the store's, the carrier's) replaces this rule. */
+const UNDATED_ASK_AFTER_DAYS = 7;
+
+/** On its way with no day and no number, and recorded a week ago or more. */
+export function undatedAndDue(r: Pick<DueRow, "expected_arrival" | "tracking_number" | "shipment_state" | "created_at">, now: Date): boolean {
+  if (r.expected_arrival !== null || r.tracking_number?.trim() || r.shipment_state || !r.created_at) return false;
+  return now.getTime() - new Date(r.created_at).getTime() >= UNDATED_ASK_AFTER_DAYS * 86_400_000;
+}
 
 export function startArrivalSweeper(): void {
   // The walk is the kernel's (platform().sweeps, #3036): this registers the
@@ -151,7 +162,7 @@ export function decideAsk(state: AskState, now: Date): AskDecision {
 export function askMessage(
   order: { vendor: string | null; orderNumber: string | null },
   decision: AskDecision,
-  carrier?: { state?: string | null; detail?: string | null } | null,
+  carrier?: { state?: string | null; detail?: string | null; undated?: boolean } | null,
 ): string {
   const what = order.vendor ?? (order.orderNumber ? `order ${order.orderNumber}` : "Your order");
 
@@ -168,6 +179,9 @@ export function askMessage(
     return `${what} was out for delivery today. Did it turn up?`;
   }
 
+  if (carrier?.undated) {
+    return decision === "nudge" ? `${what}: still not marked arrived. Has it arrived?` : `${what} was ordered a week ago. Has it arrived?`;
+  }
   return decision === "nudge"
     ? `${what} — still not marked arrived. Did it turn up?`
     : `${what} was due today. Did it turn up?`;
@@ -187,6 +201,8 @@ export interface DueRow {
   prior_asks: number | null;
   prior_last_asked: Date | null;
   prior_carrier_state: string | null;
+  /** When the order was recorded: an undated one is asked about a week on. */
+  created_at?: Date | null;
 }
 
 /** Rebuild the ask history a decision needs from one swept row. Pure, so the
@@ -272,6 +288,7 @@ async function visitWorkspace(
                  o.shipment_state          as shipment_state,
                  o.shipment_checked_at     as shipment_checked_at,
                  o.eta_source              as eta_source,
+                 o.created_at              as created_at,
                  a.expected_arrival::text  as prior_expected,
                  a.asks                    as prior_asks,
                  a.last_asked_at           as prior_last_asked,
@@ -287,6 +304,12 @@ async function visitWorkspace(
                -- or followable: worth checking before the date, which is the
                -- entire reason to have a tracking number
                or nullif(btrim(coalesce(o.tracking_number, '')), '') is not null
+               -- or on its way with no day and no number (an online order): asked
+               -- once, a week after it was recorded, never with an invented date
+               or (o.status = 'in-transit'
+                   and o.expected_arrival is null
+                   and o.created_at <= ${new Date(now.getTime() - UNDATED_ASK_AFTER_DAYS * 86_400_000)}
+                   and o.created_at > ${new Date(now.getTime() - STALE_AFTER_DAYS * 86_400_000)})
              )
         `.compile(tdb);
 
@@ -401,7 +424,8 @@ async function visitWorkspace(
             (!opts.orderId || r.id === opts.orderId) &&
             (r.shipment_state === "delivered" ||
               r.shipment_state === "out_for_delivery" ||
-              (r.expected_arrival !== null && r.expected_arrival <= today)),
+              (r.expected_arrival !== null && r.expected_arrival <= today) ||
+              undatedAndDue(r, now)),
         );
         due += askable.length;
 
@@ -422,6 +446,7 @@ async function visitWorkspace(
           const message = askMessage({ vendor: row.vendor, orderNumber: row.order_number }, decision, {
             state: row.shipment_state,
             detail: null,
+            undated: row.expected_arrival === null && !row.shipment_state,
           });
           // Stamp BEFORE dispatching. The old order ("stamp after, repeating
           // is the harmless direction") had the asymmetry backwards: for a
@@ -486,7 +511,9 @@ async function visitWorkspace(
                 card: {
                   heading: askedAbout
                     ? `An order was due ${askedAbout}`
-                    : "An order should have arrived",
+                    : row.shipment_state
+                      ? "An order should have arrived"
+                      : "Has this order arrived?",
                   body: message,
                   ...(row.vendor ? { context: row.vendor } : {}),
                 },

@@ -19,7 +19,6 @@ import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { meta } from "../db/meta.js";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 export function finalExportDays(env: NodeJS.ProcessEnv = process.env): number {
   const d = Number(env.COBBLR_WORKSPACE_FINAL_EXPORT_DAYS);
   return Number.isFinite(d) && d >= 1 ? d : 30;
@@ -74,7 +73,7 @@ export async function keepFinalExport(orgId: string, buffer: Buffer, filename: s
   const written = (await stat(path)).size;
   if (written !== buffer.length) {
     await rm(path, { force: true });
-    throw new Error(`final backup of ${org.slug} wrote ${written} of ${countOf(buffer.length, "byte")}`);
+    throw new Error(`final backup of ${org.slug} wrote ${written} of ${buffer.length} bytes`);
   }
   await meta
     .insertInto("workspace_final_exports")

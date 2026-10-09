@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MutationError, QueryError } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 
-import { countOf } from "@cobblr/platform-contract/plural";
 export function FilamentCatalog() {
   const { api } = useInventory();
   const qc = useQueryClient();
@@ -20,7 +19,7 @@ export function FilamentCatalog() {
       <button className="rounded bg-cobble-600 text-white px-3 py-2 text-sm" disabled={q.isFetching}>Search catalog</button>
     </form>
     {q.isError && <QueryError what="filament catalog" onRetry={() => { void q.refetch(); }} />}
-    {q.data && <p className="text-xs text-muted">{q.data.total ? `${countOf(q.data.total, "match")}. Showing ${q.data.items.length}.` : "No matching filaments."}</p>}
+    {q.data && <p className="text-xs text-muted">{q.data.total ? `${q.data.total} matches. Showing ${q.data.items.length}.` : "No matching filaments."}</p>}
     <ul className="space-y-2">{q.data?.items.map((r) => <li key={r.id} className="flex flex-wrap items-center gap-2 text-sm">
       <span className="flex-1 min-w-0">{r.manufacturer} {r.name} · {r.material}</span>
       <button type="button" disabled={add.isPending} onClick={() => add.mutate(r.id)} className="rounded border border-line px-2 py-1 text-sm">Import type</button>

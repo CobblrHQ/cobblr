@@ -169,6 +169,9 @@ export interface PartListItem extends HomeBoxFields {
   holdings?: HoldingRow[];
   /** The card's top line over those rows. */
   rollup?: CardRollup;
+  /** Its stock by shape (sheet, roll, spool, liquid, wearing tool, count).
+   *  Absent on an older response. */
+  stock?: StockView;
 }
 
 /** One place a thing is kept, as the card's row shows it. */

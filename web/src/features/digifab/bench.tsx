@@ -1,8 +1,7 @@
 import { instrumentReadingText } from "@cobblr/platform-contract/instrument-reading";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
-import { SearchInput, useToast, useConfirm, useImageSrc } from "@cobblr/platform-web";
+import { SearchInput, useToast, useConfirm, useImageSrc, WorkspaceLink } from "@cobblr/platform-web";
 import { api, type BenchReport, type BenchOperation, type BenchCapture, type PlatformResolvedEntity } from "../../lib/api";
 import { useActiveOrg } from "../../auth/ActiveOrgContext";
 import type { EntityDetailPanelCtx } from "../../panels/types";
@@ -86,7 +85,7 @@ export function BenchInstrument({slug,machineId}:{slug:string;machineId:string})
    {instrument.profile==="sigrok"?<><button type="button" className="min-h-11 rounded-md bg-accent px-3 text-sm text-white disabled:opacity-50" disabled={busy||!record} onClick={()=>capture()}>{busy?"Waiting for analyser…":"Start capture"}</button><label className="block text-sm">Import .sr<input className="block w-full min-h-11" type="file" accept=".sr" disabled={busy||!record} onChange={e=>{const file=e.target.files?.[0];if(file)void importCapture(file);e.target.value="";}}/></label></>:<button type="button" className="min-h-11 rounded-md bg-accent px-3 text-sm text-white disabled:opacity-50" disabled={busy||!record} onClick={()=>void operate("log")}>{busy?"Waiting for instrument…":"Log fresh reading"}</button>}
   </div>}
   <h4 className="text-sm font-medium">Saved readings ({page.data.total})</h4>
-  <ul className="space-y-3">{page.data.items.map(row=><li key={row.id} className="border-t border-line pt-2 space-y-1"><p className="text-xs text-muted">{row.report.at}</p><Measurements report={row.report}/><RecordLink slug={slug} kind={row.record_kind} id={row.record_id}/>{row.capture_file_id&&<CaptureDownload slug={slug} id={row.capture_file_id}/>} {row.screenshot_file_id&&<Link className="text-sm text-accent" to={`/w/${slug}/files/${row.screenshot_file_id}`}>Scope screenshot</Link>}</li>)}</ul>
+  <ul className="space-y-3">{page.data.items.map(row=><li key={row.id} className="border-t border-line pt-2 space-y-1"><p className="text-xs text-muted">{row.report.at}</p><Measurements report={row.report}/><RecordLink slug={slug} kind={row.record_kind} id={row.record_id}/>{row.capture_file_id&&<CaptureDownload slug={slug} id={row.capture_file_id}/>} {row.screenshot_file_id&&<WorkspaceLink className="text-sm text-accent" slug={slug} to={`/files/${row.screenshot_file_id}`}>Scope screenshot</WorkspaceLink>}</li>)}</ul>
   <div className="flex gap-2"><button type="button" className="min-h-11 rounded-md border border-line px-3 text-sm text-content hover:bg-subtle disabled:opacity-50" disabled={!offset} onClick={()=>setOffset(Math.max(0,offset-20))}>Previous readings</button><button type="button" className="min-h-11 rounded-md border border-line px-3 text-sm text-content hover:bg-subtle disabled:opacity-50" disabled={offset+page.data.items.length>=page.data.total} onClick={()=>setOffset(offset+20)}>More readings</button></div>
  </section>;
 }
@@ -94,7 +93,7 @@ function Measurements({report}:{report:BenchReport}){return <><dl className="spa
 function RecordLink({slug,kind,id}:{slug:string;kind:string;id:string}){
  const record=useQuery({queryKey:["entity",slug,kind,id],queryFn:()=>api.lookupEntity(slug,kind,id)});
  if(!record.data)return <span className="text-xs text-muted">Record unavailable</span>;
- return <Link className="text-sm text-accent break-words" to={`/w/${slug}${record.data.detailUrl}`}>{record.data.title}</Link>;
+ return <WorkspaceLink className="text-sm text-accent break-words" slug={slug} to={`${record.data.detailUrl}`}>{record.data.title}</WorkspaceLink>;
 }
 
 function CaptureDownload({slug,id}:{slug:string;id:string}){const url=useImageSrc(api.fileRawUrl(slug,id,"original"));return <div><a className="text-sm text-accent" href={url || undefined} download="logic-capture.sr">Download .sr</a><p className="text-xs text-muted">Open the downloaded .sr in PulseView on your desktop.</p></div>;}

@@ -40,6 +40,9 @@ export interface ReceiptOrderInput {
   currency?: string | null;
   groupId: string;
   sourceFileId: string | null;
+  /** An online order (an order confirmation, or shipping charged): filed as
+   *  on its way rather than arrived (fileReceiptAs). */
+  ships?: boolean;
 }
 
 /** Find-or-create the vendor RECORD, so an order points at a managed vendor
@@ -94,6 +97,7 @@ export async function tryCreateReceiptOrder(input: ReceiptOrderInput): Promise<{
           input.knownShipment,
           input.expectedArrival ?? null,
           arrivedEverywhere(new Date()),
+          input.ships === true,
         ),
         expected_arrival: input.expectedArrival ?? undefined,
         total_cost: input.total ?? undefined,

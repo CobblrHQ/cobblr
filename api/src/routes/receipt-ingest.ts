@@ -25,9 +25,12 @@ import { landedSomething } from "../platform/inbound-dedupe.js";
 import { notifyAccount } from "../platform/notifications.js";
 import { absoluteAppUrl } from "../platform/public-url.js";
 import { planBodyCapture, planEmptyRead } from "../platform/receipt-body.js";
-import { classifyOrderNotice, classifyReturnEmail, classifyShipmentEmail, isAutomatedStoreSender, isForwardingVerification, trackingAddedReply } from "../platform/shipment-email.js";
+import { classifyOrderNotice, classifyReturnEmail, classifyShipmentEmail, isAutomatedStoreSender, isForwardingVerification, isOrderConfirmation, trackingAddedReply } from "../platform/shipment-email.js";
 import { outcomeStatus } from "../platform/inbound-outcome.js";
-import { bestReceiptBody, receiptReplyHeaders } from "../platform/inbound-email-body.js";
+import { bestReceiptBody, isReplyToCobblr, receiptReplyHeaders } from "../platform/inbound-email-body.js";
+import { ownAddressNameFor } from "../platform/own-address.js";
+import { sendAuthEmail } from "../platform/hosted-seams.js";
+import { namedAddress } from "@cobblr/platform-contract/address-name";
 import {
   extractReceiptToken,
   mintReceiptAddress,
@@ -35,6 +38,7 @@ import {
   verifyReceiptToken,
 } from "../platform/receipt-email.js";
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
+import { findOrderPageLink, withoutSignInLinks } from "@cobblr/platform-contract/order-page-link";
 
 const INTERNAL_API = selfOrigin();
 
@@ -103,10 +107,24 @@ export interface ReceiptEmailInput {
 export async function ingestReceiptEmail(
   input: ReceiptEmailInput,
 ): Promise<{ status: number; body: Record<string, unknown>; orgId?: string; userId?: string }> {
-  const { token, to, from_email, text, html, subject, message_id, attachments } = input;
+  const { token, to, from_email, subject, message_id, attachments } = input;
+  // A store's "View order" link signs the buyer in (#5461). It is taken out
+  // here, before the body is filed, parsed or shown to a model, and goes only
+  // to Purchases, sealed, once the workspace is known.
+  const orderPage = findOrderPageLink(input.html, from_email);
+  const text = input.text == null ? input.text : withoutSignInLinks(input.text, orderPage);
+  const html = input.html == null ? input.html : withoutSignInLinks(input.html, orderPage);
   // A forwarded store receipt often has its content in html (or a full,
   // unstripped plain body). Pick whichever carries more text for body capture.
   const bodyText = bestReceiptBody(text, html);
+
+  // The receipts flow writes FROM this address now (#5462), so a reply to one
+  // of its emails, or an out-of-office answering one, arrives here. It is not
+  // a receipt: filing it would make a junk inbox item, and answering it could
+  // start an out-of-office loop.
+  if (isReplyToCobblr({ subject, text, attachments })) {
+    return { status: 200, body: { ignored: true, reason: "reply-to-cobblr" } };
+  }
 
   // Resolve the target (user, workspace).
   let userId: string | null = null;
@@ -224,6 +242,9 @@ export async function ingestReceiptEmail(
     });
 
   const results: Array<Record<string, unknown>> = [];
+  // An order confirmation is an online order: its order is on its way, not
+  // in hand, even before any shipping notice (#5351).
+  const orderConfirmation = isOrderConfirmation((subject ?? "").replace(/^(?:fwd?|fw|re):\s*/i, "").trim());
   // parsedCount = real receipt LINE ITEMS (attachments + body parse). noteCreated
   // = the never-vanish single-note fallback fired (the receipt couldn't be parsed
   // into lines — e.g. no AI). Kept apart so the reply doesn't call a whole receipt
@@ -252,7 +273,7 @@ export async function ingestReceiptEmail(
         results.push({ filename: a.filename ?? null, error: "store_failed" });
         continue;
       }
-      const r = await post(`/modules/core-scan/scan/receipt`, { file_id: written.fileId, origin: "email", ...(from_email ? { from: from_email } : {}) });
+      const r = await post(`/modules/core-scan/scan/receipt`, { file_id: written.fileId, origin: "email", ...(from_email ? { from: from_email } : {}), ...(orderConfirmation ? { order_confirmation: true } : {}) });
       const body = (await r.json().catch(() => ({}))) as {
         receipt?: { item_count?: number; method?: string; vendor?: string | null };
         duplicate?: boolean;
@@ -355,7 +376,7 @@ export async function ingestReceiptEmail(
         mimeType: "text/plain",
       });
       if (written) {
-        const r = await post(`/modules/core-scan/scan/receipt`, { file_id: written.fileId, origin: "email", ...(from_email ? { from: from_email } : {}) });
+        const r = await post(`/modules/core-scan/scan/receipt`, { file_id: written.fileId, origin: "email", ...(from_email ? { from: from_email } : {}), ...(orderConfirmation ? { order_confirmation: true } : {}) });
         const rb = (await r.json().catch(() => ({}))) as {
           receipt?: { item_count?: number };
           duplicate?: boolean;
@@ -425,12 +446,23 @@ export async function ingestReceiptEmail(
     }
   }
 
+  // The store's own order page, when its email carried one: kept sealed on
+  // the order so its lines' tracking keeps itself current (#5461). The
+  // order may not exist yet; Purchases holds the link on the order number.
+  if (orderPage) {
+    try {
+      const r = await post(`/modules/purchases/order-pages`, { link: orderPage.url, order_number: orderNotice?.orderRef ?? /#\s?([A-Z0-9][A-Z0-9-]{2,})\b/i.exec(subject ?? "")?.[1] ?? null });
+      results.push({ source: "order-page", ok: r.ok, store: orderPage.host });
+    } catch (err) {
+      results.push({ source: "order-page", error: "exception", message: (err as Error).name });
+    }
+  }
+
   // 3. Reply to the sender about THEIR email — BRIEF, and honest about what
   //    actually happened. The reply is a one-way, threaded notification built by
-  //    receiptReplyHeaders: FROM a no-reply address, NO Reply-To (ingest is by
-  //    FORWARDING a receipt to the receipts address, never by replying here — a
-  //    Reply-To once meant a "what is this?" reply got ingested as junk; see that
-  //    helper). Three cases, so a whole receipt saved as ONE note is never
+  //    receiptReplyHeaders: FROM the person's own receipts address, named
+  //    "Cobblr Receipts" so Gmail learns the name (#5462), NO Reply-To; a reply
+  //    to it is dropped above by isReplyToCobblr, never filed as junk. Three cases, so a whole receipt saved as ONE note is never
   //    miscounted as "1 item":
   //      parsedCount > 0 → the accurate line-item count
   //      duplicate       → already imported (same vendor + order #); offer
@@ -441,7 +473,7 @@ export async function ingestReceiptEmail(
   //    raw sender, so no backscatter.
   const subj = (subject ?? "").trim();
   const reSubject = (base: string) => (subj ? `Re: ${subj}` : base);
-  const replyHeaders = receiptReplyHeaders(mintReceiptAddress(userId, orgId), message_id);
+  const replyHeaders = receiptReplyHeaders(mintReceiptAddress(userId, orgId), message_id, await ownAddressNameFor(userId, orgId, "receipts"));
   // A message READ from the person's own mailbox was never sent to us, so
   // there is nobody to answer: "we could not find a receipt in your email"
   // would be a reply to a store. What landed is still worth the bell (a
@@ -610,7 +642,7 @@ receiptInboundRouter.post("/receipt-ingest/email", async (req, res, next) => {
 
 export const receiptAddressRouter = Router({ mergeParams: true });
 
-receiptAddressRouter.get("/:slug/receipt-address", requireAuth, withTenant, (req, res) => {
+receiptAddressRouter.get("/:slug/receipt-address", requireAuth, withTenant, async (req, res) => {
   const userId = (req as unknown as { session?: { id: string } }).session?.id;
   const orgId = (req as unknown as { tenant?: { org: { id: string } } }).tenant?.org.id;
   if (!userId || !orgId) {
@@ -618,5 +650,72 @@ receiptAddressRouter.get("/:slug/receipt-address", requireAuth, withTenant, (req
     return;
   }
   const address = mintReceiptAddress(userId, orgId);
-  res.json({ configured: receiptEmailConfigured(), address, order_address: address?.replace(/^receipts\+/, "orders+") ?? null });
+  // The names these addresses send as (#5462), so the card's "Add to
+  // contacts" and the person's mail client agree on what to call them.
+  const [receipt_name, order_name] = await Promise.all([ownAddressNameFor(userId, orgId, "receipts"), ownAddressNameFor(userId, orgId, "orders")]);
+  res.json({ configured: receiptEmailConfigured(), address, order_address: address?.replace(/^receipts\+/, "orders+") ?? null, receipt_name, order_name });
 });
+
+const EmailMeBody = z.object({ which: z.enum(["receipts", "orders"]).default("receipts") });
+
+// UI-SCREEN: /scan
+// AI-REACH: exempt — it mails the person their own address, from that address, so their mail client learns its name; the assistant can already say the address (GET receipt-address), and mailing someone is their own press.
+receiptAddressRouter.post("/:slug/receipt-address/email-me", requireAuth, withTenant, async (req, res, next) => {
+  // ROLE: any member (it mails the caller their own address, from it; nothing in the workspace changes)
+  try {
+    const userId = (req as unknown as { session?: { id: string } }).session?.id;
+    const orgId = (req as unknown as { tenant?: { org: { id: string; name?: string } } }).tenant?.org.id;
+    if (!userId || !orgId) {
+      res.status(401).json({ error: { code: "no_auth", message: "Auth required." } });
+      return;
+    }
+    const parsed = EmailMeBody.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "bad_body", message: "which is receipts or orders." } });
+      return;
+    }
+    const receipts = mintReceiptAddress(userId, orgId);
+    if (!receipts) {
+      res.status(409).json({ error: { code: "not_configured", message: "This Cobblr has no email address set up for receipts." } });
+      return;
+    }
+    const which = parsed.data.which;
+    const address = which === "orders" ? receipts.replace(/^receipts\+/, "orders+") : receipts;
+    const name = await ownAddressNameFor(userId, orgId, which);
+    const user = await meta.selectFrom("users").select("email").where("id", "=", userId).executeTakeFirst();
+    if (!user?.email) {
+      res.status(409).json({ error: { code: "no_email", message: "Your account has no email address to send it to." } });
+      return;
+    }
+    const text = which === "orders"
+      ? `This is your ${name} address: ${address}\n\nForward the emails your customers send with an order here, and each becomes a draft order for you to check. Save this sender as a contact, and typing "Cobblr" in your To field finds it.`
+      : `This is your ${name} address: ${address}\n\nForward receipts and order emails here, and their lines become items in Cobblr. Save this sender as a contact, and typing "Cobblr" in your To field finds it.`;
+    const sent = await sendAuthEmail({ to: user.email, subject: `Your ${name} address`, text, kind: "notification", from: namedAddress(name, address) });
+    if (!sent) {
+      res.status(503).json({ error: { code: "not_sent", message: "This Cobblr could not send email just now. Copy the address instead." } });
+      return;
+    }
+    res.json({ sent: true, to: user.email, name });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Hand a store's order page link to Purchases for one person's workspace,
+ *  as that person, the way a live order email does (#5461). Purchases seals it
+ *  and attaches it to the order with that number. The answer says whether it
+ *  landed, and whether trying again could help; it never echoes the link. */
+export async function handOrderPageLink(input: { orgId: string; userId: string; link: string; orderNumber: string | null }): Promise<{ ok: boolean; retry: boolean }> {
+  const org = await meta.selectFrom("orgs").select("slug").where("id", "=", input.orgId).executeTakeFirst();
+  if (!org) return { ok: false, retry: false };
+  try {
+    const r = await apiFetch(`${INTERNAL_API}/api/v1/orgs/${org.slug}/modules/purchases/order-pages`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${await signSession(input.userId)}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ link: input.link, order_number: input.orderNumber }),
+    });
+    return { ok: r.ok, retry: r.status >= 500 };
+  } catch {
+    return { ok: false, retry: true };
+  }
+}

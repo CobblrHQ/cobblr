@@ -16,6 +16,7 @@ import { nothingToFilter, offeredFilters, type ListFilter } from "./list-filters
 import { AddToListButton } from "./AddToListButton";
 import { QtyStepper } from "./QtyStepper";
 import { availableOnHand } from "../stock-derived";
+import { listStockReading } from "../stock-shapes";
 import { HoldingRows, RollupLine } from "./HoldingRows";
 import { CombineSuggestionsBanner } from "./CombineSuggestions";
 import { openUnitsLabel } from "./consumption/perUnit";
@@ -32,6 +33,7 @@ import type { PartListItem, InvFieldDef } from "./api";
 import { countOf, viewQuery } from "@cobblr/platform-contract";
 import { strayRecords } from "@cobblr/platform-contract/instance-for-category";
 import { withArticle } from "@cobblr/platform-contract/plural";
+import { PART_FIELD_LABELS } from "../part-field-labels";
 
 /** One of this module's lists, as `GET /instances?module=inventory` describes it. */
 interface SiblingList {
@@ -58,7 +60,7 @@ export function PartsListPage() {
   // real product title either lost its tail to an ellipsis or pushed the last
   // column off the edge, while a wide monitor kept 900px of margin either side.
   usePageWidth("wide");
-  const { api, orgSlug, getToken, entityKind, itemNoun, itemNounPlural, basePath, instance, connectorImport } = useInventory();
+  const { api, orgSlug, getToken, entityKind, itemNoun, itemNounPlural, nounWords, basePath, instance, connectorImport } = useInventory();
   const { appMode } = usePlatformWeb();
   const qc = useQueryClient();
   // /inventory/parts/:id keeps this list mounted and opens the detail
@@ -380,7 +382,7 @@ export function PartsListPage() {
   const allChecked = partItems.length > 0 && partItems.every((p) => selected.has(p.id));
   async function bulkDelete() {
     const ok = await confirm({
-      title: `Delete ${selected.size} part${selected.size === 1 ? "" : "s"}?`,
+      title: `Delete ${countOf(selected.size, nounWords)}?`,
       message: "This removes them from the workspace permanently.",
       confirmLabel: "Delete",
       destructive: true,
@@ -390,7 +392,7 @@ export function PartsListPage() {
       for (const id of Array.from(selected)) {
         await api.deletePart(id);
       }
-      toast.success(`Deleted ${selected.size} part${selected.size === 1 ? "" : "s"}`);
+      toast.success(`Deleted ${countOf(selected.size, nounWords)}`);
       setSelected(new Set());
       void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
     } catch (err) {
@@ -413,7 +415,7 @@ export function PartsListPage() {
         const desc =
           assetId != null
             ? `#${String(assetId).padStart(3, "0")} ${p?.name ?? ""}`.trim()
-            : (p?.name ?? "Part");
+            : (p?.name ?? itemNoun.charAt(0).toUpperCase() + itemNoun.slice(1));
         try {
           const { scan_url } = await api.mintQrToken({
             entity_kind: "inventory:part",
@@ -472,7 +474,7 @@ export function PartsListPage() {
       }
     }
     noteWorkspaceWrite(`/api/v1/orgs/${orgSlug}/modules/core-tags/attachments`);
-    toast.success(`Tagged ${selected.size} part${selected.size === 1 ? "" : "s"}`);
+    toast.success(`Tagged ${countOf(selected.size, nounWords)}`);
     setSelected(new Set());
     void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
   }
@@ -1225,9 +1227,9 @@ function PartsTable({
             {customCols.map((c) => (
               <Th key={c.id}>{c.display_label}</Th>
             ))}
-            {showQty && <Th className="text-right">Qty</Th>}
+            {showQty && <Th className="text-right">{fp.label("qty", PART_FIELD_LABELS.qty)}</Th>}
             {showQty && <Th className="text-right">Available</Th>}
-            {showMin && <Th className="text-right">{fp.label("min_qty", "Min")}</Th>}
+            {showMin && <Th className="text-right">{fp.label("min_qty", PART_FIELD_LABELS.min_qty)}</Th>}
             {anySupplier && <Th>Supplier</Th>}
             <Th />
           </tr>
@@ -1360,19 +1362,23 @@ function PartsTable({
                         count claim with one click, so an assortment reads its
                         number rather than offering to nudge it. Counting is a
                         deliberate act on the detail card. */}
-                    {isAssorted(p) ? (
-                      <span className="text-accent" title="Estimated, not counted">
-                        {assortedQty(p)}
-                      </span>
-                    ) : p.rollup ? (
-                      // Everything held, across its places; each place's own
-                      // stepper is on its row below.
-                      <span className="font-semibold" title="Across every place">{fmt(p.rollup.qty)}</span>
+                    {isAssorted(p) || p.rollup ? (
+                      <>
+                        {isAssorted(p) ? (
+                          <span className="text-accent" title="Estimated, not counted">
+                            {assortedQty(p)}
+                          </span>
+                        ) : (
+                          // Everything held, across its places; each place's own
+                          // stepper is on its row below.
+                          <span className="font-semibold" title="Across every place">{fmt(p.rollup!.qty)}</span>
+                        )}
+                        {units.suffix(p.unit) && (
+                          <span className="text-faint dark:text-slate-500">{units.suffix(p.unit)}</span>
+                        )}
+                      </>
                     ) : (
-                      <QtyStepper partId={p.id} qty={Number(p.qty)} unit={p.unit} label={p.name} size="sm" />
-                    )}
-                    {units.suffix(p.unit) && (
-                      <span className="text-faint dark:text-slate-500">{units.suffix(p.unit)}</span>
+                      <RowAmount p={p} />
                     )}
                     {/* A model tracked unit by unit: the count is the unopened
                         spares, and an open one with something left is stock
@@ -1393,7 +1399,7 @@ function PartsTable({
                 >
                   {/* Available derives from a count. An estimate has none, and
                       printing 0 here would contradict the ~50 beside it. */}
-                  {isAssorted(p) || p.rollup ? (
+                  {isAssorted(p) || p.rollup || listStockReading(p.stock) ? (
                     <span className="text-faint dark:text-slate-500">—</span>
                   ) : (
                     fmt(availableOnHand(p))
@@ -1407,7 +1413,7 @@ function PartsTable({
                     <span className="text-[11px]">per place</span>
                   ) : (
                     <EditableCell
-                      def={nativeDef("min_qty", fp.label("min_qty", "Min"), "number")}
+                      def={nativeDef("min_qty", fp.label("min_qty", PART_FIELD_LABELS.min_qty), "number")}
                       value={p.min_qty}
                       align="right"
                       onCommit={(v) => setCol(p, "min_qty", v)}
@@ -1555,17 +1561,17 @@ function PartsTable({
                       {isAssorted(p) ? (
                         <span className="text-accent" title="Estimated, not counted">
                           {assortedQty(p)}
+                          {units.suffix(p.unit) ? ` ${units.suffix(p.unit)}` : ""}
                         </span>
                       ) : (
                         <>
-                          qty <QtyStepper partId={p.id} qty={Number(p.qty)} unit={p.unit} label={p.name} size="sm" />
+                          {!listStockReading(p.stock) && "qty "}<RowAmount p={p} />
                         </>
                       )}
-                      {units.suffix(p.unit) ? ` ${units.suffix(p.unit)}` : ""}
                       {openUnitsLabel(p.open_units, fmt) ? ` + ${openUnitsLabel(p.open_units, fmt)}` : ""}
                     </span>
                   )}
-                  {showQty && !isAssorted(p) && !p.rollup && (
+                  {showQty && !isAssorted(p) && !p.rollup && !listStockReading(p.stock) && (
                     <span title="Derived from what is on hand (open units included) minus what's allocated">
                       avail {fmt(availableOnHand(p))}
                     </span>
@@ -1575,7 +1581,7 @@ function PartsTable({
                       min
                       <span className="w-14">
                         <EditableCell
-                          def={nativeDef("min_qty", fp.label("min_qty", "Min"), "number")}
+                          def={nativeDef("min_qty", fp.label("min_qty", PART_FIELD_LABELS.min_qty), "number")}
                           value={p.min_qty}
                           onCommit={(v) => setCol(p, "min_qty", v)}
                         />
@@ -1769,7 +1775,7 @@ function PartsTileGrid({ items, basePath }: { items: PartListItem[]; basePath: s
                   {openUnitsLabel(p.open_units, fmt) ? ` · ${openUnitsLabel(p.open_units, fmt)}` : ""}
                 </span>
               ) : (
-                [fmt(p.qty), units.suffix(p.unit), openUnitsLabel(p.open_units, fmt) ? `+ ${openUnitsLabel(p.open_units, fmt)}` : ""].filter(Boolean).join(" ")
+                listStockReading(p.stock) ?? [fmt(p.qty), units.suffix(p.unit), openUnitsLabel(p.open_units, fmt) ? `+ ${openUnitsLabel(p.open_units, fmt)}` : ""].filter(Boolean).join(" ")
               )
             }
             attention={!disclosure.stock ? false : p.rollup ? p.rollup.low : p.low_stock}
@@ -1778,7 +1784,7 @@ function PartsTileGrid({ items, basePath }: { items: PartListItem[]; basePath: s
             // (each place steps on its own row). The tile keeps the tap from
             // opening the item behind it.
             status={
-              disclosure.stock && !isAssorted(p) && !p.rollup ? (
+              disclosure.stock && !isAssorted(p) && !p.rollup && !listStockReading(p.stock) ? (
                 <span className="flex justify-end">
                   <QtyStepper partId={p.id} qty={Number(p.qty)} unit={p.unit} label={p.name} size="sm" />
                 </span>
@@ -1791,6 +1797,22 @@ function PartsTileGrid({ items, basePath }: { items: PartListItem[]; basePath: s
   );
 }
 
+
+/** A row's amount in one place. A sheet or a wearing tool reads what is left
+ *  of it (its count is one sheet, one cutter); anything else is the stepper,
+ *  which prints its own unit, so nothing beside it adds another (#5296: "830 g
+ *  [Use some] g"). */
+function RowAmount({ p }: { p: PartListItem }) {
+  const reading = listStockReading(p.stock);
+  if (reading) {
+    return (
+      <span className="whitespace-nowrap" data-testid="stock-reading">
+        {reading}
+      </span>
+    );
+  }
+  return <QtyStepper partId={p.id} qty={Number(p.qty)} unit={p.unit} label={p.name} size="sm" />;
+}
 
 /** On hand, or the count face itself on an older api. */
 function onHandOf(p: { qty: number | string; on_hand?: number }): number {

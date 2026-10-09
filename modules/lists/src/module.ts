@@ -12,7 +12,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "lists",
-  version: "0.1.21",
+  version: "0.1.22",
   displayName: "Lists",
   description:
     "Simple checklists for shopping, packing or to-dos, which can fill themselves when something runs low.",

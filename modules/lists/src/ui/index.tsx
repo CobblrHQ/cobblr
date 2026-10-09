@@ -32,7 +32,10 @@ export function ListsUI({ orgSlug, getToken }: Props) {
   const location = useLocation();
   const navigate = useNavigate();
   const itemInPath = /\/lists\/items\/([^/?#]+)/.exec(location.pathname)?.[1] ?? null;
-  const listInPath = itemInPath ? null : (/\/lists\/([^/?#]+)/.exec(location.pathname)?.[1] ?? null);
+  // "/lists/items" is the lines' collection, which is the lists themselves:
+  // never a list called "items".
+  const segment = /\/lists\/([^/?#]+)/.exec(location.pathname)?.[1] ?? null;
+  const listInPath = itemInPath || segment === "items" ? null : segment;
   const lineHome = useQuery({
     queryKey: ["lists-item-home", orgSlug, itemInPath],
     queryFn: () => api.getItem(itemInPath!),

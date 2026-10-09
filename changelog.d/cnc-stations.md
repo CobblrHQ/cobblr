@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-06
 docs_target: docs/USER_GUIDE.md#CNC stations
+docs_published: 2026-10-10
 ---
 CNC stations now review posted programs, check stock and tools, pause for tool changes and track stock use and bit runtime.
 

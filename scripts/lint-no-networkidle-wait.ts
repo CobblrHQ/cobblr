@@ -19,7 +19,10 @@
 // times a full first load, the one thing a settle signal would cut short:
 // it is why the opt-out exists. Comments mentioning the word do not count.
 // e2e/ is not in scope yet: its 288 scripts are the yardsticks and demos,
-// many written against networkidle; they move as they are touched.
+// many written against networkidle; they move as they are touched. Its
+// docs-shots/ is, because it makes the public docs site's pictures as kiosk/
+// makes the homepage's: three of its flows hung on networkidle after two
+// months unrun, and the docs went stale behind them (2026-10-09).
 //
 //   npx tsx scripts/lint-no-networkidle-wait.ts   (pnpm lint no-networkidle-wait)
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -28,7 +31,7 @@ import { stripComments } from "./lib/source-scan.ts";
 
 /** Where the rule bites. Keep it narrow: a lint over the whole repo judges
  *  files whose authors never heard of it. */
-const ROOTS = ["scripts", "kiosk"];
+const ROOTS = ["scripts", "kiosk", "e2e/docs-shots"];
 
 /** One offending place. `line` is 1-based for a clickable path:line. */
 interface Violation {
