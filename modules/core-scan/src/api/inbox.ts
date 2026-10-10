@@ -55,7 +55,7 @@ import {
   type AutofilePlan,
 } from "../services/autofile.js";
 import { resolveRequirement, storageRequirementFor } from "../services/storage-requirement.js";
-import { applyReceiptFacts } from "../services/receipt-candidate-facts.js";
+import { applyReceiptFacts, receiptPackAsks } from "../services/receipt-candidate-facts.js";
 import { alignStorageFields } from "../services/align-storage-fields.js";
 import { moveQuantity, scanTargetOf, scanTargetsRegistered, startingCount, type QuantityMove } from "../services/scan-target.js";
 import { withGroupImages as groupImagesFor } from "../services/group-image.js";
@@ -73,7 +73,7 @@ import { amountOf, centsFromAmount } from "@cobblr/platform-contract/money";
 import { z } from "zod";
 import { fileReceiptAs, type KnownShipment } from "../services/receipt-arrival.js";
 import { claimOrderLine, orderLines, deleteReceiptOrder, lineUnitCost } from "../services/receipt-order.js";
-import { pendingPurchaseOf, recordReceiptPurchase } from "../services/receipt-purchase.js";
+import { pendingPurchaseOf, recordReceiptPurchase, type PendingPurchase } from "../services/receipt-purchase.js";
 import {
   mapRoledFacts,
   planDecodeFill,
@@ -83,8 +83,7 @@ import {
   traitAxisValue,
   type DecodeFillTarget,
   isActionStep,
-  type ActionUndoStep,
-} from "@cobblr/platform-contract";
+  type ActionUndoStep, countOf } from "@cobblr/platform-contract";
 import { decodeKeysetCursor, encodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
 import { splitEntityKind, entityKindOf } from "@cobblr/platform-contract/entity-kind";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
@@ -173,7 +172,11 @@ import { uncombinePlan, type CombineUndo } from "../services/uncombine.js";
 import { resolvePaintColorFromText } from "../services/paint-code.js";
 import { resolvePaintCodeViaWeb } from "../services/paint-code-websearch.js";
 import { parseReceipt } from "../services/receipt.js";
-import { lineNet } from "../services/receipt-shared.js";
+import { lineDiscounted, lineNet, shareOrderDiscount } from "../services/receipt-shared.js";
+import { lineImagesFor, type EmailLineImage } from "@cobblr/platform-contract/email-line-images";
+import { readOrderPacks } from "@cobblr/platform-contract/receipt-pack";
+import { orderPageForReceipt, readWithOrderPage } from "../services/receipt-order-page.js";
+import type { OrderPageSummary } from "@cobblr/platform-contract/order-page-link";
 import { looksLikeReceiptPhoto, routeScannedReceiptPhoto } from "../services/receipt-photo.js";
 import { readFailureFrom, readFailureHistory, readHistoryAfterSuccess } from "../services/receipt-read-state.js";
 import { cleanOrderRef, receiptDedupKey,
@@ -1338,8 +1341,20 @@ async function materializeReceiptLines(opts: {
    *  creates can carry the same key; generated here when a caller does not care
    *  (reparse), which keeps this the only place that has to know. */
   groupId?: string;
+  /** The photo the order email printed beside each line, with its row's
+   *  words (#5350): each line takes the one its words name, and that photo
+   *  is its picture before any search. */
+  lineImages?: readonly EmailLineImage[] | null;
+  /** The receipt came by email: what it states reads "from the order
+   *  email" on the card. */
+  emailed?: boolean;
 }): Promise<{ rows: Array<{ id: string }>; lineRows: Array<string | null> }> {
   const groupId = opts.groupId ?? randomUUID();
+  // Read together, so siblings agree: one product's lines that differ only
+  // by variant are packs of the same shape (receipt-pack.ts, #5350).
+  const descriptions = opts.receipt.items.map((l) => (l.kind ? "" : l.description));
+  const packs = readOrderPacks(descriptions);
+  const photos = lineImagesFor(descriptions, opts.lineImages ?? []);
   const t = opts.receipt.totals;
   const baseMeta = {
     source: "receipt",
@@ -1350,6 +1365,7 @@ async function materializeReceiptLines(opts: {
     receipt_currency: opts.receipt.currency,
     parse_method: opts.method,
     ...(opts.source ? { receipt_source: opts.source } : {}),
+    ...(opts.emailed ? { receipt_origin: "email" } : {}),
     // Provenance: what this purchase WAS, beyond the line's own description.
     // Kept as components rather than one "price", because a receipt carries
     // several numbers that all look like the price and picking one is how the
@@ -1423,10 +1439,14 @@ async function materializeReceiptLines(opts: {
         ...(line.manufacturer && !(lineAt === unitAt && checks && nameDoubtedIn(checks)) ? { suggested_manufacturer: line.manufacturer } : {}),
         // A line sold BY WEIGHT is one thing, not four: "4.14 lb @ 1.99/lb"
         // was rounded into a quantity of 4 chicken breasts (2026-09-06).
-        quantity: lineQuantity(line),
+        // A settled pack is that many things: "10KG" of filament in a bundle
+        // is ten 1 kg spools. An unsettled one stays one line and asks.
+        quantity: packs[lineAt] && !packs[lineAt]!.ask ? lineQuantity(line) * packs[lineAt]!.count : lineQuantity(line),
         suggested_metadata: JSON.stringify({
           ...baseMeta,
           description: line.description,
+          ...(packs[lineAt] ? { line_pack: packs[lineAt] } : {}),
+          ...(photos[lineAt] ? { order_line_image: photos[lineAt] } : {}),
           unit_price: line.unit_price,
           line_total: line.line_total,
           ...(line.weight !== null && line.weight !== undefined
@@ -1444,7 +1464,10 @@ async function materializeReceiptLines(opts: {
           // nothing further to wire - the same route a decoded VIN's model
           // takes. Before this it was read past entirely.
           ...(line.model && !(lineAt === unitAt && checks && nameDoubtedIn(checks)) ? { model: line.model } : {}),
-          ...(line.discount ? { line_discount: line.discount, line_net: lineNet(line) } : {}),
+          ...(line.discount ? { line_discount: line.discount } : {}),
+          // Its share of a code taken off the whole order (shareOrderDiscount).
+          ...(line.order_discount ? { order_discount_share: line.order_discount } : {}),
+          ...(lineDiscounted(line) ? { line_net: lineNet(line) } : {}),
           // What the document says about this thing, by field role (a VIN as
           // `identifier`, the odometer as `usage`); receipt-facts.ts lands
           // them on the record's own fields when it is filed.
@@ -1745,6 +1768,82 @@ inboxRouter.post(
   }),
 );
 
+/** The purchase a read receipt makes (order-at-parse.md): its order, its
+ *  lines NET of the coupon printed under each, and each inbox row's claim on
+ *  its line. One shape for the first read and for a re-read that succeeds
+ *  after a failed one, which used to make no order at all. A seller or a
+ *  price the page's checks did not believe is not put on the purchase:
+ *  claiming the line fills the record from the order, and "sells/leases this
+ *  vehicle 'as is'" became Bought from that way (#4633). */
+function receiptPurchasePlan(
+  receipt: ParsedReceipt,
+  o: {
+    orderRef: string | null;
+    awaiting: { tracking_number: string | null; shipment_state: string | null; shipment_checked_at: Date | null; shipment_next_poll_at: Date | null; shipment_location: string | null; expected_arrival: string | null } | null;
+    groupId: string;
+    ships: boolean;
+    sourceFileId: string;
+    rowIds: Array<string | null>;
+    targetItemId: string | null;
+  },
+): PendingPurchase {
+  const doubts = doubtedChecks({ check_fields: receipt.checks });
+  const priceOk = !priceDoubted(doubts);
+  const { awaiting } = o;
+  return {
+    vendor: sellerDoubted(doubts) ? null : receipt.vendor,
+    orderRef: o.orderRef,
+    orderedAt: receipt.date,
+    currency: receipt.currency,
+    // Nobody has typed one yet, unless a shipping notice got here first and
+    // left the session awaiting, in which case its parcel (number, state,
+    // promised day) carries into the order it now makes.
+    trackingNumber: awaiting?.tracking_number ?? null,
+    knownShipment: awaiting?.shipment_state
+      ? {
+          state: awaiting.shipment_state,
+          checkedAt: awaiting.shipment_checked_at ?? null,
+          nextPollAt: awaiting.shipment_next_poll_at ?? null,
+          location: awaiting.shipment_location ?? null,
+        }
+      : null,
+    expectedArrival: receipt.expected_arrival ?? awaiting?.expected_arrival ?? null,
+    total: priceOk ? receipt.total : null,
+    groupId: o.groupId,
+    ships: o.ships || (receipt.totals?.shipping ?? 0) > 0,
+    sourceFileId: o.sourceFileId,
+    // NET of the coupon printed under each line: the order records what was
+    // paid, not the shelf price. Without this a receipt's lines sum to more
+    // than its own total and the order silently disagrees with its paper.
+    lines: receipt.items.map((line) => ({
+      description: line.description,
+      qty: line.qty,
+      unitCost: priceOk ? lineUnitCost(lineDiscounted(line) ? null : line.unit_price, lineNet(line), line.qty) : null,
+      lineAmount: priceOk ? lineNet(line) : null,
+      ...(line.kind ? { kind: line.kind } : {}),
+    })),
+    rowIds: o.rowIds,
+    targetItemId: o.targetItemId,
+  };
+}
+
+const OrderPageSummaryBody = z.object({
+  store: z.string().max(253),
+  order_name: z.string().max(120).nullable(),
+  outcome: z.string().max(40),
+  lines: z.array(z.object({ name: z.string().max(500), qty: z.number().positive(), unit_price: z.number().nullable(), currency: z.string().max(8).nullable() })).max(200),
+  parcels: z
+    .array(
+      z.object({
+        tracking_number: z.string().max(80).nullable(),
+        carrier: z.string().max(120).nullable(),
+        state: z.string().max(40),
+        lines: z.array(z.object({ name: z.string().max(500), qty: z.number().positive() })).max(200),
+      }),
+    )
+    .max(50),
+}) satisfies z.ZodType<OrderPageSummary>;
+
 const ReceiptBody = z.object({
   file_id: z.string().uuid(),
   /** Where the receipt came from — "email" makes the inbox session read
@@ -1752,6 +1851,12 @@ const ReceiptBody = z.object({
   origin: z.enum(["email", "upload"]).optional(),
   /** The address an emailed receipt came from; kept on the session. */
   from: z.string().trim().max(320).optional(),
+  /** The photo the email printed in each line's row, with that row's words
+   *  (emailLineImages, #5350). Kept on the session so a re-read keeps them. */
+  line_images: z
+    .array(z.object({ text: z.string().max(500), url: z.string().url().max(2000) }))
+    .max(30)
+    .optional(),
   /** Skip the "you already imported this receipt" guard and import it anyway
    *  (the user chose to, or it's a re-forward of one they'd discarded). */
   force: z.boolean().optional(),
@@ -1774,6 +1879,11 @@ const ReceiptBody = z.object({
   /** The email this came in was an order confirmation: an online order, on
    *  its way rather than in hand (the email ingest knows the subject). */
   order_confirmation: z.boolean().optional(),
+  /** What the store's own order page said about this order (the email ingest
+   *  read it through Purchases; never the link). With lines, the receipt is
+   *  read with no model: the free tiers, filled from the page, or the page
+   *  alone (services/receipt-order-page.ts). */
+  order_page: OrderPageSummaryBody.optional(),
 });
 
 // AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
@@ -1788,10 +1898,13 @@ inboxRouter.post(
     const ctx = tenantContext(req);
     const session = sessionUser(req);
 
-    const result = await parseReceipt(ctx.org.id, parsed.data.file_id, session?.id ?? null, req.ip ?? null, {
-      ...(parsed.data.queue_if_busy ? { queueIfBusy: true } : {}),
-      ...(parsed.data.hosted_job_id ? { hostedJobId: parsed.data.hosted_job_id } : {}),
-    });
+    const result = await readWithOrderPage(ctx.org.id, parsed.data.file_id, parsed.data.order_page ?? null, (more) =>
+      parseReceipt(ctx.org.id, parsed.data.file_id, session?.id ?? null, req.ip ?? null, {
+        ...(parsed.data.queue_if_busy ? { queueIfBusy: true } : {}),
+        ...(parsed.data.hosted_job_id ? { hostedJobId: parsed.data.hosted_job_id } : {}),
+        ...more,
+      }),
+    );
     // Accepted, not read: the hosted identify reads it when an engine is
     // back, and the caller (which asked to wait) collects it. No session yet:
     // there is nothing read to keep, and the caller's row holds the file.
@@ -1824,6 +1937,7 @@ inboxRouter.post(
             label: "Receipt · not read yet",
             origin: parsed.data.origin ?? null,
             origin_from: parsed.data.origin === "email" ? (parsed.data.from ?? null) : null,
+            ...(parsed.data.line_images?.length ? { line_images: JSON.stringify(parsed.data.line_images) as never } : {}),
             source_file_id: parsed.data.file_id,
             read_state: "failed",
             read_failure: JSON.stringify(readFailureFrom(result, [])) as never,
@@ -1847,7 +1961,10 @@ inboxRouter.post(
         });
       return;
     }
-    const { receipt, method } = result;
+    // A code taken off the whole order is shared across its lines, so each
+    // line's cost is what it cost (shareOrderDiscount, #5350).
+    const { method } = result;
+    const receipt = shareOrderDiscount(result.receipt);
     noteScanCaptured(ctx.org.id, session.id, "receipt");
     const orderRef = cleanOrderRef(receipt.order_ref);
 
@@ -1971,6 +2088,8 @@ inboxRouter.post(
       origin: parsed.data.origin ?? null,
       // Only an email's own read says who sent it; a re-read keeps it.
       ...(parsed.data.origin === "email" && parsed.data.from ? { origin_from: parsed.data.from } : {}),
+      // The email's line photos, so a re-read gives each line its own again.
+      ...(parsed.data.line_images?.length ? { line_images: JSON.stringify(parsed.data.line_images) } : {}),
       // Remember the original so the session can offer "View original" + "Re-parse".
       source_file_id: parsed.data.file_id,
       // Vendor + order # as their own fields so the order # is editable later.
@@ -2029,6 +2148,8 @@ inboxRouter.post(
       token: bearer(req),
       baseUrl: receiptBaseUrl,
       groupId: receiptGroupId,
+      lineImages: parsed.data.line_images ?? null,
+      emailed: parsed.data.origin === "email",
         });
     } finally {
       // Read once the lines are in (or the attempt to make them is over).
@@ -2052,53 +2173,22 @@ inboxRouter.post(
     // When Purchases is off the order is not lost: the session keeps it and
     // offers to turn Purchases on (services/receipt-purchase.ts, #3869).
     let purchase: { recorded: boolean; purchases_off: boolean } | null = null;
-    // A seller or a price the page's checks did not believe is not put on the
-    // purchase either: claiming the line fills the record from the order, and
-    // "sells/leases this vehicle 'as is'" became Bought from that way (#4633).
-    const doubts = doubtedChecks({ check_fields: receipt.checks });
-    const priceOk = !priceDoubted(doubts);
     if (batchId) {
       const outcome = await recordReceiptPurchase(
         db,
         batchId,
-        {
-          vendor: sellerDoubted(doubts) ? null : receipt.vendor,
+        receiptPurchasePlan(receipt, {
           orderRef,
-          orderedAt: receipt.date,
-          currency: receipt.currency,
-          // Nobody has typed one yet — unless a shipping notice got here first
-          // and left the session awaiting, in which case its parcel (number,
-          // state, promised day) carries into the order it now makes.
-          trackingNumber: awaiting?.tracking_number ?? null,
-          knownShipment: awaiting?.shipment_state
-            ? {
-                state: awaiting.shipment_state,
-                checkedAt: awaiting.shipment_checked_at ?? null,
-                nextPollAt: awaiting.shipment_next_poll_at ?? null,
-                location: awaiting.shipment_location ?? null,
-              }
-            : null,
-          expectedArrival: receipt.expected_arrival ?? awaiting?.expected_arrival ?? null,
-          total: priceOk ? receipt.total : null,
+          awaiting: awaiting ?? null,
           groupId: receiptGroupId,
           // An online order is on its way, not in hand: the email said it was
-          // an order confirmation, or the receipt charged for shipping.
-          ships: parsed.data.order_confirmation === true || (receipt.totals?.shipping ?? 0) > 0,
+          // an order confirmation, the store's own page read it, or the
+          // receipt charged for shipping.
+          ships: parsed.data.order_confirmation === true || method === "order-page" || method === "order-email",
           sourceFileId: parsed.data.file_id,
-          // NET of the coupon printed under each line: the order records what
-          // was paid, not the shelf price. Without this a receipt's lines sum to
-          // more than its own total and the order silently disagrees with the
-          // paper it came from.
-          lines: receipt.items.map((line) => ({
-            description: line.description,
-            qty: line.qty,
-            unitCost: priceOk ? lineUnitCost(line.discount ? null : line.unit_price, lineNet(line), line.qty) : null,
-            lineAmount: priceOk ? lineNet(line) : null,
-            ...(line.kind ? { kind: line.kind } : {}),
-          })),
           rowIds: made.lineRows,
           targetItemId,
-        },
+        }),
         { baseUrl: receiptBaseUrl, slug: ctx.org.slug, headers: { Authorization: `Bearer ${bearer(req)}`, "Content-Type": "application/json" } },
       );
       purchase = outcome.recorded ? { recorded: true, purchases_off: false } : { recorded: false, purchases_off: outcome.purchasesOff };
@@ -2155,7 +2245,7 @@ inboxRouter.post(
 
     const batch = await db
       .selectFrom("core_scan_batches")
-      .select(["id", "source_file_id", "read_failure"])
+      .select(["id", "source_file_id", "read_failure", "origin", "order_ref", "purchases_order_id", "line_images"])
       .where("id", "=", parsed.data.batch_id)
       .executeTakeFirst();
     if (!batch?.source_file_id) {
@@ -2172,7 +2262,18 @@ inboxRouter.post(
       .where("id", "=", batch.id)
       .execute();
 
-    const result = await parseReceipt(ctx.org.id, batch.source_file_id, session?.id ?? null, req.ip ?? null);
+    // An emailed receipt tries its store's order page first: the page Purchases
+    // kept from the email names the order and its lines with no model, so a
+    // read the AI failed on is filled from it (services/receipt-order-page.ts).
+    const sourceFileId = batch.source_file_id;
+    const page = batch.origin === "email"
+      ? await orderPageForReceipt(ctx.org.id, sourceFileId, batch.order_ref ?? null, {
+          baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
+          slug: ctx.org.slug,
+          token: bearer(req) ?? "",
+        })
+      : null;
+    const result = await readWithOrderPage(ctx.org.id, sourceFileId, page, (more) => parseReceipt(ctx.org.id, sourceFileId, session?.id ?? null, req.ip ?? null, more));
     if (!result.ok) {
       // Failed again: the state says so, with this attempt on the history.
       await db
@@ -2188,7 +2289,10 @@ inboxRouter.post(
         .json({ error: { code: "receipt_unparsed", message: result.reason, failure: result.code, ...(result.ai ? { ai: result.ai } : {}) } });
       return;
     }
-    const { receipt, method } = result;
+    // A code taken off the whole order is shared across its lines, so each
+    // line's cost is what it cost (shareOrderDiscount, #5350).
+    const { method } = result;
+    const receipt = shareOrderDiscount(result.receipt);
 
     // Drop only the still-pending lines of this batch (keep confirmed/discarded
     // history), refresh the session label from the new vendor, then re-insert.
@@ -2212,8 +2316,11 @@ inboxRouter.post(
     // "in_flight" (set above) while they are made, so a poll never sees a read
     // session with no lines.
     let rows: Awaited<ReturnType<typeof materializeReceiptLines>>["rows"] = [];
+    let lineRows: Array<string | null> = [];
+    const groupId = randomUUID();
+    const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
     try {
-      ({ rows } = await materializeReceiptLines({
+      ({ rows, lineRows } = await materializeReceiptLines({
       db,
       orgId: ctx.org.id,
       orgSlug: ctx.org.slug,
@@ -2223,7 +2330,10 @@ inboxRouter.post(
       method,
       source: result.source,
       token: bearer(req),
-      baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
+      baseUrl,
+      groupId,
+      lineImages: Array.isArray(batch.line_images) ? (batch.line_images as EmailLineImage[]) : null,
+      emailed: batch.origin === "email",
       }));
     } finally {
       await db
@@ -2244,8 +2354,30 @@ inboxRouter.post(
         .execute();
     }
 
+    // The order a first read would have made, when the first read failed and
+    // made none: a receipt read again is in Purchases like any other.
+    let purchase: { recorded: boolean; purchases_off: boolean } | null = null;
+    if (!batch.purchases_order_id) {
+      const outcome = await recordReceiptPurchase(
+        db,
+        batch.id,
+        receiptPurchasePlan(receipt, {
+          orderRef: cleanOrderRef(receipt.order_ref),
+          awaiting: null,
+          groupId,
+          ships: method === "order-page" || method === "order-email",
+          sourceFileId,
+          rowIds: lineRows,
+          targetItemId: null,
+        }),
+        { baseUrl, slug: ctx.org.slug, headers: { Authorization: `Bearer ${bearer(req)}`, "Content-Type": "application/json" } },
+      );
+      purchase = outcome.recorded ? { recorded: true, purchases_off: false } : { recorded: false, purchases_off: outcome.purchasesOff };
+    }
+
     res.json({
       batch_id: batch.id,
+      purchase,
       receipt: { vendor: receipt.vendor, date: receipt.date, date_convention: result.date_reading?.convention ?? null, date_decided_by: result.date_reading?.decided_by ?? null, date_printed: result.date_reading?.printed ?? null, currency: receipt.currency, total: receipt.total, item_count: rows.length, lines_total: receipt.lines_total, lines_reconcile: receipt.lines_reconcile, method },
       items: rows,
     });
@@ -2748,8 +2880,8 @@ async function sessionTheme(req: Request, res: Response, batchId: string, asked:
     try {
       const r = await platform().ai.invoke({
         orgId: ctx.org.id,
-        capability: "chat",
-        input: { messages: [{ role: "system", content: system }, { role: "user", content: `The ${items.length} pending items:\n${list}` }] },
+        capability: "organise",
+        input: { messages: [{ role: "system", content: system }, { role: "user", content: `The ${countOf(items.length, "pending item")}:\n${list}` }] },
         source: { kind: "core-scan:session-theme", id: ctx.org.id },
         userId: sessionUser(req).id,
       });
@@ -8343,13 +8475,13 @@ inboxRouter.post(
           split_into: children.map((c) => (c as { id: string }).id),
           split_prior_notes: row.ai_notes ?? null,
         }) as never,
-        ai_notes: `Split into ${children.length} items.`,
+        ai_notes: `Split into ${countOf(children.length, "item")}.`,
         resolved_at: new Date(),
         updated_at: new Date(),
       })
       .where("id", "=", id ?? "")
       .execute();
-    await appendScanHistory(db, id ?? "", { action: "split", note: `${children.length} items; crops: ${cropReport.join(", ")}` });
+    await appendScanHistory(db, id ?? "", { action: "split", note: `${countOf(children.length, "item")}; crops: ${cropReport.join(", ")}` });
     res.json({ children });
   }),
 );
@@ -9070,7 +9202,7 @@ inboxRouter.post(
         others.map((o) => o.id),
       )
       .execute();
-    await appendScanHistory(db, primary.id, { action: "combine", note: `${rows.length} items` });
+    await appendScanHistory(db, primary.id, { action: "combine", note: `${countOf(rows.length, "item")}` });
     res.json(await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", primary.id).executeTakeFirst());
   }),
 );
@@ -9663,6 +9795,9 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     // after the model so the till's facts win (see receipt-candidate-facts.ts),
     // and stamped as evidence so a re-run can tell them from a guess (#3008).
     const evidenceStamps = applyReceiptFacts(row.suggested_metadata as Record<string, unknown> | null, candidates, menu);
+    // A pack the line's words did not settle asks once, on the routed table's
+    // size field, instead of the model guessing per line (#5350).
+    const packAsks = receiptPackAsks(row.suggested_metadata as Record<string, unknown> | null, candidates, menu);
     // A split child KNOWS what the group photo read about it (its set number,
     // that the box is sealed); the model, looking at one crop, only guesses.
     // Written after the model so the group's facts win (split-inherit.ts).
@@ -9918,6 +10053,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
           ...(splitReview ? { low_trust: true, split_review: splitReview } : {}),
           ...(disagreed.length ? { low_trust: true, split_disagreed: disagreed } : {}),
           ...(nameFacts.length ? { name_facts: nameFacts } : {}),
+          ...(packAsks.length || (meta as { pack_asks?: unknown }).pack_asks ? { pack_asks: packAsks } : {}),
           // The whole map, re-derived: `||` replaces the key, which is what
           // lets a stamp for a field the route no longer fills go away.
           [FIELD_PROVENANCE_KEY]: fieldProvenance,

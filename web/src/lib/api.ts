@@ -41,7 +41,7 @@ import { bodyOf, type ImportRun, type SheetsBody, type SheetsPlan, type UndoRepo
 import type { ResolveOutcome as RegistryResolveOutcome } from "@cobblr/platform-contract/resolvables";
 import type { FieldRole, FieldDefType } from "@cobblr/platform-contract/field-vocabulary";
 import type { LiveControlPublic, AiConnectionTest } from "@cobblr/platform-contract";
-import type { AiReportedModels } from "@cobblr/platform-contract";
+import type { AiDefaultJobId, AiReportedModels } from "@cobblr/platform-contract";
 import { describeUnreadableBody, sendUpload, uploadErrorOf, UploadError } from "@cobblr/platform-web";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 import { walkPages } from "./list-pages";
@@ -1468,6 +1468,8 @@ export const api = {
       signup_enabled: boolean;
       self_serve_invites?: boolean;
       hosted?: boolean;
+      /** This server can send Web Push (its key pair exists); null when it could not say. */
+      web_push?: boolean | null;
       captcha?: { provider: string; site_key: string | null } | null;
       /** Present only when this surface can BOTH reach the account service and redeem
        *  a code from it. Null means "no such button", not "not configured yet". */
@@ -2368,6 +2370,31 @@ export const api = {
    *  quietly wins. `capability` narrows the order to one kind of work. */
   setConnectionOrder: (body: { org_id: string; credential_ids: string[]; capability?: string | null }) =>
     request<{ ok: true }>("POST", "/me/connections/order", body),
+
+  /** The person's own default AI per job: each job's steps, their AI
+   *  connections with the models each can do each job with, and the
+   *  workspaces that chose for a job themselves (#5404). */
+  /** `fresh` asks each connection that lists its models for its list now
+   *  ("Refresh models"). */
+  getMyAiDefaults: (fresh = false) => request<MyAiDefaults>("GET", `/me/ai-defaults${fresh ? "?fresh=1" : ""}`),
+  /** Replace one job's steps, First first. Refused with a sentence when a
+   *  step could not answer the job. */
+  setMyAiDefaults: (job: string, steps: Array<{ credential_id: string; model: string }>) =>
+    request<MyAiDefaults>("PUT", `/me/ai-defaults/${encodeURIComponent(job)}`, { steps }),
+  clearMyAiDefaults: (job: string) => request<MyAiDefaults>("DELETE", `/me/ai-defaults/${encodeURIComponent(job)}`),
+  /** The workspace's own order per job (#5622): each job's steps, the
+   *  connections it can name with the models each can do each job with, and
+   *  whether the caller may change it (owner or admin). A connection is a
+   *  personal connection's id or `workspace:<provider id>`. */
+  getWorkspaceAiOrder: (slug: string, fresh = false) => request<WorkspaceAiOrder>("GET", `/orgs/${slug}/ai-job-order${fresh ? "?fresh=1" : ""}`),
+  setWorkspaceAiOrder: (slug: string, job: string, steps: Array<{ connection: string; model: string }>) =>
+    request<WorkspaceAiOrder>("PUT", `/orgs/${slug}/ai-job-order/${encodeURIComponent(job)}`, { steps }),
+  clearWorkspaceAiOrder: (slug: string, job: string) => request<WorkspaceAiOrder>("DELETE", `/orgs/${slug}/ai-job-order/${encodeURIComponent(job)}`),
+  /** Who reads this workspace's personal documents (#5621). */
+  getPersonalDocumentsReader: (slug: string) => request<PersonalDocumentsReaderView>("GET", `/orgs/${slug}/personal-documents-reader`),
+  /** Owner only. A cloud connection needs the consent sentence the page showed, word for word. */
+  setPersonalDocumentsReader: (slug: string, body: { connection: "local" } | { connection: string; consent: string }) =>
+    request<PersonalDocumentsReaderView>("PUT", `/orgs/${slug}/personal-documents-reader`, body),
 
   // Workspace owner: review + approve members' AI-share offers.
   listAiShares: (slug: string) =>
@@ -4947,6 +4974,22 @@ export const api = {
       `/orgs/${slug}/station-devices`,
     ),
   revokeStationDevice: (slug: string, id: string) => request<{ ok: true }>("DELETE", `/orgs/${slug}/station-devices/${id}`),
+  /** A phone opened a station's kitchen QR (#5353): its key buys a token for
+   *  that station's few presses. No session, so a plain fetch; null when the
+   *  label no longer opens it. */
+  stationQrClaim: async (slug: string, address: string, key: string) => {
+    const r = await fetch("/api/v1/station/qr/claim", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slug, address, key }), cache: "no-store" });
+    if (r.status === 403) return null;
+    if (!r.ok) throw new ApiError(r.status, "station_qr_claim", (await r.json().catch(() => null))?.error?.message ?? "Could not open the station.");
+    return (await r.json()) as { ok: true; token: string; slug: string; address: string; label: string };
+  },
+  stationQrState: (slug: string, address: string) =>
+    request<{ enabled: boolean; printed_at: string | null; phones: number }>("GET", `/orgs/${slug}/station-devices/qr/${address}`),
+  /** Print a new kitchen QR: a fresh key (shown once, for the label) that
+   *  retires the old one and every phone it let in. */
+  printStationQr: (slug: string, address: string) =>
+    request<{ key: string; enabled: boolean; printed_at: string | null; phones: number }>("POST", `/orgs/${slug}/station-devices/qr/${address}`, {}),
+  stopStationQr: (slug: string, address: string) => request<{ ok: true }>("DELETE", `/orgs/${slug}/station-devices/qr/${address}`),
   stationScreen: (slug: string, address: string) =>
     request<{ address: string; label: string; settings: StationSettings; has_pin: boolean; device: boolean }>(
       "GET",
@@ -5506,7 +5549,7 @@ export const api = {
              *  total charged. False means the receipt is only mostly read. */
             lines_total: number;
             lines_reconcile: boolean | null;
-            method: "csv" | "pdf-table" | "text-lines" | "ocr-lines" | "ocr-form" | "ai-chat" | "ai-vision" | "ai-document";
+            method: "csv" | "pdf-table" | "text-lines" | "ocr-lines" | "ocr-form" | "ai-chat" | "ai-vision" | "ai-document" | "order-page" | "order-email";
           };
           items: ScanInboxItem[];
           /** The session the lines went into. */
@@ -7331,6 +7374,73 @@ export interface ChatModelMenu {
   defaultShort: string;
 }
 
+/** One entry of a model picker for a provider that lists its models: each
+ *  family's "latest" first, then exact versions to pin (#5417). */
+export interface AiModelChoiceView {
+  id: string;
+  /** "Haiku · latest (5.5)" or "Haiku 4.5". */
+  label: string;
+  short: string;
+  latest?: { family: string; resolves: string };
+}
+
+/** GET /me/ai-defaults: a person's own default AI per job (#5404). One row
+ *  per job and connection step, with its order and model, so the page can
+ *  draw it as chains or as a jobs-by-connections grid. */
+export interface MyAiDefaults {
+  jobs: Array<{
+    id: AiDefaultJobId;
+    title: string;
+    steps: Array<{ credential_id: string; model: string; model_label?: string; label: string; provider_id: string | null; usable: boolean }>;
+    /** Workspaces that chose for this job themselves, and which of its
+     *  capabilities they chose for. */
+    own_order_in: Array<{ org_id: string; slug: string; name: string; can_change: boolean; capabilities: string[] }>;
+  }>;
+  connections: Array<{
+    id: string;
+    label: string;
+    provider_id: string;
+    /** The models it can do each job with; a job it cannot do is absent. */
+    jobs: Partial<Record<AiDefaultJobId, { models: string[]; default_model: string | null; choices?: AiModelChoiceView[] }>>;
+    unlisted?: string;
+    /** Its provider's listing could not be read; these are its usual models. */
+    fallback?: string;
+  }>;
+  /** A model's name on a picker, per provider. */
+  model_labels: Record<string, Record<string, string>>;
+}
+
+export interface PersonalDocumentsReaderView {
+  reader: { kind: "local" } | { kind: "cloud"; connection: string; label: string; company: string; consented_by: string | null; consented_at: string; consent: string };
+  local_ai: boolean;
+  can_change: boolean;
+  choices: Array<{ connection: string; label: string; company: string; consent: string }>;
+}
+
+/** The same view as a person's own defaults, for a workspace (#5622). */
+export interface WorkspaceAiOrder {
+  can_edit: boolean;
+  jobs: Array<{
+    id: string;
+    title: string;
+    /** Set here; false = who answers now, with nothing chosen here. */
+    chosen: boolean;
+    steps: Array<{ credential_id: string; model: string; model_label?: string; label: string; provider_id: string | null; usable: boolean }>;
+    own_order_in: [];
+  }>;
+  connections: Array<{
+    id: string;
+    label: string;
+    provider_id: string;
+    jobs: Partial<Record<string, { models: string[]; default_model: string | null; choices?: AiModelChoiceView[] }>>;
+    unlisted?: string;
+    fallback?: string;
+    /** The caller's own "Just me" connection: it answers their calls only. */
+    just_you?: true;
+  }>;
+  model_labels: Record<string, Record<string, string>>;
+}
+
 export interface UserConnection {
   id: string;
   provider_id: string;
@@ -8556,6 +8666,10 @@ export interface ViewDataResponse {
   /** The view's own filters the collection could not run. Shown, so an
    *  unfiltered list never passes for the filtered one. */
   unapplied?: Array<{ col: string; op: string; value?: unknown; ref_col?: string }>;
+  /** The view's own grouping the collection cannot read (an older bundle's
+   *  view naming a field its records lack): the rows come back ungrouped,
+   *  and the surface says so instead of opening onto an error. */
+  ungrouped?: { group_by: unknown; reason: string };
 }
 
 export interface TagRecord {
@@ -10481,6 +10595,8 @@ export interface PlatformBundleInstance {
   item_noun?: string;
   /** Default unit for new items (e.g. "skein"). */
   qty_unit?: string;
+  /** The table a record here is made into parts on (a Lego set comes apart into bricks on Bricks). */
+  parts_into?: string;
   /** What a record of this table calls the things inside it ("Parts"). */
   contents_label?: string;
   /** The service jobs a record of this table usually needs ("Oil change"). */
@@ -10500,7 +10616,7 @@ export interface PlatformBundleInstance {
    *  pairing. `instance` is the parent instance name. */
   paste_tracking?: boolean;
   package_receiving?: { identity_field: string; storage_tracking?: boolean };
-  board_revisions?: { package_kind: string; blank_kind: string; stencil_kind: string; placed_kind?: string };
+  board_revisions?: { package_kind: string; blank_kind: string; stencil_kind: string; placed_kind?: string; tested_kind?: string };
   parent?: {
     instance: string;
     label?: string;

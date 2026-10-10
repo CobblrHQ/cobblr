@@ -1,4 +1,4 @@
-import { RecordFormModal, NewFromTemplateButton, useLater, useImageSrc, EntityPhoto, useOverlayOpenFlag, useToast, colorSwatch, wantsSwatch, ColourInput, valueFromInput, PopoverLayer, BackdropLayer, FieldPack, fieldNeed, fieldControl, fieldPackControlClass, type FieldType, relativeTime, SearchInput, ChoiceCombobox, ChoiceField, offersClarifier, noteKey, WorkspaceLink } from "@cobblr/platform-web";
+import { NumberStepper, RecordFormModal, NewFromTemplateButton, useLater, useImageSrc, EntityPhoto, useOverlayOpenFlag, useToast, colorSwatch, wantsSwatch, ColourInput, valueFromInput, PopoverLayer, BackdropLayer, FieldPack, fieldNeed, fieldControl, fieldPackControlClass, type FieldType, relativeTime, SearchInput, ChoiceCombobox, ChoiceField, offersClarifier, noteKey, WorkspaceLink } from "@cobblr/platform-web";
 // The scan inbox's DESKTOP card, and the pieces only it renders: the
 // collapsed strip (photo column, title, facts, filing pair, tool rail), the
 // expanded triage surface (photos beside intel, the confirm form, the AI
@@ -131,6 +131,7 @@ import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 /** Base-kind fallback for when the scan menu can't load — the menu
  *  (GET /modules/core-scan/menu) is the real source of truth and lists
  *  the workspace's ACTUAL tables ("Yarn"), not module names. */
@@ -1450,7 +1451,7 @@ export function InboxCard({
   const split = useMutation({
     mutationFn: () => api.splitScanItem(activeSlug, item.id),
     onSuccess: (r) => {
-      toast.success(`Split into ${r.children.length} items`);
+      toast.success(`Split into ${countOf(r.children.length, "item")}`);
       invalidateInbox();
     },
     onError: onErr,
@@ -1723,13 +1724,14 @@ export function InboxCard({
     return q.choices.length ? `Check ${label.toLowerCase()}` : `${label} is not set`;
   };
   const answerQuestion = useMutation({
-    mutationFn: ({ field, value, names }: { field: string | null; value: string; names?: true }) => {
+    mutationFn: ({ field, value, names, quantity }: { field: string | null; value: string; names?: true; quantity?: number }) => {
       // The answer is the row's name (a held web guess taken, #2918): written
       // the way a typed name is, a person's choice, never a table field.
       if (names || !field) return api.updateScanItem(activeSlug, item.id, { name: value.trim() });
       const last = questions.length === 1 && questions[0]?.field === field;
       const kind = (item.suggested_candidates?.[0] as { kind?: string } | undefined)?.kind;
-      return api.updateScanItem(activeSlug, item.id, { fields: { [field]: value }, ...(kind ? { fields_kind: kind } : {}), ...(last ? { reviewed: true } : {}) });
+      // A pack's answer is a count too: "10 of 1 kg" is ten things (#5350).
+      return api.updateScanItem(activeSlug, item.id, { fields: { [field]: value }, ...(kind ? { fields_kind: kind } : {}), ...(last ? { reviewed: true } : {}), ...(quantity ? { quantity } : {}) });
     },
     onSuccess: (_r, v) => {
       toast.success(v.names || !v.field ? "Got it - finding the right table…" : `${v.field.replace(/_/g, " ")}: ${v.value}`);
@@ -2527,7 +2529,7 @@ export function InboxCard({
     if (item.status === "pending") {
       if (item.image_file_id && !multiItem && toolSplit) actions.push({ ...toolSplit, tool: "split", label: "Split into items", icon: screenIcons.split, hint: "Several different things in one photo", busy: split.isPending, onClick: () => split.mutate() });
       if (item.image_file_id && toolReceipt) actions.push({ ...toolReceipt, tool: "receipt", label: "Read as a receipt", icon: screenIcons.receipt, hint: "This photo is a receipt: split into its lines", busy: asReceipt.isPending, onClick: () => asReceipt.mutate() });
-      if (combinedCount) actions.push({ label: SCAN_UNDO_ACTIONS.undoCombine, icon: screenIcons.undo, hint: `Put the ${combinedCount} scans back as they were`, busy: uncombine.isPending, onClick: () => uncombine.mutate() });
+      if (combinedCount) actions.push({ label: SCAN_UNDO_ACTIONS.undoCombine, icon: screenIcons.undo, hint: `Put the ${countOf(combinedCount, "scan")} back as they were`, busy: uncombine.isPending, onClick: () => uncombine.mutate() });
       if ((item.suggested_metadata as { split_from?: string } | null)?.split_from) actions.push({ label: SCAN_UNDO_ACTIONS.undoSplit, icon: screenIcons.undo, hint: "Put the group photo back; every piece goes to Recently deleted", busy: unsplit.isPending, onClick: () => unsplit.mutate() });
       if (hasLocations && toolBin) actions.push({ ...toolBin, tool: "bin", label: "Turn into a bin", hint: "This IS a container: make it a location you can scan into", onClick: () => setMakeBinOpen(true) });
       if (toolBox) actions.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "empty-box" ? "Not an empty box" : "Empty box", hint: BOX_STATE_EFFECT["empty-box"], busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "empty-box" ? null : "empty-box") });
@@ -2577,7 +2579,7 @@ export function InboxCard({
                   prompt: q ? questionPrompt(q) : rowState.sentence ?? "Check this item",
                   because: q ? rowState.sentence ?? q.because ?? "" : "",
                   busy: answerQuestion.isPending || markReviewed.isPending,
-                  choices: (q?.choices ?? []).map((c) => ({ value: c.value, source: c.source, onPick: () => q && (q.field || q.names) && answerQuestion.mutate({ field: q.field, value: c.value, ...(q.names ? { names: true as const } : {}) }) })),
+                  choices: (q?.choices ?? []).map((c) => ({ value: c.value, source: c.source, onPick: () => q && (q.field || q.names) && answerQuestion.mutate({ field: q.field, value: c.value, ...(q.names ? { names: true as const } : {}), ...(c.quantity ? { quantity: c.quantity } : {}) }) })),
                   actions: [
                     ...(typed && !formOpen ? [{ label: "Type it", hint: "Set the value on the form below", onClick: () => openForm(dest ?? undefined) }] : []),
                     looksFineResolves
@@ -2701,7 +2703,7 @@ export function InboxCard({
       more.push({ label: "Replay processing", hint: "Free: keeps the identification, re-applies routing and fields", busy: aiWorking, onClick: () => rerun.mutate({ noAi: true }) });
       if (item.image_file_id && !multiItem && toolSplit) more.push({ ...toolSplit, tool: "split", label: "Split into items", hint: "Several different things in one photo", busy: split.isPending, onClick: () => split.mutate() });
       if (item.image_file_id && toolReceipt) more.push({ ...toolReceipt, tool: "receipt", label: "Read as a receipt", hint: "This photo is a receipt: split into its lines", busy: asReceipt.isPending, onClick: () => asReceipt.mutate() });
-      if (combinedCount) more.push({ label: SCAN_UNDO_ACTIONS.undoCombine, hint: `Put the ${combinedCount} scans back as they were`, busy: uncombine.isPending, onClick: () => uncombine.mutate() });
+      if (combinedCount) more.push({ label: SCAN_UNDO_ACTIONS.undoCombine, hint: `Put the ${countOf(combinedCount, "scan")} back as they were`, busy: uncombine.isPending, onClick: () => uncombine.mutate() });
       if (splitFrom) more.push({ label: SCAN_UNDO_ACTIONS.undoSplit, hint: "Put the group photo back; every piece goes to Recently deleted", busy: unsplit.isPending, onClick: () => unsplit.mutate() });
       if (hasLocations && toolBin) more.push({ ...toolBin, tool: "bin", label: "Turn into a bin", hint: "This IS a container: make it a location you can scan into", onClick: () => setMakeBinOpen(true) });
       if (toolBox) more.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "empty-box" ? "Not an empty box" : "Empty box", hint: BOX_STATE_EFFECT["empty-box"], busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "empty-box" ? null : "empty-box") });
@@ -2725,7 +2727,7 @@ export function InboxCard({
                     prompt: questionPrompt(cardQuestions[0]),
                     because: cardQuestions[0].because,
                     busy: answerQuestion.isPending,
-                    choices: cardQuestions[0].choices.map((c) => ({ value: c.value, source: c.source, onPick: () => cardQuestions[0] && (cardQuestions[0].field || cardQuestions[0].names) && answerQuestion.mutate({ field: cardQuestions[0].field, value: c.value, ...(cardQuestions[0].names ? { names: true as const } : {}) }) })),
+                    choices: cardQuestions[0].choices.map((c) => ({ value: c.value, source: c.source, onPick: () => cardQuestions[0] && (cardQuestions[0].field || cardQuestions[0].names) && answerQuestion.mutate({ field: cardQuestions[0].field, value: c.value, ...(cardQuestions[0].names ? { names: true as const } : {}), ...(c.quantity ? { quantity: c.quantity } : {}) }) })),
                     // A names question is typed on the item screen, where the name field is.
                     onType: cardQuestions[0].field && dest ? () => openForm(dest) : cardQuestions[0].names && onOpenSheet ? () => onOpenSheet(dest) : null,
                   }
@@ -3039,37 +3041,20 @@ export function InboxCard({
                 it until it passed one gave no way to raise it without opening
                 the form (#4552). */}
             {!receiptUnread && typeof (item.suggested_metadata as { weight?: unknown } | null)?.weight !== "number" && (
-              <span className="shrink-0 inline-flex items-center rounded-full bg-cobble-600 text-white text-[11px] font-semibold overflow-hidden">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    qtyPatch.mutate(Math.max(1, (item.quantity ?? 1) - 1));
-                  }}
-                  disabled={qtyPatch.isPending}
-                  className="px-1.5 py-0.5 hover:bg-cobble-700 disabled:opacity-50"
-                  title="Decrease quantity"
-                  aria-label="Decrease quantity"
-                >
-                  −
-                </button>
-                <span className="px-1 tabular-nums" title="Quantity (scanned this many times)">
-                  ×{item.quantity}
-                </span>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    qtyPatch.mutate((item.quantity ?? 1) + 1);
-                  }}
-                  disabled={qtyPatch.isPending}
-                  className="px-1.5 py-0.5 hover:bg-cobble-700 disabled:opacity-50"
-                  title="Increase quantity"
-                  aria-label="Increase quantity"
-                >
-                  +
-                </button>
-              </span>
+              <NumberStepper
+                className="shrink-0 inline-flex items-center rounded-full bg-cobble-600 text-white text-[11px] font-semibold overflow-hidden"
+                value={item.quantity ?? 1}
+                min={1}
+                busy={qtyPatch.isPending}
+                stopClicks
+                label="Quantity"
+                prefix="×"
+                decreaseLabel="Decrease quantity"
+                increaseLabel="Increase quantity"
+                buttonClassName="px-1.5 py-0.5 hover:bg-cobble-700 disabled:opacity-50"
+                inputClassName="w-7 bg-transparent px-0.5 text-center tabular-nums text-white"
+                onChange={(n) => qtyPatch.mutate(n)}
+              />
             )}
           </div>
           <div className="text-[11px] font-mono text-faint dark:text-slate-500 min-w-0 whitespace-normal break-words sm:truncate">
@@ -3144,7 +3129,7 @@ export function InboxCard({
               if (combinedCount && item.status === "pending")
                 segs.push(
                   <span className="text-accent">
-                    ⧉ {combinedCount} scans combined
+                    ⧉ {countOf(combinedCount, "scan")} combined
                     <button
                       type="button"
                       data-testid="undo-combine"
@@ -3252,7 +3237,7 @@ export function InboxCard({
                         <button
                           type="button"
                           disabled={answerQuestion.isPending}
-                          onClick={() => (q.field || q.names) && answerQuestion.mutate({ field: q.field, value: c.value, ...(q.names ? { names: true as const } : {}) })}
+                          onClick={() => (q.field || q.names) && answerQuestion.mutate({ field: q.field, value: c.value, ...(q.names ? { names: true as const } : {}), ...(c.quantity ? { quantity: c.quantity } : {}) })}
                           className="rounded-md border border-amber-400/60 bg-amber-50 dark:bg-amber-900/20 px-1.5 py-0.5 font-medium text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition disabled:opacity-50"
                           title={`Set ${q.field?.replace(/_/g, " ")} to ${c.value}: ${c.source}`}
                         >

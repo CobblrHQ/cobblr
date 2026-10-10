@@ -109,7 +109,7 @@ export function JoinPage() {
               <input required value={orgName} onChange={(e) => setOrgName(e.target.value)} placeholder="Sam's Workshop" className="input w-full" />
             </Field>
             {error && <div className="text-xs text-ember-500">{error}</div>}
-            <button type="submit" disabled={busy} className="w-full rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition disabled:opacity-50">
+            <button type="submit" data-testid="join-submit" disabled={busy} className="w-full rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition disabled:opacity-50">
               {busy ? "Creating your workspace…" : "Create my workspace"}
             </button>
           </form>

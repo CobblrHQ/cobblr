@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { QueryError, useStationWakeLock, useConfirm, usePageTitle, downloadBlob } from "@cobblr/platform-web";
 import { useBoardAction } from "./BoardRevisions.js";
 import type { BuildsApi } from "./api.js";
+import { countOf } from "@cobblr/platform-contract/plural";
 const button = "min-h-12 rounded border border-line px-4 py-3 text-base disabled:opacity-50";
 export function AssemblyStation({ slug, machineId, orderId, api, camera }: { slug: string; machineId: string; orderId: string; api: BuildsApi; camera: (onCode: (code: string) => void, onClose: () => void) => ReactNode }) {
   usePageTitle("Placement station");
@@ -22,7 +23,7 @@ export function AssemblyStation({ slug, machineId, orderId, api, camera }: { slu
   const scan = (value: string) => { setScanning(false); run.mutate(async () => { if (!credential || !slot) throw new Error("Choose the loaded feeder slot first."); await call("builds:verify-feeder", { order_id: orderId, station_token: credential.token, slot, code: value }); setCode(""); }); };
   async function step(side: "top" | "bottom", operation: "start" | "finish") {
     if (!credential) return;
-    const agreed = await confirm({ title: operation === "start" ? `Start ${side} side?` : `Complete ${side} side?`, message: operation === "start" ? `Confirm all ${order.data?.qty} boards are loaded, the exported ${side} program is selected and its package calibrations match this machine.` : `Confirm every placement on all ${order.data?.qty} boards completed. The last side draws the reserved reels and blank boards and adds placed board stock.`, confirmLabel: operation === "start" ? "Confirm and start" : "Confirm completion" });
+    const agreed = await confirm({ title: operation === "start" ? `Start ${side} side?` : `Complete ${side} side?`, message: operation === "start" ? `Confirm all ${countOf(Number(order.data?.qty ?? 0), "board")} are loaded, the exported ${side} program is selected and its package calibrations match this machine.` : `Confirm every placement on all ${countOf(Number(order.data?.qty ?? 0), "board")} completed. The last side draws the reserved reels and blank boards and adds placed board stock.`, confirmLabel: operation === "start" ? "Confirm and start" : "Confirm completion" });
     if (agreed) run.mutate(async () => { await call(`builds:${operation}-placement`, { order_id: orderId, station_token: credential.token, side, source: "manual", confirmed_all_boards: true }); });
   }
   return <main className="mx-auto max-w-3xl p-4 sm:p-6 space-y-4" id="main-content">
@@ -33,7 +34,7 @@ export function AssemblyStation({ slug, machineId, orderId, api, camera }: { slu
     {placement && placement.machine_id !== machineId && <p role="alert">This work order belongs to another machine. Open its station from the work order.</p>}
     {placement && placement.machine_id === machineId && <>
       {!order.data?.assembly.paste && <p role="status" className="text-ember-700 dark:text-ember-300">Record paste application on this work order before Start.</p>}
-      <p>{order.data?.qty} boards · {order.data?.assembly.state} · {placement.profile.model}</p>
+      <p>{countOf(Number(order.data?.qty ?? 0), "board")} · {order.data?.assembly.state} · {placement.profile.model}</p>
       <p className="text-sm text-muted">Load the exported program and check its alignment on the machine. Each package calibration must already have passed a test board.</p>
       {credential && <>
         <section className="rounded border border-line p-4 space-y-3"><h2 className="text-xl font-semibold">Verify loaded reels</h2><ul className="space-y-2">{placement.feeders.map(f => <li key={f.slot}>Slot {f.slot} · {f.mpn} · lot {f.lot_code ?? "unrecorded"} · {placement.verified[f.slot]?.station_id === credential.id && placement.verified[f.slot]?.part_id === f.part_id ? "Verified" : "Unverified"}</li>)}</ul>

@@ -62,6 +62,8 @@ export interface CoreScanBatchesTable {
    *  Null for an ordinary in-app scan session. */
   /** The address an emailed receipt came from (origin "email"). */
   origin_from: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  /** The order email's line photos with their rows' words (#5350). */
+  line_images: ColumnType<unknown | null, string | null | undefined, string | null | undefined>;
   origin: ColumnType<string | null, string | null | undefined, string | null | undefined>;
   /** When this session was IMPORTED from another instance: the source batch id,
    *  which is the dedupe key for repeat syncs. Separate from `origin` so the

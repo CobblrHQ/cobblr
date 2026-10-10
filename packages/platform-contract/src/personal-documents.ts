@@ -4,7 +4,9 @@ export interface PersonalDocumentRead {
   privacy: DocumentPrivacy;
   kind: "registration" | "personal" | "ordinary";
   fields: Partial<Record<PersonalDocumentField, string>>;
-  sources: Partial<Record<PersonalDocumentField, "code" | "local-ai">>;
+  /** Who read each field: code, a local model, or the cloud connection the
+   *  workspace's owner consented to (#5621). */
+  sources: Partial<Record<PersonalDocumentField, "code" | "local-ai" | "cloud-ai">>;
   missing: PersonalDocumentField[];
   message: string;
 }

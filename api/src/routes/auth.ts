@@ -65,7 +65,7 @@ import { dispatch } from "../platform/notifications.js";
 import { createAccount } from "../platform/accounts.js";
 import { isUndeliverableTestAddress } from "../platform/email-send.js";
 import * as activity from "../platform/activity.js";
-import { fireSignup, sendAuthEmail } from "../platform/hosted-seams.js";
+import { activeAuthEmailSender, fireSignup, sendAuthEmail } from "../platform/hosted-seams.js";
 import { discordAppId } from "../platform/discord-oauth.js";
 import { communityLinks, discordInviteUrl, type CommunityLink } from "../platform/community.js";
 import { provisionAppWorkspace, ProvisionAppError } from "../platform/provision-app.js";
@@ -334,7 +334,7 @@ export async function buildAuthResponse(userId: string): Promise<AuthResponse> {
 // link). Add fields here as more anonymous-time toggles appear;
 // don't repurpose /api/v1/healthz for auth UI hints.
 
-authRouter.get("/config", (req, res) => {
+authRouter.get("/config", async (req, res) => {
   if (overLimit(configLimiter, req)) return rateLimited(res);
   // The same answer for every visitor of a deployment: a shared cache may hold
   // it for a minute, which also spares the limit a page reload's worth.
@@ -342,6 +342,10 @@ authRouter.get("/config", (req, res) => {
   return res.json({
     signup_enabled: publicSignupEnabled(),
     self_serve_invites: selfServeInvitesEnabled(),
+    // Which sender delivers auth email: "byo:smtp" (configured here), "overlay"
+    // (a hosted overlay's), or null (none: links show inline). A name only. A
+    // staging that must never mail a person asserts its own here (2026-10-10).
+    email_sender: activeAuthEmailSender(),
     // Captcha for the signup form. Null unless a provider + secret are configured
     // server-side (the trial tier). The site key is public; the secret never is.
     captcha: captchaEnabled()
@@ -354,6 +358,10 @@ authRouter.get("/config", (req, res) => {
     // managed/public-prod deployment sets COBBLR_HOSTED=true. Drives client hints
     // such as "a hosted Cobblr can't reach your LAN device directly".
     hosted: process.env.COBBLR_HOSTED === "true",
+    // Whether this server can send Web Push (#5565): its key pair exists. The
+    // public key itself is public by nature, but a yes is all a page (or an
+    // operator checking a deployment with curl) needs. null: could not be read.
+    web_push: await webPushReady(),
     // Central identity, for the "sign in with your Cobblr account" button. Null unless
     // BOTH halves are configured, because a button that starts a hand-off this surface
     // cannot finish is worse than no button: it fails after the redirect, on somebody
@@ -1258,6 +1266,18 @@ import {
 import { revokeSandboxLinksForUser } from "../platform/try-sandbox.js";
 import { inviteStatus, joinThroughInvite, REFUSAL } from "../platform/join-invite.js";
 import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
+import { vapidKeys } from "../platform/push-keys.js";
+
+/** True when this instance has its Web Push key pair, false when it has none,
+ *  null when the answer could not be read (said in the log, never a false). */
+async function webPushReady(): Promise<boolean | null> {
+  try {
+    return (await vapidKeys()) !== null;
+  } catch (err) {
+    console.error("[push] could not read the Web Push key for /auth/config:", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
 
 
 /** A page on this site to come back to: a path, never another origin. */

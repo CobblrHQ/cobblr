@@ -20,6 +20,7 @@ import { provenanceFieldFor, PROVENANCE_FIELDS } from "@cobblr/platform-contract
 import { parseNumber, parseQuantity, type ColumnType, type SummaryFact, type UnderstoodColumn, type UnderstoodSheet, type Value } from "./sheet-understand.js";
 import { moneyForStorage, moneyStorageOf, type MoneyStorage } from "@cobblr/platform-contract/money";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 // ─── the workspace, as the planner sees it ───────────────────────────────────
 
 export interface TargetField {
@@ -341,7 +342,7 @@ export function scoreTargets(sheet: UnderstoodSheet, filename: string, targets: 
       const rowsHere = topCounts.get(i) ?? 0;
       if (sample.length && rowsHere) {
         score += Math.round((4 * rowsHere) / sample.length);
-        if (rowsHere / sample.length >= 0.3) why.push(`${rowsHere} of the first ${sample.length} rows read like its things`);
+        if (rowsHere / sample.length >= 0.3) why.push(`${rowsHere} of the first ${countOf(sample.length, "row")} read like its things`);
       }
       if (t.status === "existing" && score > 1) score += 1;
       return { target: t, score, why };
@@ -707,7 +708,7 @@ function checkSummary(
     }
     // An average: over which rows is the sheet's to say, so each count it
     // could have divided by is tried, all rows first.
-    const counts: Array<[number, string]> = [[rows.length, `over all ${rows.length} rows`]];
+    const counts: Array<[number, string]> = [[rows.length, `over all ${countOf(rows.length, "row")}`]];
     sheet.columns.forEach((c, i) => {
       const n = rows.filter((r) => r.values[i] != null).length;
       if (n > 0 && n !== rows.length) counts.push([n, `over the ${n} with ${/^[aeiou]/i.test(c.header) ? "an" : "a"} ${c.header}`]);

@@ -25,7 +25,7 @@ export interface FieldContribution {
 
 /** Ranking of what decides the headline: a person's word, then what was read
  *  off the item, then a catalog's answer, then the AI's say-so. */
-const RANK: Record<string, number> = { person: 0, label: 1, receipt: 1, order: 1, decode: 1, catalog: 2, ai: 3, router: 3 };
+const RANK: Record<string, number> = { person: 0, label: 1, receipt: 1, order: 1, "order-email": 1, decode: 1, catalog: 2, ai: 3, router: 3 };
 const rankOf = (source: string): number => RANK[source] ?? 3;
 
 type Stamped = Pick<FieldProvenance, "by" | "from"> & { contributions?: FieldContribution[] };
@@ -52,6 +52,7 @@ const SOURCE_WORDS: Record<string, string> = {
   ai: "the AI",
   receipt: "the receipt",
   order: "the order",
+  "order-email": "the order email",
   person: "you",
   decode: "the code",
   router: "the AI",

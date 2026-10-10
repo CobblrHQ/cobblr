@@ -22,6 +22,7 @@ export function register(): void {
     buildCompatProvider({
       id: "openrouter",
       label: "OpenRouter (one key, any model)",
+      company: "OpenRouter and the maker of the model it picks",
       describeCredentials: () => ({
         api_key: {
           label: "OpenRouter API key (openrouter.ai/keys, requests transit OpenRouter)",

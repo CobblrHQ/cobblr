@@ -340,7 +340,13 @@ export interface DigifabLaserPlansTable {
   id: Generated<string>; connection_id: string; remote_device_id: string; library_id: string;
   plan: import("./laser-plans.js").LaserPlan; run_id: string | null; created_at: Generated<Date>;
 }
+export interface DigifabReflowProfilesTable {
+  id: Generated<string>; paste_kind: string; paste_id: string; fingerprint: string;
+  profile: import("@cobblr/platform-contract/reflow-profile").ReflowProfile;
+  created_by: string | null; created_at: Generated<Date>;
+}
 export interface DigifabDB {
+  digifab_reflow_profiles: DigifabReflowProfilesTable;
   digifab_test_numbering: import("./production-store.js").TestNumbering;
   digifab_test_delivery: import("./production-store.js").TestDelivery;
   digifab_test_plans: import("./production-store.js").TestPlanHead;

@@ -41,6 +41,7 @@ import { scanRowState, scanTrackedMatch } from "@cobblr/platform-contract/scan-t
 import { evidencedFill } from "@cobblr/platform-contract/scan-evidence";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 /** "license_plate" → "License plate" — a friendly label for a raw field key
  *  (no field-def lookup needed for a quick merge preview). */
 function humanizeField(key: string): string {
@@ -349,7 +350,7 @@ export function TrackedMatchBanner({
       {cards.length > 1 && (
         <div data-testid="match-pick" className="space-y-1">
           <div className="text-xs text-content dark:text-mortar-100">
-            This could be any of {cards.length} things you have. Which is it?
+            This could be any of {countOf(cards.length, "thing")} you have. Which is it?
           </div>
           <div role="radiogroup" aria-label="Which one this is" className="flex flex-wrap gap-1.5">
             {cards.map((m, i) => (
@@ -407,7 +408,7 @@ export function TrackedMatchBanner({
       {several && (
         <div data-testid="which-place">
           <div className="text-[11px] text-muted mb-1">
-            {picked ? "Adds to" : `You keep this in ${places.length} places. Which one is this?`}
+            {picked ? "Adds to" : `You keep this in ${countOf(places.length, "place")}. Which one is this?`}
           </div>
           <div className="flex flex-wrap gap-1.5">
             {places.map((p) => (

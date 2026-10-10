@@ -1,7 +1,7 @@
 // Kysely table types for builds. Column names match the migration (snake_case).
 // Numeric columns come back from pg as strings; coerce when doing math.
 
-import type { Generated, Kysely } from "kysely";
+import type { Generated, ColumnType, Kysely } from "kysely";
 import type { Request } from "express";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 
@@ -117,7 +117,14 @@ export interface PlannedTable {
   updated_at: Generated<Date>;
 }
 
+export interface InspectionsTable {
+  metadata: Generated<Record<string, unknown>>;
+ id: Generated<string>; order_id: string; ordinal: number; revision: Generated<number>; status: "pass" | "fail";
+ front_file_id: string; back_file_id: string; serial_code: string | null; defects: ColumnType<string[], string, string>; notes: string;
+ history: ColumnType<Array<Record<string, unknown>>, string | undefined, string>; inspected_by: string | null; station_id: string | null; inspected_at: Generated<Date>;
+}
 export interface BuildsDB {
+  builds_inspections: InspectionsTable;
   builds_builds: BuildsTable;
   builds_components: ComponentsTable;
   builds_runs: RunsTable;

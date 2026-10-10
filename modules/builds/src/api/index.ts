@@ -1,3 +1,5 @@
+import { inspectionRouter, registerInspectionActions } from "./inspection.js";
+import { reflowRouter, registerReflowActions } from "./reflow.js";
 import { registerAssemblyPasteActions } from "./assembly-paste.js";
 import { placementRouter, registerPlacementActions } from "./placement.js";
 import { assemblyOrdersRouter, registerAssemblyOrderActions } from "./assembly-orders.js";
@@ -13,6 +15,8 @@ import { registerBuildsActionHandlers } from "./action-handlers.js";
 registerBoardRevisionActions();
 registerAssemblyOrderActions();
 registerPlacementActions();
+registerReflowActions();
+registerInspectionActions();
 registerAssemblyPasteActions();
 registerBuildsResolvers();
 registerBuildsActionHandlers();
@@ -21,6 +25,8 @@ const router = Router({ mergeParams: true });
 router.use("/", boardRevisionsRouter);
 router.use("/", assemblyOrdersRouter);
 router.use("/", placementRouter);
+router.use("/", reflowRouter);
+router.use("/", inspectionRouter);
 router.use("/", buildsRouter);
 
 export default router;

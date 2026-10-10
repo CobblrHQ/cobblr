@@ -6,7 +6,10 @@
 // and the warnings, each one a sentence about a consequence ("scanning
 // waits") rather than a state ("1 provider").
 
-import type { AiCapability } from "@cobblr/platform-contract";
+import { AI_JOBS, isFloatingModel, type AiCapability, type AiJobId } from "@cobblr/platform-contract";
+
+/** The AI page's "Who does what, in order", for links to it. */
+export const WHO_ANSWERS_ANCHOR = "who-answers";
 
 export interface AiChainStep {
   position: number;
@@ -26,6 +29,9 @@ export interface AiChainStep {
    *  images natively. null: in doubt (a bridge) and not yet shown the test
    *  picture. */
   reads_photos: "read" | "not-read" | "no" | "declared" | null;
+  /** One of the person's own default steps for this job, set on Your
+   *  account, Connections, rather than ordered here. */
+  your_default?: true;
 }
 
 export interface AiChain {
@@ -40,8 +46,10 @@ export interface AiChainAnswer {
 }
 
 export interface AiJobGroup {
-  id: "photos" | "chat" | "text" | "search" | "personal";
+  id: AiJobId;
   title: string;
+  /** The job inside a sentence: "for a quick look", "for Cobb chat". */
+  phrase: string;
   /** The job whose chain the group shows. */
   shows: AiCapability;
   /** Every job the group stands for: a reorder writes the order for each. */
@@ -50,29 +58,52 @@ export interface AiJobGroup {
   waits: string;
 }
 
-/** Every capability sits in exactly one group (ai-chain.test.ts), so a job
- *  added to the contract cannot fall off the page. */
-export const AI_JOB_GROUPS: AiJobGroup[] = [
-  { id: "personal", title: "Personal documents", shows: "personal-document-read", capabilities: ["personal-document-read"], waits: "documents are read by code only" },
-  {
-    id: "photos",
-    title: "Reading photos",
-    shows: "identify-image",
-    capabilities: ["identify-image", "identify-glance", "split-image", "rank-images", "classify-image", "extract-text", "document-read"],
-    waits: "scanning waits",
-  },
-  { id: "chat", title: "Chat", shows: "chat", capabilities: ["chat", "plan-changes", "design-workspace"], waits: "Cobb stops answering" },
-  { id: "text", title: "Organising and text", shows: "summarise", capabilities: ["summarise", "match-to-catalog"], waits: "matching and summaries wait" },
-  { id: "search", title: "Search", shows: "embed-text", capabilities: ["embed-text"], waits: "search falls back to plain words" },
-];
+const WAITS: Record<AiJobId, string> = {
+  personal: "documents are read by code only",
+  glance: "the scan card asks no first-look question",
+  reading: "scanning and document reading wait",
+  chat: "Cobb stops answering",
+  text: "matching and summaries wait",
+  search: "search falls back to plain words",
+};
 
-/** "Gemini · Flash Lite (floating) · yours · Verified" */
+/** The contract's jobs (the router keeps a person's defaults by the
+ *  same list), with what waits when nothing answers. Every capability sits
+ *  in exactly one group (ai-chain.test.ts), so a job added to the contract
+ *  cannot fall off the page. */
+export const AI_JOB_GROUPS: AiJobGroup[] = AI_JOBS.map((j) => ({
+  id: j.id,
+  title: j.title,
+  phrase: j.phrase,
+  shows: j.shows,
+  capabilities: [...j.capabilities],
+  waits: WAITS[j.id],
+}));
+
+/** A model as a person reads it (#5622): "Haiku · latest (5.5)" for a
+ *  provider that lists its models, the provider's own name for it
+ *  otherwise, and an id that floats on the provider's side
+ *  ("gemini-flash-lite-latest") as "Gemini Flash Lite · latest", never the id. */
+export function modelWords(id: string, label?: string | null): string {
+  const floating = isFloatingModel(id);
+  if (label) return floating && !/latest/i.test(label) ? `${label} · latest` : label;
+  if (!floating) return id;
+  const words = id
+    .trim()
+    .replace(/^models\//, "")
+    .replace(/[-:]latest$/i, "")
+    .split(/[-_:]+/)
+    .filter(Boolean)
+    .map((w) => (/^\d/.test(w) ? w : w[0]!.toUpperCase() + w.slice(1)))
+    .join(" ");
+  return `${words || "Model"} · latest`;
+}
+
+/** "Gemini · Flash Lite · latest · yours · Verified" */
 export function stepLine(s: AiChainStep): string {
   const bits = [s.label];
-  // "Haiku · latest (5.5)" says it moves already; an id that floats on the
-  // provider's side ("gemini-flash-lite-latest") says so in words.
   if (s.model_label) bits.push(s.model_label);
-  else if (s.model) bits.push(s.floating ? `${s.model} (floating)` : s.model);
+  else if (s.model) bits.push(modelWords(s.model));
   bits.push(sourceWords(s.source));
   if (s.status) bits.push(s.status);
   return bits.join(" · ");
@@ -99,9 +130,10 @@ export function chainWarnings(group: AiJobGroup, answer: AiChainAnswer): string[
   const out: string[] = [];
   const asked = answer.you.steps.filter((s) => s.asked);
   const first = asked[0];
-  if (group.id === "personal") return ["Personal documents are read here or by your local AI. They never go to a cloud AI. If no local AI is connected, code reads what it can and you check the missing values."];
+  // The personal documents panel says who reads them, once (#5621).
+  if (group.id === "personal") return [];
   if (!first) return [`Nothing here can do this, so ${group.waits}.`];
-  if (group.id === "photos") {
+  if (group.id === "glance" || group.id === "reading") {
     for (const s of asked) {
       if (s.reads_photos === "not-read") out.push(`${s.label} doesn't read photos: it answered the test picture without naming it.`);
       else if (s.reads_photos === null && s.source === "yours") out.push(`${s.label} has not been checked with a photo. Test it on Your account, Connections.`);
@@ -115,7 +147,10 @@ export function chainWarnings(group: AiJobGroup, answer: AiChainAnswer): string[
 export function sectionWarnings(answers: AiChainAnswer[]): string[] {
   const out: string[] = [];
   const floating = new Map<string, string>();
-  for (const a of answers) for (const s of a.you.steps) if (s.asked && s.floating && s.model) floating.set(`${s.label}|${s.model}`, `${s.label} (${s.model})`);
+  // A family's latest from a provider's own listing (it has a model_label,
+  // "Haiku · latest (5.5)") moves only when the listing shows a newer model,
+  // and the platform says so when it does: not a floating model.
+  for (const a of answers) for (const s of a.you.steps) if (s.asked && s.floating && s.model && !s.model_label) floating.set(`${s.label}|${s.model}`, `${s.label} (${modelWords(s.model)})`);
   if (floating.size) {
     out.push(`Floating model: ${[...floating.values()].join(" and ")}. The provider can change what it points at without notice.`);
   }
@@ -128,19 +163,6 @@ export function sectionWarnings(answers: AiChainAnswer[]): string[] {
     out.push(`Only you get ${[...justMe].join(" and ")}: automations and background work can't use a "Just me" connection. Share it with the workspace to let them.`);
   }
   return out;
-}
-
-/** The order of the caller's own connections after moving one up or down,
- *  as the ids the order endpoint takes. Somebody else's rows and the
- *  workspace's do not move: only the person who owns a connection ranks it. */
-export function reorderedOwn(steps: AiChainStep[], credentialId: string, by: -1 | 1): string[] | null {
-  const own = steps.filter((s) => s.source === "yours" && s.credential_id).map((s) => s.credential_id!);
-  const i = own.indexOf(credentialId);
-  const j = i + by;
-  if (i < 0 || j < 0 || j >= own.length) return null;
-  const next = [...own];
-  [next[i], next[j]] = [next[j]!, next[i]!];
-  return next;
 }
 
 /** One line for a workspace on Your account, Connections: "Gemini, then

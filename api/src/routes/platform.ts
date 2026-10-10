@@ -1922,6 +1922,7 @@ platformOrgRouter.get("/:slug/ai-chain", requireAuth, withTenant, async (req, re
         // "declared": takes images and is not in doubt. null: in doubt and
         // not yet shown the test picture.
         reads_photos: !vision ? ("no" as const) : (v?.photos ?? (def?.checksPhotosInTest ? null : ("declared" as const))),
+        ...(s.your_default ? { your_default: true as const } : {}),
       };
       if (s.source === "shared" && s.owner_user_id !== me) {
         const owner = owners.find((o) => o.id === s.owner_user_id)?.display_name ?? "a member";

@@ -55,6 +55,7 @@ export function PersonalDocumentValues({ read }: { read: PersonalDocumentRead })
     <dl className="grid grid-cols-2 gap-2 text-sm">{Object.entries(read.fields).map(([key, value]) => <div key={key}>
       <dt className="font-medium">{fieldLabels[key] || key}</dt><dd className="break-words">{value}</dd>
       {read.sources[key as keyof typeof read.sources] === "local-ai" && <dd className="text-muted">Read by your local AI. Please check.</dd>}
+      {read.sources[key as keyof typeof read.sources] === "cloud-ai" && <dd className="text-muted">Read by the cloud AI this workspace's owner chose. Please check.</dd>}
     </div>)}</dl>
     <p className="text-sm text-muted">The original has not been saved. Keep your copy until you file it in the Vault.</p>
   </>;

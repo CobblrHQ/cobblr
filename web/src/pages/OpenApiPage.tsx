@@ -11,6 +11,7 @@ import { QueryError } from "../components/QueryError";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 import { FEED_SCROLL_PAGE_INNER } from "../lib/feed";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 interface OpenApiSpec {
   openapi: string;
   info: { title: string; version: string; description?: string };
@@ -53,7 +54,7 @@ export function OpenApiPage() {
     <div className="space-y-4">
       <ConfigHeaderActions>
         <span className="text-sm text-muted dark:text-slate-400">
-            v{spec?.info.version ?? "?"} · {schemas.length} schemas · {paths.length} paths
+            v{spec?.info.version ?? "?"} · {countOf(schemas.length, "schema")} · {countOf(paths.length, "path")}
           </span>
         <button
               onClick={() => {

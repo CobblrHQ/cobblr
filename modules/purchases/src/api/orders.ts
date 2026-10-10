@@ -340,7 +340,7 @@ ordersRouter.post(
     });
     // An order email filed before this order existed may have left its
     // store page waiting on this number.
-    if (inserted.order_number) await attachWaiting(db).catch((err: unknown) => console.error("[purchases] order page attach failed:", (err as Error).name));
+    if (inserted.order_number) await attachWaiting(db, ctx.org.id).catch((err: unknown) => console.error("[purchases] order page attach failed:", (err as Error).name));
     res.status(201).json(inserted);
   }),
 );

@@ -46,7 +46,7 @@ export async function prepareProductionAttempt(db: Kysely<DigifabDB>, raw: z.inf
   return { ...row, unit: input.unit };
  });
 }
-export function verifyProductionResult(plan: ProductionPlan, result: ProductionTestResult): ProductionTestResult {
+export function verifyProductionResult(plan: ProductionPlan, result: ProductionTestResult, unit?: { serial?: string | null }): ProductionTestResult {
  // A result is stored as it arrives, so a wireless credential is refused here, before anything is kept.
  assertNoWirelessCredentialFields(result);
  if (!isDeepStrictEqual(validateProductionPlan(result.plan), plan) || productionPlanHash(result.plan) !== result.plan_hash) throw new Error("Use this attempt's exact plan and limits.");
@@ -62,7 +62,7 @@ export function verifyProductionResult(plan: ProductionPlan, result: ProductionT
   if (stopped) throw new Error("A stopped plan cannot run a later step.");
   const { id: _id, name: _name, kind: _kind, limits: _limits, result: _result, reason: _reason, started_at: _start, finished_at: _end, ...value } = recorded;
   const observation = ProductionObservationSchema.parse(value);
-  if (recorded.result === "pass" && judgeProductionObservation(step, observation).result !== "pass") throw new Error("The measurement does not pass its saved limits.");
+  if (recorded.result === "pass" && judgeProductionObservation(step, observation, unit).result !== "pass") throw new Error("The measurement does not pass its saved limits.");
   if (step.kind === "program" && recorded.result === "pass" && observation.firmware_hash !== step.firmware.sha256) throw new Error("The programmed firmware hash does not match this plan.");
   if (recorded.result === "fail") { failed = true; stopped = (step.on_fail ?? plan.on_fail) === "stop"; }
  }
@@ -74,7 +74,7 @@ export function verifyProductionResult(plan: ProductionPlan, result: ProductionT
 export async function finishProductionAttempt(db: Kysely<DigifabDB>, id: string, asked: ProductionTestResult) {
  const finish = async (trx: Kysely<DigifabDB>) => {
   const row = await trx.selectFrom("digifab_test_runs").selectAll().where("id", "=", id).forUpdate().executeTakeFirstOrThrow();
-  const result = verifyProductionResult(row.plan, asked);
+  const result = verifyProductionResult(row.plan, asked, { serial: typeof row.unit_snapshot?.serial === "string" ? row.unit_snapshot.serial : null });
   if (row.finished_at) { if (!isDeepStrictEqual(row.result, JSON.parse(JSON.stringify(result)))) throw new Error("This immutable result was already saved. Retest as a new attempt."); return row; }
   return trx.updateTable("digifab_test_runs").set({ result, finished_at: new Date(result.finished_at) }).where("id", "=", id).returningAll().executeTakeFirstOrThrow();
  };

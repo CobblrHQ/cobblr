@@ -513,6 +513,28 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     version: "0.1.0",
   },
   {
+    // UI-SCREEN: /settings/connections (Who answers for you)
+    group: "more",
+    id: "platform:set-my-default-ai", run_by: "member",
+    min_role: "member",
+    label: "Choose your own AI for a kind of work",
+    description:
+      "Set which of the person's own AI connections answers a kind of work for them, in every workspace they use unless that workspace chose its own: job is photos (reading scans), chat, text (organising, summaries) or search. steps is First then the fallbacks, each { connection, model }: the connection by its name, the model by its name (Flash Lite; a family name such as Haiku follows its newest version, Haiku 4.5 keeps that version). No steps clears the job. Changes only the person's own choice, never anyone else's.",
+    icon: "sparkles",
+    scope: "workspace",
+    invoke_handler: "platform.set-my-default-ai",
+    user_invokable: true,
+    // Its undo puts the job's previous steps back, or clears it when there
+    // were none; it changes only the caller's own choice.
+    undoable: true,
+    examples: ["use Flash Lite for scans", "answer my chat with Claude Sonnet, then Gemini", "stop using my own AI for search"],
+    args_schema: {
+      job: { label: "The kind of work: photos, chat, text or search", type: "text", required: true },
+      steps: { label: "First, then fallbacks: each a connection and a model, by name", type: "list" },
+    },
+    version: "0.1.0",
+  },
+  {
     // UI-SCREEN: / (the dashboard's offer to move records into the collection they belong in)
     group: "more",
     id: "platform:move-records",

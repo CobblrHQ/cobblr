@@ -28,8 +28,8 @@
     "hash": "00d9c6a666bedb5035b9f0ed5e8642fb0ff94a8ecd8919e774d325c69a9e1af1"
   },
   "cobblr.community.lego": {
-    "version": "0.6.5",
-    "hash": "5dd1761ecce351d2cd463fe62b34fcde20d9b62a0bf11faa5032bce99a076cab"
+    "version": "0.7.0",
+    "hash": "b9417e8b079a9167fb6d2d396c21eb7dc2e848d21716e6386b18e7ddb2a61615"
   },
   "cobblr.community.lending-library": {
     "version": "0.1.5",
@@ -72,8 +72,8 @@
     "hash": "fbefad65f76fd344c2f93b79f8895d65584825b1a277c54cd3d28417b457aa4e"
   },
   "cobblr.flagship.electronics-assembly": {
-    "version": "0.1.9",
-    "hash": "42b6e22c13f57ab2a1f0d57d3ea25f1df1571eb2af531bf6b2930c526cfdacbf"
+    "version": "0.1.11",
+    "hash": "d63dc4387f730966ac055ff6691777c3a164710e475f3e45752ff81bfadc9892"
   },
   "cobblr.flagship.fasteners": {
     "version": "0.1.5",

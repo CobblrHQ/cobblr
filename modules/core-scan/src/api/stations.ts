@@ -31,6 +31,7 @@ import {
   DEFAULT_STATION_SETTINGS,
   isStationAddress,
   stationLabelOf,
+  stationQrMay,
   stationReaches,
   stationSettingsOf,
   type StationLookup,
@@ -54,6 +55,39 @@ type Db = ReturnType<typeof tenantDb>;
 function isStationDevice(req: Request): boolean {
   const scopes = (req as unknown as { session?: { token_scopes?: string[] | null } }).session?.token_scopes ?? [];
   return scopes.some((s) => s.startsWith("station:"));
+}
+
+/** A phone holding the station's kitchen QR (#5353): it may press only what
+ *  the owner ticked (stationQrMay), and not too fast. */
+function isQrPhone(req: Request): boolean {
+  const scopes = (req as unknown as { session?: { token_scopes?: string[] | null } }).session?.token_scopes ?? [];
+  return scopes.some((s) => s.startsWith("station-qr:"));
+}
+
+// SINGLE-PROCESS-SAFE: a soft brake on one phone's presses; a second api process only lets it press a little more.
+const qrPresses = new Map<string, number[]>();
+const QR_PRESSES_PER_MINUTE = 30;
+/** True when this QR phone has pressed too often in the last minute. */
+function qrTooFast(req: Request): boolean {
+  const id = (req as unknown as { session?: { api_token_id?: string | null } }).session?.api_token_id ?? "";
+  const now = Date.now();
+  const recent = (qrPresses.get(id) ?? []).filter((t) => now - t < 60_000);
+  recent.push(now);
+  qrPresses.set(id, recent);
+  if (qrPresses.size > 5_000) qrPresses.delete(qrPresses.keys().next().value as string);
+  return recent.length > QR_PRESSES_PER_MINUTE;
+}
+
+/** The QR's refusal, said once for every press it does not allow. */
+function refuseQr(req: Request, res: Parameters<Parameters<typeof asyncHandler>[0]>[1], settings: StationSettings, press: { op?: string; action_id?: string }): boolean {
+  if (!isQrPhone(req)) return false;
+  if (qrTooFast(req)) {
+    res.status(429).json({ error: { code: "too_fast", message: "That is a lot of presses. Wait a minute, then try again." } });
+    return true;
+  }
+  if (stationQrMay(settings, press)) return false;
+  res.status(403).json({ error: { code: "not_on_qr", message: "The kitchen QR can't do that. Sign in to do more." } });
+  return true;
 }
 
 function addressOf(req: Request): string | null {
@@ -273,6 +307,7 @@ stationsRouter.post(
     if (!stationReaches(settings, b.kind)) {
       return void res.status(403).json({ error: { code: "outside_station", message: `${label} does not keep that.` } });
     }
+    if (refuseQr(req, res, settings, { op: b.op })) return;
     const target = await scanTargetOf(org.id, b.kind);
     if (!target?.scannable.qtyField) {
       return void res.status(409).json({ error: { code: "no_count", message: "That keeps no count." } });
@@ -434,7 +469,8 @@ stationsRouter.get(
     if (!stationReaches(settings, kind)) {
       return void res.status(403).json({ error: { code: "outside_station", message: `${label} does not keep that.` } });
     }
-    const offered = await stationActionsFor(org.id, kind);
+    // A kitchen QR phone sees only the presses the owner ticked.
+    const offered = (await stationActionsFor(org.id, kind)).filter((a) => !isQrPhone(req) || stationQrMay(settings, { action_id: a.id }));
     // The same picker a record page offers: "who has it" is the workspace's
     // People by name, never an id box a kiosk cannot fill.
     const choose = await platform().actions.argChoices(org.id, kind, offered.map((a) => a.args_schema));
@@ -481,6 +517,7 @@ stationsRouter.post(
     if (!stationReaches(settings, b.kind)) {
       return void res.status(403).json({ error: { code: "outside_station", message: `${label} does not keep that.` } });
     }
+    if (refuseQr(req, res, settings, { action_id: b.action_id })) return;
     const action = (await stationActionsFor(org.id, b.kind)).find((a) => a.id === b.action_id);
     if (!action) {
       return void res.status(403).json({ error: { code: "not_offered", message: `${label} does not offer that here.` } });

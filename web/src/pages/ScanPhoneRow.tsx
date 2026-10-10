@@ -16,7 +16,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Camera, CheckCircle, ChevronDown, ChevronRight, Download, Loader2, MoreHorizontal, PackagePlus, RotateCcw, ScanLine, Scissors } from "lucide-react";
 import type { ScanInboxItem } from "../lib/api";
-import { OverlayLayer, BackdropLayer, PopoverLayer, useEscapeToClose, useLockPageScroll } from "@cobblr/platform-web";
+import { NumberStepper, OverlayLayer, BackdropLayer, PopoverLayer, useEscapeToClose, useLockPageScroll } from "@cobblr/platform-web";
 import { ScanReceiptUnread, type ScanReceiptUnreadProps } from "../components/ScanReceiptUnread";
 import { RECEIPT_UNREAD_TITLE } from "@cobblr/platform-contract/scan-copy";
 
@@ -296,23 +296,24 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
           {p.quantity && (() => {
             const q = p.quantity;
             return (
-              <span className="inline-flex shrink-0 items-center overflow-hidden rounded-md border border-line dark:border-slate-700 text-xs" title="Quantity">
-                {q.signed ? (
-                  <>
-                    <button type="button" aria-label="One less" disabled={q.busy || q.value <= q.signed.floor} onClick={() => q.onChange(q.value - 1 === 0 ? -1 : q.value - 1)} className="min-h-9 w-7 text-muted disabled:opacity-40">−</button>
-                    <span data-testid="row-change" className={"min-w-[1.75rem] text-center font-semibold tabular-nums " + (q.value < 0 ? "text-ember-700 dark:text-ember-300" : "text-content dark:text-mortar-100")}>
-                      {q.value > 0 ? `+${q.value}` : `−${-q.value}`}
-                    </span>
-                    <button type="button" aria-label="One more" disabled={q.busy} onClick={() => q.onChange(q.value + 1 === 0 ? 1 : q.value + 1)} className="min-h-9 w-7 text-muted disabled:opacity-40">+</button>
-                  </>
-                ) : (
-                  <>
-                    <button type="button" aria-label="Decrease quantity" disabled={q.busy || q.value <= 1} onClick={() => q.onChange(q.value - 1)} className="min-h-9 w-7 text-muted disabled:opacity-40">−</button>
-                    <span className="min-w-[1.75rem] text-center font-semibold tabular-nums text-content dark:text-mortar-100">×{q.value}</span>
-                    <button type="button" aria-label="Increase quantity" disabled={q.busy} onClick={() => q.onChange(q.value + 1)} className="min-h-9 w-7 text-muted disabled:opacity-40">+</button>
-                  </>
-                )}
-              </span>
+              <NumberStepper
+                className="inline-flex shrink-0 items-center overflow-hidden rounded-md border border-line dark:border-slate-700 text-xs"
+                value={q.value}
+                busy={q.busy}
+                // A signed row is a CHANGE to stock the person has (+3 / −2): it
+                // skips zero and may be typed negative. Otherwise it is the
+                // count of a new capture, one at least.
+                signed={!!q.signed}
+                min={q.signed ? q.signed.floor : 1}
+                label={q.signed ? "Change by" : "Quantity"}
+                prefix="×"
+                decreaseLabel={q.signed ? "One less" : "Decrease quantity"}
+                increaseLabel={q.signed ? "One more" : "Increase quantity"}
+                inputTestId={q.signed ? "row-change" : undefined}
+                buttonClassName="min-h-9 w-7 text-muted disabled:opacity-40"
+                inputClassName={"w-9 bg-transparent text-center font-semibold tabular-nums " + (q.signed && q.value < 0 ? "text-ember-700 dark:text-ember-300" : "text-content dark:text-mortar-100")}
+                onChange={q.onChange}
+              />
             );
           })()}
           <span className="flex shrink-0 items-center gap-1.5">

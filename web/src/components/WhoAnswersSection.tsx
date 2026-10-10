@@ -1,23 +1,32 @@
-// "Who answers, in order" on the workspace AI page (#3842).
+// "Who does what, in order" on the workspace AI page (#3842, #5622).
 //
-// The only ordering control used to be a pairwise "use this one first"
-// inside one connection's edit panel, per workspace: no view of the whole
-// chain, no third position, nothing per job. This shows the chain the router
-// actually walks (GET /ai-chain, built from the router's own decision), one
-// list per kind of work, with what would go wrong in words beside it.
-import { useMutation, useQueries } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp } from "lucide-react";
-import { api, ApiError } from "../lib/api";
+// One row per kind of work, read as a chain ("My Claude · Haiku ·
+// latest (5.5) → Google Gemini · Flash Lite"). An owner or admin taps a job
+// to change the workspace's order for everyone here: each step's connection
+// and model (the same picker as a person's own defaults on Your account),
+// its place in the order, and which connections it asks at all. Everyone
+// else reads it. With nothing chosen here a row shows who answers now, and
+// the first change saves that as the workspace's order.
+import { useState } from "react";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
+import { api, ApiError, type WorkspaceAiOrder } from "../lib/api";
 import { aiAvailabilityKeys } from "../lib/ai-availability-keys";
-import { AI_JOB_GROUPS, chainWarnings, reorderedOwn, sectionWarnings, sourceWords, type AiChainAnswer, type AiJobGroup } from "../lib/ai-chain";
+import { AI_JOB_GROUPS, WHO_ANSWERS_ANCHOR, chainSummary, chainWarnings, sectionWarnings, type AiChainAnswer, type AiJobGroup } from "../lib/ai-chain";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useToast } from "@cobblr/platform-web";
 import { ServicesInOrder } from "./ServicesInOrder";
+import { JobRow } from "./YourAiDefaults";
+import { PersonalDocumentsReader } from "./PersonalDocumentsReader";
 
-export const WHO_ANSWERS_ANCHOR = "who-answers";
+export { WHO_ANSWERS_ANCHOR } from "../lib/ai-chain";
 
 export function WhoAnswersSection() {
-  const { activeSlug, activeOrg } = useActiveOrg();
+  const { activeSlug } = useActiveOrg();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [open, setOpen] = useState<string | null>(null);
+  const [highlight, setHighlight] = useState<string | null>(null);
   const chains = useQueries({
     queries: AI_JOB_GROUPS.map((g) => ({
       queryKey: aiAvailabilityKeys.chain(activeSlug, g.shows),
@@ -25,115 +34,176 @@ export function WhoAnswersSection() {
       enabled: !!activeSlug,
     })),
   });
+  const order = useQuery({
+    queryKey: aiAvailabilityKeys.workspaceOrder(activeSlug),
+    queryFn: () => api.getWorkspaceAiOrder(activeSlug),
+    enabled: !!activeSlug,
+  });
+  const settle = (next?: WorkspaceAiOrder) => {
+    if (next) qc.setQueryData(aiAvailabilityKeys.workspaceOrder(activeSlug), next);
+    void qc.invalidateQueries({ queryKey: aiAvailabilityKeys.all() });
+  };
+  const save = useMutation({
+    mutationFn: ({ job, steps }: { job: string; steps: Array<{ credential_id: string; model: string }> }) =>
+      steps.length
+        ? api.setWorkspaceAiOrder(activeSlug, job, steps.map((s) => ({ connection: s.credential_id, model: s.model })))
+        : api.clearWorkspaceAiOrder(activeSlug, job),
+    onSuccess: settle,
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  const relist = useMutation({
+    mutationFn: () => api.getWorkspaceAiOrder(activeSlug, true),
+    onSuccess: (next) => qc.setQueryData(aiAvailabilityKeys.workspaceOrder(activeSlug), next),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+
+  const view = order.data;
+  const all = chains.map((c) => c.data).filter((d): d is AiChainAnswer => !!d);
+  const warnings = all.length === AI_JOB_GROUPS.length ? sectionWarnings(all) : [];
+  const lists = !!view?.connections.some((c) => Object.values(c.jobs).some((j) => j?.choices));
+  const marked = highlight ? view?.connections.find((c) => c.id === highlight) : undefined;
 
   return (
     <section id={WHO_ANSWERS_ANCHOR} className="scroll-mt-20 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
-      <h2 className="text-sm font-semibold text-content dark:text-mortar-100">Who does what, in order</h2>
-      <p className="text-xs text-faint mt-0.5 mb-3">
-        When the first is busy or failing, a call asks the next, up to three. Move your own connections up or down to change the order.
-      </p>
-      {(() => {
-        const all = chains.map((c) => c.data).filter((d): d is AiChainAnswer => !!d);
-        const w = all.length === AI_JOB_GROUPS.length ? sectionWarnings(all) : [];
-        return w.length ? (
-          <ul className="mb-3 space-y-0.5">
-            {w.map((x) => (
-              <li key={x} className="text-xs text-amber-700 dark:text-amber-300">
-                {x}
-              </li>
-            ))}
-          </ul>
-        ) : null;
-      })()}
-      <div className="space-y-4">
-        {AI_JOB_GROUPS.map((g, i) => (
-          <JobChain key={g.id} group={g} answer={chains[i]?.data ?? null} loading={!!chains[i]?.isLoading} orgId={activeOrg?.id ?? null} />
-        ))}
+      <div className="flex items-start gap-3">
+        <h2 className="text-sm font-semibold text-content dark:text-mortar-100">Who does what, in order</h2>
+        {view?.can_edit && lists && (
+          <button type="button" onClick={() => relist.mutate()} disabled={relist.isPending} className="ml-auto shrink-0 text-xs text-muted underline hover:text-content disabled:opacity-50" data-refresh-models>
+            {relist.isPending ? "Refreshing…" : "Refresh models"}
+          </button>
+        )}
       </div>
+      <p className="text-xs text-faint mt-0.5 mb-3">
+        When the first is busy or failing, a call asks the next, up to three.{" "}
+        {view?.can_edit
+          ? "Tap a job to change this workspace's order for everyone here: each step's model, its place, and which connections it asks."
+          : "Only an owner or admin changes this workspace's order."}
+      </p>
+      {view?.connections
+        .filter((c) => c.fallback)
+        .map((c) => (
+          <p key={c.id} className="mb-1 text-xs text-muted" title={c.fallback} data-models-fallback>
+            Couldn't ask {c.label} for its current list, so its usual models are shown.
+          </p>
+        ))}
+      {marked && (
+        <p className="mb-1 text-xs text-muted" data-where-used>
+          Marked: where {marked.label} answers ·{" "}
+          <button type="button" onClick={() => setHighlight(null)} className="underline hover:text-content">
+            Show all
+          </button>
+        </p>
+      )}
+      {warnings.length > 0 && (
+        <ul className="mb-3 space-y-0.5">
+          {warnings.map((x) => (
+            <li key={x} className="text-xs text-amber-700 dark:text-amber-300">
+              {x}
+            </li>
+          ))}
+        </ul>
+      )}
+      {!view ? (
+        <p className="text-xs text-faint">Checking…</p>
+      ) : (
+        <div className="divide-y divide-line dark:divide-slate-700">
+          {AI_JOB_GROUPS.map((g, i) => {
+            // Who reads personal documents is the workspace's own setting,
+            // not an order of steps (#5621).
+            if (g.id === "personal") return <PersonalDocumentsReader key={g.id} />;
+            const job = view.jobs.find((j) => j.id === g.id);
+            if (!job) return null;
+            return (
+              <JobRow
+                key={g.id}
+                group={g}
+                job={job}
+                data={view}
+                verification={() => undefined}
+                pending={save.isPending}
+                open={open === g.id}
+                onToggle={() => view.can_edit && setOpen((o) => (o === g.id ? null : g.id))}
+                highlight={highlight}
+                onHighlight={(id) => setHighlight((h) => (h === id ? null : id))}
+                onSave={(steps) => save.mutate({ job: g.id, steps })}
+                onUseMineThere={() => {}}
+                readOnly={!view.can_edit}
+                emptyText={emptyFor(chains[i]?.data ?? null)}
+                firstText="Choose this workspace's order"
+                footer={
+                  <JobFooter
+                    group={g}
+                    chosen={job.chosen}
+                    canEdit={view.can_edit}
+                    pending={save.isPending}
+                    answer={chains[i]?.data ?? null}
+                    onAutomatic={() => save.mutate({ job: g.id, steps: [] })}
+                  />
+                }
+              />
+            );
+          })}
+        </div>
+      )}
       <ServicesInOrder />
     </section>
   );
 }
 
-function JobChain({ group, answer, loading, orgId }: { group: AiJobGroup; answer: AiChainAnswer | null; loading: boolean; orgId: string | null }) {
-  const toast = useToast();
-  const move = useMutation({
-    mutationFn: async (next: string[]) => {
-      if (!orgId) return;
-      // One order for the whole group: the jobs in it are one kind of work to
-      // the person arranging them.
-      for (const capability of group.capabilities) {
-        await api.setConnectionOrder({ org_id: orgId, credential_ids: next, capability });
-      }
-    },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
-  });
+/** A row with nothing to edit says who answers anyway: a person's own
+ *  defaults, or the plan's AI. */
+function emptyFor(answer: AiChainAnswer | null): string {
+  const summary = answer ? chainSummary(answer.you) : null;
+  return summary ? `Answered now by ${summary}.` : "Nothing here can do this yet.";
+}
+
+function JobFooter({
+  group,
+  chosen,
+  canEdit,
+  pending,
+  answer,
+  onAutomatic,
+}: {
+  group: AiJobGroup;
+  chosen: boolean;
+  canEdit: boolean;
+  pending: boolean;
+  answer: AiChainAnswer | null;
+  onAutomatic: () => void;
+}) {
   const steps = answer?.you.steps ?? [];
   const warnings = answer ? chainWarnings(group, answer) : [];
   const automations = answer?.automations.steps.filter((s) => s.asked) ?? [];
-
   return (
-    <div>
-      <h3 className="text-[10px] font-mono uppercase tracking-widest text-accent">{group.title}</h3>
-      {group.id === "personal" && <p className="mt-1 text-sm text-muted">Personal documents are read here or by your local AI. They never go to a cloud AI.</p>}
-      {loading ? (
-        <p className="text-xs text-faint mt-1">Checking…</p>
-      ) : steps.length === 0 ? (
-        <p className="text-sm text-muted mt-1">Nothing here can do this yet.</p>
-      ) : (
-        <ol className="mt-1 divide-y divide-line dark:divide-slate-700 rounded-lg border border-line dark:border-slate-700">
-          {steps.map((s) => {
-            const up = s.credential_id ? reorderedOwn(steps, s.credential_id, -1) : null;
-            const down = s.credential_id ? reorderedOwn(steps, s.credential_id, 1) : null;
-            return (
-              <li key={`${s.position}-${s.label}`} className={"flex items-center gap-2 px-3 py-2 text-sm " + (s.asked ? "" : "opacity-60")}>
-                <span className="w-5 shrink-0 text-faint tabular-nums">{s.position}.</span>
-                {/* Two lines: at phone width one line cut off exactly the part
-                    that answers "whose is it, and does it work". */}
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-content dark:text-mortar-100">{s.label}</span>
-                  <span className="block text-[11px] text-muted break-words">
-                    {[s.model ? (s.floating ? `${s.model} (floating)` : s.model) : null, sourceWords(s.source), s.status]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </span>
-                  {!s.asked && <span className="block text-[11px] text-faint">A call stops before this one.</span>}
-                </span>
-                {s.source === "yours" && (up || down) && (
-                  <span className="flex shrink-0 gap-0.5">
-                    <button
-                      type="button"
-                      disabled={!up || move.isPending}
-                      onClick={() => up && move.mutate(up)}
-                      aria-label={`Ask ${s.label} earlier for ${group.title.toLowerCase()}`}
-                      className="p-1.5 rounded text-muted hover:text-content hover:bg-subtle dark:hover:bg-slate-800 disabled:opacity-30"
-                    >
-                      <ArrowUp className="h-4 w-4" />
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!down || move.isPending}
-                      onClick={() => down && move.mutate(down)}
-                      aria-label={`Ask ${s.label} later for ${group.title.toLowerCase()}`}
-                      className="p-1.5 rounded text-muted hover:text-content hover:bg-subtle dark:hover:bg-slate-800 disabled:opacity-30"
-                    >
-                      <ArrowDown className="h-4 w-4" />
-                    </button>
-                  </span>
-                )}
-              </li>
-            );
-          })}
-        </ol>
+    <div className="mt-1 space-y-0.5 text-[11px]">
+      <p className="text-muted" data-order-owner>
+        {chosen ? "This workspace's order, for everyone here." : "Automatic: nothing chosen here."}
+        {chosen && canEdit && (
+          <>
+            {" "}
+            <button type="button" disabled={pending} onClick={onAutomatic} className="text-accent hover:underline disabled:opacity-50">
+              Back to automatic
+            </button>
+          </>
+        )}
+      </p>
+      {!chosen && steps.some((s) => s.your_default) && (
+        <p className="text-muted">
+          Your own order for {group.phrase}, in every workspace you use.{" "}
+          <Link to="/me/connections" className="text-accent hover:underline">
+            Change it on Your account, Connections
+          </Link>
+        </p>
       )}
       {answer && (
-        <p className="text-[11px] text-faint mt-1">
+        <p className="text-faint">
           With nobody at the keyboard (automations, background work):{" "}
           {automations.length ? automations.map((s) => s.label).join(", then ") : "nothing answers"}.
         </p>
       )}
       {warnings.length > 0 && (
-        <ul className="mt-1.5 space-y-0.5">
+        <ul className="space-y-0.5">
           {warnings.map((w) => (
             <li key={w} className="text-xs text-amber-700 dark:text-amber-300">
               {w}

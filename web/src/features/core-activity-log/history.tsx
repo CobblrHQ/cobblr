@@ -14,7 +14,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { History, Loader2 } from "lucide-react";
 import { EntityPhoto, relativeTime, useImageSrc } from "@cobblr/platform-web";
 import { api, type ActivityEntry, type ShownPhoto, type ShownValue } from "../../lib/api";
-import { activityVerb, documentWords, partWords, updatedFieldsWords } from "../../lib/activity-words";
+import { documentWords, ownHistoryVerb, partWords, updatedFieldsWords } from "../../lib/activity-words";
 import { groupHistory, GROUP_SHOWN, type HistoryLine } from "../../lib/history-groups";
 import { ActorVia, ACTIVITY_ROW, ACTOR_CELL } from "../../components/ActorVia";
 import { useActiveOrg } from "../../auth/ActiveOrgContext";
@@ -238,7 +238,7 @@ export function HistoryPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
                   <span className={`text-muted dark:text-slate-400 ${ACTOR_CELL}`}>
                     <ActorVia entry={e} />
                   </span>
-                  <span className="text-content dark:text-mortar-200">{part ? part.verb : activityVerb(e.action)}</span>
+                  <span className="text-content dark:text-mortar-200">{part ? part.verb : ownHistoryVerb(e.action)}</span>
                   {fields ? (
                     <span className="text-muted dark:text-slate-400 truncate min-w-0" title={fields}>
                       {fields}

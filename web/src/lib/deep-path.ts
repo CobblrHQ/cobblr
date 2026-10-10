@@ -1,14 +1,21 @@
 /** The deep path to preserve across a workspace redirect: the request path with
  *  any leading `/w/<slug>` stripped, so it can be re-prefixed with the resolved
- *  workspace. Bare paths (no `/w/…`) pass through unchanged.
+ *  workspace. Other bare paths (no `/w/…`) pass through unchanged. Auth entries return
+ *  to the workspace root after sign-in.
  *
- *  Shared by BOTH redirect sites — the bare-URL landing (App.tsx LandingRedirect)
+ *  Shared by BOTH redirect sites — the bare-URL landing (App.tsx LandingEntry)
  *  and the unknown-slug bounce (ActiveOrgContext) — so a deep link can never be
  *  silently dropped by only one of them. That divergence is exactly the bug this
  *  fixes: a `/w/<placeholder>/configuration/api-recipes` docs link used to bounce
  *  to the workspace ROOT, losing the page; a bare link already worked. */
 export function deepPathAfterWorkspace(pathname: string): string {
-  return pathname.replace(/^\/w\/[^/]+/, "") || "/";
+  const path = pathname.replace(/^\/w\/[^/]+/, "");
+  return authEntryAt(path) ? "/" : path || "/";
+}
+
+export function authEntryAt(pathname: string): "/login" | "/signup" | null {
+  const path = pathname.replace(/\/+$/, "");
+  return path === "/login" || path === "/signup" ? path : null;
 }
 
 /** A uuid path segment: a RECORD, and records do not exist in another

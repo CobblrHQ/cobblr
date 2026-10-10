@@ -449,7 +449,7 @@ async function aiPlan(
       // way, but without this a user-only route silently falls through to the
       // managed provider (and its entitlement gate), landing on the heuristic.
       userId: userId ?? undefined,
-      capability: "chat",
+      capability: "organise",
       input: {
         messages: [
           { role: "system", content: SYSTEM_PROMPT },

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ProductionPlan, ProductionStepResult, ProductionTestResult } from "./production-test.js";
 import { matchesProductionJig } from "./jig-scan.js";
+import { judgeTargetRun, stepChangesHardware } from "./production-steps.js";
 export interface StationAttempt {
  id: string; serial: string; unit?: { kind: string; id: string }; plan: ProductionPlan; jig_id: string | null; jig_name?: string; jig_cycle?: number | null; jig_labels?: string[]; unit_labels?: string[];
  status: "prepared" | "running" | "finished"; steps: ProductionStepResult[]; result?: ProductionTestResult;
@@ -24,7 +25,7 @@ export function ProductionStation({ port, onResult }: { port: ProductionStationP
  }, []);
  const attempt = attempts.find(a => a.id === selected) ?? attempts.find(a => a.serial === serial.trim() || matchesProductionJig(serial, a.unit?.id ?? a.id, a.unit_labels ?? []));
  const running = attempts.find(a => a.status === "running");
- const needsConfirm = attempt?.plan.steps.some(s => s.kind === "program" || s.kind === "script" || s.kind === "serial" && s.write !== undefined || s.kind === "instrument" && s.operation !== "measure") ?? false;
+ const needsConfirm = attempt?.plan.steps.some(stepChangesHardware) ?? false;
  async function act(operation: "start" | "abort" | "answer" | "sync", args: Record<string, unknown>) {
   calls.current++; setBusy(true); setError("");
   try { await currentPort.current.act(operation, args); const sequence = ++issued.current; const data = await currentPort.current.read(); if (sequence >= applied.current) { applied.current = sequence; setAttempts(data.attempts); } }
@@ -50,7 +51,7 @@ export function ProductionStation({ port, onResult }: { port: ProductionStationP
   {needsConfirm && <label><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} /> I checked the fixture and output settings.</label>}
   <button className="ps-start" disabled={busy || !!running || attempt.status !== "prepared" || needsConfirm && !confirmed || !!attempt.jig_id && !matchesProductionJig(jig, attempt.jig_id, attempt.jig_labels ?? [])} onClick={() => void act("start", { id: attempt.id, jig_id: attempt.jig_id, confirmed })}>Start</button>
   <button className="ps-stop" disabled={!running} onClick={() => void act("abort", { id: running?.id })}>Abort test</button>
-  <div aria-live="polite">{attempt.steps.map(step => <div className={`ps-result ps-${step.result}`} key={step.id}><strong>{step.name}: {step.result}</strong>{step.value !== undefined && <div>{String(step.value)} {step.unit ?? ""}</div>}{step.limits?.kind === "range" && <small>Limits: {step.limits.min ?? "no lower bound"} to {step.limits.max ?? "no upper bound"} {step.limits.unit}</small>}{step.reason && <p>{step.reason}</p>}</div>)}</div>
+  <div aria-live="polite">{attempt.steps.map(step => { const planned = attempt.plan.steps.find(s => s.id === step.id), run = planned?.kind === "probe" && planned.action.op === "run" && typeof step.value === "string" ? judgeTargetRun(planned.action, step.value) : null; return <div className={`ps-result ps-${step.result}`} key={step.id}><strong>{step.name}: {step.result}</strong>{run ? <ul>{run.checks.map((c, n) => <li key={n} className={`ps-${c.result}`}>{c.name}: {c.result}{c.value === undefined ? "" : ` ${c.value} ${c.unit ?? ""}`}</li>)}</ul> : step.value !== undefined && <div>{String(step.value)} {step.unit ?? ""}</div>}{step.limits?.kind === "range" && <small>Limits: {step.limits.min ?? "no lower bound"} to {step.limits.max ?? "no upper bound"} {step.limits.unit}</small>}{step.reason && <p>{step.reason}</p>}</div>; })}</div>
   {attempt.result && <><p className={`ps-summary ${attempt.result.status === "passed" ? "ps-pass" : "ps-fail"}`}>{attempt.result.status}</p>{attempt.result.outputs_off.map(o => <p key={o.instrument}>{o.instrument}: {o.confirmed ? "output off confirmed" : o.error || "output off not confirmed"}</p>)}<p>{attempt.synced ? "Saved in Cobblr" : "Saved on the bridge; ready to sync"}</p><button disabled={busy || attempt.synced} onClick={() => void act("sync", { id: attempt.id })}>Sync result</button>{onResult && <button onClick={() => onResult(attempt)}>History, rework or scrap</button>}</>}
   </>}
   {(error || readError) && <p role="alert">{error || readError}</p>}

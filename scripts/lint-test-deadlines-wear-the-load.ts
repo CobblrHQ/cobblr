@@ -8,10 +8,18 @@
 // a violation; `Date.now() + worn(<number>)` passes. A deadline that must not scale says why on the
 // line: `// fixed-deadline: <reason>`.
 //
+// WIDENED (2026-10-08, the same night): main went red on pattern-photo-auto, whose waits escaped both
+// shapes above: a `timeoutMs = 45_000` default parameter and a fixed `}, 60_000)` test budget around
+// two such waits. A timeout* variable, a test's own budget (`}, <ms>)` of 1000 or more, closing an
+// it/hook) and `timeout: <ms>` in a test's options all scale with the box too.
+//
 // THE BOUNDARY, AND WHICH FALSE POSITIVE DREW IT. `new Date(Date.now() + 29 * DAY)` is a DATE the
 // test sends (a sweep 29 days out, a token's expiry), not a wait, and appears 26 times in api/tests:
 // that is why the rule keys on the deadline names and not on `Date.now() +` itself. A poll against a
 // deadline named something else escapes it; none did on 2026-10-08.
+//
+// THE OTHER BOUNDARY: a line that asserts (expect(...), toHaveBeenCalledWith(...)) is checking a value
+// the code under test passed, not waiting; wearing it makes the test disagree with the code.
 //
 // PROVE IT RED: it was run against the eight fixed deadlines on main and failed on each.
 //
@@ -41,7 +49,7 @@ function* walk(dir: string): Generator<string> {
     if (name === "node_modules" || name === "dist" || name.startsWith(".")) continue;
     const p = join(dir, name);
     if (statSync(p).isDirectory()) yield* walk(p);
-    else if (/\.test\.tsx?$/.test(name)) yield p;
+    else if (/\.test\.tsx?$/.test(name) || (/^api\/tests\//.test(p) && /\.ts$/.test(name))) yield p;
   }
 }
 
@@ -51,8 +59,16 @@ function check(file: string, src: string): Violation[] {
   const lines = src.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
-    if (/\b(?:deadline|until|end|stop)\w*\s*=\s*Date\.now\(\)\s*\+\s*[0-9]/i.test(line) && !/\/\/ fixed-deadline: \S/.test(line)) {
+    if (/\/\/ fixed-deadline: \S/.test(line)) continue;
+    // An ASSERTED value is not a wait: `toHaveBeenCalledWith(path, {timeout: 10_000})` checks what the
+    // code passed, and wearing it made the expectation disagree with the code (#5429, red 2026-10-09).
+    if (/\bexpect\(|\.(?:toHaveBeenCalledWith|toHaveBeenLastCalledWith|toHaveBeenNthCalledWith|toEqual|toStrictEqual|toMatchObject|toBe)\(/.test(line)) continue;
+    if (/\b(?:deadline|until|end|stop)\w*\s*=\s*Date\.now\(\)\s*\+\s*[0-9]/i.test(line)) {
       out.push({ file, line: i + 1, what: "a polling deadline that does not scale with the box: Date.now() + worn(ms)" });
+    } else if (/\btimeout\w*\s*=\s*[0-9][0-9_]*\b/i.test(line)) {
+      out.push({ file, line: i + 1, what: "a timeout that does not scale with the box: worn(ms)" });
+    } else if (/^\s*\},\s*[0-9][0-9_]{3,}\s*\);?\s*(\/\/.*)?$/.test(line) || /\btimeout:\s*[0-9][0-9_]{3,}\b/.test(line)) {
+      out.push({ file, line: i + 1, what: "a test's own time budget that does not scale with the box: worn(ms) (or a named budget such as FRESH_ORG_BUDGET_MS)" });
     }
   }
   return out;

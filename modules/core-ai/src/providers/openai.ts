@@ -2,6 +2,7 @@
 // embed / classify-image / extract-text. Cost is per model from the one
 // price table in openai-models.ts.
 
+import { sendDroppingRefused } from "./refused-params.js";
 import { platform, type AiCapability, isChatTurn } from "@cobblr/platform-contract";
 import { providerError, providerSentence, reasonFromResponse, reasonFromTransportError, redactSecrets, retryAfterSecOf } from "@cobblr/platform-contract/provider-reason";
 import { visionPromptFor } from "./identify-prompt.js";
@@ -23,6 +24,7 @@ export function register(): void {
   platform().ai.registerProvider({
     id: "openai",
     label: "OpenAI",
+    company: "OpenAI",
     describeCredentials: () => ({
       api_key: { label: "OpenAI API key (sk-…)", secret: true },
     }),
@@ -100,14 +102,18 @@ export function register(): void {
           ) {
             body.response_format = { type: "json_object" };
           }
-          const res = await fetch("https://api.openai.com/v1/chat/completions", {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              authorization: `Bearer ${apiKey}`,
-            },
-            body: JSON.stringify(body),
-          });
+          // A model that refuses an optional knob (temperature on a reasoning
+          // model) is sent again without it, and remembered (refused-params.ts).
+          const res = await sendDroppingRefused("openai", ctx.model, body, (b) =>
+            fetch("https://api.openai.com/v1/chat/completions", {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                authorization: `Bearer ${apiKey}`,
+              },
+              body: JSON.stringify(b),
+            }),
+          );
           if (!res.ok) throw failed(res.status, await res.text());
           const out = (await res.json()) as {
             choices: Array<{

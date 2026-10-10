@@ -15,13 +15,19 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Navigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
-import { Check, Minus, MoreHorizontal, Plus, Hash, MapPin, Undo2, WifiOff, X } from "lucide-react";
+import { ArrowLeft, Check, Minus, MoreHorizontal, Plus, Hash, MapPin, Undo2, WifiOff, X } from "lucide-react";
+import { StationCamera, StationLensChoice, deviceLens, rememberDeviceLens } from "./StationCamera";
+import { StationQrPanel } from "./StationQrPanel";
 import {
   DEFAULT_STATION_ADDRESS,
   STATION_ACTIONS,
   isStationAddress,
   oneTapOp,
+  stationLens,
+  STATION_CAMERAS,
   type StationAction,
+  type StationCamera as StationCameraSetting,
+  type StationLens,
   type StationLookup,
   type StationRecord,
   type StationSettings,
@@ -45,7 +51,7 @@ import {
   stationScanOf,
   type QueuedMove,
 } from "../lib/station-screen";
-import { lastStation, readStationToken, rememberStation, saveStationToken, setStationTokenOverride } from "../lib/station-token";
+import { lastStation, readStationToken, rememberStation, saveStationToken, readStationQrToken, saveStationQrToken, setStationTokenOverride } from "../lib/station-token";
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /** A request that never reached the server (no network), as opposed to one
@@ -63,6 +69,11 @@ export function StationPage() {
   // signed in on this browser, when they are a member of the workspace.
   const [deviceToken, setDeviceToken] = useState(() => readStationToken(slug, address));
   const personToken = useMemo(() => getToken(), []);
+  // A phone that opened the kitchen QR (#5353): the label's key, once, and
+  // the token it bought, kept apart from a tablet's.
+  const qrKey = params.get("k");
+  const fromQr = params.get("from") === "qr" || !!qrKey;
+  const [qrToken, setQrToken] = useState(() => readStationQrToken(slug, address));
 
   useEffect(() => {
     if (isStationAddress(address)) rememberStation(slug, address);
@@ -86,17 +97,76 @@ export function StationPage() {
       />
     );
   }
+  if (qrToken && !personToken) {
+    return (
+      <QrStation
+        slug={slug}
+        address={address}
+        token={qrToken}
+        onGone={() => {
+          saveStationQrToken(slug, address, null);
+          setQrToken(null);
+        }}
+      />
+    );
+  }
   return (
     <PersonOrApproval
       slug={slug}
       address={address}
       kiosk={kiosk}
       personToken={personToken}
+      fromQr={fromQr}
+      qrKey={qrKey}
+      onQrClaimed={(t) => {
+        saveStationQrToken(slug, address, t);
+        // The key is spent on this phone: off the address bar and history.
+        window.history.replaceState(null, "", window.location.pathname);
+        setQrToken(t);
+      }}
       onApproved={(t) => {
         saveStationToken(slug, address, t);
         setDeviceToken(t);
       }}
     />
+  );
+}
+
+/** A phone holding the kitchen QR's token: the station, with only the
+ *  presses the owner allowed, no settings and nothing new added. */
+function QrStation({ slug, address, token, onGone }: { slug: string; address: string; token: string; onGone: () => void }) {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    setStationTokenOverride(token);
+    setReady(true);
+    return () => setStationTokenOverride(null);
+  }, [token]);
+  if (!ready) return <Shell kiosk={false}><Centered title="Opening…" /></Shell>;
+  return <StationLoader slug={slug} address={address} kiosk={false} device qr onForget={onGone} />;
+}
+
+/** The label's key, spent once for a token. */
+function QrClaim({ slug, address, qrKey, onClaimed }: { slug: string; address: string; qrKey: string; onClaimed: (token: string) => void }) {
+  const claim = useQuery({ queryKey: ["station-qr-claim", slug, address, qrKey], queryFn: () => api.stationQrClaim(slug, address, qrKey), retry: false, staleTime: Infinity });
+  useEffect(() => {
+    if (claim.data?.token) onClaimed(claim.data.token);
+  }, [claim.data, onClaimed]);
+  if (claim.isPending || claim.data) return <Shell kiosk={false}><Centered title="Opening…" /></Shell>;
+  return <SignInOrAsk slug={slug} address={address} why="This QR no longer opens the station: a new label was printed, or it was turned off." />;
+}
+
+/** Opened from a printed label by someone not signed in: never the tablet's
+ *  approval code, which a phone has no use for. */
+function SignInOrAsk({ slug, address, why }: { slug: string; address: string; why?: string }) {
+  const next = `/station/${slug}/${address}`;
+  return (
+    <Shell kiosk={false}>
+      <Centered
+        title="Sign in, or ask for access"
+        body={`${why ? `${why} ` : ""}This station is for the people of this workspace. Sign in to use it, or ask whoever runs it for access.`}
+        action={<BigButton onClick={() => window.location.assign(`/login?next=${encodeURIComponent(next)}`)}>Sign in</BigButton>}
+      />
+    </Shell>
   );
 }
 
@@ -129,7 +199,7 @@ function DeviceStation({ slug, address, token, kiosk, onForget }: { slug: string
 /** No device token: a signed-in member opens it as themselves; anyone else
  *  (signed out, another workspace's person, or a guest, whom a station's own
  *  routes refuse) sees the approval code without asking for the station. */
-function PersonOrApproval({ slug, address, kiosk, personToken, onApproved }: { slug: string; address: string; kiosk: boolean; personToken: string | null; onApproved: (token: string) => void }) {
+function PersonOrApproval({ slug, address, kiosk, personToken, fromQr, qrKey, onQrClaimed, onApproved }: { slug: string; address: string; kiosk: boolean; personToken: string | null; fromQr: boolean; qrKey: string | null; onQrClaimed: (token: string) => void; onApproved: (token: string) => void }) {
   const me = useQuery({ queryKey: ["station-me", !!personToken], queryFn: () => api.me(), enabled: !!personToken, retry: false, staleTime: 60_000 });
   const role = me.data?.orgs.find((o) => o.slug === slug)?.role ?? null;
   const mayUse = !!role && role !== "guest";
@@ -141,6 +211,10 @@ function PersonOrApproval({ slug, address, kiosk, personToken, onApproved }: { s
   });
   if (personToken && (me.isLoading || (mayUse && asPerson.isLoading))) return <Shell kiosk={kiosk}><Centered title="Opening…" /></Shell>;
   if (personToken && mayUse && asPerson.data) return <StationLoader slug={slug} address={address} kiosk={kiosk} device={false} onForget={() => {}} />;
+  // A member signed in on their phone used it above, as themselves. Anyone
+  // else who came from the printed label spends its key, or is asked to sign in.
+  if (qrKey) return <QrClaim slug={slug} address={address} qrKey={qrKey} onClaimed={onQrClaimed} />;
+  if (fromQr) return <SignInOrAsk slug={slug} address={address} />;
   return <ApprovalView slug={slug} address={address} onApproved={onApproved} />;
 }
 
@@ -234,7 +308,7 @@ function ApprovalView({ slug, address, onApproved }: { slug: string; address: st
 
 // ── The station ────────────────────────────────────────────────────────────
 
-function StationLoader({ slug, address, kiosk, device, onForget }: { slug: string; address: string; kiosk: boolean; device: boolean; onForget: () => void }) {
+function StationLoader({ slug, address, kiosk, device, qr, onForget }: { slug: string; address: string; kiosk: boolean; device: boolean; qr?: boolean; onForget: () => void }) {
   const screen = useQuery({ queryKey: ["station-screen", slug, address], queryFn: () => api.stationScreen(slug, address), retry: 1 });
   if (screen.isPending) return <Shell kiosk={kiosk}><Centered title="Opening…" /></Shell>;
   if (screen.error) {
@@ -242,9 +316,9 @@ function StationLoader({ slug, address, kiosk, device, onForget }: { slug: strin
     return (
       <Shell kiosk={kiosk}>
         <Centered
-          title={gone ? "This screen was stopped" : "The station did not open"}
-          body={gone ? "Its approval was taken away in Configuration → Devices. Approve it again to use it." : errText(screen.error)}
-          action={gone && device ? <BigButton onClick={onForget}>Approve again</BigButton> : undefined}
+          title={gone ? (qr ? "This QR no longer opens the station" : "This screen was stopped") : "The station did not open"}
+          body={gone ? (qr ? "A new label was printed, or the QR was turned off. Scan the new label, or sign in." : "Its approval was taken away in Configuration → Devices. Approve it again to use it.") : errText(screen.error)}
+          action={gone && device ? <BigButton onClick={onForget}>{qr ? "Forget this QR" : "Approve again"}</BigButton> : undefined}
         />
       </Shell>
     );
@@ -255,7 +329,7 @@ function StationLoader({ slug, address, kiosk, device, onForget }: { slug: strin
       {/* The workspace's own platform context: the inbox card a new thing
           shows needs it, and the station is drawn outside the shell. */}
       <WorkspacePlatformWeb orgSlug={slug} role={org.role} appMode={false}>
-        <Station slug={slug} address={address} kiosk={kiosk} device={device} label={screen.data.label} settings={screen.data.settings} hasPin={screen.data.has_pin} onForget={onForget} />
+        <Station slug={slug} address={address} kiosk={kiosk} device={device} qr={qr} label={screen.data.label} settings={screen.data.settings} hasPin={screen.data.has_pin} onForget={onForget} />
       </WorkspacePlatformWeb>
     </FixedActiveOrgProvider>
   );
@@ -280,7 +354,7 @@ interface LastMove {
   undoable?: boolean;
 }
 
-function Station(props: { slug: string; address: string; kiosk: boolean; device: boolean; label: string; settings: StationSettings; hasPin: boolean; onForget: () => void }) {
+function Station(props: { slug: string; address: string; kiosk: boolean; device: boolean; qr?: boolean; label: string; settings: StationSettings; hasPin: boolean; onForget: () => void }) {
   const { slug, address, settings } = props;
   const qc = useQueryClient();
   const [view, setView] = useState<View>({ kind: "ready" });
@@ -293,6 +367,13 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
   const [queue, setQueue] = useState<QueuedMove[]>(() => loadQueue(slug, address, Date.now()));
   const lastScan = useRef<{ code: string; at: number } | null>(null);
   const touchedAt = useRef(Date.now());
+  // The camera's lens on THIS device: its own pick, else the station's (#5353).
+  const [lensPick, setLensPick] = useState<StationLens | null>(() => deviceLens(slug, address));
+  const lens = stationLens(settings.camera, lensPick);
+  const pickLens = (l: StationLens) => {
+    rememberDeviceLens(slug, address, l);
+    setLensPick(l);
+  };
 
   const menu = useQuery({ queryKey: ["station-menu", slug], queryFn: () => api.scanMenu(slug).then((r) => r.items), staleTime: 5 * 60_000 });
   const places = useQuery({ queryKey: ["core-locations", slug], queryFn: () => api.listLocations(slug).then((r) => r.items), staleTime: 60_000 });
@@ -488,6 +569,11 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
         setView({ kind: "error", message: "That label's record is gone." });
         return signal(false);
       }
+      // A phone holding the kitchen QR adds nothing new: it says so (#5353).
+      if (props.qr) {
+        setView({ kind: "error", message: "That isn't something this station keeps yet. Sign in to add it." });
+        return signal(false);
+      }
       // Something new: the scan inbox's own intake, then its own card.
       try {
         const item = await api.scanBarcode(slug, { barcode: scan.code, ...(settings.new_location_id ? { target_location_id: settings.new_location_id } : {}) });
@@ -498,7 +584,7 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
         signal(false);
       }
     },
-    [slug, address, settings.action, settings.count_repeats, settings.new_location_id, count, signal],
+    [slug, address, settings.action, settings.count_repeats, settings.new_location_id, count, signal, props.qr],
   );
 
   useBarcodeWedge({ enabled: !keypad && !settingsOpen && !asking, onScan: (c) => void onScan(c) });
@@ -550,11 +636,20 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
         data-testid="station"
       >
         <header className="flex items-center justify-between gap-3 px-4 pt-3 sm:px-6">
-          <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-3">
+            {settings.back_url && (
+              // The dashboard this station was opened from (Home Assistant): the
+              // way back on a wall tablet that has no browser bar (#5353).
+              <a href={settings.back_url} className="inline-flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-full border border-line px-3 text-sm font-medium text-content hover:border-cobble-400 dark:border-slate-600" data-testid="station-back">
+                <ArrowLeft size={16} /> Back to {settings.back_label}
+              </a>
+            )}
+            <div className="min-w-0">
             <div className="truncate text-sm font-medium text-muted">{props.label}</div>
             {settings.action !== "ask" && (
               <div className="text-xs text-muted">One-tap: {settings.action === "add-one" ? "every scan adds 1" : "every scan uses 1"}</div>
             )}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             {queue.length > 0 && (
@@ -562,20 +657,29 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
                 <WifiOff size={14} /> {queue.length} waiting to sync
               </span>
             )}
-            <button
-              type="button"
-              onClick={() => setSettingsOpen(true)}
-              className="rounded-full p-2.5 text-muted hover:bg-black/5 dark:hover:bg-white/10"
-              aria-label="Station settings"
-              title="Station settings"
-            >
-              <MoreHorizontal size={22} />
-            </button>
+            {!props.qr && (
+              <button
+                type="button"
+                onClick={() => setSettingsOpen(true)}
+                className="rounded-full p-2.5 text-muted hover:bg-black/5 dark:hover:bg-white/10"
+                aria-label="Station settings"
+                title="Station settings"
+              >
+                <MoreHorizontal size={22} />
+              </button>
+            )}
           </div>
         </header>
 
         <main id={MAIN_ID} tabIndex={-1} className="flex flex-1 items-start justify-center px-4 pb-8 pt-4 outline-none sm:items-center sm:px-6">
-          {view.kind === "ready" && <Ready label={props.label} last={last} onUndo={undo} />}
+          {view.kind === "ready" && (
+            <Ready label={props.label} last={last} onUndo={undo} camera={lens !== null}>
+              {lens === "ask" && <StationLensChoice onPick={pickLens} />}
+              {(lens === "front" || lens === "rear") && !keypad && !settingsOpen && !asking && (
+                <StationCamera lens={lens} onCode={(c) => void onScan(c)} onFlip={() => pickLens(lens === "front" ? "rear" : "front")} />
+              )}
+            </Ready>
+          )}
           {view.kind === "looking" && <Centered title="Looking it up…" body={view.code} />}
           {view.kind === "error" && <Notice tone="bad" title={view.message} onDismiss={() => setView({ kind: "ready" })} />}
           {view.kind === "outside" && (
@@ -676,12 +780,22 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
 
 // ── Pieces ─────────────────────────────────────────────────────────────────
 
-function Ready({ label, last, onUndo }: { label: string; last: LastMove | null; onUndo: () => void }) {
+const CAMERA_WORDS: Record<StationCameraSetting, string> = {
+  off: "None (a scanner reads the codes)",
+  front: "The front camera",
+  rear: "The back camera",
+  ask: "Ask each tablet once",
+};
+
+function Ready({ label, last, onUndo, camera, children }: { label: string; last: LastMove | null; onUndo: () => void; camera?: boolean; children?: ReactNode }) {
   return (
-    <div className="flex flex-col items-center gap-6 py-16 text-center" data-testid="station-ready">
+    <div className={`flex flex-col items-center text-center ${camera ? "gap-4 py-4" : "gap-6 py-16"}`} data-testid="station-ready">
       <div className="text-5xl font-semibold max-sm:text-4xl">Ready to scan</div>
-      <p className="max-w-md text-lg text-muted">Scan a barcode or a Cobblr label with the scanner. {label} shows what it is.</p>
+      <p className="max-w-md text-lg text-muted">
+        {camera ? `Hold a barcode or a Cobblr label up to the camera, or use a scanner. ${label} shows what it is.` : `Scan a barcode or a Cobblr label with the scanner. ${label} shows what it is.`}
+      </p>
       {last && <UndoBar last={last} onUndo={onUndo} />}
+      {children}
     </div>
   );
 }
@@ -949,6 +1063,34 @@ function SettingsSheet(props: {
               <input type="checkbox" checked={draft.flash} onChange={(e) => set("flash", e.target.checked)} /> Flash
             </label>
           </Field>
+          <Field label="Camera on the screen">
+            <select value={draft.camera} onChange={(e) => set("camera", e.target.value as StationCameraSetting)} className="rounded-xl border border-line px-3 py-2 dark:border-slate-600 dark:bg-slate-800" aria-label="Camera">
+              {STATION_CAMERAS.map((c) => (
+                <option key={c} value={c}>
+                  {CAMERA_WORDS[c]}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-sm text-muted">For a tablet with no scanner. Each tablet can flip its own camera.</p>
+          </Field>
+          <Field label="A dashboard this station opens from">
+            <input
+              type="url"
+              value={draft.back_url ?? ""}
+              onChange={(e) => set("back_url", e.target.value.trim() || null)}
+              placeholder="https://homeassistant.local:8123/lovelace/kitchen"
+              className="mb-2 w-full rounded-xl border border-line px-3 py-2 dark:border-slate-600 dark:bg-slate-800"
+              aria-label="Dashboard address"
+            />
+            <input
+              value={draft.back_label}
+              onChange={(e) => set("back_label", e.target.value.slice(0, 40))}
+              placeholder="Home Assistant"
+              className="w-full rounded-xl border border-line px-3 py-2 dark:border-slate-600 dark:bg-slate-800"
+              aria-label="Dashboard name"
+            />
+            <p className="mt-1 text-sm text-muted">Shows a Back to {draft.back_label || "Home Assistant"} button on the station.</p>
+          </Field>
           <Field label="Display">
             <select value={draft.theme} onChange={(e) => set("theme", e.target.value as StationSettings["theme"])} className="mr-3 rounded-xl border border-line px-3 py-2 dark:border-slate-600 dark:bg-slate-800" aria-label="Theme">
               <option value="system">Follow the tablet</option>
@@ -959,6 +1101,11 @@ function SettingsSheet(props: {
               <input type="checkbox" checked={draft.large_text} onChange={(e) => set("large_text", e.target.checked)} /> Large text
             </label>
           </Field>
+          {!props.device && (
+            <Field label="A QR for phones">
+              <StationQrPanel slug={props.slug} address={props.address} label={props.label} draft={draft} set={set} />
+            </Field>
+          )}
           {!props.device && (
             <Field label={props.hasPin ? "Change the owner PIN" : "Owner PIN (lets the tablet change these)"}>
               <input inputMode="numeric" value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D/g, "").slice(0, 8))} placeholder="4 to 8 digits" className="w-48 rounded-xl border border-line px-3 py-2 dark:border-slate-600 dark:bg-slate-800" aria-label="New PIN" />

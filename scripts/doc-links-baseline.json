@@ -52,22 +52,6 @@
     "link": "../../modules/digifab.md"
   },
   {
-    "file": "docs/walkthroughs/flagship-bundles/vehicle-maintenance.md",
-    "link": "../../../bundles/vehicle-maintenance.json"
-  },
-  {
-    "file": "docs/walkthroughs/flagship-bundles/yarn-stash.md",
-    "link": "../../../bundles/filament-stash.json"
-  },
-  {
-    "file": "docs/walkthroughs/home-life-full-sidebar-walkthrough.md",
-    "link": "../../bundles/food-cluster.json"
-  },
-  {
-    "file": "docs/walkthroughs/home-life-full-sidebar-walkthrough.md",
-    "link": "../../bundles/kitchen-fitness.json"
-  },
-  {
     "file": "docs/walkthroughs/homebox-migration.md",
     "link": "./homebox-migration/01-blank-dashboard.png"
   },

@@ -108,9 +108,9 @@ export function CommunicationPreferencesPage() {
   const verified = discordQ.data?.verified ?? false;
   const connected = discordQ.data?.connected ?? false;
   const configured = discordConnectable(discordQ.data);
-  // A server that cannot connect Discord does not name it: the page is about
-  // what can reach you here.
-  usePageTitle(configured || discordQ.isLoading ? "Phone, Discord, email & in-app" : "Phone, email & in-app");
+  // One name for this page wherever it is reached from: the bell's footer, the
+  // Notifications tabs, Your account and search (#5565).
+  usePageTitle("Notification settings");
   // Connected and previously confirmed, but by the PREVIOUS Discord app. The
   // DM channel belongs to the bot, so the permission does not carry over and
   // messages would go nowhere silently. One re-confirm fixes it.

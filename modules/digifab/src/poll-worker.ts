@@ -6,7 +6,7 @@
 import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { DigifabDB } from "./db.js";
-import { pollJob } from "./jobs-core.js";
+import { pollJob, pollTuning } from "./jobs-core.js";
 import { ensureFailureWatch } from "./failure-detect.js";
 import { noteFarmActive } from "./farm-active.js";
 
@@ -58,13 +58,26 @@ export function registerPollWorker(): void {
   });
 }
 
+/** The first poll after a send: 4 s, or sooner on a mock connection whose pace is quicker. */
+async function firstPollMs(orgId: string, jobId: string): Promise<number> {
+  try {
+    const db = (await platform().tenants.getDb(orgId)) as Kysely<DigifabDB>;
+    const row = await db.selectFrom("digifab_jobs").select(["connection_id"]).where("id", "=", jobId).executeTakeFirst();
+    if (!row?.connection_id) return FIRST_POLL_MS;
+    const conn = await platform().devices.connections().getInternal(orgId, row.connection_id);
+    return Math.min(FIRST_POLL_MS, pollTuning(conn ?? null).intervalMs);
+  } catch {
+    return FIRST_POLL_MS;
+  }
+}
+
 export async function enqueuePoll(orgId: string, jobId: string): Promise<void> {
   noteFarmActive(orgId);
   await platform().queue.enqueue({
     orgId,
     queue: POLL_QUEUE,
     payload: { jobId },
-    runAt: new Date(Date.now() + FIRST_POLL_MS),
+    runAt: new Date(Date.now() + (await firstPollMs(orgId, jobId))),
   });
 }
 

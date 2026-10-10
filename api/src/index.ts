@@ -36,7 +36,7 @@ import { confirmServiceJob, registerServiceConfirm } from "./platform/service-co
 import { registerServiceSupervisor } from "./platform/service-supervisor.js";
 import { openServicesTestDoors } from "./platform/services-test-doors.js";
 import { testDoorsEnabled } from "./platform/test-doors.js";
-import { setPlatform, canContain, canBeContained, likeEscape, platform as platformSeams, EntityKindIdRegex, isInstallHolder } from "@cobblr/platform-contract";
+import { setPlatform, canContain, canBeContained, likeEscape, platform as platformSeams, EntityKindIdRegex, isInstallHolder, countOf } from "@cobblr/platform-contract";
 import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { describeBlock, describeCapabilityBlock } from "./platform/approvals.js";
 import { atVersion, mergeJsonb, rowVersion } from "./platform/jsonb-merge.js";
@@ -151,6 +151,8 @@ import { reconcileBundleFieldAggregates } from "./platform/reconcile-bundle-fiel
 import { reconcileIntegrationNav } from "./platform/integration-nav.js";
 import { reconcileBundleUpdates, startBundleUpdateSweeper } from "./platform/bundle-updates.js";
 import { reconcileBundleFieldRoles } from "./platform/bundle-field-roles.js";
+import { reconcileBundleInstanceConfig } from "./platform/bundle-instance-config.js";
+import { healBundleViewFields } from "./platform/heal-bundle-view-fields.js";
 import { repairReplayTruncatedNames } from "./platform/repair-replay-truncated-names.js";
 import { retireReceiptFailurePlaceholders } from "./platform/retire-receipt-failure-placeholders.js";
 import { backfillIdentityLinks } from "./platform/backfill-identity.js";
@@ -943,7 +945,10 @@ async function boot() {
           : null;
         return { auth_method: actor.authMethod, via: via?.kind ?? null, token_name: tok?.name ?? null };
       },
-      registerEmailSender: hostedSeams.registerAuthEmailSender,
+      // An overlay's sender: never the configured one, and it replaces a
+      // configured sender only when the instance says so (hosted-seams.ts).
+      registerEmailSender: (sender, opts) =>
+        hostedSeams.registerAuthEmailSender(sender, { name: opts?.name, source: "overlay", allowOverride: env.COBBLR_AUTH_EMAIL_ALLOW_OVERRIDE }),
       hasEmailSender: hostedSeams.hasAuthEmailSender,
       sendEmail: hostedSeams.sendAuthEmail,
     },
@@ -1957,6 +1962,15 @@ async function boot() {
   // is filed by role). Fills a missing role only; meta-only.
   const rolesFilled = await T("reconcileBundleFieldRoles", reconcileBundleFieldRoles());
   if (rolesFilled > 0) console.log(`[cobblr-api] bundle field roles: ${rolesFilled} filled from the catalog`);
+  // A table a bundle installed carries the declarations its current manifest
+  // makes (a Lego Sets table's parts_into), on an install from before them.
+  // Fills a missing key only; meta-only.
+  const tablesFilled = await T("reconcileBundleInstanceConfig", reconcileBundleInstanceConfig());
+  if (tablesFilled > 0) console.log(`[cobblr-api] bundle tables: ${tablesFilled} filled from the catalog`);
+  // A view a bundle seeded names fields its kind has, as the shipped bundle
+  // now defines it, unless the person edited it (Lego 0.6.4's grouping).
+  const viewsHealed = await T("healBundleViewFields", healBundleViewFields());
+  if (viewsHealed.healed > 0) console.log(`[cobblr-api] bundle views: ${viewsHealed.healed} healed from the catalog`);
 
   // The one sweeper that flushes windowed notification channels. Every module
   // that wants a digest gets it from here rather than growing its own timer:
@@ -2209,7 +2223,7 @@ async function boot() {
   if (poolEnabled() && env.COBBLR_TEST_ORG_POOL_SIZE) {
     const target = env.COBBLR_TEST_ORG_POOL_SIZE;
     void bakeTestOrgPool(target)
-      .then((r) => console.log(`[test-org-pool] boot bake done: ${r.total} orgs ready`))
+      .then((r) => console.log(`[test-org-pool] boot bake done: ${countOf(r.total, "org")} ready`))
       .catch((err) => console.error("[test-org-pool] boot bake failed:", (err as Error).message));
   }
 

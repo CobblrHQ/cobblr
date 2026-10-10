@@ -1,6 +1,18 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { Selectable } from "kysely";
+import { judgeTargetRun, type TargetCheckResult } from "@cobblr/platform-contract/production-steps";
+import type { ProductionPlan, ProductionStepResult } from "@cobblr/platform-contract/production-test";
 import type { TestRun } from "./production-store.js";
+/** The on-target test firmware run behind a step, if it is one. */
+function targetRun(plan: ProductionPlan, step: ProductionStepResult) {
+ const planned = plan.steps.find(s => s.id === step.id);
+ return planned?.kind === "probe" && planned.action.op === "run" ? planned.action : undefined;
+}
+/** Each check on-target test firmware reported in a probe run step, judged against the plan. */
+function targetChecks(plan: ProductionPlan, step: ProductionStepResult): TargetCheckResult[] {
+ const action = targetRun(plan, step);
+ return action && typeof step.value === "string" ? judgeTargetRun(action, step.value).checks : [];
+}
 export function productionStatistics(runs: Selectable<TestRun>[]) {
  const first = new Map<string, Selectable<TestRun>>(), failures = new Map<string, number>(), groups = { operators: new Map<string, { tested: number; failed: number }>(), jigs: new Map<string, { tested: number; failed: number }>() };
  const values = new Map<string, { step: string; plan_id: string; plan_version: number; unit: string; min?: number; max?: number; values: number[] }>();
@@ -10,6 +22,14 @@ export function productionStatistics(runs: Selectable<TestRun>[]) {
   if (!first.has(key) || first.get(key)!.attempt > run.attempt) first.set(key, run);
   for (const step of run.result.steps) {
    if (step.result === "fail") { const key = `${run.plan_id}:v${run.plan_version}:${step.name}`; failures.set(key, (failures.get(key) ?? 0) + 1); }
+   for (const check of targetChecks(run.plan, step)) {
+    if (check.result === "fail") { const key = `${run.plan_id}:v${run.plan_version}:${step.name} / ${check.name}`; failures.set(key, (failures.get(key) ?? 0) + 1); }
+    const planned = targetRun(run.plan, step)?.checks.find(c => c.name === check.name)?.limits;
+    if (typeof check.value !== "number" || planned?.kind !== "range" || check.unit !== planned.unit) continue;
+    const key = `${run.plan_id}:v${run.plan_version}:${step.id}/${check.name}`;
+    const current = values.get(key) ?? { step: `${step.name} / ${check.name}`, plan_id: run.plan_id, plan_version: run.plan_version, unit: check.unit, min: planned.min, max: planned.max, values: [] };
+    current.values.push(check.value); values.set(key, current);
+   }
    if (typeof step.value !== "number" || step.limits?.kind !== "range" || step.unit !== step.limits.unit) continue;
    const key = `${run.plan_id}:v${run.plan_version}:${step.id}`;
    const current = values.get(key) ?? { step: step.name, plan_id: run.plan_id, plan_version: run.plan_version, unit: step.unit, min: step.limits.min, max: step.limits.max, values: [] };
@@ -50,6 +70,9 @@ export async function productionCertificate(runs: Selectable<TestRun>[], serials
    if (step.reason) line(step.reason);
    if (step.identity) line(`Instrument: ${step.identity} | Calibration due: ${step.calibration_due ?? "not recorded"}`);
    if (step.firmware_hash) line(`Firmware SHA-256: ${step.firmware_hash}`);
+   if (step.readback_sha256) line(`Read back from the chip: ${step.readback_sha256}`);
+   for (const check of targetChecks(run.plan, step)) line(`${check.name}: ${check.result}${check.value === undefined ? "" : ` | ${check.value} ${check.unit ?? ""}`}${check.reason ? ` | ${check.reason}` : ""}`);
+   if (step.unit_write) line(`Serial written to ${step.unit_write.memory} at 0x${step.unit_write.address.toString(16)}: ${Buffer.from(step.unit_write.hex, "hex").toString("latin1").replace(/\0+$/, "")}`);
    for (const attachment of step.attachments ?? []) line(`${attachment.role}: ${attachment.filename}, file ${attachment.id}, SHA-256 ${attachment.sha256}`);
   }
   for (const output of run.result?.outputs_off ?? []) line(`${output.instrument}: ${output.confirmed ? "output off confirmed" : output.error ?? "output off not confirmed"}`);

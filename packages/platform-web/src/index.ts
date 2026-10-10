@@ -195,6 +195,8 @@ export { useUnits, type UseUnits } from "./useUnits";
 export { formatQuantity, formatUnit, resolveUnit, convertQuantity, unitLens, usedInUnit } from "./units";
 export { AmountControl } from "./AmountControl";
 export { StockStepper } from "./StockStepper";
+export { NumberStepper, type NumberStepperProps } from "./NumberStepper";
+export { TypeableNumber } from "./TypeableNumber";
 export { StickyBottomBar } from "./StickyBottomBar";
 export type {
   FieldRendererId,

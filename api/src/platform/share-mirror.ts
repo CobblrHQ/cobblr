@@ -298,7 +298,11 @@ export async function mirrorAndDeliverNow(linkId: string, waitMs = 20_000): Prom
     .where("link_id", "=", linkId)
     .where("sent_at", "is", null)
     .executeTakeFirst();
-  return { delivered: !flushed.error && Number(left?.n ?? 0) === 0, error: flushed.error, sent: flushed.sent };
+  const delivered = !flushed.error && Number(left?.n ?? 0) === 0;
+  // An owner told "not yet" is worth one line: CI's api log is the only trace
+  // a run leaves of why (run 41902 had none).
+  if (!delivered) console.warn(`[share] ${linkId}: a change has not reached the other side yet (${flushed.error ?? `${left?.n ?? 0} waiting`})`);
+  return { delivered, error: flushed.error, sent: flushed.sent };
 }
 
 /** Something changed in a workspace: its mirrored shares are due a pass.
@@ -431,7 +435,7 @@ async function recordCopyBase(
  *  a single hold for the whole api was replaced, and its count reset, by
  *  another test file setting its own while CI ran them side by side, so a
  *  test's pass never reached a hold that was no longer there (#5396). */
-type ApplyPoint = "before-write" | "after-write" | "owner-pass";
+export type ApplyPoint = "before-write" | "after-write" | "owner-pass" | "edits-pass";
 const applyHolds = new Map<string, { at: ApplyPoint; ms: number }>();
 const holdsReached = new Map<string, number>();
 export function setMirrorApplyHoldForTests(h: { orgId: string; at: ApplyPoint; ms: number } | null): void {
@@ -450,7 +454,7 @@ export function setMirrorApplyHoldForTests(h: { orgId: string; at: ApplyPoint; m
 /** How often a hold was reached: one workspace's, or every workspace's together. */
 export const mirrorApplyHoldReached = (orgId?: string): number =>
   orgId ? (holdsReached.get(orgId) ?? 0) : [...holdsReached.values()].reduce((n, x) => n + x, 0);
-async function holdForTests(orgId: string, at: ApplyPoint): Promise<void> {
+export async function holdForTests(orgId: string, at: ApplyPoint): Promise<void> {
   const h = applyHolds.get(orgId);
   if (!h || h.at !== at) return;
   holdsReached.set(orgId, (holdsReached.get(orgId) ?? 0) + 1);
@@ -528,7 +532,9 @@ async function slugOf(orgId: string): Promise<string> {
 export function registerShareMirrorOps(): void {
   const registerCopyOp = (op: string, apply: (link: ShareLinkRow, p: Record<string, unknown>) => Promise<void>) =>
     registerShareOp(op, async (link, p) => {
-      const applied = await withShareCopyState(link.id, () => apply(link, p));
+      // Waited for: the friend's edits pass holds the copy a moment after
+      // every change in the share space (share-copy-state.ts).
+      const applied = await withShareCopyState(link.id, () => apply(link, p), { waitMs: 10_000 });
       if (applied === null) throw new Error("The shared copy is being checked for edits. Try syncing again.");
     });
   registerShareOp("mirror.shape", async (link, p) => {

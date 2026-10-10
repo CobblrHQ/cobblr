@@ -20,7 +20,7 @@ export async function listTidySuggestions(orgId: string, role: string | null | u
 }
 
 async function smallModel(orgId: string, prompt: string): Promise<unknown> {
-  const answer = await platform().ai.invoke({ orgId, userId: null, capability: "chat", costPolicy: "free", input: { messages: [{ role: "system", content: "Return only the requested JSON. Never call tools." }, { role: "user", content: prompt }] }, config: { max_tokens: 1200, temperature: 0 } });
+  const answer = await platform().ai.invoke({ orgId, userId: null, capability: "organise", costPolicy: "free", input: { messages: [{ role: "system", content: "Return only the requested JSON. Never call tools." }, { role: "user", content: prompt }] }, config: { max_tokens: 1200, temperature: 0 } });
   return JSON.parse(answer.text.replace(/^```(?:json)?\s*|\s*```$/g, ""));
 }
 

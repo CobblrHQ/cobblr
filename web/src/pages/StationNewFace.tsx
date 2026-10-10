@@ -4,8 +4,8 @@
 // the full card for everything else. InboxCard renders this with its own
 // state, so Add here is the same Add the inbox's row runs.
 import type { ReactNode } from "react";
-import { Minus, Plus } from "lucide-react";
-import { EntityPhoto } from "@cobblr/platform-web";
+import { Plus } from "lucide-react";
+import { EntityPhoto, NumberStepper } from "@cobblr/platform-web";
 
 /** A station's photo: the whole product on a light tile, as a catalog shows
  *  it. Cover cropped a bottle's top and sides at arm's length. */
@@ -55,27 +55,22 @@ export function StationNewFace(p: StationNewFaceProps) {
         <>
           <div className="mt-6 flex flex-wrap items-stretch gap-3">
             {p.quantity && (
-              <div className="inline-flex min-h-[64px] items-center rounded-2xl border border-line bg-surface dark:border-slate-600 dark:bg-slate-800" data-testid="station-new-qty">
-                <button
-                  type="button"
-                  aria-label="One fewer"
-                  disabled={p.quantity.busy || p.quantity.value <= 1}
-                  onClick={() => p.quantity && p.quantity.onChange(p.quantity.value - 1)}
-                  className="h-full px-4 text-content disabled:opacity-40"
-                >
-                  <Minus size={24} />
-                </button>
-                <span className="min-w-[3ch] text-center text-2xl font-semibold" aria-live="polite">×{p.quantity.value}</span>
-                <button
-                  type="button"
-                  aria-label="One more"
-                  disabled={p.quantity.busy}
-                  onClick={() => p.quantity && p.quantity.onChange(p.quantity.value + 1)}
-                  className="h-full px-4 text-content disabled:opacity-40"
-                >
-                  <Plus size={24} />
-                </button>
-              </div>
+              <NumberStepper
+                value={p.quantity.value}
+                onChange={p.quantity.onChange}
+                busy={p.quantity.busy}
+                min={1}
+                label="Quantity"
+                prefix="×"
+                decreaseLabel="One fewer"
+                increaseLabel="One more"
+                testId="station-new-qty"
+                icons
+                iconSize={24}
+                className="inline-flex min-h-[64px] items-center rounded-2xl border border-line bg-surface text-2xl dark:border-slate-600 dark:bg-slate-800"
+                buttonClassName="h-full px-4 text-content disabled:opacity-40"
+                inputClassName="w-[3ch] bg-transparent text-center text-2xl font-semibold tabular-nums text-content dark:text-mortar-100"
+              />
             )}
             {p.commit && (
               <button

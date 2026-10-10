@@ -9,7 +9,12 @@ import { readBoardStock, revision } from "./board-revisions.js";
 import { asyncHandler } from "./util.js";
 export interface AssemblyKitLine { part_id: string; kind: string; qty: number; placements: number; role: "component" | "blank"; lot_code?: string | null; allocation_id?: string }
 export interface AssemblyOrder {
+  finish_intent?: { run_id: string; source_id: string; input_kind: string; input_id: string; output_kind: string; output_id: string; accepted: number; rejected: number; by: string | null };
+  inspection_machine?: { kind: string; id: string };
+  finished?: { run_id: string; output_kind: string; output_id: string; accepted: number; rejected: number; by: string | null; at: string };
+  trace?: ReturnType<typeof import("../assembly-inspection.js").assemblyTrace>;
   request_key: string; state: "draft" | "kitted" | "released" | "pasted" | "placing" | "placed" | "reflowed" | "tested" | "cancelled";
+  reflow?: import("./reflow.js").AssemblyReflow; reflow_history?: import("./reflow.js").AssemblyReflow[];
   kit_plan?: AssemblyKitLine[]; released_by?: string | null; released_at?: string;
   paste_intent?: NonNullable<AssemblyOrder["paste"]> & { handling_revision: number; applied_by: string | null };
   paste?: { part_id: string; kind: string; lot_code: string; amount_ml: number; applied_at: string; stencil_id: string; source: string };

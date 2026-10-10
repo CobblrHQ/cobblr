@@ -8,6 +8,7 @@ import { Minus, Plus } from "lucide-react";
 import { Modal } from "@cobblr/platform-web";
 import type { PlaceableRecord } from "../../lib/placeableRecords";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 export type SeveralPlacesAnswer =
   | { kind: "all" }
   | { kind: "some"; fromHoldingId: string; fromLocationId: string | null; qty: number }
@@ -42,7 +43,7 @@ export function SeveralPlacesDialog({
   const btn = "w-9 h-9 grid place-items-center rounded-md border border-line dark:border-slate-600 disabled:opacity-30";
 
   return (
-    <Modal open onClose={onClose} title={`${record.name} is kept in ${holdings.length} places`} subtitle={`Dropped on ${placeName}`} size="sm">
+    <Modal open onClose={onClose} title={`${record.name} is kept in ${countOf(holdings.length, "place")}`} subtitle={`Dropped on ${placeName}`} size="sm">
       <div className="space-y-4 text-sm" data-testid="several-places">
         <ul className="text-xs text-muted dark:text-slate-400 space-y-0.5">
           {holdings.map((h) => (

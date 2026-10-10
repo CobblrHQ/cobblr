@@ -25,6 +25,7 @@
 
 import { platform } from "@cobblr/platform-contract";
 import { readReceiptAnswer, type ReceiptAnswer } from "./receipt-photo.js";
+import { emailLineImages, type EmailLineImage } from "@cobblr/platform-contract/email-line-images";
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
 // enrich.ts's INTERNAL_API — these calls carry a minted bearer, so they must
@@ -148,14 +149,16 @@ async function uploadFile(
  *  the one reader (readReceiptAnswer): a receipt already in the inbox is not a
  *  receipt with nothing on it, so it is never handed on to the photo path as
  *  a product (#4027). Null when the call itself failed. */
-async function receiptCapture(slug: string, token: string, fileId: string): Promise<ReceiptAnswer | null> {
+async function receiptCapture(slug: string, token: string, fileId: string, lineImages: readonly EmailLineImage[] = []): Promise<ReceiptAnswer | null> {
   try {
     const r = await apiFetch(`${INTERNAL_API}/api/v1/orgs/${slug}/modules/core-scan/scan/receipt`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
       // "email": the session reads "emailed", and its rows are never a kept
       // example (photo-observation-gate).
-      body: JSON.stringify({ file_id: fileId, origin: "email" }),
+      // The photo printed beside each line, which the text body has lost
+      // (#5350): each line's own picture, ahead of any search.
+      body: JSON.stringify({ file_id: fileId, origin: "email", ...(lineImages.length ? { line_images: lineImages } : {}) }),
     });
     return readReceiptAnswer(r.status, await r.json().catch(() => null));
   } catch {
@@ -287,7 +290,7 @@ export function registerEmailInbound(): void {
       if (note && looksMultiItem(note)) {
         const fileId = await uploadFile(ctx.orgId, Buffer.from(note, "utf8"), "email-body.txt", "text/plain");
         if (fileId) {
-          const answer = await receiptCapture(who.slug, token, fileId);
+          const answer = await receiptCapture(who.slug, token, fileId, emailLineImages(b.html));
           if (answer?.kind === "read") {
             itemsCreated += answer.items;
             bodySplit = true;

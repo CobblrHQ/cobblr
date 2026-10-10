@@ -167,8 +167,15 @@ export function noCameraReason(ctx: { isSecureContext?: boolean; mediaDevices?: 
     : "This browser offers no camera here. Scan an image file instead, or open Cobblr in a browser that has one.";
 }
 
+/** What the camera is asked for first: the back lens unless the front is
+ *  wanted (a wall tablet facing the room, #5353). */
+export function firstVideoAsk(lens: "front" | "rear"): { facingMode: { ideal: "user" | "environment" } } {
+  return { facingMode: { ideal: lens === "front" ? "user" : "environment" } };
+}
+
 export async function acquireScannerStream(
   preferredDeviceId?: string | null,
+  lens: "front" | "rear" = "rear",
 ): Promise<ScannerStream> {
   const none = noCameraReason({ isSecureContext: window.isSecureContext, mediaDevices: navigator.mediaDevices });
   if (none) throw new NoCameraHere(none);
@@ -188,11 +195,14 @@ export async function acquireScannerStream(
     return finalize(stream, preferredDeviceId);
   }
 
-  // First open: grab ANY rear camera (this triggers the permission prompt).
+  // First open: grab ANY camera facing the asked way (this triggers the
+  // permission prompt). The front lens is taken as it comes: the best-lens
+  // pick below only ranks back lenses.
   const initial = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: { ideal: "environment" }, ...BASE_VIDEO },
+    video: { ...firstVideoAsk(lens), ...BASE_VIDEO },
     audio: false,
   });
+  if (lens === "front") return finalize(initial, initial.getVideoTracks()[0]?.getSettings().deviceId ?? null);
 
   // Now labels are readable → pick the best lens; re-acquire locked if it differs.
   let best: string | null = null;

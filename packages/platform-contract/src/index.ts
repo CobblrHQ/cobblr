@@ -4381,6 +4381,24 @@ export const AiCapabilities = [
   // proposes one (modules/core-ai/src/api/plan-tier.ts). Never swapped down
   // to a lighter sibling when busy.
   "plan-changes",
+  // Reading the TEXT of a document into fields: a receipt or invoice that came
+  // as text (an email, a PDF with a text layer), the materials a pattern
+  // lists. Its own id because it rode `chat` for a long time, so a person's
+  // order for Cobb's chat read every receipt (the owner, 2026-10-10: choosing
+  // Sonnet for Cobb read every receipt with Sonnet). It is thorough reading,
+  // with documents and the scan inbox. The caller sends its own messages and
+  // parses its own shape; a provider that does not declare it answers through
+  // its chat, the same call as before.
+  "read-document-text",
+  // Naming a thing from TEXT evidence rather than a photo: a barcode's web
+  // results, a product description checked against a photo's read. Thorough
+  // reading, for the scan inbox; its own id for the reason above.
+  "identify-from-text",
+  // Organising what is already in the workspace: grouping pending scans into
+  // themes, matching scans to records, planning a tidy-up, naming a sheet's
+  // columns, laying out a floor plan's places. The caller's own prompt and
+  // shape; a provider that does not declare it answers through its chat.
+  "organise",
 ] as const;
 
 export type AiCapability = (typeof AiCapabilities)[number];
@@ -4417,6 +4435,11 @@ export const AI_CAPABILITY_FALLBACK: Partial<Record<AiCapability, AiCapability>>
   "personal-document-read": "document-read",
   // A provider written before planning had its own job plans in its chat.
   "plan-changes": "chat",
+  // Split out of chat (2026-10-10): every provider that read these through its
+  // chat still does, with no change, until it declares them.
+  "read-document-text": "chat",
+  "identify-from-text": "chat",
+  "organise": "chat",
 };
 
 /** A turn of the conversation, with tools and the chat answer shape: `chat`
@@ -4435,6 +4458,38 @@ export { isFloatingModel };
 export function aiCapabilityChain(capability: AiCapability): AiCapability[] {
   const next = AI_CAPABILITY_FALLBACK[capability];
   return next ? [capability, next] : [capability];
+}
+
+/** The jobs a person arranges AI by, and the capabilities each stands for.
+ *  ONE list for the router (a person's own defaults are kept per job) and
+ *  the pages that show the jobs, so the two cannot disagree about which job
+ *  a capability belongs to. Every capability sits in exactly one job.
+ *  `shows` is the capability whose chain stands for the job on a page and
+ *  whose models a person picks from. */
+export const AI_JOBS = [
+  { id: "personal", phrase: "personal documents", title: "Personal documents", shows: "personal-document-read", capabilities: ["personal-document-read"] },
+  // The owner (2026-10-10): "Identifying scans/photos in the moment needs to
+  // be quick. Identifying things more thoroughly in the scan inbox can take
+  // longer. Documents might fit in here. Cobb chat is separate."
+  { id: "glance", phrase: "a quick look", title: "Quick look", shows: "identify-glance", capabilities: ["identify-glance"] },
+  {
+    id: "reading",
+    phrase: "thorough reading",
+    title: "Thorough reading",
+    shows: "identify-image",
+    capabilities: ["identify-image", "split-image", "rank-images", "classify-image", "extract-text", "document-read", "read-document-text", "identify-from-text"],
+  },
+  { id: "chat", phrase: "Cobb chat", title: "Cobb chat", shows: "chat", capabilities: ["chat", "plan-changes", "design-workspace"] },
+  { id: "text", phrase: "organising and text", title: "Organising and text", shows: "organise", capabilities: ["summarise", "match-to-catalog", "organise"] },
+  { id: "search", phrase: "search", title: "Search", shows: "embed-text", capabilities: ["embed-text"] },
+] as const satisfies ReadonlyArray<{ id: string; title: string; /** The job inside a sentence: "for a quick look", "for Cobb chat". */ phrase: string; shows: AiCapability; capabilities: readonly AiCapability[] }>;
+
+export type AiJobId = (typeof AI_JOBS)[number]["id"];
+export const AI_JOB_IDS: readonly AiJobId[] = AI_JOBS.map((j) => j.id);
+
+/** The job a capability belongs to. */
+export function aiJobOf(capability: AiCapability): (typeof AI_JOBS)[number] {
+  return AI_JOBS.find((j) => (j.capabilities as readonly string[]).includes(capability)) ?? AI_JOBS.find((j) => j.id === "chat")!;
 }
 
 /** One credential field an AI provider asks for. `choices` renders as a
@@ -4485,12 +4540,32 @@ export const AI_JOB_PRIVACY: Record<AiCapability, AiPrivacy> = {
   "document-read": "normal",
   "personal-document-read": "personal",
   "plan-changes": "normal",
+  "read-document-text": "normal",
+  "identify-from-text": "normal",
+  "organise": "normal",
 };
+
+/** The jobs a person may set their OWN default AI for (#5404): every job but
+ *  a personal one. Personal documents are read by a local model only, by the
+ *  workspace's own rule, so a person's defaults never reach them. */
+export const AI_DEFAULT_JOBS = AI_JOBS.filter((j): j is Exclude<(typeof AI_JOBS)[number], { id: "personal" }> => AI_JOB_PRIVACY[j.shows] !== "personal");
+export type AiDefaultJobId = (typeof AI_DEFAULT_JOBS)[number]["id"];
+
+/** The job a person's own defaults answer a capability with, or null when
+ *  they never do (personal documents). */
+export function aiDefaultJobOf(capability: AiCapability): AiDefaultJobId | null {
+  const id = aiJobOf(capability).id;
+  return AI_DEFAULT_JOBS.find((j) => j.id === id)?.id ?? null;
+}
 
 export interface AiProviderDef {
   locality?: "local" | "cloud";
   id: string;
   label: string;
+  /** The company a call is sent to, as a person consents to it: "Anthropic",
+   *  "Google". Named in the consent to read personal documents in the cloud
+   *  (#5621); the label stands in when it is not set. */
+  company?: string;
   describeCredentials: () => Record<string, AiCredentialField>;
   /** Step-by-step, shown in the UI when this provider is picked. Optional: a provider
    *  needing no credentials (a managed one) has nothing to instruct. */
@@ -4713,6 +4788,9 @@ export interface AiChainStep {
   credential_id?: string;
   owner_user_id?: string;
   provider_row_id?: string;
+  /** One of the caller's own default steps for the job (#5404): set on Your
+   *  account, Connections, not ordered from a workspace's page. */
+  your_default?: true;
 }
 
 export interface PlatformAi {
@@ -5406,8 +5484,11 @@ export interface PlatformAuth {
   /** Register the platform-level auth-email sender (verify / reset / magic
    *  link). A self-hoster wires their own; the overlay injects a managed
    *  sender. Open core registers none — magic-link falls back to the inline
-   *  dev link, reset to admin-managed. Last registration wins. */
-  registerEmailSender(sender: AuthEmailSender): void;
+   *  dev link, reset to admin-managed. A sender the instance configured
+   *  itself (COBBLR_AUTH_EMAIL_PROVIDER) is not replaced by an overlay's unless
+   *  COBBLR_AUTH_EMAIL_ALLOW_OVERRIDE=true; any replacement is logged with both
+   *  names. `name` labels this sender in that log and in /auth/config. */
+  registerEmailSender(sender: AuthEmailSender, opts?: { name?: string }): void;
   /** True if an auth-email sender is registered (so the auth routes know
    *  whether real delivery is available vs. the dev-link fallback). */
   hasEmailSender(): boolean;
@@ -7847,6 +7928,32 @@ export interface DeletedRowTree {
   cleared: Array<{ table: string; column: string; row: Record<string, unknown> }>;
 }
 
+/** Single-column foreign keys in the public schema that point at `table`
+ *  and cascade or clear on delete: the child table and column, the parent
+ *  column, and the rule. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function foreignKeysInto(q: any, table: string): Promise<Array<{ table: string; column: string; parentColumn: string; rule: string }>> {
+  const parent = await q.selectFrom("pg_catalog.pg_class as p").innerJoin("pg_catalog.pg_namespace as n", "n.oid", "p.relnamespace")
+    .select("p.oid").where("n.nspname", "=", "public").where("p.relname", "=", table).executeTakeFirst() as { oid: number } | undefined;
+  if (!parent) return [];
+  const cons = await q.selectFrom("pg_catalog.pg_constraint as c").innerJoin("pg_catalog.pg_class as child", "child.oid", "c.conrelid")
+    .innerJoin("pg_catalog.pg_namespace as cn", "cn.oid", "child.relnamespace")
+    .select(["child.relname as table", "c.conrelid", "c.conkey", "c.confkey", "c.confdeltype"])
+    .where("c.contype", "=", "f").where("c.confrelid", "=", parent.oid).where("cn.nspname", "=", "public").where("c.confdeltype", "in", ["c", "n"])
+    .execute() as Array<{ table: string; conrelid: number; conkey: number[] | string; confkey: number[] | string; confdeltype: string }>;
+  const nums = (v: number[] | string) => (Array.isArray(v) ? v : String(v).replace(/[{}]/g, "").split(",").filter(Boolean)).map(Number);
+  const single = cons.filter((c) => nums(c.conkey).length === 1 && nums(c.confkey).length === 1);
+  if (!single.length) return [];
+  const attrs = await q.selectFrom("pg_catalog.pg_attribute").select(["attrelid", "attnum", "attname"])
+    .where("attrelid", "in", [...new Set([parent.oid, ...single.map((c) => c.conrelid)])]).where("attnum", ">", 0).execute() as Array<{ attrelid: number; attnum: number; attname: string }>;
+  const name = (rel: number, num: number) => attrs.find((a) => Number(a.attrelid) === Number(rel) && Number(a.attnum) === num)?.attname;
+  return single.flatMap((c) => {
+    const column = name(c.conrelid, nums(c.conkey)[0]!);
+    const parentColumn = name(parent.oid, nums(c.confkey)[0]!);
+    return column && parentColumn ? [{ table: c.table, column, parentColumn, rule: c.confdeltype === "c" ? "CASCADE" : "SET NULL" }] : [];
+  });
+}
+
 export async function snapshotRowTree(db: unknown, table: string, id: string, prefix: string): Promise<DeletionSnapshot | null> {
   const image = await snapshotRow(db, table, id);
   if (!image) return null;
@@ -7854,17 +7961,22 @@ export async function snapshotRowTree(db: unknown, table: string, id: string, pr
   const q = db as any;
   const related: DeletedRowTree = { rows: [], cleared: [] };
   const seen = new Set<string>();
+  // The foreign keys pointing at a table, read once per table per snapshot
+  // from pg_catalog. information_schema answered the same in tens of
+  // milliseconds a row, more on a loaded box and in a workspace with many
+  // tables, and a send or its Undo snapshots every record it touches.
+  const keys = new Map<string, Promise<Array<{ table: string; column: string; parentColumn: string; rule: string }>>>();
+  const childKeys = (parentTable: string) => {
+    let got = keys.get(parentTable);
+    if (!got) keys.set(parentTable, (got = foreignKeysInto(q, parentTable)));
+    return got;
+  };
   const visit = async (parentTable: string, row: Record<string, unknown>): Promise<void> => {
     const key = `${parentTable}:${String(row.id ?? JSON.stringify(row))}`;
     if (seen.has(key)) return;
     seen.add(key);
     if (parentTable !== table || row.id !== id) related.rows.push({ table: parentTable, row });
-    const fks = await q.selectFrom("information_schema.referential_constraints as r")
-      .innerJoin("information_schema.key_column_usage as child", "child.constraint_name", "r.constraint_name")
-      .innerJoin("information_schema.key_column_usage as parent", "parent.constraint_name", "r.unique_constraint_name")
-      .select(["child.table_name as table", "child.column_name as column", "parent.column_name as parentColumn", "r.delete_rule as rule"])
-      .where("child.table_schema", "=", "public").where("parent.table_schema", "=", "public")
-      .where("parent.table_name", "=", parentTable).where("r.delete_rule", "in", ["CASCADE", "SET NULL"]).execute() as Array<{ table: string; column: string; parentColumn: string; rule: string }>;
+    const fks = await childKeys(parentTable);
     for (const fk of fks) {
       if (!fk.table.startsWith(prefix) || row[fk.parentColumn] == null) continue;
       const children = await q.selectFrom(fk.table).selectAll().where(fk.column, "=", row[fk.parentColumn]).execute() as Array<Record<string, unknown>>;

@@ -43,7 +43,7 @@ export function VerifyEmailPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-canvas dark:bg-slate-900 p-6">
-      <div className="w-full max-w-sm rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-6 space-y-4 text-center">
+      <div className="w-full max-w-sm rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-6 space-y-4 text-center" data-testid="verify-email-page" data-state={state}>
         <div className="flex flex-col items-center gap-3">
           <CobblestoneMark size={48} />
           {state === "working" && (

@@ -8,13 +8,14 @@ import { checkoutTestOrg, poolStatus } from "../db/test-org-pool.js";
 import { workspaceShape } from "../db/workspace-shape.js";
 import { clearPassFailures, passFailures } from "../platform/pass-failures.js";
 import { retireReceiptFailurePlaceholders } from "../platform/retire-receipt-failure-placeholders.js";
+import { healBundleViewFields } from "../platform/heal-bundle-view-fields.js";
 import { rehomeAssetsInstanceToRecords } from "../platform/rehome-instance.js";
 import { reconcileScanCategoryFields, retireScanCategoryPlaceholders } from "../platform/reconcile-scan-category.js";
 import { runAllTenantSweeps, runTenantSweep } from "../platform/tenant-sweeps.js";
 import { setSubscriberDelayForTests } from "../platform/events.js";
 import { selfFetch } from "../platform/self-fetch.js";
 import { runWithActor } from "../lib/request-context.js";
-import { mirrorApplyHoldReached, setMirrorApplyHoldForTests } from "../platform/share-mirror.js";
+import { type ApplyPoint, mirrorApplyHoldReached, setMirrorApplyHoldForTests } from "../platform/share-mirror.js";
 import * as notifications from "../platform/notifications.js";
 import { registerHandler } from "../platform/actions.js";
 import { ActionRefusal, PLATFORM_OWNER } from "@cobblr/platform-contract";
@@ -132,6 +133,17 @@ testSupportRouter.post("/test-support/run-migration/scan-category-axis", async (
     await reconcileScanCategoryFields(onlyOrg(req));
     await retireScanCategoryPlaceholders(onlyOrg(req));
     res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Same reason, for the boot pass that gives a bundle-seeded view the shipped
+// bundle's definition when the one its install wrote names a field its kind
+// lacks (heal-bundle-view-fields.ts).
+testSupportRouter.post("/test-support/run-migration/bundle-view-fields", async (req, res, next) => {
+  try {
+    res.json(await healBundleViewFields(onlyOrg(req)));
   } catch (err) {
     next(err);
   }
@@ -300,13 +312,15 @@ testSupportRouter.post("/test-support/self-fetch", async (req, res, next) => {
 // Hold a share's mirror inside its apply on one share space, before or after
 // it writes the owner's change onto the copy, so a test lands the friend's
 // edit exactly there (a friend's edit lost to the mirror). Body: { slug (the
-// share space), at: "before-write" | "after-write", ms }; ms 0 clears. GET
+// share space), at: "before-write" | "after-write" | "owner-pass" |
+// "edits-pass" (the friend's edits pass, holding the copy's state), ms }; ms
+// 0 clears. GET
 // reports how many applies reached it, the positive control.
 testSupportRouter.post("/test-support/mirror-apply-hold", async (req, res, next) => {
   try {
     const { slug, at, ms } = (req.body ?? {}) as { slug?: string; at?: string; ms?: number };
-    if (!slug || (at !== "before-write" && at !== "after-write" && at !== "owner-pass") || typeof ms !== "number") {
-      res.status(400).json({ error: { code: "bad_body", message: "slug + at (before-write|after-write) + ms required" } });
+    if (!slug || !["before-write", "after-write", "owner-pass", "edits-pass"].includes(at ?? "") || typeof ms !== "number") {
+      res.status(400).json({ error: { code: "bad_body", message: "slug + at (before-write|after-write|owner-pass|edits-pass) + ms required" } });
       return;
     }
     const o = await meta.selectFrom("orgs").select("id").where("slug", "=", slug).executeTakeFirst();
@@ -314,7 +328,7 @@ testSupportRouter.post("/test-support/mirror-apply-hold", async (req, res, next)
       res.status(404).json({ error: { code: "not_found", message: "no such workspace" } });
       return;
     }
-    setMirrorApplyHoldForTests({ orgId: o.id, at, ms });
+    setMirrorApplyHoldForTests({ orgId: o.id, at: at as ApplyPoint, ms });
     res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -593,6 +607,26 @@ testSupportRouter.post("/test-support/raw-placement", async (req, res, next) => 
               on conflict (containee_kind, containee_id) do update
                 set container_kind = excluded.container_kind, container_id = excluded.container_id, placed_at = excluded.placed_at`.execute(db as never);
     res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// What a store's order page said, as an earlier read would have kept it, on
+// the link waiting for an order number: CI cannot reach a store, so a test of
+// "Read again from the page" stands in for the read. Body: { org_id,
+// order_number, page_order }.
+testSupportRouter.post("/test-support/order-page-was-read", async (req, res, next) => {
+  try {
+    const b = (req.body ?? {}) as { org_id?: string; order_number?: string; page_order?: unknown };
+    if (!b.org_id || !b.order_number || !b.page_order) {
+      res.status(400).json({ error: { code: "bad_body", message: "org_id, order_number and page_order required" } });
+      return;
+    }
+    const db = await getTenantDb(b.org_id);
+    const r = await sql`update purchases_order_pages set page_order = ${JSON.stringify(b.page_order)}::jsonb, last_outcome = 'read'
+              where regexp_replace(coalesce(order_number, ''), '^#\\s*', '') = ${b.order_number.replace(/^#\s*/, "")}`.execute(db as never);
+    res.json({ updated: Number(r.numAffectedRows ?? 0) });
   } catch (err) {
     next(err);
   }

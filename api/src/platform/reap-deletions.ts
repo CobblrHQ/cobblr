@@ -26,6 +26,7 @@
 
 import { runExclusive } from "./exclusive.js";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 /** Days between asking and the drop, fail-safe: a missing or non-numeric
  *  value is 14, never NaN (a NaN due date would be never, or now). Pure. */
 export function deletionGraceDays(env: NodeJS.ProcessEnv = process.env): number {
@@ -95,7 +96,7 @@ export async function reapRequestedDeletions(deps: DeletionReapDeps = {}): Promi
   const max = deps.max ?? deletionReapMax();
   const due = dueForDeletion(await (deps.listCandidates ?? defaultCandidates)(), now);
   if (max > 0 && due.length > max) {
-    const refused = `${due.length} workspaces are due at once, over the cap of ${max}; nothing was deleted. Check the clock and the deletion_due_at stamps, then raise COBBLR_WORKSPACE_DELETE_REAP_MAX for one sweep if they are right.`;
+    const refused = `${countOf(due.length, "workspace")} are due at once, over the cap of ${max}; nothing was deleted. Check the clock and the deletion_due_at stamps, then raise COBBLR_WORKSPACE_DELETE_REAP_MAX for one sweep if they are right.`;
     console.error(`[reap-deletions] ${refused}`);
     return { due: due.length, deleted: [], kept: [], refused };
   }

@@ -262,6 +262,10 @@ const InstanceEntry = z.object({
   glyph: z.string().optional(),
   item_noun: z.string().optional(),
   qty_unit: z.string().optional(),
+  /** Another table of this bundle (its instance_name) that a record here is
+   *  made into parts on: a Lego set disassembles into bricks on Bricks
+   *  (#5434). Absent, its parts go to the module's own table. */
+  parts_into: z.string().min(1).regex(/^[a-z0-9][a-z0-9-]*$/).optional(),
   /** What a record of this table calls the things inside it ("Parts" for a
    *  computer, "In the bag" for a bag): the default for its Contents panel.
    *  A workspace's own word wins and an update never overwrites it. */
@@ -336,7 +340,7 @@ const InstanceEntry = z.object({
   renewal_fields: RenewalBindingSchema.optional(),
   record_templates: z.array(RecordTemplateSchema).max(30).optional(),
   receipt_draft: ReceiptDraftSchema.optional(),
-  board_revisions: z.object({ package_kind: z.string().min(3).max(120), blank_kind: z.string().min(3).max(120), stencil_kind: z.string().min(3).max(120), placed_kind: z.string().min(3).max(120).optional() }).optional(),
+  board_revisions: z.object({ package_kind: z.string().min(3).max(120), blank_kind: z.string().min(3).max(120), stencil_kind: z.string().min(3).max(120), placed_kind: z.string().min(3).max(120).optional(), tested_kind: z.string().min(3).max(120).optional() }).optional(),
   paste_tracking: z.boolean().optional(),
   package_receiving: z.object({ identity_field: z.string().min(1).max(80), storage_tracking: z.boolean().default(false) }).optional(),
   parent: z
@@ -2028,7 +2032,7 @@ async function applyValidatedBundleUnlocked(
     // (2026-09-12). The instance's words come first so a table-specific term
     // wins any first-match read.
     const tableWords = bundleTableWords(inst.scan_keywords, m.scan_keywords);
-    const instConfig: Record<string, unknown> = { renewal_fields: inst.renewal_fields ?? null, record_templates: inst.record_templates ?? null, receipt_draft: inst.receipt_draft ?? null, item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null, parent: inst.parent ?? null, package_receiving: inst.package_receiving ?? null, paste_tracking: inst.paste_tracking ?? false, board_revisions: inst.board_revisions ?? null, nav_group: inst.nav_group ?? null, scan_keywords: tableWords.length ? tableWords : null, faces: inst.faces ?? null, file_intake: inst.file_intake ?? null, connector_import: (inst as { connector_import?: unknown }).connector_import ?? null, noun: inst.noun ?? null, hint: inst.hint ?? null, links: inst.links ?? null, noun_choice: (inst as { noun_choice?: unknown }).noun_choice ?? null, contents_label_default: inst.contents_label ?? null, service_tasks_default: inst.service_tasks ?? null };
+    const instConfig: Record<string, unknown> = { renewal_fields: inst.renewal_fields ?? null, record_templates: inst.record_templates ?? null, receipt_draft: inst.receipt_draft ?? null, item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null, parts_into: inst.parts_into ?? null, parent: inst.parent ?? null, package_receiving: inst.package_receiving ?? null, paste_tracking: inst.paste_tracking ?? false, board_revisions: inst.board_revisions ?? null, nav_group: inst.nav_group ?? null, scan_keywords: tableWords.length ? tableWords : null, faces: inst.faces ?? null, file_intake: inst.file_intake ?? null, connector_import: (inst as { connector_import?: unknown }).connector_import ?? null, noun: inst.noun ?? null, hint: inst.hint ?? null, links: inst.links ?? null, noun_choice: (inst as { noun_choice?: unknown }).noun_choice ?? null, contents_label_default: inst.contents_label ?? null, service_tasks_default: inst.service_tasks ?? null };
     // Creation-time stock signal: a bundle that declares a MEASURED unit (a
     // qty_unit that isn't blank or "each" — filament in kg, yarn in skeins)
     // carries stock character before any data exists, so latch it to stock at

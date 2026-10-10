@@ -2,6 +2,26 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-10-10
+
+### Features
+- On a workspace's AI page, an owner or admin can now tap a kind of work to change the workspace's order: each step's connection and model (Haiku to Sonnet, latest or a pinned version), its place, and which connections it asks. Models read in words, such as "Haiku · latest (5.5)", rather than as ids.
+- A store's order confirmation email is now read by code, with no AI: the order number, every line named the store's way with its price, and the order's discount, checked against the email's own subtotal. A forwarded email reads the same, and an order email that said "Couldn't be read" is filed by Read again.
+- A workspace's owner can now choose who reads its personal documents: on this machine only, as before and by default, or one cloud connection the workspace shares, after agreeing to a sentence that names the company they go to. The choice is recorded in the activity feed and can be changed back at any time, and the AI page now says in one sentence what happens to a personal document, with a link to connect a local AI.
+- A production test can now drive and watch the board's pins through a fixture I/O controller on the jig: set, pulse and PWM outputs, read levels, count edges, and measure frequency, duty and edge-to-edge timing against the plan's limits. Nothing that powers or drives the board runs until the plan's "jig closed / board seated" check passes, and every run releases the fixture's pins. A plan can also keep bench camera frames for every check and a short clip of each failure.
+- A production test can now use a debug probe (OpenOCD, probe-rs or pyOCD over SWD or JTAG) to check that the right chip is on the board, read and write registers, reset the target, and run the board's own test firmware, judging each result line it prints over RTT, semihosting or UART against the plan's limits.
+- A production test's firmware step now reads every byte back off the chip and checks it against the firmware, can erase the chip first, sets and checks AVR fuses, and writes each board's serial to the address you choose. pyOCD joins the supported programmers.
+
+### Improvements
+- AI work is now arranged in five kinds: Quick look (the first-look question at the camera), Thorough reading (the scan inbox, documents, receipts and invoices), Cobb chat, Organising and text, and Search. Receipts that arrive by email, order emails and pattern materials are read by your Thorough reading choice, not by the AI you picked for Cobb's chat, and grouping, matching and tidying scans follow Organising and text. Your earlier choice for Reading photos carries over to both Quick look and Thorough reading.
+
+### Fixes
+- A workspace whose AI is a Claude key reads receipts again. Reading an emailed or uploaded receipt, planning where things go and naming a scan session sent their instructions in a form Claude's API refuses, so each one failed with "the AI errored". They now reach Claude the way it takes them.
+- Claude Haiku 5.5 reads receipts. Claude's newest models refuse one of the settings Cobblr sent with every request, so a workspace on them could not read a receipt, plan where things go or name a scan session. Cobblr no longer sends it to those models, and any model that refuses a setting is now asked again without it and remembered.
+- A view with a grouping it cannot use still opens. A workspace that installed Lego before 0.6.5 kept a "By part category" view grouped by a field the bricks do not have, and it opened onto an error. Now it shows your bricks in one list and says which grouping it skipped; editing the view or updating the bundle brings the groups back.
+- Lego's "By part category" groups your bricks again, without an update. A workspace that installed Lego before 0.6.5 kept a view grouped by a field the bricks do not have. Cobblr now gives that view the current bundle's grouping when it starts, as long as you never changed the view yourself; a view you edited stays as you left it.
+- Turn on notifications from the bell. Open the bell and its top row offers Get notifications on this device; one tap turns them on, and once they are on it says so, with Turn off. On an iPhone or iPad in Safari it says to add Cobblr to your Home Screen first and shows you how. The offer can be put away on that device. Notification settings is now at the foot of the bell, one tap away, and goes by that name everywhere: Your account, the notifications tabs and search.
+
 ## 2026-10-09
 
 ### Features

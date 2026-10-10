@@ -6,6 +6,7 @@ import { getThreadSet } from "./pecThreads.js";
 import { pyRound } from "./pyMath.js";
 import { ByteWriter } from "./binaryWriter.js";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 const { COMMAND_MASK, STITCH, JUMP, END, COLOR_CHANGE } = EmbConstant;
 
 const JUMP_CODE = 0x10;
@@ -80,7 +81,7 @@ function buildUniquePalette(threadlist: EmbThread[]): number[] {
     const index = findNearestColorIndex(thread, chart);
     if (index < 0) {
       throw new RangeError(
-        `writePes: a PEC palette supports at most ${chart.length} unique threads`
+        `writePes: a PEC palette supports at most ${countOf(chart.length, "unique thread")}`
       );
     }
     assignments.push(index);

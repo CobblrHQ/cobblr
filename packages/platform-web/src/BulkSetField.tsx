@@ -12,6 +12,7 @@ import { fieldNeed } from "./field-pack";
 import { fieldControl } from "./fieldControl";
 import type { BulkFieldOption, PlatformFieldDef } from "./types";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 interface Ref { kind: string; id: string }
 interface Result { ok?: boolean; error?: string; summary?: string; data?: { done: unknown[]; failed: Array<Ref & { title: string; error: string }> } }
 
@@ -22,7 +23,7 @@ export function BulkSetField({ records, onDone }: { records: Ref[]; onDone?: () 
   const options = useQuery({ queryKey: ["bulk-field-options", orgSlug, kinds], queryFn: () => api.listBulkFieldOptions!(orgSlug, kinds), enabled: allowed && records.length > 0 });
   if (!allowed || records.length === 0) return null;
   return (
-    <FooterActionPopover label="Set field…" icon={<Pencil size={12} />} title={`Set a field on ${records.length} records`} width={340} data-testid="bulk-set-field">
+    <FooterActionPopover label="Set field…" icon={<Pencil size={12} />} title={`Set a field on ${countOf(records.length, "record")}`} width={340} data-testid="bulk-set-field">
       {(close) => options.isLoading ? <p className="p-3 text-sm">Loading fields…</p> : options.isError ? <p role="alert" className="p-3 text-sm">{options.error.message}</p> : (
         <SetFieldForm records={records} fields={options.data?.items ?? []} close={close} onDone={onDone} />
       )}
@@ -79,7 +80,7 @@ function SetFieldForm({ records, fields, close, onDone }: { records: Ref[]; fiel
         {!clear && def && <FieldPack items={[{ need: fieldNeed(def.id, { control: fieldControl(def), label: def.display_label, choices: def.choices }), node: <FieldValueEditor key={def.name} draftOnly def={def} kind={records[0]!.kind} value={value} onCommit={setValue} /> }]} />}
         {error && <p role="alert" className="text-sm text-ember-600 dark:text-ember-400">{error}</p>}
         {failed.length > 0 && <div role="alert" className="max-h-48 overflow-auto text-sm"><p>These records were skipped:</p><ul>{failed.map((r) => <li key={`${r.kind}:${r.id}`}>{r.title}: {r.error}</li>)}</ul></div>}
-        <button type="submit" disabled={busy} className="w-full rounded bg-cobble-600 px-3 py-2 text-sm text-white disabled:opacity-50">{busy ? "Applying…" : `${clear ? "Clear" : "Set"} on ${records.length} records`}</button>
+        <button type="submit" disabled={busy} className="w-full rounded bg-cobble-600 px-3 py-2 text-sm text-white disabled:opacity-50">{busy ? "Applying…" : `${clear ? "Clear" : "Set"} on ${countOf(records.length, "record")}`}</button>
       </>}
     </form>
   );

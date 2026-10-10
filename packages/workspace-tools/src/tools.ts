@@ -30,6 +30,7 @@ import { asMeasure, measureMatches, measureTokens, type Measure } from "@cobblr/
 import { CURSOR_PARAM, decodeCursor, pageEnd, type Paging } from "./paging.js";
 import { pairingResultPresentation } from "@cobblr/platform-contract/pairing-presentation";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 export type ToolMode = "read" | "write";
 
 interface WorkspaceToolBase {
@@ -176,7 +177,7 @@ function severalMatch(items: unknown[], q: string): { several_match: string } | 
     return String(r.title ?? f.name ?? r.name ?? "");
   });
   return {
-    several_match: `${named.length} records match "${q}" by name (${names.join("; ")}). Before stating a quantity, place or detail, ask which one the person means, or answer about each by name; never report on one as if it were the only one.`,
+    several_match: `${countOf(named.length, "record")} match "${q}" by name (${names.join("; ")}). Before stating a quantity, place or detail, ask which one the person means, or answer about each by name; never report on one as if it were the only one.`,
   };
 }
 
@@ -311,7 +312,7 @@ async function scanByText(
   const end = offset + items.length;
   const notes: string[] = [];
   if (end < hits.length) notes.push(`PARTIAL: records ${offset + 1}-${end} of ${hits.length}. Do not count, rank, or say "none" from this page; call again with cursor = next_cursor for the rest, or use count_records for exact totals.`);
-  if (!walked.complete) notes.push(`scanned the first ${walked.items.length} of ${walked.total} records only`);
+  if (!walked.complete) notes.push(`scanned the first ${walked.items.length} of ${countOf(walked.total, "record")} only`);
   const body = {
     shown: items.length,
     total: hits.length,
@@ -348,7 +349,7 @@ export function pageWithTruth(body: unknown, limit: number, offset = 0): unknown
   const partial = offset > 0 || (known ? shown < (total as number) : shown === limit);
   const range = `records ${offset + 1}-${offset + shown}`;
   const extent = known
-    ? offset > 0 ? `${range} of ${total}` : `${shown} of ${total} records`
+    ? offset > 0 ? `${range} of ${total}` : `${shown} of ${countOf(total ?? 0, "record")}`
     : offset > 0 ? `${range}, there may be more` : `the first ${shown} records, there may be more`;
   return {
     shown,
@@ -1897,7 +1898,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         items: page.map((it) => summarizeScanItem(it, batches)),
         ...(typeof total === "number" ? { total_in_facet: total } : {}),
         matched: matched.length,
-        ...(scannedAll ? {} : { note: `searched the newest ${all.length} captures only; narrow the facet to reach older ones` }),
+        ...(scannedAll ? {} : { note: `searched the newest ${countOf(all.length, "capture")} only; narrow the facet to reach older ones` }),
         ...pageEnd("list_scan_inbox", end < matched.length ? { f: facet, l: limit, q, o: end } : null),
       });
     },
@@ -1928,7 +1929,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     paging: { by: "one-call", why: "a description of the setup, one area or a summary of all" },
     params: {
       part: z
-        .enum(["all", "instances", "views", "automations", "apps", "templates", "units", "devices"])
+        .enum(["all", "instances", "views", "automations", "apps", "templates", "units", "devices", "ai"])
         .optional()
         .describe("Area; default all"),
       bridge:z.string().max(60).optional().describe("Devices: bridge name; omit for default"),
@@ -2029,6 +2030,26 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
             ...(vocab.display_mode ? { display_mode: vocab.display_mode } : {}),
           };
         }
+      }
+
+      // Who answers each AI job here, and who reads personal documents: read
+      // only. Changing them is the owner's on the AI page; turning the cloud
+      // on for personal documents is a person's consent, never the assistant's.
+      if (want("ai")) {
+        const order = await grab("/ai-job-order", (b) =>
+          ((b.jobs as Array<{ title: string; chosen: boolean; steps: Array<{ label: string; model: string; model_label?: string }> }> | undefined) ?? []).map((j) => ({
+            job: j.title,
+            set_here: j.chosen,
+            steps: j.steps.map((st) => `${st.label} · ${st.model_label ?? st.model}`),
+          })),
+        );
+        const reader = await grab("/personal-documents-reader", (b) => {
+          const r = b.reader as { kind: string; label?: string; company?: string; consented_by?: string | null; consented_at?: string };
+          return r.kind === "cloud"
+            ? `Sent to ${r.company} (${r.label}), consented by ${r.consented_by ?? "the owner"} on ${r.consented_at?.slice(0, 10)}`
+            : "Read on this machine only (code, plus a local AI if one is connected)";
+        });
+        if (order || reader) out.ai = { ...(order ? { who_answers: order } : {}), ...(reader ? { personal_documents: reader } : {}) };
       }
 
       const areas = Object.keys(out);

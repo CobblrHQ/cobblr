@@ -1,3 +1,4 @@
+import { reflowProfilesRouter, registerReflowProfiles } from "./reflow-profiles.js";
 import {largeFormatRouter} from "./large-format.js";
 import {registerLargeFormatActions} from "../large-format/actions.js";
 import {embroideryRouter} from "./embroidery.js";
@@ -105,7 +106,9 @@ platform().edge.registerConsumer({
   href: "/digifab",
 });
 
+registerReflowProfiles();
 const router = Router({ mergeParams: true });
+router.use("/", reflowProfilesRouter);
 router.use("/bench",benchRouter);
 router.use("/production", productionRouter);
 router.use("/connections", connectionsRouter);

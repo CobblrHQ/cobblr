@@ -181,6 +181,9 @@ interface TriageMeta {
    *  (core-scan's name-facts): the field, the value the name gives, the
    *  words that gave it, and what the model had put there. */
   name_facts?: Array<{ field: string; value: string; said: string; was: string | null }>;
+  /** A receipt line's pack its words did not settle: "10 of 1 kg, or one of
+   *  10 kg?", on the routed table's size field (receipt-pack.ts, #5350). */
+  pack_asks?: Array<{ field: string; count: number; each: string; whole: string }>;
   /** Values a person typed on the row before filing, by the table they
    *  were typed for (core-scan's user-fields). */
   user_fields?: { kind?: string | null; values?: Record<string, unknown> };
@@ -322,7 +325,9 @@ export function needsScanReview(row: ScanTriageRow): boolean {
     // A field the row's own evidence contradicts (the cover, the decoded
     // code) holds the row whatever the confidence number says: the number
     // is the identification's, not the field's (#3070, scan-evidence.ts).
-    scanEvidenceConflicts(row).length > 0
+    scanEvidenceConflicts(row).length > 0 ||
+    // A pack the order's words did not settle is asked, not guessed (#5350).
+    unansweredPackAsks(row).length > 0
   );
 }
 
@@ -454,6 +459,15 @@ export interface ScanQuestionChoice {
   value: string;
   /** Why this answer is on offer: 'the name says "4 Ply"', "the AI's read". */
   source: string;
+  /** The count the answer also sets: "10 spools of 1 kg" is ten things. */
+  quantity?: number;
+}
+
+/** The pack questions a row still asks: those whose size field nobody set. */
+export function unansweredPackAsks(row: ScanTriageRow): Array<{ field: string; count: number; each: string; whole: string }> {
+  const meta = metaOf(row);
+  const typed = meta.user_fields?.values ?? {};
+  return (meta.pack_asks ?? []).filter((a) => typed[a.field] == null || String(typed[a.field]).trim() === "");
 }
 
 /** The ONE thing a flagged row still asks of a person, as a question with
@@ -549,6 +563,17 @@ export function scanReviewQuestions(row: ScanTriageRow): ScanQuestion[] {
         { value: f.was, source: "the AI's read" },
       ],
       because: `the name says "${f.said}" and the AI read "${f.was}"`,
+    });
+  }
+  for (const a of unansweredPackAsks(row)) {
+    out.push({
+      field: a.field,
+      prompt: `${a.count} of ${a.each}, or one of ${a.whole}?`,
+      choices: [
+        { value: a.each, source: `${a.count} of ${a.each}`, quantity: a.count },
+        { value: a.whole, source: `one of ${a.whole}`, quantity: 1 },
+      ],
+      because: `the order says ${a.whole} and nothing says whether that is one or ${a.count}`,
     });
   }
   for (const field of meta.split_disagreed ?? []) {

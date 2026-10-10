@@ -8,7 +8,7 @@
 // into a fixed step (usedInUnit decides).
 
 import { useEffect, useState, type FormEvent } from "react";
-import { Minus, Plus } from "lucide-react";
+import { NumberStepper } from "./NumberStepper";
 import { useUnits } from "./useUnits";
 import { usedInUnit } from "./units";
 import { countWordsFor, wordForCount, type CountWords } from "@cobblr/platform-contract/plural";
@@ -90,15 +90,20 @@ export function AmountControl({
   if (!used) {
     return (
       <span className="inline-flex flex-col items-end" data-testid="amount-control" data-mode="count">
-        <span className="inline-flex items-center gap-1.5">
-          <button type="button" className={btn} onClick={() => void apply(-1)} disabled={busy || value <= 0} aria-label={`One fewer ${label}`}>
-            <Minus size={16} />
-          </button>
-          {number}
-          <button type="button" className={btn} onClick={() => void apply(1)} disabled={busy} aria-label={`One more ${label}`}>
-            <Plus size={16} />
-          </button>
-        </span>
+        <NumberStepper
+          className={(size === "sm" ? "text-sm" : "text-base") + " inline-flex items-center gap-1.5 text-content dark:text-mortar-100"}
+          value={value}
+          suffix={shownUnit}
+          min={0}
+          busy={busy}
+          label={label}
+          icons
+          iconSize={16}
+          inputTestId="amount-qty"
+          buttonClassName={btn}
+          inputClassName={(size === "sm" ? "w-12 text-sm" : "w-14 text-base") + " bg-transparent text-center font-mono tabular-nums text-content dark:text-mortar-100"}
+          onChange={(n) => void apply(n - value)}
+        />
         {error && <span className="mt-1 max-w-[14rem] text-right text-[11px] text-ember-600 dark:text-ember-400">{error}</span>}
       </span>
     );

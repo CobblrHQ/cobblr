@@ -16,7 +16,7 @@ export function FoundDevices({slug,bridges}:{slug:string;bridges:EdgeBridge[]}){
  const [selected,setSelected]=useState<FoundBridgeDevice|null>(null);
  const qc=useQueryClient();
  const connected=bridges.some(item=>item.bridge===bridge&&item.connected);
- const connections=useQuery({queryKey:["digifab-connections",slug],queryFn:()=>api.listDigifabConnections(slug),enabled:!!slug});
+ const connections=useQuery({queryKey:["digifab-connections",slug],queryFn:()=>api.listDigifabConnections(slug),enabled:!!slug&&bridges.length>0});
  const found=useQuery({queryKey:["edge-discovery",slug,bridge],queryFn:()=>api.discoverBridgeDevices(slug,bridge),enabled:!!slug&&connected,refetchInterval:30_000,retry:false});
  if(!bridges.length)return null;
  const items=found.data?.items.filter(device=>!connections.data?.items.some(connection=>{

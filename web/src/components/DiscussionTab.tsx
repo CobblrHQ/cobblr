@@ -541,8 +541,8 @@ export function DiscussionTab() {
           <div className="mx-4 mt-3 shrink-0 flex items-start gap-2 rounded-md border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900 px-3 py-2">
             <MessageSquare size={13} className="shrink-0 mt-0.5 text-cobble-700 dark:text-cobble-200" />
             <p className="flex-1 min-w-0 text-[11px] text-cobble-800 dark:text-cobble-100">
-              {/* /me/communication (the Delivery tab), NOT /me/notifications (Inbox).
-                  The Connect Discord button lives on Delivery; Inbox is a list of
+              {/* /me/communication (the Settings tab), NOT /me/notifications (Inbox).
+                  The Connect Discord button lives on Settings; Inbox is a list of
                   things that already happened, so this CTA used to land on a page
                   that cannot do the thing it offers. */}
               <Link to="/me/communication" className="underline hover:no-underline">

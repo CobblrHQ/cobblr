@@ -176,7 +176,8 @@ export function EdgeBridgesPage({ embedded = false }: { embedded?: boolean } = {
       </section>
 
       <ServerBridge slug={slug} />
-      <FoundDevices slug={slug} bridges={tunnel}/>
+      {/* A found machine is added as a Digital Fabrication connection: without it, nothing to add to. */}
+      {on?.has("digifab")&&<FoundDevices slug={slug} bridges={tunnel}/>}
       {on?.has("digifab")&&<BrowserLaserOption/>}
 
       {/* Set up a bridge — right here, no module required */}

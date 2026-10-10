@@ -2,6 +2,7 @@
 // keeps the splash → auth → dashboard journey one screen.
 
 import { useEffect, useState, type FormEvent } from "react";
+import { authEntryAt } from "../lib/deep-path";
 import { rememberSource, rememberedSource } from "../lib/identity-door";
 import { AccountCard } from "../components/AccountCard";
 import { redeemOnce } from "../lib/redeem-once";
@@ -36,7 +37,7 @@ export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carryi
   const [mode, setMode] = useState<Mode>(() => {
     if (initialMode) return initialMode;
     try {
-      return new URLSearchParams(window.location.search).get("mode") === "signup" ? "signup" : "login";
+      return authEntryAt(window.location.pathname) === "/signup" || new URLSearchParams(window.location.search).get("mode") === "signup" ? "signup" : "login";
     } catch {
       return "login";
     }
@@ -62,7 +63,7 @@ export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carryi
   // What was ASKED for, read once: the form's own mode is snapped back to sign
   // in when this surface's sign-up is off, which is exactly this case.
   // `mode` on the first render is the ?mode the page arrived with.
-  const [wantsSignup] = useState(() => !!carrying || mode === "signup" || window.location.pathname === "/signup");
+  const [wantsSignup] = useState(() => !!carrying || mode === "signup" || authEntryAt(window.location.pathname) === "/signup");
   // The link or QR that sent them (?source=), kept for the sign-up it leads to.
   const [source] = useState(() => {
     rememberSource(window.location.search);

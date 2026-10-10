@@ -125,6 +125,14 @@ export function nameInDoubt(meta: unknown): boolean {
   return Array.isArray(fields) && (fields.includes("name") || fields.includes("make") || fields.includes("model"));
 }
 
+/** The photo the order email printed beside this line, and whether it is
+ *  already the row's stored picture. Null when the line had none. */
+export function orderLinePhoto(meta: unknown): { url: string; stored: boolean } | null {
+  const m = (meta ?? {}) as { order_line_image?: unknown; catalog_image_from?: unknown };
+  const url = typeof m.order_line_image === "string" && /^https?:\/\//i.test(m.order_line_image) ? m.order_line_image : null;
+  return url ? { url, stored: m.catalog_image_from === url } : null;
+}
+
 export async function refreshCatalogImageByName(
   orgId: string,
   itemId: string,
@@ -157,6 +165,17 @@ export async function refreshCatalogImageByName(
     .where("id", "=", itemId)
     .executeTakeFirst();
   if ((cur?.suggested_metadata as { catalog_image_user_set?: boolean } | null)?.catalog_image_user_set) return "kept";
+  // The order email printed this line's own photo (#5350): it is the thing
+  // that was bought, so it is the picture, ahead of every search. Every
+  // re-search comes through here, so a rename or a sweep keeps it too. Only
+  // a photo that cannot be fetched lets the search run.
+  const printed = orderLinePhoto(cur?.suggested_metadata);
+  if (printed) {
+    if (printed.stored) return "kept";
+    const { downloadCatalogImage } = await import("./enrich.js");
+    if (await downloadCatalogImage({ db, orgId, itemId }, printed.url, { asPrinted: true })) return "stored";
+    console.warn(`[core-scan] the order email's photo for ${itemId} could not be fetched; searching instead`);
+  }
   // A name the document checks found is not words ("C1yTe WATCU Ey oL 4") is
   // never searched for: the search answers it with whatever the garbage
   // resembles (wristwatches, #4571). It waits for the corrected name.
@@ -1176,7 +1195,7 @@ export async function crossCheckScanPhoto(
       // detached from the cron, no request user in scope).
       await platform().ai.invoke({
         orgId,
-        capability: "chat",
+        capability: "identify-from-text",
         input: {
           messages: [
             {

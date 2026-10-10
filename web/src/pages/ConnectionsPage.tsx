@@ -21,7 +21,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { backupOffers, backupSummary, type BackupOffer } from "../lib/connection-backup";
 import { Pencil, Plug, Plus, Trash2, X } from "lucide-react";
 import { useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
-import { WorkspaceChainSummaries } from "../components/WorkspaceChainSummaries";
+import { YourAiDefaults } from "../components/YourAiDefaults";
 import { TestConnectionButton, VerificationBadge, VerificationLine } from "../components/ConnectionState";
 import { keyRefusedBy, refusalDialog, verificationToast } from "../lib/connection-state";
 import { connectionRemovalPlan } from "../lib/connection-removal";
@@ -268,11 +268,7 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
         ))}
       </div>
 
-      <WorkspaceChainSummaries
-        workspaces={orgs.filter((o) =>
-          (conns.data?.items ?? []).some((c) => c.kind === "ai-provider" && c.routes.some((r) => r.org_id === o.id)),
-        )}
-      />
+      {(conns.data?.items ?? []).some((c) => c.kind === "ai-provider") && <YourAiDefaults connections={conns.data?.items ?? []} />}
 
       {adding ? (
         <ConnectionForm

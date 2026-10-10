@@ -81,6 +81,13 @@ export interface PicturesContext {
  *  what the pair's yours slot chooses from. */
 export const YOUR_ROLES: ReadonlySet<PictureRole> = new Set<PictureRole>(["own", "crop", "group", "extra"]);
 
+/** The row's stored catalog picture is the one its order email printed
+ *  beside the line (order_line_image, stored as catalog_image_from). */
+export function orderEmailPicture(meta: unknown): boolean {
+  const m = (meta ?? {}) as { order_line_image?: unknown; catalog_image_from?: unknown };
+  return typeof m.order_line_image === "string" && m.order_line_image !== "" && m.catalog_image_from === m.order_line_image;
+}
+
 export function rowPictures(row: PictureRow, ctx: PicturesContext = {}): RowPicture[] {
   const meta = (row.suggested_metadata ?? {}) as {
     split_from?: unknown;
@@ -139,7 +146,11 @@ export function rowPictures(row: PictureRow, ctx: PicturesContext = {}): RowPict
   }));
   if (!current && catalogFile && catalogUrl) current = webTiles.find((t) => t.url === catalogUrl) ?? null;
   if (!current && catalogFile) {
-    const pane: RowPicture = { key: `catalog:${catalogFile}`, role: "catalog", fileId: catalogFile, url: catalogUrl, thumbUrl: null, caption: "Catalog image", current: false };
+    // The photo the order email printed beside this line (#5350) says so.
+    const printed = orderEmailPicture(row.suggested_metadata);
+    const pane: RowPicture = printed
+      ? { key: `catalog:${catalogFile}`, role: "catalog", fileId: catalogFile, url: catalogUrl, thumbUrl: null, caption: "From the order email", current: false, source: "the order email" }
+      : { key: `catalog:${catalogFile}`, role: "catalog", fileId: catalogFile, url: catalogUrl, thumbUrl: null, caption: "Catalog image", current: false };
     out.push(pane);
     current = pane;
   }
@@ -184,6 +195,8 @@ export function catalogCaption(pictures: readonly RowPicture[]): string {
       return "Catalog: your added photo";
     case "web":
       return cur.source ? `Catalog: from ${cur.source}` : "Catalog: from the web";
+    case "catalog":
+      return cur.source ? `Catalog: from ${cur.source}` : "Catalog";
     default:
       return "Catalog";
   }

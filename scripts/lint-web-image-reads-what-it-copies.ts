@@ -64,9 +64,13 @@ export function buildContext(dockerfile: string): string[] {
   return out;
 }
 
+const jsonRead = new Map<string, unknown>();
 function readJson<T>(p: string): T {
   // tsconfig files may carry comments; the shared scanner knows strings.
-  return JSON.parse(stripComments(readFileSync(abs(p), "utf8"))) as T;
+  // Read once: every @cobblr import resolves through its package.json, which
+  // read per import grew with each new import until it broke the read budget.
+  if (!jsonRead.has(p)) jsonRead.set(p, JSON.parse(stripComments(readFileSync(abs(p), "utf8"))));
+  return jsonRead.get(p) as T;
 }
 
 function* walkDir(dir: string): Generator<string> {
@@ -236,7 +240,10 @@ function main(): void {
         violations.push({ file, line, what: `imports ${spec} (${target}), which ${DOCKERFILE} does not copy into the build` });
         continue;
       }
-      if (!/\.d\.m?ts$/.test(target)) queue.push(target);
+      // A package's build output is made inside the image, from the sources it copies: following it read
+      // whatever was built on this machine (22.6 MB against 11.3 recorded, on a checkout whose packages
+      // were built for its unit tests), never anything the image needs.
+      if (!/\.d\.m?ts$/.test(target) && !/(^|\/)dist\//.test(target)) queue.push(target);
     }
   }
 

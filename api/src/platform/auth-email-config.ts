@@ -20,7 +20,8 @@
 //   resend:   COBBLR_AUTH_RESEND_API_KEY
 //   postmark: COBBLR_AUTH_POSTMARK_TOKEN
 
-import { platform, type AuthEmailMessage, type AuthEmailSender } from "@cobblr/platform-contract";
+import { registerAuthEmailSender } from "./hosted-seams.js";
+import type { AuthEmailMessage, AuthEmailSender } from "@cobblr/platform-contract";
 import {
   checkEmailConfig,
   sendEmailVia,
@@ -118,9 +119,11 @@ export function buildAuthEmailSender(): AuthEmailSender | null {
 }
 
 /** Register the BYO auth-email sender iff a provider is fully configured via
- *  env. Call at boot BEFORE module load so the cloud overlay's managed sender
- *  (registered in its onBoot) wins when present. */
+ *  env, as this instance's CONFIGURED sender: an overlay registering later
+ *  (the cloud's managed sender, in its onBoot) does not replace it unless
+ *  COBBLR_AUTH_EMAIL_ALLOW_OVERRIDE=true (hosted-seams.ts). */
 export function registerConfiguredAuthEmailSender(): void {
   const sender = buildAuthEmailSender();
-  if (sender) platform().auth.registerEmailSender(sender);
+  if (!sender) return;
+  registerAuthEmailSender(sender, { name: `byo:${buildAuthEmailConfigFromEnv().provider ?? "smtp"}`, source: "configured" });
 }

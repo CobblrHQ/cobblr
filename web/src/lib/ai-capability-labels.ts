@@ -30,6 +30,9 @@ export const CAPABILITY_LABELS: Record<AiCapability, string> = {
   "personal-document-read": "Personal documents",
   "document-read": "Read a document (receipts, invoices, forms)",
   "plan-changes": "Plan a change Cobb offers (deletes, removals, new lists)",
+  "read-document-text": "Read a receipt, invoice or pattern's text",
+  "identify-from-text": "Name a scan from its barcode or description",
+  organise: "Organise scans and records (themes, matches, tidy-ups)",
 };
 
 /** Older/aliased ids that still appear in stored config rows. Not capabilities

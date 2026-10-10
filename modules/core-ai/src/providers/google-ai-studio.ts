@@ -260,6 +260,7 @@ function googleAiStudioPreset(): ReturnType<typeof buildCompatProvider> {
       freeBackground: true,
       freeBackgroundModel: "gemini-flash-lite-latest",
       label: "Google AI Studio (free tier)",
+      company: "Google",
       describeCredentials: () => ({
         api_key: {
           // Short, because `setup` above now carries where to get it and what the free
@@ -332,7 +333,19 @@ function googleAiStudioPreset(): ReturnType<typeof buildCompatProvider> {
       // quota decision the note makes visible. Google reports fifty-one models
       // to /models; the settings page shows all of them for someone who wants
       // to type one, this is for someone deciding in a chat.
+      //
+      // Every other job Gemini can do offers the same two, Lite first: without
+      // a menu a job fell back to the compat adapter's "default" placeholder,
+      // so when the models list could not be read (a failed key, an outage)
+      // the only "model" a person could pick for Reading photos was "default"
+      // and their own defaults could not be saved at all.
       modelsFor: {
+        ...Object.fromEntries(
+          (["identify-image", "identify-glance", "split-image", "rank-images", "classify-image", "extract-text", "summarise", "match-to-catalog"] as const).map((cap) => [
+            cap,
+            [GOOGLE_AI_STUDIO_DEFAULT_MODEL, GOOGLE_AI_STUDIO_BUILDER_MODEL],
+          ]),
+        ),
         chat: [GOOGLE_AI_STUDIO_DEFAULT_MODEL, GOOGLE_AI_STUDIO_BUILDER_MODEL],
         "design-workspace": [GOOGLE_AI_STUDIO_BUILDER_MODEL, GOOGLE_AI_STUDIO_DEFAULT_MODEL],
         "document-read": [GOOGLE_AI_STUDIO_BUILDER_MODEL],

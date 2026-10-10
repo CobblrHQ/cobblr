@@ -96,6 +96,23 @@ export function isFloatingModel(model: string): boolean {
   return /(^|[-:])latest$/i.test(model.trim());
 }
 
+/** A model too slow for a question asked at the camera (Quick look, the
+ *  owner 2026-10-10: "Identifying scans/ photos in the moment needs to be
+ *  quick"). The fuller tier of each family: Claude's Sonnet and Opus,
+ *  Gemini's Pro and full Flash (Lite is the quick one), OpenAI's models
+ *  without mini or nano, and a local model of 30 billion parameters or more.
+ *  The picker lists these after the quick ones, with a note; it never
+ *  refuses one. */
+export function slowForQuickLook(model: string): boolean {
+  const m = model.trim().toLowerCase();
+  if (/\b(haiku|lite|mini|nano|flash-8b)\b/.test(m)) return false;
+  if (/\b(sonnet|opus)\b/.test(m)) return true;
+  if (/gemini/.test(m) && /\b(pro|flash)\b/.test(m)) return true;
+  if (/^(gpt-[45]|o[134])\b/.test(m)) return true;
+  const size = m.match(/(\d+(?:\.\d+)?)b\b/);
+  return !!size && Number(size[1]) >= 30;
+}
+
 function bareModelId(id: string): string {
   return id.trim().replace(/^models\//, "").toLowerCase();
 }

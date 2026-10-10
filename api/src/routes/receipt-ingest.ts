@@ -31,6 +31,7 @@ import { bestReceiptBody, isReplyToCobblr, receiptReplyHeaders } from "../platfo
 import { ownAddressNameFor } from "../platform/own-address.js";
 import { sendAuthEmail } from "../platform/hosted-seams.js";
 import { namedAddress } from "@cobblr/platform-contract/address-name";
+import { emailLineImages } from "@cobblr/platform-contract/email-line-images";
 import {
   extractReceiptToken,
   mintReceiptAddress,
@@ -38,7 +39,7 @@ import {
   verifyReceiptToken,
 } from "../platform/receipt-email.js";
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
-import { findOrderPageLink, withoutSignInLinks } from "@cobblr/platform-contract/order-page-link";
+import { findOrderPageLink, orderPageLines, withoutSignInLinks, type OrderPageSummary } from "@cobblr/platform-contract/order-page-link";
 
 const INTERNAL_API = selfOrigin();
 
@@ -259,6 +260,31 @@ export async function ingestReceiptEmail(
   // one-click "import anyway" (re-runs the route with force).
   let duplicate: { fileId: string; order_ref: string | null; vendor: string | null; item_count: number } | null = null;
 
+  // The store's own order page, when its email carried one (#5461): kept
+  // sealed on the order so its lines' tracking keeps itself current, and read
+  // NOW when this instance reads pages, so the receipt below is filled from
+  // the page's own words (the order's name, every line) with no model asked.
+  // The order may not exist yet; Purchases holds the link on the order's
+  // number, which the page itself names.
+  let pageSummary: OrderPageSummary | null = null;
+  if (orderPage) {
+    try {
+      const noticeRef = classifyOrderNotice({ subject, text: bodyText.trim(), html, from_email })?.orderRef;
+      const r = await post(`/modules/purchases/order-pages`, {
+        link: orderPage.url,
+        order_number: noticeRef ?? /#\s?([A-Z0-9][A-Z0-9-]{2,})\b/i.exec(subject ?? "")?.[1] ?? null,
+        read_now: true,
+      });
+      const rb = (await r.json().catch(() => ({}))) as { order?: OrderPageSummary | null };
+      pageSummary = r.ok ? (rb.order ?? null) : null;
+      results.push({ source: "order-page", ok: r.ok, store: orderPage.host, ...(pageSummary ? { read: pageSummary.outcome, lines: orderPageLines(pageSummary).length } : {}) });
+    } catch (err) {
+      results.push({ source: "order-page", error: "exception", message: (err as Error).name });
+    }
+  }
+  const pageHasLines = !!pageSummary && orderPageLines(pageSummary).length > 0;
+  const withPage = pageHasLines ? { order_page: pageSummary } : {};
+
   // 1. File attachments → core-files → core-scan's receipt parser (one row per
   //    line item). Written via the server-side seam (system capture, not a user
   //    upload).
@@ -273,7 +299,7 @@ export async function ingestReceiptEmail(
         results.push({ filename: a.filename ?? null, error: "store_failed" });
         continue;
       }
-      const r = await post(`/modules/core-scan/scan/receipt`, { file_id: written.fileId, origin: "email", ...(from_email ? { from: from_email } : {}), ...(orderConfirmation ? { order_confirmation: true } : {}) });
+      const r = await post(`/modules/core-scan/scan/receipt`, { file_id: written.fileId, origin: "email", ...(from_email ? { from: from_email } : {}), ...(orderConfirmation ? { order_confirmation: true } : {}), ...withPage });
       const body = (await r.json().catch(() => ({}))) as {
         receipt?: { item_count?: number; method?: string; vendor?: string | null };
         duplicate?: boolean;
@@ -368,15 +394,27 @@ export async function ingestReceiptEmail(
   // those too, and the never-vanish fallback would file each as an inbox note.
   // Those notes are noise nobody asked for, so the sender decides: a machine's
   // unreadable email is archived and dropped, a person's is kept as before.
-  const machineNoise = parsedCount === 0 && !appliedShipment && !returned && !orderNotice && isAutomatedStoreSender(from_email);
-  if (parsedCount === 0 && !appliedShipment && !machineNoise && planBodyCapture(body) === "receipt") {
+  // An email whose store page named its lines is an order, whatever its
+  // body looks like: it is read, never dropped as noise or kept as a note.
+  const machineNoise = parsedCount === 0 && !appliedShipment && !returned && !orderNotice && !pageHasLines && isAutomatedStoreSender(from_email);
+  if (parsedCount === 0 && !appliedShipment && !machineNoise && (pageHasLines || planBodyCapture(body) === "receipt")) {
     try {
       const written = await platform().files.write(orgId, new TextEncoder().encode(body), {
         filename: "emailed-receipt.txt",
         mimeType: "text/plain",
       });
       if (written) {
-        const r = await post(`/modules/core-scan/scan/receipt`, { file_id: written.fileId, origin: "email", ...(from_email ? { from: from_email } : {}), ...(orderConfirmation ? { order_confirmation: true } : {}) });
+        // The photo printed beside each line, which the text has lost: each
+        // line's own picture, ahead of any web search (#5350).
+        const lineImages = emailLineImages(html);
+        const r = await post(`/modules/core-scan/scan/receipt`, {
+          file_id: written.fileId,
+          origin: "email",
+          ...(from_email ? { from: from_email } : {}),
+          ...(orderConfirmation ? { order_confirmation: true } : {}),
+          ...withPage,
+          ...(lineImages.length ? { line_images: lineImages } : {}),
+        });
         const rb = (await r.json().catch(() => ({}))) as {
           receipt?: { item_count?: number };
           duplicate?: boolean;
@@ -443,18 +481,6 @@ export async function ingestReceiptEmail(
     if (r.ok) {
       noteCreated = true;
       results.push({ source: "body-note", ok: true });
-    }
-  }
-
-  // The store's own order page, when its email carried one: kept sealed on
-  // the order so its lines' tracking keeps itself current (#5461). The
-  // order may not exist yet; Purchases holds the link on the order number.
-  if (orderPage) {
-    try {
-      const r = await post(`/modules/purchases/order-pages`, { link: orderPage.url, order_number: orderNotice?.orderRef ?? /#\s?([A-Z0-9][A-Z0-9-]{2,})\b/i.exec(subject ?? "")?.[1] ?? null });
-      results.push({ source: "order-page", ok: r.ok, store: orderPage.host });
-    } catch (err) {
-      results.push({ source: "order-page", error: "exception", message: (err as Error).name });
     }
   }
 

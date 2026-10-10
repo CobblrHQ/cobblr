@@ -7,7 +7,7 @@ import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import type { BoardRevision } from "../api/board-revisions.js";
 import type { checkBoardStock } from "../board-revision.js";
 import type { BuildsApi } from "./api.js";
-import { randomId } from "@cobblr/platform-contract";
+import { randomId, countOf } from "@cobblr/platform-contract";
 const control = "w-full rounded border border-line bg-surface px-3 py-2 text-sm text-content";
 const button = "rounded border border-line px-3 py-2 text-sm disabled:opacity-50";
 const primary = `${button} bg-cobble-600 text-white`;
@@ -95,7 +95,7 @@ export function BoardRevisionCard({ slug, id, spec, api }: { slug: string; id: s
   function run(task: () => Promise<void>) { setMessage(""); operation.mutate(task); }
   return <section className="space-y-4" data-testid="board-revision">
     <AssemblyOrdersCard slug={slug} buildId={id} spec={spec} api={api} />
-    <p>Revision {spec.revision} · {spec.placements.length} placements · {spec.bom.length} BOM lines</p>
+    <p>Revision {spec.revision} · {countOf(spec.placements.length, "placement")} · {spec.bom.length} BOM lines</p>
     <Link className="underline text-accent" to={`/instances/${spec.project_kind.split(":")[0]}/${spec.project_id}`}>Open board project</Link>
     <div className="flex flex-wrap items-end gap-2"><label className="text-sm">Boards to make<NumberField label="Boards to make" className={control} min={1} max={1_000_000} value={boards} onChange={(n) => { setBoards(n); setChecked(null); }} /></label><button type="button" disabled={busy} className={button} onClick={() => void run(async () => setChecked(await call("builds:check-board-stock", { build_id: id, boards })))}>Check BOM stock</button></div>
     {checked && <div className="space-y-2"><p role="status">{checked.ready ? "Component stock is ready." : "Components are short. Check the quantities and moisture warnings."}</p>

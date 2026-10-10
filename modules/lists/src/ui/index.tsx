@@ -1,4 +1,4 @@
-import { fieldNeed, FieldPack, RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, QueryError, useToast, useConfirm, usePageTitle, usePlatformWeb } from "@cobblr/platform-web";
+import { NumberStepper, fieldNeed, FieldPack, RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, QueryError, useToast, useConfirm, usePageTitle, usePlatformWeb } from "@cobblr/platform-web";
 // lists UI — the host mounts <ListsUI /> at /lists. A grid of lists;
 // clicking one opens a detail MODAL with check-off, add-item, and clear-done.
 // Modals (not pages) for detail/create; toasts (not dialogs) for feedback;
@@ -7,7 +7,7 @@ import { fieldNeed, FieldPack, RecordFormModal, ContributedDetailPanels, CustomF
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ListChecks, Plus, Trash2, X, RotateCcw, Hand, Minus, Pencil, ChevronDown } from "lucide-react";
+import { ListChecks, Plus, Trash2, X, RotateCcw, Hand, Pencil, ChevronDown } from "lucide-react";
 import { ListsApi, type ListSummary, type ListItem, ListsApiError, lineQuantity, restockAmount, willDatePhrase } from "./api.js";
 import { RunningLowOffer } from "./RunningLowOffer.js";
 import { PickToLight } from "@cobblr/platform-web";
@@ -360,26 +360,20 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
                     correction rides the check as `quantity`. */}
                 {!it.checked && amountFor(it) != null && (
                   <span className="mt-0.5 flex items-center gap-1 text-[11px] text-muted" title="Checking this off adds to the record it came from">
-                    <span className="inline-flex items-center rounded border border-line dark:border-slate-700">
-                      <button
-                        type="button"
-                        aria-label="One fewer"
-                        disabled={amountFor(it)! <= 1}
-                        onClick={() => setAmounts((a) => ({ ...a, [it.id]: Math.max(1, amountFor(it)! - 1) }))}
-                        className="px-1 py-0.5 hover:text-content disabled:opacity-40"
-                      >
-                        <Minus size={10} />
-                      </button>
-                      <span className="px-1 font-medium tabular-nums text-content dark:text-mortar-100">+{amountFor(it)}</span>
-                      <button
-                        type="button"
-                        aria-label="One more"
-                        onClick={() => setAmounts((a) => ({ ...a, [it.id]: amountFor(it)! + 1 }))}
-                        className="px-1 py-0.5 hover:text-content"
-                      >
-                        <Plus size={10} />
-                      </button>
-                    </span>
+                    <NumberStepper
+                      className="inline-flex items-center rounded border border-line dark:border-slate-700"
+                      value={amountFor(it)!}
+                      min={1}
+                      label="Amount to add to stock"
+                      decreaseLabel="One fewer"
+                      increaseLabel="One more"
+                      icons
+                      iconSize={10}
+                      prefix="+"
+                      buttonClassName="px-1 py-0.5 hover:text-content disabled:opacity-40"
+                      inputClassName="w-7 bg-transparent px-1 text-center font-medium tabular-nums text-content dark:text-mortar-100"
+                      onChange={(n) => setAmounts((a) => ({ ...a, [it.id]: n }))}
+                    />
                     to stock when checked
                     {willDatePhrase(it.will_date) && <span className="text-faint">· {willDatePhrase(it.will_date)}</span>}
                   </span>

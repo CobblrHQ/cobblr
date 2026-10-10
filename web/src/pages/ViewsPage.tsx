@@ -281,6 +281,12 @@ function ViewExportButton({ slug, viewId, grouped }: { slug: string; viewId: str
   );
 }
 
+/** A saved grouping as the words a person reads: "category", "brand, then year". */
+function groupingWords(raw: unknown): string {
+  const names = (Array.isArray(raw) ? raw : [raw]).map((g) => (typeof g === "string" ? g : (g as { field?: unknown })?.field)).filter((g): g is string => typeof g === "string");
+  return names.length ? names.map((n) => `“${humanize(n)}”`).join(", then ") : "its saved column";
+}
+
 /** The type-switched render of one saved view's rows — shared by the config
  *  page's preview modal, the full-page /views/:viewId surface and the
  *  instance page's view tabs. `collectionEmpty` is the server's word on
@@ -295,7 +301,7 @@ export function SavedViewBody({
    *  here can only be the collection's `total`. */
   data: ViewData;
 }) {
-  const { items, isLoading, collectionEmpty, unapplied, total } = data;
+  const { items, isLoading, collectionEmpty, unapplied, ungrouped, total } = data;
   const cfg = (view.config ?? {}) as ViewConfig;
   // Count reads in the collection's own noun ("5 books"), not DB-speak "5
   // rows" and not the kind's literal suffix ("5 items" about books).
@@ -329,7 +335,7 @@ export function SavedViewBody({
       <div className="text-xs text-muted dark:text-slate-400 flex flex-wrap items-center gap-2">
         <span>{labels.collection(view.entity_kind)}</span>
         <span className="px-1.5 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300 text-[10px]" data-testid="view-kind-word">
-          <ViewKindWord slug={activeSlug} view={view} fallback={labels.viewType(view.view_type)} />
+          <ViewKindWord slug={activeSlug} view={view} fallback={labels.viewType(view.view_type)} ungrouped={!!ungrouped} />
         </span>
         <span data-testid="view-count">
           {total === null ? `${items.length}+` : total} {(total ?? items.length) === 1 ? noun : plural}
@@ -342,6 +348,11 @@ export function SavedViewBody({
         <p data-testid="view-unapplied" className="rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-2 py-1 text-xs text-amber-900 dark:text-amber-200">
           {unapplied.length === 1 ? "One filter" : `${unapplied.length} filters`} in this view could not run, so these are not narrowed by{" "}
           {unapplied.map((p) => `${p.col} ${p.op} ${p.ref_col ?? String(p.value ?? "")}`).join(", ")}.
+        </p>
+      )}
+      {ungrouped && (
+        <p data-testid="view-ungrouped" className="rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-2 py-1 text-xs text-amber-900 dark:text-amber-200">
+          This view could not group by {groupingWords(ungrouped.group_by)}, so these are in one list. Edit the view to choose another column.
         </p>
       )}
       {data.isError && <p role="alert" className="text-sm text-ember-600 dark:text-ember-400">This view could not load. <button onClick={data.refetch}>Try again</button></p>}
@@ -468,8 +479,9 @@ function TableGrouping({ fields, value, onChange }: { fields: import("../compone
 // counts) are not summarised.
 // The word beside a view's count. A grouped table says what it is grouped by,
 // not "Table": beside a "By weight" tab, "Table" read as the other tab (#5079).
-function ViewKindWord({ slug, view, fallback }: { slug: string; view: SavedView; fallback: string }) {
-  const by = normalizeGrouping(view.config?.group_by);
+// One the server could not apply is not what the rows are.
+function ViewKindWord({ slug, view, fallback, ungrouped }: { slug: string; view: SavedView; fallback: string; ungrouped?: boolean }) {
+  const by = ungrouped ? [] : normalizeGrouping(view.config?.group_by);
   return by.length ? <GroupedByWord slug={slug} kind={view.entity_kind} fields={by.map((g) => g.field)} /> : <>{fallback}</>;
 }
 

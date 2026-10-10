@@ -129,6 +129,9 @@ export interface PurchasesOrderPagesTable {
   last_outcome: string | null;
   refusals: Generated<number>;
   shipped_lines: number | null;
+  /** What the page last said about the order itself, with no link in it:
+   *  `{ order: { name, lines } | null, parcels, outcome }` (order-page/store.ts). */
+  page_order: ColumnType<unknown, string | null | undefined, string | null | undefined>;
   captured_by_user_id: string | null;
   captured_at: Generated<Date>;
   updated_at: Generated<Date>;

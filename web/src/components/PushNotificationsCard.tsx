@@ -4,12 +4,12 @@
 // devices that get pushes and how each last fared, what is worth a push, and
 // quiet hours.
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { BellRing, Moon, Smartphone } from "lucide-react";
 import { Modal, relativeTime, useConfirm, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type MePushSettings, type NotificationPriority } from "../lib/api";
-import { dismissInstall, installRoute, readInstallEnv } from "../lib/install-app";
-import { pushReadiness, readPushEnv, thisDeviceId, turnOffPushHere, turnOnPushHere } from "../lib/push-device";
+import { dismissInstall } from "../lib/install-app";
+import { usePushHere } from "../lib/usePushHere";
 import { InstallWalkBody } from "./InstallWalk";
 
 const THRESHOLDS: Array<{ value: NotificationPriority; label: string }> = [
@@ -29,35 +29,10 @@ const button = "inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-
 const quiet = "inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 hover:bg-subtle dark:hover:bg-slate-800 text-content dark:text-mortar-200 text-xs font-medium px-3 py-1.5 disabled:opacity-60";
 
 export function PushNotificationsCard() {
-  const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
-  const [route] = useState(() => installRoute(readInstallEnv()));
-  const [env, setEnv] = useState(() => readPushEnv(route));
   const [walking, setWalking] = useState(false);
-  const [mine, setMine] = useState(() => thisDeviceId());
-  const q = useQuery({ queryKey: ["me-push"], queryFn: () => api.mePush() });
-  const refresh = () => void qc.invalidateQueries({ queryKey: ["me-push"] });
-  const readiness = pushReadiness(env);
-  const devices = q.data?.devices ?? [];
-  const here = devices.find((d) => d.id === mine);
-
-  const turnOn = useMutation({
-    mutationFn: async () => {
-      const key = q.data?.public_key;
-      if (!key) throw new Error("This server has not made its push key yet. Try again in a minute.");
-      return turnOnPushHere(key, env);
-    },
-    onSuccess: (r) => {
-      setEnv(readPushEnv(route));
-      if (r.ok) {
-        setMine(r.id);
-        toast.success("Notifications are on for this device. Send a test to see one arrive.");
-      } else if (r.why === "failed") toast.error(r.message ?? "This device could not be turned on.");
-      refresh();
-    },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't turn notifications on"),
-  });
+  const { q, route, readiness, devices, here, mine, turnOn, remove, refresh } = usePushHere();
   const test = useMutation({
     mutationFn: (id: string) => api.testMePushDevice(id),
     onSuccess: (r) => {
@@ -69,17 +44,6 @@ export function PushNotificationsCard() {
       toast.error(e instanceof ApiError ? e.message : "The test was not delivered");
       refresh();
     },
-  });
-  const remove = useMutation({
-    mutationFn: async (id: string) => {
-      if (id === mine) await turnOffPushHere();
-      await api.removeMePushDevice(id);
-    },
-    onSuccess: (_r, id) => {
-      if (id === mine) setMine(null);
-      refresh();
-    },
-    onError: () => toast.error("Couldn't remove that device"),
   });
   const save = useMutation({
     mutationFn: (body: Partial<MePushSettings>) => api.setMePushSettings(body),

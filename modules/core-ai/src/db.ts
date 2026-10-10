@@ -18,6 +18,20 @@ export interface CoreAiProvidersTable {
   updated_at: Generated<Date>;
 }
 
+/** A workspace's own order per job (0018, #5622): First first, each step a
+ *  connection and model. */
+export interface CoreAiJobStepsTable {
+  job: string;
+  position: number;
+  /** A personal connection routed here; null = the workspace's own provider. */
+  credential_id: string | null;
+  provider_id: string;
+  model: string;
+  model_follows: string | null;
+  updated_by: string | null;
+  updated_at: Generated<Date>;
+}
+
 export interface CoreAiCapabilityDefaultsTable {
   capability: string;
   provider_id: string;
@@ -76,6 +90,7 @@ export interface CoreAiCacheTable {
 export interface CoreAiDB {
   core_ai_providers: CoreAiProvidersTable;
   core_ai_capability_defaults: CoreAiCapabilityDefaultsTable;
+  core_ai_job_steps: CoreAiJobStepsTable;
   core_ai_calls: CoreAiCallsTable;
   core_ai_cache: CoreAiCacheTable;
   core_ai_basics: CoreAiBasicsTable;

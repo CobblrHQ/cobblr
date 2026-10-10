@@ -1,8 +1,13 @@
 {
   "manifest": {
     "id": "cobblr.community.lego",
-    "version": "0.6.5",
+    "version": "0.7.0",
     "releases": [
+      {
+        "version": "0.7.0",
+        "released_at": "2026-10-09",
+        "notes": "Disassembling a set puts its bricks on your Bricks table, in workspaces that installed Lego before this too, instead of the general Parts table."
+      },
       {
         "version": "0.6.5",
         "released_at": "2026-10-08",
@@ -43,6 +48,7 @@
       {
         "module": "inventory",
         "instance_name": "sets",
+        "parts_into": "bricks",
         "nav_group": {
           "key": "lego",
           "label": "LEGO"

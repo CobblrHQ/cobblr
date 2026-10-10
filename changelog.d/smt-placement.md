@@ -3,6 +3,7 @@ type: feature
 scope: builds
 date: 2026-10-06
 docs_target: docs/modules/electronics-assembly.md#Pick and place
+docs_published: 2026-10-10
 ---
 Added calibrated pick-and-place exports, feeder QR checks and authorized station recording with placed-board stock.
 

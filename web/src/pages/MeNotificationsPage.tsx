@@ -7,6 +7,7 @@
 
 import { useState } from "react";
 import { AreaTabs, NOTIFICATION_TABS } from "../components/AreaTabs";
+import { BellPushRow } from "../components/BellPushRow";
 import { Link, useNavigate } from "react-router-dom";
 import { notificationAction } from "../lib/notification-action";
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -108,6 +109,8 @@ export function MeNotificationsPage() {
   return (
     <div className="space-y-4">
       <AreaTabs tabs={NOTIFICATION_TABS} area="notifications" />
+      {/* The phone menu's "alerts" lands here: the same offer the bell makes. */}
+      <div className="-mx-2"><BellPushRow onNavigate={() => {}} /></div>
       <div className="flex items-baseline gap-3 pb-1 flex-wrap">
         <span className="text-sm text-muted dark:text-slate-400">
           {q.hasNextPage ? `The latest ${items.length}` : `${items.length}`} {unreadOnly ? "unread" : "in all"}

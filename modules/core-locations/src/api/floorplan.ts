@@ -178,7 +178,7 @@ export async function runFloorplanSeed(opts: {
   for (let attempt = 1; attempt <= 2; attempt++) {
     const r = await platform().ai.invoke({
       orgId: opts.orgId,
-      capability: "chat",
+      capability: "organise",
       input: { messages: [{ role: "user", content: prompt }] },
       source: { kind: "core-locations:floorplan-seed", id: opts.roomId },
       userId: opts.userId,

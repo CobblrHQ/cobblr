@@ -169,7 +169,7 @@ export async function aiReadMaterials(
     const r = await platform().ai.invoke({
       orgId,
       userId: userId ?? undefined,
-      capability: "chat",
+      capability: "read-document-text",
       input: {
         messages: [
           { role: "system", content: AI_SYSTEM },

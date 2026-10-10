@@ -20,8 +20,8 @@ const ORIGINAL = "COBBLR_TEST_TMP_BASE";
 
 /** Point TMPDIR at a fresh directory for the running test file; remove it after. */
 export function scopeTmpdir(afterAll) {
-  if (!process.env[ORIGINAL]) process.env[ORIGINAL] = process.env.TMPDIR || "/tmp";
-  const dir = mkdtempSync(join(process.env[ORIGINAL], "vitest-file-"));
+  if (!process.env[ORIGINAL]) process.env[ORIGINAL] = process.env.TMPDIR || "/tmp"; // verdict-env: restores the variables this file set, by their names
+  const dir = mkdtempSync(join(process.env[ORIGINAL], "vitest-file-")); // verdict-env: restores the variables this file set, by their names
   process.env.TMPDIR = dir;
   const remove = () => {
     try {

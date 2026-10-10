@@ -121,7 +121,7 @@ export function ScanResultModal({
   // Quantity + its write, together: this sheet used to hold the count in local
   // state and PATCH it only from "Save & next", so closing any other way threw
   // the edit away (reported 2026-08-03). See lib/scanQuantity.
-  const { value: qty, commit: commitQty, bump: bumpQty, flush: flushQty } = useScanQuantity(activeSlug, item);
+  const { value: qty, commit: commitQty, setTo: setQty, flush: flushQty } = useScanQuantity(activeSlug, item);
   // URLs that 404'd/hotlink-blocked — each candidate gets one try, then we
   // fall to the next rung (a URL that failed once will fail again).
   const [brokenSrcs, setBrokenSrcs] = useState<ReadonlySet<string>>(new Set());
@@ -628,7 +628,7 @@ export function ScanResultModal({
         {!alreadyOwned && (
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-mono uppercase tracking-widest text-muted">quantity</span>
-            <QtyStepper value={qty} onBump={bumpQty} big />
+            <QtyStepper value={qty} onSet={setQty} big />
           </div>
         )}
 

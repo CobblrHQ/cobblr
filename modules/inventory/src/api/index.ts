@@ -1,3 +1,4 @@
+import { registerAssemblyFinish } from "./assembly-finish.js";
 import { registerPasteUseActions } from "./paste-use.js";
 import { pasteRouter, registerPasteActions } from "./paste.js";
 import { registerKitActions } from "./kits.js";
@@ -49,6 +50,7 @@ registerStorageActions();
 registerPasteActions();
 registerPasteUseActions();
 registerKitActions();
+registerAssemblyFinish();
 registerPackageReceiving();
 registerPlacementConsumption();
 registerSpoolmanWriteBack();

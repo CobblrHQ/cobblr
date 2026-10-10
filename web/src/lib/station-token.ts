@@ -57,3 +57,24 @@ export function rememberStation(slug: string, address: string): void {
     // Nothing kept: /station asks which station next time.
   }
 }
+
+// A phone's kitchen QR token (#5353): kept apart from a tablet's, so a phone
+// that opened the label is never mistaken for an approved station screen.
+const qrKey = (slug: string, address: string) => `cobblr.station-qr.${slug}.${address}`;
+
+export function readStationQrToken(slug: string, address: string): string | null {
+  try {
+    return localStorage.getItem(qrKey(slug, address));
+  } catch {
+    return null;
+  }
+}
+
+export function saveStationQrToken(slug: string, address: string, token: string | null): void {
+  try {
+    if (token) localStorage.setItem(qrKey(slug, address), token);
+    else localStorage.removeItem(qrKey(slug, address));
+  } catch {
+    // A browser that keeps nothing opens the label again next time.
+  }
+}

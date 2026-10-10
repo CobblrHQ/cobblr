@@ -62,6 +62,7 @@ import { withArticle } from "@cobblr/platform-contract/plural";
 import { DEFAULT_SILL_MM, closetWalls, doorFitsWall, edgeOf, frontEdge, intoRoom, planFlags, readCloset, roomWalls, rotated, type ClosetDoor, type Edge, type PlanItem } from "@cobblr/platform-contract/plan-clearance";
 import { GapReadout, PlanFlagList, PlanSymbols } from "./PlanSymbols";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 type PlaceOutline = { key: string; label: string; colour: string | null; border: string; swatch: string; tagId?: string };
 
 function outlineFor(loc: Location, attachments: TagAttachment[], tags: TagRecord[]): PlaceOutline | null {
@@ -2714,7 +2715,7 @@ function DrawersModal({
           changes.push(await onPlaced(ordered[i]!, rects[i]!));
           setProgress(i + 1);
         }
-        toast.success(`${ordered.length} drawers arranged in ${room.name}`);
+        toast.success(`${countOf(ordered.length, "drawer")} arranged in ${room.name}`);
       } else {
         if (clear) for (const o of onFace) changes.push(await onPlaced(o, null));
         for (let i = 0; i < rects.length; i++) {
@@ -2821,7 +2822,7 @@ function DrawersModal({
             {busy
               ? `${mode === "arrange" ? "Arranging" : "Making"} ${progress}/${count}…`
               : mode === "arrange"
-                ? `Arrange ${count} drawers`
+                ? `Arrange ${countOf(count, "drawer")}`
                 : `Make ${count} ${noun}`}
           </button>
         </div>

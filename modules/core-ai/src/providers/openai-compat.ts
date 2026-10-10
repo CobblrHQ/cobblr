@@ -19,6 +19,7 @@ import { platform, type AiCapability, type AiProviderDef, isChatTurn } from "@co
 import { providerError, providerSentence, reasonFromResponse, reasonFromTransportError, redactSecrets, retryAfterSecOf } from "@cobblr/platform-contract/provider-reason";
 import { servedModelOf } from "@cobblr/platform-contract/ai-models";
 import { assertSafeAiEndpoint, pinnedFetch, type PinnedResponse } from "../ssrf.js";
+import { sendDroppingRefused } from "./refused-params.js";
 import { TRANSIT_FIELD, viaBridge, edgeKeyFor, edgeFetch } from "./edge-transit.js";
 import { buildMessages } from "./openai.js";
 import { toolsOf, openAiToolsOf, parseOpenAiToolCalls, looksLikeNoToolSupport, stripLeakedReasoning } from "./tool-wire.js";
@@ -125,6 +126,8 @@ export interface CompatPresetOpts {
   /** Gateways with no default model refuse early with a helpful message
    *  instead of relaying an opaque 4xx. */
   requireModel?: boolean;
+  /** The company calls go to, named in a consent (AiProviderDef.company). */
+  company?: string;
   /** A model to use when neither the call nor the connection names one. Lets a preset
    *  with a known-good default ship a blank, optional model field. */
   defaultModel?: string;
@@ -161,6 +164,7 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
   return {
     id,
     label: opts.label,
+    ...(opts.company ? { company: opts.company } : {}),
     ...(opts.localOnly ? { locality: "local" as const } : {}),
     describeCredentials: opts.describeCredentials,
     setup: opts.setup,
@@ -238,7 +242,7 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
       // One seam, so every capability (chat, embed, the image ones) gets the retry
       // rather than whichever call site remembered to ask for it. The body is untouched
       // until after the last attempt, so retrying a streamed response is safe here.
-      const call = async (
+      const retrying = async (
         path: string,
         init: { method?: "GET" | "POST"; headers?: Record<string, string>; body?: string },
       ): Promise<PinnedResponse> => {
@@ -254,6 +258,23 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
           res = await once(path, init);
         }
         return res;
+      };
+      // A JSON request a model refuses an optional knob of (a deprecated
+      // temperature) is sent again without it, and remembered for the model
+      // (refused-params.ts). Anything else goes as it came.
+      const call = async (
+        path: string,
+        init: { method?: "GET" | "POST"; headers?: Record<string, string>; body?: string },
+      ): Promise<PinnedResponse> => {
+        let json: Record<string, unknown> | null = null;
+        try {
+          const parsed = init.method === "POST" && typeof init.body === "string" ? (JSON.parse(init.body) as unknown) : null;
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) json = parsed as Record<string, unknown>;
+        } catch {
+          // a body that is not JSON is sent as it is
+        }
+        if (!json) return retrying(path, init);
+        return sendDroppingRefused(id, model, json, (b) => retrying(path, { ...init, body: JSON.stringify(b) }));
       };
       switch (ctx.capability) {
         case "embed-text": {

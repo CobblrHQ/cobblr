@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import type { Kysely } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, countOf } from "@cobblr/platform-contract";
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import type { DigifabDB } from "./db.js";
 import {
@@ -238,7 +238,7 @@ export async function prepareEmbroidery(
   const missing = missingThreads(before.stops, b.threads);
   if (missing.length)
     throw new ReviewRequired(
-      `You are missing threads for ${missing.length} colour stops: ${missing.map((i) => i + 1).join(", ")}.`,
+      `You are missing threads for ${countOf(missing.length, "colour stop")}: ${missing.map((i) => i + 1).join(", ")}.`,
     );
   if (Object.keys(b.threads).length !== before.stops.length)
     throw new ReviewRequired(

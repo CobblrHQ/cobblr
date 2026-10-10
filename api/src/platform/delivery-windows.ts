@@ -34,6 +34,7 @@
 import { Kysely, sql, type Generated } from "kysely";
 import { dayIn } from "@cobblr/platform-contract/day";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 /** low < normal < high < urgent. Mirrors notifications.ts; kept local so the
  *  pure half of this file has no imports to stub in a test. */
 const RANK: Record<string, number> = { low: 0, normal: 1, high: 2, urgent: 3 };
@@ -236,7 +237,7 @@ export function composeDigest(items: DeferredItem[]): string {
   if (items.length === 0) return "";
   if (items.length === 1) return items[0]!.message;
   const lines = items.map((i) => `• ${i.message}`);
-  return `${items.length} updates from your workspace:\n${lines.join("\n")}`;
+  return `${countOf(items.length, "update")} from your workspace:\n${lines.join("\n")}`;
 }
 
 // ── storage ────────────────────────────────────────────────────────────────

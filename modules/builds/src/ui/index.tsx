@@ -11,11 +11,14 @@ import { fieldNeed, FieldPack, RecordFormModal, CollectionHeader, ContributedDet
 // detail/create; toasts for feedback; destructive deletes confirm. House style.
 
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useMatch } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Hammer, Plus, Trash2, X, Wrench, AlertTriangle, Layers, ListOrdered, Check, Circle, ChevronUp, ChevronDown, Clock, History, GitBranch, Search, CornerDownRight, CalendarClock } from "lucide-react";
 import { BuildsApi, BuildsApiError, type BuildSummary, type PartOption, type OperationRow, type GenealogyNode } from "./api.js";
 import { PickToLight } from "@cobblr/platform-web";
+import { BoardInspection } from "./Inspection.js";
+import { useRunAction } from "@cobblr/platform-web";
+import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 
 export const navItems = [{ label: "Builds", path: "/builds", icon: Hammer }];
 
@@ -25,6 +28,20 @@ interface Props {
 }
 
 export function BuildsUI({ orgSlug, getToken }: Props) {
+  const inspection = useMatch("/builds/inspections/:id");
+  // PRESS-ARGS: the saved inspection supplies the label target; queuing has no other required inputs.
+  const run = useRunAction();
+  if (inspection?.params.id) {
+    return <BoardInspection slug={orgSlug} id={inspection.params.id} api={new BuildsApi(orgSlug, getToken)} queueLabel={async (id) => {
+      const outcome = await run({ actionId: "labels:print", entityKind: "builds:inspection", entityId: id });
+      const result = normaliseActionResult(outcome.result, "labels:print");
+      if (!outcome.ok || !result.ok) throw new Error(typeof result.error === "string" ? result.error : "The label could not be queued.");
+    }} />;
+  }
+  return <BuildsCollectionUI orgSlug={orgSlug} getToken={getToken} />;
+}
+
+function BuildsCollectionUI({ orgSlug, getToken }: Props) {
   usePageTitle("Builds");
   const api = new BuildsApi(orgSlug, getToken);
   const qc = useQueryClient();
@@ -1037,3 +1054,8 @@ function AddPlannedRow({ builds, onAdd, onCancel }: { builds: BuildSummary[]; on
 }
 
 export default BuildsUI;
+
+export { ReflowStation } from "./ReflowStation.js";
+
+export { InspectionStation } from "./InspectionStation.js";
+export { BoardInspection } from "./Inspection.js";

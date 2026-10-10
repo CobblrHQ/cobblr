@@ -429,6 +429,38 @@ export interface UserCredentialsTable {
 /** Explicit-scope routing: which workspaces an 'explicit'-scoped personal
  *  credential reaches, plus the PER-WORKSPACE mode (Just me vs Share with
  *  members). Row present = routed to this org; absent = Off. */
+/** A person's own default AI per job (20261008-207, #5404): the steps to ask
+ *  in order, position 0 first, each one of their own AI connections and a
+ *  model. Every workspace they use follows these unless it chose for the job
+ *  itself. */
+/** Who reads a workspace's personal documents (#5621). No row = on this
+ *  machine only. */
+export interface OrgPersonalDocumentsReaderTable {
+  org_id: string;
+  /** A personal connection's id, or `workspace:<provider id>`. */
+  connection: string;
+  provider_id: string;
+  consented_by: string | null;
+  consented_at: Generated<Date>;
+  consent_text: string;
+}
+
+export interface UserAiJobDefaultsTable {
+  user_id: string;
+  /** A job of AI_DEFAULT_JOBS; 'photos' rows are kept only for an api from
+   *  before Quick look and Thorough reading split it (migration 210). */
+  job: import("@cobblr/platform-contract").AiDefaultJobId | "photos";
+  position: number;
+  credential_id: string;
+  /** Always a model the provider serves; with `model_follows`, what that
+   *  latest meant when it was saved. */
+  model: string;
+  /** A family's latest when one was picked (claude-haiku-latest). */
+  model_follows: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
 export interface UserCredentialOrgsTable {
   /** Surrogate key (20260928-144): a connection has a general row and one row
    *  per job it is ordered for, in the same workspace. */
@@ -1431,6 +1463,15 @@ export interface StationDeviceRequestsTable {
   claimed_at: Date | null;
 }
 
+/** A station's kitchen QR key (#5353), by hash; platform migration 209. */
+export interface StationQrKeysTable {
+  org_id: string;
+  address: string;
+  key_hash: string;
+  enabled_by: string;
+  created_at: Generated<Date>;
+}
+
 export interface EdgePairingCodesTable {
   code_hash: string;
   org_id: string;
@@ -1759,6 +1800,7 @@ export interface MetaDB {
   edge_bridges: EdgeBridgesTable;
   edge_pairing_codes: EdgePairingCodesTable;
   station_device_requests: StationDeviceRequestsTable;
+  station_qr_keys: StationQrKeysTable;
   edge_relay_jobs: EdgeRelayJobsTable;
   edge_blobs: EdgeBlobsTable;
   users: UsersTable;
@@ -1781,6 +1823,8 @@ export interface MetaDB {
   oauth_refresh_tokens: OauthRefreshTokensTable;
   user_credentials: UserCredentialsTable;
   user_credential_orgs: UserCredentialOrgsTable;
+  user_ai_job_defaults: UserAiJobDefaultsTable;
+  org_personal_documents_reader: OrgPersonalDocumentsReaderTable;
   service_manifests: ServiceManifestsTable;
   service_capability_policies: ServiceCapabilityPoliciesTable;
   ai_held_changes: AiHeldChangesTable;

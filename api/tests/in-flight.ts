@@ -21,6 +21,7 @@
 // writer never went out has proven nothing, and must say so rather than pass.
 import {} from "./helpers.js";
 import { testSupport, testSupportMounted } from "./test-support.js";
+import { worn } from "../../scripts/lib/load-factor.mjs";
 
 export interface HoldStatus {
   id: string;
@@ -100,8 +101,8 @@ export async function holdOutbound(spec: {
   return {
     id,
     status,
-    reached: (n, timeoutMs = 10_000) => until("reached", n, timeoutMs),
-    returned: (n, timeoutMs = 10_000) => until("returned", n, timeoutMs),
+    reached: (n, timeoutMs = worn(10_000)) => until("reached", n, timeoutMs),
+    returned: (n, timeoutMs = worn(10_000)) => until("returned", n, timeoutMs),
     release: async () => {
       await testSupport(path, { method: "DELETE" });
     },

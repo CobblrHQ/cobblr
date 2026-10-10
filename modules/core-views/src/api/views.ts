@@ -1,5 +1,5 @@
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
-import { readGroupKeys } from "@cobblr/platform-contract/grouped-list";
+import { GroupingError, readGroupKeys } from "@cobblr/platform-contract/grouped-list";
 // /views — saved view CRUD + the /data passthrough that delegates
 // to platform.entities.list() for the kind the view targets.
 
@@ -269,14 +269,25 @@ viewsRouter.get(
     // "50 3D printers" of 56 and dropped a column. A caller that wants a
     // preview asks for a limit and gets that page with the true total.
     const { limit, offset } = parsedQuery.data;
-    const result =
-      !query.group_by && limit === undefined && offset === undefined
-        ? await platform().entities.listAll(ctx.org.id, view.entity_kind, query, viewer)
+    const read = async (q: typeof query) =>
+      !q.group_by && limit === undefined && offset === undefined
+        ? await platform().entities.listAll(ctx.org.id, view.entity_kind, q, viewer)
         : await (async () => {
-            const page = await platform().entities.list(ctx.org.id, view.entity_kind, { ...query, limit, offset }, viewer);
+            const page = await platform().entities.list(ctx.org.id, view.entity_kind, { ...q, limit, offset }, viewer);
             const total = page.total ?? null;
             return { ...page, total, complete: total !== null && (offset ?? 0) + page.items.length >= total };
           })();
+    // The grouping is the view's own, saved earlier, not this request's: an
+    // older bundle's view can name a field its records do not have (Lego
+    // 0.6.4's "By part category"). Refusing it opened a pinned view onto an
+    // error; the rows come back ungrouped and the answer says why.
+    let ungrouped: { group_by: unknown; reason: string } | undefined;
+    const result = await read(query).catch(async (err: unknown) => {
+      if (!(err instanceof GroupingError) || !query.group_by || parsedQuery.data.group_keys) throw err;
+      ungrouped = { group_by: query.group_by, reason: err.message };
+      const { group_by: _by, group_offset: _go, group_limit: _gl, group_keys: _gk, ...flat } = query;
+      return read(flat);
+    });
     // An empty answer is one of two things, and the page cannot tell them
     // apart from the rows alone: the collection has nothing yet (a fresh
     // install opening its cover wall) or the view's own filter excluded
@@ -292,6 +303,7 @@ viewsRouter.get(
       view: { id: view.id, name: view.name, entity_kind: view.entity_kind, view_type: view.view_type },
       ...result,
       collection_empty: collectionEmpty,
+      ...(ungrouped ? { ungrouped } : {}),
     });
   }),
 );

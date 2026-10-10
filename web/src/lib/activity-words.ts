@@ -140,90 +140,91 @@ export function partWords(action: string, diff: unknown, word?: string | null): 
   return { verb: action === "part_installed" ? "installed" : "took out", what: `${qty}${name}` };
 }
 
+/** The feed's own sentences for actions, ahead of the platform's table. */
+export const FEED_VERBS: Readonly<Record<string, string>> = {
+  created: "created",
+  updated: "updated",
+  deleted: "deleted",
+  login: "signed in",
+  user_created: "joined",
+  pairing_created: "linked",
+  pairing_deleted: "unlinked",
+  // A boot pass moved the record to the table its fields belong to (the
+  // Groceries base-kind twin, 2026-09-13); the row says so, not "system".
+  moved_by_upgrade: "moved into its own table by the upgrade:",
+  // "ran a wire" read as jargon to a new user (2026-09-12): the row is
+  // "<actor> <verb> <event -> action>", so the verb says what happened.
+  wire_fired: "ran an automation",
+  wire_failed: "automation failed",
+  // A trial brought in from the demo box; the row's title is the trial's name.
+  carry_replayed: "brought in their trial:",
+  // Which model the AI uses moved: a family's latest found a newer model,
+  // a retired pin healed, or the upgrade to "latest" (#5417). The row's
+  // title is the sentence that says which.
+  ai_model_changed: "changed the AI model:",
+  // One thing added from a scan, its create and follow-up rows folded in
+  // (foldOneThingsRows).
+  added_from_scan: "scanned in",
+  // A thing built from parts: logged on the computer (or machine) itself.
+  part_installed: "installed a part in",
+  part_removed: "took a part out of",
+  // One-tap stock changes (a button, or a scanned action label).
+  part_used: "took one of",
+  part_restocked: "restocked",
+  stock_consumed: "used components from",
+  part_storage_changed: "changed storage for",
+  // A spreadsheet import is one row for the whole run; its title is the file.
+  sheet_imported: "imported",
+  // A stocktake is one row for the whole run; its title is the place.
+  stocktake_taken: "took stock of",
+  stocktake_undone: "undid the stocktake of",
+  record_gone: "marked gone",
+  // A thing that left, and came back (platform:mark-gone / bring-back).
+  record_sold: "sold",
+  record_given_away: "gave away",
+  record_parted_out: "parted out",
+  record_converted: "converted",
+  record_traded: "traded",
+  record_lost: "lost",
+  record_scrapped: "disposed of",
+  record_brought_back: "got back",
+  // A thing handed over through a share, filed: the friend gave it (#4683).
+  record_sent: "sent from another workspace",
+  record_handed_over: "gave you",
+  sheet_import_undone: "undid the import of",
+  sheet_import_partly_undone: "partly undid the import of",
+  // Tags. An attach or detach is logged on the record that was tagged, so
+  // the row names that record.
+  tag_attached: "tagged",
+  tag_detached: "took a tag off",
+  tag_merged: "merged a tag into",
+  // A sales order's own changes (orderHappened).
+  order_status_changed: "moved the status of",
+  order_line_added: "added a line to",
+  order_line_changed: "changed a line on",
+  order_line_removed: "removed a line from",
+  order_stock_taken: "took stock for",
+  order_shipped: "shipped",
+  order_emailed: "emailed the customer about",
+  order_make_started: "started making for",
+  // A purchase order's parcel, on the order's own history (#5351).
+  order_shipment_added: "added a parcel",
+  // A document from a document system (core-documents); the row says which
+  // (documentWords).
+  document_linked: "linked a document:",
+  document_unlinked: "unlinked a document:",
+  // An item from an outside library (a document, a game); the row names it
+  // (documentWords).
+  library_item_linked: "linked",
+  library_item_unlinked: "unlinked",
+  library_item_copied: "copied into Cobblr",
+};
+
 /** The verb a feed row puts between who and what: one map for every feed
  *  (the dashboard's recent activity and the account's own log each kept a
  *  copy, and they had drifted: only one knew what an automation row says). */
 export function activityVerb(a: string): string {
-  // Cobblr's action names are snake_case verbs like 'task_created'
-  // / 'pairing_created' / 'login'. Turn them into human prose.
-  const map: Record<string, string> = {
-    created: "created",
-    updated: "updated",
-    deleted: "deleted",
-    login: "signed in",
-    user_created: "joined",
-    pairing_created: "linked",
-    pairing_deleted: "unlinked",
-    // A boot pass moved the record to the table its fields belong to (the
-    // Groceries base-kind twin, 2026-09-13); the row says so, not "system".
-    moved_by_upgrade: "moved into its own table by the upgrade:",
-    // "ran a wire" read as jargon to a new user (2026-09-12): the row is
-    // "<actor> <verb> <event -> action>", so the verb says what happened.
-    wire_fired: "ran an automation",
-    wire_failed: "automation failed",
-    // A trial brought in from the demo box; the row's title is the trial's name.
-    carry_replayed: "brought in their trial:",
-    // Which model the AI uses moved: a family's latest found a newer model,
-    // a retired pin healed, or the upgrade to "latest" (#5417). The row's
-    // title is the sentence that says which.
-    ai_model_changed: "changed the AI model:",
-    // One thing added from a scan, its create and follow-up rows folded in
-    // (foldOneThingsRows).
-    added_from_scan: "scanned in",
-    // A thing built from parts: logged on the computer (or machine) itself.
-    part_installed: "installed a part in",
-    part_removed: "took a part out of",
-    // One-tap stock changes (a button, or a scanned action label).
-    part_used: "took one of",
-    part_restocked: "restocked",
-    stock_consumed: "used components from",
-    part_storage_changed: "changed storage for",
-    // A spreadsheet import is one row for the whole run; its title is the file.
-    sheet_imported: "imported",
-    // A stocktake is one row for the whole run; its title is the place.
-    stocktake_taken: "took stock of",
-    stocktake_undone: "undid the stocktake of",
-    // A thing that left, and came back (platform:mark-gone / bring-back).
-    record_sold: "sold",
-    record_given_away: "gave away",
-    record_parted_out: "parted out",
-    record_converted: "converted",
-    record_traded: "traded",
-    record_lost: "lost",
-    record_scrapped: "disposed of",
-    record_gone: "marked gone",
-    record_brought_back: "got back",
-    // A thing handed over through a share, filed: the friend gave it (#4683).
-    record_sent: "sent from another workspace",
-    record_handed_over: "gave you",
-    sheet_import_undone: "undid the import of",
-    sheet_import_partly_undone: "partly undid the import of",
-    // Tags. An attach or detach is logged on the record that was tagged, so
-    // the row names that record.
-    tag_attached: "tagged",
-    tag_detached: "took a tag off",
-    tag_merged: "merged a tag into",
-    // A sales order's own changes (orderHappened).
-    order_status_changed: "moved the status of",
-    order_line_added: "added a line to",
-    order_line_changed: "changed a line on",
-    order_line_removed: "removed a line from",
-    order_stock_taken: "took stock for",
-    order_shipped: "shipped",
-    order_emailed: "emailed the customer about",
-    order_make_started: "started making for",
-    // A purchase order's parcel, on the order's own history (#5351).
-    order_shipment_added: "added a parcel",
-    // A document from a document system (core-documents); the row says which
-    // (documentWords).
-    document_linked: "linked a document:",
-    document_unlinked: "unlinked a document:",
-    // An item from an outside library (a document, a game); the row names it
-    // (documentWords).
-    library_item_linked: "linked",
-    library_item_unlinked: "unlinked",
-    library_item_copied: "copied into Cobblr",
-  };
+  const map = FEED_VERBS;
   if (map[a]) return map[a];
   // A module that named its action the way it names events
   // ("core-documents.linked") would otherwise read as code on the page: the
@@ -240,6 +241,16 @@ export function activityVerb(a: string): string {
   if (verb.endsWith("_updated")) return "updated";
   if (verb.endsWith("_deleted")) return "deleted";
   return verb.replace(/[_-]/g, " ");
+}
+
+/** The verb on a record's OWN history, where the record is the page and so
+ *  the row leaves its name out: a verb that ends on a preposition would
+ *  dangle ("Sam applied a layout to", #5530), so it ends before it
+ *  ("Sam applied a layout"). */
+export function ownHistoryVerb(a: string): string {
+  return activityVerb(a)
+    .replace(/\s+out of$/, " out")
+    .replace(/\s+(?:into|onto|from|about|to|of|in|on|for|with|at)$/, "");
 }
 
 /** The document a document row is about, by its title (core-documents logs

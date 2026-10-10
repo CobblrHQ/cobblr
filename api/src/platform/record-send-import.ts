@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { sql } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, countOf } from "@cobblr/platform-contract";
 import type { SendReceipt } from "@cobblr/platform-contract/send-file";
 import { meta } from "../db/meta.js";
 import { encryptCreds, decryptCreds } from "../db/crypto.js";
@@ -114,7 +114,7 @@ export async function undoSendFileImport(orgId: string, userId: string, id: stri
     const rows = await rowsForImport(orgId,userId,id);
     if (!rows.length) throw new SendError("That is not a file import you made here.");
     for (const row of rows) await undoFileArrival(orgId,userId,row.id,true,true);
-    if (dryRun) return {summary: `Undo ${rows.length} imported items here. The source on the sending Cobblr stays as it is.`};
+    if (dryRun) return {summary: `Undo ${countOf(rows.length, "imported item")} here. The source on the sending Cobblr stays as it is.`};
     for (const row of rows.reverse()) await undoFileArrival(orgId,userId,row.id,false,true);
     return {ok: true, receipt: await receiptForImport(orgId,userId,id,"undone"), summary: "Import undone here. For a Move, take this return file to the source Cobblr to restore the source separately."};
   });

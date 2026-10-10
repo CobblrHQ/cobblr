@@ -386,6 +386,7 @@ export async function readPersonalDocumentLocally(input: DocumentInput): Promise
   const privacy = vectorDrawing ? "normal" : code || fullyRead ? (personalIn(text) ? "personal" : "normal") : wholePhoto && !forcePersonal ? photoPrivacy(text) : classifyPersonalText(text, forcePersonal);
   const fields = privacy === "personal" ? extractPersonalFields(text) : {};
   const sources: PersonalDocumentRead["sources"] = Object.fromEntries(Object.keys(fields).map((key) => [key, "code"]));
+  let sentTo: string | null = null;
   if (privacy === "personal" && input.assist && FIELDS.some((field) => !fields[field])) {
     const missing = FIELDS.filter((field) => !fields[field]);
     try {
@@ -395,13 +396,28 @@ export async function readPersonalDocumentLocally(input: DocumentInput): Promise
           ...(firstPage ? { image_b64: Buffer.from(firstPage).toString("base64"), image_media_type: "image/png" } : input.mime.startsWith("image/") ? { image_b64: Buffer.from(input.bytes).toString("base64"), image_media_type: input.mime } : {}),
         } });
       const filled = extractPersonalFields(answer.text);
-      for (const field of missing) if (filled[field]) { fields[field] = filled[field]; sources[field] = "local-ai"; }
+      // Read by the cloud connection the workspace's owner consented to
+      // (#5621), or by a local model: said per field, and in the message.
+      // Only a provider known to be a cloud one is named as such: the router
+      // reaches one here only with the owner's consent.
+      const def = answer.provider_id ? platform().ai.getProvider?.(answer.provider_id) : null;
+      const cloud = !!def && def.locality !== "local";
+      if (cloud) sentTo = def.company ?? def.label;
+      for (const field of missing) if (filled[field]) { fields[field] = filled[field]; sources[field] = cloud ? "cloud-ai" : "local-ai"; }
     } catch (error) { needsLocalConnection = refusalCodeOf(error) === "no_provider"; }
   }
   const missing = FIELDS.filter((field) => !fields[field]);
   return { privacy, kind: privacy === "normal" ? "ordinary" : /registration/i.test(text) ? "registration" : "personal", fields,
     sources, missing,
     message: privacy === "normal" ? "This is an ordinary document." : missing.length
-      ? `Read on this server. Please check ${missing.join(", ")}; they could not be read.${needsLocalConnection ? " Connect a local AI in Configuration, AI to help with the missing fields." : ""} This document has not been sent to a cloud AI.`
-      : "Read on this server. Check these values before using them. This document has not been sent to a cloud AI." };
+      ? `${readWhere(sentTo)} Please check ${missing.join(", ")}; they could not be read.${needsLocalConnection ? " Connect a local AI in Configuration, AI to help with the missing fields." : ""}${sentNote(sentTo)}`
+      : `${readWhere(sentTo)} Check these values before using them.${sentNote(sentTo)}` };
+}
+
+/** Where a personal document was read, in the words the card shows. */
+function readWhere(sentTo: string | null): string {
+  return sentTo ? `Read on this server and by ${sentTo}, as this workspace's owner chose.` : "Read on this server.";
+}
+function sentNote(sentTo: string | null): string {
+  return sentTo ? "" : " This document has not been sent to a cloud AI.";
 }

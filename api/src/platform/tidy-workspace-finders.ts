@@ -1,5 +1,5 @@
 import type { PlatformTidy, TidyCandidate, TidyFinderContext, ResolvedEntity } from "@cobblr/platform-contract";
-import { fieldDay, platform } from "@cobblr/platform-contract";
+import { fieldDay, platform, countOf } from "@cobblr/platform-contract";
 import { listAll, listKindsForOrg, resolveKind } from "./entities.js";
 import { listInstances } from "./instances.js";
 import { resolveFieldDefsForKind } from "./field-defs.js";
@@ -40,7 +40,7 @@ export function registerWorkspaceTidyFinders(registry: PlatformTidy): void {
     const out: TidyCandidate[] = [];
     for (const c of await collections(ctx)) {
       const rows = c.records.filter((r) => { const f = values(r); return f.min_qty != null && f.qty != null && Number(f.on_hand ?? f.qty) <= Number(f.min_qty); });
-      if (rows.length) out.push(suggest("low-stock", c, rows, `Check ${rows.length} low-stock things in ${c.label}.`, 20));
+      if (rows.length) out.push(suggest("low-stock", c, rows, `Check ${countOf(rows.length, "low-stock thing")} in ${c.label}.`, 20));
     }
     return out;
   } });
@@ -50,7 +50,7 @@ export function registerWorkspaceTidyFinders(registry: PlatformTidy): void {
     for (const c of await collections(ctx)) {
       const fields = c.defs.filter((d) => d.type === "date" && /warranty|coverage/i.test(`${d.name} ${d.display_label} ${c.label}`));
       const rows = c.records.filter((r) => fields.some((d) => { const day = fieldDay(values(r)[d.name]); return day && day >= today && day <= soon; }));
-      if (rows.length) out.push(suggest("warranty-ending", c, rows, `Review ${rows.length} warranties ending within 30 days in ${c.label}.`, 15));
+      if (rows.length) out.push(suggest("warranty-ending", c, rows, `Review ${countOf(rows.length, "warranty")} ending within 30 days in ${c.label}.`, 15));
     }
     return out;
   } });
@@ -60,7 +60,7 @@ export function registerWorkspaceTidyFinders(registry: PlatformTidy): void {
     for (const c of await collections(ctx)) {
       const dates = c.defs.filter((d) => d.type === "date" && /return|lent.*until|loan.*until/i.test(`${d.name} ${d.display_label}`));
       const rows = c.records.filter((r) => dates.some((d) => { const day = fieldDay(values(r)[d.name]); return day && day < today && !values(r).returned_at; }));
-      if (rows.length) out.push(suggest("overdue-loan", c, rows, `Follow up on ${rows.length} things past their return date in ${c.label}.`, 10));
+      if (rows.length) out.push(suggest("overdue-loan", c, rows, `Follow up on ${countOf(rows.length, "thing")} past their return date in ${c.label}.`, 10));
     }
     return out;
   } });
@@ -79,7 +79,7 @@ export function registerWorkspaceTidyFinders(registry: PlatformTidy): void {
           else seen.set(key, r);
         }
       }
-      if (duplicates.size) out.push(suggest("near-duplicate", c, [...duplicates.values()], `Review ${duplicates.size} things with matching names or identifiers in ${c.label}.`, 40));
+      if (duplicates.size) out.push(suggest("near-duplicate", c, [...duplicates.values()], `Review ${countOf(duplicates.size, "thing")} with matching names or identifiers in ${c.label}.`, 40));
     }
     return out;
   } });
@@ -91,7 +91,7 @@ export function registerWorkspaceTidyFinders(registry: PlatformTidy): void {
       for (const def of c.defs.filter((d) => d.type !== "computed")) {
         if (c.records.filter((r) => filled(r, def.name)).length / c.records.length < 0.8) continue;
         const rows = c.records.filter((r) => !filled(r, def.name));
-        if (rows.length) out.push({ ...suggest("missing-field", c, rows, `Add ${def.display_label} to ${rows.length} things in ${c.label}.`, 50), id: `missing-field:${c.kind}:${def.name}` });
+        if (rows.length) out.push({ ...suggest("missing-field", c, rows, `Add ${def.display_label} to ${countOf(rows.length, "thing")} in ${c.label}.`, 50), id: `missing-field:${c.kind}:${def.name}` });
       }
     }
     return out;
@@ -105,7 +105,7 @@ export function registerWorkspaceTidyFinders(registry: PlatformTidy): void {
       for (const r of places.items.filter((r) => !r.retired)) {
         if (!(await platform().placement.contents({ orgId: ctx.orgId, container: { kind: r.kind, id: r.id } })).length) empty.push(r);
       }
-      if (empty.length) out.push(suggest("empty-place", { kind: k.id, label: k.display_name, route: empty[0]?.detailUrl || "/", records: [], defs: [] }, empty, `Review ${empty.length} empty places.`, 60));
+      if (empty.length) out.push(suggest("empty-place", { kind: k.id, label: k.display_name, route: empty[0]?.detailUrl || "/", records: [], defs: [] }, empty, `Review ${countOf(empty.length, "empty place")}.`, 60));
     }
     return out;
   } });

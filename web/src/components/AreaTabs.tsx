@@ -24,7 +24,7 @@ export const ACCESS_TABS: AreaTab[] = [
 
 export const NOTIFICATION_TABS: AreaTab[] = [
   { label: "Inbox", to: "/me/notifications" },
-  { label: "Delivery", to: "/me/communication" },
+  { label: "Settings", to: "/me/communication" },
   { label: "Channels", to: "/me/notification-channels" },
 ];
 

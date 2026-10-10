@@ -25,7 +25,7 @@ import { escortCoveredByAction, resolveActionId, ESCORT_COVERAGE } from "./act-d
 import { buildSystemPrompt, situationalSuffix, type PromptWorkspace, type PromptOptions } from "./system-prompt.js";
 import { GROUNDING_RULES, PLAIN_ANSWER_RULES, TOOL_USE_RULES } from "./prompt-rules.js";
 import { z } from "zod";
-import { CHAT_HISTORY_MESSAGES, platform, type AiChainStep } from "@cobblr/platform-contract";
+import { CHAT_HISTORY_MESSAGES, platform, type AiChainStep, countOf } from "@cobblr/platform-contract";
 import { kindWordsFrom } from "@cobblr/platform-contract/kind-label";
 import { matchCommand } from "./basics.js";
 import { replyDespiteRefusal, withPlanCard } from "./plan-card.js";
@@ -1352,7 +1352,7 @@ chatRouter.post(
     const suggestion = hit
       ? {
           template: hit.template,
-          summary: hit.summary ?? `${hit.operations.length} changes`,
+          summary: hit.summary ?? `${countOf(hit.operations.length, "change")}`,
           operations: hit.operations.length,
           ...(hit.note ? { note: hit.note } : {}),
           ...(hit.leftHeading ? { leftHeading: hit.leftHeading } : {}),

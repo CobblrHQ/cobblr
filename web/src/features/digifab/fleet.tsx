@@ -45,6 +45,7 @@ import { withArticle } from "@cobblr/platform-contract/plural";
 import { useJobStartReview } from "./startReview";
 import { useReprint } from "./useReprint";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 export type LinkableMachine = { id: string; name: string; instLabel: string | null; image: string | null };
 
 /** A print history row is reprintable unless it's the task-derived kind. */
@@ -2127,7 +2128,7 @@ function FileRow({
             <span className="flex flex-wrap gap-x-3 gap-y-0.5">
               {fmtDuration(fi.printTimeSec) && <span>⏱ {fmtDuration(fi.printTimeSec)}</span>}
               {fi.filamentMm != null && <span>🧵 {(fi.filamentMm / 1000).toFixed(1)} m</span>}
-              {fi.numLayers != null && <span>{fi.numLayers} layers</span>}
+              {fi.numLayers != null && <span>{countOf(fi.numLayers, "layer")}</span>}
               {fi.height != null && <span>{fi.height} mm tall</span>}
               {fi.generatedBy && <span className="opacity-70">· {fi.generatedBy.split(/\s+/)[0]}</span>}
             </span>

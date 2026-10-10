@@ -12,7 +12,7 @@ import { verifySession } from "./jwt.js";
 import { errors as joseErrors } from "jose";
 import { resolveApiToken } from "./api-tokens.js";
 import { tokenAccessAllows, type TokenAccess } from "./token-access.js";
-import { isStationScope, tokenScopeAllows } from "./scopes.js";
+import { isStationQrScope, isStationScope, tokenScopeAllows } from "./scopes.js";
 import { runWithActor, runVia, type Via } from "../lib/request-context.js";
 import { linkOrigin } from "../platform/link-origin.js";
 import { env } from "../env.js";
@@ -192,6 +192,10 @@ const MCP_READ_PATHS: Array<string | RegExp> = [
   "/calendar/events",
   // how the workspace is set up
   "/instances",
+  // who answers each AI job here and who reads personal documents
+  // (get_workspace_setup, part ai): read only, never changed over MCP
+  "/ai-job-order",
+  "/personal-documents-reader",
   "/bindings",
   "/modules/core-views/views",
   "/modules/core-apps/apps",
@@ -555,7 +559,7 @@ export async function requireAuth(
         ? { kind: "assistant" }
         : authMethod === "api_token" && client === "mcp"
           ? { kind: "mcp" }
-          : tokenScopes?.some(isStationScope)
+          : tokenScopes?.some((k) => isStationScope(k) || isStationQrScope(k))
             ? { kind: "surface", label: tokenName }
             : null;
     runWithActor(

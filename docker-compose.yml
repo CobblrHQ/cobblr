@@ -142,6 +142,9 @@ services:
       # The no-account sandbox (docs/design-decisions/try-sandbox.md). Unset
       # everywhere but the try box, where COBBLR_TRY_SANDBOX=true mounts it.
       COBBLR_TRY_SANDBOX: ${COBBLR_TRY_SANDBOX:-}
+      # An overlay's mail sender may replace the one configured here only when this
+      # says so (api/src/platform/hosted-seams.ts).
+      COBBLR_AUTH_EMAIL_ALLOW_OVERRIDE: ${COBBLR_AUTH_EMAIL_ALLOW_OVERRIDE:-}
       TRY_SANDBOX_TTL_MINUTES: ${TRY_SANDBOX_TTL_MINUTES:-}
       TRY_SANDBOX_DECISION_HOURS: ${TRY_SANDBOX_DECISION_HOURS:-}
       TRY_SANDBOX_MAX_LIVE: ${TRY_SANDBOX_MAX_LIVE:-}

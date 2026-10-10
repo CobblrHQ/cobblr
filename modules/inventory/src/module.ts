@@ -14,7 +14,7 @@ import { PART_FIELD_LABELS } from "./part-field-labels.js";
 
 export default defineModule({
   name: "inventory",
-  version: "0.20.2",
+  version: "0.20.3",
   displayName: "Inventory",
   description:
     "Parts and supplies: how many you have, where they are kept, and what is running low.",
@@ -217,6 +217,12 @@ export default defineModule({
       "inventory.category.created", // emitted by categories.ts — declare so it's bindable (audit 2026-06-26)
     ],
     actions: [
+      // UI-SCREEN: /station/inspection/<machineId>/<orderId> records board evidence and the tested-stock handoff.
+      {
+        id: "inventory:finish-assembly-stock",
+        runBy: "member",
+        examples: ["finish the tested board transfer"],
+        group: "plan", label: "Move inspected boards into tested stock", description: "Settle an immutable native work order inspection transfer once. Only accepted boards move from placed to tested stock.", scope: "workspace", invokeHandler: "inventory.finish-assembly-stock", userInvokable: true, argsSchema: {source_id: {label: "Work order id", type: "text", required: true}, source_kind: {label: "Work order kind", type: "text", required: true}, input_kind: {label: "Placed stock kind", type: "text", required: true}, input_id: {label: "Placed stock id", type: "text", required: true}, output_kind: {label: "Tested stock kind", type: "text", required: true}, output_id: {label: "Tested stock id", type: "text", required: true}, accepted: {label: "Accepted board count", type: "number", required: true}}},
       {
         group: "stock",
         id: "inventory:consume-with-loss",

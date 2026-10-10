@@ -1,13 +1,23 @@
 {
   "manifest": {
     "id": "cobblr.flagship.electronics-assembly",
-    "version": "0.1.9",
+    "version": "0.1.11",
     "name": "Electronics assembly",
     "author": "Cobblr",
-    "description": "Component packages and board revisions, with stock checks, fabrication purchases, assembly kits, solder paste handling and placement stations.",
+    "description": "Component packages and board revisions, with stock checks, fabrication purchases, assembly kits, solder paste handling, placement stations and reflow logs.",
     "released_at": "2026-10-08",
-    "changelog": "Export calibrated placement files, verify feeder reels and record runs at an authorized station.",
+    "changelog": "Inspect each board, preserve its evidence and trace tested batches back to their reel lots.",
     "releases": [
+      {
+        "version": "0.1.11",
+        "released_at": "2026-10-08",
+        "notes": "Inspect each board, preserve its evidence and trace tested batches back to their reel lots."
+      },
+      {
+        "version": "0.1.10",
+        "released_at": "2026-10-08",
+        "notes": "Save paste profiles and record reflow at authorized ovens with temperature limit checks."
+      },
       {
         "version": "0.1.9",
         "released_at": "2026-10-08",
@@ -64,6 +74,31 @@
     "field_defs": [],
     "saved_views": [],
     "provides_instances": [
+      {
+        "module": "inventory",
+        "instance_name": "tested-boards",
+        "scan_keywords": [
+          "tested PCB",
+          "assembled tested board"
+        ],
+        "display_name": "Tested Boards",
+        "glyph": "▱",
+        "item_noun": "tested board",
+        "qty_unit": "each",
+        "faces": {
+          "stock": true
+        },
+        "field_defs": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "board_revision_id",
+            "display_label": "Board revision",
+            "type": "text",
+            "position": 1
+          }
+        ],
+        "saved_views": []
+      },
       {
         "module": "inventory",
         "instance_name": "placed-boards",
@@ -157,7 +192,8 @@
           "package_kind": "component-packages:item",
           "blank_kind": "blank-boards:item",
           "stencil_kind": "board-stencils:item",
-          "placed_kind": "placed-boards:item"
+          "placed_kind": "placed-boards:item",
+          "tested_kind": "tested-boards:item"
         },
         "scan_keywords": [
           "PCB project",

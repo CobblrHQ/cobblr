@@ -12,6 +12,9 @@
 //   a date field  the receipt's date
 //   a "from" field  the receipt's vendor
 //   a weight field  the printed weight, for a line sold by weight
+//   a size field    one of a pack's things ("1 kg"), for a line that is a
+//                   pack of them ("10KG" of filament in a bundle, #5350)
+//   a colour field  a mixed pack's "Mixed (10 colours)", never one colour
 //
 // Matched by the ROLE the table declared when it declared one, and by field
 // NAME across the words people use otherwise, because the provenance preset
@@ -38,6 +41,7 @@ import {
   PURCHASE_PRICE_NAMES,
 } from "@cobblr/platform-contract/receipt-fact-names";
 import { listingOf, type ListingRead } from "./listing-evidence.js";
+import type { LinePack } from "@cobblr/platform-contract/receipt-pack";
 import { centsFromAmount, formatMoney } from "@cobblr/platform-contract/money";
 import {
   fieldProvenanceOf,
@@ -59,6 +63,50 @@ export interface ReceiptFactsMeta {
   weight_unit?: unknown;
   unit_price?: unknown;
   field_provenance?: unknown;
+  /** The receipt came by email (materializeReceiptLines). */
+  receipt_origin?: unknown;
+  /** What the line's words say it is several of (receipt-pack.ts). */
+  line_pack?: unknown;
+}
+
+/** A field that holds one thing's size, by name, and that can hold a weight:
+ *  a free field, or one whose choices are weights ("1 kg"). A garment's
+ *  "size" with S, M and L is never given "1 kg". */
+const UNIT_SIZE_NAMES = /^(size|spool_size|unit_size|each_size)$/;
+const COLOUR_NAMES = /^(colou?r|colou?rway)$/;
+function holdsAWeight(f: { type: string; choices?: string[] }): boolean {
+  if (f.type !== "text" && f.type !== "select") return false;
+  return !f.choices?.length || f.choices.some((c) => /\b\d+(?:\.\d+)?\s*(kg|g|lb)\b/i.test(c));
+}
+
+/** A line's pack, when the receipt read one. */
+export function linePackOf(meta: { line_pack?: unknown } | null | undefined): LinePack | null {
+  const p = meta?.line_pack as Partial<LinePack> | null | undefined;
+  return p && typeof p.count === "number" && p.count >= 2 && typeof p.each === "string" && typeof p.whole === "string"
+    ? { count: p.count, each: p.each, whole: p.whole, colour: typeof p.colour === "string" ? p.colour : null, ask: p.ask === true }
+    : null;
+}
+
+/** What the stamp says the receipt's facts came from: an emailed order
+ *  reads "from the order email" (#5350). */
+function evidenceFrom(meta: ReceiptFactsMeta): "receipt" | "order-email" {
+  return meta.receipt_origin === "email" ? "order-email" : "receipt";
+}
+
+/** The pack questions a line still asks, on the field the routed table holds
+ *  a size in: "10 of 1 kg, or one of 10 kg?". Asked when nothing on the line
+ *  or its siblings settled it (receipt-pack.ts). */
+export function receiptPackAsks(
+  meta: ReceiptFactsMeta | null | undefined,
+  candidates: CandidateLike[],
+  menu: readonly ScanMenuEntry[],
+): Array<{ field: string; count: number; each: string; whole: string }> {
+  if (!meta || meta.source !== "receipt") return [];
+  const pack = linePackOf(meta);
+  if (!pack?.ask) return [];
+  const entry = candidates[0] ? entryFor(candidates[0], menu) : undefined;
+  const f = entry?.fields.find((x) => UNIT_SIZE_NAMES.test(x.name.toLowerCase()) && holdsAWeight(x));
+  return f ? [{ field: f.name, count: pack.count, each: pack.each, whole: pack.whole }] : [];
 }
 
 interface CandidateLike {
@@ -106,6 +154,8 @@ export function applyReceiptFacts(
   const weight = num(meta.weight);
   const weightUnit = str(meta.weight_unit);
   const unitPrice = num(meta.unit_price);
+  const pack = linePackOf(meta);
+  const from = evidenceFrom(meta);
   const prior = fieldProvenanceOf(meta);
 
   for (const cand of candidates) {
@@ -122,10 +172,21 @@ export function applyReceiptFacts(
       fields[f.name] = value;
       const role = purchaseFieldRole(f);
       const displaced = was !== undefined && was !== null && String(was).trim() !== "" && String(was).trim() !== String(value).trim() ? String(was) : null;
-      stamps[f.name] = { by: "evidence", from: "receipt", ...(role ? { role } : {}), ...(displaced ? { replaced: displaced } : {}) };
+      stamps[f.name] = { by: "evidence", from, ...(role ? { role } : {}), ...(displaced ? { replaced: displaced } : {}) };
     };
     for (const f of entry.fields) {
       const name = f.name.toLowerCase();
+      // A settled pack: each thing's size and, for a mix, its colours. An
+      // unsettled one writes nothing and asks (receiptPackAsks).
+      if (pack && !pack.ask && UNIT_SIZE_NAMES.test(name) && holdsAWeight(f)) {
+        const v = f.type === "select" ? onChoices(f, pack.each, (a, b) => choiceKey(a).replace(/\s/g, "") === choiceKey(b).replace(/\s/g, "")) : pack.each;
+        if (v) write(f, v);
+        continue;
+      }
+      if (pack?.colour && COLOUR_NAMES.test(name) && f.type === "text") {
+        write(f, pack.colour);
+        continue;
+      }
       if (date && isAcquiredOnField(f)) write(f, date);
       else if (vendor && isAcquiredFromField(f)) write(f, vendor);
       // The seller only when the receipt names one apart from the shop; a

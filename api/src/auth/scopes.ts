@@ -266,6 +266,34 @@ const STATION_SHARED: Array<[string, RegExp]> = [
   ["GET", /^\/me$/],
 ];
 
+// ── A station's kitchen QR: station-qr:<address> (#5353) ─────────────────
+// Claimed by a phone that opened the printed QR (platform/station-devices.ts
+// claimStationQr), never minted any other way. Narrower than the tablet's:
+// the station's own reads, its lookup and its presses (which presses is the
+// station's own qr_ settings, checked by core-scan), and the reads its card
+// draws with. No scan intake, no inbox, no moving, no settings.
+const STATION_QR_SCOPE_RE = /^station-qr:([a-z0-9][a-z0-9-]{0,39})$/;
+
+export function isStationQrScope(key: string): boolean {
+  return STATION_QR_SCOPE_RE.test(key);
+}
+
+const STATION_QR_READS: Array<[string, RegExp]> = [
+  ["GET", new RegExp(`^${ORG}/modules/core-locations/locations$`)],
+  ["GET", new RegExp(`^${ORG}/modules/core-files/files/[^/]+(/raw)?$`)],
+  ["GET", new RegExp(`^${ORG}/modules/core-scan/menu$`)],
+  ["GET", /^\/me$/],
+];
+
+function stationQrScopeAllows(key: string, method: string, rel: string): boolean {
+  const address = STATION_QR_SCOPE_RE.exec(key)?.[1];
+  if (!address) return false;
+  const own = `^${ORG}/modules/core-scan/stations/screens/${address}`;
+  if (method === "GET" && new RegExp(`${own}(/actions|/scans/next)?$`).test(rel)) return true;
+  if (method === "POST" && new RegExp(`${own}/(lookup|count|undo|actions/run|actions/undo)$`).test(rel)) return true;
+  return STATION_QR_READS.some(([m, re]) => m === method && re.test(rel));
+}
+
 function stationScopeAllows(key: string, method: string, rel: string): boolean {
   const address = STATION_SCOPE_RE.exec(key)?.[1];
   if (!address) return false;
@@ -306,6 +334,10 @@ export function tokenScopeAllows(scopes: string[], method: string, originalUrl: 
     }
     if (isStationScope(key)) {
       if (stationScopeAllows(key, method, rel)) return true;
+      continue;
+    }
+    if (isStationQrScope(key)) {
+      if (stationQrScopeAllows(key, method, rel)) return true;
       continue;
     }
     const def = BY_KEY.get(key);

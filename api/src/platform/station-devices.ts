@@ -9,7 +9,8 @@
 // screen, and no token is stored here: it is minted when the tablet claims
 // it, once. Revoking it (Configuration → Devices) ends the tablet's access.
 
-import { createHash, randomBytes, randomInt } from "node:crypto";
+import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { mintTokenString } from "../auth/api-tokens.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
@@ -23,6 +24,8 @@ import {
   stationDeviceName,
   stationLabelOf,
   stationScope,
+  stationQrName,
+  stationQrScope,
 } from "@cobblr/platform-contract/station-screen";
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -196,4 +199,105 @@ export async function revokeStationDevice(orgId: string, tokenId: string): Promi
     .where("revoked_at", "is", null)
     .executeTakeFirst();
   return Number(r.numUpdatedRows ?? 0) > 0;
+}
+
+// ── A station's kitchen QR (#5353) ───────────────────────────────────────
+// The owner, of the kitchen station: "a qr label with the link should let me
+// (or anyone else?) do the same thing from their phone." A member signed in
+// on their phone needs nothing here: the station's routes take them as
+// themselves. For someone with no account, an owner or admin turns the QR on
+// and prints it. Its link carries a key; a phone that opens it claims a token
+// with scope `station-qr:<address>`, which reaches that station's lookup and
+// only the presses the owner ticked (core-scan checks which). Printing a new
+// label replaces the key and revokes every token the old one gave out.
+
+/** The source every kitchen QR token carries, so rotation finds them. */
+export const STATION_QR_TOKEN_SOURCE = "station qr";
+
+async function revokeStationQrTokens(orgId: string, address: string): Promise<void> {
+  await meta
+    .updateTable("api_tokens")
+    .set({ revoked_at: new Date() })
+    .where("org_id", "=", orgId)
+    .where("source", "=", STATION_QR_TOKEN_SOURCE)
+    .where("revoked_at", "is", null)
+    .where(sql<boolean>`${stationQrScope(address)} = any(scopes)`)
+    .execute();
+}
+
+/** Turn the QR on, or print a new one: a fresh key, and every phone that
+ *  claimed the old one stops working. Null for an address that cannot be a
+ *  station. The key is returned once, for the label; only its hash is kept. */
+export async function rotateStationQr(p: { orgId: string; userId: string; address: string }): Promise<{ key: string } | null> {
+  if (!isStationAddress(p.address)) return null;
+  const key = randomBytes(24).toString("base64url");
+  await revokeStationQrTokens(p.orgId, p.address);
+  await meta
+    .insertInto("station_qr_keys")
+    .values({ org_id: p.orgId, address: p.address, key_hash: sha(key), enabled_by: p.userId })
+    .onConflict((oc) => oc.columns(["org_id", "address"]).doUpdateSet({ key_hash: sha(key), enabled_by: p.userId, created_at: new Date() }))
+    .execute();
+  return { key };
+}
+
+/** Turn the QR off: the key is gone and so is every phone it let in. */
+export async function disableStationQr(orgId: string, address: string): Promise<void> {
+  await meta.deleteFrom("station_qr_keys").where("org_id", "=", orgId).where("address", "=", address).execute();
+  await revokeStationQrTokens(orgId, address);
+}
+
+/** Whether the station's QR is on, and since when (the label's age). */
+export async function stationQrState(orgId: string, address: string): Promise<{ enabled: boolean; printed_at: string | null; phones: number }> {
+  const row = await meta.selectFrom("station_qr_keys").select(["created_at"]).where("org_id", "=", orgId).where("address", "=", address).executeTakeFirst();
+  const phones = await meta
+    .selectFrom("api_tokens")
+    .select((eb) => eb.fn.countAll<string>().as("n"))
+    .where("org_id", "=", orgId)
+    .where("source", "=", STATION_QR_TOKEN_SOURCE)
+    .where("revoked_at", "is", null)
+    .where(sql<boolean>`${stationQrScope(address)} = any(scopes)`)
+    .executeTakeFirst();
+  return { enabled: !!row, printed_at: row ? row.created_at.toISOString() : null, phones: Number(phones?.n ?? 0) };
+}
+
+export type StationQrClaim = { ok: true; token: string; slug: string; address: string; label: string } | { ok: false };
+
+/** A phone opened the label: the key buys a token for that one station, if
+ *  the QR is still on, the key is the current one, and whoever turned it on
+ *  is still an owner or admin. Every refusal looks the same. */
+export async function claimStationQr(p: { slug?: unknown; address?: unknown; key?: unknown }): Promise<StationQrClaim> {
+  if (typeof p.slug !== "string" || typeof p.address !== "string" || typeof p.key !== "string" || p.key.length < 20 || p.key.length > 100) return { ok: false };
+  if (!isStationAddress(p.address)) return { ok: false };
+  const row = await meta
+    .selectFrom("station_qr_keys as k")
+    .innerJoin("orgs as o", "o.id", "k.org_id")
+    .innerJoin("org_memberships as m", (j) => j.onRef("m.org_id", "=", "k.org_id").onRef("m.user_id", "=", "k.enabled_by"))
+    .innerJoin("users as u", "u.id", "k.enabled_by")
+    .select(["k.org_id", "k.key_hash", "k.enabled_by", "o.slug", "m.role", "u.active"])
+    .where("o.slug", "=", p.slug)
+    .where("k.address", "=", p.address)
+    .executeTakeFirst();
+  if (!row) return { ok: false };
+  const given = Buffer.from(sha(p.key), "hex");
+  const kept = Buffer.from(row.key_hash, "hex");
+  if (given.length !== kept.length || !timingSafeEqual(given, kept)) return { ok: false };
+  if (!row.active || !roleSatisfies(row.role, ["owner", "admin"])) return { ok: false };
+  const label = stationLabelOf(p.address);
+  const { plaintext, hash, tokenPrefix } = mintTokenString();
+  await meta
+    .insertInto("api_tokens")
+    .values({
+      user_id: row.enabled_by,
+      name: stationQrName(label),
+      token_hash: hash,
+      token_prefix: tokenPrefix,
+      expires_at: null,
+      scopes: [stationQrScope(p.address)],
+      source: STATION_QR_TOKEN_SOURCE,
+      meta: { kind: "station-qr", address: p.address, label },
+      org_id: row.org_id,
+      access: "change",
+    })
+    .execute();
+  return { ok: true, token: plaintext, slug: row.slug, address: p.address, label };
 }

@@ -183,8 +183,15 @@ export async function markJobTerminal(
 
 /** The poll pace. The mock is fast for tests and demos; how long an
  *  unreachable manager is tolerated is unreachablePlan's call (job-truth.ts). */
-function pollTuning(connType: string | null): { intervalMs: number; fast: boolean } {
-  return connType === "mock" ? { intervalMs: 4_000, fast: true } : { intervalMs: POLL_MS, fast: false };
+/** A mock connection's pace: every 4 s, or what its URL asks for (`mock://farm?poll_ms=1000`, 250 to
+ *  4000 ms), so a test that prints three plates waits seconds, not the demo's rhythm (#5443). */
+export function mockPollMs(baseUrl: string | null | undefined): number {
+  const m = /[?&]poll_ms=(\d+)/.exec(baseUrl ?? "");
+  return Math.min(4_000, Math.max(250, m ? Number(m[1]) : 4_000));
+}
+
+export function pollTuning(conn: { type?: string | null; base_url?: string | null } | null): { intervalMs: number; fast: boolean } {
+  return conn?.type === "mock" ? { intervalMs: mockPollMs(conn.base_url), fast: true } : { intervalMs: POLL_MS, fast: false };
 }
 
 /** Build a live driver from a connection ref (id OR label; decrypts creds). The
@@ -411,7 +418,7 @@ export async function pollJob(
   // spurious print.completed + filament deduction. Local terminal is final.
   if (TERMINAL.has(job.status)) return { status: job.status, terminal: true, intervalMs: 0 };
   const conn = await platform().devices.connections().getInternal(orgId, job.connection_id);
-  const { intervalMs, fast } = pollTuning(conn?.type ?? null);
+  const { intervalMs, fast } = pollTuning(conn ?? null);
   const driver = await buildDriverById(db, orgId, job.connection_id);
   if (!driver) return null;
 

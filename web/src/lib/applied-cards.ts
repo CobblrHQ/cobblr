@@ -22,6 +22,7 @@
 
 import { refsOfResponse, type ChatEntityRef } from "./entity-chips";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 /** One applied write, as the chat response reports it. */
 export interface AppliedWrite {
   summary: string;
@@ -73,7 +74,7 @@ export function appliedCards(applied: AppliedWrite[], turnId: string | null): Ap
     {
       role: "assistant",
       content: [
-        `Made ${applied.length} changes:`,
+        `Made ${countOf(applied.length, "change")}:`,
         "",
         ...applied.map((a) => `- ${a.summary.replace(/\.$/, "")}`),
       ].join("\n"),

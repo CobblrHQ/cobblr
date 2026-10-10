@@ -50,6 +50,8 @@ import { TestConnectionButton, VerificationBadge } from "../components/Connectio
 import { keyRefusedBy, refusalDialog, verificationToast } from "../lib/connection-state";
 import { useAiStatus } from "../components/AiStatusNotice";
 import { WhoAnswersSection } from "../components/WhoAnswersSection";
+import { modelWords } from "../lib/ai-chain";
+import { ModelChoiceOptions } from "../components/ModelChoiceOptions";
 import { PayloadView, usageLine } from "../components/PayloadView";
 import { FEED_SCROLL, FEED_SCROLL_INNER } from "../lib/feed";
 
@@ -161,7 +163,7 @@ export function AiPage() {
         </h2>
         <p className="text-xs text-faint mt-0.5 mb-1">
           Pin a job to a particular provider and model. Anything left on
-          automatic uses whatever AI is available. Personal documents use local AI only.
+          automatic uses whatever AI is available. Who reads personal documents is set under Who does what, in order.
         </p>
         <div className="divide-y divide-line dark:divide-slate-700">
           {capDefaultsQ.data?.all_capabilities.map((cap) => {
@@ -182,7 +184,7 @@ export function AiPage() {
                           does not exist here. */}
                       <span className="text-muted">{row.credential_id ? pinnedConnectionName(row.credential_id, sharesQ.data?.items ?? []) : row.provider_id}</span>
                       <span className="mx-1 text-faint">·</span>
-                      <span className="font-mono text-xs">{row.model}</span>
+                      <span className="text-xs" title={row.model}>{modelWords(row.model, defByPid.get(row.provider_id)?.modelNotes?.[row.model]?.label)}</span>
                     </span>
                   ) : (
                     <span className="text-xs text-faint">automatic</span>
@@ -731,8 +733,6 @@ export function CapabilityDefaultModal({
   const choices = reported?.ok ? reported.choices : undefined;
   // Models this connection's calls were answered by another model for.
   const redirects = reportedQ.data?.redirects ?? undefined;
-  const latestChoices = choices?.filter((c) => c.latest) ?? [];
-  const pinChoices = choices?.filter((c) => !c.latest) ?? [];
 
   const saveM = useMutation({
     mutationFn: () =>
@@ -882,26 +882,7 @@ export function CapabilityDefaultModal({
               className={`w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900 ${choices ? "" : "font-mono"}`}
             >
               {choices ? (
-                <>
-                  {latestChoices.length > 0 && (
-                    <optgroup label="Latest (moves to each new version)">
-                      {latestChoices.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.label}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {pinChoices.length > 0 && (
-                    <optgroup label="Pin a version">
-                      {pinChoices.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.label}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                </>
+                <ModelChoiceOptions choices={choices} />
               ) : (
                 supportedModels.map((m) => {
                   const base = def?.modelNotes?.[m] ? `${def.modelNotes[m]!.label}${def.modelNotes[m]!.note ? ` - ${def.modelNotes[m]!.note}` : ""}` : m;

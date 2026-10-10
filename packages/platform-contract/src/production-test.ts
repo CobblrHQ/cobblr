@@ -1,24 +1,71 @@
 import { createHash } from "node:crypto";
-import { RE2JS } from "re2js";
 import { z } from "zod";
+import { unitWriteBytes } from "@cobblr/platform-contract/firmware-image";
+import { AVR_FUSES, PROGRAMMERS } from "@cobblr/platform-contract/production-programmers";
+import { PROBE_CHANNELS, PROBES, judgeLimits, judgeTargetRun, limitPattern, parseWord, stepChangesHardware } from "@cobblr/platform-contract/production-steps";
+
+export { stepChangesHardware } from "@cobblr/platform-contract/production-steps";
 
 const key = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/);
 const text = z.string().max(200_000);
 const scalar = z.union([z.number().finite(), text, z.boolean(), z.null()]);
 const artifact = z.object({ file_id: z.string().uuid(), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 const ref = z.object({ kind: z.string().min(3).max(160), id: z.string().uuid() }).strict();
+const hex64 = z.string().regex(/^[a-f0-9]{64}$/);
+const address = z.number().int().min(0).max(0xffff_ffff);
+const word = z.string().regex(/^0x[0-9a-fA-F]{1,8}$/);
+const width = z.union([z.literal(8), z.literal(16), z.literal(32)]).default(32);
+const chip = z.string().regex(/^[A-Za-z0-9_.-]{1,80}$/);
+
 export const ProductionLimits = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("range"), min: z.number().finite().optional(), max: z.number().finite().optional(), unit: z.string().min(1).max(32) }).strict(),
   z.object({ kind: z.literal("expected"), value: scalar, unit: z.string().min(1).max(32).optional() }).strict(),
   z.object({ kind: z.literal("regex"), pattern: z.string().min(1).max(500), flags: z.enum(["", "i", "m", "im"]).default("") }).strict(),
 ]);
 export type ProductionLimits = z.infer<typeof ProductionLimits>;
+// What a debug probe does on the target. A value read back is a word: the
+// target's IDCODE, a register, or what a write left there; `mask` picks the
+// bits that must match.
+export const ProbeAction = z.discriminatedUnion("op", [
+  z.object({ op: z.literal("identify"), expect: word, mask: word.optional() }).strict(),
+  z.object({ op: z.literal("read"), address, width, expect: word, mask: word.optional() }).strict(),
+  z.object({ op: z.literal("write"), address, width, value: word, mask: word.optional() }).strict(),
+  z.object({ op: z.literal("reset"), halt: z.boolean().default(false) }).strict(),
+  // Test firmware already on the chip runs and prints `NAME [VALUE [UNIT]] PASS|FAIL` lines, then `done`.
+  z.object({
+    op: z.literal("run"), channel: z.enum(PROBE_CHANNELS), reset_first: z.boolean().default(true), done: z.string().trim().min(1).max(80).default("DONE"),
+    // The serial port the firmware prints to, for the uart channel.
+    uart_device: key.optional(), baud_rate: z.number().int().positive().max(2_000_000).default(115200),
+    // Where OpenOCD looks for the RTT control block.
+    rtt_search: z.object({ address, size: z.number().int().min(16).max(0x10_0000) }).strict().optional(),
+    // The earlier program step whose ELF names the RTT control block, for probe-rs.
+    symbols_from: key.optional(),
+    // Lines the plan requires, with its own limits on their values; the firmware's own verdict is never enough on its own.
+    checks: z.array(z.object({ name: z.string().regex(/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/), limits: ProductionLimits.optional(), required: z.boolean().default(true) }).strict()).max(64).default([]),
+  }).strict(),
+]);
+export type ProbeAction = z.infer<typeof ProbeAction>;
 const base = { id: key, name: z.string().trim().min(1).max(200), notes: z.string().max(8000).optional(), limits: ProductionLimits.optional(), timeout_ms: z.number().int().min(100).max(120_000).default(30_000), on_fail: z.enum(["stop", "continue"]).optional() };
 export const ProductionStepSchema = z.discriminatedUnion("kind", [
   z.object({ ...base, kind: z.literal("instrument"), instrument: key, operation: z.enum(["measure", "setpoint", "output-on", "output-off"]), quantity: key.optional(), voltage: z.number().finite().nonnegative().optional(), current_limit: z.number().finite().nonnegative().optional() }).strict(),
   z.object({ ...base, kind: z.literal("capture"), instrument: key, channels: z.string().min(1).max(200), sample_rate: z.number().int().positive().max(100_000_000), duration_ms: z.number().int().positive().max(10_000), trigger: z.string().max(200).optional(), decoder: z.enum(["uart", "i2c", "spi", "can", "onewire"]).optional() }).strict(),
   z.object({ ...base, kind: z.literal("serial"), device: key, baud_rate: z.number().int().positive().max(2_000_000).default(115200), write: z.string().max(65_536).optional(), ending: z.enum(["none", "lf", "cr", "crlf"]).default("none"), serial_from_value: z.boolean().default(false) }).strict(),
-  z.object({ ...base, kind: z.literal("program"), tool: z.enum(["openocd", "esptool", "avrdude", "picotool", "probe-rs"]), device: key, firmware: artifact, parameters: z.record(z.union([z.string().max(1000), z.number().finite(), z.boolean()])).default({}), timeout_ms: z.number().int().min(100).max(120_000).default(120_000) }).strict(),
+  z.object({
+    ...base, kind: z.literal("program"), tool: z.enum(PROGRAMMERS), device: key,
+    // image_sha256 is what the image puts on the chip (firmware-image.ts), pinned when the plan is saved, so a read-back is checked against it.
+    firmware: artifact.extend({ format: z.enum(["bin", "hex", "elf", "uf2"]).optional(), image_sha256: hex64.optional() }),
+    parameters: z.record(z.union([z.string().max(1000), z.number().finite(), z.boolean()])).default({}),
+    // Where a raw BIN starts. The other formats carry their own addresses.
+    load_address: address.optional(),
+    erase: z.enum(["none", "chip"]).optional(),
+    // "readback": the station reads every byte back over the probe and compares it with the image. Absent: the programmer's own verify.
+    verify: z.enum(["readback", "tool"]).optional(),
+    fuses: z.record(z.enum(AVR_FUSES), z.string().regex(/^0x[0-9a-fA-F]{2}$/)).optional(),
+    // The unit's serial, written as zero-padded ASCII at a fixed address, then read back.
+    unit_write: z.object({ address, length: z.number().int().min(1).max(64), memory: z.enum(["flash", "eeprom"]).default("flash") }).strict().optional(),
+    timeout_ms: z.number().int().min(100).max(120_000).default(120_000),
+  }).strict(),
+  z.object({ ...base, kind: z.literal("probe"), tool: z.enum(PROBES), device: key, target: chip.optional(), action: ProbeAction, timeout_ms: z.number().int().min(100).max(120_000).default(30_000) }).strict(),
   z.object({ ...base, kind: z.literal("operator"), photo_required: z.boolean().default(false), prompt: z.string().trim().min(1).max(8000), image_file_id: z.string().uuid().optional(), response: z.enum(["pass-fail", "number", "text", "scan"]), serial_from_value: z.boolean().default(false), timeout_ms: z.number().int().min(100).max(3_600_000).default(300_000) }).strict(),
   z.object({ ...base, kind: z.literal("wait"), duration_ms: z.number().int().nonnegative().max(600_000) }).strict(),
   z.object({ ...base, kind: z.literal("script"), framework: z.enum(["python", "openhtf"]).default("python"), script: artifact, devices: z.array(key).max(16).default([]), args: z.record(z.union([z.string().max(8000), z.number().finite(), z.boolean()])).default({}), measurement: key.optional(), timeout_ms: z.number().int().min(100).max(30_000).default(10_000) }).strict(),
@@ -33,9 +80,33 @@ export const ProductionPlanSchema = z.object({
 }).strict();
 export type ProductionPlan = z.infer<typeof ProductionPlanSchema>;
 
-function pattern(limits: Extract<ProductionLimits, { kind: "regex" }>) {
-  const flags = (limits.flags.includes("i") ? RE2JS.CASE_INSENSITIVE : 0) | (limits.flags.includes("m") ? RE2JS.MULTILINE : 0);
-  return RE2JS.compile(limits.pattern, flags);
+function checkLimits(limits: ProductionLimits | undefined, label: string) {
+  if (limits?.kind === "range" && (limits.min === undefined && limits.max === undefined || limits.min !== undefined && limits.max !== undefined && limits.min > limits.max)) throw new Error(`Check the range for ${label}.`);
+  if (limits?.kind === "regex") {
+    try { limitPattern(limits); } catch { throw new Error(`Check the RE2 pattern for ${label}.`); }
+  }
+}
+function checkProbeStep(step: Extract<ProductionStep, { kind: "probe" }>, earlier: ProductionStep[]) {
+  const action = step.action;
+  if (step.limits) throw new Error(`Set what ${step.name} expects on its probe action, not as pass limits.`);
+  if (step.tool !== "openocd" && !step.target) throw new Error(`Give ${step.name} the target chip ${step.tool} connects to.`);
+  if (action.op === "identify" && step.tool === "probe-rs") throw new Error(`Check ${step.name}'s IDCODE with OpenOCD or pyOCD, or read the chip's device-ID register with probe-rs.`);
+  if (action.op === "reset" && action.halt && step.tool === "probe-rs") throw new Error(`Halt after ${step.name}'s reset with OpenOCD or pyOCD; probe-rs resets and runs.`);
+  if (action.op === "read" || action.op === "write") {
+    if (action.address % (action.width / 8) !== 0) throw new Error(`Align ${step.name}'s address to its ${action.width}-bit width.`);
+    const widest = action.width === 32 ? 0xffff_ffff : 2 ** action.width - 1;
+    for (const value of [action.op === "read" ? action.expect : action.value, action.mask]) if (value !== undefined && parseWord(value)! > widest) throw new Error(`${step.name} has a value wider than ${action.width} bits.`);
+  }
+  if (action.op !== "run") return;
+  if (action.channel === "uart" && !action.uart_device) throw new Error(`Choose the serial port ${step.name}'s test firmware prints to.`);
+  if (action.channel === "rtt" && step.tool === "openocd" && !action.rtt_search) throw new Error(`Give ${step.name} the RAM range OpenOCD searches for the RTT block.`);
+  if (action.channel === "rtt" && step.tool === "probe-rs") {
+    const source = earlier.find(s => s.id === action.symbols_from);
+    if (source?.kind !== "program" || source.firmware.format !== undefined && source.firmware.format !== "elf") throw new Error(`Choose the earlier ELF program step whose symbols ${step.name} reads RTT from.`);
+  }
+  if (action.channel === "semihosting" && step.tool !== "openocd") throw new Error(`Run ${step.name} over RTT or UART with ${step.tool}, or choose OpenOCD for semihosting.`);
+  if (new Set(action.checks.map(c => c.name)).size !== action.checks.length) throw new Error(`Name each of ${step.name}'s checks once.`);
+  for (const check of action.checks) checkLimits(check.limits, `${step.name} ${check.name}`);
 }
 export function assertNoWirelessCredentialFields(value: unknown, path = ""): void {
   if (!value || typeof value !== "object") return;
@@ -51,18 +122,24 @@ export function validateProductionPlan(raw: unknown): ProductionPlan {
   if (controls.size !== plan.controlled_instruments.length || plan.steps.length !== new Set(plan.steps.map(step => step.id)).size) throw new Error("Give each step and controlled instrument a unique id.");
   if (plan.steps.filter(s => (s.kind === "serial" || s.kind === "operator") && s.serial_from_value).length > 1) throw new Error("Choose one check to read the board serial.");
   for (const instrument of controls) if (!Object.hasOwn(plan.instruments, instrument)) throw new Error("Declare every controlled instrument in this plan.");
-  for (const step of plan.steps) {
+  for (const [index, step] of plan.steps.entries()) {
+    if (step.kind === "probe") checkProbeStep(step, plan.steps.slice(0, index));
     if ((step.kind === "instrument" || step.kind === "capture") && !Object.hasOwn(plan.instruments, step.instrument)) throw new Error(`Choose the instrument for ${step.name}.`);
     if (step.kind === "instrument") {
       if (step.operation === "measure" && (!step.quantity || !step.limits)) throw new Error(`Give ${step.name} a measured quantity and limits.`);
       if (step.operation !== "measure" && !controls.has(step.instrument)) throw new Error(`Declare ${step.instrument} as controlled before changing its output.`);
       if (step.operation === "setpoint" && step.voltage === undefined && step.current_limit === undefined) throw new Error(`Give ${step.name} a voltage or current limit.`);
     }
-    if ((step.kind === "capture" || step.kind === "serial") && !step.limits) throw new Error(`Give ${step.name} limits or an expected reply.`);
-    if (step.limits?.kind === "range" && (step.limits.min === undefined && step.limits.max === undefined || step.limits.min !== undefined && step.limits.max !== undefined && step.limits.min > step.limits.max)) throw new Error(`Check the range for ${step.name}.`);
-    if (step.limits?.kind === "regex") {
-      try { pattern(step.limits); } catch { throw new Error(`Check the RE2 pattern for ${step.name}.`); }
+    if (step.kind === "program") {
+      if (step.verify === "readback" && (!step.firmware.image_sha256 || !step.firmware.format)) throw new Error(`Save ${step.name} again so its firmware read-back is pinned.`);
+      if (step.fuses && step.tool !== "avrdude") throw new Error(`Set fuses on ${step.name} with avrdude; option bytes for other programmers are set with the vendor's own tools.`);
+      if (step.fuses && !Object.keys(step.fuses).length) throw new Error(`Give ${step.name} at least one fuse, or leave fuses off.`);
+      if (step.unit_write?.memory === "eeprom" && step.tool !== "avrdude") throw new Error(`Write ${step.name}'s serial to flash; only avrdude writes EEPROM here.`);
+      if (step.unit_write && step.tool === "avrdude" && step.unit_write.memory !== "eeprom") throw new Error(`Write ${step.name}'s serial to EEPROM; avrdude cannot write one address of flash on its own.`);
+      if (step.firmware.format === "bin" && step.load_address === undefined && step.parameters.offset === undefined) throw new Error(`Give ${step.name} the address its BIN image starts at.`);
     }
+    if ((step.kind === "capture" || step.kind === "serial") && !step.limits) throw new Error(`Give ${step.name} limits or an expected reply.`);
+    checkLimits(step.limits, step.name);
   }
   return plan;
 }
@@ -86,6 +163,10 @@ export const ProductionObservationSchema = z.object({
   identity: z.string().max(1000).optional(), calibration_due: z.string().max(80).nullable().optional(),
   measured_at: z.string().datetime().optional(), serial: z.string().min(1).max(160).optional(),
   firmware_hash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  // What a read-back found on the chip, fingerprinted the way the plan pinned the image.
+  readback_sha256: hex64.optional(),
+  // The bytes written for this unit and where, as read back after writing.
+  unit_write: z.object({ address, memory: z.enum(["flash", "eeprom"]), hex: z.string().regex(/^(?:[0-9a-f]{2}){1,64}$/) }).strict().optional(),
   attachments: z.array(z.object({ id: z.string().max(160), filename: z.string().max(200), mime_type: z.string().max(100), sha256: z.string().regex(/^[a-f0-9]{64}$/), role: z.enum(["capture", "photo", "scope", "report"]) }).strict()).max(20).optional(),
 }).strict();
 export type ProductionObservation = z.infer<typeof ProductionObservationSchema>;
@@ -104,20 +185,34 @@ export interface ProductionTestResult {
   steps: ProductionStepResult[]; outputs_off: Array<{ instrument: string; confirmed: boolean; error?: string }>;
   started_at: string; finished_at: string;
 }
-export function judgeProductionObservation(step: ProductionStep, observation: ProductionObservation): { result: "pass" | "fail"; reason?: string } {
+export function judgeProductionObservation(step: ProductionStep, observation: ProductionObservation, unit?: { serial?: string | null }): { result: "pass" | "fail"; reason?: string } {
   const limit = step.limits;
   if (observation.confirmed === false) return { result: "fail", reason: "The device did not confirm the operation." };
-  if (limit?.kind === "range" || limit?.kind === "expected" && limit.unit !== undefined) {
-    if (observation.unit !== limit.unit) return { result: "fail", reason: "The measured unit does not match this step's limits." };
+  if (step.kind === "program") {
+    if (step.verify === "readback" && observation.readback_sha256 !== step.firmware.image_sha256) return { result: "fail", reason: "What was read back from the chip is not this firmware image." };
+    if (step.unit_write) {
+      const written = observation.unit_write;
+      if (!written || written.address !== step.unit_write.address || written.memory !== step.unit_write.memory || written.hex.length !== step.unit_write.length * 2) return { result: "fail", reason: "The unit's serial was not read back where the plan writes it." };
+      if (unit?.serial && written.hex !== Buffer.from(unitWriteBytes(unit.serial, step.unit_write.length)).toString("hex")) return { result: "fail", reason: "The serial read back from the board is not this unit's." };
+    }
   }
-  if (limit?.kind === "range") {
-    const value = observation.value;
-    if (typeof value !== "number" || !Number.isFinite(value)) return { result: "fail", reason: "The instrument did not return a finite measurement." };
-    return limit.min !== undefined && value < limit.min || limit.max !== undefined && value > limit.max ? { result: "fail", reason: "The measurement is outside its limits." } : { result: "pass" };
-  }
-  if (limit?.kind === "expected") return observation.value === limit.value ? { result: "pass" } : { result: "fail", reason: "The value does not match the expected value." };
-  if (limit?.kind === "regex") return typeof observation.value === "string" && pattern(limit).matcher(observation.value).find() ? { result: "pass" } : { result: "fail", reason: "The reply does not match the expected pattern." };
+  if (step.kind === "probe") return judgeProbe(step, observation);
+  const judged = judgeLimits(limit, observation);
+  if (judged) return judged;
   return observation.confirmed === true || observation.value !== undefined && observation.value !== false && observation.value !== null ? { result: "pass" } : { result: "fail", reason: "This step did not return a successful result." };
+}
+function judgeProbe(step: Extract<ProductionStep, { kind: "probe" }>, observation: ProductionObservation): { result: "pass" | "fail"; reason?: string } {
+  const action = step.action;
+  if (action.op === "reset") return observation.confirmed === true ? { result: "pass" } : { result: "fail", reason: "The probe did not confirm the reset." };
+  if (action.op === "run") {
+    if (typeof observation.value !== "string") return { result: "fail", reason: "The test firmware's output was not kept." };
+    const { result, reason } = judgeTargetRun(action, observation.value);
+    return reason ? { result, reason } : { result };
+  }
+  const got = parseWord(observation.value), mask = parseWord(action.mask ?? "0xffffffff")!, want = parseWord(action.op === "write" ? action.value : action.expect)!;
+  if (got === null) return { result: "fail", reason: "The probe did not return a value." };
+  if (((got & mask) >>> 0) === ((want & mask) >>> 0)) return { result: "pass" };
+  return { result: "fail", reason: action.op === "identify" ? "The chip on this board is not the one this plan expects." : action.op === "write" ? "The value read back is not what was written." : "The register does not hold the expected value." };
 }
 async function performStep(step: ProductionStep, io: ProductionTestPorts, parent?: AbortSignal): Promise<ProductionObservation> {
   const controller = new AbortController(), abort = () => controller.abort();
@@ -127,7 +222,7 @@ async function performStep(step: ProductionStep, io: ProductionTestPorts, parent
   if (parent?.aborted) abort();
   try {
     const work = io.perform(step, controller.signal);
-    const changesHardware = step.kind === "program" || step.kind === "script" || step.kind === "serial" && step.write !== undefined || step.kind === "instrument" && step.operation !== "measure";
+    const changesHardware = stepChangesHardware(step);
     // A control must settle before cleanup, so an interrupted write cannot arrive after output off.
     if (changesHardware) {
       const answer = await work;
@@ -142,9 +237,9 @@ async function performStep(step: ProductionStep, io: ProductionTestPorts, parent
     }));
   } finally { clearTimeout(timer); parent?.removeEventListener("abort", abort); }
 }
-export async function executeProductionTest(raw: unknown, io: ProductionTestPorts, options: { confirmed?: boolean; signal?: AbortSignal; now?: () => Date } = {}): Promise<ProductionTestResult> {
+export async function executeProductionTest(raw: unknown, io: ProductionTestPorts, options: { confirmed?: boolean; signal?: AbortSignal; now?: () => Date; unit?: { serial?: string | null } } = {}): Promise<ProductionTestResult> {
   const plan = frozen(validateProductionPlan(raw));
-  const changesHardware = plan.steps.some(step => step.kind === "program" || step.kind === "script" || step.kind === "serial" && step.write !== undefined || step.kind === "instrument" && step.operation !== "measure");
+  const changesHardware = plan.steps.some(stepChangesHardware);
   if (changesHardware && options.confirmed !== true) throw new Error("Confirm this plan's control and programming steps before Start.");
   for (const instrument of plan.controlled_instruments) if (!await io.controlEnabled(instrument)) throw new Error(`Turn on control for ${instrument} before running this plan.`);
   const now = () => (options.now?.() ?? new Date()).toISOString();
@@ -157,7 +252,7 @@ export async function executeProductionTest(raw: unknown, io: ProductionTestPort
       if (options.signal?.aborted || stopped) recorded = { id: step.id, name: step.name, kind: step.kind, limits: step.limits, result: "skip", reason: options.signal?.aborted ? "The operator stopped this test." : "An earlier step failed.", started_at, finished_at: now() };
       else {
         try {
-          const observation = await performStep(step, io, options.signal), judged = judgeProductionObservation(step, observation);
+          const observation = await performStep(step, io, options.signal), judged = judgeProductionObservation(step, observation, options.unit);
           recorded = { ...observation, ...judged, id: step.id, name: step.name, kind: step.kind, limits: step.limits, started_at, finished_at: now() };
         } catch (error) {
           recorded = { id: step.id, name: step.name, kind: step.kind, limits: step.limits, result: "fail", reason: error instanceof Error ? error.message.slice(0, 3000) : "This step could not finish.", started_at, finished_at: now() };

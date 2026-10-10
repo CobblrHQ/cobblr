@@ -34,9 +34,37 @@ export interface PageParcel {
   lines: Array<{ name: string; qty: number }>;
 }
 
+/** The order itself: its name and every line, shipped or not. Asked apart
+ *  from the parcels, so a guest view that withholds tracking still names the
+ *  order and its lines. Null when the page would not say. */
+export interface PageOrder {
+  name: string | null;
+  lines: Array<{ name: string; qty: number; unitPrice: number | null; currency: string | null }>;
+}
+
 export interface PageRead {
   outcome: ReadOutcome;
   parcels: PageParcel[];
+  order?: PageOrder | null;
+  /** Where the read went, hop by hop, with nothing that signs in: each hop's
+   *  status, host and path words, every token and id cut. What a read that
+   *  missed is diagnosed from, with no second spend of the link. */
+  trail?: string[];
+}
+
+/** Bumped when the reader learns a new way through a store's pages: a page
+ *  kept by an older reader is read once more instead of trusting its outcome. */
+export const ORDER_PAGE_READER = 2;
+
+/** One hop as the trail keeps it: "302 shop.example.org/_t/c/v3/…". The query
+ *  and fragment are dropped and every path segment that is not a plain word
+ *  (a key, a token, an order id, a shop number) becomes "…". */
+export function hopOf(status: number, url: URL): string {
+  const path = url.pathname
+    .split("/")
+    .map((seg) => (seg === "" || /^[a-z_][a-z_-]{0,23}$/.test(seg) || /^v\d$/i.test(seg) ? seg : "…"))
+    .join("/");
+  return `${status} ${url.hostname}${path}`;
 }
 
 /** One request, redirects NOT followed (the caller carries the cookies). */
@@ -95,6 +123,42 @@ const FULFILLMENTS = `query OrderFulfillments($orderId: ID!) {
   }
 }`;
 
+// Two shapes: with each line's price, and without, for a store whose API
+// version does not answer the price field (an unknown field fails the query).
+const ORDER_LINES_PRICED = `query OrderLines($orderId: ID!) {
+  order(id: $orderId) {
+    name
+    lineItems(first: 100) { nodes { presentmentName title quantity price { amount currencyCode } } }
+  }
+}`;
+const ORDER_LINES = `query OrderLines($orderId: ID!) {
+  order(id: $orderId) {
+    name
+    lineItems(first: 100) { nodes { presentmentName title quantity } }
+  }
+}`;
+
+/** The order's name and lines in a Customer Account API answer, or null. */
+export function orderOfAnswer(body: unknown): PageOrder | null {
+  const order = (body as { data?: { order?: { name?: unknown; lineItems?: { nodes?: Array<Record<string, unknown>> } } | null } })?.data?.order;
+  if (!order) return null;
+  const lines = (order.lineItems?.nodes ?? [])
+    .map((n) => {
+      const price = n.price as { amount?: unknown; currencyCode?: unknown } | undefined;
+      const amount = price?.amount != null ? Number(price.amount) : NaN;
+      return {
+        name: String(n.presentmentName || n.title || "").trim(),
+        qty: Number(n.quantity ?? 1) || 1,
+        unitPrice: Number.isFinite(amount) ? amount : null,
+        currency: typeof price?.currencyCode === "string" ? price.currencyCode : null,
+      };
+    })
+    .filter((l) => l.name);
+  const name = typeof order.name === "string" && order.name.trim() ? order.name.trim() : null;
+  if (!name && !lines.length) return null;
+  return { name, lines };
+}
+
 /** The parcels in a Customer Account API fulfillments answer. A parcel with
  *  no tracking information is a redacted view, never a parcel without a box. */
 export function parcelsOfFulfillments(body: unknown): PageRead {
@@ -140,18 +204,26 @@ export function orderHeaders(pathToken: string, html: string): { access: string;
 /** Follow the link and read the order. Never throws; never names the link. */
 export async function readShopifyOrderPage(link: string, fetchHop: FetchHop): Promise<PageRead> {
   const jar = new CookieJar();
-  const none = (outcome: ReadOutcome): PageRead => ({ outcome, parcels: [] });
+  const trail: string[] = [];
+  const none = (outcome: ReadOutcome): PageRead => ({ outcome, parcels: [], trail });
+  const step = (to: URL, r: Response) => {
+    if (trail.length < 24) trail.push(hopOf(r.status, to));
+  };
   try {
     let url = new URL(link);
     let res: Response | null = null;
     for (let hop = 0; hop < MAX_HOPS; hop++) {
       res = await fetchHop(url.href, { headers: { "user-agent": UA, accept: "text/html,application/json", cookie: jar.header(url) } });
       jar.take(url, res);
+      step(url, res);
       if (res.status === 429 || res.status === 403) return none("throttled");
       const loc = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
       if (!loc) break;
       url = new URL(loc, url);
-      if (SIGN_IN.test(url.pathname) && !/\/oauth\/authorize/i.test(url.pathname)) return none("expired");
+      if (SIGN_IN.test(url.pathname) && !/\/oauth\/authorize/i.test(url.pathname)) {
+        trail.push(`→ ${hopOf(0, url).slice(2)}`);
+        return none("expired");
+      }
     }
     if (!res || res.status !== 200) return none(res && res.status >= 300 && res.status < 400 ? "failed" : "unsupported");
     const page = ORDER_PAGE.exec(url.href.split(/[?#]/)[0] ?? "");
@@ -160,36 +232,51 @@ export async function readShopifyOrderPage(link: string, fetchHop: FetchHop): Pr
     const html = await res.text();
     const base = `https://shopify.com/${shopId}/account`;
     const tokenRes = await fetchHop(`${base}/oauth/token`, { headers: { "user-agent": UA, accept: "application/json", cookie: jar.header(new URL(base)), referer: url.href } });
+    step(new URL(`${base}/oauth/token`), tokenRes);
     if (tokenRes.status === 429 || tokenRes.status === 403) return none("throttled");
     if (tokenRes.status === 401 || (tokenRes.status >= 300 && tokenRes.status < 400)) return none("expired");
     const access = ((await tokenRes.json().catch(() => null)) as { access_token?: string } | null)?.access_token;
     if (!access) return none("expired");
     const headers = orderHeaders(token ?? "", html);
-    const gql = await fetchHop(`${base}/customer/api/unstable/graphql?operation=OrderFulfillments`, {
-      method: "POST",
-      headers: {
-        "user-agent": UA,
-        accept: "application/json",
-        "content-type": "application/json",
-        origin: "https://shopify.com",
-        referer: url.href,
-        cookie: jar.header(new URL(base)),
-        authorization: access,
-        "x-shopify-order-access-token": headers.access,
-        "x-shopify-resource-context": headers.context,
-      },
-      body: JSON.stringify({ operationName: "OrderFulfillments", query: FULFILLMENTS, variables: { orderId: `gid://shopify/Order/${token}` } }),
-    });
-    if (gql.status === 429 || gql.status === 403) return none("throttled");
-    if (gql.status === 401) return none("expired");
-    if (!gql.ok) return none("failed");
+    const ask = (operationName: string, query: string) =>
+      fetchHop(`${base}/customer/api/unstable/graphql?operation=${operationName}`, {
+        method: "POST",
+        headers: {
+          "user-agent": UA,
+          accept: "application/json",
+          "content-type": "application/json",
+          origin: "https://shopify.com",
+          referer: url.href,
+          cookie: jar.header(new URL(base)),
+          authorization: access,
+          "x-shopify-order-access-token": headers.access,
+          "x-shopify-resource-context": headers.context,
+        },
+        body: JSON.stringify({ operationName, query, variables: { orderId: `gid://shopify/Order/${token}` } }),
+      });
+    // The order's name and lines first: they survive the guest view that
+    // withholds tracking, and they are what fills a receipt with no model.
+    let order: PageOrder | null = null;
+    for (const query of [ORDER_LINES_PRICED, ORDER_LINES]) {
+      const res = await ask("OrderLines", query);
+      trail.push(`${res.status} OrderLines`);
+      if (res.status === 429 || res.status === 403) return { ...none("throttled"), order };
+      if (!res.ok) break;
+      order = orderOfAnswer(await res.json().catch(() => null));
+      if (order) break;
+    }
+    const gql = await ask("OrderFulfillments", FULFILLMENTS);
+    trail.push(`${gql.status} OrderFulfillments`);
+    if (gql.status === 429 || gql.status === 403) return { ...none("throttled"), order };
+    if (gql.status === 401) return { ...none("expired"), order };
+    if (!gql.ok) return { ...none("failed"), order };
     const body = (await gql.json().catch(() => null)) as { errors?: Array<{ message?: string }> } | null;
-    if (!body) return none("failed");
+    if (!body) return { ...none("failed"), order };
     if (body.errors?.length && !(body as { data?: unknown }).data) {
       const said = body.errors.map((e) => e.message ?? "").join(" ");
-      return none(/access|denied|redact|permission/i.test(said) ? "redacted" : /token|unauthor/i.test(said) ? "expired" : "failed");
+      return { ...none(/access|denied|redact|permission/i.test(said) ? "redacted" : /token|unauthor/i.test(said) ? "expired" : "failed"), order };
     }
-    return parcelsOfFulfillments(body);
+    return { ...parcelsOfFulfillments(body), order, trail };
   } catch {
     return none("failed");
   }

@@ -21,9 +21,42 @@ import type {
 // core registers none → the auth routes fall back to the inline dev link /
 // admin-managed reset. A self-hoster wires their own SMTP/API sender; the
 // overlay injects a managed one.
+//
+// TWO SENDERS ARE LOUD (2026-10-10). Registration used to be "last wins", and on
+// staging the cloud overlay's managed sender (real SMTP) silently replaced the
+// mail catcher the instance had configured, so staging mailed real addresses.
+// Now each sender has a name and a source. A second registration says, in the
+// boot log, both names and which one sends; and an overlay never replaces a
+// sender this instance configured itself (COBBLR_AUTH_EMAIL_PROVIDER) unless
+// COBBLR_AUTH_EMAIL_ALLOW_OVERRIDE=true says that is meant. /auth/config names
+// the one that sends.
+export type AuthEmailSenderSource = "configured" | "overlay";
 let authEmailSender: AuthEmailSender | null = null;
-export function registerAuthEmailSender(s: AuthEmailSender): void {
+let authEmailSenderName: string | null = null;
+let authEmailSenderSource: AuthEmailSenderSource | null = null;
+export function registerAuthEmailSender(
+  s: AuthEmailSender,
+  opts: { name?: string; source?: AuthEmailSenderSource; allowOverride?: boolean } = {},
+): void {
+  const name = opts.name?.trim() || "overlay";
+  const source = opts.source ?? "overlay";
+  if (authEmailSender && authEmailSenderName !== null) {
+    if (authEmailSenderSource === "configured" && source !== "configured" && !opts.allowOverride) {
+      console.warn(
+        `[auth-email] TWO senders: ${name} tried to replace ${authEmailSenderName}, which this instance configured (COBBLR_AUTH_EMAIL_PROVIDER). Refused: ${authEmailSenderName} sends. Set COBBLR_AUTH_EMAIL_ALLOW_OVERRIDE=true to let ${name} send instead.`,
+      );
+      return;
+    }
+    console.warn(`[auth-email] TWO senders: ${name} replaced ${authEmailSenderName}; ${name} sends.`);
+  }
   authEmailSender = s;
+  authEmailSenderName = name;
+  authEmailSenderSource = source;
+}
+/** The name of the sender that delivers auth email ("byo:smtp", "overlay"), or
+ *  null when none is registered. A name, never a host or a credential. */
+export function activeAuthEmailSender(): string | null {
+  return authEmailSender ? authEmailSenderName : null;
 }
 export function hasAuthEmailSender(): boolean {
   return authEmailSender !== null;

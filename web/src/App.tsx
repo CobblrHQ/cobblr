@@ -139,6 +139,9 @@ const DigifabPage = lazy(() => import("./pages/DigifabPage").then((m) => ({ defa
 const PrinterStationPage = lazy(() => import("./pages/PrinterStationPage").then((m) => ({ default: m.PrinterStationPage })));
 const EmbroideryPage = lazy(() => import("./pages/EmbroideryPage").then(m => ({ default: m.EmbroideryPage })));
 const FloorManagerPage = lazy(() => import("./pages/FloorManagerPage").then(m => ({ default: m.FloorManagerPage })));
+const InspectionStationPage = lazy(() => import("./pages/InspectionStationPage").then(m => ({ default: m.InspectionStationPage })));
+const BoardInspectionPage = lazy(() => import("./pages/BoardInspectionPage").then(m => ({ default: m.BoardInspectionPage })));
+const ReflowStationPage = lazy(() => import("./pages/ReflowStationPage").then(m => ({ default: m.ReflowStationPage })));
 const AssemblyStationPage = lazy(() => import("./pages/AssemblyStationPage").then(m => ({ default: m.AssemblyStationPage })));
 const KilnStationPage = lazy(() => import("./pages/KilnStationPage").then(m => ({ default: m.KilnStationPage })));
 const StockStationPage = lazy(() => import("./pages/StockStationPage").then((m) => ({ default: m.StockStationPage })));
@@ -429,7 +432,9 @@ function PublicRoutes() {
       <Route path="/start/:app" element={<StartAppPage />} />
       {/* Legacy un-prefixed member-portal links → workspace-scoped portal. */}
       <Route path="/portal/:slug/*" element={<PortalSlugRedirect />} />
-      <Route path="*" element={<LandingRedirect />} />
+      <Route path="/login" element={<LandingEntry />} />
+      <Route path="/signup" element={<LandingEntry />} />
+      <Route path="*" element={<LandingEntry />} />
     </Routes>
   );
 }
@@ -496,7 +501,7 @@ function takeOAuthReturn(): string | null {
   }
 }
 
-function LandingRedirect() {
+function LandingEntry() {
   const { user, orgs } = useAuth();
   if (!user) return <AuthPage />;
   if (user.must_reset_password) return <ForcePasswordResetPage />;
@@ -697,14 +702,18 @@ function ActiveOrgScopedRoutes() {
         <Route path="/station/stock/:station" element={<StockStationPage />} />
         <Route element={<ModuleOffGate><Outlet /></ModuleOffGate>}>
           <Route path="/station/assembly/:machineId/:orderId" element={<AssemblyStationPage />} />
+          <Route path="/station/reflow/:machineId/:orderId" element={<ReflowStationPage />} />
+          <Route path="/station/inspection/:machineId/:orderId" element={<InspectionStationPage />} />
           <Route path="/station/floor" element={<FloorManagerPage screen />} />
           <Route path="/station/kiln/:machineId" element={<KilnStationPage />} />
           <Route path="/station/printer/:machineId" element={<PrinterStationPage />} />
           <Route path="/station/production/:connectionId" element={<ProductionStationPage />} />
           <Route path="/station/machine/:connectionId/:deviceId" element={<MachineStationPage />} />
         </Route>
+
         <Route element={<AppLayout activeSlug={activeSlug} />}>
-          <Route index element={<Dashboard />} />
+          <Route path="/builds/inspections/:id" element={<BoardInspectionPage />} />
+          <Route path="/" element={<Dashboard />} />
           <Route
             path="/inventory/*"
             element={
@@ -961,7 +970,7 @@ function ActiveOrgScopedRoutes() {
           {/* The bench display: the last few scans, big, no controls. */}
           <Route path="/scan/live" element={<ScanLivePage />} />
           {/* QR-label resolve inside the workspace: the in-app scanner
-              navigates here on a label hit, and LandingRedirect rewrites
+              navigates here on a label hit, and LandingEntry rewrites
               bare /qr/<token> URLs into /w/<default>/qr/<token>. */}
           <Route path="/qr/*" element={<QrResolvePage />} />
           <Route path="/a/*" element={<ActionLabelPage />} />

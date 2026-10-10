@@ -1,14 +1,14 @@
 // "Get a Discord message before things go off", offered where it matters.
 //
 // The DM feature existed and nobody found it: it lived as a card on the
-// Delivery tab of Notifications under Your account, three levels from where
+// Settings tab of Notifications under Your account, three levels from where
 // anybody thinks about reminders (the owner, 2026-09-29: "even I have to dig
 // too much to find it"). So it is offered at the moment it is useful, the
 // first time the workspace has things with a date on them, once, and gone
 // for good when connected or dismissed.
 //
 // One tap: the button goes to Discord's own consent screen, and the way back
-// lands on the Delivery page with the test message already sent and the
+// lands on Notification settings with the test message already sent and the
 // morning digest already chosen (me.ts oauth-start). Every door into it
 // (this offer, the setup card, Your account, the account menu, search) uses
 // the same link, CONNECT_DISCORD_PATH (lib/discord-connect.ts).

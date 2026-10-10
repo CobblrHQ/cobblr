@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "digifab",
-  version: "0.34.1",
+  version: "0.36.0",
   displayName: "Digital Fabrication",
   description:
     "Send a design to the software that runs your machine (FDM Monster, OctoPrint and others) and follow the job until it is done.",
@@ -244,6 +244,15 @@ export default defineModule({
       { eventType: "digifab.make.ready", label: "A print is ready to start", description: "Print this has sliced a model for a printer; the print waits on its Make for someone to start it." },
     ],
     actions: [
+      // UI-SCREEN: /builds/<revision> saves paste profiles and downloads the oven bridge package.
+      {runBy: "member", id: "digifab:reflow-profiles", group: "make", label: "Read paste profiles", description: "List saved immutable reflow profiles for this paste jar.", scope: "workspace", invokeHandler: "digifab.reflow-profiles", userInvokable: true, argsSchema: {paste_kind: {label: "Paste collection kind", type: "text", required: true}, paste_id: {label: "Paste jar id", type: "text", required: true}}},
+      // UI-SCREEN: /builds/<revision> saves paste profiles and downloads the oven bridge package.
+      {runBy: "member", id: "digifab:reflow-profile", group: "make", label: "Read a paste profile", description: "Read one saved paste profile and its manufacturer limits.", scope: "workspace", invokeHandler: "digifab.reflow-profile", userInvokable: true, argsSchema: {profile_id: {label: "Paste profile id", type: "text", required: true}}},
+      // UI-SCREEN: /builds/<revision> saves paste profiles and downloads the oven bridge package.
+      // ADMIN-ONLY: a paste's reflow profile is the recipe every later batch is baked with; saving one is process setup, and a member has no say over configuration
+      {runBy: "admin", id: "digifab:save-reflow-profile", group: "make", label: "Save a paste reflow profile", description: "Save the four phases and manufacturer limits as a new immutable version for a liquid paste jar.", scope: "workspace", invokeHandler: "digifab.save-reflow-profile", userInvokable: true, argsSchema: {paste_kind: {label: "Paste collection kind", type: "text", required: true}, paste_id: {label: "Paste jar id", type: "text", required: true}, profile: {label: "Four phases and manufacturer limits", type: "json", required: true}}},
+      // UI-SCREEN: /builds/<revision> saves paste profiles and downloads the oven bridge package.
+      {runBy: "member", id: "digifab:reflow-bridge-package", group: "make", label: "Download the reflow bridge driver", description: "Read the installable bridge driver package for T-962 open firmware and YARC controllers.", scope: "workspace", invokeHandler: "digifab.reflow-bridge-package", userInvokable: true, argsSchema: {}},
       {
         // UI-SCREEN: /digifab/production
         id: "digifab:production-test", label: "Manage production tests", scope: "workspace", group: "more", userInvokable: false, effect: "writes", undoable: false,

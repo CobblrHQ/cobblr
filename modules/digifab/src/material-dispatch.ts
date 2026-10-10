@@ -1,6 +1,7 @@
 import { gramsByTool, planDraw } from "./loaded-spools.js";
 import { sameColour, type LoadedSpool } from "./pick-printer.js";
 import { nestParts, type Design, type Sheet, type Profile } from "./laser-layout.js";
+import { countOf } from "@cobblr/platform-contract/plural";
 const norm = (v: string | null | undefined) => (v ?? "").trim().toLowerCase();
 export interface PrinterMaterial {
  material_type?: string | null;
@@ -75,7 +76,7 @@ export function allocateLaserBatch(design: Design, ask: BatchAsk, candidates: La
     used.add(sheet.id); left -= lo; moved = true; break;
    }
   }
-  if (!moved) throw new Error(`Restock ${ask.thickness_mm} mm ${ask.material}: room for ${ask.quantity - left} of ${ask.quantity} parts on the available sheets.`);
+  if (!moved) throw new Error(`Restock ${ask.thickness_mm} mm ${ask.material}: room for ${ask.quantity - left} of ${countOf(ask.quantity, "part")} on the available sheets.`);
  }
  if (used.size > 50) throw new Error("Split this batch into at most 50 physical sheets at a time.");
  return [...groups.values()];
@@ -105,5 +106,5 @@ export async function allocateOutlineLaserBatch(design: Design, ask: BatchAsk, c
   if(!left)return groups;
   if(performance.now()-started>=3000)break;
  }
- throw new Error(`Restock ${ask.thickness_mm} mm ${ask.material}: room for ${ask.quantity-left} of ${ask.quantity} parts on the available sheets.`);
+ throw new Error(`Restock ${ask.thickness_mm} mm ${ask.material}: room for ${ask.quantity-left} of ${countOf(ask.quantity, "part")} on the available sheets.`);
 }

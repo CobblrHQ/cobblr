@@ -35,6 +35,16 @@ export function anthropicAlias(id: string): string {
 
 const LATEST = /^claude-([a-z]+)-latest$/;
 
+/** Whether a model takes `temperature`. Claude 5 and later answer it with a
+ *  400 ("deprecated for this model"); a family's "latest" is the newest, so
+ *  it is taken to be one of those. An id this cannot read is sent it, and a
+ *  refusal is learned (refused-params.ts). */
+export function anthropicTakesTemperature(model: string): boolean {
+  if (LATEST.test(model)) return false;
+  const m = ID.exec(model);
+  return !m || Number(m[2]) < 5;
+}
+
 /** Lighter first: haiku, sonnet, opus, then anything newer by name. */
 export const ANTHROPIC_FAMILY_ORDER = ["haiku", "sonnet", "opus"] as const;
 

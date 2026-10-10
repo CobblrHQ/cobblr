@@ -169,6 +169,17 @@ const Schema = z.object({
   COBBLR_SERVER_BRIDGE_CACHE_DIR: z.string().default(""),
   COBBLR_SERVER_BRIDGE_ORIGIN: z.string().default(""),
 
+  // ── auth email: who sends ─────────────────────────────────────────────────
+  // A sender configured here (COBBLR_AUTH_EMAIL_PROVIDER, core's own) is not
+  // replaced by one an overlay registers later, unless this says so. On
+  // 2026-10-10 staging's configured catcher was silently replaced by the cloud's
+  // real SMTP, because the last registration won. An instance that runs both on
+  // purpose (app.cobblr.xyz keeps the managed sender) sets it to true.
+  COBBLR_AUTH_EMAIL_ALLOW_OVERRIDE: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
+
   // ── the no-account sandbox (docs/design-decisions/try-sandbox.md) ──────────
   // OFF unless COBBLR_TRY_SANDBOX=true, so prod / staging / self-host never
   // hand out an anonymous workspace even if the other keys drift in. An enum,

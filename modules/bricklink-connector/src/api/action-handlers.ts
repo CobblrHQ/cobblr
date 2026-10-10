@@ -11,21 +11,44 @@
 // direct access to inventory's tables.
 
 import { actionActed, normaliseActionResult } from "@cobblr/platform-contract/action-result";
-import { platform, requireActionEntity } from "@cobblr/platform-contract";
+import { countOf, platform, requireActionEntity } from "@cobblr/platform-contract";
 
 let registered = false;
+
+const BASE_KIND = "inventory:part";
+
+/** Where a kit's parts are made, and the kind they are then: the table its
+ *  own table declares (`parts_into`: a Lego set comes apart into bricks on
+ *  Bricks, #5434), when that table is in this workspace; else the base Parts
+ *  table, as a kit on Parts always has. `configOf` is the platform's
+ *  instances.configOf. */
+export async function partsHomeFor(
+  orgId: string,
+  kitKind: string,
+  configOf: (orgId: string, instanceName: string) => Promise<Record<string, unknown> | null>,
+): Promise<{ instance: string | null; kind: string }> {
+  if (kitKind === BASE_KIND) return { instance: null, kind: BASE_KIND };
+  const kitTable = kitKind.split(":")[0]!;
+  const into = (await configOf(orgId, kitTable))?.parts_into;
+  if (typeof into === "string" && into && (await configOf(orgId, into))) return { instance: into, kind: `${into}:item` };
+  return { instance: null, kind: BASE_KIND };
+}
 
 export function registerBricklinkHandlers(): void {
   if (registered) return;
   registered = true;
 
   platform().actions.registerHandler("bricklink.disassemble-kit", async (ctx) => {
-    const kitId = requireActionEntity(ctx).id;
+    const kit = requireActionEntity(ctx);
+    const kitId = kit.id;
+    // A set on the Lego bundle's Sets table is a sets:item: read it as itself.
+    const kitKind = kit.kind || BASE_KIND;
+    const home = await partsHomeFor(ctx.orgId, kitKind, (o, n) => platform().instances.configOf(o, n));
 
     // 1. Find the matched catalog entry (a Rebrickable set).
     const matched = await platform().entities.walkPairings(
       ctx.orgId,
-      { kind: "inventory:part", id: kitId },
+      { kind: kitKind, id: kitId },
       { rel: "matches", dir: "out", kind: "core-catalogs:entry" },
     );
     const match = matched[0];
@@ -91,6 +114,7 @@ export function registerBricklinkHandlers(): void {
       return {
         partEntryId: partEntry?.id ?? null,
         item: {
+          ...(home.instance ? { instance: home.instance } : {}),
           name: (partEntry?.payload.name as string | undefined) ?? rowName ?? `Part ${partNum}`,
           qty: Number(row.payload.quantity ?? 1),
           unit: "each",
@@ -123,10 +147,10 @@ export function registerBricklinkHandlers(): void {
       .map((id, i) => {
         const partEntryId = specs[i]?.partEntryId;
         if (!partEntryId) return null;
-        return { orgId: ctx.orgId, sourceKind: "inventory:part", sourceId: id, targetKind: "core-catalogs:entry", targetId: partEntryId, relationshipKind: "matches", createdBy: ctx.userId };
+        return { orgId: ctx.orgId, sourceKind: home.kind, sourceId: id, targetKind: "core-catalogs:entry", targetId: partEntryId, relationshipKind: "matches", createdBy: ctx.userId };
       })
       .filter((v): v is NonNullable<typeof v> => v !== null);
-    const derivedFromValues = ids.map((id) => ({ orgId: ctx.orgId, sourceKind: "inventory:part", sourceId: id, targetKind: "inventory:part", targetId: kitId, relationshipKind: "derived-from", createdBy: ctx.userId }));
+    const derivedFromValues = ids.map((id) => ({ orgId: ctx.orgId, sourceKind: home.kind, sourceId: id, targetKind: kitKind, targetId: kitId, relationshipKind: "derived-from", createdBy: ctx.userId }));
     await platform().pairings.createMany(matchesValues);
     await platform().pairings.createMany(derivedFromValues);
 
@@ -142,15 +166,17 @@ export function registerBricklinkHandlers(): void {
     // parts we just spawned (the scope:"refs" door), so the user goes straight
     // from "disassembled" to "here's a plan to bin these". The web shell reads
     // result.ui and opens the registered flow; ignored where it isn't honored.
+    // The records just made, as the organize flow names them (<kind>::<id>).
+    const refs = ids.map((id) => [home.kind, id].join("::"));
     return {
       ok: true,
       kitId,
       setNum,
       spawned: ids.length,
-      message: `Spawned ${ids.length} parts from set ${setNum}.`,
+      message: `Spawned ${countOf(ids.length, "part")} from set ${setNum}.`,
       ui: {
         flow: "core-scan:organize",
-        args: { scope: "refs", refs: ids.map((id) => `inventory:part::${id}`) },
+        args: { scope: "refs", refs },
       },
     };
   });

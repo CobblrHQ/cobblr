@@ -15,6 +15,7 @@ import { ApiError, api, type BasicRuleRow, type BasicAnswer, type BasicMissRow, 
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 export function AssistantSettingsPage() {
   usePageTitle("Assistant");
   const { activeSlug } = useActiveOrg();
@@ -58,7 +59,7 @@ export function AssistantSettingsPage() {
   return (
     <div className="space-y-5">
       <ConfigHeaderActions>
-        <span className="text-sm text-muted dark:text-slate-400">{rules.length} answers</span>
+        <span className="text-sm text-muted dark:text-slate-400">{countOf(rules.length, "answer")}</span>
         <button
           onClick={() => setAdding(true)}
           className="inline-flex items-center gap-2 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition"

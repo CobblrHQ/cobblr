@@ -28,6 +28,7 @@ export interface ViewData {
   refetch?: () => void;
   collectionEmpty?: boolean;
   unapplied?: ViewDataResponse["unapplied"];
+  ungrouped?: ViewDataResponse["ungrouped"];
   /** Load the next page, when there is one. */
   loadMore?: () => void;
   loadingMore: boolean;
@@ -107,6 +108,7 @@ export function useViewData(
     refetch: () => void q.refetch(),
     collectionEmpty: first?.collection_empty,
     unapplied: first?.unapplied,
+    ungrouped: first?.ungrouped,
     loadMore: q.hasNextPage ? () => void q.fetchNextPage() : undefined,
     loadingMore: q.isFetchingNextPage,
     view: first?.view,

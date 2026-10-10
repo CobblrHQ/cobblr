@@ -3,10 +3,12 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { sql, type Kysely, type Selectable } from "kysely";
 import { likeEscape, platform, readJsonArg, type ActionInvokeContext } from "@cobblr/platform-contract";
+import { countOf } from "@cobblr/platform-contract/plural";
 import { openRecordPath } from "@cobblr/platform-contract/instance-detail";
 import type { ProductionTestResult } from "@cobblr/platform-contract/production-test";
-import { validateProductionPlan } from "@cobblr/platform-contract/production-test";
+import { stepChangesHardware, validateProductionPlan, type ProductionStep } from "@cobblr/platform-contract/production-test";
 import { configuredControl } from "./bench.js";
+import { pinProgramImages } from "./production-firmware.js";
 import type { DigifabDB } from "./db.js";
 import { PrepareAttempt, ProductionUnitRef, saveProductionPlan, prepareProductionAttempt, finishProductionAttempt, verifyProductionResult, productionUnitHistory } from "./production-store.js";
 import { NewProductionUnit, NewProductionJig, mintProductionUnit, saveProductionJig, reconcileProductionJig } from "./production-records.js";
@@ -72,7 +74,7 @@ export async function syncProductionAttempt(db: Kysely<DigifabDB>, orgId: string
   const reply = await call("result", { id }) as { result?: ProductionTestResult; files?: Record<string, { data_b64: string; filename: string; mime_type: string; sha256: string }> };
   if (!reply.result) throw new Error("Finish or abort this attempt on its bridge before syncing.");
   const result = JSON.parse(JSON.stringify(reply.result)) as ProductionTestResult;
-  verifyProductionResult(row.plan, result);
+  verifyProductionResult(row.plan, result, { serial: typeof row.unit_snapshot?.serial === "string" ? row.unit_snapshot.serial : null });
   for (const step of result.steps) for (const attachment of step.attachments ?? []) {
    const file = reply.files?.[attachment.id]; if (!file) throw new Error("Keep every capture, photo and report on the bridge until it syncs.");
    const bytes = Buffer.from(file.data_b64, "base64");
@@ -95,6 +97,8 @@ export async function projectProductionUnit(db: Kysely<DigifabDB>, orgId: string
   const history = await productionUnitHistory(trx, unit), latest = history.runs[0];
   const registered = await trx.selectFrom("digifab_test_units").selectAll().where("unit_kind", "=", unit.kind).where("unit_id", "=", unit.id).executeTakeFirstOrThrow();
   const serial = latest?.result?.steps.find(s => s.serial)?.serial, firmware_hash = latest?.result?.steps.find(s => s.firmware_hash)?.firmware_hash;
+  // Where this unit's serial was written on the board, as read back after writing.
+  const written = latest?.result?.steps.find(s => s.result === "pass" && s.unit_write)?.unit_write;
   const writer = await platform().entities.getWriter(orgId, unit.kind); if (!writer?.mergeMetadata) throw new Error("Keep the serialized unit's writer available to save its latest test status.");
   if (serial && serial !== registered.serial) {
    await sql`select pg_advisory_xact_lock(hashtext(${`production-serial:${registered.product_kind}:${registered.product_id}`}))`.execute(trx);
@@ -105,12 +109,19 @@ export async function projectProductionUnit(db: Kysely<DigifabDB>, orgId: string
    await trx.updateTable("digifab_test_units").set({ serial }).where("unit_kind", "=", unit.kind).where("unit_id", "=", unit.id).execute();
   }
   if (firmware_hash) await trx.updateTable("digifab_test_units").set({ details: { ...registered.details, firmware_hash } }).where("unit_kind", "=", unit.kind).where("unit_id", "=", unit.id).execute();
-  await writer.mergeMetadata(orgId, unit.id, { production_status: history.status, last_test_run: latest?.id ?? null, last_test_attempt: latest?.attempt ?? 0, ...(latest?.result?.steps.some(s => s.firmware_hash) ? { firmware_hash: latest.result.steps.find(s => s.firmware_hash)!.firmware_hash } : {}) });
+  await writer.mergeMetadata(orgId, unit.id, { production_status: history.status, last_test_run: latest?.id ?? null, last_test_attempt: latest?.attempt ?? 0, ...(latest?.result?.steps.some(s => s.firmware_hash) ? { firmware_hash: latest.result.steps.find(s => s.firmware_hash)!.firmware_hash } : {}), ...(written ? { serial_written: { address: written.address, memory: written.memory } } : {}) });
  });
+}
+/** What a probe step does to the board, as the Start card says it. */
+function probeLine(step: Extract<ProductionStep, { kind: "probe" }>): string {
+ const action = step.action;
+ if (action.op === "write") return `Write ${action.value} to 0x${action.address.toString(16)} over ${step.tool}`;
+ if (action.op === "reset") return `Reset the board${action.halt ? " and halt it" : ""} over ${step.tool}`;
+ return `Run the board's test firmware over ${step.tool}`;
 }
 export async function productionMutation(db: Kysely<DigifabDB>, orgId: string, userId: string, operation: string, fields: unknown) {
  if (["save_plan", "save_jig", "mint_unit"].includes(operation) && !await platform().auth.userHasRole({ orgId, userId, minRole: "admin" })) throw new Error("An admin must edit plans, fixtures or unit numbering.");
- if (operation === "save_plan") { const input = z.object({ id: uuid.optional(), plan: z.unknown() }).strict().parse(fields), plan = validateProductionPlan(input.plan); for (const ref of [plan.product, plan.board_revision, plan.customer].filter(Boolean)) if (!await platform().entities.lookup(orgId, ref!.kind, ref!.id)) throw new Error("Choose a product, revision and customer in this workspace."); return saveProductionPlan(db, plan, input.id); }
+ if (operation === "save_plan") { const input = z.object({ id: uuid.optional(), plan: z.unknown() }).strict().parse(fields), plan = validateProductionPlan(await pinProgramImages(orgId, input.plan)); for (const ref of [plan.product, plan.board_revision, plan.customer].filter(Boolean)) if (!await platform().entities.lookup(orgId, ref!.kind, ref!.id)) throw new Error("Choose a product, revision and customer in this workspace."); return saveProductionPlan(db, plan, input.id); }
  if (operation === "save_jig") return saveProductionJig(db, orgId, NewProductionJig.parse(fields));
  if (operation === "mint_unit") return mintProductionUnit(db, orgId, userId, NewProductionUnit.parse(fields));
  if (operation === "prepare") return prepareProductionStation(db, orgId, userId, fields);
@@ -193,7 +204,7 @@ export function registerProductionTest() {
  }
  platform().actions.registerPlanner("digifab.production-control", async ctx => {
   const args = ctx.args ?? {}, fields = readJsonArg<Record<string, unknown>>(args, "fields") ?? {};
-  try { const db = await platform().tenants.getDb(ctx.orgId) as Kysely<DigifabDB>, row = await db.selectFrom("digifab_test_runs").selectAll().where("id", "=", uuid.parse(fields.id)).executeTakeFirstOrThrow(); return { title: `${args.operation === "answer" ? "Record an answer for" : "Start"} ${row.plan.name}`, lines: [`Exact version ${row.plan_version}, attempt ${row.attempt}`, `${row.plan.steps.length} steps; all declared supplies turn off at the end`, ...row.plan.steps.filter(s => s.kind === "program").map(s => `Program firmware ${s.kind === "program" ? s.firmware.sha256 : ""}`)] }; } catch { return { error: "Choose an existing production attempt." }; }
+  try { const db = await platform().tenants.getDb(ctx.orgId) as Kysely<DigifabDB>, row = await db.selectFrom("digifab_test_runs").selectAll().where("id", "=", uuid.parse(fields.id)).executeTakeFirstOrThrow(); return { title: `${args.operation === "answer" ? "Record an answer for" : "Start"} ${row.plan.name}`, lines: [`Exact version ${row.plan_version}, attempt ${row.attempt}`, `${countOf(row.plan.steps.length, "step")}; all declared supplies turn off at the end`, ...row.plan.steps.flatMap(s => s.kind === "program" ? [`Program firmware ${s.firmware.sha256}`] : s.kind === "probe" && stepChangesHardware(s) ? [probeLine(s)] : [])] }; } catch { return { error: "Choose an existing production attempt." }; }
  });
  platform().entities.registerResolver("digifab:test-run", async (orgId, id) => {
   const db = await platform().tenants.getDb(orgId) as Kysely<DigifabDB>, row = await db.selectFrom("digifab_test_runs").selectAll().where("id", "=", id).executeTakeFirst();

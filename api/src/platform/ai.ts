@@ -26,12 +26,15 @@ import type {
   AiReportedModels,
   PlatformAi,
 } from "@cobblr/platform-contract";
-import { AI_JOB_PRIVACY, aiCapabilityChain, isChatTurn, isFloatingModel, type AiChainStep } from "@cobblr/platform-contract";
-import { ladderWithoutRedirects, servedModelOf } from "@cobblr/platform-contract/ai-models";
+import { AI_JOB_PRIVACY, aiCapabilityChain, aiDefaultJobOf, aiJobOf, isChatTurn, isFloatingModel, type AiChainStep } from "@cobblr/platform-contract";
+import { ladderWithoutRedirects, servedModelOf, type AiModelChoice } from "@cobblr/platform-contract/ai-models";
 import { getTenantDb } from "../db/tenant.js";
 import { meta } from "../db/meta.js";
 import * as integrationsImpl from "./integrations.js";
 import { resolvePersonalProvider, type ResolvedPersonalProvider } from "./user-credentials.js";
+import { myAiConnection, myAiJobSteps, type MyAiJobStep } from "./ai-job-defaults.js";
+import { workspaceAiJobSteps, type WorkspaceAiJobStep } from "./workspace-ai-job-steps.js";
+import { personalDocumentsReader, type PersonalDocumentsReader } from "./personal-documents-reader-store.js";
 import { signMcpReadGrant } from "../auth/jwt.js";
 import { mcpRelayUrl } from "./public-url.js";
 import { env } from "../env.js";
@@ -470,6 +473,19 @@ export async function checkAvailability(
   capability: AiCapability = "chat",
 ): Promise<{ available: boolean; reason: AiAvailabilityReason; source?: AiSource }> {
   if (!env.COBBLR_AI_ENABLED) return { available: false, reason: "operator_disabled" };
+  // The person's own defaults for the job, where the workspace chose nothing
+  // for it: the router asks exactly those, so they alone decide (#5404).
+  const myJob = aiDefaultJobOf(capability);
+  if (userId && myJob && !(await workspaceJobChoice(orgId, capability))) {
+    const steps = await myAiJobSteps(userId, myJob);
+    if (steps.length) {
+      const usable = steps.some((s) => {
+        const def = s.connection ? providers.get(s.connection.providerId) : undefined;
+        return !!def && aiCapabilityChain(capability).some((c) => def.capabilities[c]);
+      });
+      return usable ? { available: true, reason: "ok", source: "personal" } : { available: false, reason: "no_provider" };
+    }
+  }
   // A user's OWN personal connection always works — it's their key, not the
   // workspace's — so it wins even when the workspace turned shared AI off.
   const personal = await resolvePersonalProvider(
@@ -525,6 +541,10 @@ const MAX_PROVIDERS_PER_CALL = 3;
  *  kind are two different doors. */
 interface TriedProvider extends AiAttempt {
   rowId: string;
+  /** The model the step named, when the call sent another: a family's
+   *  latest is asked as the version it means now, and a person's step is
+   *  matched by what it named. */
+  requested?: string;
 }
 
 /** What a person reads for the connection that served (or was asked for)
@@ -563,7 +583,7 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
     const classified = await readPersonalDocument({ bytes: Buffer.from(req.input.image_b64, "base64"), mime: String(req.input.image_media_type || "image/jpeg") });
     if (classified.privacy === "personal") throw aiRefusal("no_provider", "This is a personal document. Read it with Personal documents in the scan inbox; it cannot use the ordinary vision job.");
   }
-  const { result: r, asked: tried, current } = await askInOrder<TriedProvider, { rowId?: string; providerId?: string; model?: string; label?: string }, Awaited<ReturnType<typeof invokeRaw>>>({
+  const { result: r, asked: tried, current } = await askInOrder<TriedProvider, { rowId?: string; providerId?: string; model?: string; requested?: string; label?: string }, Awaited<ReturnType<typeof invokeRaw>>>({
     max: MAX_PROVIDERS_PER_CALL,
     newCurrent: () => ({}),
     attempt: (asked, current) => invokeRaw(req, asked, current),
@@ -574,6 +594,7 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
             provider_id: current.providerId ?? "",
             label: current.label ?? labelOf(current.providerId ?? ""),
             model: current.model ?? "",
+            ...(current.requested && current.requested !== current.model ? { requested: current.requested } : {}),
             reason: providerReasonOf(err) ?? "unknown",
           }
         : null,
@@ -581,7 +602,7 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
     isCandidateFailure: (err) => refusalCodeOf(err) === "provider_error",
     finish: (err, asked) => withAttempts(err, [...asked]),
   });
-  const answered_after = tried.length ? tried.map(({ rowId: _rowId, ...a }) => a) : undefined;
+  const answered_after = tried.length ? tried.map(({ rowId: _rowId, requested: _requested, ...a }) => a) : undefined;
   if (answered_after) {
     console.warn(
       `[ai] ${req.capability} answered by ${r.provider_id}/${r.model} after ${answered_after.map((a) => `${a.provider_id}/${a.model} (${a.reason})`).join(", ")}`,
@@ -627,7 +648,7 @@ export function setBusyRetryDelaysForTest(delays: readonly number[]): void {
 async function nextCandidate(
   req: Pick<Parameters<PlatformAi["invoke"]>[0], "orgId" | "userId" | "capability" | "provider_id" | "model" | "credential_id" | "costPolicy" | "privacy">,
   tried: readonly TriedProvider[],
-): Promise<{ row: ProviderRow; model: string; picked: boolean; personalCredentials?: Record<string, unknown>; personal: ResolvedPersonalProvider | null }> {
+): Promise<{ row: ProviderRow; model: string; picked: boolean; personalCredentials?: Record<string, unknown>; personal: ResolvedPersonalProvider | null; fromYourDefaults?: true; fromWorkspace?: true }> {
   const triedPersonal = new Set(tried.filter((t) => t.rowId.startsWith("personal:")).map((t) => t.rowId.slice("personal:".length)));
   const triedWorkspace = new Set(tried.filter((t) => !t.rowId.startsWith("personal:")).map((t) => t.provider_id));
   const personalDocument = req.privacy === "personal" || AI_JOB_PRIVACY[req.capability] === "personal";
@@ -641,6 +662,14 @@ async function nextCandidate(
   // (the ai:false contract) handles it with no per-feature changes.
   if (!env.COBBLR_AI_ENABLED) {
     throw aiRefusal("operator_disabled", "no provider configured: AI features are disabled for this instance (COBBLR_AI_ENABLED=false)");
+  }
+  // A workspace whose owner consented to one cloud connection reading its
+  // personal documents (#5621) asks exactly that one first; when it cannot
+  // answer, the read stays on this machine. No other cloud is ever asked.
+  if (personalDocument && !req.provider_id && !req.credential_id) {
+    const reader = await personalDocumentsReader(req.orgId);
+    const consented = reader ? await consentedReaderCandidate(req, reader, tried) : null;
+    if (consented) return consented;
   }
   // Personal (user-scoped) connections — DEFAULT-OFF. When the caller hasn't
   // forced a provider, a credential the user (or a member, per its routing
@@ -664,6 +693,27 @@ async function nextCandidate(
   // not consulted at all.
   const choseWorkspaceProvider =
     !req.credential_id && !!choice && !choice.credentialId && !!choice.providerId && !triedWorkspace.has(choice.providerId);
+  // The workspace's own order for the job (#5622), set on the AI page: below
+  // an exact pin for this capability and anything the call said, above a
+  // person's own defaults. When it set one, the call asks exactly those
+  // steps and nothing else.
+  if (!req.provider_id && !req.credential_id && !choice) {
+    const wsSteps = await workspaceAiJobSteps(req.orgId, aiJobOf(req.capability).id);
+    const free = req.costPolicy !== "free" || wsSteps.some((s) => providers.get(s.providerId)?.freeBackground);
+    if (wsSteps.length && free) return workspaceStepsCandidate(req, wsSteps, tried, personalDocument);
+  }
+  // The caller's OWN defaults for the job (#5404): below anything the call or
+  // the workspace said, above every default nobody chose. When they set any,
+  // the call asks exactly their steps and nothing else.
+  const myJob = personalDocument ? null : aiDefaultJobOf(req.capability);
+  if (!req.provider_id && !req.credential_id && !choice && req.userId && myJob) {
+    const steps = await myAiJobSteps(req.userId, myJob);
+    // Work that must cost nothing (a background read on the free tier) is
+    // the caller's constraint, not the person's choice: it uses their steps
+    // when one of them is free, and otherwise the free path it always took.
+    const free = req.costPolicy !== "free" || steps.some((s) => s.connection && providers.get(s.connection.providerId)?.freeBackground);
+    if (steps.length && free) return yourDefaultsCandidate(req, steps, tried);
+  }
   if (!req.provider_id && !choseWorkspaceProvider) {
     const personal = await resolvePersonalProvider(
       req.orgId,
@@ -737,6 +787,179 @@ async function nextCandidate(
   return { row, model: req.costPolicy === "free" ? providers.get(row.provider_id)?.freeBackgroundModel || model : model, picked, personalCredentials, personal: personalServed };
 }
 
+/** The model a person's step asks for this capability: theirs, when the
+ *  connection serves it for this job (declared, or the connection lists its
+ *  own models), and the provider's own default otherwise, as a workspace's
+ *  choice for chat leaves planning to the fuller model. A family's latest or
+ *  a version of a provider that lists its models goes on as picked: the call
+ *  asks the listing what it means (concreteModel in invokeRaw), the same way
+ *  a workspace's choice is resolved, so a latest moves and a retired pin
+ *  heals and is said. */
+function stepModel(def: AiProviderDef, capability: AiCapability, model: string): { model: string; picked: boolean } | null {
+  for (const served of aiCapabilityChain(capability)) {
+    const cap = def.capabilities[served];
+    if (!cap) continue;
+    if (cap.models.includes(model) || def.listModels || def.modelCatalog?.familyOfLatest(model) || def.modelCatalog?.parse(model)) return { model, picked: true };
+    const fallback = cap.defaultModel ?? cap.models[0];
+    return fallback ? { model: fallback, picked: false } : null;
+  }
+  return null;
+}
+
+/** The next of the caller's own steps for this job not yet asked on this
+ *  call. A step whose connection is gone or cannot do this job is passed
+ *  over; when none is left the call is refused, naming the job, and is
+ *  never answered by something the person did not pick. */
+function yourDefaultsCandidate(
+  req: Pick<Parameters<PlatformAi["invoke"]>[0], "userId" | "capability" | "costPolicy">,
+  steps: readonly MyAiJobStep[],
+  tried: readonly TriedProvider[],
+): { row: ProviderRow; model: string; picked: boolean; personalCredentials?: Record<string, unknown>; personal: ResolvedPersonalProvider | null; fromYourDefaults: true } {
+  const job = aiJobOf(req.capability);
+  const why: string[] = [];
+  for (const s of steps) {
+    const c = s.connection;
+    if (!c) {
+      why.push(`a connection that can no longer be used (${s.model})`);
+      continue;
+    }
+    const def = providers.get(c.providerId);
+    const name = c.label?.trim() || labelOf(c.providerId);
+    const m = def ? stepModel(def, req.capability, s.model) : null;
+    if (!def || !m) {
+      why.push(`${name} can't do this job`);
+      continue;
+    }
+    const rowId = `personal:${c.credentialId}`;
+    const model = req.costPolicy === "free" ? def.freeBackgroundModel || m.model : m.model;
+    const asked = tried.find((t) => t.rowId === rowId && [t.model, t.requested].some((x) => x === m.model || x === model));
+    if (asked) {
+      why.push(`${name} · ${asked.model} (${asked.reason})`);
+      continue;
+    }
+    if (req.costPolicy === "free" && !def.freeBackground) {
+      why.push(`${name} is not free to use for background work`);
+      continue;
+    }
+    return {
+      row: { id: rowId, provider_id: c.providerId, credentials_enc: "", enabled: true, config: {}, label: c.label },
+      model,
+      picked: m.picked,
+      personalCredentials: c.credentials,
+      personal: c,
+      fromYourDefaults: true,
+    };
+  }
+  throw aiRefusal("no_provider", `None of your defaults for ${job.title} could answer: ${why.join("; ") || "none is set"}.`);
+}
+
+/** The cloud connection a workspace's owner consented to for personal
+ *  documents (#5621), when it can answer this call: still routed here and
+ *  usable by this caller, able to read a document, not yet asked. Null
+ *  otherwise, and the read goes on to this machine's own readers. */
+async function consentedReaderCandidate(
+  req: Pick<Parameters<PlatformAi["invoke"]>[0], "orgId" | "userId" | "capability" | "costPolicy">,
+  reader: PersonalDocumentsReader,
+  tried: readonly TriedProvider[],
+): Promise<{ row: ProviderRow; model: string; picked: boolean; personalCredentials?: Record<string, unknown>; personal: ResolvedPersonalProvider | null } | null> {
+  const def = providers.get(reader.providerId);
+  if (!def) return null;
+  const served = aiCapabilityChain(req.capability).find((cap) => def.capabilities[cap]);
+  const cap = served ? def.capabilities[served] : undefined;
+  const model = cap?.defaultModel ?? cap?.models[0];
+  if (!model) return null;
+  if (reader.credentialId) {
+    const personal = await resolvePersonalProvider(req.orgId, req.userId ?? null, (pid) => pid === reader.providerId, "ai-provider", req.capability, reader.credentialId).catch(() => null);
+    if (!personal || personal.credentialId !== reader.credentialId) return null;
+    const rowId = `personal:${personal.credentialId}`;
+    if (tried.some((t) => t.rowId === rowId)) return null;
+    return {
+      row: { id: rowId, provider_id: personal.providerId, credentials_enc: "", enabled: true, config: {}, label: req.userId && personal.ownerUserId === req.userId ? personal.label : null },
+      model,
+      picked: false,
+      personalCredentials: personal.credentials,
+      personal,
+    };
+  }
+  const tdb = (await getTenantDb(req.orgId)) as unknown as {
+    selectFrom: (t: string) => { selectAll: () => { where: (c: string, o: string, v: unknown) => { where: (c: string, o: string, v: unknown) => { executeTakeFirst: () => Promise<ProviderRow | undefined> } } } };
+  };
+  const row = await tdb.selectFrom("core_ai_providers").selectAll().where("provider_id", "=", reader.providerId).where("enabled", "=", true).executeTakeFirst().catch(() => undefined);
+  if (!row || tried.some((t) => t.rowId === row.id)) return null;
+  return { row, model, picked: false, personal: null };
+}
+
+/** True when this row is the one the workspace's owner consented to. */
+function isConsentedReader(row: Pick<ProviderRow, "id" | "provider_id">, reader: PersonalDocumentsReader | null): boolean {
+  if (!reader) return false;
+  return reader.credentialId ? row.id === `personal:${reader.credentialId}` : !String(row.id).startsWith("personal:") && row.provider_id === reader.providerId;
+}
+
+/** The next of the workspace's own steps for this job not yet asked on this
+ *  call (#5622). A personal connection is asked only when this caller may
+ *  use it here (a "Just me" connection answers its owner's calls only); a
+ *  step that cannot answer is passed over, and when none is left the call is
+ *  refused naming the job, never answered by something nobody picked. */
+async function workspaceStepsCandidate(
+  req: Pick<Parameters<PlatformAi["invoke"]>[0], "orgId" | "userId" | "capability" | "costPolicy">,
+  steps: readonly WorkspaceAiJobStep[],
+  tried: readonly TriedProvider[],
+  personalDocument: boolean,
+): Promise<{ row: ProviderRow; model: string; picked: boolean; personalCredentials?: Record<string, unknown>; personal: ResolvedPersonalProvider | null; fromWorkspace: true }> {
+  const job = aiJobOf(req.capability);
+  const why: string[] = [];
+  const doesJob = (pid: string) => aiCapabilityChain(req.capability).some((cap) => !!providers.get(pid)?.capabilities[cap]) && (!personalDocument || providers.get(pid)?.locality === "local");
+  for (const s of steps) {
+    const def = providers.get(s.providerId);
+    const fallbackName = labelOf(s.providerId);
+    if (!def || !doesJob(s.providerId)) {
+      why.push(`${fallbackName} can't do this job`);
+      continue;
+    }
+    const m = stepModel(def, req.capability, s.model);
+    if (!m) {
+      why.push(`${fallbackName} can't do this job`);
+      continue;
+    }
+    const model = req.costPolicy === "free" ? def.freeBackgroundModel || m.model : m.model;
+    let candidate: { row: ProviderRow; personalCredentials?: Record<string, unknown>; personal: ResolvedPersonalProvider | null };
+    if (s.credentialId) {
+      const personal = await resolvePersonalProvider(req.orgId, req.userId ?? null, doesJob, "ai-provider", req.capability, s.credentialId).catch(() => null);
+      if (!personal || personal.credentialId !== s.credentialId) {
+        why.push(`${fallbackName} (a connection this call may not use here)`);
+        continue;
+      }
+      candidate = {
+        row: { id: `personal:${personal.credentialId}`, provider_id: personal.providerId, credentials_enc: "", enabled: true, config: {}, label: req.userId && personal.ownerUserId === req.userId ? personal.label : null },
+        personalCredentials: personal.credentials,
+        personal,
+      };
+    } else {
+      const tdb = (await getTenantDb(req.orgId)) as unknown as {
+        selectFrom: (t: string) => { selectAll: () => { where: (c: string, o: string, v: unknown) => { where: (c: string, o: string, v: unknown) => { executeTakeFirst: () => Promise<ProviderRow | undefined> } } } };
+      };
+      const row = await tdb.selectFrom("core_ai_providers").selectAll().where("provider_id", "=", s.providerId).where("enabled", "=", true).executeTakeFirst();
+      if (!row) {
+        why.push(`${fallbackName} is no longer set up here`);
+        continue;
+      }
+      candidate = { row, personal: null };
+    }
+    const name = nameOf(candidate.row);
+    const asked = tried.find((t) => t.rowId === candidate.row.id && [t.model, t.requested].some((x) => x === m.model || x === model));
+    if (asked) {
+      why.push(`${name} · ${asked.model} (${asked.reason})`);
+      continue;
+    }
+    if (req.costPolicy === "free" && !def.freeBackground) {
+      why.push(`${name} is not free to use for background work`);
+      continue;
+    }
+    return { ...candidate, model, picked: m.picked, fromWorkspace: true };
+  }
+  throw aiRefusal("no_provider", `None of this workspace's choices for ${job.title} could answer: ${why.join("; ") || "none is set"}.`);
+}
+
 export type { AiChainStep } from "@cobblr/platform-contract";
 
 /** Every provider a call for `capability` would ask, in the order it asks
@@ -781,8 +1004,11 @@ export async function aiChainFor(
           source: isPersonal ? (personal && userId && personal.ownerUserId === userId ? "yours" : "shared") : String(row.id).startsWith("virtual:") ? "managed" : "workspace",
           ...(isPersonal && personal ? { credential_id: personal.credentialId, owner_user_id: personal.ownerUserId } : {}),
           ...(!isPersonal && !String(row.id).startsWith("virtual:") ? { provider_row_id: row.id } : {}),
+          ...(next.fromYourDefaults ? { your_default: true as const } : {}),
         },
-        asked: { rowId: row.id, provider_id: row.provider_id, label: nameOf(row), model, reason: "busy" },
+        // The router's own model, not the one shown: it is what the next
+        // step is excluded by (a person's steps are told apart by model).
+        asked: { rowId: row.id, provider_id: row.provider_id, label: nameOf(row), model: next.model, reason: "busy" },
       };
     },
   });
@@ -795,7 +1021,7 @@ export async function aiChainFor(
 const invokeRaw = async (
   req: Parameters<PlatformAi["invoke"]>[0],
   tried: readonly TriedProvider[] = [],
-  current: { rowId?: string; providerId?: string; model?: string; label?: string } = {},
+  current: { rowId?: string; providerId?: string; model?: string; requested?: string; label?: string } = {},
 ): Promise<Omit<Awaited<ReturnType<PlatformAi["invoke"]>>, "text">> => {
   const next = await nextCandidate(req, tried);
   const { row, picked } = next;
@@ -805,7 +1031,11 @@ const invokeRaw = async (
   // one of them names the model the call actually sends (#5417).
   const requestedModel = next.model;
   let model = requestedModel;
-  const catalog = req.privacy === "personal" ? undefined : providers.get(row.provider_id)?.modelCatalog;
+  // A local reader of a personal document is never asked to list its models;
+  // a consented cloud reader resolves its latest like any call (#5621).
+  const consentedReader = req.privacy === "personal" ? await personalDocumentsReader(req.orgId) : null;
+  const cloudPersonal = req.privacy === "personal" && isConsentedReader(row, consentedReader);
+  const catalog = req.privacy === "personal" && !cloudPersonal ? undefined : providers.get(row.provider_id)?.modelCatalog;
   let listedCredentials: Record<string, unknown> | undefined;
   const concrete = async (fresh: boolean): Promise<string> => {
     listedCredentials ??= personalCredentials ?? (row.credentials_enc ? await integrationsImpl.decryptCredentials(req.orgId, row.credentials_enc) : {});
@@ -827,19 +1057,20 @@ const invokeRaw = async (
   current.rowId = row.id;
   current.providerId = row.provider_id;
   current.model = model;
+  current.requested = requestedModel;
   current.label = nameOf(row);
 
   if (req.privacy === "personal") {
     const def = providers.get(row.provider_id)!;
     const credentials = personalCredentials ?? (row.credentials_enc ? await integrationsImpl.decryptCredentials(req.orgId, row.credentials_enc) : {});
-    if (def.locality !== "local" || credentials.mcp_relay === "bridge") throw aiRefusal("no_provider", "Personal documents can only be read by a local model.");
+    if (!cloudPersonal && (def.locality !== "local" || credentials.mcp_relay === "bridge")) throw aiRefusal("no_provider", "Personal documents can only be read by a local model.");
     const start = Date.now();
     try {
       const payload = await def.invoke({ orgId: req.orgId, rowId: row.id, capability: aiCapabilityChain(req.capability).find((cap) => def.capabilities[cap]) ?? req.capability, model,
         privacy: "personal", credentials, input: req.input, config: { ...(row.config ?? {}), ...(req.config ?? {}) } });
       return { ...payload, result: payload.result, provider_id: row.provider_id, model, cached: false, duration_ms: Date.now() - start };
     } catch (error) {
-      throw aiRefusal("provider_error", "Your local AI could not read this document. The values read by code are still available.",
+      throw aiRefusal("provider_error", `${cloudPersonal ? nameOf(row) : "Your local AI"} could not read this document. The values read by code are still available.`,
         { reason: providerReasonOf(error), providerId: row.provider_id, model });
     }
   }
@@ -1091,7 +1322,11 @@ const invokeRaw = async (
     payload = await def.invoke({
       orgId: req.orgId,
       rowId: row.id,
-      capability: req.capability,
+      // The job as the provider knows it: one written before a job was split
+      // out of chat (organise, read-document-text) answers it through its
+      // chat, the call it always made. A chat turn keeps its own id, which
+      // every adapter reads through isChatTurn.
+      capability: def.capabilities[req.capability] || isChatTurn(req.capability) ? req.capability : (aiCapabilityChain(req.capability).find((cap) => def.capabilities[cap]) ?? req.capability),
       model: sent,
       credentials,
       input: req.input,
@@ -1366,6 +1601,109 @@ export async function modelsReportedBy(
   }
   reported.set(key, { at: Date.now(), value });
   return value;
+}
+
+/** What one of a person's OWN connections can do a job with, for their
+ *  defaults (#5404): no workspace is involved, so it reads the connection
+ *  directly. The job's capability must be one the provider declares (a
+ *  text-only provider never serves Reading photos). A provider that lists
+ *  its models answers from its live listing, each family's latest first and
+ *  then the versions to pin, the same answer a workspace's job picker gets
+ *  (#5417); one that reports what it serves answers with that; any other
+ *  with the adapter's list. */
+export async function modelsOfMyConnection(
+  userId: string,
+  credentialId: string,
+  capability: AiCapability,
+  opts: { fresh?: boolean } = {},
+): Promise<ConnectionModels> {
+  const c = await myAiConnection(userId, credentialId);
+  if (!c) return { ok: false, code: "not_yours", message: "That isn't one of your AI connections." };
+  return modelsOfConnection(c.providerId, c.credentials, c.label, { catalogKey: `user:${credentialId}`, listKey: `me|${credentialId}` }, capability, opts);
+}
+
+export type ConnectionModels =
+  | { ok: true; providerId: string; label: string; models: string[]; defaultModel: string | null; choices?: AiModelChoice[]; fallback?: string }
+  | { ok: false; code: "not_yours" | "cannot_do_job" | "models_unlisted"; message: string };
+
+/** What a connection a WORKSPACE may name can do a job with (#5622): one of
+ *  its own providers, or a personal connection routed here that this caller
+ *  may use. The same answer a person's own picker gets, from the listing the
+ *  workspace's calls use. */
+export async function modelsOfWorkspaceConnection(
+  orgId: string,
+  userId: string | null,
+  ref: { credentialId: string } | { providerId: string },
+  capability: AiCapability,
+  opts: { fresh?: boolean } = {},
+): Promise<ConnectionModels> {
+  if ("credentialId" in ref) {
+    const personal = await resolvePersonalProvider(orgId, userId, () => true, "ai-provider", capability, ref.credentialId).catch(() => null);
+    if (!personal || personal.credentialId !== ref.credentialId) return { ok: false, code: "not_yours", message: "That connection is not one this workspace can use." };
+    const key = listingKey(orgId, { credentialId: ref.credentialId, providerId: personal.providerId });
+    const name = userId && personal.ownerUserId === userId ? personal.label : null;
+    return modelsOfConnection(personal.providerId, personal.credentials, name, { catalogKey: key, listKey: key }, capability, opts);
+  }
+  const tdb = (await getTenantDb(orgId)) as unknown as {
+    selectFrom: (t: string) => {
+      select: (c: string[]) => { where: (c: string, op: string, v: unknown) => { where: (c: string, op: string, v: unknown) => { executeTakeFirst: () => Promise<{ credentials_enc: string | null; label?: string | null } | undefined> } } };
+    };
+  };
+  const row = await tdb.selectFrom("core_ai_providers").select(["credentials_enc", "label"]).where("provider_id", "=", ref.providerId).where("enabled", "=", true).executeTakeFirst();
+  if (!row) return { ok: false, code: "not_yours", message: "That provider is not set up in this workspace." };
+  const credentials = row.credentials_enc ? await integrationsImpl.decryptCredentials(orgId, row.credentials_enc) : {};
+  const key = listingKey(orgId, { credentialId: null, providerId: ref.providerId });
+  return modelsOfConnection(ref.providerId, credentials, row.label ?? null, { catalogKey: key, listKey: key }, capability, opts);
+}
+
+/** A provider that lists its models answers from its live listing, each
+ *  family's latest first and then the versions to pin (#5417); one that
+ *  reports what it serves answers with that; any other with the adapter's
+ *  list. The job's capability must be one the provider declares. */
+async function modelsOfConnection(
+  providerId: string,
+  credentials: Record<string, unknown>,
+  label: string | null,
+  keys: { catalogKey: string; listKey: string },
+  capability: AiCapability,
+  opts: { fresh?: boolean },
+): Promise<ConnectionModels> {
+  const def = providers.get(providerId);
+  const name = label?.trim() || labelOf(providerId);
+  const cap = def ? aiCapabilityChain(capability).map((x) => def.capabilities[x]).find(Boolean) : undefined;
+  if (!def || !cap) return { ok: false, code: "cannot_do_job", message: `${name} can't do ${aiJobOf(capability).phrase}.` };
+  const preferred = (models: string[]) => (cap.defaultModel && models.includes(cap.defaultModel) ? cap.defaultModel : (models[0] ?? null));
+  if (def.modelCatalog) {
+    const answer = await connectionModelChoices({ key: keys.catalogKey, catalog: def.modelCatalog, credentials, capability, fresh: opts.fresh });
+    if (!answer.ok || !answer.choices?.length) return { ok: false, code: "cannot_do_job", message: `${name} lists no model that can do ${aiJobOf(capability).phrase}.` };
+    return {
+      ok: true,
+      providerId,
+      label: name,
+      models: answer.models,
+      defaultModel: preferred(answer.models),
+      choices: answer.choices,
+      ...(answer.fallback ? { fallback: answer.fallback } : {}),
+    };
+  }
+  let models = cap.models;
+  if (def.listModels) {
+    const hit = reported.get(keys.listKey);
+    let value: AiReportedModels;
+    if (hit && !opts.fresh && Date.now() - hit.at < REPORTED_TTL_MS) value = hit.value;
+    else {
+      try {
+        const live = await def.listModels(credentials);
+        value = { ok: true, models: [...new Set([...live, ...pinnedOf(credentials)])] };
+      } catch (err) {
+        value = { ok: false, error: redactSecrets((err as Error)?.message ?? String(err), Object.values(credentials)), models: pinnedOf(credentials) };
+      }
+      reported.set(keys.listKey, { at: Date.now(), value });
+    }
+    if (!value.ok && !value.models.length) return { ok: false, code: "models_unlisted", message: `Couldn't ask ${name} which models it serves: ${value.error}` };
+    models = value.models;
+  }
+  return { ok: true, providerId, label: name, models, defaultModel: preferred(models) };
 }
 
 /**

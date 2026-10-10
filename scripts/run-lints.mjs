@@ -24,8 +24,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultConcurrency, runParallel } from "./lib/parallel.mjs";
 import { lintCommand } from "./lib/lint-command.mjs";
+import { fetchManifests, latestPasses, lintClosure, lintContext, lintVerdictKey, mergeManifest } from "./lib/lint-verdicts.mjs";
+import { record as recordVerdicts, recordShadow } from "./lib/verdict-cache.mjs";
 import { CEILING_MS, quietFor, judgeRun, ioPressure, IO_CONTENDED_AT, cpuPressure, CPU_CONTENDED_AT, overReadBudget } from "./lib/lint-budget.mjs";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -69,7 +71,7 @@ function runOne(rawName, args) {
   }
 }
 
-function main() {
+async function main() {
   const oneArg = process.argv.indexOf("--one");
   if (oneArg !== -1) {
     // `pnpm lint no-emdash -- --update`: pnpm passes the separator through.
@@ -95,8 +97,61 @@ function main() {
     return;
   }
 
+  // THE VERDICT CACHE (#4303, lib/lint-verdicts.mjs): a lint whose every observation (what it read,
+  // listed, globbed, probed, asked git, read from the environment) is as it was when it last passed is
+  // not run again; the log names the run. CI only, never --record or --only. A scheduled or dispatched
+  // run (the release's) runs every lint (COBBLR_VERDICT_CACHE=off) and reports any it would have reused
+  // that failed: a shadow miss. Fails open: no store, a dirty tree, any error, and every lint runs.
+  // OFF unless COBBLR_LINT_VERDICTS=on (2026-10-10): on main's lane its keying took 644 s, fetching
+  // hundreds of megabytes of manifests, and reused 10 of 475, making the typecheck job 31 minutes.
+  // The unit suite's cache is unaffected.
+  const cacheOn = (process.env.CI || process.env.COBBLR_VERDICT_FORCE) && process.env.COBBLR_LINT_VERDICTS === "on" && !record && !only;
+  const shadow = process.env.COBBLR_VERDICT_CACHE === "off";
+  let vctx = null;
+  const closures = new Map();
+  /** @type {Map<string, string>} lint -> the run its reusable pass came from */
+  const reusable = new Map();
+  let reusedNames = [];
+  if (cacheOn) {
+    vctx = lintContext(ROOT);
+    if (!vctx) console.log("[verdicts] off: the working tree's tracked files differ from HEAD");
+    else {
+      const t0 = Date.now();
+      for (const n of names) closures.set(n, lintClosure(scripts[n], vctx));
+      const latest = await latestPasses(names);
+      const manifests = await fetchManifests(Object.values(latest).flat().map((p) => p.manifest), { dir: process.env.COBBLR_VERDICT_MANIFESTS || (existsSync("/ts-cache") ? "/ts-cache/lint-manifests" : undefined) });
+      for (const n of names) {
+        const c = closures.get(n);
+        if (!c) continue;
+        for (const pass of latest[n] ?? []) {
+          const m = manifests.get(pass.manifest);
+          if (!m) continue;
+          const { key } = lintVerdictKey({ name: n, cmd: scripts[n], manifest: m, ctx: vctx, closure: c });
+          if (key && key === pass.key) {
+            reusable.set(n, pass.run);
+            break;
+          }
+        }
+      }
+      const ms = Date.now() - t0;
+      if (shadow) console.log(`[verdicts] uncached run: every lint runs; ${reusable.size} of ${names.length} would have been reused (keyed in ${(ms / 1000).toFixed(1)}s), and any of those that fails is a shadow miss`);
+      else {
+        reusedNames = [...reusable.keys()];
+        const byRun = new Map();
+        for (const r of reusable.values()) byRun.set(r, (byRun.get(r) ?? 0) + 1);
+        console.log(`[verdicts] reused ${reusedNames.length} of ${names.length} lints: everything each observed is as it was when it passed (from run${byRun.size === 1 ? "" : "s"} ${[...byRun].map(([r, n]) => `${r || "?"} (${n})`).join(", ") || "-"}; keyed in ${(ms / 1000).toFixed(1)}s)`);
+        if (reusedNames.length) console.log(`[verdicts]   reused: ${reusedNames.sort().join(", ")}`);
+      }
+    }
+  }
+  const toRun = reusedNames.length ? names.filter((n) => !reusable.has(n)) : names;
+  if (toRun.length === 0) {
+    console.log(`[lints] ✓ every lint's verdict was reused; nothing to run`);
+    return;
+  }
+
   const concurrency = Number(process.env.COBBLR_LINT_CONCURRENCY) || defaultConcurrency();
-  console.log(`[lints] ${names.length} lints, ${concurrency} at a time`);
+  console.log(`[lints] ${toRun.length} lints, ${concurrency} at a time`);
 
   // Run the slowest first: a long job started last is dead wall-clock while the
   // pool drains. The order is a hint only — a lint that gets slower just drifts
@@ -124,15 +179,16 @@ function main() {
   // the runner host's /tmp on 2026-09-30. Gone when the run ends, however it ends.
   process.once("exit", () => rmSync(readsDir, { recursive: true, force: true }));
   const readsFile = (name) => join(readsDir, `${name.replace(/[^A-Za-z0-9_.-]/g, "_")}.jsonl`);
-  const preload = `--require ${join(ROOT, "scripts", "lib", "lint-reads.cjs")}`;
-  const jobs = names
+  const inputsFile = (name) => join(readsDir, `${name.replace(/[^A-Za-z0-9_.-]/g, "_")}.inputs.jsonl`);
+  const preload = `--require ${join(ROOT, "scripts", "lib", "lint-reads.cjs")}${vctx ? ` --require ${join(ROOT, "scripts", "lib", "lint-inputs.cjs")}` : ""}`;
+  const jobs = toRun
     .slice()
     .sort((a, b) => rank(a) - rank(b))
     .map((name) => ({
       name,
       cmd: lintCommand(scripts[name]),
       cwd: ROOT,
-      env: { NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} ${preload}`.trim(), COBBLR_LINT_READS_FILE: readsFile(name) },
+      env: { NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} ${preload}`.trim(), COBBLR_LINT_READS_FILE: readsFile(name), ...(vctx ? { COBBLR_LINT_INPUTS_FILE: inputsFile(name), COBBLR_LINT_ROOT: ROOT } : {}) },
     }));
   const readMBOf = (name) => {
     try {
@@ -170,6 +226,40 @@ function main() {
     // lints once locked the two against each other, and no run could pass or
     // record (2026-09-14). It is re-checked against the written file below.
     const failed = results.filter((r) => r.code !== 0 && !(record && r.name === "lint:lint-durations"));
+    // Every lint that passed is stored with what it observed, whatever else failed; a failure never is.
+    if (vctx) {
+      const entries = [];
+      let hiddenCount = 0;
+      const hiddenWhy = new Map();
+      for (const r of results) {
+        if (r.code !== 0) continue;
+        const c = closures.get(r.name);
+        let m;
+        try {
+          m = mergeManifest(readFileSync(inputsFile(r.name), "utf8"));
+        } catch {
+          m = mergeManifest("");
+        }
+        const { key, hidden } = c ? lintVerdictKey({ name: r.name, cmd: scripts[r.name], manifest: m, ctx: vctx, closure: c }) : { key: null, hidden: "no closure" };
+        if (!key) {
+          hiddenCount++;
+          hiddenWhy.set(hidden, (hiddenWhy.get(hidden) ?? 0) + 1);
+          continue;
+        }
+        entries.push({ name: r.name, key, manifest: m });
+      }
+      const kept = await recordVerdicts("lint", entries);
+      console.log(`[verdicts] ${kept ? "stored" : "could not store"} ${entries.length} lint pass(es) for the next run; ${hiddenCount} never reused`);
+      for (const [why, n] of [...hiddenWhy].sort((a, b) => b[1] - a[1]).slice(0, 8)) console.log(`[verdicts]   never reused (${n}): ${String(why)}`);
+      if (shadow && reusable.size) {
+        const misses = results.filter((r) => r.code !== 0 && reusable.has(r.name)).map((r) => ({ name: r.name, from: reusable.get(r.name) }));
+        if (misses.length) {
+          console.error(`[verdicts] ✗ SHADOW MISS: the cache would have reused a pass for ${misses.length} lint(s) that failed here. Each is a hole in what lib/lint-inputs.cjs records:`);
+          for (const m of misses) console.error(`[verdicts]     ${m.name} (its pass came from run ${m.from || "?"})`);
+          await recordShadow("lint", misses);
+        } else console.log(`[verdicts] shadow check: all ${reusable.size} lint(s) the cache would have reused passed here`);
+      }
+    }
     for (const r of results) r.readMB = readMBOf(r.name);
     const cpu = results.reduce((s, r) => s + r.ms, 0);
     const wall = Date.now() - started;
@@ -316,4 +406,4 @@ function main() {
 }
 
 // Importable (lint:lints-are-wired reads MANUAL + discoverLints) without running.
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main();
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) await main();

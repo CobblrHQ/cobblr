@@ -1684,6 +1684,12 @@ export async function downloadCatalogImage(
      *  without it after, so a matching picture wins over the first that
      *  merely does not contradict (#3729). A refusal here stamps nothing. */
     mustShow?: boolean;
+    /** The picture the order printed beside this very line (#5350): it IS
+     *  the thing bought, so it is kept whole. No cut to one unit (a pack's
+     *  photo of ten spools is the pack) and no colour test (a multicolour
+     *  pack is every colour). Size, safety and the stock-preview refusal
+     *  still apply. */
+    asPrinted?: boolean;
   } = {},
 ): Promise<boolean> {
   // A stock "no image" graphic is not a photo, and an agency's preview is a
@@ -1745,8 +1751,9 @@ export async function downloadCatalogImage(
       // the FIRST catalog image an item gets has no verdict. Fall back to the
       // ink-profile detector, which finds two separated objects of the same
       // width and colour wherever they sit in the frame.
-      const single =
-        (opts.unitSide ? await cropToUnit(raw, opts.unitSide) : await cropToFirstUnit(raw)) ?? raw;
+      const single = opts.asPrinted
+        ? raw
+        : ((opts.unitSide ? await cropToUnit(raw, opts.unitSide) : await cropToFirstUnit(raw)) ?? raw);
       const trim = await trimCatalogMarginsWithVerdict(single);
       const trimmed = trim.bytes ?? single;
       // What colour the picture IS, from its pixels: a picture whose URL says
@@ -1766,8 +1773,8 @@ export async function downloadCatalogImage(
       // For a row identified from its own photo, the picture has to look like
       // that photo, not only share a colour word with it: a silver
       // flashlight's name search stored a yellow-handled lantern (#4037).
-      const own = await ownPhotoColours(ctx.orgId, ctx.db as never, ctx.itemId).catch(() => null);
-      const why = colourContradiction(stated, colour) ?? (own ? looksDifferent(own, await pictureColours(trimmed)) : null);
+      const own = opts.asPrinted ? null : await ownPhotoColours(ctx.orgId, ctx.db as never, ctx.itemId).catch(() => null);
+      const why = opts.asPrinted ? null : (colourContradiction(stated, colour) ?? (own ? looksDifferent(own, await pictureColours(trimmed)) : null));
       if (why) {
         console.warn(`[core-scan] catalog picture ${imageUrl} for ${ctx.itemId}: ${why}; not used`);
         // The writer that chose it may already have put its address on the

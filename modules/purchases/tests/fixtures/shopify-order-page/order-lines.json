@@ -1,0 +1,15 @@
+{
+  "_note": "Shape of a Shopify Customer Account API answer to the OrderLines query (order name and line items), built from the API's schema rather than recorded; every value is an example.",
+  "data": {
+    "order": {
+      "name": "#7741",
+      "lineItems": {
+        "nodes": [
+          { "presentmentName": "KINGROON PETG Filament 1.75mm - US / 10KG / Multicolor", "title": "KINGROON PETG Filament 1.75mm", "quantity": 1, "price": { "amount": "169.99", "currencyCode": "USD" } },
+          { "presentmentName": "KINGROON PETG Filament 1.75mm - US / 10KG / white", "title": "KINGROON PETG Filament 1.75mm", "quantity": 1, "price": { "amount": "169.99", "currencyCode": "USD" } },
+          { "presentmentName": "KINGROON PETG Filament 1.75mm - US / 10KG / Multicolor-1", "title": "KINGROON PETG Filament 1.75mm", "quantity": 1, "price": { "amount": "169.99", "currencyCode": "USD" } }
+        ]
+      }
+    }
+  }
+}

@@ -5,9 +5,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
-import { Bluetooth, Check, ChevronDown, Download, Hash, Minus, Monitor, Pencil, Plus, Printer, RotateCcw, RotateCw, Send, Settings2, Trash2, Wifi, Zap } from "lucide-react";
+import { Bluetooth, Check, ChevronDown, Download, Hash, Monitor, Pencil, Plus, Printer, RotateCcw, RotateCw, Send, Settings2, Trash2, Wifi, Zap } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { usePageTitle, usePageWidth, useToast, Modal, BACKDROP_LAYER_CLASS, useFieldDraft, NfcTags, isWebNfcAvailable, type NfcTarget } from "@cobblr/platform-web";
+import { NumberStepper, usePageTitle, usePageWidth, useToast, Modal, BACKDROP_LAYER_CLASS, useFieldDraft, NfcTags, isWebNfcAvailable, type NfcTarget } from "@cobblr/platform-web";
 import { useLabels } from "./context";
 import { BrowsePanel } from "./BrowsePanel";
 import { CodesPanel } from "./CodesPanel";
@@ -1301,27 +1301,22 @@ export function QueuePage() {
                         {codes.data[it.entity_id]}
                       </span>
                     )}
-                    <div className="flex items-center gap-1 shrink-0" title="Copies to print">
-                      <button
-                        onClick={() => setQty.mutate({ id: it.id, qty: Math.max(1, it.qty - 1) })}
-                        disabled={it.qty <= 1 || setQty.isPending}
-                        className="w-5 h-5 grid place-items-center rounded border border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100 disabled:opacity-30 disabled:cursor-not-allowed transition"
-                        aria-label="Fewer copies"
-                      >
-                        <Minus size={11} />
-                      </button>
-                      <span className="font-mono text-xs text-muted dark:text-slate-400 w-7 text-center tabular-nums">
-                        ×{it.qty}
-                      </span>
-                      <button
-                        onClick={() => setQty.mutate({ id: it.id, qty: Math.min(99, it.qty + 1) })}
-                        disabled={it.qty >= 99 || setQty.isPending}
-                        className="w-5 h-5 grid place-items-center rounded border border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100 disabled:opacity-30 disabled:cursor-not-allowed transition"
-                        aria-label="More copies"
-                      >
-                        <Plus size={11} />
-                      </button>
-                    </div>
+                    <NumberStepper
+                      className="flex items-center gap-1 shrink-0"
+                      value={it.qty}
+                      min={1}
+                      max={99}
+                      busy={setQty.isPending}
+                      label="Copies to print"
+                      decreaseLabel="Fewer copies"
+                      increaseLabel="More copies"
+                      icons
+                      iconSize={11}
+                      prefix="×"
+                      buttonClassName="w-5 h-5 grid place-items-center rounded border border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100 disabled:opacity-30 disabled:cursor-not-allowed transition"
+                      inputClassName="font-mono text-xs text-muted dark:text-slate-400 w-7 bg-transparent text-center tabular-nums"
+                      onChange={(n) => setQty.mutate({ id: it.id, qty: n })}
+                    />
                     <button
                       onClick={() => remove.mutate(it.id)}
                       className="text-faint dark:text-slate-600 hover:text-ember-500 transition shrink-0"

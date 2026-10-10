@@ -80,7 +80,9 @@ export function DigifabPage({
   const list = useQuery({
     queryKey: ["digifab-connections", activeSlug],
     queryFn: () => api.listDigifabConnections(activeSlug),
-    enabled: !!activeSlug && digifabEnabled !== false,
+    // On, not "not known to be off": while the module list loads, a read
+    // here is refused (409) in every workspace without Digital Fabrication.
+    enabled: !!activeSlug && digifabEnabled === true,
   });
 
   const test = useMutation({
@@ -103,7 +105,7 @@ export function DigifabPage({
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
-  const bridges = useQuery({ queryKey: ["edge-bridges", activeSlug], queryFn: () => api.listEdgeBridges(activeSlug), enabled: !!activeSlug, refetchInterval: 8000 });
+  const bridges = useQuery({ queryKey: ["edge-bridges", activeSlug], queryFn: () => api.listEdgeBridges(activeSlug), enabled: !!activeSlug && digifabEnabled === true, refetchInterval: 8000 });
   const bridgeName = (id: unknown) => bridgeDisplayName(bridges.data?.bridges.find(b => b.bridge === (typeof id === "string" ? id : null)) || { bridge: typeof id === "string" ? id : null, name: null });
   const items = list.data?.items ?? [];
   // Per-mode capability table (cloud/lan/hybrid) so each Bambu connection can show

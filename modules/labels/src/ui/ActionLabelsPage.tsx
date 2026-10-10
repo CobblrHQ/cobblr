@@ -22,6 +22,7 @@ import { askBeforePress, pressAnswersToArgs, pressStillNeeds } from "@cobblr/pla
 import { useLabels } from "./context";
 import type { ActionLabel, ActionLabelButton } from "./api";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 const input =
   "w-full rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-2 text-base text-content dark:text-slate-100";
 
@@ -119,7 +120,7 @@ function Composer({ kind, id, recordTitle }: { kind: string; id: string; recordT
   return (
     <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-4" data-testid="action-label-composer">
       <div className="text-[10px] font-mono uppercase tracking-widest text-accent">new button for {recordTitle || "this record"}</div>
-      {labels.data?.complete === false && <p className="text-sm text-muted">Showing {labels.data.items.length} of {labels.data.total} labels.</p>}
+      {labels.data?.complete === false && <p className="text-sm text-muted">Showing {labels.data.items.length} of {countOf(labels.data.total ?? 0, "label")}.</p>}
       {actions.isLoading ? (
         <Loader2 size={16} className="animate-spin text-faint" />
       ) : choices.length === 0 ? (
@@ -247,7 +248,7 @@ function LabelList() {
   );
   return (
     <section className="space-y-2" data-testid="action-label-list">
-      {labels.data?.complete === false && <p className="text-sm text-muted">Showing {items.length} of {labels.data.total} labels.</p>}
+      {labels.data?.complete === false && <p className="text-sm text-muted">Showing {items.length} of {countOf(labels.data.total ?? 0, "label")}.</p>}
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-sm font-medium text-content dark:text-mortar-100">Your action labels</h2>
         {off.length > 0 && (

@@ -352,7 +352,7 @@ export async function llmIdentify(
     .ai.invoke({
       orgId,
       userId: userId ?? undefined,
-      capability: "chat",
+      capability: "identify-from-text",
       input: { messages: [{ role: "system", content: system }, { role: "user", content: user }] },
       source: { kind: "core-scan:barcode", id: upc },
     })

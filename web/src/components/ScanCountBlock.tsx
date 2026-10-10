@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Minus, Plus } from "lucide-react";
-import { runAction, useFaces, useToast } from "@cobblr/platform-web";
+import { runAction, TypeableNumber, useFaces, useToast } from "@cobblr/platform-web";
 import {
   SCAN_COUNT_REASON_LABEL,
   SHOPPING_LIST_DOOR,
@@ -225,21 +225,26 @@ export function ScanCountBlock({
         <button type="button" aria-label={mode === "set" ? "One fewer in total" : "One less"} disabled={value <= floor || (mode === "change" && have === 0)} onClick={() => put(value - 1)} className={step}>
           <Minus size={15} />
         </button>
-        <input
-          type="text"
-          inputMode="numeric"
-          aria-label={mode === "set" ? "Total" : "Change by"}
-          value={text}
-          onFocus={(e) => e.currentTarget.select()}
-          onChange={(e) => {
-            setText(e.target.value);
-            const n = readTyped(e.target.value);
+        <TypeableNumber
+          value={value}
+          label={mode === "set" ? "Total" : "Change by"}
+          // The shared typeable number (tap, numeric keypad, select-all, commit
+          // on blur or Enter, Escape reverts), with this block's own meaning on
+          // top: the preview follows every keystroke, a change may be typed
+          // negative, and a change of zero is refused (the field goes back).
+          allowNegative={mode === "change"}
+          signedText={mode === "change"}
+          text={text}
+          onTextChange={(t) => {
+            setText(t);
+            const n = readTyped(t);
             if (n == null || (mode === "change" && n === 0)) return;
             const next = Math.max(floor, n);
             setValue(next);
             if (mode === "change" && Math.sign(next) !== Math.sign(value)) setReason(null);
           }}
-          onBlur={() => setText(shown(mode, value))}
+          onCommit={() => setText(shown(mode, value))}
+          onRevert={(was) => put(was)}
           className="h-10 w-16 rounded-md border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 text-center text-base font-semibold tabular-nums text-content dark:text-mortar-100"
         />
         <button type="button" aria-label={mode === "set" ? "One more in total" : "One more"} onClick={() => put(value + 1)} className={step}>

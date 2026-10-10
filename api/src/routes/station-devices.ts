@@ -5,7 +5,18 @@ import { requireAuth } from "../auth/middleware.js";
 import { requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import { makeIpLimiter, overLimit, rateLimited } from "../platform/ip-limiter.js";
-import { approveStation, claimStation, listStationDevices, requestStationApproval, revokeStationDevice } from "../platform/station-devices.js";
+import {
+  approveStation,
+  claimStation,
+  claimStationQr,
+  disableStationQr,
+  listStationDevices,
+  requestStationApproval,
+  revokeStationDevice,
+  rotateStationQr,
+  stationQrState,
+} from "../platform/station-devices.js";
+import { isStationAddress } from "@cobblr/platform-contract/station-screen";
 
 /** The tablet's half: no session, so a per-IP limit stands in front of both. */
 export const stationPublicRouter = Router();
@@ -35,6 +46,27 @@ stationPublicRouter.get("/requests/:id", async (req, res, next) => {
   try {
     res.setHeader("cache-control", "no-store");
     res.json(await claimStation(req.params.id ?? "", req.query.key));
+  } catch (e) {
+    next(e);
+  }
+});
+
+// A phone opened a station's kitchen QR (#5353): its key buys a token for
+// that station's few presses. A guessed key costs the guesser this limit.
+const qrLimiter = makeIpLimiter(60_000, 10);
+// AI-REACH: exempt, spoken by a phone that opened a printed QR; the assistant has no label to hold.
+// UI-REACH: the station page opened from the kitchen QR (web/src/pages/StationPage.tsx)
+stationPublicRouter.post("/qr/claim", async (req, res, next) => {
+  if (overLimit(qrLimiter, req)) return void rateLimited(res);
+  try {
+    res.setHeader("cache-control", "no-store");
+    const body = (req.body ?? {}) as { slug?: unknown; address?: unknown; key?: unknown };
+    const r = await claimStationQr(body);
+    if (!r.ok) {
+      res.status(403).json({ error: { code: "station_qr_unusable", message: "This QR no longer opens the station. Ask for the new label, or sign in." } });
+      return;
+    }
+    res.json(r);
   } catch (e) {
     next(e);
   }
@@ -89,6 +121,44 @@ stationDevicesRouter.delete("/:id", async (req, res, next) => {
       res.status(404).json({ error: { code: "not_found", message: "No such station device." } });
       return;
     }
+    res.json({ ok: true });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// The kitchen QR's switch (#5353): its state, print a label (a fresh key that
+// retires the old one), turn it off.
+stationDevicesRouter.get("/qr/:address", async (req, res, next) => {
+  if (!requireRole(req, res, "owner", "admin")) return;
+  try {
+    res.json(await stationQrState(req.tenant!.org.id, req.params.address ?? ""));
+  } catch (e) {
+    next(e);
+  }
+});
+
+// AI-REACH: exempt, printing a label that lets people without an account in is a security step a person takes at the station's settings.
+stationDevicesRouter.post("/qr/:address", async (req, res, next) => {
+  if (!requireRole(req, res, "owner", "admin")) return;
+  try {
+    const address = req.params.address ?? "";
+    if (!isStationAddress(address)) {
+      res.status(400).json({ error: { code: "bad_station_address", message: "That is not a station address." } });
+      return;
+    }
+    const r = await rotateStationQr({ orgId: req.tenant!.org.id, userId: req.session!.id, address });
+    res.json({ key: r!.key, ...(await stationQrState(req.tenant!.org.id, address)) });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// AI-REACH: exempt, the same security step as printing it.
+stationDevicesRouter.delete("/qr/:address", async (req, res, next) => {
+  if (!requireRole(req, res, "owner", "admin")) return;
+  try {
+    await disableStationQr(req.tenant!.org.id, req.params.address ?? "");
     res.json({ ok: true });
   } catch (e) {
     next(e);

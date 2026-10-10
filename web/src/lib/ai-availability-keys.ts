@@ -30,10 +30,14 @@ export const aiAvailabilityKeys = {
   connections: () => ["ai", "connections"] as const,
   /** Who answers a job here, in order (GET /ai-chain). */
   chain: (slug: string, capability: string) => ["ai", "chain", slug, capability] as const,
+  /** The person's own default AI per job (GET /me/ai-defaults). */
+  myDefaults: () => ["ai", "my-defaults"] as const,
+  workspaceOrder: (slug: string) => ["ai", "workspace-order", slug] as const,
+  personalReader: (slug: string) => ["ai", "personal-reader", slug] as const,
 };
 
 /** A write that can change whether AI works somewhere: a personal
  *  connection or its routing, a workspace's shares, its AI switch, its
  *  providers, or which provider serves what. */
 export const AI_AVAILABILITY_WRITE =
-  /^\/(?:me\/connections(?:[/?#]|$)|orgs\/[^/]+\/(?:ai-shares|ai-settings)(?:[/?#]|$)|orgs\/[^/]+\/modules\/core-ai\/(?:providers|capability-defaults)(?:[/?#]|$))/;
+  /^\/(?:me\/(?:connections|ai-defaults)(?:[/?#]|$)|orgs\/[^/]+\/(?:ai-shares|ai-settings)(?:[/?#]|$)|orgs\/[^/]+\/modules\/core-ai\/(?:providers|capability-defaults)(?:[/?#]|$))/;

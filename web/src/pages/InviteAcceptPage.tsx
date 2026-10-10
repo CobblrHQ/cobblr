@@ -208,7 +208,7 @@ export function InviteAcceptPage() {
               placeholder="Sam" className="input w-full" />
           </Field>
           {suErr && <div className="text-xs text-ember-500">{suErr}</div>}
-          <button type="submit" disabled={suBusy}
+          <button type="submit" data-testid="invite-create-account" disabled={suBusy}
             className="w-full rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition disabled:opacity-50">
             {suBusy ? "Joining…" : `Create account & join`}
           </button>

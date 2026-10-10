@@ -1264,7 +1264,7 @@ export async function runMatchmaker(
       .ai.invoke({
         orgId,
         userId: userId ?? undefined,
-        capability: "chat",
+        capability: "organise",
         input: { messages: [{ role: "system", content: system }, { role: "user", content: user }] },
         // A 2-candidate reply with reconciliation notes never fit the 1024
         // default — the notes-truncation salvage in parseMatchmakerCandidates

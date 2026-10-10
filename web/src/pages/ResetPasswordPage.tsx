@@ -61,6 +61,7 @@ export function ResetPasswordPage() {
             <PasswordInput
               required
               autoFocus
+              data-testid="reset-new-password"
               value={next}
               onChange={(e) => setNext(e.target.value)}
               className="input"
@@ -73,6 +74,7 @@ export function ResetPasswordPage() {
             </span>
             <PasswordInput
               required
+              data-testid="reset-confirm-password"
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
               className="input"
@@ -86,6 +88,7 @@ export function ResetPasswordPage() {
           )}
           <button
             type="submit"
+            data-testid="reset-submit"
             disabled={busy || !next || !confirm}
             className="w-full rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium py-2 transition disabled:opacity-50"
           >

@@ -13,7 +13,7 @@
 import { priceDoubted, sellerDoubted } from "./receipt-facts.js";
 import { platform } from "@cobblr/platform-contract";
 import { parseReceipt } from "./receipt.js";
-import { lineNet, type ParsedReceipt, type ReceiptLine } from "./receipt-shared.js";
+import { lineDiscounted, lineNet, shareOrderDiscount, type ParsedReceipt, type ReceiptLine } from "./receipt-shared.js";
 import { claimOrderLine, lineUnitCost } from "./receipt-order.js";
 import { fillRecordFromPaperwork, paperworkDoubts, type PaperworkHeld, type PaperworkConflict, type PaperworkField, type PaperworkFill } from "./record-paperwork.js";
 import type { Kysely } from "kysely";
@@ -196,6 +196,7 @@ export async function attachPaperwork(args: {
     if (!r.ok) return { read: false, reason: r.reason };
     receipt = r.receipt;
   }
+  receipt = shareOrderDiscount(receipt);
   const unit = unitLineOf(receipt);
   // A receipt with many things on it does not say which one this record is:
   // it is kept as a file, and its lines stay where the inbox would put them.
@@ -272,7 +273,7 @@ export async function attachPaperwork(args: {
         lines: receipt.items.map((line) => ({
           description: line.description,
           qty: line.qty,
-          unit_cost: priceOk ? lineUnitCost(line.discount ? null : line.unit_price, lineNet(line), line.qty) : null,
+          unit_cost: priceOk ? lineUnitCost(lineDiscounted(line) ? null : line.unit_price, lineNet(line), line.qty) : null,
           line_amount: priceOk ? lineNet(line) : null,
           ...(line.kind ? { kind: line.kind } : {}),
         })),

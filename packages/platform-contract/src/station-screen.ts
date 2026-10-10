@@ -63,6 +63,31 @@ export function stationAddressOfScope(scope: string): string | null {
   return m && isStationAddress(m[1]) ? m[1]! : null;
 }
 
+/** A phone that claimed a station's kitchen QR (#5353): it reaches that
+ *  station's lookup and the few presses the owner chose, nothing else. */
+export function stationQrScope(address: string): string {
+  return `station-qr:${address}`;
+}
+
+export function stationQrAddressOfScope(scope: string): string | null {
+  const m = /^station-qr:(.+)$/.exec(scope);
+  return m && isStationAddress(m[1]) ? m[1]! : null;
+}
+
+/** What a kitchen QR's token is called, in Devices and in history lines. */
+export function stationQrName(label: string): string {
+  return `${stationDeviceName(label)} QR`;
+}
+
+/** What a phone holding the kitchen QR may do at this station: "use one"
+ *  when the owner allowed it, and the actions the owner ticked, and only
+ *  those that the station itself offers. */
+export function stationQrMay(settings: Pick<StationSettings, "qr_use_one" | "qr_actions">, press: { op?: string; action_id?: string }): boolean {
+  if (press.op !== undefined) return press.op === "use" && settings.qr_use_one;
+  if (press.action_id !== undefined) return settings.qr_actions.includes(press.action_id);
+  return false;
+}
+
 // ── Settings ───────────────────────────────────────────────────────────────
 
 /** What a scan of something you already have does. `ask` shows the record's
@@ -91,6 +116,44 @@ export interface StationSettings {
   theme: "system" | "light" | "dark";
   /** Larger type for reading across a room. */
   large_text: boolean;
+  /** A camera on the screen itself, for a tablet with no scanner (#5353): the
+   *  front one (a wall tablet you hold a jar up to), the back one, or ask the
+   *  device once. Off by default: a station with a scanner keeps its screen. */
+  camera: StationCamera;
+  /** A dashboard this station is opened from (Home Assistant), and what the
+   *  button back to it says. Null: no button. */
+  back_url: string | null;
+  back_label: string;
+  /** What a phone holding this station's kitchen QR may press (#5353): "used
+   *  one", and the station's own actions by id. The QR itself is turned on
+   *  and printed from the settings; nothing here works without it. */
+  qr_use_one: boolean;
+  qr_actions: string[];
+}
+
+export const STATION_CAMERAS = ["off", "front", "rear", "ask"] as const;
+export type StationCamera = (typeof STATION_CAMERAS)[number];
+/** A device's own pick of lens, which outranks the station's. */
+export type StationLens = "front" | "rear";
+
+/** The lens a station's camera opens: the device's own pick (its flip
+ *  button, or its answer to "ask"), else the station's setting. Null when
+ *  the station has no camera, "ask" when nothing has been picked yet. */
+export function stationLens(camera: StationCamera, devicePick: StationLens | null): StationLens | "ask" | null {
+  if (camera === "off") return null;
+  if (devicePick) return devicePick;
+  return camera === "ask" ? "ask" : camera;
+}
+
+/** A back address the button may open: http or https, nothing else. */
+export function stationBackUrl(v: unknown): string | null {
+  if (typeof v !== "string" || !v.trim() || v.length > 500) return null;
+  try {
+    const u = new URL(v.trim());
+    return u.protocol === "https:" || u.protocol === "http:" ? u.toString() : null;
+  } catch {
+    return null;
+  }
 }
 
 export const DEFAULT_STATION_SETTINGS: StationSettings = {
@@ -104,6 +167,11 @@ export const DEFAULT_STATION_SETTINGS: StationSettings = {
   flash: true,
   theme: "system",
   large_text: false,
+  camera: "off",
+  back_url: null,
+  back_label: "Home Assistant",
+  qr_use_one: true,
+  qr_actions: [],
 };
 
 /** The stock move a One-tap station makes on every scan of a known thing,
@@ -133,6 +201,11 @@ export function stationSettingsOf(raw: unknown): StationSettings {
     flash: typeof r.flash === "boolean" ? r.flash : d.flash,
     theme: r.theme === "light" || r.theme === "dark" || r.theme === "system" ? r.theme : d.theme,
     large_text: typeof r.large_text === "boolean" ? r.large_text : d.large_text,
+    camera: (STATION_CAMERAS as readonly string[]).includes(r.camera as string) ? (r.camera as StationCamera) : d.camera,
+    back_url: stationBackUrl(r.back_url),
+    back_label: str(r.back_label)?.slice(0, 40) ?? d.back_label,
+    qr_use_one: typeof r.qr_use_one === "boolean" ? r.qr_use_one : d.qr_use_one,
+    qr_actions: Array.isArray(r.qr_actions) ? r.qr_actions.filter((a): a is string => typeof a === "string" && /^[a-z0-9-]+:[a-z0-9-]+$/.test(a)).slice(0, 20) : d.qr_actions,
   };
 }
 

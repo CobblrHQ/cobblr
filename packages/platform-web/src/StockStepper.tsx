@@ -8,12 +8,8 @@
 // where the person types what they used.
 
 import { useEffect, useState } from "react";
-import { Minus, Plus } from "lucide-react";
+import { NumberStepper } from "./NumberStepper";
 import { AmountControl } from "./AmountControl";
-
-function fmt(n: number): string {
-  return Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3)));
-}
 
 export function StockStepper({
   qty,
@@ -53,7 +49,7 @@ function CountStepper({ qty, onStep, label, size }: { qty: number; onStep: (delt
   // A refetch brings the ledger's own number; it replaces the last tap's.
   useEffect(() => setShown(null), [qty]);
   const value = shown ?? qty;
-  const step = async (delta: 1 | -1) => {
+  const step = async (delta: number) => {
     if (busy) return;
     setBusy(true);
     setError(null);
@@ -65,22 +61,24 @@ function CountStepper({ qty, onStep, label, size }: { qty: number; onStep: (delt
       setBusy(false);
     }
   };
-  const btn =
-    (size === "sm" ? "w-8 h-8" : "w-11 h-11") +
-    " grid place-items-center rounded-lg border border-line dark:border-slate-700 text-content dark:text-mortar-100 active:bg-subtle dark:active:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition";
+  const sm = size === "sm";
   return (
     <span className="inline-flex flex-col items-end" data-testid="stock-stepper">
-      <span className="inline-flex items-center gap-1.5">
-        <button type="button" className={btn} onClick={() => void step(-1)} disabled={busy || value <= 0} aria-label={`One fewer ${label}`}>
-          <Minus size={16} />
-        </button>
-        <span className={(size === "sm" ? "min-w-[2rem] text-sm" : "min-w-[2.5rem] text-base") + " text-center font-mono tabular-nums text-content dark:text-mortar-100"} data-testid="stock-stepper-qty">
-          {fmt(value)}
-        </span>
-        <button type="button" className={btn} onClick={() => void step(1)} disabled={busy} aria-label={`One more ${label}`}>
-          <Plus size={16} />
-        </button>
-      </span>
+      <NumberStepper
+        className="inline-flex items-center gap-1.5"
+        value={value}
+        min={0}
+        busy={busy}
+        label={label}
+        icons
+        iconSize={16}
+        testId="stock-stepper-control"
+        inputTestId="stock-stepper-qty"
+        buttonClassName={(sm ? "w-8 h-8" : "w-11 h-11") + " grid place-items-center rounded-lg border border-line dark:border-slate-700 text-content dark:text-mortar-100 active:bg-subtle dark:active:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition"}
+        inputClassName={(sm ? "w-12 text-sm" : "w-14 text-base") + " bg-transparent text-center font-mono tabular-nums text-content dark:text-mortar-100"}
+        // The ledger moves by a change: a typed count is the change that reaches it.
+        onChange={(n) => void step(n - value)}
+      />
       {error && <span className="mt-1 max-w-[14rem] text-right text-[11px] text-ember-600 dark:text-ember-400">{error}</span>}
     </span>
   );

@@ -618,10 +618,18 @@ async function claimNext(key: string, lanes: EdgeLane[] | null): Promise<EdgeRel
 export async function relayPoll(key: string, opts?: { signal?: AbortSignal; lanes?: EdgeLane[] | null }): Promise<EdgeRelayItem | null> {
   await relayTouch(key);
   const deadline = Date.now() + POLL_WAIT_MS;
+  let checkedAt = Date.now();
   for (;;) {
     const item = await claimNext(key, opts?.lanes ?? null);
     if (item) return item;
     if (opts?.signal?.aborted || Date.now() >= deadline) return null;
+    // A bridge disconnected while parked here ends its poll now, not at the 25 s deadline: its next
+    // poll meets its revoked key. Disconnecting deletes the row this poll's touch made.
+    if (Date.now() - checkedAt >= 1_000) {
+      checkedAt = Date.now();
+      const still = await meta.selectFrom("edge_bridges").select("channel_key").where("channel_key", "=", key).executeTakeFirst();
+      if (!still) return null;
+    }
     await sleep(CLAIM_POLL_MS);
     // Keep presence warm across a long park, or the reaper would call a bridge
     // that is sitting right here "disconnected". Update only, never create: a

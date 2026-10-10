@@ -10,6 +10,7 @@ import type { NotificationPriority } from "../db/schema.js";
 import type { PushUrgency } from "./web-push.js";
 import { localMinuteOfDay } from "./delivery-windows.js";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 const RANK: Record<NotificationPriority, number> = { low: 0, normal: 1, high: 2, urgent: 3 };
 
 /** A new device's threshold: the phone buzzes for what is actionable, and the
@@ -105,7 +106,7 @@ export function buildPushPayload(src: PushSource): PushPayload {
   return {
     id: src.notificationId,
     title: src.title || "Cobblr",
-    body: src.private ? privatePushLine(src.eventType) : digest ? oneLine(`${src.digestCount} updates while you were away`) : oneLine(src.message),
+    body: src.private ? privatePushLine(src.eventType) : digest ? oneLine(`${countOf(src.digestCount ?? 0, "update")} while you were away`) : oneLine(src.message),
     url: digest ? "/" : inAppLink(src.link_url),
     // Collapses a repeat of the same notification into one on the device.
     tag: digest ? "cobblr-digest" : `cobblr-${src.notificationId}`,

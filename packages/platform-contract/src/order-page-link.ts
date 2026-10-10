@@ -104,3 +104,35 @@ export function orderPageLinkInText(text: string): OrderPageLink | null {
   }
   return null;
 }
+
+/** What a store's order page says about its order, with no link in it: the
+ *  order's own name ("#36772"), each line in the store's words with its
+ *  quantity, and the parcels so far. Purchases reads it; the email ingest and
+ *  the scan inbox fill a receipt session from it with no model asked. A
+ *  redacted read (the guest view a worn link falls back to) still carries the
+ *  name and the lines; only tracking numbers go. */
+export interface OrderPageSummary {
+  store: string;
+  order_name: string | null;
+  /** "read" | "redacted" | "expired" | "throttled" | "unsupported" | "failed" | "off" */
+  outcome: string;
+  lines: Array<{ name: string; qty: number; unit_price: number | null; currency: string | null }>;
+  parcels: Array<{ tracking_number: string | null; carrier: string | null; state: string; lines: Array<{ name: string; qty: number }> }>;
+  /** Where the last read went, hop by hop (status, host, path words), with
+   *  every token cut: why a read that missed missed. */
+  trail?: string[];
+}
+
+/** The lines a summary can fill a receipt with: the order's own, else every
+ *  parcel's, merged by name. Empty when the page gave neither. */
+export function orderPageLines(s: OrderPageSummary): OrderPageSummary["lines"] {
+  if (s.lines.length) return s.lines;
+  const byName = new Map<string, OrderPageSummary["lines"][number]>();
+  for (const p of s.parcels) {
+    for (const l of p.lines) {
+      const had = byName.get(l.name);
+      byName.set(l.name, had ? { ...had, qty: had.qty + l.qty } : { name: l.name, qty: l.qty, unit_price: null, currency: null });
+    }
+  }
+  return [...byName.values()];
+}

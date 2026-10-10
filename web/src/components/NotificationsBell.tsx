@@ -18,6 +18,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { notificationRoute } from "../lib/deep-path";
 import { inviteTokenFrom, notificationAction } from "../lib/notification-action";
 import { NotificationActionButtons } from "./NotificationActionButtons";
+import { BellPushRow, NOTIFICATION_SETTINGS_PATH } from "./BellPushRow";
 import { MarkdownText } from "@cobblr/platform-web";
 import { api, ApiError, type CrossOrgNotificationEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -251,6 +252,8 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
       <MutationError mutation={markAll} className="block px-3 pt-2">Couldn't mark them read:</MutationError>
       <MutationError mutation={markRead} className="block px-3 pt-2">Couldn't mark that read:</MutationError>
       <div className={mode === "sidebar" ? "flex-1 overflow-y-auto" : ""}>
+        {/* Notifications on this device, offered where people look for them (#5565). */}
+        <BellPushRow onNavigate={() => setOpen(false)} />
         {list.isLoading && <div className="px-3 py-4 text-[11px] text-faint">loading…</div>}
         {list.data && list.data.items.length === 0 && (
           <div className="px-3 py-4 text-[11px] text-faint italic">No notifications yet.</div>
@@ -416,13 +419,25 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
           })}
         </ul>
       </div>
-      <Link
-        to="/me/notifications"
-        onClick={() => setOpen(false)}
-        className="block px-3 py-2 border-t border-line dark:border-slate-700 text-[11px] font-mono uppercase tracking-widest text-accent hover:text-accent transition text-center shrink-0"
-      >
-        see all →
-      </Link>
+      {/* Two doors at the foot: everything sent, and how it reaches you, so the
+          settings are one tap from the bell and never a hunt through Account (#5565). */}
+      <div className="flex items-stretch border-t border-line dark:border-slate-700 shrink-0">
+        <Link
+          to="/me/notifications"
+          onClick={() => setOpen(false)}
+          className="flex-1 px-3 py-2 text-[11px] font-mono uppercase tracking-widest text-accent hover:text-accent transition text-center"
+        >
+          see all →
+        </Link>
+        <Link
+          to={NOTIFICATION_SETTINGS_PATH}
+          onClick={() => setOpen(false)}
+          data-testid="bell-notification-settings"
+          className="flex-1 px-3 py-2 border-l border-line dark:border-slate-700 text-[11px] font-mono uppercase tracking-widest text-accent hover:text-accent transition text-center"
+        >
+          Notification settings
+        </Link>
+      </div>
     </>
   );
 

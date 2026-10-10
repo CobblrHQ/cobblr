@@ -34,14 +34,18 @@ export async function probeWorkspaceItemCount(slug: string, enabled: Set<string>
   if (enabled.has("assets")) probes.push(wrap("/modules/assets/assets?limit=1"));
   if (enabled.has("projects")) probes.push(wrap("/modules/projects/projects?limit=1"));
   if (enabled.has("purchases")) probes.push(wrap("/modules/purchases/orders?limit=1"));
-  const instances = await api.listInstances(slug).then((r) => r.items).catch(() => []);
+  const [counts, instances] = await Promise.all([
+    Promise.all(probes),
+    api.listInstances(slug).then((r) => r.items).catch(() => []),
+  ]);
   // NAMED instances only: default instances are covered by the module probes
   // above, and the defaults of core-* capability modules have no items router
   // at all — probing them 501s on every dashboard load.
-  for (const inst of instances.filter((i) => !i.is_default))
-    probes.push(wrap(`/instances/${encodeURIComponent(inst.instance_name)}/items?limit=1`));
-  const counts = await Promise.all(probes);
-  return counts.reduce((a, b) => a + b, 0);
+  const namedCounts = await Promise.all(
+    instances.filter((i) => !i.is_default)
+      .map((inst) => wrap(`/instances/${encodeURIComponent(inst.instance_name)}/items?limit=1`)),
+  );
+  return [...counts, ...namedCounts].reduce((a, b) => a + b, 0);
 }
 
 /** Pass "" as `slug` to keep the probe fully idle (e.g. off the dashboard).

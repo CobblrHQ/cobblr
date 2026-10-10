@@ -12,6 +12,7 @@ import type { ImportResponse } from "./api";
 import { InventoryApiError } from "./api";
 import { PART_FIELD_LABELS } from "../part-field-labels";
 
+import { countOf } from "@cobblr/platform-contract/plural";
 export function ImportDialog({ onClose }: { onClose: (importedCount: number) => void }) {
   const { api, itemNounPlural } = useInventory();
   const qc = useQueryClient();
@@ -193,7 +194,7 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
                 className="flex-1 rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium py-2 transition disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 <FileUp size={14} />
-                {commit.isPending ? "…" : `Import ${preview.rows.length} rows`}
+                {commit.isPending ? "…" : `Import ${countOf(preview.rows.length, "row")}`}
               </button>
             </div>
           </>

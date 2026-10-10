@@ -53,6 +53,7 @@ import { allowTestPushService } from "./platform/push-endpoints.js";
 import { testDoorsEnabled } from "./platform/test-doors.js";
 import { listRoutes } from "./lib/route-list.js";
 import { connectionsRouter, workspaceAiSharesRouter } from "./routes/connections.js";
+import { aiDefaultsRouter } from "./routes/ai-defaults.js";
 import { modulesRouter } from "./routes/modules.js";
 import { orgsRouter } from "./routes/orgs.js";
 import { servicesRouter } from "./routes/services.js";
@@ -443,6 +444,7 @@ export function createApp(): AppHandles {
   // is looked at. Mounted here so it sits under /api/v1 with everything else.
   v1.use(discordInteractionsRouter);
   v1.use(connectionsRouter);
+  v1.use(aiDefaultsRouter);
   // Public read endpoint for core-public-surfaces. No auth required;
   // token in the URL is the secret. Mounted on /api/v1/public/* —
   // outside /orgs because the URL carries no slug.

@@ -1863,13 +1863,15 @@ function PinnedView({
   // list.
   const isGallery = view.view_type === "gallery";
   const isHeatmap = view.view_type === "heatmap";
-  const groupBy = typeof view.config?.group_by === "string" ? (view.config.group_by as string) : null;
-  const isGrouped = !!groupBy && !isGallery && !isHeatmap;
   // The whole view, the same answer the full view page gets: the card's count
   // and its group bars are about every record. A 500-row sample made the bars
   // and the full view of the same view disagree, and an unlimited ask got one
   // page of 50.
   const data = useViewData(slug, view.id, view.entity_kind);
+  // A saved grouping the server could not read buckets nothing: every row
+  // would land in "unset".
+  const groupBy = typeof view.config?.group_by === "string" && !data.ungrouped ? (view.config.group_by as string) : null;
+  const isGrouped = !!groupBy && !isGallery && !isHeatmap;
   const routeFor = useDetailRoute(slug);
   const allItems = data.items;
   const items = allItems.slice(0, 5);

@@ -29,8 +29,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { COULD_NOT_TELL } from "@cobblr/platform-contract/scan-copy";
 import { needsScanReview } from "@cobblr/platform-contract/scan-triage";
 import { identifyFailureWords, type IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
-import { Camera, Check, ChevronDown, Loader2, MapPin, Minus, Plus, RefreshCw, Trash2, Undo2, X } from "lucide-react";
-import { useImageSrc, EntityPhoto, MutationError } from "@cobblr/platform-web";
+import { Camera, Check, ChevronDown, Loader2, MapPin, Plus, RefreshCw, Trash2, Undo2, X } from "lucide-react";
+import { useImageSrc, EntityPhoto, MutationError, NumberStepper } from "@cobblr/platform-web";
 import { api, type ScanInboxItem } from "../lib/api";
 import { useScanQuantity } from "../lib/scanQuantity";
 import { GlanceQuestion, pendingGlance } from "../components/GlanceQuestion";
@@ -83,28 +83,32 @@ function useSheetSwipe(onUp?: () => void, onDown?: () => void) {
  *  variant). `big` pads the buttons up for the primary sheets. */
 export function QtyStepper({
   value,
-  onBump,
+  onSet,
   big,
   testId,
 }: {
   value: number;
-  onBump: (d: 1 | -1) => void;
+  /** The count the person reached, by tap or by typing it. */
+  onSet: (n: number) => void;
   big?: boolean;
   testId?: string;
 }) {
   const pad = big ? "px-4 py-2.5" : "px-3 py-1.5";
   return (
-    <div className="flex items-center rounded-lg border border-white/25 bg-white/10 overflow-hidden shrink-0">
-      <button type="button" onClick={() => onBump(-1)} aria-label="Fewer" disabled={value <= 1} className={`${pad} text-white disabled:opacity-40`}>
-        <Minus size={big ? 15 : 13} />
-      </button>
-      <span data-testid={testId} className={`min-w-[1.9rem] text-center text-white font-bold ${big ? "text-[14.5px]" : "text-[13px]"}`}>
-        {value}
-      </span>
-      <button type="button" onClick={() => onBump(1)} aria-label="More" className={`${pad} text-white`}>
-        <Plus size={big ? 15 : 13} />
-      </button>
-    </div>
+    <NumberStepper
+      className="flex items-center rounded-lg border border-white/25 bg-white/10 overflow-hidden shrink-0"
+      value={value}
+      min={1}
+      label="Quantity"
+      decreaseLabel="Fewer"
+      increaseLabel="More"
+      icons
+      iconSize={big ? 15 : 13}
+      buttonClassName={`${pad} text-white disabled:opacity-40`}
+      inputTestId={testId}
+      inputClassName={`w-[2.4rem] bg-transparent text-center text-white font-bold ${big ? "text-[14.5px]" : "text-[13px]"}`}
+      onChange={onSet}
+    />
   );
 }
 
@@ -299,7 +303,7 @@ export function ScanCaptureDrawer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item?.id]);
   // The quantity and its persistence come as one thing — see lib/scanQuantity.
-  const { value: shownQty, bump } = useScanQuantity(slug, it ?? null);
+  const { value: shownQty, setTo } = useScanQuantity(slug, it ?? null);
 
   // Before any early return: a hook. Where it goes is the card's answer (#3618).
   const routedTo = useItemDestinationLabel(it ?? null);
@@ -411,7 +415,7 @@ export function ScanCaptureDrawer({
           it={it!}
           name={name}
           shownQty={shownQty}
-          bump={bump}
+          setTo={setTo}
           onCollapse={() => setExpanded(false)}
           onRename={(v) => rename.mutate(v)}
           onPhoto={(op, fileId) => photo.mutate({ op, fileId })}
@@ -522,7 +526,7 @@ export function ScanCaptureDrawer({
         </div>
       ) : (
       <div className="flex items-center gap-2 px-3 pt-2 pb-1.5">
-        <QtyStepper value={shownQty} onBump={bump} testId="capture-drawer-qty" />
+        <QtyStepper value={shownQty} onSet={setTo} testId="capture-drawer-qty" />
         <div className="flex-1" />
         {/* Looks right confirms a name; an item with none has nothing to
             confirm and nothing to be wrong about (#3616's rule, and the
@@ -638,7 +642,7 @@ function Thumb({ url, name }: { url: string | null; name: string }) {
  *  than inline — a full picker cannot coexist with these fields in the height
  *  available above the shutter. */
 function ExpandedSheet({
-  slug, it, name, shownQty, bump, onCollapse, onRename, onPhoto, photoBusy,
+  slug, it, name, shownQty, setTo, onCollapse, onRename, onPhoto, photoBusy,
   onAddPhoto, onPickLocation, sessionLocationLabel, containerLabel,
   onConfirm, onDelete, deleteBusy, correcting = false, correctBusy = false, onCorrect,
 }: {
@@ -646,7 +650,7 @@ function ExpandedSheet({
   it: ScanInboxItem;
   name: string | null | undefined;
   shownQty: number;
-  bump: (d: 1 | -1) => void;
+  setTo: (n: number) => void;
   onCollapse: () => void;
   onRename: (v: string) => void;
   onPhoto: (op: "primary" | "remove", fileId: string) => void;
@@ -799,7 +803,7 @@ function ExpandedSheet({
       <div className="flex items-end gap-3 px-3 mt-2.5">
         <div>
           <span className="block text-[9.5px] font-mono uppercase tracking-widest text-white/40 mb-1">Quantity</span>
-          <QtyStepper value={shownQty} onBump={bump} big />
+          <QtyStepper value={shownQty} onSet={setTo} big />
         </div>
         <div className="flex-1 min-w-0">
           <span className="block text-[9.5px] font-mono uppercase tracking-widest text-white/40 mb-1">Location</span>

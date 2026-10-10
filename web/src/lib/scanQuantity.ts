@@ -140,5 +140,16 @@ export function useScanQuantity(slug: string, item: ScanInboxItem | null) {
     [item, local, writer],
   );
 
-  return { value, commit: commitQuantity(local, item?.quantity), bump, flush: () => writer.flush() };
+  // A typed count (the stepper's number is a field): an absolute quantity, one at least.
+  const setTo = useCallback(
+    (n: number) => {
+      if (!item) return;
+      const next = Math.max(1, Math.round(n));
+      setLocal(next);
+      writer.set(item.id, next);
+    },
+    [item, writer],
+  );
+
+  return { value, commit: commitQuantity(local, item?.quantity), bump, setTo, flush: () => writer.flush() };
 }

@@ -28,7 +28,7 @@ import * as activity from "./activity.js";
 import { baseKindOf, lookup } from "./entities.js";
 import { describeChanges } from "./history-describe.js";
 import { gatedFields } from "./scope-eval.js";
-import { COPY_BOOKKEEPING, fieldsOf, isReference, mirrorAndDeliverNow, noteWorkspaceChanged } from "./share-mirror.js";
+import { COPY_BOOKKEEPING, fieldsOf, holdForTests, isReference, mirrorAndDeliverNow, noteWorkspaceChanged } from "./share-mirror.js";
 import { enqueueShareOp, getShareLink, kickShareSync, registerShareOp, type ShareLinkRow } from "./share-sync.js";
 import { withShareCopyState } from "./share-copy-state.js";
 import { runExclusive } from "./exclusive.js";
@@ -68,14 +68,14 @@ export async function noteCopiesChanged(orgId: string): Promise<void> {
 /** Send back every field the friend changed on a link's copies since the
  *  mirror last left them. */
 export async function sendCopyEdits(linkId: string): Promise<{ sent: number }> {
-  // SKIP-IF-BUSY OK: the mirror owns the copy and base; leave edits_due_at set for the next pass
-  return (await withShareCopyState(linkId, () => sendCopyEditsPass(linkId))) ?? { sent: 0 };
+  return (await withShareCopyState(linkId, () => sendCopyEditsPass(linkId), { skipIfBusy: "the mirror owns the copy and base; edits_due_at stays set for the next pass" })) ?? { sent: 0 };
 }
 
 async function sendCopyEditsPass(linkId: string): Promise<{ sent: number }> {
   const link = await getShareLink(linkId);
   if (!link || link.side !== "share" || link.status !== "active") return { sent: 0 };
   await meta.updateTable("share_links").set({ edits_due_at: null }).where("id", "=", linkId).execute();
+  await holdForTests(link.org_id, "edits-pass");
   const bases = await meta.selectFrom("share_copy_base").selectAll().where("link_id", "=", linkId).execute();
   let sent = 0;
   for (const b of bases) {

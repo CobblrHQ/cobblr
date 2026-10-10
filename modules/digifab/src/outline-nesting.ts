@@ -3,6 +3,7 @@ import { canRecordCuts, type Design, type Sheet, type LayoutSheet, type Point, t
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { runNestWorker, type NestResult } from "./nesting-pool.js";
+import { countOf } from "@cobblr/platform-contract/plural";
 export type NestOptions = { rotation_step?: number; budget_ms?: number; seed?: number; partial?: boolean };
 const bounds = (points: Point[]): Rect => {
  const x = Math.min(...points.map(p => p.x)), y = Math.min(...points.map(p => p.y));
@@ -143,7 +144,7 @@ export async function nestOutlines(design: Design, quantity: number, sheets: She
  const start = performance.now();
  try {
   const result = await runNestWorker<NestResult>({ item:{id:0,orientation:{rotation:{mode:"stepped",step:rotate?step:360}},shape:{type:"simple_polygon",data:outline.points.map(p=>[p.x,p.y])}}, containers, quantity, separation, seed, attempts:Math.min(budget>3000?32:8,Math.max(quantity<=16?2:1,Math.floor((budget>3000?1024:256)/(quantity*outline.points.length)))), samples:budget>3000?4000:1000 },Math.max(1,budget - Math.ceil(performance.now()-started) - 10));
-  if (!options.partial && result.placed !== quantity) return fallback(`Nested by rectangle: the outline search fitted ${result.placed} of ${quantity} parts in the time it had. Optimize harder may fit them by outline.`);
+  if (!options.partial && result.placed !== quantity) return fallback(`Nested by rectangle: the outline search fitted ${result.placed} of ${countOf(quantity, "part")} in the time it had. Optimize harder may fit them by outline.`);
   let number=0;
   const outlineLayouts = result.layouts.flatMap((l,i)=>{
    const sheet=sheets[l.container_id]!;

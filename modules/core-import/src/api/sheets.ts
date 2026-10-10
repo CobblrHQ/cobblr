@@ -185,7 +185,7 @@ async function buildPlans(input: z.infer<typeof PlanBody>, ctx: PlanCtx) {
     await nameColumnsWithAi(sheet, async (prompt) => {
       const r = await platform().ai.invoke({
         orgId: ctx.orgId,
-        capability: "chat",
+        capability: "organise",
         input: { messages: [{ role: "user", content: prompt }] },
         source: { kind: "core-import:sheet-columns", id: filename },
         userId: ctx.userId ?? null,

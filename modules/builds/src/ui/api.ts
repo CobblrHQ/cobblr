@@ -153,6 +153,12 @@ export class BuildsApiError extends Error {
 }
 
 export class BuildsApi {
+  inspectionResources(orderId: string, ordinal?: number) { return this.req<Awaited<ReturnType<typeof import("../api/inspection.js").inspectionResources>>>("GET", `/assembly-orders/${orderId}/inspection-resources${ordinal ? `?ordinal=${ordinal}` : ""}`); }
+  inspection(id: string) { return this.req<Awaited<ReturnType<typeof import("../api/inspection.js").inspectionView>>>("GET", `/assembly-inspections/${id}`); }
+  assemblyRecall(code: string) { return this.req<Awaited<ReturnType<typeof import("../api/inspection.js").assemblyRecall>>>("GET", `/assembly-recall?code=${encodeURIComponent(code)}`); }
+  reflowResources(orderId: string) {
+    return this.req<import("../api/reflow.js").ReflowResources>("GET", `/assembly-orders/${orderId}/reflow-resources`);
+  }
   placementResources() { return this.req<Awaited<ReturnType<typeof import("../api/placement.js").placementResources>>>("GET", "/placement-resources"); }
   placementProgram(id: string) { return this.req<Awaited<ReturnType<typeof import("../api/placement.js").placementProgram>>>("GET", `/assembly-orders/${id}/program`); }
   async authorizeMachineStation(machineKind: string, machineId: string, purpose: "placement" | "reflow" | "inspection") {

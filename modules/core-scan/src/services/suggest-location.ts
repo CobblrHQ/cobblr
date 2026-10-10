@@ -25,7 +25,7 @@
 // storage warning would immediately complain about is the worst thing this file
 // could do.
 
-import { platform } from "@cobblr/platform-contract";
+import { platform, countOf } from "@cobblr/platform-contract";
 import { scanTargetsForOrg } from "./scan-target.js";
 import { isJunkName } from "./enrich.js";
 import { satisfiesRequirement, type StorageRequirement } from "./storage-requirement.js";
@@ -239,7 +239,7 @@ export async function suggestLocationForItem(
           location_id: home.id,
           location_name: home.title,
           count: home.count,
-          reason: opts.kindLabel?.trim() ? `where your other ${opts.kindLabel.trim()} are` : `${home.count} others are kept here`,
+          reason: opts.kindLabel?.trim() ? `where your other ${opts.kindLabel.trim()} are` : `${countOf(home.count, "other")} are kept here`,
           source: "same-collection",
         };
       }
@@ -358,7 +358,7 @@ export async function suggestLocationForItem(
     count,
     reason:
       count >= 2
-        ? `${count} similar items are stored here`
+        ? `${countOf(count, "similar item")} are stored here`
         : "a matching item is stored here",
     source: "similar-items",
   };

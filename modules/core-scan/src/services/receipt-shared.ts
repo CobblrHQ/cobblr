@@ -38,6 +38,12 @@ export interface ReceiptLine {
    *  A discount is never its own line. Nobody owns a coupon, and an inbox row
    *  called "Lidl Points Coupon" is not a thing to put on a shelf. */
   discount: number | null;
+  /** This line's share of a discount taken off the whole ORDER (a code like
+   *  WEL05, 10% of the subtotal), as a positive number. Kept apart from
+   *  `discount`, which was printed under the line: the order record wants
+   *  what each line cost after the code, and the card wants to say why
+   *  (shareOrderDiscount). */
+  order_discount?: number | null;
   /** For a line sold BY WEIGHT: the weight printed on the line ("4.14 lb"),
    *  and its unit. `qty` is then 1 - it is one package - and `unit_price` is
    *  the per-unit price ($/lb). Null for anything sold by count. Kept because
@@ -84,7 +90,49 @@ export function weightUnit(v: unknown): ReceiptLine["weight_unit"] {
 
 /** What a line actually cost: rung-up price less anything taken off it. */
 export function lineNet(l: ReceiptLine): number {
-  return (l.line_total ?? 0) - (l.discount ?? 0);
+  return (l.line_total ?? 0) - (l.discount ?? 0) - (l.order_discount ?? 0);
+}
+
+/** Money came off this line, under it or as its share of the order's. */
+export function lineDiscounted(l: Pick<ReceiptLine, "discount" | "order_discount">): boolean {
+  return !!l.discount || !!l.order_discount;
+}
+
+/**
+ * A discount on the whole order, shared across its item lines in proportion
+ * to what each was rung up at, to the cent (#5350). A Kingroon order took
+ * 10% (WEL05, -25.62) off three lines of 80.30, 87.99 and 87.99; each line's
+ * cost is what it cost after the code, and the shares add up to exactly the
+ * discount (the largest remainders take the odd cents).
+ *
+ * Only when it is safe to say: the totals reconciled, no line carries a
+ * discount of its own (then the order's figure may be those), and the item
+ * lines add up to the subtotal the discount came off. Otherwise the receipt
+ * is returned as it was, and the lines keep their rung-up prices.
+ */
+export function shareOrderDiscount(receipt: ParsedReceipt): ParsedReceipt {
+  const t = receipt.totals;
+  const off: number = centsFromAmount((t?.discounts ?? []).reduce((s, d) => s + Math.abs(d), 0));
+  if (!t || !t.reconciled || off <= 0 || t.subtotal === null) return receipt;
+  const items = receipt.items.map((l, i) => ({ l, i })).filter(({ l }) => !l.kind);
+  if (!items.length || items.some(({ l }) => l.discount || l.order_discount || l.line_total === null)) return receipt;
+  const cents: number[] = items.map(({ l }) => centsFromAmount(l.line_total!));
+  const sum = cents.reduce((s, c) => s + c, 0);
+  if (sum <= 0 || Math.abs(sum - centsFromAmount(t.subtotal)) > 1 || off >= sum) return receipt;
+  const exact = cents.map((c) => (c * off) / sum);
+  const share = exact.map(Math.floor);
+  let left = off - share.reduce((s, c) => s + c, 0);
+  const byRemainder = exact.map((e, k) => ({ k, r: e - Math.floor(e) })).sort((a, b) => b.r - a.r || a.k - b.k);
+  for (const { k } of byRemainder) {
+    if (left <= 0) break;
+    share[k]!++;
+    left--;
+  }
+  const next = receipt.items.slice();
+  items.forEach(({ l, i }, k) => {
+    next[i] = { ...l, order_discount: amountOf(share[k]! as Cents) };
+  });
+  return { ...receipt, items: next, lines_total: money(next.reduce((s, l) => s + lineNet(l), 0)) };
 }
 
 /** Title for the inbox session a parsed receipt becomes: the vendor when known
@@ -109,6 +157,7 @@ export function vendorFromLabel(label: string | null | undefined): string | null
 import type { AiFallback, ProviderErrorReason } from "@cobblr/platform-contract/scan-fallback";
 import type { ReceiptReadSource } from "@cobblr/platform-contract/scan-session";
 import type { RoledFacts } from "@cobblr/platform-contract";
+import { amountOf, centsFromAmount, type Cents } from "@cobblr/platform-contract/money";
 import { filedQuantityOf } from "./filed-quantity.js";
 import type { ReceiptDateReading } from "./receipt-date.js";
 import {
@@ -172,8 +221,11 @@ export interface ParsedReceipt {
  *  deterministic parse or the AI fallback. */
 /** `ocr-form`: a scanned form read the way a form is (form-ocr.ts);
  *  `ai-document`: the page read by the document model because a check on the
- *  engine's read failed (document-read.ts). */
-export type ParseMethod = "csv" | "pdf-table" | "text-lines" | "ocr-lines" | "ocr-form" | "ai-chat" | "ai-vision" | "ai-document";
+ *  engine's read failed (document-read.ts); `order-page`: the lines the
+ *  store's own order page gave, with no model (receipt-order-page.ts);
+ *  `order-email`: a store's order confirmation email read by its layout,
+ *  with no model (receipt-order-email.ts). */
+export type ParseMethod = "csv" | "pdf-table" | "text-lines" | "ocr-lines" | "ocr-form" | "ai-chat" | "ai-vision" | "ai-document" | "order-page" | "order-email";
 
 /**
  * WHY a parse failed, in a form something can branch on.

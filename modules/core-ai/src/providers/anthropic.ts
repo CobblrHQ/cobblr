@@ -7,7 +7,8 @@ import { rankImagesPromptFor } from "./rank-images-prompt.js";
 import { toolsOf, turnsOf, anthropicToolsOf, anthropicMessagesOf, parseAnthropicContent } from "./tool-wire.js";
 import { promptFingerprint } from "./prompt-fingerprint.js";
 import { pricedModel, servedModelOf } from "@cobblr/platform-contract/ai-models";
-import { anthropicCapabilities, anthropicCatalog, anthropicCostCents } from "./anthropic-models.js";
+import { anthropicCapabilities, anthropicCatalog, anthropicCostCents, anthropicTakesTemperature } from "./anthropic-models.js";
+import { sendDroppingRefused } from "./refused-params.js";
 
 // Which models each job may use is no longer a list here: the key's own
 // listing, read by the rules in anthropic-models.ts (#5417). This is what a
@@ -25,6 +26,7 @@ export function register(): void {
   platform().ai.registerProvider({
     id: "anthropic",
     label: "Anthropic (Claude)",
+    company: "Anthropic",
     describeCredentials: () => ({
       api_key: { label: "API key (usually starts with sk-ant-)", secret: true },
     }),
@@ -60,7 +62,10 @@ export function register(): void {
         // (the matchmaker literally instructs "identical items must route the
         // same way") — sampling variance is pure downside, so temperature
         // pins to 0 unless a caller/config explicitly asks for spread.
-        temperature: typeof ctx.config.temperature === "number" ? ctx.config.temperature : 0,
+        // Claude 5 and later refuse it ("deprecated for this model"), so it is
+        // sent only where a model takes it; a model that refuses it anyway is
+        // answered by sendDroppingRefused below.
+        ...(typeof ctx.config.temperature === "number" ? { temperature: ctx.config.temperature } : anthropicTakesTemperature(ctx.model) ? { temperature: 0 } : {}),
         messages,
       };
       if (system) {
@@ -76,15 +81,17 @@ export function register(): void {
       // Native tool-calling for chat: forward the neutral tool defs.
       const toolDefs = isChatTurn(ctx.capability) ? toolsOf(ctx.input) : null;
       if (toolDefs) body.tools = anthropicToolsOf(toolDefs);
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify(body),
-      });
+      const res = await sendDroppingRefused("anthropic", ctx.model, body, (b) =>
+        fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-api-key": apiKey,
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify(b),
+        }),
+      );
       if (!res.ok) {
         const body = await res.text();
         throw providerError("anthropic", reasonFromResponse(res.status, body), redactSecrets(`anthropic: ${res.status} ${body}`, [apiKey]), res.status, retryAfterSecOf(body));

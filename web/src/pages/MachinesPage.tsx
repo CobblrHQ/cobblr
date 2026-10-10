@@ -916,7 +916,7 @@ function SaveViewModal({
             <div className="text-[10px] text-faint mt-1">
               {included.size === allStates.length
                 ? "All states: no filter, shows everything"
-                : `${included.size} of ${allStates.length} states`}
+                : `${included.size} of ${countOf(allStates.length, "state")}`}
             </div>
           </div>
         )}

@@ -32,6 +32,7 @@ import { kindWordsFrom, type KindWords } from "@cobblr/platform-contract/kind-la
 import { disableModuleForOrg, enableModuleForOrg } from "../modules/enable.js";
 import { listEntries } from "../modules/registry.js";
 import { meta } from "../db/meta.js";
+import { MAX_STEPS, jobOfWords, myAiDefaultsView, pickMyAiStep, saveMyAiDefaults } from "./my-ai-defaults.js";
 import { actionLabelOf, registerHandler, registerPlanner, registerRequester, registerUndo } from "./actions.js";
 import { getMover, instancesHolding, moveRecords } from "./move-records.js";
 import { bringBack, markGone } from "./dispositions.js";
@@ -391,14 +392,14 @@ export function registerPlatformActionHandlers(): void {
     if (!parsed.success) return { error: "Choose between 1 and 500 records, each with a kind and id." };
     const lines: string[] = [];
     for (const r of parsed.data) lines.push((await lookup(ctx.orgId, r.kind, r.id))?.title ?? "A record that is no longer available");
-    return { title: `Set ${String(ctx.args?.field ?? "a field")} on ${lines.length} records`, lines };
+    return { title: `Set ${String(ctx.args?.field ?? "a field")} on ${countOf(lines.length, "record")}`, lines };
   });
   registerHandler("platform.set-field-on-records", async (ctx) => {
     const parsed = refsSchema.safeParse(ctx.args?.records);
     if (!parsed.success || typeof ctx.args?.field !== "string" || !("value" in ctx.args)) return { ok: false, error: "Choose records, a field and a value, or null to clear it." };
     try {
       const data = await setBulkField(ctx.orgId, ctx.userId, parsed.data, ctx.args.field, ctx.args.value);
-      return { ok: true, data: { field: ctx.args.field, ...data }, summary: `${data.done.length} records changed.${data.failed.length ? ` ${data.failed.length} skipped.` : ""}` };
+      return { ok: true, data: { field: ctx.args.field, ...data }, summary: `${countOf(data.done.length, "record")} changed.${data.failed.length ? ` ${data.failed.length} skipped.` : ""}` };
     } catch (e) { return { ok: false, error: (e as Error).message }; }
   });
   registerUndo("platform.set-field-on-records", (result) => {
@@ -414,7 +415,7 @@ export function registerPlatformActionHandlers(): void {
     const parsed = changesSchema.safeParse(ctx.args?.changes);
     if (!parsed.success || typeof ctx.args?.field !== "string") return { ok: false, error: "The batch's changes are missing." };
     const data = await restoreBulkField(ctx.orgId, ctx.userId, ctx.args.field, parsed.data.map((r) => ({ ...r, before: r.before ?? null, after: r.after ?? null })));
-    return { ok: true, data, summary: `${data.done.length} records restored.${data.failed.length ? ` ${data.failed.length} skipped.` : ""}` };
+    return { ok: true, data, summary: `${countOf(data.done.length, "record")} restored.${data.failed.length ? ` ${data.failed.length} skipped.` : ""}` };
   });
 
   registerHandler("platform.add-field", async (ctx: ActionInvokeContext) => {
@@ -1274,6 +1275,79 @@ export function registerPlatformActionHandlers(): void {
     return {
       title: `Turn on the ${found.label} feature`,
       lines: [`${found.label} appears in the menu for everyone in this workspace.`],
+    };
+  });
+
+  /** The steps a person asked for, as given: a list of { connection,
+   *  model }, or that list written out as JSON. */
+  const saidSteps = (raw: unknown): Array<{ connection: string; model: string }> | { error: string } => {
+    let list = raw;
+    if (typeof raw === "string") {
+      try {
+        list = raw.trim() ? JSON.parse(raw) : [];
+      } catch {
+        return { error: "steps is a list of { connection, model }, First first" };
+      }
+    }
+    if (list == null) return [];
+    if (!Array.isArray(list)) return { error: "steps is a list of { connection, model }, First first" };
+    const out: Array<{ connection: string; model: string }> = [];
+    for (const s of list) {
+      const o = (s ?? {}) as { connection?: unknown; model?: unknown };
+      if (!str(o.connection) || !str(o.model)) return { error: "each step names a connection and a model" };
+      out.push({ connection: str(o.connection), model: str(o.model) });
+    }
+    if (out.length > MAX_STEPS) return { error: `at most ${MAX_STEPS} steps` };
+    return out;
+  };
+
+  /** A person's request in words, as the ids a save takes. */
+  const myDefaultsAsked = async (ctx: ActionInvokeContext) => {
+    if (!ctx.userId) return { error: "only a signed-in person has their own AI to choose" };
+    const job = jobOfWords(str((ctx.args ?? {}).job));
+    if (!job) return { error: `which kind of work? photos, chat, text or search (got "${str((ctx.args ?? {}).job)}")` };
+    const wanted = saidSteps((ctx.args ?? {}).steps);
+    if ("error" in wanted) return wanted;
+    const view = await myAiDefaultsView(ctx.userId);
+    const steps: Array<{ credential_id: string; model: string }> = [];
+    const words: string[] = [];
+    for (const w of wanted) {
+      const picked = pickMyAiStep(view, job.id, w.connection, w.model);
+      if ("error" in picked) return { error: picked.error };
+      steps.push(picked);
+      const c = view.connections.find((x) => x.id === picked.credential_id)!;
+      const name = c.jobs[job.id]?.choices?.find((x) => x.id === picked.model)?.label ?? view.model_labels[c.provider_id]?.[picked.model] ?? picked.model;
+      words.push(`${c.label} · ${name}`);
+    }
+    return { userId: ctx.userId, job, steps, words };
+  };
+
+  registerHandler("platform.set-my-default-ai", async (ctx: ActionInvokeContext) => {
+    const asked = await myDefaultsAsked(ctx);
+    if ("error" in asked) return { ok: false, error: asked.error };
+    const saved = await saveMyAiDefaults(asked.userId, asked.job, asked.steps);
+    if (!saved.ok) return { ok: false, error: saved.refusal };
+    const summary = asked.steps.length ? `${asked.job.title}: ${asked.words.join(", then ")}` : `${asked.job.title}: your own choice cleared`;
+    return { ok: true, summary, data: { job: asked.job.id, steps: asked.steps, previous: saved.previous } };
+  });
+
+  // Undo puts back what the job had before, by id, through this same
+  // action; a job that had nothing is cleared.
+  registerUndo("platform.set-my-default-ai", (result) => {
+    const d = (result as { data?: { job?: unknown; previous?: unknown } } | null)?.data;
+    if (typeof d?.job !== "string" || !Array.isArray(d.previous)) return null;
+    const previous = d.previous as Array<{ credential_id: string; model: string }>;
+    return { action_id: "platform:set-my-default-ai", args: { job: d.job, steps: previous.map((s) => ({ connection: s.credential_id, model: s.model })) } };
+  });
+
+  registerPlanner("platform.set-my-default-ai", async (ctx: ActionInvokeContext) => {
+    const asked = await myDefaultsAsked(ctx);
+    if ("error" in asked) return { error: asked.error };
+    return {
+      title: asked.steps.length ? `Your own AI for ${asked.job.phrase}` : `Stop using your own AI for ${asked.job.phrase}`,
+      lines: asked.steps.length
+        ? [...asked.words.map((w, i) => `${i === 0 ? "First" : "Then"}: ${w}`), "Every workspace you use follows this unless it chose its own."]
+        : ["Each workspace you use goes back to its own order for this."],
     };
   });
 

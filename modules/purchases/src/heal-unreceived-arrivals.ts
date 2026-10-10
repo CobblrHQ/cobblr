@@ -35,7 +35,7 @@
 // visit, so the question disappears without anyone answering it.
 
 import { sql, type Kysely } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, countOf } from "@cobblr/platform-contract";
 import { registerHealPass } from "@cobblr/platform-contract/heal-pass";
 import type { PurchasesDB } from "./db.js";
 
@@ -59,7 +59,7 @@ const MAY_HAVE_MISSED_STOCK = sql<boolean>`(
 export function unconfirmedSentence(n: number): string {
   return n === 1
     ? "One thing you ordered may not have reached your stock when it was delivered."
-    : `${n} things you ordered may not have reached your stock when they were delivered.`;
+    : `${countOf(n, "thing")} you ordered may not have reached your stock when they were delivered.`;
 }
 
 /** Heal one workspace; answers how many lines it stamped or withdrew. */

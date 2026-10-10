@@ -18,6 +18,7 @@ import type { CoreScanDB } from "../db.js";
 import { enrichPhotoItem, knownCategories } from "../services/enrich-photo.js";
 import { answerWindow, claimGlanceAnswer, glanceItem, readContextFor, readGlanceEnabled, shouldGlance } from "../services/glance.js";
 import { finishPhotoRead } from "../services/photo-read-finish.js";
+import { scanReader } from "../services/scan-reader.js";
 import { autoRankCatalogPhoto, readPhotoRankEnabled } from "../services/auto-rank.js";
 import { runReceiptBackfill } from "../services/receipt-backfill.js";
 import { attachPaperwork } from "../services/attach-paperwork.js";
@@ -133,10 +134,11 @@ export function registerScanHandlers(): void {
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreScanDB>;
     const row = await db
       .selectFrom("core_scan_inbox_items")
-      .select(["barcode_text", "image_file_id", "ai_suggested_at", "suggested_metadata"])
+      .select(["barcode_text", "image_file_id", "ai_suggested_at", "suggested_metadata", "created_by_user_id"])
       .where("id", "=", itemId)
       .executeTakeFirst();
     if (!row) return { ok: true, skipped: "no such row" };
+    const reader = scanReader(ctx.userId, row);
     // Only photo-only scans — a barcode is handled inline by the fast
     // path; an already-enriched row isn't re-run by the auto wire.
     if (row.barcode_text || !row.image_file_id || row.ai_suggested_at) {
@@ -167,7 +169,7 @@ export function registerScanHandlers(): void {
         orgId: ctx.orgId,
         itemId,
         imageFileId: row.image_file_id,
-        userId: ctx.userId,
+        userId: reader,
         knownCategories: await knownCategories(db),
       });
       if (glance) {
@@ -186,13 +188,13 @@ export function registerScanHandlers(): void {
       orgId: ctx.orgId,
       itemId,
       imageFileId: row.image_file_id,
-      userId: ctx.userId,
+      userId: reader,
       visitorIp: typeof payloadIp === "string" ? payloadIp : null,
       ...readCtx,
     });
     // The receipt route, the queued wait, or the enriched event: one copy,
     // shared with a queued identify that finishes later (photo-read-finish.ts).
-    const done = await finishPhotoRead({ orgId: ctx.orgId, itemId, fileId: row.image_file_id, userId: ctx.userId ?? null, outcome });
+    const done = await finishPhotoRead({ orgId: ctx.orgId, itemId, fileId: row.image_file_id, userId: reader, outcome });
     return { ok: true, ...done };
   });
 

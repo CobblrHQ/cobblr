@@ -61,6 +61,7 @@ import {
   parsePdfTableReceipt,
 } from "./receipt-deterministic.js";
 import { detectOrderRef, parseTextReceipt } from "./receipt-text.js";
+import { parseOrderEmail } from "./receipt-order-email.js";
 import { asBillOfSale, looksLikeBillOfSale, looksLikeTransaction, markCharges, readBillOfSale } from "./bill-of-sale.js";
 import { ocrImageText } from "./ocr.js";
 import { looksLikeFullPage, ocrFormText } from "./form-ocr.js";
@@ -141,7 +142,7 @@ async function chatExtract(orgId: string, text: string, sourceId: string, userId
   const r = await platform().ai.invoke({
     orgId,
     userId: userId ?? undefined,
-    capability: "chat",
+    capability: "read-document-text",
     input: {
       messages: [
         {
@@ -324,9 +325,12 @@ export async function parseReceipt(
    *  when the text shows one (a price, a total, a bill of sale), so pasting a
    *  manual never spends an AI read, and a picture with no text to judge is
    *  not sent at all. The inbox's own reads keep today's behaviour. */
-  opts: { requireTransaction?: boolean } & HostedReadOpts = {},
+  /** `noModel`: the caller already holds the lines from somewhere better
+   *  than a model (the store's own order page): only the free tiers run, and
+   *  a receipt they cannot read fails with no model asked. */
+  opts: { requireTransaction?: boolean; noModel?: boolean } & HostedReadOpts = {},
 ): Promise<ReceiptResult> {
-  const mayAsk = (text: string | null | undefined): boolean => !opts.requireTransaction || (!!text && looksLikeTransaction(text));
+  const mayAsk = (text: string | null | undefined): boolean => !opts.noModel && (!opts.requireTransaction || (!!text && looksLikeTransaction(text)));
   const file = await platform().files.read(orgId, fileId, "original");
   if (!file) return { ok: false, reason: "Couldn't read that file.", code: "unreadable" };
   const bytes = Buffer.from(file.bytes);
@@ -370,6 +374,7 @@ export async function parseReceipt(
   // models mean the engine's read is filed with its doubts marked and the
   // page waits for one; nothing at all to file is "the AI is busy".
   const readDocument = async (img: Buffer, ocr: { receipt: ParsedReceipt; text: string } | null, method: ParseMethod, source: ReceiptSource): Promise<ReceiptResult | null> => {
+    if (opts.noModel) return ocr ? done(ocr.receipt, method, ocr.text, source) : null;
     const checked = await readCheckedDocument({ orgId, page: img, sourceId: fileId, userId, ocr });
     if (!checked) return null;
     if ("busy" in checked) {
@@ -477,6 +482,10 @@ export async function parseReceipt(
   const asText = bytes.toString("utf8");
   const sale = readBillOfSale(asText);
   if (sale) return done(withTextChecks(sale), "text-lines", asText, "text");
+  // A store's order email, its lines named the store's way and checked
+  // against its own subtotal, before the till parser that misreads the layout.
+  const ordered = parseOrderEmail(asText);
+  if (ordered) return done(ordered, "order-email", asText, "text");
   const byLine = parseTextReceipt(asText);
   if (byLine) return done(byLine.receipt, "text-lines", asText, "text");
   if (!mayAsk(asText)) return failed({ ok: false, reason: "It does not read as a sale.", code: "no_line_items" }, "text");

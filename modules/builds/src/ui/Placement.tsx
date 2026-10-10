@@ -10,6 +10,7 @@ import type { BuildsApi } from "./api.js";
 import type { BoardRevision } from "../api/board-revisions.js";
 import type { AssemblyOrderView } from "../api/assembly-orders.js";
 import type { PlacementProfile } from "../placement-program.js";
+import { countOf } from "@cobblr/platform-contract/plural";
 const input = "w-full rounded border border-line bg-surface p-2 text-sm";
 const button = "rounded border border-line px-3 py-2 text-sm min-h-11 disabled:opacity-50";
 type Calibration = PlacementProfile["packages"][string];
@@ -57,7 +58,7 @@ export function PlacementCard({ slug, order, spec, api }: { slug: string; order:
         <button type="submit" className={button} disabled={operation.isPending}>Prepare placement program</button>
       </form>}
     </>}
-    {prepared && <div className="space-y-2"><p className="text-sm">Prepared for {prepared.profile.model} · {order.qty} boards</p><button type="button" className={button} disabled={operation.isPending} onClick={exportFiles}>Download placement files</button><Link className="block text-accent underline min-h-11 py-2" to={`/station/assembly/${prepared.machine_id}/${order.id}`}>Open placement station</Link>{["placed", "reflowed", "tested"].includes(order.assembly.state) && <Link className="block text-sm text-accent underline" to={openRecordPath(prepared.output_kind, prepared.output_id)}>Placed board stock</Link>}</div>}
+    {prepared && <div className="space-y-2"><p className="text-sm">Prepared for {prepared.profile.model} · {countOf(Number(order.qty), "board")}</p><button type="button" className={button} disabled={operation.isPending} onClick={exportFiles}>Download placement files</button><Link className="block text-accent underline min-h-11 py-2" to={`/station/assembly/${prepared.machine_id}/${order.id}`}>Open placement station</Link>{["placed", "reflowed", "tested"].includes(order.assembly.state) && <Link className="block text-sm text-accent underline" to={openRecordPath(prepared.output_kind, prepared.output_id)}>Placed board stock</Link>}</div>}
     {error && <p role="alert" className="text-ember-700 dark:text-ember-300">{error}</p>}
   </section>;
 }

@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.62.0",
+  version: "0.65.0",
   displayName: "Scan",
   description:
     "Scan a barcode or snap a photo, and get the thing named and ready to file in one tap.",

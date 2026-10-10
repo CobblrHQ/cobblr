@@ -122,8 +122,10 @@ export const SHARED_WORKSPACE_TABLES: Record<string, SharedTablePolicy> = {
   oauth_grants: { travels: "never", why: CREDENTIAL },
   oauth_codes: { travels: "never", why: CREDENTIAL },
   org_encryption_keys: { travels: "never", why: CREDENTIAL },
+  station_qr_keys: { travels: "never", why: CREDENTIAL },
   integration_inbound_token_lookup: { travels: "never", why: CREDENTIAL },
   user_credential_orgs: { travels: "never", why: CREDENTIAL },
+  org_personal_documents_reader: { travels: "never", why: "a consent to send personal documents to a cloud company is given by the owner where the workspace runs, never carried in a backup" },
   // The workspace's own outbound email: its provider settings and keys.
   org_outbound_email: { travels: "never", why: CREDENTIAL },
   outbound_email_log: {
