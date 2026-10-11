@@ -9,6 +9,7 @@
 // already used, where what you type is the value and, on a field that
 // learns, becomes a choice.
 
+import { AddressPicker } from "./AddressPicker";
 import { SecretField } from "./SecretField";
 import { ColourInput } from "./ColourInput";
 import { useMemo, useState, type FocusEvent } from "react";
@@ -383,6 +384,9 @@ export function FieldValueEditor({
     ) : control === "markdown" ? (
       // Rich text — the Markdown editor (Write/Preview split).
       <MarkdownRow def={def} value={value} onCommit={onCommit} />
+    ) : control === "address" ? (
+      // Where it happens: the workspace's own places first, free text always.
+      <AddressPicker label={def.display_label} value={value} required={!!def.required} onCommit={onCommit} />
     ) : control === "money" ? (
       // An amount: the currency symbol, grouped digits, never cents.
       <MoneyRow def={def} value={value} onCommit={onCommit} currency={currency} onCurrencyChange={onCurrencyChange} />

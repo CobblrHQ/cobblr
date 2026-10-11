@@ -1,4 +1,5 @@
-import { SegmentedChoice, fieldNeed, FieldPack, RecordFormModal, MoneyInput, useConfirm, useToast, MutationError, noteWorkspaceWrite } from "@cobblr/platform-web";
+import { SegmentedChoice, fieldNeed, FieldPack, RecordFormModal, MoneyInput, useConfirm, useToast, MutationError, noteWorkspaceWrite, AddressPicker, AddressView, workspaceFetch } from "@cobblr/platform-web";
+import type { AddressValue } from "@cobblr/platform-contract/address";
 // Per-part maintenance panel — lists scheduled + history entries
 // from core-maintenance. Add an entry as "done now", "scheduled
 // later", or both (something done with a follow-up).
@@ -12,6 +13,7 @@ import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Calendar, CheckCircle, History, Plus, Trash2 } from "lucide-react";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
+import { dayLabel, dayStoredHere } from "@cobblr/platform-contract/day";
 import { useInventory } from "./context";
 
 interface MaintenanceEntry {
@@ -23,6 +25,8 @@ interface MaintenanceEntry {
   cost_cents: number | null;
   notes: string | null;
   recurrence_rule: string | null;
+  /** Where the visit happens, or null. */
+  address?: AddressValue | null;
   /** Where an open entry stands, counted by the server in this browser's
    *  zone: the same count the record's schedule and the Maintenance page show. */
   due?: { state: "ok" | "due-soon" | "overdue"; reason: string; days: number };
@@ -68,7 +72,7 @@ export function MaintenancePanel({ entityModule, entityType, entityId }: Props) 
   const list = useQuery({
     queryKey: ["maintenance", orgSlug, entityModule, entityType, entityId],
     queryFn: async () => {
-      const res = await fetch(`${base}?${params.toString()}`, { headers: auth() });
+      const res = await workspaceFetch(`${base}?${params.toString()}`, { headers: auth() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return (await res.json()) as { items: MaintenanceEntry[] };
     },
@@ -81,7 +85,7 @@ export function MaintenancePanel({ entityModule, entityType, entityId }: Props) 
 
   const complete = useMutation({
     mutationFn: async (id: string) => {
-      const res = await fetch(`${base}/${id}/complete`, {
+      const res = await workspaceFetch(`${base}/${id}/complete`, {
         method: "POST",
         headers: { ...auth(), "Content-Type": "application/json" },
         body: JSON.stringify({}),
@@ -99,7 +103,7 @@ export function MaintenancePanel({ entityModule, entityType, entityId }: Props) 
 
   const remove = useMutation({
     mutationFn: async (id: string) => {
-      const res = await fetch(`${base}/${id}`, { method: "DELETE", headers: auth() });
+      const res = await workspaceFetch(`${base}/${id}`, { method: "DELETE", headers: auth() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       noteWorkspaceWrite(`${base}/${id}`, res);
     },
@@ -121,6 +125,7 @@ export function MaintenancePanel({ entityModule, entityType, entityId }: Props) 
           type="button"
           onClick={() => setAdding(true)}
           className="text-[11px] font-mono uppercase tracking-widest text-accent hover:text-accent inline-flex items-center gap-1"
+          data-testid="maintenance-add"
         >
           <Plus size={11} /> add
         </button>
@@ -222,7 +227,7 @@ function EntryRow({
           <div className="text-[10px] font-mono text-faint dark:text-slate-500 mt-0.5">
             {entry.performed_at && (
               <span>
-                done {new Date(entry.performed_at).toLocaleDateString()}
+                done {dayLabel(dayStoredHere(entry.performed_at))}
               </span>
             )}
             {entry.performed_at && entry.scheduled_at && <span> · </span>}
@@ -230,7 +235,7 @@ function EntryRow({
               <span className={overdue ? "text-ember-500" : days != null && days <= 30 ? "text-amber-600" : ""}>
                 {overdue
                   ? `overdue ${-days!}d`
-                  : `due ${new Date(entry.scheduled_at).toLocaleDateString()}${days != null ? ` (${days}d)` : ""}`}
+                  : `due ${dayLabel(dayStoredHere(entry.scheduled_at))}${days != null ? ` (${days}d)` : ""}`}
               </span>
             )}
             {entry.cost_cents != null && (
@@ -240,6 +245,11 @@ function EntryRow({
           {entry.description && (
             <div className="text-[11px] text-muted dark:text-slate-400 mt-1">
               {entry.description}
+            </div>
+          )}
+          {entry.address && (
+            <div className="text-[11px] mt-1" data-testid="visit-address">
+              <AddressView value={entry.address} inline />
             </div>
           )}
         </div>
@@ -290,6 +300,7 @@ function AddEntryModal({
   const [performedAt, setPerformedAt] = useState(dayHere());
   const [scheduledAt, setScheduledAt] = useState("");
   const [cost, setCost] = useState<number | null>(null);
+  const [address, setAddress] = useState<AddressValue | null>(null);
   const [busy, setBusy] = useState(false);
 
   const auth = (): Record<string, string> => {
@@ -308,10 +319,11 @@ function AddEntryModal({
         name: name.trim(),
         description: description.trim() || null,
         cost_cents: cost,
+        address,
       };
       if (kind === "done" || kind === "both") body.performed_at = performedAt;
       if (kind === "scheduled" || kind === "both") body.scheduled_at = scheduledAt;
-      const res = await fetch(
+      const res = await workspaceFetch(
         `/api/v1/orgs/${orgSlug}/modules/core-maintenance/entries`,
         {
           method: "POST",
@@ -424,6 +436,11 @@ function AddEntryModal({
                 <MoneyInput value={cost} storage="cents" live onCommit={setCost} placeholder="—" ariaLabel="Cost" />
               </Field>
             ),
+          },
+          {
+            // Where it happens: the calendar event's Where and the phone's directions.
+            need: { ...fieldNeed("address", { control: "address", label: "Address (optional)" }), full: true },
+            node: <AddressPicker label="Address (optional)" value={address} onCommit={setAddress} />,
           },
         ]} />
         <div className="flex gap-2 pt-2">

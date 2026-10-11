@@ -177,6 +177,7 @@ const CONTROL_MIN_PX: Record<FieldSpace["control"], number> = {
   picker: 200,
   readonly: 150,
   markdown: 320,
+  address: 280,
   location: 220,
 };
 

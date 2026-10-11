@@ -19,6 +19,8 @@
 // on the action id alone even with tag_name "Kossel"; the id is where the
 // model was right, the arguments are where it can still be wrong.
 
+import { tokensOf } from "./api/ask-dont-rank.js";
+
 export interface Claim {
   cls: string;
   rest: string;
@@ -38,6 +40,10 @@ export interface Verdict {
   names?: string[];
   /** The answer's words, when the path can show them. */
   text?: string;
+  /** Records a search this turn said several of match, by name, that the
+   *  person's words do not pick between (lookAlikesIn): the app asks which,
+   *  so a reply that does is right (#5847). */
+  lookAlikes?: string[];
   /** The record an entity-scoped action was invoked on, from the call. */
   entity?: { kind: string; id: string };
   /** What the DOOR did when the bench opened it: the action run for real
@@ -157,6 +163,52 @@ export function splitClaims(ai: string): string[] {
   return out;
 }
 
+/** The records a search this turn answered with `several_match` ("ask
+ *  which one the person means"), when the person's words do not pick one: a
+ *  token only one of them carries ("12" in "the X1 Carbon #12") picks it, the
+ *  same test the app's own guard makes (ask-dont-rank.ts). Read from the
+ *  turn's tool results, so a live run and a recorded transcript agree. */
+export function lookAlikesIn(say: string, turns: ReadonlyArray<{ role?: string; content?: unknown }>): string[] {
+  const said = tokensOf(say);
+  for (const turn of turns) {
+    if (turn.role !== "tool" || typeof turn.content !== "string") continue;
+    let body: { data?: { several_match?: unknown; items?: Array<{ title?: unknown; name?: unknown }> } } & { several_match?: unknown; items?: Array<{ title?: unknown; name?: unknown }> };
+    try {
+      body = JSON.parse(turn.content);
+    } catch {
+      continue;
+    }
+    const data = body.data ?? body;
+    if (typeof data.several_match !== "string" || !Array.isArray(data.items)) continue;
+    const names = data.items.flatMap((r) => (typeof r.title === "string" ? [r.title] : typeof r.name === "string" ? [r.name] : []));
+    if (names.length < 2) continue;
+    const picked = names.filter((n) => [...tokensOf(n)].some((t) => said.has(t) && names.every((o) => o === n || !tokensOf(o).has(t))));
+    if (picked.length === 1) continue;
+    return names;
+  }
+  return [];
+}
+
+/** A reply that asks which of the look-alikes is meant: it asks (a question
+ *  mark, or "which one", "do you mean", "tell me which"), and it names at
+ *  least two of them, or names one and lists the choices (a file is often
+ *  described by what it shows, not its file name). */
+export function askedWhich(text: string | undefined, lookAlikes: readonly string[]): boolean {
+  if (!text || lookAlikes.length < 2) return false;
+  if (!/\?|\bwhich (?:one|of|do you)\b|\bdo you mean\b|\b(?:tell|let) me (?:know )?which\b/i.test(text)) return false;
+  const lower = text.toLowerCase();
+  // A name inside a longer one ("X1 Carbon" in "X1 Carbon #12") is said only
+  // where it stands on its own.
+  const said = lookAlikes.filter((n) => {
+    const longer = lookAlikes.filter((o) => o !== n && o.toLowerCase().includes(n.toLowerCase())).map((o) => o.toLowerCase());
+    let rest = lower;
+    for (const o of longer) rest = rest.split(o).join(" ");
+    return rest.includes(n.toLowerCase());
+  });
+  const listed = (text.match(/^\s*(?:[-*•]|\d+[.)])\s+\S/gm) ?? []).length;
+  return said.length >= 2 || (said.length >= 1 && listed >= 2);
+}
+
 /** What the model did, said the way a person reads it. */
 function gotWord(picked: string | null): string {
   if (picked === null) return "words";
@@ -171,6 +223,7 @@ function judgeOne(ai: string, v: Verdict, knownActions: Set<string>): Judgement 
     case "action": {
       if (c.rest === "computed" || c.rest === "undo") return null;
       if (!knownActions.has(c.rest)) return null;
+      if (v.picked === null && askedWhich(v.text, v.lookAlikes ?? [])) return { ok: true, why: `asked which of ${v.lookAlikes!.length} look-alikes a search found (the app's own rule)` };
       if (v.picked !== c.rest) return { ok: false, why: `wanted ${c.rest}, got ${v.picked ?? "words"}` };
       for (const [k, want] of Object.entries(c.args)) {
         const got = v.args?.[k];
@@ -182,14 +235,17 @@ function judgeOne(ai: string, v: Verdict, knownActions: Set<string>): Judgement 
     // words a person reads: "wanted a record update, got the action
     // projects:mark-task-done" and never "got X (got X)".
     case "create": {
+      if (v.picked === null && askedWhich(v.text, v.lookAlikes ?? [])) return { ok: true, why: `asked which of ${v.lookAlikes!.length} look-alikes a search found (the app's own rule)` };
       const ok = v.picked === "(create_record)" || v.picked === "(create_records)";
       return { ok, why: ok ? "created the record" : `wanted a record create, got ${gotWord(v.picked)}` };
     }
     case "update": {
+      if (v.picked === null && askedWhich(v.text, v.lookAlikes ?? [])) return { ok: true, why: `asked which of ${v.lookAlikes!.length} look-alikes a search found (the app's own rule)` };
       const ok = v.picked === "(update_record)";
       return { ok, why: ok ? "updated the record" : `wanted a record update, got ${gotWord(v.picked)}` };
     }
     case "delete": {
+      if (v.picked === null && askedWhich(v.text, v.lookAlikes ?? [])) return { ok: true, why: `asked which of ${v.lookAlikes!.length} look-alikes a search found (the app's own rule)` };
       const ok = v.picked === "(delete_record)";
       return { ok, why: ok ? "deleted the record" : `wanted a record delete, got ${gotWord(v.picked)}` };
     }

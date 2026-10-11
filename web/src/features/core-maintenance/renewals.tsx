@@ -1,20 +1,20 @@
 import { useState, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RecordFormModal, MoneyInput, useMoneyCurrency, usePhotoPick, useToast, usePasteImage, NumberField } from "@cobblr/platform-web";
+import { RecordFormModal, MoneyInput, useMoneyCurrency, usePhotoPick, useRunWithUndo, useToast, usePasteImage, NumberField } from "@cobblr/platform-web";
 import { TermHistory, TermReferenceQuantity } from "./terms";
 import { api, type MaintenanceSchedule, type MaintenanceReminder, type OverdueCadence } from "../../lib/api";
 import type { EntityDetailPanelCtx } from "../../panels/types";
+import { dayHere, dayLabel, daysUntil, dayStoredHere } from "@cobblr/platform-contract/day";
 
 const input = "w-full rounded-md border border-line bg-surface px-3 py-2 text-base text-content dark:bg-slate-900 dark:border-slate-700";
 function renewalDate(value: string, relative = false): string {
-  const date = new Date(value.slice(0, 10) + "T12:00:00");
+  const day = dayStoredHere(value) ?? value;
   if (relative) {
-    const today = new Date();
-    if (date.toDateString() === today.toDateString()) return "today";
-    today.setDate(today.getDate() + 1);
-    if (date.toDateString() === today.toDateString()) return "tomorrow";
+    const left = daysUntil(day, dayHere());
+    if (left === 0) return "today";
+    if (left === 1) return "tomorrow";
   }
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  return dayLabel(day);
 }
 
 const button = "rounded-md bg-accent px-3 py-2 text-sm text-white disabled:opacity-50";
@@ -33,14 +33,16 @@ export function CadencePicker({ value, onChange, workspace = false }: { value: O
   return <label className="block text-sm">Overdue reminders<select aria-label="Overdue reminders" className={input} value={value ?? "default"} onChange={(e) => onChange(e.target.value === "default" ? null : e.target.value as OverdueCadence)}>{!workspace && <option value="default">Workspace default</option>}<option value="day">Daily</option><option value="week">Weekly</option><option value="month">Monthly</option><option value="off">Off</option></select></label>;
 }
 
-export function ReminderControls({ slug, occurrence, refresh }: { slug: string; occurrence: { id: string; nag_stopped_at: string | null; nag_snoozed_until: string | null }; refresh: () => void }) {
+export function ReminderControls({ occurrence, refresh }: { occurrence: { id: string; nag_stopped_at: string | null; nag_snoozed_until: string | null }; refresh: () => void }) {
   const toast = useToast();
   const [date, setDate] = useState("");
   const [chooseDate, setChooseDate] = useState(false);
   // One quiet control until asked: four snooze and stop choices on every
   // overdue card buried its one primary action, Renewed.
   const [open, setOpen] = useState(false);
-  const change = useMutation({ mutationFn: (body: Parameters<typeof api.maintenanceReminders>[2]) => api.maintenanceReminders(slug, occurrence.id, body), onSuccess: () => { refresh(); setChooseDate(false); }, onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't change reminders") });
+  const runWithUndo = useRunWithUndo();
+  const change = useMutation({ mutationFn: (body: { mode: "snooze" | "stop" | "resume"; duration?: "week" | "month"; until?: string }) =>
+    runWithUndo({ actionId: "core-maintenance:reminders", args: { entry_id: occurrence.id, ...body } }, body.mode === "stop" ? "Reminders off." : body.mode === "resume" ? "Reminders back on." : "Reminders snoozed."), onSuccess: () => { refresh(); setChooseDate(false); }, onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't change reminders") });
   const stopped = !!occurrence.nag_stopped_at;
   const snoozed = !!occurrence.nag_snoozed_until && new Date(occurrence.nag_snoozed_until) > new Date();
   return <div className="space-y-2 text-xs">
@@ -67,7 +69,7 @@ export function Renewals({ ctx, schedules }: { ctx: EntityDetailPanelCtx; schedu
   return <div className="space-y-3" data-testid="renewals">
     {cards.map((c) => <section key={c.field || c.schedule?.id} className="rounded-xl border border-line p-3 space-y-2">
       <h3 className="text-sm font-semibold">{c.label}</h3>
-      {c.schedule ? <><p className="text-sm">{c.schedule.ended_at ? "Didn't renew. Term ends" : c.schedule.renewal_status === "lapsed" ? "Lapsed on" : "Expires"} {c.schedule.current_expiry ? renewalDate(c.schedule.current_expiry) : "date needed"}</p>{!c.schedule.ended_at && <p className={`text-sm ${c.schedule.due.state === "overdue" ? "text-ember-700 dark:text-ember-400 font-medium" : "text-muted"}`}>{c.schedule.due.reason}</p>}{c.schedule.cancel_by && !c.schedule.ended_at && <p className="text-sm font-medium">Cancel by {renewalDate(c.schedule.cancel_by)} or it renews</p>}<p className="text-xs text-muted">Next reminder: {c.schedule.next_reminder_at ? renewalDate(c.schedule.next_reminder_at, true) : "reminders off"}</p><div className="flex flex-wrap gap-3">{!c.schedule.ended_at && <><button type="button" className={button} onClick={() => setRenewing(c.schedule!)}>Renewed</button><button type="button" className="text-sm text-accent" disabled={end.isPending} onClick={() => end.mutate(c.schedule!.id)}>Didn't renew</button></>}<button type="button" className="text-sm text-accent" onClick={() => setEditing(c)}>Change renewal</button></div>{!c.schedule.ended_at && c.schedule.occurrence && c.schedule.due.state === "overdue" && <ReminderControls slug={ctx.slug} occurrence={c.schedule.occurrence} refresh={refresh} />}</> : <><p className="text-sm text-muted">{c.value ? `Expires ${renewalDate(c.value)}` : "No expiry set"}</p><button type="button" className={button} onClick={() => setEditing(c)}>Add {c.label.toLowerCase()}</button></>}
+      {c.schedule ? <><p className="text-sm">{c.schedule.ended_at ? "Didn't renew. Term ends" : c.schedule.renewal_status === "lapsed" ? "Lapsed on" : "Expires"} {c.schedule.current_expiry ? renewalDate(c.schedule.current_expiry) : "date needed"}</p>{!c.schedule.ended_at && <p className={`text-sm ${c.schedule.due.state === "overdue" ? "text-ember-700 dark:text-ember-400 font-medium" : "text-muted"}`}>{c.schedule.due.reason}</p>}{c.schedule.cancel_by && !c.schedule.ended_at && <p className="text-sm font-medium">Cancel by {renewalDate(c.schedule.cancel_by)} or it renews</p>}<p className="text-xs text-muted">Next reminder: {c.schedule.next_reminder_at ? renewalDate(c.schedule.next_reminder_at, true) : "reminders off"}</p><div className="flex flex-wrap gap-3">{!c.schedule.ended_at && <><button type="button" className={button} onClick={() => setRenewing(c.schedule!)}>Renewed</button><button type="button" className="text-sm text-accent" disabled={end.isPending} onClick={() => end.mutate(c.schedule!.id)}>Didn't renew</button></>}<button type="button" className="text-sm text-accent" onClick={() => setEditing(c)}>Change renewal</button></div>{!c.schedule.ended_at && c.schedule.occurrence && c.schedule.due.state === "overdue" && <ReminderControls occurrence={c.schedule.occurrence} refresh={refresh} />}</> : <><p className="text-sm text-muted">{c.value ? `Expires ${renewalDate(c.value)}` : "No expiry set"}</p><button type="button" className={button} onClick={() => setEditing(c)}>Add {c.label.toLowerCase()}</button></>}
     </section>)}
     <TermHistory slug={ctx.slug} entityId={ctx.entityId} refresh={refresh} />
     <button type="button" className="text-sm text-accent" onClick={() => setEditing({ label: "Renewal" })}>Add a renewal</button>
@@ -77,7 +79,7 @@ export function Renewals({ ctx, schedules }: { ctx: EntityDetailPanelCtx; schedu
 }
 
 function RenewalSetup({ ctx, initial, close, refresh }: { ctx: EntityDetailPanelCtx; initial: { label: string; field?: string; value?: string | null; schedule?: MaintenanceSchedule }; close: () => void; refresh: () => void }) {
-  const toast = useToast();
+  const toast = useToast(); const runWithUndo = useRunWithUndo();
   const s = initial.schedule;
   const [name, setName] = useState(initial.label);
   const [expiry, setExpiry] = useState((s?.current_expiry ?? initial.value)?.slice(0, 10) ?? "");
@@ -89,7 +91,7 @@ function RenewalSetup({ ctx, initial, close, refresh }: { ctx: EntityDetailPanel
   const [cadence, setCadence] = useState<OverdueCadence | null>(s?.overdue_every ?? null);
   const save = useMutation({ mutationFn: async () => {
     const rule = { name, current_expiry: expiry, anchor: repeat === "last" || (repeat === "custom" && lastDay) ? { month: Number(expiry.slice(5, 7)), last_day: true as const } : expiry.slice(5), every_n: repeat === "custom" ? n : 1, every_unit: repeat === "custom" ? unit : "year" as const, remind, overdue_every: cadence };
-    if (s) return api.updateMaintenanceSchedule(ctx.slug, s.id, rule);
+    if (s) return runWithUndo({ actionId: "core-maintenance:update-schedule", args: { schedule_id: s.id, ...rule } }, `${s.name} changed.`);
     const [mod, type] = (ctx.kind ?? "").split(":");
     return api.createMaintenanceSchedule(ctx.slug, { ...rule, entity_module: mod!, entity_type: type!, entity_id: ctx.entityId, expiry_field: initial.field || null });
   }, onSuccess: () => { refresh(); close(); }, onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't save renewal") });

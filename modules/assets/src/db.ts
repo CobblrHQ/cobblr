@@ -5,7 +5,8 @@ import { requestInstance } from "@cobblr/platform-contract/request-instance";
 
 type ColJsonb = ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown> | undefined>;
 type ColJsonbArr = ColumnType<unknown[], unknown[] | undefined, unknown[] | undefined>;
-type ColDate = ColumnType<Date | null, string | null | undefined, string | null | undefined>;
+/** A `date` column: its `YYYY-MM-DD` text, never a Date (#5759). */
+type ColDate = ColumnType<string | null, string | null | undefined, string | null | undefined>;
 
 export interface AssetsAssetsTable {
   id: Generated<string>;

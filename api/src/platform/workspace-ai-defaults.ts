@@ -106,6 +106,21 @@ export async function workspaceAiDefaultsView(orgId: string, userId: string | nu
     const notes = aiImpl.getProvider(c.provider_id)?.modelNotes;
     if (notes && !model_labels[c.provider_id]) model_labels[c.provider_id] = Object.fromEntries(Object.entries(notes).map(([k, v]) => [k, v.label]));
   }
+  // A step can name a member's own "Just me" connection, which nobody else
+  // may use or see by its label: said as theirs, never as gone (#5622). Only a
+  // connection that really was removed reads "no longer here".
+  const unnamed = [...new Set(stored.flatMap((st) => (st.credentialId && !byKey.has(st.credentialId) ? [st.credentialId] : [])))];
+  const othersOwn = new Map<string, string>();
+  if (unnamed.length) {
+    const rows = await meta
+      .selectFrom("user_credentials as uc")
+      .innerJoin("users as u", "u.id", "uc.user_id")
+      .select(["uc.id", "u.display_name"])
+      .where("uc.id", "in", unnamed)
+      .execute()
+      .catch(() => []);
+    for (const r of rows) othersOwn.set(r.id, `${r.display_name ?? "A member"}'s own connection`);
+  }
   const stepOf = (jobId: AiJobId, key: string, model: string, providerId: string | null) => {
     const c = byKey.get(key);
     const model_label = c?.jobs[jobId]?.choices?.find((x) => x.id === model)?.label;
@@ -113,7 +128,7 @@ export async function workspaceAiDefaultsView(orgId: string, userId: string | nu
       credential_id: key,
       model,
       ...(model_label ? { model_label } : {}),
-      label: c?.label ?? "A connection no longer here",
+      label: c?.label ?? othersOwn.get(key) ?? "A connection no longer here",
       provider_id: c?.provider_id ?? providerId,
       usable: !!c?.jobs[jobId],
     };

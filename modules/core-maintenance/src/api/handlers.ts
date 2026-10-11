@@ -1,3 +1,4 @@
+import { asAddress } from "@cobblr/platform-contract/address";
 import { ensureBoundRenewal, RenewalFields } from "../bound-renewal.js";
 import { ensureUsageSchedule } from "../usage-schedule.js";
 import { z } from "zod";
@@ -28,16 +29,16 @@ import { moneyForStorage } from "@cobblr/platform-contract/money";
 import { TermBody } from "../term-fields.js";
 import { updateTerm, endRenewal } from "../terms-store.js";
 
+import { instantFromInput } from "@cobblr/platform-contract/day";
+
 const str = (v: unknown): string | null =>
   typeof v === "string" && v.trim() ? v.trim() : null;
 
-/** A date the model may phrase loosely. Invalid → null rather than Invalid Date,
+/** A date the model may phrase loosely. A bare day is that day (stored at
+ *  noon UTC, never midnight: #5759); invalid is null rather than Invalid Date,
  *  which Postgres would reject with something nobody can act on. */
 function when(v: unknown): Date | null {
-  const s = str(v);
-  if (!s) return null;
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? null : d;
+  return instantFromInput(str(v));
 }
 
 export function registerMaintenanceHandlers(): void {
@@ -191,6 +192,9 @@ export function registerMaintenanceHandlers(): void {
         notes: str(args.notes),
         recurrence_rule: str(args.recurrence_rule),
         schedule_id: str(args.schedule_id),
+        // Where it happens: the place Cobb found with find_addresses, or the
+        // address as the person said it.
+        address: asAddress(args.address),
       } as never)
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -318,7 +322,7 @@ function registerUndos(): void {
     const row = await db
       .updateTable("core_maintenance_entries")
       .set({
-        performed_at: typeof a.performed_at === "string" && a.performed_at ? new Date(a.performed_at) : null,
+        performed_at: instantFromInput(a.performed_at),
         performed_by: typeof a.performed_by === "string" && a.performed_by ? a.performed_by : null,
       } as never)
       .where("id", "=", id)

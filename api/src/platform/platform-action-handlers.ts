@@ -1322,6 +1322,26 @@ export function registerPlatformActionHandlers(): void {
     return { userId: ctx.userId, job, steps, words };
   };
 
+  // The assistant's door INTO the Vault: the bytes go in encrypted and the
+  // plain copy leaves Files for good. Nothing here reads a vault file out.
+  registerHandler("platform.file-into-vault", async (ctx: ActionInvokeContext) => {
+    const a = (ctx.args ?? {}) as { file_id?: unknown; folder?: unknown; record_kind?: unknown; record_id?: unknown };
+    if (!ctx.userId) return { ok: false, error: "Only a person can file a document in their Vault." };
+    if (typeof a.file_id !== "string" || !a.file_id) return { ok: false, error: "Which document? Give its file id." };
+    const got = await platform().files.read(ctx.orgId, a.file_id, "original");
+    if (!got) return { ok: false, error: "That file is not in this workspace." };
+    const record = typeof a.record_kind === "string" && a.record_kind && typeof a.record_id === "string" && a.record_id ? { kind: a.record_kind, id: a.record_id } : null;
+    let filed: { fileId: string; folderId: string; folderName: string };
+    try {
+      filed = await platform().vault.file(ctx.orgId, ctx.userId, { name: got.filename || "Document", mimeType: got.mimeType, bytes: got.bytes, folder: typeof a.folder === "string" ? a.folder : null, record });
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+    const removed = await platform().files.removeForGood(ctx.orgId, a.file_id);
+    const tail = removed ? " The plain copy is gone from Files." : " A copy of it is still in use in Files; remove that there.";
+    return { ok: true, summary: `Filed in your Vault folder "${filed.folderName}".${tail}`, data: { vault_file_id: filed.fileId, folder_id: filed.folderId, plain_copy_removed: removed === true } };
+  });
+
   registerHandler("platform.set-my-default-ai", async (ctx: ActionInvokeContext) => {
     const asked = await myDefaultsAsked(ctx);
     if ("error" in asked) return { ok: false, error: asked.error };

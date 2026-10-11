@@ -74,9 +74,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     return id;
   }, []);
 
+  // A toast with a button lasts long enough to press it (an Undo).
+  const withAction = (base: number, opts?: Partial<Omit<Toast, "id" | "kind" | "message">>) => (opts?.actionLabel && opts.duration === undefined ? Math.max(base, 8000) : base);
   const toastApi: ToastCtx = {
-    info: (message, opts) => push({ kind: "info", message, duration: 4000, ...opts }),
-    success: (message, opts) => push({ kind: "success", message, duration: 5000, ...opts }),
+    info: (message, opts) => push({ kind: "info", message, duration: withAction(4000, opts), ...opts }),
+    success: (message, opts) => push({ kind: "success", message, duration: withAction(5000, opts), ...opts }),
     // A failure is never silent: an error with no words still says that
     // something failed (a blank message used to render as nothing at all).
     error: (message, opts) => push({ kind: "error", message: String(message ?? "").trim() ? message : ERROR_WITHOUT_WORDS, duration: 8000, ...opts }),
@@ -206,7 +208,10 @@ function ToastCard({ toast, dismiss }: { toast: Toast; dismiss: (id: number) => 
       <Icon size={16} className={`shrink-0 mt-0.5 ${palette.icon}`} />
       <div className="flex-1 min-w-0">
         <div className={`text-sm leading-snug ${palette.text}`}>{toast.message}</div>
-        {toast.kind === "action" && toast.actionLabel && (
+        {/* Any toast given a button draws it: a success toast's Undo was
+            passed and never drawn, so sharing and suggestions offered an
+            Undo nobody could see (#5812). */}
+        {toast.actionLabel && (
           <div className="mt-2 flex items-center gap-2">
             <button
               onClick={handleAction}
@@ -224,7 +229,7 @@ function ToastCard({ toast, dismiss }: { toast: Toast; dismiss: (id: number) => 
           </div>
         )}
       </div>
-      {toast.kind !== "action" && (
+      {!toast.actionLabel && (
         <button
           onClick={() => dismiss(toast.id)}
           className={`shrink-0 ${palette.icon} hover:opacity-75 mt-0.5`}

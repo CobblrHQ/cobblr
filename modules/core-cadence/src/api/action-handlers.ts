@@ -11,6 +11,7 @@ import { statedQuantity } from "@cobblr/platform-contract/stated-quantity";
 import type { Kysely } from "kysely";
 import type { CoreCadenceDB } from "../db.js";
 import { recordCadenceEvent } from "../record.js";
+import { instantFromInput } from "@cobblr/platform-contract/day";
 
 let registered = false;
 
@@ -46,8 +47,8 @@ export function registerCadenceActionHandlers(): void {
     // A receipt carries its OWN date; defaulting to now would compress real
     // history into today and flatten the learned rate.
     const occurredAt =
-      typeof args.occurred_at === "string" && !Number.isNaN(Date.parse(args.occurred_at))
-        ? new Date(args.occurred_at)
+      instantFromInput(args.occurred_at)
+        ? instantFromInput(args.occurred_at)!
         : new Date();
 
     const price = Number(args.unit_price);

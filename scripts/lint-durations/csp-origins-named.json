@@ -1,0 +1,10 @@
+{
+  "lint": "lint:csp-origins-named",
+  "run": "node scripts/lint-csp-origins-named.ts",
+  "rows": [
+    "selfhost-deploy"
+  ],
+  "ms": 768,
+  "recorded": "2026-10-11",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

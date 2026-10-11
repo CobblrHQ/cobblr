@@ -49,9 +49,13 @@ export function RollupLine({ rollup, unit }: { rollup: CardRollup; unit?: string
   );
 }
 
-/** One lot, as a line: "4 · lot A-101 · expires in 3d". */
-export function lotWords(l: HoldingLot): string {
-  return [fmt(l.qty), l.lot ? `lot ${l.lot}` : null, goesOffWords(l.expires_on) ?? "no date"].filter(Boolean).join(" · ");
+/** One lot, as a line: "4 · lot A-101 · expires in 3d". Among lots that carry
+ *  numbers, one without says "batch unknown"; among lots none of which is
+ *  dated (a spool's batches), none says "no date". */
+export function lotWords(l: HoldingLot, all: readonly HoldingLot[] = [l]): string {
+  const numbered = all.some((x) => x.lot);
+  const dated = all.some((x) => x.expires_on);
+  return [fmt(l.qty), l.lot ? `lot ${l.lot}` : numbered ? "batch unknown" : null, goesOffWords(l.expires_on) ?? (dated || !numbered ? "no date" : null)].filter(Boolean).join(" · ");
 }
 
 /** A place with several lots can show them; one lot is already its date. */
@@ -65,7 +69,7 @@ function LotsToggle({ lots }: { lots: HoldingLot[] }) {
       {open && (
         <ul className="mt-1 space-y-0.5 pl-4 text-[11px] font-mono text-muted dark:text-slate-400" data-testid="holding-lots">
           {lots.map((l, i) => (
-            <li key={`${l.expires_on}-${l.lot ?? ""}-${i}`}>{lotWords(l)}</li>
+            <li key={`${l.expires_on}-${l.lot ?? ""}-${i}`}>{lotWords(l, lots)}</li>
           ))}
         </ul>
       )}

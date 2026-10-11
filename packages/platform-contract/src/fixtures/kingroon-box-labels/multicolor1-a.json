@@ -1,0 +1,36 @@
+{
+ "photo": "multi1-a",
+ "engine": "core-scan ocrLabelReadings (tesseract, no model)",
+ "labels": [
+  {
+   "box": 1,
+   "expected_colour": "White",
+   "frame": "G016Y-1CH\np: Diameter: 175mm\n\nBatch No. :832051101\n",
+   "fine": "asic\ne (8 f&)\nG016Y-1CH\np: Diameter: 175mm\nP ~—s-_ Batch No. :832051101\n"
+  },
+  {
+   "box": 2,
+   "expected_colour": "Light Pink",
+   "frame": "——\nPETG Basic\nLight Pink (j4) &)\n\nSKU: KR-PETGOO3Y-1CH\n\n8 Printing Temp Diameter} 75mir\n230-260°C\n\nBed Temp Batch No.B24011102\n\nTT\na 70-90\n",
+   "fine": "PETG Basic\nLight Pink G49)\nSKU: KR-PETGOO3Y-1CH\nWy Printing Temp — Diameter. 1 7Smir\n230-260C\ninj, Bed Temp Batch No.B24011102\nOD 50.00%\n"
+  },
+  {
+   "box": 3,
+   "expected_colour": "Orange",
+   "frame": "PETG Basic\n\nOrange (#2)\nSKU:KR-PETGO21Y~1CH\nPrinting Temp: Diameter: 175mm\n\n230-260°C\n\nlth, Bed Temp : Batch No. :B31011301\n70-90°C\n",
+   "fine": "PETG Basic\nOrange (44)\nSKU: KR-PETGO21Y-1CH\nB Printing Temp: Diameter: 175mm\n230-260°C\nrN Bed Temp : Batch No. :B31011301\n70-90°C\n"
+  },
+  {
+   "box": 4,
+   "expected_colour": "Black",
+   "frame": "PETG Basic\n\nBlack (A)\nSKU: KR-PETG027Y-1 CH\n\n8 Printing Temp: Diameter: 1.7Smm\n\naly\n\n230-260°C\n\nBed Temp : Batch No, :833021402\n70-90°C\n",
+   "fine": "| PETG Basic\n! Black (i f&)\nSKU: KR-PETGO27Y-1 CH\ns Printing Temp: Diameter: 1.2?Smm\n230-260°C\ni, Bed Temp ; Batch No, :833011402\nLN 70-90°C\n"
+  },
+  {
+   "box": 5,
+   "expected_colour": "Purple",
+   "frame": "|\n\nPETG Basic\nPurple (Ae)\nSKU: KR-PETGO24Y-1 CH\n8 Printing Temp: Diameter: 1.75mm\n230-260°C\n\nyg, BedTemp: —_ Batch No. 1833010202\n2 70-90\"\n",
+   "fine": "| PETG Basic\n\n. Purple (#&)\n\n. SKU:KR-PETGO24Y-1 CH\n\n~ Printing Temp: Diameter: 175mm\n230-260°C\n\n. ih Bed Temp : Batch No. :833010202\n70-90°C\n"
+  }
+ ]
+}

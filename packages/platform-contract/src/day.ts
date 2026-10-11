@@ -148,3 +148,137 @@ export function countdownWords(target: Day, today: Day, style: "short" | "long" 
   if (style === "short") return diff < 0 ? `${n}d ago` : `in ${n}d`;
   return diff < 0 ? `${spanWords(n)} ago` : `in ${spanWords(n)}`;
 }
+
+// A DAY IS NOT AN INSTANT (#5759).
+//
+// A date-only value names a calendar day, which has no hour and no zone.
+// `new Date("2026-10-16")` gives it both: midnight in UTC, the evening of the
+// 15th anywhere west of Greenwich. A service visit booked for the 16th read
+// "due 10/15" in New York, and every surface that met the same trap had
+// patched it its own way (`T12:00:00`, `timeZone: "UTC"`, a local-midnight
+// helper) or not at all. So a day is read with `fieldDay`, shown with
+// `dayLabel`, counted with `daysUntil`, and only becomes an instant through
+// `instantOnDay`, which has to be told whose day it is. `lint:date-only-is-a-day`
+// refuses the other doors.
+
+const DAY_PARTS = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** A day's year, month and day, or null when it is not a day that exists. */
+function partsOf(day: Day): [number, number, number] | null {
+  const m = DAY_PARTS.exec(day);
+  if (!m) return null;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const t = new Date(Date.UTC(y, mo - 1, d));
+  return t.getUTCMonth() === mo - 1 && t.getUTCDate() === d ? [y, mo, d] : null;
+}
+
+/**
+ * A day as a person reads it, the same day in every zone: "Oct 16, 2026",
+ * or whatever `opts` asks for. The value is read by `fieldDay`, so a stored
+ * date, a timestamp a column sent, or a best-before month all work; a value
+ * that names no day comes back as written rather than as a made-up date.
+ * Formatted in UTC on purpose: the day was built in UTC, so no zone can move it.
+ */
+export function dayLabel(value: unknown, opts: Intl.DateTimeFormatOptions = { year: "numeric", month: "short", day: "numeric" }, locale?: string | string[]): string {
+  const day = fieldDay(value);
+  const parts = day ? partsOf(day) : null;
+  if (!parts) return value == null ? "" : String(value);
+  const [y, m, d] = parts;
+  return new Intl.DateTimeFormat(locale, { ...opts, timeZone: "UTC" }).format(new Date(Date.UTC(y, m - 1, d)));
+}
+
+/** The minutes `timeZone` is ahead of UTC at `at`. */
+function offsetMinutes(at: number, timeZone: string): number {
+  const f = new Intl.DateTimeFormat("en-US", { timeZone, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const p = Object.fromEntries(f.formatToParts(new Date(at)).map((x) => [x.type, x.value]));
+  const local = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour), Number(p.minute), Number(p.second));
+  return Math.round((local - Math.floor(at / 1000) * 1000) / 60_000);
+}
+
+/** Which moment of the day: its middle, its first instant, or its last. */
+export type DayMoment = "noon" | "start" | "end";
+
+/**
+ * The instant to store when a column holds an instant but a person gave a
+ * day (a visit "on the 16th", a task due the 16th). With no zone that is
+ * NOON UTC, the platform's one encoding of a day in an instant column: it
+ * needs nobody's zone to write, `dayStoredAt` reads it back as exactly that
+ * day anywhere, and even a reader that shows it in local time sees the same
+ * day from UTC-11 to UTC+11.
+ *
+ * `at: "start" | "end"` with a zone is that day's first or last instant
+ * where the person is, for a window ("public until the 16th" lasts through
+ * their 16th). Without a zone the answer is never wrong in the costly
+ * direction: `start` when the day begins at UTC+14, `end` when it ends at
+ * UTC-12, so a window opens no later and closes no sooner than anybody's day.
+ */
+export function instantOnDay(day: Day, timeZone?: string | null, at: DayMoment = "noon"): Date | null {
+  const parts = partsOf(day);
+  if (!parts) return null;
+  const [y, m, d] = parts;
+  const wall = at === "noon" ? Date.UTC(y, m - 1, d, 12) : at === "start" ? Date.UTC(y, m - 1, d) : Date.UTC(y, m - 1, d + 1) - 1;
+  if (!timeZone || at === "noon") {
+    if (at === "noon") return new Date(wall);
+    return new Date(at === "start" ? wall - 14 * 3_600_000 : wall + 12 * 3_600_000);
+  }
+  try {
+    // Twice: the first guess may sit across a DST change from the answer.
+    let guess = wall - offsetMinutes(wall, timeZone) * 60_000;
+    guess = wall - offsetMinutes(guess, timeZone) * 60_000;
+    return new Date(guess);
+  } catch {
+    return instantOnDay(day, null, at);
+  }
+}
+
+/**
+ * An instant a request sent, which a date input sends as a bare day. A full
+ * timestamp is that instant; a bare day is `instantOnDay` in the sender's
+ * zone; anything else is null, never an Invalid Date stored as a value.
+ */
+export function instantFromInput(value: unknown, timeZone?: string | null, at: DayMoment = "noon"): Date | null {
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  if (typeof value !== "string" || !value.trim()) return null;
+  const s = value.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return instantOnDay(s, timeZone, at);
+  const t = Date.parse(s);
+  return Number.isNaN(t) ? null : new Date(t);
+}
+
+/** The day `n` days after `day` (before, for a negative `n`): calendar
+ *  arithmetic on the day itself, so no hour or zone can move the answer. */
+export function addDays(day: Day, n: number): Day {
+  const parts = partsOf(day);
+  if (!parts) return day;
+  const [y, m, d] = parts;
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+
+/** True when an instant is how a day is stored: noon UTC to the millisecond. */
+export function isStoredDay(at: Date): boolean {
+  const t = at.getTime();
+  return Number.isFinite(t) && ((t % 86_400_000) + 86_400_000) % 86_400_000 === 12 * 3_600_000;
+}
+
+/**
+ * The day an instant column's value names. A bare day is itself. A stored day (noon UTC, written by
+ * `instantOnDay`) is its own day in every zone; any other instant is the day
+ * it falls on where the reader is (`dayIn`). This is how a column that holds
+ * both, a visit someone booked for the 16th beside one a schedule worked out
+ * from when the last service was done, is read without moving either.
+ */
+export function dayStoredAt(value: Date | string, timeZone: string | null | undefined): Day | null {
+  if (typeof value === "string" && DAY_PARTS.test(value.trim())) return partsOf(value.trim()) ? value.trim() : null;
+  const at = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(at.getTime())) return null;
+  return isStoredDay(at) ? at.toISOString().slice(0, 10) : dayIn(at, timeZone);
+}
+
+/** `dayStoredAt` for code running in the person's own browser: an instant
+ *  that is not a stored day falls on the local calendar day. */
+export function dayStoredHere(value: Date | string): Day | null {
+  if (typeof value === "string" && DAY_PARTS.test(value.trim())) return partsOf(value.trim()) ? value.trim() : null;
+  const at = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(at.getTime())) return null;
+  return isStoredDay(at) ? at.toISOString().slice(0, 10) : dayHere(at);
+}

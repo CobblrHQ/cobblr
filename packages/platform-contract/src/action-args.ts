@@ -40,6 +40,8 @@ export interface ActionArgSpec {
   choicesFrom?: ArgChoicesFrom;
   /** An amount of money as a person says it ("$45.50"); never cents. */
   money?: boolean;
+  /** Where something happens: an address object or the address as said. */
+  address?: boolean;
   /** Offered on the button's sheet although the action runs without it.
    *  Only what `required` (or a `oneOf` group) names was ever asked, so an
    *  optional answer a person often has ("due back on", "last done on") had

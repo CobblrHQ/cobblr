@@ -9,7 +9,7 @@
 // was due: an oil change done a month late starts the next three months from
 // the day it was actually changed.
 
-import { dayIn, daysUntil, spanWords } from "@cobblr/platform-contract/day";
+import { dayIn, dayStoredAt, daysUntil, spanWords } from "@cobblr/platform-contract/day";
 
 // The calendar step rule is shared with everything else that repeats.
 import { addInterval, INTERVAL_UNITS, type IntervalUnit } from "@cobblr/platform-contract/interval";
@@ -87,7 +87,7 @@ export interface Due {
  *  rounding up and the other to the nearest (#3991). `timeZone` is the
  *  reader's; without one, the day that has arrived everywhere. */
 export function calendarDue(at: Date, now: Date, timeZone?: string | null): { state: DueState; reason: string; days: number } {
-  const d = daysUntil(dayIn(at, timeZone), dayIn(now, timeZone));
+  const d = daysUntil(dayStoredAt(at, timeZone) ?? dayIn(at, timeZone), dayIn(now, timeZone));
   if (d < 0) return { state: "overdue", reason: `overdue by ${spanWords(-d)}`, days: d };
   if (d === 0) return { state: "due-soon", reason: "due today", days: d };
   if (d <= DUE_SOON_DAYS) return { state: "due-soon", reason: `due in ${d} day${d === 1 ? "" : "s"}`, days: d };
@@ -107,7 +107,7 @@ export function dueState(s: ScheduleState, now: Date, counter: number | null, co
   if (at) {
     const { state, reason } = calendarDue(at, now, timeZone);
     const soon = reminderAt(at, s.remind);
-    verdicts.push({ state: state === "overdue" ? state : dayIn(now, timeZone) >= dayIn(soon, timeZone) ? "due-soon" : "ok", reason });
+    verdicts.push({ state: state === "overdue" ? state : dayIn(now, timeZone) >= (dayStoredAt(soon, timeZone) ?? dayIn(soon, timeZone)) ? "due-soon" : "ok", reason });
   }
   if (mark != null && counter != null && hasCounter(s)) {
     const left = mark - counter;

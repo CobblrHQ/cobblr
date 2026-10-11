@@ -53,6 +53,8 @@ export async function syncManifestRegistries(): Promise<{
     wire_only: boolean;
     record_optional: boolean;
     finishes: string | null;
+    stock_move: string | null;
+    editor: boolean;
     args_schema: unknown;
     undoable: boolean;
     effect: string | null;
@@ -133,6 +135,8 @@ export async function syncManifestRegistries(): Promise<{
         wire_only: a.wireOnly ?? false,
         record_optional: a.recordOptional ?? false,
         finishes: a.finishes ?? null,
+        stock_move: a.stockMove ?? null,
+        editor: a.editor === true,
         args_schema: a.argsSchema ?? null,
         undoable: a.undoable ?? false,
         effect: a.effect ?? null,
@@ -167,6 +171,8 @@ export async function syncManifestRegistries(): Promise<{
       wire_only: a.wire_only ?? false,
       record_optional: false,
       finishes: null,
+      stock_move: null,
+      editor: false,
       args_schema: a.args_schema,
       undoable: a.undoable ?? false,
       effect: null,
@@ -312,6 +318,8 @@ export async function syncManifestRegistries(): Promise<{
           wire_only: a.wire_only,
           record_optional: a.record_optional,
           finishes: a.finishes,
+          stock_move: a.stock_move,
+          editor: a.editor,
         })
         .onConflict((b) =>
           b.column("id").doUpdateSet({
@@ -336,6 +344,8 @@ export async function syncManifestRegistries(): Promise<{
             wire_only: a.wire_only,
             record_optional: a.record_optional,
             finishes: a.finishes,
+            stock_move: a.stock_move,
+            editor: a.editor,
             version: a.version,
           }),
         )

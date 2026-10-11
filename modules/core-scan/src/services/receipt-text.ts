@@ -23,6 +23,7 @@ import {
   buildReceipt,
   cleanOrderRef,
   enrichReceiptFromText,
+  isMailTitle,
   isoDate,
   type ParsedReceipt,
 } from "./receipt-shared.js";
@@ -158,6 +159,7 @@ export function detectVendor(lines: string[]): string | null {
     const s = l.trim();
     if (s.length < 3 || s.length > 60) continue;
     if (!/[a-z]/i.test(s)) continue;
+    if (isMailTitle(s)) continue;
     if (/^\d+\s/.test(s)) continue; // street address
     if (/\b(tel|phone|fax|www\.|http|store\s*#)\b/i.test(s)) continue;
     if (readTrailingAmount(s)) continue;

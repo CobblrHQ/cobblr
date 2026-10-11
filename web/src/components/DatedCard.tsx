@@ -84,14 +84,14 @@ export function DatedCard({ slug, card }: { slug: string; card: DatedCardModel }
     if (!rec) return;
     setBusy(`${e.id}:${f.action_id}`);
     try {
-      const run: ActionRun = await runAction({ actionId: f.action_id, entityKind: rec.kind, entityId: rec.id, args: { timezone } });
+      const run: ActionRun = await runAction({ actionId: f.action_id, entityKind: rec.kind, entityId: rec.id, args: { timezone } }, { undo: "shown-here" });
       hide(e.id, true);
       const undo = undoSteps(run.undo);
       toast.action(`${WORDS[f.finishes].done}: ${rec.name}`, {
         actionLabel: "Undo",
         duration: 8000,
         onAction: async () => {
-          for (const step of undo) await runAction({ actionId: step.action_id, entityKind: rec.kind, entityId: rec.id, args: step.args ?? {} });
+          for (const step of undo) await runAction({ actionId: step.action_id, entityKind: rec.kind, entityId: rec.id, args: step.args ?? {} }, { undo: "is-undo" });
           hide(e.id, false);
         },
       });
@@ -137,9 +137,12 @@ export function DatedCard({ slug, card }: { slug: string; card: DatedCardModel }
     if (!ok) return;
     setBusy("all");
     let done = 0;
+    // One Undo for the whole batch, never one toast per record (#5812).
+    const back: Array<{ id: string; steps: ReturnType<typeof undoSteps> }> = [];
     for (const id of ids) {
       try {
-        await runAction({ actionId: toss.action_id, entityKind: kind, entityId: id, args: { timezone } });
+        const run = await runAction({ actionId: toss.action_id, entityKind: kind, entityId: id, args: { timezone } }, { undo: "shown-here" });
+        back.push({ id, steps: undoSteps(run.undo) });
         hide(id, true);
         done++;
       } catch {
@@ -147,7 +150,14 @@ export function DatedCard({ slug, card }: { slug: string; card: DatedCardModel }
       }
     }
     setBusy(null);
-    if (done === ids.length) toast.success(`Tossed ${done}.`);
+    const undoAll = async () => {
+      for (const b of back) {
+        for (const step of b.steps) await runAction({ actionId: step.action_id, entityKind: kind, entityId: b.id, args: step.args ?? {} }, { undo: "is-undo" });
+        hide(b.id, false);
+      }
+    };
+    const offer = back.some((b) => b.steps.length) ? { actionLabel: "Undo", onAction: undoAll } : undefined;
+    if (done === ids.length) toast.success(`Tossed ${done}.`, offer);
     else toast.error(`Tossed ${done} of ${ids.length}; the rest are still here.`);
   };
 

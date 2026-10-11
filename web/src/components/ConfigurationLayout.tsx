@@ -15,7 +15,7 @@
 // it used to be `hidden md:block`, which left a phone with no settings
 // navigation at all once you were inside a page.
 
-import { useMemo, useState, type ComponentType } from "react";
+import { Suspense, lazy, useMemo, useState, type ComponentType } from "react";
 import { SearchInput } from "@cobblr/platform-web";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { ChevronLeft, Settings2 } from "lucide-react";
@@ -278,6 +278,11 @@ function MobileConfigJump() {
   );
 }
 
+// The AI page's member-readable part, loaded only when a member opens that
+// page: this layout is on every Configuration screen's first load, and the
+// AI order's editor would weigh on all of them (first-load budget).
+const WhoAnswersSection = lazy(() => import("./WhoAnswersSection").then((m) => ({ default: m.WhoAnswersSection })));
+
 export function ConfigurationLayout() {
   const location = useLocation();
   const navMode = useNavMode();
@@ -285,7 +290,15 @@ export function ConfigurationLayout() {
   const { role } = useConfigVisibility();
   // The nav hides a page below its role; a URL, bookmark or link still lands
   // here, and the page's controls would fail on every save. Say who runs it.
-  const page = pageOpenTo(location.pathname, role) ? <Outlet /> : <ManagedByAdmins page={destinationForPath(location.pathname)?.label} />;
+  // A member still reads which AI answers each job here, read-only (#5622):
+  // Your account's "Change the order" links to it, and the order decides
+  // where their own requests go.
+  const readable = location.pathname.startsWith("/configuration/ai") ? (
+    <Suspense fallback={null}>
+      <WhoAnswersSection />
+    </Suspense>
+  ) : null;
+  const page = pageOpenTo(location.pathname, role) ? <Outlet /> : <ManagedByAdmins page={destinationForPath(location.pathname)?.label}>{readable}</ManagedByAdmins>;
   // The hub and the section pages ARE navigation; a rail beside them would
   // just repeat the page.
   const onIndex =

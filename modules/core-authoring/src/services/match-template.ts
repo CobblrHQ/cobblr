@@ -1,3 +1,4 @@
+import { NUMBER_OR_NULL, TEXT_OR_NULL, objectWith } from "@cobblr/platform-contract/ai-output-schemas";
 // Hosted match-template (Phase 2) — the non-dev path.
 //
 // Phase 1 "match" = the driving model reads GET /templates and picks. That
@@ -61,7 +62,7 @@ export async function matchTemplateHosted(orgId: string, intent: string, userId?
       userId: userId ?? undefined,
       // Part of building a workspace, so it rides the builder's job.
       capability: "design-workspace",
-      input: { messages: [{ role: "system", content: system }, { role: "user", content: user }] },
+      input: { output_schema: objectWith(["template_id"], { template_id: TEXT_OR_NULL, confidence: NUMBER_OR_NULL }), messages: [{ role: "system", content: system }, { role: "user", content: user }] },
       source: { kind: "core-authoring:match-template", id: orgId },
     });
     result = r.text;

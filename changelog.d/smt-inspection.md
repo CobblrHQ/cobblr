@@ -3,6 +3,7 @@ type: feature
 scope: builds
 date: 2026-10-06
 docs_target: docs/modules/electronics-assembly.md#Inspection and traceability
+docs_published: 2026-10-11
 ---
 Added board inspection photos, rework history, QR labels and tested-batch traceability to reel lots.
 

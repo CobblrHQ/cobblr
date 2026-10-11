@@ -40,6 +40,7 @@ export const ROUTE_CHUNKS: ReadonlyArray<readonly [string, Loader]> = [
   ["/views", () => import("../pages/ViewsPage")],
   ["/apps", () => import("../pages/AllAppsPage")],
   ["/calendar", () => import("../pages/CalendarPage")],
+  ["/vault", () => import("../pages/VaultPage")],
   ["/discussion", () => import("../pages/DiscussionInboxPage")],
   ["/suggestions", () => import("../pages/SuggestionsPage")],
   ["/wires", () => import("../pages/BindingsPage")],

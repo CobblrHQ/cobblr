@@ -37,7 +37,7 @@ export async function exclusive<T>(orgId: string, kind: string, id: string, work
   return locked(orgId, await baseKindOf(orgId, kind), id, work);
 }
 
-export async function keep(orgId: string, kind: string, id: string, image: Record<string, unknown>, details?: unknown, deletedBy?: string | null, deletedAt?: Date): Promise<string> {
+export async function keep(orgId: string, kind: string, id: string, image: Record<string, unknown>, details?: unknown, deletedBy?: string | null, deletedAt?: Date, related?: Kept["related"]): Promise<string> {
   kind = await baseKindOf(orgId, kind);
   const active = captures.getStore();
   const entryId = active?.key === keyOf(orgId, kind, id) ? active.entryId : undefined;
@@ -46,13 +46,13 @@ export async function keep(orgId: string, kind: string, id: string, image: Recor
     return entryId;
   }
   const savedId = randomUUID();
-  await sql`insert into deleted_records (id, org_id, entity_kind, entity_id, name, instance, deleted_by, image, details, ready, deleted_at)
+  await sql`insert into deleted_records (id, org_id, entity_kind, entity_id, name, instance, deleted_by, image, details, related, ready, deleted_at)
     values (${savedId}, ${orgId}, ${kind}, ${id}, ${String(image.name ?? image.title ?? image.filename ?? "Untitled")},
       ${typeof image.instance === "string" ? image.instance : null}, ${deletedBy ?? currentActor()?.userId ?? null},
-      ${JSON.stringify(image)}::jsonb, ${details === undefined ? null : JSON.stringify(details)}::jsonb, ${active?.key !== keyOf(orgId, kind, id)}, ${deletedAt ?? new Date()})
+      ${JSON.stringify(image)}::jsonb, ${details === undefined ? null : JSON.stringify(details)}::jsonb, ${JSON.stringify(related ?? {})}::jsonb, ${active?.key !== keyOf(orgId, kind, id)}, ${deletedAt ?? new Date()})
     on conflict (org_id, entity_kind, entity_id) do update set id = excluded.id, name = excluded.name,
       instance = excluded.instance, deleted_by = excluded.deleted_by, image = excluded.image, details = excluded.details,
-      related = '{}'::jsonb, restoring = false, ready = excluded.ready, deleted_at = excluded.deleted_at`.execute(await dbOf());
+      related = excluded.related, restoring = false, ready = excluded.ready, deleted_at = excluded.deleted_at`.execute(await dbOf());
   if (active?.key === keyOf(orgId, kind, id)) active.entryId = savedId;
   return savedId;
 }
@@ -77,10 +77,11 @@ export async function captureDelete<T>(orgId: string, kind: string, id: string, 
     const snapshot = writer.snapshotDeletion ? await writer.snapshotDeletion(orgId, id) : (() => null)();
     const image = snapshot?.image ?? await writer.snapshot(orgId, id);
     if (!image) return { value: await work() };
-    const deletionId = await keep(orgId, kind, id, image);
     const related: Kept["related"] = { writer: snapshot?.related, participants: {}, kind: typeof image.instance === "string" && image.instance !== kind.split(":")[0] ? `${image.instance}:item` : kind };
     for (const [name, participant] of participants) related.participants![name] = await participant.snapshot(orgId, { kind: related.kind!, id }, snapshot ?? { image });
-    await sql`update deleted_records set related = ${JSON.stringify(related)}::jsonb where id = ${deletionId} and org_id = ${orgId}`.execute(await dbOf());
+    // Kept with what goes with it in one write: the row is not ready until
+    // the delete is done, so nothing reads it in between.
+    const deletionId = await keep(orgId, kind, id, image, undefined, undefined, undefined, related);
     try {
       const value = await work();
       const current = await writer.snapshot(orgId, id);

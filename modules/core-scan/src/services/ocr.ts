@@ -336,3 +336,27 @@ async function readImageText(bytes: Buffer | Uint8Array, framePassOnly = false):
   if (!frame.trim()) return null;
   return { text: frame, ms, engine: "tesseract", pass: "frame" };
 }
+
+/** Two independent readings of a small printed label (#5764): the frame read
+ *  every photo gets, and one block read of the label at twice the size. A
+ *  box's batch number is kept only where both readings agree, because one
+ *  OCR read can turn a 1 into a 2 and still look like a batch. Null when
+ *  there is no engine. */
+export async function ocrLabelReadings(bytes: Buffer | Uint8Array): Promise<{ frame: string; fine: string } | null> {
+  if (!(await ocrAvailable())) return null;
+  try {
+    const frame = await run(["stdin", "stdout", "--psm", "4", "-l", "eng"], await preprocessForOcr(bytes));
+    const big = await sharp(Buffer.from(bytes))
+      .rotate()
+      .resize({ width: Math.min(2 * ((await sharp(Buffer.from(bytes)).metadata()).width ?? MAX_WIDTH), 2 * MAX_WIDTH), withoutEnlargement: false })
+      .greyscale()
+      .normalise()
+      .png()
+      .toBuffer();
+    const fine = await run(["stdin", "stdout", "--psm", "6", "-l", "eng"], big);
+    return { frame, fine };
+  } catch (err) {
+    console.warn(`[core-scan] label OCR failed: ${(err as Error).message}`);
+    return null;
+  }
+}

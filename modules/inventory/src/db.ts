@@ -55,7 +55,7 @@ export interface InventoryPartsTable {
   // marks a record as an estimate rather than a count.
   approximate_qty: string | null;
   estimated_at: Date | null;
-  warranty_expires: Date | null;
+  warranty_expires: string | null;
   lifetime_warranty: Generated<boolean>;
   warranty_details: string | null;
   insured: Generated<boolean>;

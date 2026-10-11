@@ -20,7 +20,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Plus, ScanLine, LogOut, LayoutDashboard, LayoutGrid, ChevronDown } from "lucide-react";
 import { MarkdownText } from "@cobblr/platform-web";
 import { useAuth } from "../auth/AuthContext";
-import { useRunAction, AskBeforeRun, type Asking, EntityActionsBar, EntityThumb, usePageTitle, useToast, OverlayLayer, BackdropLayer } from "@cobblr/platform-web";
+import { useRunAction, undoStepsOf, AskBeforeRun, type Asking, EntityActionsBar, EntityThumb, usePageTitle, useToast, OverlayLayer, BackdropLayer } from "@cobblr/platform-web";
 import { NewPartDialog, InventoryProvider } from "@cobblr/inventory/ui";
 import { api, getToken, type AppBlock, type AppTheme } from "../lib/api";
 import { frameDocUrl } from "../lib/frame-doc";
@@ -541,8 +541,10 @@ function ActionBlock({
   const go = async (args?: Record<string, unknown>) => {
     setBusy(true);
     try {
-      await runAction({ actionId, entityKind: kind ?? "", entityId: "", ...(args && Object.keys(args).length ? { args } : {}) });
-      toast.success(`${label ?? actionId} ran.`);
+      // The door offers the action's Undo, saying it ran, when there is one.
+      await runAction({ actionId, entityKind: kind ?? "", entityId: "", ...(args && Object.keys(args).length ? { args } : {}) }, { done: `${label ?? actionId} ran.` }).then((r) => {
+        if (!undoStepsOf(r.undo).length) toast.success(`${label ?? actionId} ran.`);
+      });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Action failed.");
     } finally {

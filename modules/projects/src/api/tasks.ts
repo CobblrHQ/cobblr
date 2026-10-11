@@ -4,6 +4,7 @@
 
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
+import { instantFromInput } from "@cobblr/platform-contract/day";
 import { z } from "zod";
 import { ENERGIES, PRIORITIES, TASK_STATUSES } from "../vocab.js";
 import { sql } from "kysely";
@@ -34,7 +35,7 @@ const TaskCreate = z.object({
   status: z.enum(TASK_STATUSES).optional(),
   priority: z.enum(PRIORITIES).nullable().optional(),
   energy: z.enum(ENERGIES).nullable().optional(),
-  due_date: z.string().nullable().optional(),
+  due_date: z.string().nullable().optional().refine((v) => !v || instantFromInput(v) !== null, { message: "Give a day (YYYY-MM-DD) or a date and time." }),
   metadata: z.record(z.unknown()).optional(),
   /** Comes round again when done; null stops it. */
   // anchor_day rides along so editing the rule mid-series (a Feb 28 of a
@@ -201,7 +202,7 @@ tasksRouter.post(
         status: parsed.data.status ?? "todo",
         priority: parsed.data.priority ?? "med",
         energy: parsed.data.energy ?? "medium",
-        due_date: parsed.data.due_date ? new Date(parsed.data.due_date) : null,
+        due_date: instantFromInput(parsed.data.due_date),
         ...(parsed.data.checklist ? { checklist: JSON.stringify(parsed.data.checklist) as never } : {}),
         ...(parsed.data.repeat ? { repeat: JSON.stringify(parsed.data.repeat) as never } : {}),
         // D6: hoisted-from-top-level keys live here.
@@ -254,7 +255,7 @@ tasksRouter.patch(
     for (const [k, v] of Object.entries(parsed.data)) {
       if (v === undefined) continue;
       if (k === "due_date" && v != null && typeof v === "string") {
-        patch[k] = new Date(v);
+        patch[k] = instantFromInput(v);
       } else if (k === "repeat") {
         patch[k] = v === null ? null : JSON.stringify(v);
       } else if (k === "checklist") {

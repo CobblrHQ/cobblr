@@ -4,6 +4,8 @@ import { entityInitial, RecordFormModal, NewItemMenu, CurrencyPicker, MoneyTotal
 // AssetsPage. Order items live inside the detail modal (they're a
 // child collection, not their own top-level entity).
 
+import { lineReceivedSentence } from "@cobblr/platform-contract/line-units";
+import { OrderLineScanIn } from "../components/OrderLineUnits";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -11,7 +13,7 @@ import { ChevronRight, Plus, Receipt, Store, Trash2 } from "lucide-react";
 import { ApiError, api, type Order, type OrderItem, type OrderSummary, type VendorSummary } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
-import { formatStoredMoney } from "@cobblr/platform-contract/money";
+import { formatStoredMoney, linesTotalLabel } from "@cobblr/platform-contract/money";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { useDetailRoute } from "../lib/useDetailRoute";
 import { ReceiptSourceViewer } from "../components/ReceiptSourceViewer";
@@ -26,11 +28,11 @@ import { UnconfirmedReceiptsBanner } from "./UnconfirmedReceipts";
 import { OrderReturns } from "./OrderReturns";
 import { AddOrderLine, AddToStockChoice, AddTrackingSheet, OrderLineControls } from "./OrderLines";
 import { OrderPageStatus } from "../features/purchases/orderPageStatus";
+import { dayLabel } from "@cobblr/platform-contract/day";
 
 function fmtOrderDate(d: string | null): string | null {
   if (!d) return null;
-  const dt = new Date(d.length <= 10 ? `${d}T00:00:00` : d);
-  return Number.isNaN(dt.getTime()) ? d : dt.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  return dayLabel(d);
 }
 
 /** An order's amounts are kept in the currency's main unit. */
@@ -395,9 +397,9 @@ export function PurchasesPage() {
           <StatCard label="In transit" value={String(inTransit)} />
           <StatCard label="From receipts" value={String(receiptsCount)} />
           <StatCard
-            label={statusFilter || query ? "Spend (filtered)" : "Total spend"}
+            label={`${statusFilter || query ? "Spend (filtered)" : "Total spend"}${shown && shown.priced < shown.count ? " so far" : ""}`}
             value={money(filteredSpend, shown?.currency) ?? money(0, shown?.currency)!}
-            hint={`${shown?.count ?? 0} order${shown?.count === 1 ? "" : "s"}`}
+            hint={`${shown?.count ?? 0} order${shown?.count === 1 ? "" : "s"}${shown && shown.priced < shown.count ? `, ${shown.count - shown.priced} unpriced` : ""}`}
           />
         </div>
       )}
@@ -499,7 +501,7 @@ export function PurchasesPage() {
             <tfoot className="border-t-2 border-line dark:border-slate-700">
               <tr className="text-xs font-mono">
                 <td colSpan={6} />
-                <td className="px-3 py-2 text-right text-[10px] uppercase tracking-widest text-faint">Total</td>
+                <td className="px-3 py-2 text-right text-[10px] uppercase tracking-widest text-faint">{shown && shown.priced < shown.count ? `Total so far, ${shown.count - shown.priced} unpriced` : "Total"}</td>
                 <td className="px-3 py-2 text-right font-semibold text-content dark:text-mortar-100">
                   {money(filteredSpend)}
                 </td>
@@ -603,6 +605,7 @@ function ReceiptRenderModal({
   const computed = order.computed_total ?? subtotal + shipping;
   const total = order.total_cost != null ? Number(order.total_cost) : computed;
   const other = total - computed;
+  const pricedLines = { lines: items.length, unpriced: items.filter((it) => it.unit_cost == null).length };
   const host = order.url ? order.url.replace(/^https?:\/\//, "").replace(/\/.*$/, "") : null;
   const meta = [host, order.order_number ? `Order #${order.order_number}` : null, fmtOrderDate(order.ordered_at)]
     .filter(Boolean)
@@ -633,7 +636,7 @@ function ReceiptRenderModal({
         )}
         <div className="mt-3 space-y-1 text-xs">
           <div className="flex justify-between">
-            <span>Subtotal</span>
+            <span>{linesTotalLabel(pricedLines, "Subtotal")}</span>
             <span className="tabular-nums">{money(order.computed_total != null ? computed - shipping : subtotal)}</span>
           </div>
           {shipping > 0 && (
@@ -649,7 +652,7 @@ function ReceiptRenderModal({
             </div>
           )}
           <div className="flex justify-between font-bold text-sm border-t border-[#bcb4a2] pt-1.5 mt-1.5">
-            <span>TOTAL</span>
+            <span>{order.total_cost != null ? "TOTAL" : linesTotalLabel(pricedLines, "TOTAL")}</span>
             <span className="tabular-nums">{money(total)}</span>
           </div>
         </div>
@@ -713,6 +716,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
   const computed = o?.computed_total ?? subtotal + shipping;
   const totalNum = o?.total_cost != null ? Number(o.total_cost) : null;
   const reconciles = totalNum != null && Math.abs(totalNum - computed) < 0.01;
+  const pricedLines = { lines: items.length, unpriced: items.filter((it) => it.unit_cost == null).length };
 
   async function handleDelete() {
     if (!o) return;
@@ -888,7 +892,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
                 </ul>
                 <div className="mt-3 pt-2.5 border-t border-dashed border-line dark:border-slate-700 space-y-1 text-sm">
                   <div className="flex justify-between text-muted">
-                    <span>Subtotal ({items.length} line{items.length === 1 ? "" : "s"})</span>
+                    <span data-testid="order-subtotal">{pricedLines.unpriced ? linesTotalLabel(pricedLines, "Subtotal") : `Subtotal (${items.length} line${items.length === 1 ? "" : "s"})`}</span>
                     <span className="font-mono">{money(computed - shipping)}</span>
                   </div>
                   {shipping > 0 && (
@@ -999,6 +1003,11 @@ function OrderLineItem({
             part deleted
           </span>
         )}
+        {item.received_qty != null && Number(item.received_qty) > 0 && (
+          <span className="block text-xs text-muted" data-testid="order-line-received">
+            {lineReceivedSentence(Number(item.received_qty), qty)}
+          </span>
+        )}
       </span>
       <span className="font-mono text-xs text-muted whitespace-nowrap">
         {qty.toFixed(0)} × {unit != null ? money(unit) : "—"}
@@ -1020,6 +1029,7 @@ function OrderLineItem({
       ) : (
         <div className={`${cls} flex-1 min-w-0`}>{inner}</div>
       )}
+      {!item.received_at && !item.part_id && qty > 1 && <OrderLineScanIn itemId={item.id} />}
       {controls}
     </li>
   );

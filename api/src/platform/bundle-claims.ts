@@ -63,6 +63,22 @@ export async function claimsForSource(orgId: string, source: string): Promise<Re
   return rows.map((r) => ({ resource_type: r.resource_type as ClaimType, resource_key: r.resource_key }));
 }
 
+/** Which bundles made each instance (instance name → bundle external ids):
+ *  the shared name for a table that is the same in every workspace, which the
+ *  scan learning loop routes by (#3769). The user's own claim is left out. */
+export async function bundlesByInstance(orgId: string): Promise<Map<string, string[]>> {
+  const rows = await meta
+    .selectFrom("bundle_resource_claims")
+    .select(["source", "resource_key"])
+    .where("org_id", "=", orgId)
+    .where("resource_type", "=", "instance")
+    .where("source", "<>", USER_SOURCE)
+    .execute();
+  const out = new Map<string, string[]>();
+  for (const r of rows) out.set(r.resource_key, [...(out.get(r.resource_key) ?? []), r.source]);
+  return out;
+}
+
 /** Drop every claim a source holds — called when a bundle is uninstalled. */
 export async function removeClaimsForSource(orgId: string, source: string): Promise<void> {
   await meta

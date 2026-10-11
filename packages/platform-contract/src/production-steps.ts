@@ -12,16 +12,62 @@ export type Probe = (typeof PROBES)[number];
 export const PROBE_CHANNELS = ["rtt", "semihosting", "uart"] as const;
 export type ProbeChannel = (typeof PROBE_CHANNELS)[number];
 
-type StepShape = { kind: string; operation?: string; write?: string; action?: { op: string } };
+/** What a fixture I/O controller does with a pin: the first three drive it,
+ *  the rest watch it. */
+export const PIN_OPS = ["set", "pulse", "pwm", "read", "count", "frequency", "duty", "interval"] as const;
+export type PinOp = (typeof PIN_OPS)[number];
+export const PIN_EDGES = ["rising", "falling", "both"] as const;
+/** The unit each measuring pin step reports, which its limits must use. */
+export const PIN_UNITS = { count: "edges", frequency: "Hz", duty: "%", interval: "ms" } as const;
+
+type PinActionShape = { op: string; pin?: string; from?: string; to?: string; drive?: boolean };
+type StepShape = { id?: string; kind: string; operation?: string; write?: string; response?: string; action?: PinActionShape };
+
+/** A pin step that drives the board through the fixture rather than only watching it. */
+export function pinStepDrives(action: PinActionShape | undefined): boolean {
+  return action?.op === "set" || action?.op === "pulse" || action?.op === "pwm" || action?.op === "interval" && action.drive === true;
+}
 
 /** A step that changes the board or an output. Start asks the operator to
- *  confirm these, and each one settles before cleanup turns outputs off. */
+ *  confirm these, each one settles before cleanup turns outputs off, and none
+ *  of them runs before the plan's seated check passes. */
 export function stepChangesHardware(step: StepShape): boolean {
   if (step.kind === "program" || step.kind === "script") return true;
   if (step.kind === "serial") return step.write !== undefined;
   if (step.kind === "instrument") return step.operation !== "measure";
   if (step.kind === "probe") return step.action?.op !== "identify" && step.action?.op !== "read";
+  if (step.kind === "pin") return pinStepDrives(step.action);
   return false;
+}
+
+/** A fixture pin as the jig wires it: the plan's net name on a controller GPIO. */
+export interface JigPin { name: string; gpio: number; direction: "input" | "output"; pull: "none" | "up" | "down" }
+
+/** Every fixture pin a plan uses, by net name, and whether it drives or reads it. */
+export function planPins(steps: StepShape[]): Array<{ name: string; direction: "input" | "output" }> {
+  const found = new Map<string, "input" | "output">();
+  const use = (name: string | undefined, direction: "input" | "output") => {
+    if (!name) return;
+    if (found.has(name) && found.get(name) !== direction) throw new Error(`Use ${name} as an input or an output, not both.`);
+    found.set(name, direction);
+  };
+  for (const step of steps) {
+    if (step.kind !== "pin" || !step.action) continue;
+    const action = step.action;
+    if (action.op === "interval") { use(action.from, action.drive ? "output" : "input"); use(action.to, "input"); }
+    else use(action.pin, pinStepDrives(action) ? "output" : "input");
+  }
+  return [...found].map(([name, direction]) => ({ name, direction }));
+}
+
+/** Why a jig cannot run a plan's pin steps, or null when its pin list covers them. */
+export function jigPinProblem(pins: JigPin[], steps: StepShape[]): string | null {
+  for (const used of planPins(steps)) {
+    const wired = pins.find(pin => pin.name === used.name);
+    if (!wired) return `Map ${used.name} to a fixture pin on this jig.`;
+    if (wired.direction !== used.direction) return `Wire ${used.name} as an ${used.direction} on this jig; the plan ${used.direction === "output" ? "drives" : "reads"} it.`;
+  }
+  return null;
 }
 
 /** One line of a target's own test report: `ADC_VREF 1.198 V PASS`. */

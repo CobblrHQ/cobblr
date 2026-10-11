@@ -93,6 +93,7 @@ export type FieldRendererId =
 // which is how it slipped past the first version of lint:field-type-enum: a
 // per-line scan cannot see a union that spans a page.
 import type { FieldDefType as FieldType } from "@cobblr/platform-contract/field-vocabulary";
+import type { AddressValue } from "@cobblr/platform-contract/address";
 export type { FieldType };
 
 /** A person who can be picked into a `member` field. Deliberately the minimum:
@@ -116,6 +117,14 @@ export interface UsedValueBody {
   value: string;
   uses: number;
   lastUsed: string | null;
+}
+
+/** GET /addresses: the places already used here, and a map lookup's when one is set. */
+export interface AddressSuggestionsBody {
+  used: Array<{ address: AddressValue; usedOn: { kind: string; id: string; name: string }; uses: number; lastUsed: string | null }>;
+  found: AddressValue[];
+  lookup: { name: string } | null;
+  lookup_failed?: true;
 }
 
 export interface FieldValuesUsedBody {
@@ -308,6 +317,10 @@ export interface PlatformWebApi {
     field: string,
     opts?: { detail?: string | null; note?: boolean },
   ): Promise<FieldValuesUsedBody>;
+  /** The addresses this workspace already used, matching what is typed
+   *  (GET /addresses), for the address picker; `lookup` is null when no map
+   *  lookup is set. A host without it offers free text and the parts form. */
+  addresses?(slug: string, q: string): Promise<AddressSuggestionsBody>;
   /** Whether a kind's sellers, noted beside where things came from, have
    *  earned a field of their own (GET /field-defs/seller-offer). */
   sellerOffer?(slug: string, kind: string): Promise<{ offer: { entity_kind: string; seller: string; places: string[]; times: number; host: { name: string; label: string } } | null }>;

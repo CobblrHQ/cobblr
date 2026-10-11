@@ -34,6 +34,7 @@ export function PlaceLights({ slug, place, hasBins }: { slug: string; place: Loc
       const light: PlaceLightMapping = wled ? { connection_id: connection, driver: "wled", pixels: [{ segment, led: start, count }] } : esphome ? { connection_id: connection, driver: "esphome", entity, ...(pixels ? { pixels: [{ segment, led: start, count }] } : {}) } : { connection_id: connection, driver: "home-assistant", entity };
       await api.setPlaceLight(slug, place.id, PlaceLight.parse(light));
       if (test) {
+        // NO-UNDO: a three-second flash of the light; nothing stays to take back.
         // PRESS-ARGS: The saved place is the target; duration is fixed and colour is optional.
         const result = await runAction(api, qc, slug, { actionId: "core-locations:indicate", entityKind: "core-locations:location", entityId: place.id, args: { duration: 3 } });
         if (!result.ok) throw new Error("The light did not answer. Check its mapping and connection.");

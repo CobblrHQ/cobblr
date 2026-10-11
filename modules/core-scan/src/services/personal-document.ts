@@ -1,3 +1,4 @@
+import { looksLikeBillOfSale } from "./bill-of-sale.js";
 import sharp from "sharp";
 import { inflateSync } from "node:zlib";
 import { createHash } from "node:crypto";
@@ -390,6 +391,7 @@ export async function readPersonalDocumentLocally(input: DocumentInput): Promise
   if (privacy === "personal" && input.assist && FIELDS.some((field) => !fields[field])) {
     const missing = FIELDS.filter((field) => !fields[field]);
     try {
+      // FREE-TEXT: labelled lines (VIN:, Plate:), read by extractPersonalFields
       const answer = await platform().ai.invoke({ orgId: input.assist.orgId, userId: input.assist.userId,
         privacy: "personal", capability: "personal-document-read", input: {
           prompt: `Copy only these missing fields as printed: ${missing.join(", ")}. Reply as labelled lines (VIN:, Plate:, Expires:, Fee:, Confirmation:). Do not guess.\n${text}`,
@@ -407,7 +409,7 @@ export async function readPersonalDocumentLocally(input: DocumentInput): Promise
     } catch (error) { needsLocalConnection = refusalCodeOf(error) === "no_provider"; }
   }
   const missing = FIELDS.filter((field) => !fields[field]);
-  return { privacy, kind: privacy === "normal" ? "ordinary" : /registration/i.test(text) ? "registration" : "personal", fields,
+  return { privacy, kind: privacy === "normal" ? "ordinary" : looksLikeBillOfSale(text) ? "bill-of-sale" : /registration/i.test(text) ? "registration" : "personal", fields,
     sources, missing,
     message: privacy === "normal" ? "This is an ordinary document." : missing.length
       ? `${readWhere(sentTo)} Please check ${missing.join(", ")}; they could not be read.${needsLocalConnection ? " Connect a local AI in Configuration, AI to help with the missing fields." : ""}${sentNote(sentTo)}`

@@ -273,8 +273,8 @@ function toResolvedProject(row: {
   description: string | null;
   status: string;
   priority: string | null;
-  start_date: Date | null;
-  target_date: Date | null;
+  start_date: string | null;
+  target_date: string | null;
   instance: string;
   metadata?: unknown;
 }): ResolvedEntity {

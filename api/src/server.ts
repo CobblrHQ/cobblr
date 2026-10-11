@@ -1,3 +1,4 @@
+import { cspReportsRouter } from "./routes/csp-reports.js";
 import { GroupingError } from "@cobblr/platform-contract/grouped-list";
 import { deletedRecordsRouter } from "./routes/deleted-records.js";
 // Express app factory. Two-phase setup so module routers can attach
@@ -50,7 +51,10 @@ import { oidcAdminRouter, oidcAuthRouter, oidcMeRouter } from "./routes/oidc.js"
 import { discordInteractionsRouter } from "./routes/discord-interactions.js";
 import { testSupportRouter } from "./routes/test-support.js";
 import { allowTestPushService } from "./platform/push-endpoints.js";
+import { fileURLToPath } from "node:url";
 import { testDoorsEnabled } from "./platform/test-doors.js";
+import { expireLinkDoor } from "./platform/link-expiry-test-door.js";
+import { startTestAttribution, takeTestAttribution } from "./platform/test-attribution.js";
 import { listRoutes } from "./lib/route-list.js";
 import { connectionsRouter, workspaceAiSharesRouter } from "./routes/connections.js";
 import { aiDefaultsRouter } from "./routes/ai-defaults.js";
@@ -66,6 +70,7 @@ import { tidyRouter } from "./routes/tidy-suggestions.js";
 import { attentionRouter } from "./routes/attention.js";
 import { edgePairRouter, edgeRouter } from "./routes/edge.js";
 import { recordSendFileRouter } from "./routes/record-send-file.js";
+import { vaultRouter } from "./routes/vault.js";
 import { recordSendRouter } from "./routes/record-send.js";
 import { shareLinksOrgRouter, shareLinksRouter } from "./routes/share-links.js";
 import { blueprintRouter } from "./routes/blueprint.js";
@@ -259,6 +264,10 @@ export function createApp(): AppHandles {
   // The OAuth token and revocation endpoints take form bodies (RFC 6749).
   v1.use("/oauth", express.urlencoded({ extended: false, limit: "16kb" }));
   v1.use(oauthRouter);
+  // A browser's report of a Content-Security-Policy refusal (the policy's
+  // report-uri). Its own content types, and small: nothing in it is worth more.
+  v1.use("/csp-reports", express.json({ type: ["application/csp-report", "application/reports+json", "application/json"], limit: "16kb" }));
+  v1.use(cspReportsRouter);
 
   v1.get("/healthz", async (_req, res) => {
     // Two numbers a deploy tool reads before trusting this container (#2944):
@@ -551,6 +560,7 @@ export function createApp(): AppHandles {
   v1.use("/orgs", shareLinksOrgRouter);
   v1.use("/orgs", mePushOrgRouter);
   v1.use("/orgs", recordSendFileRouter);
+  v1.use("/orgs", vaultRouter);
   v1.use("/orgs", recordSendRouter);
   v1.use(shareLinksRouter);
   // Blueprint (workspace setup snapshot) + Backup (setup + data + files).
@@ -598,6 +608,18 @@ export function createApp(): AppHandles {
     app.get("/api/v1/test/routes", (_req, res) => {
       res.json({ routes: listRoutes(app) });
     });
+    // A test door: end an emailed sign-in link early, so a walk can open an
+    // expired one (platform/link-expiry-test-door.ts).
+    app.post("/api/v1/test/expire-link", express.json(), expireLinkDoor);
+    // A test door: the source lines run since the last ask, for the nightly run that maps each api test
+    // to the code it executes (platform/test-attribution.ts, #5761). Only when that run asked for it.
+    if (process.env.COBBLR_TEST_ATTRIBUTION === "1") {
+      const root = fileURLToPath(new URL("../../", import.meta.url)).replace(/\/$/, "");
+      void startTestAttribution().catch((err) => console.error("[test-attribution] could not start:", (err as Error).message));
+      app.post("/api/v1/test/attribution", (_req, res) => {
+        takeTestAttribution(root).then((taken) => res.json(taken), (err) => res.status(500).json({ error: (err as Error).message }));
+      });
+    }
   }
 
   app.use("/api/v1", v1);

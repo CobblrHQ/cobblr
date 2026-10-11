@@ -18,7 +18,7 @@
 // build context (each package.json, the lockfile, the workspace and tsconfig base, a build
 // script); every DIRECTORY it COPYs that is packaging rather than code (BUILD_DIRS); and the
 // fixed set below (the Dockerfiles themselves, .dockerignore, the size budgets, deploy's compose
-// files, the check's own workflow and scripts, and what the cloud overlay compiles against).
+// files, the check's own workflow and scripts).
 // A directory COPY that is source code covered by typecheck and the suites is CODE_DIRS. A new
 // COPY of a directory that is in neither list fails lint:image-inputs-classified, so a new path
 // cannot quietly fall out of the check.
@@ -34,10 +34,18 @@ import { fileURLToPath } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /** Directories a Dockerfile COPYs that are source code: judged by typecheck and the suites, not by a rebuild. */
-export const CODE_DIRS = new Set(["api", "modules", "packages/platform-net", "packages/workspace-tools", "packages/thermal-print", "packages/platform-web", "web", "scripts", "sandboxed-modules", "changelog.d", "bundles", "docs/third-party", "deploy/seeds"]);
+//
+// packages/platform-contract IS CODE (#5761). It was an input because the cloud overlay compiles
+// against it, and its source changes were 70 of the ~106 image builds pull requests ran in three
+// days (218 of 521 build-minutes on the one image slot). That compile needs no image: ci.yml's
+// typecheck runs scripts/overlay-compat.sh on every pull request that touches the contract, about a
+// second with tsgo. Its package.json is still an input (a file the Dockerfile COPYs), and what only
+// the image would see is held at typecheck too: erasableSyntaxOnly in its tsconfig and
+// lint:contract-sibling-imports for Node's type stripping.
+export const CODE_DIRS = new Set(["api", "modules", "packages/platform-contract", "packages/platform-net", "packages/workspace-tools", "packages/thermal-print", "packages/platform-web", "web", "scripts", "sandboxed-modules", "changelog.d", "bundles", "docs/third-party", "deploy/seeds"]);
 /** Directories a Dockerfile COPYs that are part of how the image is built: a change rebuilds. */
-export const BUILD_DIRS = new Set(["modules/digifab/nesting", "packages/platform-contract"]);
-/** Always inputs (prefixes), whatever the Dockerfiles say. platform-contract is what the overlay compiles against. */
+export const BUILD_DIRS = new Set(["modules/digifab/nesting"]);
+/** Always inputs (prefixes), whatever the Dockerfiles say. */
 export const FIXED = [
   "docker/",
   ".dockerignore",
@@ -48,7 +56,6 @@ export const FIXED = [
   "scripts/ci/docker-build-heal.sh",
   "scripts/ci/image-inputs.mjs",
   "scripts/ci/wait-for-room.sh",
-  "packages/platform-contract/",
 ];
 
 /** PURE. The build-context sources of every COPY (not COPY --from) in a Dockerfile's text. */

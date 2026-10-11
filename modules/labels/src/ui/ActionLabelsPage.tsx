@@ -17,7 +17,7 @@ import { useMemo, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Printer, QrCode, Plus, Power, Pencil, RotateCcw } from "lucide-react";
-import { SEGMENTED_MAX, SegmentedChoice, usePlatformWeb, useToast, usePageTitle } from "@cobblr/platform-web";
+import { SEGMENTED_MAX, SegmentedChoice, StatusRow, usePlatformWeb, useToast, usePageTitle } from "@cobblr/platform-web";
 import { askBeforePress, pressAnswersToArgs, pressStillNeeds } from "@cobblr/platform-contract/action-args";
 import { useLabels } from "./context";
 import type { ActionLabel, ActionLabelButton } from "./api";
@@ -313,46 +313,57 @@ function LabelRow({ label, onChanged, onError, onDone }: { label: ActionLabel; o
           </div>
         </div>
       </div>
-      {off && (
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => void run(() => api.restoreActionLabel(label.id), "Back on. The printed code works again.")}
-            className="inline-flex items-center gap-1.5 rounded-md border border-line dark:border-slate-600 px-3 py-2 text-sm"
-          >
-            <RotateCcw size={14} /> Turn back on
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              void run(async () => {
-                await api.restoreActionLabel(label.id);
-                await api.printActionLabel(label.id);
-              }, "Back on, and a fresh copy is in the print queue.")
-            }
-            className="inline-flex items-center gap-1.5 rounded-md border border-line dark:border-slate-600 px-3 py-2 text-sm"
-          >
-            <Printer size={14} /> Turn on and reprint
-          </button>
-        </div>
-      )}
-      {!off && (
-        <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => void run(() => api.printActionLabel(label.id), "In the print queue.")} className="inline-flex items-center gap-1.5 rounded-md border border-line dark:border-slate-600 px-3 py-2 text-sm">
-            <Printer size={14} /> Print again
-          </button>
+      <StatusRow
+        state={off ? "off" : "on"}
+        className="flex flex-wrap gap-2"
+        testId="action-label-actions"
+        states={{
+          off: (
+            <>
+              <button
+                type="button"
+                onClick={() => void run(() => api.restoreActionLabel(label.id), "Back on. The printed code works again.")}
+                className="inline-flex items-center gap-1.5 rounded-md border border-line dark:border-slate-600 px-3 py-2 text-sm"
+              >
+                <RotateCcw size={14} /> Turn back on
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  void run(async () => {
+                    await api.restoreActionLabel(label.id);
+                    await api.printActionLabel(label.id);
+                  }, "Back on, and a fresh copy is in the print queue.")
+                }
+                className="inline-flex items-center gap-1.5 rounded-md border border-line dark:border-slate-600 px-3 py-2 text-sm"
+              >
+                <Printer size={14} /> Turn on and reprint
+              </button>
+            </>
+          ),
+          on: (
+            <>
+              <button type="button" onClick={() => void run(() => api.printActionLabel(label.id), "In the print queue.")} className="inline-flex items-center gap-1.5 rounded-md border border-line dark:border-slate-600 px-3 py-2 text-sm">
+                <Printer size={14} /> Print again
+              </button>
+              <button
+                type="button"
+                onClick={() => (confirmOff ? void run(() => api.revokeActionLabel(label.id), "Turned off. Scanning it now does nothing.") : setConfirmOff(true))}
+                className="inline-flex items-center gap-1.5 rounded-md border border-ember-300 dark:border-ember-700 px-3 py-2 text-sm text-ember-700 dark:text-ember-300"
+              >
+                <Power size={14} /> {confirmOff ? "Sure? Turn it off" : "Turn off"}
+              </button>
+            </>
+          ),
+        }}
+        // A label turned off keeps its name, and the name can still change
+        // before it is turned back on (#5774).
+        always={
           <button type="button" onClick={() => setRenaming(true)} className="inline-flex items-center gap-1.5 rounded-md border border-line dark:border-slate-600 px-3 py-2 text-sm">
             <Pencil size={14} /> Rename
           </button>
-          <button
-            type="button"
-            onClick={() => (confirmOff ? void run(() => api.revokeActionLabel(label.id), "Turned off. Scanning it now does nothing.") : setConfirmOff(true))}
-            className="inline-flex items-center gap-1.5 rounded-md border border-ember-300 dark:border-ember-700 px-3 py-2 text-sm text-ember-700 dark:text-ember-300"
-          >
-            <Power size={14} /> {confirmOff ? "Sure? Turn it off" : "Turn off"}
-          </button>
-        </div>
-      )}
+        }
+      />
     </li>
   );
 }

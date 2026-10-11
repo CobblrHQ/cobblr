@@ -71,6 +71,9 @@ import { getScannableForModule } from "../platform/scan-registry.js";
 import { FIELD_PRESETS, presetState } from "../platform/field-presets.js";
 import { presetFieldStates, turnPresetOff, turnPresetOn } from "../platform/field-preset-switch.js";
 import { fieldValuesUsed } from "../platform/field-values-used.js";
+import { addressesUsed, nearestBias } from "../platform/addresses-used.js";
+import { addressLookup, LOOKUP_MIN_CHARS, LOOKUP_TIMEOUT_MS } from "../platform/address-lookup.js";
+import type { AddressValue } from "@cobblr/platform-contract/address";
 
 /** The person's own assistant reading for them: an MCP client or the relay
  *  (the session's ai_door), or Cobb's read tools (x-cobblr-reader). It may
@@ -2324,6 +2327,47 @@ platformOrgRouter.get(
         viewer: { userId: req.session?.id, role: req.tenant!.role },
       });
       res.json(out);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// The addresses this workspace already used, for the address picker, matched
+// against what is being typed ("mvc" finds MVC Lodi Agency), each with the
+// record it was last used on. `lookup` names the map lookup when one is set,
+// and is null when none is, so the picker offers no map search it cannot run;
+// a slow or failed lookup answers with the workspace's own places and says so.
+// A read, as the person asking (#5317).
+// AI-REACH: reads
+platformOrgRouter.get(
+  "/:slug/addresses",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      const q = typeof req.query.q === "string" ? req.query.q.slice(0, 200) : "";
+      const used = await addressesUsed(req.tenant!.org.id, {
+        query: q,
+        viewer: { userId: req.session?.id, role: req.tenant!.role },
+      });
+      const lookup = addressLookup();
+      let found: AddressValue[] = [];
+      let lookupFailed = false;
+      if (lookup && q.trim().length >= LOOKUP_MIN_CHARS) {
+        try {
+          found = await lookup.suggest(q.trim(), { near: nearestBias(used), signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS) });
+        } catch (err) {
+          lookupFailed = true;
+          console.warn(`[addresses] lookup ${lookup.name} failed:`, (err as Error).message);
+        }
+      }
+      res.json({
+        used,
+        found,
+        lookup: lookup ? { name: lookup.name } : null,
+        ...(lookupFailed ? { lookup_failed: true } : {}),
+      });
     } catch (err) {
       next(err);
     }

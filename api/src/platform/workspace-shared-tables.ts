@@ -74,6 +74,13 @@ export const SHARED_WORKSPACE_TABLES: Record<string, SharedTablePolicy> = {
   // An offer to reshape a kind's fields and its answer ("keep sellers as
   // notes"): a restored workspace is not asked again what it already said.
   field_upgrade_offers: { travels: "backup" },
+  // The Vault (#5242): folders, who may open each, the documents (still
+  // encrypted, never decrypted by a backup) and the folder's history. A
+  // person not in the workspace a backup lands in is dropped from a list.
+  vault_folders: { travels: "backup", id: "id", users: ["owner_id"] },
+  vault_folder_members: { travels: "backup", id: "id", users: ["user_id", "added_by"] },
+  vault_files: { travels: "backup", id: "id", users: ["created_by"] },
+  vault_events: { travels: "backup", drop: ["id"], users: ["user_id"] },
   operator_sandboxes: { travels: "never", why: "the operator's audit of a sandbox made from the box; it outlives the sandbox, and a backup of the sandbox is not that operator's record" },
   service_job_cards: { travels: "never", why: "cards a running job already sent to people; the jobs they belong to do not travel" },
   service_pending_confirms: { travels: "never", why: "a running job waiting for a yes; the job does not travel, so neither does its question" },

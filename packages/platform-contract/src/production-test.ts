@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { unitWriteBytes } from "@cobblr/platform-contract/firmware-image";
 import { AVR_FUSES, PROGRAMMERS } from "@cobblr/platform-contract/production-programmers";
-import { PROBE_CHANNELS, PROBES, judgeLimits, judgeTargetRun, limitPattern, parseWord, stepChangesHardware } from "@cobblr/platform-contract/production-steps";
+import { PIN_EDGES, PIN_UNITS, PROBE_CHANNELS, PROBES, judgeLimits, judgeTargetRun, limitPattern, parseWord, planPins, stepChangesHardware } from "@cobblr/platform-contract/production-steps";
 
-export { stepChangesHardware } from "@cobblr/platform-contract/production-steps";
+export { jigPinProblem, planPins, stepChangesHardware } from "@cobblr/platform-contract/production-steps";
 
 const key = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/);
 const text = z.string().max(200_000);
@@ -45,6 +45,27 @@ export const ProbeAction = z.discriminatedUnion("op", [
   }).strict(),
 ]);
 export type ProbeAction = z.infer<typeof ProbeAction>;
+const level = z.enum(["high", "low"]), window = z.number().int().min(10).max(10_000);
+// What the fixture I/O controller does with a pin the jig names. Levels are
+// the physical ones at the pin.
+export const PinAction = z.discriminatedUnion("op", [
+  z.object({ op: z.literal("set"), pin: key, level }).strict(),
+  z.object({ op: z.literal("pulse"), pin: key, level, width_us: z.number().int().min(1).max(1_000_000) }).strict(),
+  z.object({ op: z.literal("pwm"), pin: key, frequency_hz: z.number().int().min(1).max(1_000_000), duty_percent: z.number().min(0).max(100) }).strict(),
+  z.object({ op: z.literal("read"), pin: key, expect: level }).strict(),
+  z.object({ op: z.literal("count"), pin: key, edge: z.enum(PIN_EDGES).default("rising"), window_ms: window }).strict(),
+  z.object({ op: z.literal("frequency"), pin: key, window_ms: window }).strict(),
+  z.object({ op: z.literal("duty"), pin: key, window_ms: window }).strict(),
+  // From one edge to another; with drive, the fixture makes the first edge on an output itself.
+  z.object({ op: z.literal("interval"), from: key, from_edge: z.enum(["rising", "falling"]).default("rising"), to: key, to_edge: z.enum(["rising", "falling"]).default("rising"), drive: z.boolean().default(false), window_ms: window }).strict(),
+]);
+export type PinAction = z.infer<typeof PinAction>;
+// One fixture pin on a jig: the net name plans use, the controller's GPIO number, its direction and pull.
+export const ProductionJigPin = z.object({ name: key, gpio: z.number().int().min(0).max(63), direction: z.enum(["input", "output"]), pull: z.enum(["none", "up", "down"]).default("none") }).strict();
+export const ProductionJigPins = z.array(ProductionJigPin).max(64).superRefine((pins, ctx) => {
+  if (new Set(pins.map(p => p.name)).size !== pins.length) ctx.addIssue({ code: "custom", message: "Name each fixture pin once." });
+  if (new Set(pins.map(p => p.gpio)).size !== pins.length) ctx.addIssue({ code: "custom", message: "Wire each GPIO to one net." });
+});
 const base = { id: key, name: z.string().trim().min(1).max(200), notes: z.string().max(8000).optional(), limits: ProductionLimits.optional(), timeout_ms: z.number().int().min(100).max(120_000).default(30_000), on_fail: z.enum(["stop", "continue"]).optional() };
 export const ProductionStepSchema = z.discriminatedUnion("kind", [
   z.object({ ...base, kind: z.literal("instrument"), instrument: key, operation: z.enum(["measure", "setpoint", "output-on", "output-off"]), quantity: key.optional(), voltage: z.number().finite().nonnegative().optional(), current_limit: z.number().finite().nonnegative().optional() }).strict(),
@@ -66,6 +87,7 @@ export const ProductionStepSchema = z.discriminatedUnion("kind", [
     timeout_ms: z.number().int().min(100).max(120_000).default(120_000),
   }).strict(),
   z.object({ ...base, kind: z.literal("probe"), tool: z.enum(PROBES), device: key, target: chip.optional(), action: ProbeAction, timeout_ms: z.number().int().min(100).max(120_000).default(30_000) }).strict(),
+  z.object({ ...base, kind: z.literal("pin"), device: key.default("fixture"), action: PinAction }).strict(),
   z.object({ ...base, kind: z.literal("operator"), photo_required: z.boolean().default(false), prompt: z.string().trim().min(1).max(8000), image_file_id: z.string().uuid().optional(), response: z.enum(["pass-fail", "number", "text", "scan"]), serial_from_value: z.boolean().default(false), timeout_ms: z.number().int().min(100).max(3_600_000).default(300_000) }).strict(),
   z.object({ ...base, kind: z.literal("wait"), duration_ms: z.number().int().nonnegative().max(600_000) }).strict(),
   z.object({ ...base, kind: z.literal("script"), framework: z.enum(["python", "openhtf"]).default("python"), script: artifact, devices: z.array(key).max(16).default([]), args: z.record(z.union([z.string().max(8000), z.number().finite(), z.boolean()])).default({}), measurement: key.optional(), timeout_ms: z.number().int().min(100).max(30_000).default(10_000) }).strict(),
@@ -77,6 +99,10 @@ export const ProductionPlanSchema = z.object({
   instruments: z.record(z.object({ connection_id: z.string().uuid(), device_id: z.string().min(1).max(200) }).strict()),
   controlled_instruments: z.array(key).max(16).default([]), steps: z.array(ProductionStepSchema).min(1).max(100),
   on_fail: z.enum(["stop", "continue"]).default("stop"), required_jig_id: z.string().uuid().optional(),
+  // The "jig closed / board seated" check every step that changes hardware waits for.
+  seated_step: key.optional(),
+  // Bench camera evidence: a frame at the start and at each step's end, and a clip of the seconds before a failure.
+  camera: z.object({ frames: z.boolean().default(true), clip_on_fail_s: z.number().int().min(0).max(10).default(0) }).strict().optional(),
 }).strict();
 export type ProductionPlan = z.infer<typeof ProductionPlanSchema>;
 
@@ -115,6 +141,26 @@ export function assertNoWirelessCredentialFields(value: unknown, path = ""): voi
     assertNoWirelessCredentialFields(child, path ? `${path}.${name}` : name);
   }
 }
+function checkPinStep(step: Extract<ProductionStep, { kind: "pin" }>) {
+  const action = step.action, unit = action.op in PIN_UNITS ? PIN_UNITS[action.op as keyof typeof PIN_UNITS] : undefined;
+  if (!unit && step.limits) throw new Error(`Set what ${step.name} expects on its pin action, not as pass limits.`);
+  if (unit && (step.limits?.kind !== "range" || step.limits.unit !== unit)) throw new Error(`Give ${step.name} a range in ${unit}.`);
+  if (action.op === "interval" && action.from === action.to) throw new Error(`Time ${step.name} between two different pins.`);
+}
+function checkSeated(plan: ProductionPlan) {
+  const changes = plan.steps.findIndex(stepChangesHardware);
+  if (!plan.seated_step) {
+    if (plan.steps.some(s => s.kind === "pin" && stepChangesHardware(s))) throw new Error("Choose the check that the jig is closed and the board seated before the plan drives pins.");
+    return;
+  }
+  const at = plan.steps.findIndex(s => s.id === plan.seated_step), seat = plan.steps[at];
+  if (!seat || !(seat.kind === "pin" && seat.action.op === "read" || seat.kind === "operator" && seat.response === "pass-fail")) throw new Error("Make the seated check a pin read or an operator pass or fail.");
+  if (changes !== -1 && changes < at) throw new Error(`Move ${plan.steps[changes]!.name} after the seated check.`);
+}
+/** Every output a finished run must confirm off: the plan's controlled instruments, then each fixture's pins. */
+export function productionOutputs(plan: ProductionPlan): string[] {
+  return [...plan.controlled_instruments, ...new Set(plan.steps.flatMap(s => s.kind === "pin" ? [`${s.device}-pins`] : []))];
+}
 export function validateProductionPlan(raw: unknown): ProductionPlan {
   assertNoWirelessCredentialFields(raw);
   const plan = ProductionPlanSchema.parse(raw), controls = new Set(plan.controlled_instruments);
@@ -124,6 +170,7 @@ export function validateProductionPlan(raw: unknown): ProductionPlan {
   for (const instrument of controls) if (!Object.hasOwn(plan.instruments, instrument)) throw new Error("Declare every controlled instrument in this plan.");
   for (const [index, step] of plan.steps.entries()) {
     if (step.kind === "probe") checkProbeStep(step, plan.steps.slice(0, index));
+    if (step.kind === "pin") checkPinStep(step);
     if ((step.kind === "instrument" || step.kind === "capture") && !Object.hasOwn(plan.instruments, step.instrument)) throw new Error(`Choose the instrument for ${step.name}.`);
     if (step.kind === "instrument") {
       if (step.operation === "measure" && (!step.quantity || !step.limits)) throw new Error(`Give ${step.name} a measured quantity and limits.`);
@@ -141,6 +188,10 @@ export function validateProductionPlan(raw: unknown): ProductionPlan {
     if ((step.kind === "capture" || step.kind === "serial") && !step.limits) throw new Error(`Give ${step.name} limits or an expected reply.`);
     checkLimits(step.limits, step.name);
   }
+  planPins(plan.steps);
+  checkSeated(plan);
+  const outputs = productionOutputs(plan);
+  if (new Set(outputs).size !== outputs.length) throw new Error("Rename the controlled instrument that shares a fixture's name.");
   return plan;
 }
 function frozen<T>(value: T): T {
@@ -167,7 +218,7 @@ export const ProductionObservationSchema = z.object({
   readback_sha256: hex64.optional(),
   // The bytes written for this unit and where, as read back after writing.
   unit_write: z.object({ address, memory: z.enum(["flash", "eeprom"]), hex: z.string().regex(/^(?:[0-9a-f]{2}){1,64}$/) }).strict().optional(),
-  attachments: z.array(z.object({ id: z.string().max(160), filename: z.string().max(200), mime_type: z.string().max(100), sha256: z.string().regex(/^[a-f0-9]{64}$/), role: z.enum(["capture", "photo", "scope", "report"]) }).strict()).max(20).optional(),
+  attachments: z.array(z.object({ id: z.string().max(160), filename: z.string().max(200), mime_type: z.string().max(100), sha256: z.string().regex(/^[a-f0-9]{64}$/), role: z.enum(["capture", "photo", "scope", "report", "camera", "clip"]) }).strict()).max(20).optional(),
 }).strict();
 export type ProductionObservation = z.infer<typeof ProductionObservationSchema>;
 export interface ProductionStepResult extends ProductionObservation {
@@ -179,6 +230,10 @@ export interface ProductionTestPorts {
   outputOff(instrument: string): Promise<{ confirmed: boolean }>;
   controlEnabled(instrument: string): Promise<boolean>;
   onStep?(result: ProductionStepResult): Promise<void>;
+  // Release every pin of one fixture I/O controller to its safe, high-impedance state.
+  releasePins?(device: string): Promise<{ confirmed: boolean }>;
+  // The bench camera's evidence: the start frame, or a step's end frame plus, when it failed, its clip.
+  camera?(moment: "start" | ProductionStepResult): Promise<NonNullable<ProductionObservation["attachments"]>>;
 }
 export interface ProductionTestResult {
   plan: ProductionPlan; plan_hash: string; status: "passed" | "failed" | "aborted" | "error";
@@ -197,6 +252,7 @@ export function judgeProductionObservation(step: ProductionStep, observation: Pr
     }
   }
   if (step.kind === "probe") return judgeProbe(step, observation);
+  if (step.kind === "pin") return judgePin(step, observation);
   const judged = judgeLimits(limit, observation);
   if (judged) return judged;
   return observation.confirmed === true || observation.value !== undefined && observation.value !== false && observation.value !== null ? { result: "pass" } : { result: "fail", reason: "This step did not return a successful result." };
@@ -213,6 +269,19 @@ function judgeProbe(step: Extract<ProductionStep, { kind: "probe" }>, observatio
   if (got === null) return { result: "fail", reason: "The probe did not return a value." };
   if (((got & mask) >>> 0) === ((want & mask) >>> 0)) return { result: "pass" };
   return { result: "fail", reason: action.op === "identify" ? "The chip on this board is not the one this plan expects." : action.op === "write" ? "The value read back is not what was written." : "The register does not hold the expected value." };
+}
+function judgePin(step: Extract<ProductionStep, { kind: "pin" }>, observation: ProductionObservation): { result: "pass" | "fail"; reason?: string } {
+  const action = step.action;
+  if (action.op === "set" || action.op === "pulse" || action.op === "pwm") return observation.confirmed === true ? { result: "pass" } : { result: "fail", reason: "The fixture did not confirm the pin." };
+  if (action.op === "read") return observation.value === action.expect ? { result: "pass" } : { result: "fail", reason: typeof observation.value === "string" ? `${action.pin} is ${observation.value}, not ${action.expect}.` : "The fixture did not read the pin." };
+  if (action.op === "interval" && observation.value === null) return { result: "fail", reason: `${action.to} did not change within ${action.window_ms} ms.` };
+  return judgeLimits(step.limits, observation) ?? { result: "fail", reason: "This step has no limits." };
+}
+const NOT_SEATED = "The jig is not closed or the board is not seated.";
+function cameraFrames(moment: "start" | ProductionStepResult, got: ProductionObservation["attachments"]): NonNullable<ProductionObservation["attachments"]> {
+  const frames = (got ?? []).filter(a => a.role === "camera" || a.role === "clip" && moment !== "start" && moment.result === "fail");
+  if (!frames.some(a => a.role === "camera")) throw new Error("The bench camera did not return a frame.");
+  return frames;
 }
 async function performStep(step: ProductionStep, io: ProductionTestPorts, parent?: AbortSignal): Promise<ProductionObservation> {
   const controller = new AbortController(), abort = () => controller.abort();
@@ -244,12 +313,16 @@ export async function executeProductionTest(raw: unknown, io: ProductionTestPort
   for (const instrument of plan.controlled_instruments) if (!await io.controlEnabled(instrument)) throw new Error(`Turn on control for ${instrument} before running this plan.`);
   const now = () => (options.now?.() ?? new Date()).toISOString();
   const result: ProductionTestResult = { plan, plan_hash: productionPlanHash(plan), status: "passed", steps: [], outputs_off: [], started_at: now(), finished_at: "" };
-  let stopped = false;
+  let stopped = false, seated = !plan.seated_step, start: NonNullable<ProductionObservation["attachments"]> | Error = [];
+  if (plan.camera) {
+    try { start = cameraFrames("start", await io.camera?.("start")); } catch (error) { start = error instanceof Error ? error : new Error("The bench camera did not return a frame."); }
+  }
   try {
     for (const step of plan.steps) {
       const started_at = now();
       let recorded: ProductionStepResult;
       if (options.signal?.aborted || stopped) recorded = { id: step.id, name: step.name, kind: step.kind, limits: step.limits, result: "skip", reason: options.signal?.aborted ? "The operator stopped this test." : "An earlier step failed.", started_at, finished_at: now() };
+      else if (!seated && stepChangesHardware(step)) recorded = { id: step.id, name: step.name, kind: step.kind, limits: step.limits, result: "skip", reason: NOT_SEATED, started_at, finished_at: now() };
       else {
         try {
           const observation = await performStep(step, io, options.signal), judged = judgeProductionObservation(step, observation, options.unit);
@@ -258,6 +331,8 @@ export async function executeProductionTest(raw: unknown, io: ProductionTestPort
           recorded = { id: step.id, name: step.name, kind: step.kind, limits: step.limits, result: "fail", reason: error instanceof Error ? error.message.slice(0, 3000) : "This step could not finish.", started_at, finished_at: now() };
         }
       }
+      if (plan.camera && recorded.result !== "skip") recorded = await withCamera(recorded, io, result.steps.every(s => s.result === "skip") ? start : []);
+      if (step.id === plan.seated_step) seated = recorded.result === "pass";
       if (recorded.result === "fail") { result.status = "failed"; stopped = (step.on_fail ?? plan.on_fail) === "stop"; }
       result.steps.push(frozen(recorded));
       await io.onStep?.(recorded);
@@ -267,9 +342,11 @@ export async function executeProductionTest(raw: unknown, io: ProductionTestPort
     result.status = options.signal?.aborted ? "aborted" : "error";
     for (const step of plan.steps.slice(result.steps.length)) result.steps.push({ id: step.id, name: step.name, kind: step.kind, limits: step.limits, result: "skip", reason: error instanceof Error ? error.message.slice(0, 3000) : "This test could not finish.", started_at: now(), finished_at: now() });
   } finally {
-    result.outputs_off = await Promise.all(plan.controlled_instruments.map(async instrument => {
+    result.outputs_off = await Promise.all(productionOutputs(plan).map(async instrument => {
       try {
-        const reply = await io.outputOff(instrument);
+        const pins = plan.controlled_instruments.includes(instrument) ? undefined : instrument.slice(0, -"-pins".length);
+        if (pins !== undefined && !io.releasePins) throw new Error("This station cannot release the fixture's pins.");
+        const reply = pins === undefined ? await io.outputOff(instrument) : await io.releasePins!(pins);
         return { instrument, confirmed: reply.confirmed === true, ...(reply.confirmed === true ? {} : { error: "The instrument did not confirm output off." }) };
       } catch (error) { return { instrument, confirmed: false, error: error instanceof Error ? error.message.slice(0, 3000) : "Output off could not be confirmed." }; }
     }));
@@ -277,4 +354,14 @@ export async function executeProductionTest(raw: unknown, io: ProductionTestPort
     result.finished_at = now();
   }
   return frozen(result);
+}
+async function withCamera(recorded: ProductionStepResult, io: ProductionTestPorts, start: NonNullable<ProductionObservation["attachments"]> | Error): Promise<ProductionStepResult> {
+  try {
+    if (start instanceof Error) throw start;
+    const attachments = [...start, ...recorded.attachments ?? [], ...cameraFrames(recorded, await io.camera?.(recorded))].slice(0, 20);
+    return { ...recorded, attachments };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message.slice(0, 3000) : "The bench camera did not return a frame.";
+    return { ...recorded, result: "fail", reason: recorded.result === "fail" ? `${recorded.reason ?? "This step failed."} ${reason}` : reason };
+  }
 }

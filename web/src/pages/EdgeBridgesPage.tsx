@@ -211,6 +211,7 @@ export function EdgeBridgesPage({ embedded = false }: { embedded?: boolean } = {
                     <div className="text-sm font-medium text-content dark:text-mortar-100">{c.label}</div>
                     <div className="text-xs text-muted dark:text-slate-400">{c.description}</div>
                   </div>
+                  {/* STATUS-ROW-OK: a use that is not switched on has nothing to manage yet; Enable is its way in. */}
                   {c.enabled ? (
                     <Link
                       to={c.href}
@@ -288,6 +289,7 @@ function BridgeRow({
     <li data-testid="bridge-row" className="flex items-center gap-3 rounded-lg border border-line dark:border-slate-800 px-3 py-2 text-sm">
       {bridge.connected ? <CheckCircle2 size={15} className="text-emerald-500 shrink-0" /> : <XCircle size={15} className="text-red-500 shrink-0" />}
       <span className="flex-1 min-w-0">
+        {/* STATUS-ROW-OK: the rename form is Rename in progress; it offers Save and Cancel instead. */}
         {editing ? (
           <form
             className="flex items-center gap-2"

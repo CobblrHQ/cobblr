@@ -29,7 +29,7 @@ import {
 } from "@cobblr/platform-contract/holdings";
 import { instanceOf, partKindOf, sessionUser, tenantContext, tenantDb, type InventoryDB } from "../db.js";
 import { isLowStock } from "../on-hand.js";
-import { batchesFrom, expiryFor, putLots, takeLots, addBatch, type Batch } from "../batches.js";
+import { batchesFrom, expiryFor, putLots, takeLots, addBatch, servedLots, type Batch } from "../batches.js";
 import { withBatches } from "./action-handlers.js";
 import { recordConsumption } from "./stock-ledger.js";
 import { asyncHandler, badBody, requireCapability } from "./util.js";
@@ -152,7 +152,7 @@ export async function readHoldingRows(c: HoldingsCtx, ids: string[]): Promise<Ma
         approximate: r.approximate_qty == null ? null : Number(r.approximate_qty),
       }),
       expires_on: typeof md.expires_on === "string" && md.expires_on ? md.expires_on : null,
-      lots: batchesFrom(md, qty, typeof md.expires_on === "string" ? md.expires_on : null),
+      lots: servedLots(md, qty, typeof md.expires_on === "string" ? md.expires_on : null),
     });
   }
   return out;

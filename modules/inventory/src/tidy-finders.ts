@@ -1,11 +1,12 @@
 import { platform, type TidyCandidate, countOf } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
+import { addDays, arrivedEverywhere } from "@cobblr/platform-contract/day";
 import type { InventoryDB } from "./db.js";
 export function registerInventoryTidyFinders(): void {
   platform().tidy.registerFinder({ id: "inventory.warranties", module: "inventory", async find(ctx) {
     const db = await platform().tenants.getDb(ctx.orgId) as Kysely<InventoryDB>;
-    const today = new Date(ctx.now.toISOString().slice(0, 10));
-    const soon = new Date(today.getTime() + 30 * 86400000);
+    const today = arrivedEverywhere(ctx.now);
+    const soon = addDays(today, 30);
     const rows = await db.selectFrom("inventory_parts").select(["id", "name", "instance"]).where("archived", "=", false).where("lifetime_warranty", "=", false).where("warranty_expires", ">=", today).where("warranty_expires", "<=", soon).execute();
     const groups = new Map<string, typeof rows>();
     for (const r of rows) { const list = groups.get(r.instance) ?? []; list.push(r); groups.set(r.instance, list); }

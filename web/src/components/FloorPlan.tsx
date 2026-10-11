@@ -1483,7 +1483,7 @@ function PlanFor({
                   ${outlines.get(loc.id)?.border ?? "border border-slate-400 dark:border-slate-500"} text-content dark:text-slate-200
                   ${edit ? "cursor-move touch-none" : "cursor-pointer hover:border-accent hover:text-accent"}
                   ${colliding.has(loc.id) ? "border-dashed !border-ember-500 ring-1 ring-ember-500/60" : ""}
-                  ${inTheWay.some((f) => f.kind === "door") ? "!border-ember-500 ring-2 ring-ember-500/60" : inTheWay.length ? "ring-2 ring-amber-500/60" : ""}
+                  ${inTheWay.some((f) => f.kind === "door" || f.kind === "room") ? "!border-ember-500 ring-2 ring-ember-500/60" : inTheWay.length ? "ring-2 ring-amber-500/60" : ""}
                   ${front ? FRONT_EDGE[front] : ""}
                   ${selected ? "ring-1 ring-accent border-accent" : ""}
                   ${placing?.over === loc.id ? "ring-2 ring-accent border-accent" : ""}`}

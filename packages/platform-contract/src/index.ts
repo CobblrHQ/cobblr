@@ -1330,6 +1330,14 @@ const EntityAction = z.object({
    *  actions that declare one, so no screen names a module's action ids and a
    *  new module's verbs appear by declaring this. Absent = not such a verb. */
   finishes: z.enum(["used", "discarded", "still-good"]).optional(),
+  /** This action IS one of a station's own stock moves (`use` = "Used one",
+   *  `add` = "+1", `total` = "Set total"), done through the record's own
+   *  door. A surface that already shows that move (a station's countable
+   *  card) does not offer it again beside its own button (#5710). */
+  stockMove: z.enum(["use", "add", "total"]).optional(),
+  /** It edits a record's fields from what a person types (update the item,
+   *  set its status): a form, never a one-tap press. A kiosk offers none. */
+  editor: z.boolean().optional(),
   /** Which face this verb belongs to, for DISCLOSURE: a hidden face takes its
    *  verbs off the record along with its fields and panels. Eligibility is
    *  `appliesTo` (facts); this is the person's choice. Absent = the base
@@ -1395,6 +1403,11 @@ const EntityAction = z.object({
         // turned into its column's shape by the handler
         // (@cobblr/platform-contract/money moneyForStorage). Never cents.
         money: z.boolean().optional(),
+        // Where something happens: an address object
+        // (@cobblr/platform-contract/address) or the address as said. Shown on
+        // a confirm card as one line ("MVC Lodi Agency, 8 Mill St, Lodi"),
+        // read by the handler through asAddress.
+        address: z.boolean().optional(),
       }),
     )
     .optional(),
@@ -1769,10 +1782,13 @@ const ModuleManifest = z.object({
             /** Registry id, `<module>:<panel>` (e.g. "digifab:fleet-tab") —
              *  must have a component registered web-side. */
             id: z.string().regex(/^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*$/),
-            surface: z.enum(["module-page-tab", "entity-detail-panel", "configuration-section"]),
+            surface: z.enum(["module-page-tab", "entity-detail-panel", "configuration-section", "view-toolbar"]),
             /** Target module ("machines") for a page tab, entity kind
              *  ("machines:machine") for a detail panel, or a Configuration
-             *  page (one of CONFIGURATION_SECTION_HOSTS) for a section. */
+             *  page (one of CONFIGURATION_SECTION_HOSTS) for a section. For a
+             *  view toolbar, a module ("inventory"): the control sits on every
+             *  saved view whose records that module owns, its named
+             *  collections included, and is handed the records the view shows. */
             target: z.string().min(1),
             /** The tab/panel label the host renders. */
             title: z.string().min(1),
@@ -1899,6 +1915,9 @@ const ModuleManifest = z.object({
       continue;
     }
     const targetModule = p.target.includes(":") ? p.target.split(":")[0]! : p.target;
+    // A module's own records are not someone else's surface: a control it puts
+    // on its own views or its own kinds injects nothing.
+    if (targetModule === m.name) continue;
     if (!m.operatesOn.includes(targetModule)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -3625,6 +3644,10 @@ export interface EntityActionRecord {
   /** Can a mistaken run be put back (the manifest's `undoable`)? A surface
    *  that runs it one tap from a scan or a list row reads this: an action
    *  label only offers what its Undo can take back (#3897). */
+  /** The station stock move this action is, if any (manifest `stockMove`). */
+  stock_move?: "use" | "add" | "total" | null;
+  /** It edits the record's fields from typed values (manifest `editor`). */
+  editor?: boolean;
   undoable?: boolean;
   description: string | null;
   icon: string | null;
@@ -3808,6 +3831,13 @@ export interface CalendarEvent {
   entityType?: string;
   entityId?: string;
   detailUrl?: string;
+  /** Where it happens, as one line ("MVC Lodi Agency, 8 Mill St, Lodi, NJ"):
+   *  the feed's LOCATION, so a phone's calendar shows it and offers
+   *  directions, and the in-app calendar's "Where". From the record's address
+   *  field (@cobblr/platform-contract/address addressText). */
+  location?: string;
+  /** The address's coordinates, when it has some: the feed's GEO. */
+  geo?: { lat: number; lon: number };
 }
 
 /** A module's contribution of dated events for a window. Called with an
@@ -3890,6 +3920,23 @@ export interface PlatformCalendar {
    *  a reader that found nothing due asks here so it can SAY which record
    *  needs a person, rather than go quiet (#3279). */
   unreadableDateField(orgId: string, kind: string, field: string): Promise<Array<{ id: string; name: string; value: string }>>;
+}
+
+/** One address a module keeps outside record fields (a service visit's), as
+ *  the address picker offers it: the place, the record it was used on, and
+ *  when. */
+export interface UsedAddressRow {
+  address: unknown;
+  usedOn: { kind: string; id: string; name: string };
+  at: string | null;
+}
+
+/** The addresses a workspace already used, for the address picker (#5317).
+ *  Every address FIELD is read by the kernel; a module that stores addresses
+ *  of its own (core-maintenance's visits) registers them here, so a place
+ *  used on a visit is offered on the next record too. */
+export interface PlatformAddresses {
+  registerUsedSource(id: string, source: (orgId: string) => Promise<UsedAddressRow[]>): void;
 }
 
 /** core-queue v0.1: persistent background work for modules.
@@ -4684,6 +4731,10 @@ export interface AiProviderDef {
     result: unknown;
     input_tokens?: number;
     output_tokens?: number;
+    /** Prompt tokens a provider read from its prompt cache, and wrote to it
+     *  (#5319); counted apart from input_tokens, as Anthropic reports them. */
+    cache_read_tokens?: number;
+    cache_write_tokens?: number;
     cost_cents?: number;
     /** The model the provider's response says answered, as it said it
      *  (Anthropic's and an OpenAI-compatible `model`, Ollama's `model`).
@@ -4890,6 +4941,11 @@ export interface PlatformAi {
      *  always pass it and simply see nothing until the end. A cached reply
      *  never streams: there is nothing to watch, it is already written. */
     onDelta?: (text: string) => void;
+    /** What this call does when no AI answers (no provider, the plan's limit, a refusal): its no-AI
+     *  path, said where the call is made (#5761). `heuristic` names the deterministic answer the caller
+     *  falls back to (the matchmaker's keyword match); `byHand` is what the person is told to do instead.
+     *  Every new call site states one (lint:ai-invoke-no-ai); "heuristic first, AI last". */
+    noAi?: { heuristic: string } | { byHand: string };
   }): Promise<{
     /** The adapter's answer as it gave it: tool calls, a vector, the message. */
     result: unknown;
@@ -4903,6 +4959,8 @@ export interface PlatformAi {
     cached: boolean;
     input_tokens?: number;
     output_tokens?: number;
+    cache_read_tokens?: number;
+    cache_write_tokens?: number;
     cost_cents?: number;
     duration_ms: number;
     /** The model the provider said answered, when it said; `model` is the
@@ -6076,8 +6134,9 @@ export interface PlatformPairings {
  *  hydration) without the table-type leak. See B1 in
  *  2026-05-25-audit.md. */
 export interface PlatformCatalogs {
-  /** Find a catalog by its declared semantic_type. Returns null
-   *  when no catalog in the workspace declares the type. */
+  /** Find a catalog by its declared semantic_type. When several
+   *  declare it, one that holds entries (or reads them from the
+   *  hosted reference service) wins over an empty one, then the oldest. Returns null when no catalog declares the type. */
   findBySemanticType(
     orgId: string,
     semanticType: string,
@@ -6229,6 +6288,10 @@ export type FileAttacher = (orgId: string, spec: FileAttachSpec) => Promise<File
 /** Removes one attachment by id (the file itself stays). Resolves false when
  *  there was no such row. Emits core-files.attachment.deleted like the route. */
 export type FileDetacher = (orgId: string, attachmentId: string) => Promise<boolean>;
+/** Remove a file and its bytes now, skipping Recently deleted: the plain copy
+ *  of a document just put in the Vault. False when it cannot go yet (a live
+ *  copy still names it) or was not there. */
+export type FileRemover = (orgId: string, fileId: string) => Promise<boolean>;
 /** Lists what is attached to one entity, oldest first (sort_order, then
  *  created_at) - the server-side twin of GET /attachments. */
 export type FileAttachmentLister = (
@@ -6469,6 +6532,11 @@ export interface PlatformFiles {
   /** Remove one attachment server-side. Returns null if no detacher is
    *  registered, false if the row did not exist. */
   detach(orgId: string, attachmentId: string): Promise<boolean | null>;
+  /** A file-storage module registers the remover once at boot. */
+  registerRemover(remover: FileRemover): void;
+  /** Remove a file and its bytes for good, now (see FileRemover). Null if no
+   *  remover is registered. */
+  removeForGood(orgId: string, fileId: string): Promise<boolean | null>;
   /** A file-storage module registers the attachment lister once at boot. */
   registerAttachmentLister(lister: FileAttachmentLister): void;
   /** A file-storage module registers the describer once at boot. */
@@ -7057,7 +7125,30 @@ export interface PlatformMoney {
   total(orgId: string, values: readonly DatedMoney[], currency?: string): Promise<import("@cobblr/platform-contract/money").MoneyTotal>;
 }
 
+/** The Vault (#5242): a door IN only. A part of Cobblr holding a personal
+ *  document (an original the assistant was given, a bill of sale read on the
+ *  personal path) files it into a folder the person owns; nothing reads a
+ *  vault document out through here. */
+export interface PlatformVault {
+  /** File `bytes` into the person's folder named `folder` (an id or a name),
+   *  or their own "Personal documents" folder, made the first time. Refuses a
+   *  folder the person does not own. Encrypted before it is stored. */
+  file(
+    orgId: string,
+    userId: string,
+    doc: { name: string; mimeType?: string | null; bytes: Uint8Array; folder?: string | null; record?: { kind: string; id: string } | null },
+  ): Promise<{ fileId: string; folderId: string; folderName: string }>;
+  /** Say which record a document filed for this person belongs to, once it
+   *  is known (null unlinks). Only a document in a folder the person owns;
+   *  the record then lists it for the people who may open it. */
+  link(orgId: string, userId: string, fileId: string, record: { kind: string; id: string } | null): Promise<void>;
+  /** How many of a record's vault documents this person may open (0 for
+   *  anyone not on those folders' lists: never a count of the rest). */
+  countFor(orgId: string, userId: string, record: { kind: string; id: string }): Promise<number>;
+}
+
 export interface Platform {
+  vault: PlatformVault;
   deletedRecords: PlatformDeletedRecords;
   dispositions: PlatformDispositions;
   money: PlatformMoney;
@@ -7083,6 +7174,7 @@ export interface Platform {
   health: PlatformHealth;
   recurrence: PlatformRecurrence;
   calendar: PlatformCalendar;
+  addresses: PlatformAddresses;
   queue: PlatformQueue;
   exclusive: PlatformExclusive;
   sweeps: PlatformSweeps;

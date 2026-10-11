@@ -272,6 +272,7 @@ schedulesRouter.post(
 );
 
 // AI-REACH: action core-maintenance:update-schedule
+// UI-SCREEN: /instances/:name, Change renewal and the Service schedule save through core-maintenance:update-schedule so they carry their Undo
 schedulesRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {

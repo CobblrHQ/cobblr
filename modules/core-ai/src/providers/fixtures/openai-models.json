@@ -1,0 +1,529 @@
+{
+  "_recorded": {
+    "what": "OpenAI's models and list prices as OpenRouter's public listing reports them (https://openrouter.ai/api/v1/models, no key needed), the 'openai/' prefix and ':batch' variants dropped. No OpenAI key was at hand to ask /v1/models itself; OpenRouter relays OpenAI's own ids and prices.",
+    "when": "2026-10-11",
+    "refresh": "Re-record deliberately: GET https://openrouter.ai/api/v1/models, keep the openai/* rows, and update OPENAI_FALLBACK_MODELS and OPENAI_PRICES with it."
+  },
+  "data": [
+    {
+      "id": "gpt-3.5-turbo",
+      "usd_per_mtok": {
+        "input": 0.5,
+        "output": 1.5
+      },
+      "image_input": false
+    },
+    {
+      "id": "gpt-3.5-turbo-0613",
+      "usd_per_mtok": {
+        "input": 1.0,
+        "output": 2.0
+      },
+      "image_input": false
+    },
+    {
+      "id": "gpt-3.5-turbo-16k",
+      "usd_per_mtok": {
+        "input": 3.0,
+        "output": 4.0
+      },
+      "image_input": false
+    },
+    {
+      "id": "gpt-3.5-turbo-instruct",
+      "usd_per_mtok": {
+        "input": 1.5,
+        "output": 2.0
+      },
+      "image_input": false
+    },
+    {
+      "id": "gpt-4",
+      "usd_per_mtok": {
+        "input": 30.0,
+        "output": 60.0
+      },
+      "image_input": false
+    },
+    {
+      "id": "gpt-4-turbo",
+      "usd_per_mtok": {
+        "input": 10.0,
+        "output": 30.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-4.1",
+      "usd_per_mtok": {
+        "input": 2.0,
+        "output": 8.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-4.1-mini",
+      "usd_per_mtok": {
+        "input": 0.4,
+        "output": 1.6
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-4.1-nano",
+      "usd_per_mtok": {
+        "input": 0.1,
+        "output": 0.4
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-4o",
+      "usd_per_mtok": {
+        "input": 2.5,
+        "output": 10.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-4o-2024-05-13",
+      "usd_per_mtok": {
+        "input": 5.0,
+        "output": 15.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-4o-2024-08-06",
+      "usd_per_mtok": {
+        "input": 2.5,
+        "output": 10.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-4o-2024-11-20",
+      "usd_per_mtok": {
+        "input": 2.5,
+        "output": 10.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-4o-mini",
+      "usd_per_mtok": {
+        "input": 0.15,
+        "output": 0.6
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-4o-mini-2024-07-18",
+      "usd_per_mtok": {
+        "input": 0.15,
+        "output": 0.6
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5",
+      "usd_per_mtok": {
+        "input": 1.25,
+        "output": 10.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5-image",
+      "usd_per_mtok": {
+        "input": 10.0,
+        "output": 10.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5-image-mini",
+      "usd_per_mtok": {
+        "input": 2.5,
+        "output": 2.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5-mini",
+      "usd_per_mtok": {
+        "input": 0.25,
+        "output": 2.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5-nano",
+      "usd_per_mtok": {
+        "input": 0.05,
+        "output": 0.4
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5-pro",
+      "usd_per_mtok": {
+        "input": 15.0,
+        "output": 120.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5.1",
+      "usd_per_mtok": {
+        "input": 1.25,
+        "output": 10.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5.1-codex",
+      "usd_per_mtok": {
+        "input": 1.25,
+        "output": 10.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5.1-codex-max",
+      "usd_per_mtok": {
+        "input": 1.25,
+        "output": 10.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5.1-codex-mini",
+      "usd_per_mtok": {
+        "input": 0.25,
+        "output": 2.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5.2",
+      "usd_per_mtok": {
+        "input": 1.75,
+        "output": 14.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5.2-chat",
+      "usd_per_mtok": {
+        "input": 1.75,
+        "output": 14.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5.2-codex",
+      "usd_per_mtok": {
+        "input": 1.75,
+        "output": 14.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5.2-pro",
+      "usd_per_mtok": {
+        "input": 21.0,
+        "output": 168.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5.3-codex",
+      "usd_per_mtok": {
+        "input": 1.75,
+        "output": 14.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5.4",
+      "usd_per_mtok": {
+        "input": 2.5,
+        "output": 15.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5.4-image-2",
+      "usd_per_mtok": {
+        "input": 8.0,
+        "output": 15.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5.4-mini",
+      "usd_per_mtok": {
+        "input": 0.75,
+        "output": 4.5
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5.4-nano",
+      "usd_per_mtok": {
+        "input": 0.2,
+        "output": 1.25
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5.4-pro",
+      "usd_per_mtok": {
+        "input": 30.0,
+        "output": 180.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5.5",
+      "usd_per_mtok": {
+        "input": 5.0,
+        "output": 30.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5.5-pro",
+      "usd_per_mtok": {
+        "input": 30.0,
+        "output": 180.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "usd_per_mtok": {
+        "input": 0.2,
+        "output": 1.2
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5.6-luna-pro",
+      "usd_per_mtok": {
+        "input": 0.2,
+        "output": 1.2
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "usd_per_mtok": {
+        "input": 2.0,
+        "output": 10.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5.6-sol-pro",
+      "usd_per_mtok": {
+        "input": 2.0,
+        "output": 10.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "usd_per_mtok": {
+        "input": 2.0,
+        "output": 12.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-5.6-terra-pro",
+      "usd_per_mtok": {
+        "input": 2.0,
+        "output": 12.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-6-astra",
+      "usd_per_mtok": {
+        "input": 10.0,
+        "output": 50.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-6-astra-pro",
+      "usd_per_mtok": {
+        "input": 10.0,
+        "output": 50.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-6-luna",
+      "usd_per_mtok": {
+        "input": 0.1,
+        "output": 0.5
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-6-luna-pro",
+      "usd_per_mtok": {
+        "input": 0.1,
+        "output": 0.5
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-6-sol",
+      "usd_per_mtok": {
+        "input": 2.0,
+        "output": 10.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-6-sol-pro",
+      "usd_per_mtok": {
+        "input": 2.0,
+        "output": 10.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-6.1-sol",
+      "usd_per_mtok": {
+        "input": 2.0,
+        "output": 10.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-6.1-sol-pro",
+      "usd_per_mtok": {
+        "input": 2.0,
+        "output": 10.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-audio",
+      "usd_per_mtok": {
+        "input": 2.5,
+        "output": 10.0
+      },
+      "image_input": false
+    },
+    {
+      "id": "gpt-audio-mini",
+      "usd_per_mtok": {
+        "input": 0.6,
+        "output": 2.4
+      },
+      "image_input": false
+    },
+    {
+      "id": "gpt-chat-latest",
+      "usd_per_mtok": {
+        "input": 5.0,
+        "output": 30.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "gpt-oss-120b",
+      "usd_per_mtok": {
+        "input": 0.037,
+        "output": 0.17
+      },
+      "image_input": false
+    },
+    {
+      "id": "gpt-oss-20b",
+      "usd_per_mtok": {
+        "input": 0.018,
+        "output": 0.09
+      },
+      "image_input": false
+    },
+    {
+      "id": "gpt-oss-safeguard-20b",
+      "usd_per_mtok": {
+        "input": 0.075,
+        "output": 0.3
+      },
+      "image_input": false
+    },
+    {
+      "id": "o1",
+      "usd_per_mtok": {
+        "input": 15.0,
+        "output": 60.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "o1-pro",
+      "usd_per_mtok": {
+        "input": 150.0,
+        "output": 600.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "o3",
+      "usd_per_mtok": {
+        "input": 2.0,
+        "output": 8.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "o3-mini",
+      "usd_per_mtok": {
+        "input": 1.1,
+        "output": 4.4
+      },
+      "image_input": false
+    },
+    {
+      "id": "o3-mini-high",
+      "usd_per_mtok": {
+        "input": 1.1,
+        "output": 4.4
+      },
+      "image_input": false
+    },
+    {
+      "id": "o3-pro",
+      "usd_per_mtok": {
+        "input": 20.0,
+        "output": 80.0
+      },
+      "image_input": true
+    },
+    {
+      "id": "o4-mini",
+      "usd_per_mtok": {
+        "input": 1.1,
+        "output": 4.4
+      },
+      "image_input": true
+    },
+    {
+      "id": "o4-mini-high",
+      "usd_per_mtok": {
+        "input": 1.1,
+        "output": 4.4
+      },
+      "image_input": true
+    }
+  ]
+}

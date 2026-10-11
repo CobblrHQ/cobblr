@@ -14,7 +14,7 @@ import { DeliveryWindows } from "../components/DeliveryWindows";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Lock, MessageCircle } from "lucide-react";
-import { usePageTitle, useToast, useConfirm } from "@cobblr/platform-web";
+import { StatusRow, usePageTitle, useToast, useConfirm } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { discordConnectable } from "../lib/discord-connect";
@@ -84,7 +84,7 @@ export function CommunicationPreferencesPage() {
   });
 
   // Arriving from a "Connect Discord" door (the going-off offer, the setup
-  // card, the account menu, Your account) starts Discord's consent at once:
+  // card, Your account; never the account menu, #5774) starts Discord's consent at once:
   // the person already said what they want, and one more Connect button
   // here would be a second ask. Once per visit, and only when there is
   // something to connect.
@@ -351,16 +351,35 @@ function DiscordCard(props: {
             </span>
           )}
         </div>
-        {verified ? (
-          <button type="button" onClick={props.onDisconnect} className="text-xs text-faint hover:text-ember-500">
-            Disconnect
-          </button>
-        ) : (
-          <button type="button" onClick={props.onConnect} disabled={props.connecting}
-            className="inline-flex items-center gap-2 rounded bg-[#5865F2] hover:brightness-110 text-white text-sm font-medium px-3 py-1.5 disabled:opacity-60">
-            <MessageCircle size={15} /> {connected ? "Reconnect Discord" : "Connect Discord"}
-          </button>
-        )}
+        <StatusRow
+          state={verified ? "verified" : "unverified"}
+          className="flex flex-wrap items-center justify-end gap-3"
+          testId="discord-actions"
+          states={{
+            verified: (
+              <button type="button" onClick={props.onDisconnect} className="text-xs text-faint hover:text-ember-500">
+                Disconnect
+              </button>
+            ),
+            unverified: (
+              <button type="button" onClick={props.onConnect} disabled={props.connecting}
+                className="inline-flex items-center gap-2 rounded bg-[#5865F2] hover:brightness-110 text-white text-sm font-medium px-3 py-1.5 disabled:opacity-60">
+                <MessageCircle size={15} /> {connected ? "Reconnect Discord" : "Connect Discord"}
+              </button>
+            ),
+          }}
+          // Waiting for the first DM or long since confirmed, a person can ask
+          // for one to see that Discord still reaches them (#5774: it was only
+          // offered while waiting).
+          always={
+            connected && (
+              <button type="button" onClick={props.onRetry}
+                className="rounded border border-line dark:border-slate-600 text-xs font-medium px-3 py-1.5 hover:bg-mortar-50 dark:hover:bg-slate-800">
+                Send a test
+              </button>
+            )
+          }
+        />
       </div>
 
       {/* Once connected, point them at the community server — it's where the
@@ -382,15 +401,11 @@ function DiscordCard(props: {
       {/* Verification states after OAuth. */}
       {!verified && connected && (discordParam === "pending" || discordParam === null) && (
         <div className="text-sm text-content dark:text-mortar-200 space-y-2">
-          <p>We sent a test DM to your Discord. Tap <strong>“Yes, I got this 👋”</strong> in that message - or confirm here:</p>
+          <p>We sent a test DM to your Discord. Tap <strong>“Yes, I got this 👋”</strong> in that message - or confirm here. Nothing came? Send a test again above.</p>
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={props.onConfirm}
               className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium px-3 py-1.5">
               <Check size={13} /> Yes, I received it
-            </button>
-            <button type="button" onClick={props.onRetry}
-              className="rounded border border-line dark:border-slate-600 text-xs font-medium px-3 py-1.5 hover:bg-mortar-50 dark:hover:bg-slate-800">
-              Re-send test DM
             </button>
           </div>
         </div>

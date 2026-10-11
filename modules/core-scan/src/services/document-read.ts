@@ -48,6 +48,25 @@ export const DOCUMENT_READ_PROMPT = [
   "Where a value was written over by hand, give the one the page's own arithmetic supports, and copy nothing you cannot read.",
 ].join("\n");
 
+const valueOrNull = { type: ["string", "number", "null"] };
+/** The shape DOCUMENT_READ_PROMPT asks for, sent with the read so a model
+ *  answering in a layout of its own is caught (#5790). */
+export const DOCUMENT_READ_OUTPUT_SCHEMA = {
+  type: "object",
+  required: ["document", "lines"],
+  properties: {
+    document: { type: ["string", "null"] },
+    seller: { type: ["string", "null"] },
+    date: { type: ["string", "null"] },
+    vehicle: { type: ["object", "null"], properties: { year: valueOrNull, make: valueOrNull, model: valueOrNull, vin: valueOrNull, odometer: valueOrNull } },
+    lines: { type: ["array", "null"], items: { type: "object", properties: { label: { type: ["string", "null"] }, amount: valueOrNull } } },
+    taxable: valueOrNull,
+    total: valueOrNull,
+    deposit: valueOrNull,
+    balance: valueOrNull,
+  },
+} as const;
+
 interface DocumentJson {
   document?: string | null;
   seller?: string | null;
@@ -187,7 +206,7 @@ export async function readPageWithDocumentModel(orgId: string, page: Buffer, sou
       orgId,
       userId: userId ?? undefined,
       capability: "document-read",
-      input: { image_b64: png.toString("base64"), image_media_type: "image/png", prompt: DOCUMENT_READ_PROMPT },
+      input: { image_b64: png.toString("base64"), image_media_type: "image/png", prompt: DOCUMENT_READ_PROMPT, output_schema: DOCUMENT_READ_OUTPUT_SCHEMA },
       source: { kind: "core-scan:document", id: sourceId },
     });
     const text = documentJsonAsText(r.text);
@@ -225,6 +244,14 @@ export function withChecks(receipt: ParsedReceipt, verdict: DocumentVerdict, wai
 export function waitsFor(ai: DocumentAiRead): false | "busy" | "limit" {
   if (ai.ok) return false;
   return ai.limit ? "limit" : ai.busy ? "busy" : false;
+}
+
+/** A page the engine read, checked and made right by its VIN by code alone:
+ *  no model (a personal document, #5331; a read told to ask none). What fails
+ *  a check is marked to check, as on any read. */
+export async function checkedByCode(orgId: string, ocr: { receipt: ParsedReceipt; text: string }, now: Date = new Date()): Promise<ParsedReceipt> {
+  const first = await checkAndSettle(orgId, ocr.receipt, ocr.text, now);
+  return withChecks(first.receipt, first.verdict);
 }
 
 /**

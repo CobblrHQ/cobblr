@@ -9,7 +9,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, Scissors, Star, Trash2, Upload, X } from "lucide-react";
-import { SELECTED_TILE, useConfirm, useImageSrc, usePhotoPick, useToast, EntityPhoto, Lightbox, MutationError, noteWorkspaceWrite, uploadJson } from "@cobblr/platform-web";
+import { SELECTED_TILE, useConfirm, useImageSrc, usePhotoPick, useToast, EntityPhoto, Lightbox, MutationError, noteWorkspaceWrite, uploadJson, workspaceFetch } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { cutoutPlainBackground } from "./remove-background";
 import { isCoverFile } from "./gallery-cover";
@@ -50,7 +50,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
   const list = useQuery({
     queryKey: ["part-gallery", orgSlug, partId],
     queryFn: async () => {
-      const res = await fetch(
+      const res = await workspaceFetch(
         `${base}/attachments?source_module=inventory&source_type=part&source_id=${encodeURIComponent(partId)}`,
         { headers: auth() },
       );
@@ -66,7 +66,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
       const fd = new FormData();
       fd.append("file", file);
       const f = await uploadJson<{ id: string }>(`${base}/files`, fd, { token: getToken(), file });
-      const ares = await fetch(`${base}/attachments`, {
+      const ares = await workspaceFetch(`${base}/attachments`, {
         method: "POST",
         headers: { ...auth(), "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -88,7 +88,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
 
   const detach = useMutation({
     mutationFn: async (id: string) => {
-      const res = await fetch(`${base}/attachments/${id}`, {
+      const res = await workspaceFetch(`${base}/attachments/${id}`, {
         method: "DELETE",
         headers: auth(),
       });
@@ -107,7 +107,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
   async function handleCutout(att: AttachmentRow) {
     setCutting(att.id);
     try {
-      const r = await fetch(fullUrl(att.file_id), { headers: auth() });
+      const r = await workspaceFetch(fullUrl(att.file_id), { headers: auth() });
       const blob = await r.blob();
       const out = await cutoutPlainBackground(blob);
       if (!out) {
@@ -117,7 +117,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
       const fd = new FormData();
       fd.append("file", new File([out], (att.filename.replace(/\.\w+$/, "") || "cutout") + "-cutout.png", { type: "image/png" }));
       const f = await uploadJson<{ id: string }>(`${base}/files`, fd, { token: getToken() });
-      const ares = await fetch(`${base}/attachments`, {
+      const ares = await workspaceFetch(`${base}/attachments`, {
         method: "POST",
         headers: { ...auth(), "Content-Type": "application/json" },
         body: JSON.stringify({ file_id: f.id, source_module: "inventory", source_type: "part", source_id: partId, role: "gallery" }),

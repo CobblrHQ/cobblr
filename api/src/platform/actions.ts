@@ -428,7 +428,10 @@ export async function invoke(
   // the schema says it needs (#3123). A card that renders and dies on press
   // was a call the door could have refused.
   if (row.module_name !== PLATFORM_OWNER && !(await enabledActionOwners(ctx.orgId)).has(row.module_name)) {
-    return { ok: false, error: moduleOffRefusal(row.label, row.module_name) };
+    // The code and the app's name travel with the sentence, so a module that
+    // relays this refusal can hand its person the switch, not just the words
+    // (#5865).
+    return { ok: false, code: "module_not_enabled", module: row.module_name, error: moduleOffRefusal(row.label, row.module_name) };
   }
   const gone = await missingRecordRefusal(ctx, row.scope === "workspace" ? "workspace" : "entity");
   if (gone) return { ok: false, error: gone };
@@ -591,6 +594,8 @@ function rowToActionRecord(row: {
   wire_only?: boolean;
   record_optional?: boolean;
   finishes?: string | null;
+  stock_move?: string | null;
+  editor?: boolean;
   args_schema?: unknown;
   version: string;
   position?: number;
@@ -617,6 +622,8 @@ function rowToActionRecord(row: {
     record_optional: row.record_optional ?? false,
     undoable: row.undoable === true,
     finishes: row.finishes === "used" || row.finishes === "discarded" || row.finishes === "still-good" ? row.finishes : null,
+    stock_move: row.stock_move === "use" || row.stock_move === "add" || row.stock_move === "total" ? row.stock_move : null,
+    editor: row.editor === true,
     args_schema:
       (row.args_schema as EntityActionRecord["args_schema"]) ?? null,
     version: row.version,

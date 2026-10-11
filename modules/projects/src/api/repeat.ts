@@ -37,6 +37,7 @@ export async function makeNextOccurrence(orgId: string, db: Kysely<ProjectsDB>, 
   if (!t) return null;
   const rule = repeatOf(t.repeat);
   if (!rule) return null;
+  // DAY-OK: projects_tasks.due_date is a timestamptz, read here as the instant it holds.
   const from = new Date(t.due_date ?? t.completed_at ?? new Date());
   // A series on a due date keeps its day of the month across short months;
   // one with no due date counts from when it was done and has no anchor.

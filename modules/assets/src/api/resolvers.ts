@@ -75,7 +75,7 @@ export function registerAssetsResolvers(): void {
     insuranceDetails: async (orgId, ids) => {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<AssetsDB>;
       const rows = await db.selectFrom("assets_assets").select(["id", "serial_number", "purchased_at"]).where("id", "in", ids).execute();
-      return new Map(rows.map((r) => [r.id, { serial: r.serial_number, date: r.purchased_at?.toISOString() ?? null }]));
+      return new Map(rows.map((r) => [r.id, { serial: r.serial_number, date: r.purchased_at ?? null }]));
     },
   });
 

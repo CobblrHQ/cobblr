@@ -7,7 +7,7 @@ import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft } from "lucide-react";
-import { useToast, usePageTitle, runAction } from "@cobblr/platform-web";
+import { useToast, usePageTitle, runAction, offerUndo, type ActionRun } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { QueryError } from "../components/QueryError";
 import { api, ApiError, type ServiceRun, type ServiceRunStep } from "../lib/api";
@@ -97,8 +97,11 @@ export function ServiceRunPage() {
       // PRESS-ARGS: the step's job id is the only argument these three actions take, and the row carries it
       return runAction(api, qc, activeSlug, { actionId, entityKind: "", entityId: "", args: { job_id: jobId } });
     },
-    onSuccess: (_r, v) => {
-      toast.success(v.what === "retry" ? "Started again." : v.what === "skip" ? "Skipped; the run goes on." : v.what === "yes" ? "Started." : "Run cancelled.");
+    onSuccess: (r, v) => {
+      const said = v.what === "retry" ? "Started again." : v.what === "skip" ? "Skipped; the run goes on." : v.what === "yes" ? "Started." : "Run cancelled.";
+      // An Undo the action hands back is offered with it (#5812).
+      // PRESS-ARGS: Undo runs the action's own steps, each carrying its arguments.
+      if (v.what === "yes" || !offerUndo(toast, (b) => runAction(api, qc, activeSlug, b), r as ActionRun, {}, said)) toast.success(said);
       void qc.invalidateQueries({ queryKey: runKey(activeSlug, id) });
       void qc.invalidateQueries({ queryKey: runsKey(activeSlug) });
     },

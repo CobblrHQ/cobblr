@@ -14,6 +14,9 @@
 //   minor  → apply
 //   major / non-semver / downgrade / anything that ships catalogs → never on
 //            its own; the dashboard keeps the explicit prompt
+//   a trial sandbox → never: a trial keeps the versions it was made with, so
+//            the carry at its end reports what the person actually tried, and
+//            the carry itself brings the update (#5799)
 // and the safety gates are the ones the row used: validate first, and leave
 // for the prompt anything that needs a module enabled, collides on a field,
 // or reports an upgrade conflict. The apply itself is applyValidatedBundle,
@@ -41,6 +44,8 @@ export interface InstalledBundle {
   version: string;
   manifest: unknown;
   enabled_features: string[];
+  /** The workspace is a trial sandbox (orgs.sandbox). */
+  sandbox?: boolean;
 }
 
 export interface CatalogEntry {
@@ -70,6 +75,7 @@ export function planBundleUpdates(installed: InstalledBundle[], catalog: Catalog
   const latest = new Map(catalog.map((c) => [c.id, c]));
   const out: PlannedUpdate[] = [];
   for (const b of installed) {
+    if (b.sandbox) continue;
     const cat = latest.get(b.external_id);
     if (!cat || cat.version === b.version) continue;
     if (isDowngradeOrSame(b.version, cat.version)) continue;
@@ -129,11 +135,12 @@ function registerBundleUpdatesPass(): void {
       const { meta } = await import("../db/meta.js");
       const rows = await meta
         .selectFrom("bundles")
-        .select(["org_id", "external_id", "version", "manifest", "enabled_features"])
-        .where("install_status", "=", "active")
+        .innerJoin("orgs", "orgs.id", "bundles.org_id")
+        .select(["bundles.org_id", "bundles.external_id", "bundles.version", "bundles.manifest", "bundles.enabled_features", "orgs.sandbox"])
+        .where("bundles.install_status", "=", "active")
         .execute();
       const plan = planBundleUpdates(
-        rows.map((r) => ({ ...r, enabled_features: (r.enabled_features as string[] | null) ?? [] })),
+        rows.map((r) => ({ ...r, enabled_features: (r.enabled_features as string[] | null) ?? [], sandbox: r.sandbox === true })),
         serverCatalog(),
       );
       const byOrg = new Map<string, PlannedUpdate[]>();

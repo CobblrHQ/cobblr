@@ -16,7 +16,8 @@
 // Configuration", which nobody read (#2847). `failure` holds the action's own
 // words (a refusal's `result.error`, a thrown handler's message, the network's
 // sentence) until the person dismisses them, and every surface that uses this
-// hook mounts <ActionOutcome> to show them (lint:action-outcome-shown).
+// hook mounts <ActionOutcome> to show them (lint:action-outcome-shown). An
+// Undo the action hands back is offered in a toast (offerUndo, #5812).
 
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -24,7 +25,8 @@ import { useNavigate } from "react-router-dom";
 import { usePlatformWeb, useFlowHost } from "./context";
 import { printDirectiveOf } from "./print-directive-of";
 import { printNextStep, refusalKind, verdictOf } from "./action-outcome-compose";
-import { runAction } from "./run-action";
+import { offerUndo, runAction } from "./run-action";
+import { useToast } from "./ToastContext";
 import { useLater } from "./use-later";
 import type { BindingAskEntry } from "@cobblr/platform-contract/binding-ask";
 import { askBeforePress, pressAnswersToArgs, type ActionArgSpec } from "@cobblr/platform-contract/action-args";
@@ -60,6 +62,7 @@ export function useInvokeEntityAction({ entityKind, entityId }: InvokeTarget) {
   const { openFlow } = useFlowHost();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const toast = useToast();
   const [flash, setFlash] = useState<"ok" | "err" | null>(null);
   // Walk-up print feedback: its own line rather than the flash chip, because it
   // lands a second or two later and says more than "done".
@@ -80,7 +83,7 @@ export function useInvokeEntityAction({ entityKind, entityId }: InvokeTarget) {
         ...(args.binding ? { bindingId: args.binding.binding_id } : {}),
         ...(args.args && Object.keys(args.args).length ? { args: args.args } : {}),
       }),
-    onSuccess: (data) => {
+    onSuccess: (data, args) => {
       setFailure(null);
       setFlash("ok");
       later.after("flash", 1200, () => setFlash(null));
@@ -89,7 +92,11 @@ export function useInvokeEntityAction({ entityKind, entityId }: InvokeTarget) {
       // 3 in the queue"); it stays until the next press or a later step
       // replaces it with something the person must do.
       const verdict = verdictOf((data as { result?: unknown })?.result, "");
-      if (verdict) {
+      // The Undo the action handed back, offered where the person is looking:
+      // Use one took one and its Undo came back unseen (#5812). The toast
+      // carries the verdict, so the line below does not repeat it.
+      const offered = offerUndo(toast, (b) => runAction(api, qc, orgSlug, b), data, { entityKind, entityId }, verdict || (args.label ? `${args.label}: done.` : undefined));
+      if (verdict && !offered) {
         setNote(verdict);
         later.after("note", 6000, () => setNote((cur) => (cur === verdict ? null : cur)));
       }

@@ -1,3 +1,4 @@
+import { IDENTIFY_OUTPUT_SCHEMA, VERDICT_OUTPUT_SCHEMA } from "@cobblr/platform-contract/ai-output-schemas";
 // Photo-only vision enrichment. A scan with a photo and NO barcode can't
 // take the barcode fast path (there's no code to look up), so the photo
 // itself is read by a vision model: image → {name, brand, category,
@@ -26,9 +27,11 @@ import { titleVariantsOf, type TitleVariants } from "@cobblr/platform-contract/d
 import { PHOTO_READ_KEY, type PhotoRead } from "@cobblr/platform-contract/scan-evidence";
 import { asPackaging, packagingFromProse, type Packaging } from "@cobblr/platform-contract/scan-tools";
 import { platform } from "@cobblr/platform-contract";
+import { isLineImageRef, storedLineImageId } from "@cobblr/platform-contract/email-line-images";
 import { tidyTruncatedName } from "./item-name.js";
 import type { CoreScanDB } from "../db.js";
 import { reportBarcodeCorrection, reportBarcodeReject, unitLotsOf, withoutLots } from "./barcode-corrections.js";
+import { boxLabelPass } from "./box-label-pass.js";
 import { identityMeta, mergeMeta, CATALOG_PICTURE_NOT_PERSONS } from "./metadata.js";
 import {
   earnsMatchesYourPhoto,
@@ -127,10 +130,33 @@ export function nameInDoubt(meta: unknown): boolean {
 
 /** The photo the order email printed beside this line, and whether it is
  *  already the row's stored picture. Null when the line had none. */
-export function orderLinePhoto(meta: unknown): { url: string; stored: boolean } | null {
-  const m = (meta ?? {}) as { order_line_image?: unknown; catalog_image_from?: unknown };
-  const url = typeof m.order_line_image === "string" && /^https?:\/\//i.test(m.order_line_image) ? m.order_line_image : null;
-  return url ? { url, stored: m.catalog_image_from === url } : null;
+export function orderLinePhoto(meta: unknown): { url: string; stored: boolean; fileId: string | null } | null {
+  const m = (meta ?? {}) as { order_line_image?: unknown; store_line_image?: unknown; catalog_image_from?: unknown };
+  // The email's own picture first; the variant's photo on the store's page
+  // next (#5719); a search only when neither is there.
+  const url =
+    typeof m.order_line_image === "string" && isLineImageRef(m.order_line_image)
+      ? m.order_line_image
+      : typeof m.store_line_image === "string" && /^https?:\/\//i.test(m.store_line_image)
+        ? m.store_line_image
+        : null;
+  return url ? { url, stored: m.catalog_image_from === url, fileId: storedLineImageId(url) } : null;
+}
+
+/** The email's own image part, already stored, as the row's picture (#5719):
+ *  nothing to fetch, and never over a picture the person chose. */
+async function useStoredLinePhoto(db: Kysely<CoreScanDB>, itemId: string, url: string, fileId: string): Promise<boolean> {
+  const r = await db
+    .updateTable("core_scan_inbox_items")
+    .set({
+      catalog_image_file_id: fileId,
+      suggested_metadata: sql`(coalesce(suggested_metadata, '{}'::jsonb) - 'catalog_image_status' - 'catalog_colour') || ${JSON.stringify({ catalog_image_from: url })}::jsonb`,
+      updated_at: new Date(),
+    })
+    .where("id", "=", itemId)
+    .where(CATALOG_PICTURE_NOT_PERSONS)
+    .executeTakeFirst();
+  return Number(r.numUpdatedRows ?? 0) > 0;
 }
 
 export async function refreshCatalogImageByName(
@@ -172,6 +198,9 @@ export async function refreshCatalogImageByName(
   const printed = orderLinePhoto(cur?.suggested_metadata);
   if (printed) {
     if (printed.stored) return "kept";
+    if (printed.fileId) {
+      if (await useStoredLinePhoto(db, itemId, printed.url, printed.fileId)) return "stored";
+    }
     const { downloadCatalogImage } = await import("./enrich.js");
     if (await downloadCatalogImage({ db, orgId, itemId }, printed.url, { asPrinted: true })) return "stored";
     console.warn(`[core-scan] the order email's photo for ${itemId} could not be fetched; searching instead`);
@@ -593,7 +622,7 @@ export async function identifyPhoto({
     const r = await platform().ai.invoke({
       orgId,
       capability: "identify-image",
-      input: {
+      input: { output_schema: IDENTIFY_OUTPUT_SCHEMA,
         image_b64: imageB64,
         image_media_type: mediaType,
         ...(hint ? { user_hint: hint } : {}),
@@ -877,6 +906,7 @@ export async function observeScanPhoto(
   if (!file) return null;
   const imageB64 = Buffer.from(file.bytes).toString("base64");
   try {
+    // FREE-TEXT: parseObservation takes JSON or plain prose about the photo, both kept
     const r = await platform().ai.invoke({
       orgId,
       userId: userId ?? undefined,
@@ -1196,7 +1226,7 @@ export async function crossCheckScanPhoto(
       await platform().ai.invoke({
         orgId,
         capability: "identify-from-text",
-        input: {
+        input: { output_schema: VERDICT_OUTPUT_SCHEMA,
           messages: [
             {
               role: "user",
@@ -1226,7 +1256,7 @@ export async function crossCheckScanPhoto(
       await platform().ai.invoke({
         orgId,
         capability: "classify-image",
-        input: {
+        input: { output_schema: VERDICT_OUTPUT_SCHEMA,
           image_b64: Buffer.from(file.bytes).toString("base64"),
           image_media_type: file.mimeType,
           prompt: crossCheckPhotoPrompt(resolvedName),
@@ -1612,6 +1642,17 @@ async function readPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOutcome> {
       shape,
     );
     return "is-receipt";
+  }
+
+  // A box's own label, with an order open that it can belong to: read by OCR
+  // and settled against the order's lines and pack parts, with no model
+  // (#5764). What the label cannot settle goes on to identify below.
+  if (!answered) {
+    const box = await boxLabelPass(ctx.db as never, ctx.itemId, (original ?? file).bytes).catch((err: Error) => {
+      console.error(`[core-scan] box label read of ${ctx.itemId} failed:`, err.message);
+      return "none" as const;
+    });
+    if (box !== "none") return "identified";
   }
 
   const knownCats = await knownCategories(ctx.db);

@@ -64,11 +64,19 @@ export function scanCountResult(mode: ScanCountMode, have: number, value: number
   return mode === "set" ? Math.max(0, value) : Math.max(0, have + value);
 }
 
-/** A use session takes one; a recount starts at the current total. */
-export function scanCountStart(mode: ScanCountMode, have: number, sessionMode?: ScanCountSessionMode): number {
+/** A use session takes one; a recount starts at the current total; a
+ *  re-buy adds what the line says it bought (`scanned`: a 10-pack line adds
+ *  10, never the 1 the card used to start at, #5719). */
+export function scanCountStart(mode: ScanCountMode, have: number, sessionMode?: ScanCountSessionMode, scanned = 1): number {
   if (mode === "set") return Math.max(0, have);
   if ((sessionMode === "use" || sessionMode === "kitchen") && have > 0) return -1;
-  return 1;
+  return scanAddCount(scanned);
+}
+
+/** How many a scan's row adds: its quantity, whole and at least one. */
+export function scanAddCount(quantity: number | null | undefined): number {
+  const n = Math.round(Number(quantity));
+  return Number.isFinite(n) && n > 1 ? n : 1;
 }
 
 /** The request body the card sends, and the only shape the route accepts:

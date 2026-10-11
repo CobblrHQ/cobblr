@@ -77,12 +77,16 @@ export interface RerouteRow {
   suggested_candidates: unknown;
   target_module: string | null;
   target_entity_id: string | null;
+  /** When the row was made. A row made after the rule was never routed by
+   *  the old one, whatever its stamp says (#5430). */
+  created_at?: string | Date | null;
 }
 
 export type RerouteWhy =
   | "not-pending"
   | "not-matched"
   | "matched-after-rule"
+  | "made-after-rule"
   | "already-judged"
   | "no-route"
   | "ai-route"
@@ -129,6 +133,11 @@ export function rerouteVerdict(row: RerouteRow, menu: readonly ScanMenuEntry[]):
   const matchedAt = typeof meta.matched_at === "string" ? Date.parse(meta.matched_at) : NaN;
   if (Number.isNaN(matchedAt)) return { action: "skip", why: "not-matched" };
   if (matchedAt >= Date.parse(REROUTE_RULE.since)) return { action: "skip", why: "matched-after-rule" };
+  // An import can carry an old stamp; a row made after the rule was routed by
+  // the rule as it is now, or not by this code at all. Healing it moved a
+  // fresh workspace's rows mid-use, a page at a time (#5430).
+  const madeAt = row.created_at ? new Date(row.created_at).getTime() : NaN;
+  if (!Number.isNaN(madeAt) && madeAt >= Date.parse(REROUTE_RULE.since)) return { action: "skip", why: "made-after-rule" };
   if (row.target_entity_id || row.target_module) return { action: "skip", why: "filed" };
   if (meta.user_fields || meta.reviewed === true || storedDestinationOf(meta)?.by === "person") return { action: "skip", why: "person-answered" };
   const stored = candidateList(row.suggested_candidates);
@@ -163,9 +172,10 @@ async function unjudgedPage(orgId: string, limit: number): Promise<RerouteRow[]>
     const tdb = raw as Kysely<unknown>;
     const q = sql<RerouteRow>`
       select id, status, source_kind, suggested_name, suggested_manufacturer, suggested_sku, barcode_text, ai_notes, scan_area,
-             suggested_metadata, suggested_candidates, target_module, target_entity_id
+             suggested_metadata, suggested_candidates, target_module, target_entity_id, created_at
       from core_scan_inbox_items
       where status = 'pending'
+        and created_at < ${REROUTE_RULE.since}::timestamptz
         and target_entity_id is null
         and (suggested_metadata->'reroute') is null
         and (suggested_metadata->>'matched_at') is not null

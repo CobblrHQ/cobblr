@@ -8,6 +8,7 @@ import { Router } from "express";
 import { startReceiptTrackingSweeper } from "../services/receipt-tracking-sweeper.js";
 import { startPicturesSweeper } from "../services/pictures-sweeper.js";
 import { inboxRouter } from "./inbox.js";
+import { lineUnitsRouter } from "./line-units.js";
 import { organizeRouter } from "./organize.js";
 import { putawayRouter } from "./putaway.js";
 import { importRouter } from "./import.js";
@@ -46,6 +47,8 @@ const router = Router({ mergeParams: true });
 // Before the inbox router: its /inbox/:id routes would take /inbox/offer-to-sharer.
 router.use("/", personalDocumentsRouter);
 router.use("/", offersRouter);
+// Before the inbox's own routes: /inbox/line-slots is not an item id (#5734).
+router.use("/", lineUnitsRouter);
 router.use("/", inboxRouter);
 router.use("/", shipmentEventRouter);
 router.use("/", organizeRouter); // Guided Organize: batch put-away plan + apply

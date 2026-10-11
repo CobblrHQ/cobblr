@@ -264,6 +264,14 @@ function needsValueSql(names: readonly string[]): RawBuilder<boolean> {
 const Truthy = z.union([z.literal("1"), z.literal("true"), z.literal("0"), z.literal("false")]);
 const isTruthy = (v: string | undefined): boolean => v === "1" || v === "true";
 
+/** A search that is a number. HomeBox's `#NNN` asks for that asset number
+ *  alone; a bare number may be one too, or the number in a name, a barcode or
+ *  a model ("Gloves M 563543"), so it finds either (#5445). */
+function assetNumberSearch(raw: string): { n: number; only: boolean } | null {
+  const m = raw.match(/^(#)?\s*0*(\d+)\s*$/);
+  return m ? { n: Number(m[2]), only: m[1] === "#" } : null;
+}
+
 const ListQuery = z.object({
   search: z.string().optional(),
   /** The search word under the name every other list and the workspace
@@ -468,11 +476,11 @@ partsRouter.get(
 
     if (filter.search) {
       const raw = filter.search.trim();
-      // HomeBox-style `#NNN` syntax: search by asset_id (zero-padded
-      // or not, parse the integer suffix).
-      const assetMatch = raw.match(/^#?\s*0*(\d+)\s*$/);
-      if (assetMatch) {
-        query = query.where("p.asset_id", "=", Number(assetMatch[1]));
+      const asset = assetNumberSearch(raw);
+      if (asset?.only) {
+        query = query.where("p.asset_id", "=", asset.n);
+      } else if (asset) {
+        query = query.where((eb) => eb.or([eb("p.asset_id", "=", asset.n), sql<boolean>`p.search_blob like ${likeNeedle(raw)}`]));
       } else {
         // H8: one trigram-GIN-indexed column (search_blob) instead of a
         // 5-column OR of LIKE '%…%' (which can't use indexes and
@@ -835,9 +843,9 @@ partsRouter.get(
     if (readsValues(filter)) await refreshMeasureReadings(db, { instance: instanceOf(req) });
     if (filter.search) {
       const raw = filter.search.trim();
-      const assetMatch = raw.match(/^#?\s*0*(\d+)\s*$/);
-      if (assetMatch) {
-        query = query.where("p.asset_id", "=", Number(assetMatch[1]));
+      const asset = assetNumberSearch(raw);
+      if (asset?.only) {
+        query = query.where("p.asset_id", "=", asset.n);
       } else {
         const words = (w: string) => {
           const like = likeNeedle(w);
@@ -852,7 +860,7 @@ partsRouter.get(
         const read = measureTokens(raw);
         query = read
           ? query.where((eb) => valueSearchWhere(eb, read, { text: words, readings: "p.measures" }))
-          : query.where((eb) => eb.or(words(raw)));
+          : query.where((eb) => eb.or([...(asset ? [eb("p.asset_id", "=", asset.n)] : []), ...words(raw)]));
       }
     }
     if (filter.category_id) query = query.where("p.category_id", "=", filter.category_id);
@@ -957,9 +965,7 @@ partsRouter.get(
         r.serial_number ?? "",
         r.model_number ?? "",
         r.supplier_url ?? "",
-        r.warranty_expires
-          ? new Date(r.warranty_expires).toISOString().slice(0, 10)
-          : "",
+        r.warranty_expires ?? "",
         r.lifetime_warranty ? "true" : "false",
         r.warranty_details ?? "",
         r.insured ? "true" : "false",
@@ -1288,9 +1294,7 @@ partsRouter.post(
         serial_number: parsed.data.serial_number ?? null,
         model_number: parsed.data.model_number ?? null,
         assigned_to: parsed.data.assigned_to ?? null,
-        warranty_expires: parsed.data.warranty_expires
-          ? new Date(parsed.data.warranty_expires)
-          : null,
+        warranty_expires: parsed.data.warranty_expires ?? null,
         lifetime_warranty: parsed.data.lifetime_warranty ?? false,
         warranty_details: parsed.data.warranty_details ?? null,
         insured: parsed.data.insured ?? false,

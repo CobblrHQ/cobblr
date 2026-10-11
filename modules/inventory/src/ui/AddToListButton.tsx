@@ -9,7 +9,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ListPlus } from "lucide-react";
-import { Modal, usePlatformWeb, useRunAction, useToast } from "@cobblr/platform-web";
+import { Modal, undoStepsOf, usePlatformWeb, useRunAction, useToast } from "@cobblr/platform-web";
 
 const ADD_ITEM = "lists:add-item";
 
@@ -38,7 +38,8 @@ export function AddToListButton({ kind, id, compact }: { kind: string; id: strin
       }
       setChoices(null);
       if (r.ok === false) toast.info(r.error ?? "Not added.");
-      else toast.success(r.summary ?? "Added to the list.");
+      // The door already said it, with its Undo, when the action gave one.
+      else if (!undoStepsOf(run.undo).length) toast.success(r.summary ?? "Added to the list.");
     } catch (e) {
       // A refusal carries the handler's answer (the host's invokeAction):
       // "which list?" comes back that way, with the lists to choose from.

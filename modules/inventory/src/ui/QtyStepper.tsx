@@ -74,7 +74,11 @@ export function QtyStepper({
         };
       });
       void qc.invalidateQueries({ queryKey: ["inventory-parts"], refetchType: "none" });
-      void qc.invalidateQueries({ queryKey: ["inventory-part", partId] });
+      // Every other read of this record moved too: the detail, and Workshop
+      // stock's remaining roll (["stock-shape", slug, id]), which stayed at
+      // the old length until a reload (#5811). Named by the record's id, as
+      // the platform's refresh after an action finds them.
+      void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] !== "inventory-parts" && q.queryKey.includes(partId) });
     },
   });
   // The one stepper (platform-web StockStepper): a counted thing steps by one,

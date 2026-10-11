@@ -5,7 +5,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Check, KeyRound, Link2, Plug } from "lucide-react";
-import { useLater, useToast, usePageTitle } from "@cobblr/platform-web";
+import { StatusRow, useLater, useToast, usePageTitle } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api } from "../lib/api";
 import { assistantClients, mcpEndpoint } from "../lib/assistant-connect";
@@ -74,25 +74,39 @@ export function ConnectAssistantPage() {
         <div className="flex items-center gap-2 text-sm font-medium text-content dark:text-slate-100">
           <KeyRound size={15} className="text-cobble-500" /> Token
         </div>
-        {token ? (
-          <p className="text-xs text-content dark:text-slate-300">
-            <Check size={12} className="mr-1 inline text-emerald-500" />
-            Created, for this workspace only, able to look and make changes. It is already filled into the steps below, and this is the only time it is shown. It expires in a year; revoke it any time under{" "}
-            <Link to="/configuration/tokens" className="text-accent hover:underline">API tokens</Link>.
-          </p>
-        ) : (
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={() => mint.mutate()}
-              disabled={mint.isPending}
-              className="rounded-md bg-cobble-600 px-3 py-1.5 text-sm text-white hover:bg-cobble-700 disabled:opacity-60"
-            >
-              {mint.isPending ? "Creating…" : "Create a token for my assistant"}
-            </button>
-            <span className="text-xs text-muted dark:text-slate-400">The steps below fill it in for you.</span>
-          </div>
-        )}
+        <StatusRow
+          state={token ? "made" : "none"}
+          className="space-y-2"
+          testId="assistant-token"
+          states={{
+            made: (
+              <p className="text-xs text-content dark:text-slate-300">
+                <Check size={12} className="mr-1 inline text-emerald-500" />
+                Created, for this workspace only, able to look and make changes. It is already filled into the steps below, and this is the only time it is shown. It expires in a year.
+              </p>
+            ),
+            none: (
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => mint.mutate()}
+                  disabled={mint.isPending}
+                  className="rounded-md bg-cobble-600 px-3 py-1.5 text-sm text-white hover:bg-cobble-700 disabled:opacity-60"
+                >
+                  {mint.isPending ? "Creating…" : "Create a token for my assistant"}
+                </button>
+                <span className="text-xs text-muted dark:text-slate-400">The steps below fill it in for you.</span>
+              </div>
+            ),
+          }}
+          // Before one is made and right after: where tokens are seen and revoked (#5774).
+          always={
+            <p className="text-xs text-muted dark:text-slate-400">
+              See or revoke tokens any time under{" "}
+              <Link to="/configuration/tokens" className="text-accent hover:underline">API tokens</Link>.
+            </p>
+          }
+        />
       </section>
 
       {clients.map((c) => (

@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-maintenance",
-  version: "0.2.14",
+  version: "0.2.16",
   displayName: "Maintenance",
   description:
     "Remember when things need servicing: log what was done and get a reminder when the next one is due.",
@@ -121,7 +121,7 @@ export default defineModule({
         // along with the warranty fields; eligibility (physical, unique) stands.
         face: "maintained",
         description:
-          "Record maintenance on this record: what was done and when, or schedule the next one. Pass `name` (what was done, e.g. \"oil change\"), and optionally `performed_at`, `scheduled_at`, `notes`, `cost` (what it cost, as an amount: 45 or \"$45.50\"), `recurrence_rule`. With neither date it logs as done now. Reading the history is list_maintenance.",
+          "Record maintenance on this record: what was done and when, or schedule the next one. Pass `name` (what was done, e.g. \"oil change\"), and optionally `performed_at`, `scheduled_at`, `notes`, `cost` (what it cost, as an amount: 45 or \"$45.50\"), `recurrence_rule`, `address` (where it happens: a place from find_addresses, or the address as said; it becomes the calendar event's Where). With neither date it logs as done now. Reading the history is list_maintenance.",
         icon: "wrench",
         // Anything a workspace OWNS can need servicing: a mower, a printer, a
         // vehicle, a water filter, a lease. That is physical + unique. It was
@@ -141,6 +141,7 @@ export default defineModule({
           notes: { label: "Notes", type: "text" },
           cost: { label: "What it cost", type: "text", money: true },
           schedule_id: { label: "The schedule it belongs to (optional; matched by name otherwise)", type: "text" },
+          address: { label: "Where it happens", type: "json", address: true },
         },
       },
       {
@@ -370,6 +371,8 @@ export default defineModule({
       registerRenewalContext();
       const { registerMaintenanceCalendarSource } = await import("./calendar-source.js");
       registerMaintenanceCalendarSource();
+      const { registerVisitAddresses } = await import("./visit-addresses.js");
+      registerVisitAddresses();
     },
     onShutdown: async () => {
       const { stopMaintenanceSweeper } = await import("./sweeper.js");

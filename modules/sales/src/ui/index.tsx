@@ -13,9 +13,9 @@ import {
   type SalesOrder, type SalesOrderStatus, type CustomerSummary, type PartOption, type FulfilDoor, type HistoryRow, type OrderSort, type Paged,
 } from "./api.js";
 import { IntakeSettings } from "./intake.js";
-import { invoiceCsv, invoiceHtml } from "../invoice.js";
+import { invoiceCsv, invoiceHtml, orderTotal } from "../invoice.js";
 import { Link } from "react-router-dom";
-import { fieldCurrency, formatStoredMoney } from "@cobblr/platform-contract/money";
+import { fieldCurrency, formatStoredMoney, linesTotalWords, parseMoneyAmount } from "@cobblr/platform-contract/money";
 import { PickToLight } from "@cobblr/platform-web";
 
 export const navItems = [{ label: "Sales", path: "/sales", icon: ShoppingCart }];
@@ -412,6 +412,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
       invalidate();
     },
     onError: (e) => {
+      if (e instanceof SalesApiError && e.remedied) return;
       if (e instanceof SalesApiError) setMakeRefusal({ message: e.message, doors: e.doors });
       else toast.error(String(e));
     },
@@ -508,7 +509,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
             <div>
               <div className="flex items-baseline justify-between mb-1.5">
                 <span className="text-[10px] font-mono uppercase tracking-widest text-muted">Line items</span>
-                <span className="text-sm font-semibold text-content dark:text-mortar-100">Total {formatStoredMoney(d.total, "amount", { currency: fieldCurrency(d.metadata, "total", currency) })}</span>
+                <span data-testid="order-total" className="text-sm font-semibold text-content dark:text-mortar-100">{linesTotalWords(orderTotal(d.items, fieldCurrency(d.metadata, "total", currency)))}</span>
               </div>
               {d.items.length === 0 && <div className="text-sm text-muted italic">No line items yet. Add what was sold.</div>}
               <ul className="divide-y divide-slate-100 dark:divide-slate-800 border border-line dark:border-slate-700 rounded">
@@ -516,6 +517,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
                   <li key={it.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 text-sm group">
                     <span className="flex-1 min-w-0 text-content dark:text-mortar-100">
                       {it.description || (it.part_id ? "(part)" : "(item)")}
+                      {parseMoneyAmount(it.unit_price) === null && <span className="block text-xs text-ember-600 dark:text-ember-400" data-testid="line-unpriced">No price yet</span>}
                       {!fulfilled && d.status !== "cancelled" && (() => {
                         const a = d.availability?.find((a) => a.line_id === it.id);
                         return a ? <span className="block text-xs text-muted" data-testid="line-availability">
@@ -683,7 +685,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
         {d && <OrderHistory api={api} orderId={orderId} />}
       </div>
       {makeRefusal && (
-        <Modal open onClose={() => setMakeRefusal(null)} title="Nothing to make it with" size="sm">
+        <Modal open onClose={() => setMakeRefusal(null)} title="Can't make this yet" size="sm">
           <div className="space-y-3">
             <p className="text-sm text-content dark:text-mortar-100">{makeRefusal.message}</p>
             <div className="flex flex-wrap gap-2">
@@ -1052,9 +1054,13 @@ function AddLineRow({ api, currency, onAdd }: { api: SalesApi; currency: string;
                 {parts.data?.map((p) => (
                   <button key={p.id} type="button" onClick={() => { setPicked(p); setQ(p.title); }} className="w-full text-left px-3 py-2 text-sm hover:bg-subtle dark:hover:bg-slate-800">
                     {p.title}{p.subtitle && <span className="text-xs text-muted ml-2">{p.subtitle}</span>}
+                    {p.collection && <span className="block text-xs text-faint">{p.collection}</span>}
                   </button>
                 ))}
               </div>
+            )}
+            {q.length > 0 && parts.isSuccess && parts.data.length === 0 && (
+              <div className="mt-1 text-xs text-muted" data-testid="no-stock-match">No stocked record in any collection matches. Add adds it as a free-text line that draws no stock.</div>
             )}
           </>
         )}

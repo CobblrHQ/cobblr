@@ -14,6 +14,7 @@ import type {
   FileDescription,
   FileAttachmentRow,
   FileDetacher,
+  FileRemover,
   FileBytes,
   FileReader,
   FileVariant,
@@ -62,6 +63,17 @@ export function registerDetacher(d: FileDetacher): void {
 export async function detach(orgId: string, attachmentId: string): Promise<boolean | null> {
   if (!detacher) return null;
   return detacher(orgId, attachmentId);
+}
+
+let remover: FileRemover | null = null;
+
+export function registerRemover(r: FileRemover): void {
+  remover = r;
+}
+
+export async function removeForGood(orgId: string, fileId: string): Promise<boolean | null> {
+  if (!remover) return null;
+  return remover(orgId, fileId);
 }
 
 let lister: FileAttachmentLister | null = null;

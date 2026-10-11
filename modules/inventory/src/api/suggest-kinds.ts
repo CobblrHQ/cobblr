@@ -1,3 +1,4 @@
+import { objectWith } from "@cobblr/platform-contract/ai-output-schemas";
 // "What kinds are in this bin?" — one vision read over the assortment's photo.
 //
 // The whole point of assortments is that nobody types in fifty adapters. That
@@ -85,7 +86,7 @@ export async function suggestKindsFromPhoto(
     const r = await platform().ai.invoke({
       orgId,
       capability: "identify-image",
-      input: {
+      input: { output_schema: { anyOf: [objectWith(["kinds"]), objectWith(["items"]), { type: "array" }] },
         image_b64: Buffer.from(f.bytes).toString("base64"),
         image_media_type: f.mimeType,
         prompt: KINDS_PROMPT,
@@ -93,7 +94,9 @@ export async function suggestKindsFromPhoto(
       source: { kind: "inventory:assortment-kinds", id: fileId },
       userId: userId ?? undefined,
     });
-    return parseKinds((r as { output?: unknown })?.output ?? r);
+    // The kinds are in the answer's text; the response object itself has
+    // none, so parsing it suggested nothing, ever (#5790).
+    return parseKinds(r.text);
   } catch {
     return [];
   }

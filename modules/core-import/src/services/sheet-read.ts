@@ -78,6 +78,7 @@ function cellOf(c: XLSX.CellObject | undefined): Cell | null {
   if (!c || c.v === undefined || c.v === null) return null;
   if (c.t === "e" || c.t === "z") return null;
   const day = dayOf(c);
+  // DAY-OK: dayOf builds a cell's date in UTC, so its UTC day is the cell's day.
   if (day) return { v: day, text: (c.w ?? day.toISOString().slice(0, 10)).trim() };
   const v = c.v as CellValue;
   if (typeof v === "string" && v.trim() === "") return null;

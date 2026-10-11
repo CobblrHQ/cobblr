@@ -3,6 +3,7 @@ import { z } from "zod";
 import { sql, type Kysely } from "kysely";
 import { ActionRefusal, platform } from "@cobblr/platform-contract";
 import type { PurchasesDB } from "../db.js";
+import { fieldDay } from "@cobblr/platform-contract/field-day";
 
 const PlanOrder = z.object({
   request_key: z.string().trim().min(1).max(200), vendor: z.string().trim().min(1).max(160),
@@ -13,7 +14,7 @@ const PlanOrder = z.object({
 export function registerPlannedOrderAction() {
   platform().actions.registerHandler("purchases.plan-order", async ctx => {
     const p = PlanOrder.parse(ctx.args);
-    if (p.expected_arrival && !Number.isFinite(Date.parse(p.expected_arrival))) throw new ActionRefusal("Choose a valid expected date.");
+    if (p.expected_arrival && !fieldDay(p.expected_arrival)) throw new ActionRefusal("Choose a valid expected date.");
     const ids = [...new Set(p.lines.flatMap(l => l.part_id ? [l.part_id] : []))];
     const parts = await platform().entities.lookupMany(ctx.orgId, ids.map(id => ({ kind: "inventory:part", id })), { userId: ctx.userId ?? undefined });
     if (parts.length !== ids.length) throw new ActionRefusal("One of the order's stock records is missing or unavailable.");

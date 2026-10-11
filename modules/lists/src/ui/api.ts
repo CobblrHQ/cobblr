@@ -2,7 +2,8 @@
 // Routes are mounted at /api/v1/orgs/:slug/modules/lists/...
 
 import { dayHere } from "@cobblr/platform-contract/day";
-import { describeUnreadableBody, noteWorkspaceWrite } from "@cobblr/platform-web";
+import { describeUnreadableBody, noteWorkspaceWrite, workspaceFetch } from "@cobblr/platform-web";
+import { dayLabel } from "@cobblr/platform-contract/day";
 
 export interface ListSummary {
   id: string;
@@ -97,7 +98,7 @@ export class ListsApi {
     const token = this.getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
     const url = `/api/v1/orgs/${this.slug}/modules/lists${path}`;
-    const res = await fetch(url, {
+    const res = await workspaceFetch(url, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -185,6 +186,5 @@ export function willDatePhrase(w: WillDate | null | undefined, today = dayHere()
 }
 
 function shortDate(iso: string): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" });
+  return dayLabel(iso, { day: "numeric", month: "short" });
 }

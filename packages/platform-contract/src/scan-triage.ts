@@ -24,6 +24,7 @@
 import { scanSourceConflict, sourceConflictWords, type SourceConflict } from "@cobblr/platform-contract/acquisition-source";
 import { evidenceConflictWords, scanEvidenceConflicts } from "@cobblr/platform-contract/scan-evidence";
 import { identifyNeverTried, type IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
+import { scanAddCount } from "@cobblr/platform-contract/scan-count";
 import {
   ACTION_ADD,
   ACTION_BLOCKED,
@@ -31,7 +32,7 @@ import {
   PHOTO_CHECK_NOTE,
   sessionAddLabel,
   sessionAddCaption,
-  ACTION_MERGE,
+  actionMerge,
   ACTION_REVIEW,
   AI_FAILED_SENTENCE,
   BLOCKED_SENTENCE,
@@ -1244,7 +1245,10 @@ export function scanRowState(row: ScanTriageRow, ctx: ScanRowStateContext = {}):
       return {
         eligibility: "ready",
         sentence: MERGE_SENTENCE,
-        action: { kind: "merge", label: ACTION_MERGE, title: `Adds one more to ${updates.title} in ${destLabel}, the one you already have` },
+        action: (() => {
+          const n = scanAddCount(row.quantity);
+          return { kind: "merge" as const, label: actionMerge(n), title: `Adds ${n === 1 ? "one more" : `${n} more`} to ${updates.title} in ${destLabel}, the one you already have` };
+        })(),
         destination,
         merge: updates,
         ask: null,
@@ -1481,7 +1485,11 @@ export function splitUncutWords(reason: string | null | undefined): string {
 export function scanSplitUncut(row: ScanTriageRow): { sentence: string; why: string } | null {
   const meta = metaOf(row) as Record<string, unknown>;
   if (typeof meta.split_from !== "string" || !meta.split_from) return null;
-  if (meta.crop === "ok") return null;
+  // Only a piece cut from a group photo carries a crop state. A receipt line
+  // split by hand, or a pack split from its store's page, had no group photo
+  // to be cut from, and telling it to crop one is a sentence about a picture
+  // that does not exist (#5814).
+  if (typeof meta.crop !== "string" || meta.crop === "ok") return null;
   const why = splitUncutWords(typeof meta.crop_reason === "string" ? meta.crop_reason : null);
   return { sentence: "Not cut out of the group photo, so it shows all of it.", why: `It could not be cut out: ${why}.` };
 }

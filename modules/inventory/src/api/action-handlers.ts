@@ -28,6 +28,8 @@ import {
 import {
   batchesFrom,
   addBatch,
+  arrivingLotsOf,
+  type ArrivingLot,
   consumeOldest,
   reconcileToQty,
   visibleFrom,
@@ -113,6 +115,9 @@ interface AdjustStockPayload {
    *  was on the shelf. The check-off wires set it; so does the record's own
    *  Restock button. See fresh-lot.ts. */
   restock?: boolean;
+  /** Of the units arriving, how many carry which lot number, as their
+   *  boxes printed it ([{lot, qty}]); the rest arrive with none. */
+  lots?: unknown;
   timezone?: string;
   // Optional source attribution for the consumption ledger — e.g. the wire
   // fired by digifab.print.completed passes sourceKind:"digifab:job" + the job id.
@@ -435,10 +440,19 @@ async function roleExpiry(orgId: string, partId: string, md: Record<string, unkn
  *  today, good until today plus the item's shelf life (fresh-lot.ts). A
  *  correction on a stocked record stays a bare count; reconcile files it as
  *  an undated lot. */
-export function arrivingLots(delta: number, restock: boolean) {
+export function arrivingLots(delta: number, restock: boolean, lots: readonly ArrivingLot[] = []) {
   return (batches: Batch[], { today, shelfLifeDays, qtyBefore }: { today: string; shelfLifeDays: number | null; qtyBefore: number }): Batch[] => {
-    if (delta <= 0 || !startsFreshLot({ delta, qtyBefore, restock })) return batches;
-    return addBatch(batches, { received_on: today, expires_on: expiryFor(today, shelfLifeDays) ?? "", qty: delta });
+    if (delta <= 0) return batches;
+    // The units whose boxes printed a lot number arrive as those lots, dated
+    // today; the rest arrive as they always did (#5764).
+    let out = batches;
+    let rest = delta;
+    for (const l of lots) {
+      out = addBatch(out, { received_on: today, expires_on: expiryFor(today, shelfLifeDays) ?? "", qty: l.qty, lot: l.lot });
+      rest -= l.qty;
+    }
+    if (rest <= 0 || !startsFreshLot({ delta: rest, qtyBefore: qtyBefore + (delta - rest), restock })) return out;
+    return addBatch(out, { received_on: today, expires_on: expiryFor(today, shelfLifeDays) ?? "", qty: rest });
   };
 }
 
@@ -681,7 +695,7 @@ export function registerInventoryActionHandlers(): void {
           partId,
           reason,
           delta,
-          arrivingLots(delta, restock),
+          arrivingLots(delta, restock, arrivingLotsOf(args.lots, delta)),
           {
             ...(typeof args.timezone === "string" ? { timezone: args.timezone } : {}),
             userId: ctx.userId,

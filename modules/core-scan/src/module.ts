@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.65.0",
+  version: "0.74.2",
   displayName: "Scan",
   description:
     "Scan a barcode or snap a photo, and get the thing named and ready to file in one tap.",
@@ -290,6 +290,94 @@ export default defineModule({
         },
         invokeHandler: "core-scan.attach-paperwork",
         userInvokable: false,
+      },
+      // An order line's units (#5734): the card's doors (OrderLineUnits),
+      // for the assistant and the MCP server on the one action rail.
+      {
+        // UI-SCREEN: /scan
+        group: "more",
+        id: "core-scan:set-line-units",
+        runBy: "member",
+        examples: ["those ten spools are all different colours", "that line is ten of the same"],
+        label: "Say an order line is the same or different",
+        description:
+          "An inbox order line of N (an emailed or uploaded receipt's line) is either N of the SAME thing (one record of N; scans count toward it) or a pack of N DIFFERENT things (it becomes N lines, each matched on its own, each with its share of the price and its own purchase line). mode same on a line split into its parts puts it back as one line. Args: { item_id, mode } (same or different).",
+        scope: "workspace" as const,
+        argsSchema: {
+          item_id: { label: "The inbox order line", type: "text", required: true },
+          mode: { label: "same or different", type: "text", required: true },
+        },
+        invokeHandler: "core-scan.set-line-units",
+        userInvokable: false,
+        undoable: true,
+      },
+      {
+        // UI-SCREEN: /scan
+        group: "more",
+        id: "core-scan:split-off-units",
+        runBy: "member",
+        examples: ["two of those ten are black", "split off the 3 that are red"],
+        label: "Split the ones that differ off an order line",
+        description:
+          "On an inbox order line of the same thing, split off the few that differ (\"8 white, 2 black\": count 2, name the black ones) into a line of their own. Both keep their share of the price and their own purchase line. Undo puts them back. Args: { item_id, count, name }.",
+        scope: "workspace" as const,
+        argsSchema: {
+          item_id: { label: "The inbox order line", type: "text", required: true },
+          count: { label: "How many differ", type: "number", required: true },
+          name: { label: "What they are", type: "text" },
+        },
+        invokeHandler: "core-scan.split-off-units",
+        userInvokable: false,
+        undoable: true,
+      },
+      {
+        // UI-SCREEN: /scan
+        group: "more",
+        id: "core-scan:rejoin-order-line",
+        runBy: "member",
+        examples: ["put those two back with the rest", "they were white after all, put them back"],
+        label: "Put split-off units back into their line",
+        description: "Put a line split off an order line back into it: the line takes its units and its price back. Refused once the split-off line is filed. Args: { item_id } (the split-off line).",
+        scope: "workspace" as const,
+        argsSchema: { item_id: { label: "The split-off line", type: "text", required: true } },
+        invokeHandler: "core-scan.rejoin-order-line",
+        userInvokable: false,
+        // Reached as the undo of its pair; the card has its own door.
+        internal: true,
+      },
+      {
+        // UI-SCREEN: /scan
+        group: "more",
+        id: "core-scan:fill-order-line",
+        runBy: "member",
+        examples: ["this spool is one of the ten I ordered", "count that scan toward the Kingroon order"],
+        label: "Count a scan as one of an order line's units",
+        description:
+          "Count a scan in the inbox as ONE unit of an order line of the same thing: the line reads 3 of 10 received, nothing new is created, and the purchase line is received when the last unit is in. A scan counts once, ever. Undo takes it back. Args: { item_id, line_id } (the scan and the inbox order line), or order_item_id in place of line_id.",
+        scope: "workspace" as const,
+        argsSchema: {
+          item_id: { label: "The scan", type: "text", required: true },
+          line_id: { label: "The inbox order line", type: "text" },
+          order_item_id: { label: "Or the purchase's line", type: "text" },
+        },
+        invokeHandler: "core-scan.fill-order-line",
+        userInvokable: false,
+        undoable: true,
+      },
+      {
+        // UI-SCREEN: /scan
+        group: "more",
+        id: "core-scan:unfill-order-line",
+        runBy: "member",
+        examples: ["that scan wasn't one of the ten", "take that last spool off the order"],
+        label: "Take a scan off its order line",
+        description: "The scan was not one of the line's units after all: its slot is free and the scan is back in the inbox. Args: { item_id } (the scan).",
+        scope: "workspace" as const,
+        argsSchema: { item_id: { label: "The scan", type: "text", required: true } },
+        invokeHandler: "core-scan.unfill-order-line",
+        userInvokable: false,
+        // Reached as the undo of its pair; the card has its own door.
+        internal: true,
       },
       {
         // NO-PHRASING: a table's own wire runs it when a record is made or changed; the person's door is the record's identifier box

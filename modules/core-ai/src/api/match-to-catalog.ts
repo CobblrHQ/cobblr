@@ -1,3 +1,4 @@
+import { NUMBER_OR_NULL, listOf, objectWith } from "@cobblr/platform-contract/ai-output-schemas";
 // /api/v1/orgs/:slug/modules/core-ai/match-to-catalog
 //
 // The killer v0.1 use case. POST { entity, catalog_id } →
@@ -92,7 +93,7 @@ matchToCatalogRouter.post(
         orgId: ctx.org.id,
         userId: sessionUserId(req),
         capability: "match-to-catalog",
-        input: {
+        input: { output_schema: objectWith(["matches"], { matches: listOf(["candidate_id"], { candidate_id: { type: "string" }, confidence: NUMBER_OR_NULL }) }),
           user_entity: parsed.data.user_entity,
           candidates: candidates.map((c) => ({
             candidate_id: c.id,

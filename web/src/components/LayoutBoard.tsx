@@ -261,7 +261,7 @@ function FloorRack({
     window.addEventListener("pointerup", up);
     window.addEventListener("keydown", key);
   };
-  const blocksDoor = flags.some((f) => f.kind === "door");
+  const blocksDoor = flags.some((f) => f.kind === "door" || f.kind === "room");
   const said = flags.map((f) => f.text).join("; ");
   return (
     <div
@@ -346,6 +346,10 @@ export function LayoutBoard({
               </button>
             </div>
           )}
+          {/* The floor pans inside its own box: a planned rack bigger than the
+              room is drawn at its true size past the wall (and flagged), and
+              never widens the page (#5809). */}
+          <div data-floor-frame="" className="max-w-full overflow-x-auto">
           <div
             {...{ [DROP]: board.room.id }}
             data-drop-mm={`${b.w_mm}x${b.d_mm}`}
@@ -383,6 +387,7 @@ export function LayoutBoard({
             {board.floor.filter((t) => t.rect).map((t) => (
               <ThingBox key={t.key} t={t} bound={b} editable={editable} onDrop={onDrop} print={print} pxPerMm={null} />
             ))}
+          </div>
           </div>
           {print && <ScaleBar bound={b} />}
           {!print && <PlanFlagList flags={board.flags} />}

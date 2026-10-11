@@ -60,8 +60,8 @@ function registeredIds(src: string): { tabs: Set<string>; panels: Set<string>; s
   const tabs = mapKeys(src, "PAGE_TABS");
   const sections = mapKeys(src, "CONFIG_SECTIONS");
   const panels = new Set<string>();
-  // registerDetailPanel("<module>:<panel>", …)
-  for (const m of src.matchAll(/registerDetailPanel\(\s*["']([a-z][a-z0-9-]*:[a-z][a-z0-9-]*)["']/g)) {
+  // registerDetailPanel("<module>:<panel>", …), and registerViewToolbar for a view-toolbar control
+  for (const m of src.matchAll(/register(?:DetailPanel|ViewToolbar)\(\s*["']([a-z][a-z0-9-]*:[a-z][a-z0-9-]*)["']/g)) {
     panels.add(m[1]!);
   }
   return { tabs, panels, sections };
@@ -87,7 +87,9 @@ async function main(): Promise<void> {
             ? `a PAGE_TABS entry "${d.id}": lazy(...)`
             : d.surface === "configuration-section"
               ? `a CONFIG_SECTIONS entry "${d.id}": lazy(...)`
-              : `registerDetailPanel("${d.id}", lazy(...))`),
+              : d.surface === "view-toolbar"
+                ? `registerViewToolbar("${d.id}", lazy(...))`
+                : `registerDetailPanel("${d.id}", lazy(...))`),
       );
     }
   }

@@ -99,13 +99,19 @@ const WAITING: Record<MakeStep, string> = {
  *  as they are. From the first step not reached, each one the workspace can
  *  do shows as a placeholder; the first one it cannot do ends the timeline,
  *  with the doors that let a person go on. A failed step ends it too, with a
- *  way to run it again. */
+ *  way to run it again.
+ *
+ *  A step the Make went around (your own model after a request, so no design)
+ *  is passed over, not waited on: once a later step is recorded, nothing
+ *  before it can stop the Make or ask for a service it no longer needs. */
 export function timelineFor(make: { start_step: string }, rows: StepRow[], reach: MakeReach): Timeline {
   const start = isMakeStep(make.start_step) ? make.start_step : "request";
   const byStep = new Map(rows.map((r) => [r.step, r] as const));
+  const furthest = Math.max(-1, ...rows.map((r) => (isMakeStep(r.step) ? indexOf(r.step) : -1)));
   const entries: TimelineEntry[] = [];
   for (const step of MAKE_STEPS.slice(indexOf(start))) {
     const row = byStep.get(step);
+    if (!row && indexOf(step) < furthest) continue;
     if (row) {
       entries.push({ step, state: "recorded", row });
       if (row.status === "failed") {

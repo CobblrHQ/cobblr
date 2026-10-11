@@ -16,7 +16,7 @@ import { useOfferedAccountFeatures } from "../lib/accountFeatures";
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { KeyRound, Languages, Monitor, Moon, Sun, Unlock, UserCog , PanelLeft} from "lucide-react";
+import { KeyRound, Languages, Lock, Monitor, Moon, Sun, Unlock, UserCog , PanelLeft} from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, ApiError } from "../lib/api";
@@ -71,6 +71,16 @@ export function MeProfilePage() {
         ))}
       </div>
       <DeletedWorkspaceBackups />
+      <Link
+        to="/vault"
+        className="flex items-center gap-2 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-4 py-3 text-sm text-muted dark:text-slate-400 hover:border-cobble-300 dark:hover:border-cobble-700 transition"
+      >
+        <Lock size={15} className="text-accent shrink-0" />
+        <span>
+          <span className="font-medium text-content dark:text-mortar-200">Your Vault</span>: personal documents, encrypted, opened only by the people you choose.
+        </span>
+        <span className="ml-auto text-faint">→</span>
+      </Link>
       <Link
         to="/configuration"
         className="flex items-center gap-2 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-4 py-3 text-sm text-muted dark:text-slate-400 hover:border-cobble-300 dark:hover:border-cobble-700 transition"

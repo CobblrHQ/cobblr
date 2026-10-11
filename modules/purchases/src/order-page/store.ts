@@ -237,6 +237,14 @@ function keptPage(v: unknown): KeptPage | null {
  *  reader already found it no longer signs in or not a store page: the same
  *  link answers the same, and each read costs one of the store's few. A page
  *  an older reader judged is read once more. */
+/** The log's word for a read that missed. One that failed twice says so,
+ *  and where its tracking comes from instead. */
+export function orderPageVerdict(page: Pick<PageRead, "outcome" | "trail">): string {
+  const twice = (page.trail ?? []).includes("second pass");
+  if (page.outcome === "expired" && twice) return "expired on both passes, so its tracking comes from the shipping email";
+  return twice ? `${page.outcome} on the second pass` : page.outcome;
+}
+
 export function mayReadAgain(had: KeptPage | null): boolean {
   if (!had) return true;
   if (had.order) return false;
@@ -267,7 +275,7 @@ async function readOne(db: Kysely<PurchasesDB>, orgId: string, row: PageRow, now
   };
   if (page.outcome !== "read") {
     // The trail names no link: hosts, path words and statuses only.
-    console.log(`[purchases] order page on ${row.store_host} read ${page.outcome}: ${(page.trail ?? []).join(" > ")}`);
+    console.log(`[purchases] order page on ${row.store_host} read ${orderPageVerdict(page)}: ${(page.trail ?? []).join(" > ")}`);
   }
   const after = afterRead(page.outcome, { allTracked: applied?.allTracked ?? false, allDelivered: applied?.allDelivered ?? false, refusals: row.refusals, capturedAt: row.captured_at }, now, random());
   await db

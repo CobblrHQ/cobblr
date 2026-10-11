@@ -209,7 +209,12 @@ export const ACTION_ADD = "Add";
 export function actionInstallAdd(table: string): string {
   return `Turn on ${table} and add`;
 }
-export const ACTION_MERGE = "+1 more";
+/** A re-buy's button: what the line adds to the record you have, "+10 more"
+ *  for a 10-pack, never "+1 more" over a write of 10 (#5719). */
+export function actionMerge(count = 1): string {
+  return `+${Math.max(1, count)} more`;
+}
+export const ACTION_MERGE = actionMerge(1);
 export const ACTION_ADD_PLACE = "Add as another place";
 export const ACTION_REVIEW = "Review";
 export const ACTION_BLOCKED = "Ask an admin";

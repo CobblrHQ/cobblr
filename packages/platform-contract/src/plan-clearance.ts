@@ -306,7 +306,7 @@ export function gapsAround(box: PlanBox, others: PlanItem[], room: PlanRoom): Re
 }
 
 export interface PlanFlag {
-  kind: "door" | "window" | "aisle";
+  kind: "room" | "door" | "window" | "aisle";
   /** The things it is about. */
   ids: string[];
   text: string;
@@ -326,6 +326,13 @@ const wallWord = (wall: PlanWall, room: PlanRoom) => {
 export function planFlags(opts: { room: PlanRoom; items: PlanItem[]; aisle_mm?: number | null }): PlanFlag[] {
   const { room, items } = opts;
   const flags: PlanFlag[] = [];
+  // Something that does not fit the room says so, with its true size: a
+  // planned 7 m rack in a 6 m room was drawn past the wall and said nothing
+  // (#5809). It is never shrunk to fit.
+  for (const it of items) {
+    const why = outsideRoom(it.box, room);
+    if (why) flags.push({ kind: "room", ids: [it.id], text: `${it.name} does not fit the room: ${why}` });
+  }
   for (const w of room.walls ?? []) {
     for (const o of w.openings ?? []) {
       const s = doorSwing(w, o);
@@ -367,6 +374,21 @@ export function planFlags(opts: { room: PlanRoom; items: PlanItem[]; aisle_mm?: 
     }
   }
   return flags;
+}
+
+/** How a box reaches outside the room, in words, or null when it is inside:
+ *  too wide or too deep for it at all, else how far past which wall. */
+export function outsideRoom(box: PlanBox, room: { w_mm: number; d_mm: number }): string | null {
+  if (box.w_mm > room.w_mm) return `it is ${n(box.w_mm)} mm wide and the room is ${n(room.w_mm)} mm`;
+  if (box.d_mm > room.d_mm) return `it is ${n(box.d_mm)} mm deep and the room is ${n(room.d_mm)} mm`;
+  const past: Array<[number, string]> = [
+    [-box.x_mm, "left"],
+    [box.x_mm + box.w_mm - room.w_mm, "right"],
+    [-box.y_mm, "top"],
+    [box.y_mm + box.d_mm - room.d_mm, "bottom"],
+  ];
+  const [mm, wall] = past.sort((a, b) => b[0] - a[0])[0]!;
+  return mm > 0.5 ? `it reaches ${n(mm)} mm past the ${wall} wall` : null;
 }
 
 /** The room edge a closet is against: the one its box touches, else the

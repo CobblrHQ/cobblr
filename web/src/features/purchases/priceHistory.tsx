@@ -14,6 +14,7 @@ import { TrendingDown, TrendingUp, Minus } from "lucide-react";
 import { api, type PurchasePricePoint, type PurchasePriceStats } from "../../lib/api";
 import type { EntityDetailPanelCtx } from "../../panels/types";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
+import { dayLabel } from "@cobblr/platform-contract/day";
 
 function money(v: number | null | undefined, currency?: string): string {
   return formatStoredMoney(v, "amount", { currency }) ?? "—";
@@ -21,8 +22,7 @@ function money(v: number | null | undefined, currency?: string): string {
 
 function day(iso: string | null): string {
   if (!iso) return "undated";
-  const d = new Date(`${iso}T00:00:00`);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  return dayLabel(iso);
 }
 
 /** The headline: latest price + how it moved since the purchase before it. */

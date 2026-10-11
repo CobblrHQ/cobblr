@@ -31,7 +31,7 @@ function RemoveStrip({ slug, inst }: { slug: string; inst: ModuleInstance }) {
     void qc.invalidateQueries({ queryKey: ["nav-modules", slug] });
   };
   const remove = async () => {
-    const out = await run({ actionId: "platform:remove-list", entityKind: "", entityId: "", args: { list: inst.instance_name } });
+    const out = await run({ actionId: "platform:remove-list", entityKind: "", entityId: "", args: { list: inst.instance_name } }, { undo: "shown-here" });
     const r = out.result as { ok?: boolean; summary?: string; error?: string } | null;
     refresh();
     if (!r?.ok) {
@@ -43,7 +43,7 @@ function RemoveStrip({ slug, inst }: { slug: string; inst: ModuleInstance }) {
     toast.action(r.summary ?? `Removed the ${name} list.`, {
       actionLabel: "Undo",
       onAction: async () => {
-        for (const st of steps) await run({ actionId: st.action_id, entityKind: "", entityId: "", args: st.args ?? {} });
+        for (const st of steps) await run({ actionId: st.action_id, entityKind: "", entityId: "", args: st.args ?? {} }, { undo: "is-undo" });
         refresh();
       },
     });

@@ -1,3 +1,4 @@
+import { GLANCE_OUTPUT_SCHEMA } from "@cobblr/platform-contract/ai-output-schemas";
 // The first look, and the question it lets the camera ask.
 //
 // A photo with no barcode used to be silent for the whole considered read -
@@ -180,7 +181,7 @@ export async function glanceItem(opts: {
       orgId: opts.orgId,
       userId: opts.userId ?? undefined,
       capability: "identify-glance",
-      input: {
+      input: { output_schema: GLANCE_OUTPUT_SCHEMA,
         image_b64: Buffer.from(file.bytes).toString("base64"),
         image_media_type: file.mimeType,
         ...(opts.knownCategories.length ? { known_categories: opts.knownCategories } : {}),

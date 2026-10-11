@@ -87,17 +87,34 @@ export function cornerSide(rect: { left: number; right: number }, viewportWidth:
   return "centre";
 }
 
+/** The room the overlays leave at the foot of the screen: from the screen's
+ *  bottom edge to the top of the tallest corner piece that stays up over an
+ *  overlay (the toasts), plus a gap. A piece that stays visible over a modal
+ *  must not sit on the modal's buttons, so the modal ends above it instead.
+ *  The Groceries install toast sat on the new item form's Create, the plan
+ *  import toast on Cancel, and the update notice on the phone menu's links
+ *  (#5801). A hidden piece (height 0) takes no room. */
+export function overlayBottomReserve(viewportHeight: number, pieces: readonly { top: number; height: number }[]): number {
+  let reserve = 0;
+  for (const p of pieces) if (p.height > 0) reserve = Math.max(reserve, viewportHeight - p.top + CORNER_GAP);
+  return Math.max(0, Math.ceil(reserve));
+}
+
 export const CORNER_STACK_VAR = "--fc-stack";
 
 export const BOTTOM_CHROME_HEIGHT_VAR = "--bottom-chrome-height";
 /** The room the page's end reserves: the bars plus the tallest corner piece. */
 export const BOTTOM_CLEARANCE_VAR = "--bottom-chrome-clearance";
+/** What every overlay leaves free at its foot (overlayBottomReserve). */
+export const OVERLAY_BOTTOM_VAR = "--overlay-bottom";
 /** Set on each member: where the dock put it. */
 export const MEMBER_BOTTOM_VAR = "--fc-bottom";
 
 type Member = { el: HTMLElement; order: number };
 const members = new Map<HTMLElement, Member>();
 const corners = new Map<HTMLElement, number>();
+/** Corner pieces that stay up while an overlay is open (yields={false}). */
+const overOverlays = new Set<HTMLElement>();
 let seq = 0;
 let frame = 0;
 let ro: ResizeObserver | null = null;
@@ -155,6 +172,14 @@ function layout(): void {
   if (clearance > 0) root.style.setProperty(BOTTOM_CLEARANCE_VAR, `${clearance}px`);
   else root.style.removeProperty(BOTTOM_CLEARANCE_VAR);
   document.body.style.paddingBottom = clearance > 0 ? `${clearance}px` : "";
+  // Measured after the stacking above, so the rect is where the piece now is.
+  const vh = typeof window !== "undefined" ? window.innerHeight : 0;
+  const reserve = overlayBottomReserve(vh, [...overOverlays].map((el) => {
+    const r = el.getBoundingClientRect();
+    return { top: r.top, height: el.isConnected ? r.height : 0 };
+  }));
+  if (reserve > 0) root.style.setProperty(OVERLAY_BOTTOM_VAR, `${reserve}px`);
+  else root.style.removeProperty(OVERLAY_BOTTOM_VAR);
 }
 
 /** Coalesced: a burst of resizes is one layout. */
@@ -188,14 +213,18 @@ export function registerBottomChrome(el: HTMLElement): () => void {
 }
 
 /** A corner piece joins its corner's stack (CORNER_STACK order) and the
- *  clearance the page's end reserves. Returns the leave function. */
-export function registerCornerChrome(el: HTMLElement, order: number = CORNER_STACK.toasts - 1): () => void {
+ *  clearance the page's end reserves. One that stays up over an overlay
+ *  (`overOverlays`) also sets the room every overlay leaves at its foot.
+ *  Returns the leave function. */
+export function registerCornerChrome(el: HTMLElement, order: number = CORNER_STACK.toasts - 1, opts: { overOverlays?: boolean } = {}): () => void {
   ensureObservers();
   corners.set(el, order);
+  if (opts.overOverlays) overOverlays.add(el);
   ro?.observe(el);
   scheduleDockLayout();
   return () => {
     corners.delete(el);
+    overOverlays.delete(el);
     ro?.unobserve(el);
     el.style.removeProperty(CORNER_STACK_VAR);
     scheduleDockLayout();

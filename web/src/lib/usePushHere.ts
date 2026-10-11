@@ -4,9 +4,9 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@cobblr/platform-web";
-import { api } from "./api";
+import { ApiError, api } from "./api";
 import { installRoute, readInstallEnv } from "./install-app";
-import { pushReadiness, readPushEnv, thisDeviceId, turnOffPushHere, turnOnPushHere } from "./push-device";
+import { pushReadiness, pushTurnOnProblem, readPushEnv, thisDeviceId, turnOffPushHere, turnOnPushHere, type PushTurnOnFailure } from "./push-device";
 
 export const PUSH_QUERY_KEY = ["me-push"] as const;
 
@@ -21,21 +21,21 @@ export function usePushHere() {
   const devices = q.data?.devices ?? [];
   const here = devices.find((d) => d.id === mine) ?? null;
 
+  // Why the last Turn on did not finish, said where it was pressed until the
+  // next try (#5810: a refusal came back as the same button and nothing else).
+  const [problem, setProblem] = useState<{ why: PushTurnOnFailure; message?: string } | null>(null);
   const turnOn = useMutation({
-    mutationFn: async () => {
-      const key = q.data?.public_key;
-      if (!key) throw new Error("This server has not made its push key yet. Try again in a minute.");
-      return turnOnPushHere(key, env);
-    },
+    mutationFn: () => turnOnPushHere(q.data?.public_key, env),
+    onMutate: () => setProblem(null),
     onSuccess: (r) => {
       setEnv(readPushEnv(route));
       if (r.ok) {
         setMine(r.id);
         toast.success("Notifications are on for this device. Send a test to see one arrive.");
-      } else if (r.why === "failed") toast.error(r.message ?? "This device could not be turned on.");
+      } else setProblem({ why: r.why, message: r.message });
       refresh();
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't turn notifications on"),
+    onError: (e) => setProblem({ why: "not-saved", message: e instanceof Error ? e.message : String(e) }),
   });
 
   /** Stop pushes to a device; this one is unsubscribed in the browser too. */
@@ -51,5 +51,23 @@ export function usePushHere() {
     onError: () => toast.error("Couldn't remove that device"),
   });
 
-  return { q, route, readiness: pushReadiness(env), devices, here, mine, publicKey: q.data?.public_key ?? null, turnOn, remove, refresh };
+  /** Send a test to a device: the card's per-device button and the bell's
+   *  row send it the same way and say what happened the same way. */
+  const test = useMutation({
+    mutationFn: (id: string) => api.testMePushDevice(id),
+    onSuccess: (r) => {
+      if (r.outcome === "sent") toast.success(`Sent a test to ${r.label}.`);
+      else toast.error(r.outcome === "gone" ? `${r.label} is no longer subscribed, so it was removed. Turn it on there again.` : `${r.label}: ${r.reason ?? "not delivered"}`);
+      refresh();
+    },
+    onError: (e) => {
+      toast.error(e instanceof ApiError ? e.message : "The test was not delivered");
+      refresh();
+    },
+  });
+
+  const readiness = pushReadiness(env);
+  // A block the browser now reports is said by the denied state itself.
+  const failure = problem && readiness.kind !== "denied" ? { why: problem.why, ...pushTurnOnProblem(problem, env) } : null;
+  return { q, route, readiness, devices, here, mine, publicKey: q.data?.public_key ?? null, turnOn, failure, remove, test, refresh };
 }

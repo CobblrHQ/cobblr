@@ -12,6 +12,7 @@ import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { requireRole } from "../auth/capability.js";
 import { getMover } from "../platform/move-records.js";
+import { bundlesByInstance } from "../platform/bundle-claims.js";
 import {
   provisionInstance,
   getInstance,
@@ -64,6 +65,7 @@ instancesRouter.get(
       // book whose bundle says "book" (2026-09-12). Merged under the row's own
       // config, so a key the instance itself carries still wins.
       const overrides = await listOverrides(orgId);
+      const fromBundles = await bundlesByInstance(orgId);
       const declaredByInstance = new Map<string, Record<string, unknown>>();
       for (const o of overrides) {
         if (o.target_kind === "instance" && o.config) declaredByInstance.set(o.target_id, o.config as Record<string, unknown>);
@@ -75,6 +77,8 @@ instancesRouter.get(
           ...it,
           config: { ...(declaredByInstance.get(`${it.module_name}:${it.instance_name}`) ?? {}), ...(it.config ?? {}) },
           item_count: await countInstanceItems(orgId, it.module_name, it.instance_name),
+          // The bundles that made this table: its name in every workspace.
+          from_bundles: fromBundles.get(it.instance_name) ?? [],
           // Whether records here can be moved to a sibling instance. A module
           // opts in by registering a mover, so the UI can hide "Move to..."
           // rather than offering an action that would 400. Modules that have

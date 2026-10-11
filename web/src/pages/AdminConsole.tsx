@@ -45,6 +45,7 @@ import { AiCallModel } from "../components/AiCallModel";
 import { FeedbackCard, FEEDBACK_STATUSES, fbStatusLabel, type FeedbackSourceItem } from "@cobblr/platform-web";
 import { apiFeedbackSource } from "../lib/feedback-source-api";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
+import { dayLabel } from "@cobblr/platform-contract/day";
 
 // The console content — one routed section at a time. The shell (AdminLayout)
 // owns the operator chrome + the section nav; this just dispatches /admin/:section
@@ -2310,7 +2311,7 @@ function ProductMetricsTab() {
   const ws = [...(q.data?.workspaces ?? [])].sort((a, b) => b.walls_7d - a.walls_7d);
   const fmtTtfw = (m: number | null) =>
     m === null ? "—" : m < 60 ? `${m}m` : m < 60 * 24 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`;
-  const fmtDay = (d: string | null) => (d ? new Date(`${d}T12:00:00Z`).toLocaleDateString() : "—");
+  const fmtDay = (d: string | null) => (d ? dayLabel(d) : "—");
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted">

@@ -250,7 +250,7 @@ export async function rankPhotoWithAi(opts: {
     const r = await platform().ai.invoke({
       orgId: opts.orgId,
       capability: "rank-images",
-      input: {
+      input: { output_schema: { type: "object", anyOf: [{ required: ["chosen_tile"] }, { required: ["chosen_index"] }] },
         item_name: opts.itemName,
         ...(opts.brand ? { brand: opts.brand } : {}),
         ...(opts.knownColor ? { known_color: opts.knownColor } : {}),

@@ -23,7 +23,7 @@ export { useInvokeEntityAction } from "./use-invoke-action";
 export { useLater, type Later } from "./use-later";
 export { useFieldDraft, type FieldDraft } from "./use-field-draft";
 export { useFieldPresentation, PresentationGate, type FieldPresentation } from "./field-presentation";
-export { runAction, useRunAction, refreshAfterAction, queryShowsKinds, affectedKindsOf, type ActionBody, type ActionRun, type ActionAffected, type KindMeta } from "./run-action";
+export { runAction, useRunAction, useRunWithUndo, offerUndo, undoStepsOf, refreshAfterAction, queryShowsKinds, affectedKindsOf, type ActionBody, type ActionRun, type ActionAffected, type KindMeta, type UndoStep, type RunOptions } from "./run-action";
 export { changeWorkspaceShape, useChangeWorkspaceShape, afterWorkspaceShapeChange, queryFollowsWorkspaceShape, type ShapeMeta, type ChangeShapeOptions } from "./workspace-shape";
 export { ActionOutcome } from "./ActionOutcome";
 export { AskBeforeRun, type Asking } from "./AskBeforeRun";
@@ -95,6 +95,7 @@ export { FeedbackCard, PriorityChip, FEEDBACK_STATUSES, fbStatusLabel } from "./
 
 export { fieldControl, fieldInputText, valueFromInput, type FieldControl, type FieldValueDef } from "./fieldControl";
 export { MoneyInput, MoneyValueInput, type MoneyInputProps } from "./MoneyInput";
+export { AddressPicker, AddressView, type AddressPickerProps } from "./AddressPicker";
 export { packFields, fieldNeed, MIN_COL_PX, GAP_PX, type FieldNeed, type FieldSpace, type FieldPacking, type PackedCell, type PackOptions } from "./field-pack";
 export { FieldPack, fieldPackControlClass, type FieldPackItem } from "./FieldPack";
 export { EditField, EditSelect, FieldLabel, LabeledField, editFieldNeed, editFieldItem, editFieldText, moneyFieldItem, usedValueFieldItem, type EditFieldProps } from "./EditField";
@@ -179,6 +180,10 @@ export {
   type EntityDetailPanelCtx,
   type ContributedPanelSpec,
   type DetailPanelComponent,
+  ContributedViewToolbar,
+  registerViewToolbar,
+  type ViewToolbarCtx,
+  type ViewToolbarComponent,
 } from "./panels";
 export { Modal } from "./Modal";
 export { RecordFormModal } from "./RecordFormModal";
@@ -326,7 +331,7 @@ export { useEscapeToClose } from "./useEscapeToClose";
 export { QueryError } from "./QueryError";
 export { missingRequired, type RequiredLike } from "./required-fields";
 export type { PlatformWire, PlatformWireInput } from "./types";
-export type { FieldValuesUsedBody, UsedValueBody } from "./types";
+export type { AddressSuggestionsBody, FieldValuesUsedBody, UsedValueBody } from "./types";
 export { noteWorkspaceWrite, subscribeWorkspaceWrite, subscribeDeletedRecord, refreshStockViews, STOCK_VIEW_KEYS, STOCK_LIST_KEYS, type WorkspaceWriteListener } from "./workspace-writes";
 export { ChoiceCombobox, matchChoice, orderChoices, type ChoiceComboboxProps, type ChoiceDetail, type ChoiceOption } from "./ChoiceCombobox";
 export { NfcTags, type NfcTarget } from "./NfcTags";
@@ -358,3 +363,5 @@ export { WorkspaceLink, useWorkspaceTarget, workspaceTarget, type WorkspaceTarge
 export { useScrollToHash } from "./useScrollToHash";
 export { raisePersonalDocument, clearPersonalDocument, nextPersonalDocument, subscribePersonalDocument, type RaisedPersonalDocument } from "./personal-documents";
 export { useStationWakeLock } from "./station-wake-lock";
+export { GUEST_NOT_SHARED, mayRead, refusedForGuest, rememberRole, roleIn, workspaceFetch } from "./acting-role";
+export { StatusRow, type StatusRowProps } from "./StatusRow";

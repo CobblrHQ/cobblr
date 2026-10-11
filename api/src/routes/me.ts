@@ -56,6 +56,7 @@ import {
 } from "../platform/notification-catalog.js";
 import { ORG_ROLES, ORG_ROLE_RANK, roleSatisfies, type OrgRoleName } from "@cobblr/platform-contract/org-roles";
 import { decodeKeysetCursor, encodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
+import { instantFromInput } from "@cobblr/platform-contract/day";
 
 export const meRouter = Router();
 
@@ -96,6 +97,10 @@ meRouter.get("/me", requireAuth, async (req, res) => {
             workspace: req.session!.token_org_id
               ? (orgs.find((o) => o.id === req.session!.token_org_id)?.slug ?? null)
               : null,
+            // So a script can say its token is about to stop working before
+            // it does (the nightly bench, a week ahead): a token held to one
+            // workspace may not list the account's tokens to find out.
+            expires_at: req.session!.token_expires_at ?? null,
           }
         : null,
   });
@@ -1678,7 +1683,8 @@ meRouter.post("/me/api-tokens", requireAuth, async (req, res, next) => {
     // Minted with a token: the child never outlives or out-reaches it
     // (auth/token-lineage.ts).
     let terms = {
-      expires_at: parsed.data.expires_at ? new Date(parsed.data.expires_at) : null,
+      // A bare day lasts through that day (#5759).
+      expires_at: instantFromInput(parsed.data.expires_at, null, "end"),
       org_id: orgId,
       scopes: cleanScopes.length > 0 ? cleanScopes : null,
       access: access as TokenAccess | null,
@@ -1983,7 +1989,7 @@ meRouter.patch("/me/links/:id", requireAuth, async (req, res, next) => {
     }
     const patch: Record<string, unknown> = {};
     if (parsed.data.expires_at !== undefined) {
-      const expiresDate = parsed.data.expires_at ? new Date(parsed.data.expires_at) : null;
+      const expiresDate = instantFromInput(parsed.data.expires_at, null, "end");
       if (expiresDate && expiresDate <= new Date()) {
         res.status(400).json({
           error: { code: "expires_in_past", message: "expires_at must be in the future (use revoke to expire now)." },

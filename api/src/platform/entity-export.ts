@@ -22,6 +22,7 @@ import { SecretFieldError, secretValuesForExport } from "./secret-fields.js";
 import { meta } from "../db/meta.js";
 import { hiddenFieldsFor, list, listAll, listKindsForOrg } from "./entities.js";
 import { resolveFieldDefsForKind } from "./field-defs.js";
+import { addressText } from "@cobblr/platform-contract/address";
 import { formatMoney, centsFromAmount, readMoney, fieldCurrency, formatMoneyPlain, moneyStorageOf, storedCents, type MoneyStorage } from "@cobblr/platform-contract/money";
 
 export interface ExportColumn {
@@ -47,6 +48,12 @@ const field = (name: string) => (row: ResolvedEntity) => {
   const f = row.fields as Record<string, unknown>;
   const labelled = f[`${name}_label`];
   return readable(labelled !== undefined && labelled !== null ? labelled : f[name]);
+};
+
+/** An address as one cell: "MVC Lodi Agency, 8 Mill St, Lodi, NJ 07644". */
+const addressCell = (name: string) => (row: ResolvedEntity) => {
+  const f = row.fields as Record<string, unknown>;
+  return addressText(name in f ? f[name] : ((f.metadata as Record<string, unknown> | undefined) ?? {})[name]) || null;
 };
 
 /** A money column as a spreadsheet keeps it: "4300.00", never 430000 cents. */
@@ -110,7 +117,7 @@ export async function exportColumns(
     if ((!includeSecrets && d.type === "secret") || seen.has(d.name) || !isWritableCustomField(d) || !shown(d.name)) continue;
     seen.add(d.name);
     const money = moneyStorageOf(d);
-    all.push({ label: d.display_label || columnLabel(d.name), field: d.name, cell: money ? moneyCell(d.name, money) : field(d.name) });
+    all.push({ label: d.display_label || columnLabel(d.name), field: d.name, cell: money ? moneyCell(d.name, money) : d.type === "address" ? addressCell(d.name) : field(d.name) });
   }
   const name: ExportColumn = { label: byName.get("name")?.display_label || "Name", field: "title", cell: (row) => row.title };
   if (!only?.length) return [name, ...all];

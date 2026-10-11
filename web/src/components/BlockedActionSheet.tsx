@@ -17,7 +17,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, ShieldCheck, ShieldOff } from "lucide-react";
-import { Modal, relativeTime, useToast } from "@cobblr/platform-web";
+import { changeWorkspaceShape, Modal, relativeTime, useToast } from "@cobblr/platform-web";
 import type { BlockedAction } from "@cobblr/platform-contract/blocked-action";
 import { api, ApiError, type ApprovalRequestView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -53,9 +53,76 @@ export function BlockedActionSheet() {
 
   return (
     <>
-      {raised && <AskSheet raised={raised} onClose={clearBlockedAction} />}
+      {raised && raised.blocked.selfApply && <TurnOnSheet raised={raised} onClose={clearBlockedAction} />}
+      {raised && !raised.blocked.selfApply && <AskSheet raised={raised} onClose={clearBlockedAction} />}
       {resumeId && !raised && <ResumeSheet requestId={resumeId} />}
     </>
+  );
+}
+
+// ── Turning it on yourself ───────────────────────────────────────────────
+
+/** An owner or admin who met an app that is off: the switch is theirs, so the
+ *  sheet offers it, and then carries on with what was refused, once, as them.
+ *  It used to be a sentence about Configuration → Modules and a Close button,
+ *  with the order line's shortage left for them to find again (#5865). */
+function TurnOnSheet({ raised, onClose }: { raised: RaisedBlock; onClose: () => void }) {
+  const { activeSlug } = useActiveOrg();
+  const toast = useToast();
+  const qc = useQueryClient();
+  const blocked = raised.blocked;
+  const apps = blocked.remedies.map((r) => r.label.replace(/ turned on$/, ""));
+  const names = apps.length === 1 ? apps[0]! : `${apps.slice(0, -1).join(", ")} and ${apps[apps.length - 1]!}`;
+  const turnOn = useMutation({
+    mutationFn: async () => {
+      await changeWorkspaceShape(qc, activeSlug, async () => {
+        for (const r of blocked.remedies) await api.enableModule(activeSlug, r.key);
+      });
+      if (!raised.refused) return { finished: false as const };
+      try {
+        await api.request(raised.refused.method, raised.refused.path, raised.refused.body ?? undefined);
+        return { finished: true as const };
+      } catch (e) {
+        return { finished: false as const, message: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    onSuccess: (r) => {
+      if (r.finished) void qc.invalidateQueries();
+      if (r.finished) toast.success(`${names} is on, and it is done.`);
+      else if ("message" in r && r.message) toast.error(`${names} is on. ${r.message}`);
+      else toast.success(`${names} is on. Do it again from here.`);
+      onClose();
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      size="sm"
+      title={`Turn on ${names}?`}
+      footer={
+        <div className="flex items-center justify-between gap-2">
+          <button type="button" onClick={onClose} className={SECONDARY}>
+            Not now
+          </button>
+          <button type="button" data-testid="blocked-turn-on" disabled={turnOn.isPending} onClick={() => turnOn.mutate()} className={PRIMARY}>
+            {turnOn.isPending ? <Loader2 size={14} className="animate-spin" /> : null}
+            {raised.refused ? `Turn on ${names} and continue` : `Turn on ${names}`}
+          </button>
+        </div>
+      }
+    >
+      <div className="space-y-2 text-sm text-content dark:text-mortar-100">
+        <p>{blocked.sentence}</p>
+        <p className="text-muted dark:text-slate-400">
+          {raised.refused
+            ? `It turns on for the whole workspace, then what you were doing goes ahead. Nothing has been done yet.`
+            : `It turns on for the whole workspace.`}{" "}
+          You can turn it off again in Configuration → Modules.
+        </p>
+      </div>
+    </Modal>
   );
 }
 

@@ -55,7 +55,9 @@ import { fallbackChip, identifyFailureWords, type IdentifyFailure } from "@cobbl
 import { TrackedMatchBanner, TrackedMatchLine } from "../components/TrackedMatchBanner";
 import { scanCountVerb, useScanCountSave } from "../components/ScanCountBlock";
 import { addedPlaceSentence } from "../lib/scan-place-words";
-import { scanCountResult } from "@cobblr/platform-contract/scan-count";
+import { scanAddCount, scanCountResult } from "@cobblr/platform-contract/scan-count";
+import { packPartsNote } from "@cobblr/platform-contract/store-product";
+import { OrderLineOffer, OrderLineUnits } from "../components/OrderLineUnits";
 import { } from "../components/BinAdjustModal";
 import { HeaderMenu, MenuItem } from "../components/HeaderMenu";
 import { } from "./DuplicateRecordsSheet";
@@ -1081,7 +1083,10 @@ export function InboxCard({
   const countFiles = !planContext && alreadyTracked && !!restockMatch;
   // The phone row's compact count: the same change and the same save as the
   // full control (useScanCountSave), in the room a list row has.
-  const [rowChange, setRowChange] = useState(1);
+  // A re-buy adds what the line bought: a 10-pack line starts at +10 (#5719).
+  const rowScanned = scanAddCount(item.quantity);
+  const [rowChange, setRowChange] = useState(rowScanned);
+  useEffect(() => setRowChange(rowScanned), [rowScanned]);
   const rowCount = useScanCountSave(item.id, restockMatch ?? NO_COUNTED_MATCH);
   const rowHave = Math.max(0, restockMatch?.qty ?? 0);
   const commitBusy = quickConfirm.isPending || quickMerge.isPending;
@@ -1925,6 +1930,7 @@ export function InboxCard({
   );
   // Which AI answered, when it was not the first one asked (#3819).
   const answeredBy = answeredByLine((item.suggested_metadata as { ai_answered_by?: Parameters<typeof answeredByLine>[0] } | null)?.ai_answered_by);
+  const packNote = packPartsNote(item.suggested_metadata);
   const evidenceBox = (
     <>
           {(item.ai_notes || item.ai_confidence || topCand || aiWorking || answeredBy) && (
@@ -2734,6 +2740,17 @@ export function InboxCard({
                 : null
             }
             warning={phoneRowWarning}
+            extra={
+              <>
+                {packNote && (
+                  <p className="text-xs text-amber-700 dark:text-amber-300" data-testid="pack-note" title={packNote.why || undefined}>
+                    {packNote.sentence}
+                  </p>
+                )}
+                <OrderLineUnits item={item} />
+                <OrderLineOffer item={item} />
+              </>
+            }
             working={phoneWorking}
             failure={
               aiWorking
@@ -3261,6 +3278,15 @@ export function InboxCard({
             </div>
           )}
           <SamePictureOffer slug={activeSlug} itemId={item.id} />
+          {/* A pack the store could not take apart, an order line's units and
+              the "Part of …?" offer (#5719, #5734): open or closed. */}
+          {packNote && (
+            <p className="text-xs mt-0.5 text-amber-700 dark:text-amber-300" data-testid="pack-note" title={packNote.why || undefined}>
+              {packNote.sentence}
+            </p>
+          )}
+          <OrderLineUnits item={item} />
+          <OrderLineOffer item={item} />
           {notesPlacement.amber && (expanded || cardQuestions.length === 0 || !item.suggested_name) && !(aiDowngraded && !expanded) && !(cantIdentify && headingSaysItAll(namelessWhy)) && (
             <div className={`text-[11px] mt-0.5 text-amber-600 dark:text-amber-400 ${expanded ? "" : "line-clamp-1"}`} data-testid="amber-note">
               {notesPlacement.amberText}

@@ -110,20 +110,58 @@ export async function tryHoldExclusive(name: string): Promise<{ release: () => P
  * rather than holding a request forever behind a stuck holder.
  */
 export async function runSerialised<T>(name: string, work: () => Promise<T>, waitMs = 60_000): Promise<T> {
-  const { env } = await import("../env.js");
-  const { createClient } = await import("../db/client-error-guard.js");
   const key = lockKeyFor(name).toString();
-  const client: Client = createClient({ connectionString: env.DATABASE_URL }, `advisory-lock ${name}`);
-  await client.connect();
+  const held = await lockConnection(name);
+  const timeout = Math.max(1, Math.floor(waitMs));
+  let clean = true;
   try {
-    await client.query(`set lock_timeout = ${Math.max(1, Math.floor(waitMs))}`);
-    await client.query("select pg_advisory_lock($1)", [key]);
+    // A pooled connection keeps the session's setting: set it only when it differs.
+    if (held.timeout !== timeout) {
+      await held.client.query(`set lock_timeout = ${timeout}`);
+      held.timeout = timeout;
+    }
+    await held.client.query("select pg_advisory_lock($1)", [key]);
     try {
       return await work();
     } finally {
-      await client.query("select pg_advisory_unlock($1)", [key]).catch(() => {});
+      // A connection whose unlock did not land may still hold the lock: it is
+      // closed, never handed to the next caller.
+      await held.client.query("select pg_advisory_unlock($1)", [key]).catch(() => { clean = false; });
     }
+  } catch (err) {
+    clean = false;
+    throw err;
   } finally {
-    await client.end().catch(() => {});
+    held.done(clean);
   }
 }
+
+/** A connection a serialised run holds its lock on. Opening one per run (a
+ *  connect, a password exchange, a disconnect) was the largest part of
+ *  deleting one record, about 27 ms of a 90 ms delete (#5286), and every
+ *  record's delete takes one. They come from a small pool of warm ones; when
+ *  none is free soon (many locks at once, a lock taken inside another's work),
+ *  a fresh connection is opened as before, so a full pool only costs what
+ *  every run used to cost, and never waits on itself. */
+type Held = { client: Pick<Client, "query">; timeout: number | undefined; done: (clean: boolean) => void };
+let lockPool: import("pg").Pool | null = null;
+async function lockConnection(name: string): Promise<Held> {
+  const { env } = await import("../env.js");
+  const { createClient, createPool } = await import("../db/client-error-guard.js");
+  lockPool ??= createPool({ connectionString: env.DATABASE_URL, max: LOCK_POOL_SIZE, idleTimeoutMillis: 30_000, connectionTimeoutMillis: 2_000 }, "advisory-locks");
+  try {
+    const pooled = (await lockPool.connect()) as import("pg").PoolClient & { lockTimeout?: number };
+    return {
+      client: pooled,
+      get timeout() { return pooled.lockTimeout; },
+      set timeout(v) { pooled.lockTimeout = v; },
+      done: (clean) => pooled.release(clean ? undefined : true),
+    };
+  } catch {
+    const client: Client = createClient({ connectionString: env.DATABASE_URL }, `advisory-lock ${name}`);
+    await client.connect();
+    return { client, timeout: undefined, done: () => void client.end().catch(() => {}) };
+  }
+}
+/** Warm connections kept for serialised runs. */
+const LOCK_POOL_SIZE = 8;

@@ -10,6 +10,7 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, mintToken, requireRole } from "./util.js";
+import { instantFromInput } from "@cobblr/platform-contract/day";
 
 export const surfacesRouter = Router({ mergeParams: true });
 
@@ -79,7 +80,7 @@ export async function createSurface(
   input: z.infer<typeof SurfaceCreate>,
 ) {
   const token = mintToken();
-  const expiresAt = input.expires_at ? new Date(input.expires_at) : null;
+  const expiresAt = instantFromInput(input.expires_at, null, "end");
   const row = await db
     .insertInto("core_public_surfaces_surfaces")
     .values({
@@ -266,9 +267,7 @@ surfacesRouter.patch(
 
     const expiresProvided = parsed.data.expires_at !== undefined;
     const expiresAt = expiresProvided
-      ? parsed.data.expires_at
-        ? new Date(parsed.data.expires_at)
-        : null
+      ? instantFromInput(parsed.data.expires_at, null, "end")
       : undefined;
 
     const patch: Record<string, unknown> = { updated_at: new Date() };

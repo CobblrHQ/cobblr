@@ -7,7 +7,7 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { BellRing, Moon, Smartphone } from "lucide-react";
 import { Modal, relativeTime, useConfirm, useToast } from "@cobblr/platform-web";
-import { ApiError, api, type MePushSettings, type NotificationPriority } from "../lib/api";
+import { api, type MePushSettings, type NotificationPriority } from "../lib/api";
 import { dismissInstall } from "../lib/install-app";
 import { usePushHere } from "../lib/usePushHere";
 import { InstallWalkBody } from "./InstallWalk";
@@ -32,19 +32,7 @@ export function PushNotificationsCard() {
   const toast = useToast();
   const confirm = useConfirm();
   const [walking, setWalking] = useState(false);
-  const { q, route, readiness, devices, here, mine, turnOn, remove, refresh } = usePushHere();
-  const test = useMutation({
-    mutationFn: (id: string) => api.testMePushDevice(id),
-    onSuccess: (r) => {
-      if (r.outcome === "sent") toast.success(`Sent a test to ${r.label}.`);
-      else toast.error(r.outcome === "gone" ? `${r.label} is no longer subscribed, so it was removed. Turn it on there again.` : `${r.label}: ${r.reason ?? "not delivered"}`);
-      refresh();
-    },
-    onError: (e) => {
-      toast.error(e instanceof ApiError ? e.message : "The test was not delivered");
-      refresh();
-    },
-  });
+  const { q, route, readiness, devices, here, mine, turnOn, failure, remove, test, refresh } = usePushHere();
   const save = useMutation({
     mutationFn: (body: Partial<MePushSettings>) => api.setMePushSettings(body),
     onSuccess: refresh,
@@ -89,10 +77,20 @@ export function PushNotificationsCard() {
           <p className="text-content dark:text-mortar-200">This device said no to notifications from Cobblr, so only its own settings can let them in again.</p>
           <p className="text-muted dark:text-slate-400">{readiness.howToAllow}</p>
         </div>
-      ) : !q.data?.public_key ? (
-        <p className="text-sm text-muted dark:text-slate-400">This server is still making its push key. Reload in a minute.</p>
       ) : here ? (
         <p className="text-sm text-content dark:text-mortar-200" data-testid="push-on-here">Notifications are on for this device.</p>
+      ) : failure ? (
+        // A Turn on that did not finish says what failed and what to do,
+        // until the next try (#5810).
+        <div className="rounded-md border border-ember-200 dark:border-ember-700 bg-ember-50 dark:bg-ember-900/30 p-3 text-sm space-y-2" role="alert" data-testid="push-problem">
+          <p className="text-content dark:text-mortar-100">{failure.says}</p>
+          <p className="text-muted dark:text-slate-400">{failure.next}</p>
+          <button type="button" className={button} disabled={turnOn.isPending} onClick={() => turnOn.mutate()} data-testid="push-retry">
+            {turnOn.isPending ? "Trying…" : "Try again"}
+          </button>
+        </div>
+      ) : !q.data?.public_key ? (
+        <p className="text-sm text-muted dark:text-slate-400">This server is still making its push key. Reload in a minute.</p>
       ) : (
         <button type="button" className={button} disabled={turnOn.isPending} onClick={() => turnOn.mutate()} data-testid="push-turn-on">
           {turnOn.isPending ? "Turning on…" : "Turn on notifications on this device"}

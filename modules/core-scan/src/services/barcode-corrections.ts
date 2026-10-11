@@ -12,6 +12,7 @@
 // CobblrHQ/barcode-intelligence/docs/correction-feedback.md.
 
 import crypto from "node:crypto";
+import { LEARNED_BUNDLE_KEY } from "@cobblr/platform-contract/learned-route";
 import { isStockPreviewUrl } from "./stock-preview.js";
 import { isStoreCode } from "./barcode-lookup.js";
 import { filterToFiled, labelTarget } from "./label-words.js";
@@ -139,7 +140,7 @@ function ownInstanceOrigins(): string[] {
 
 export async function reportBarcodeCorrection(opts: {
   upc: string;
-  field: "title" | "brand" | "category" | "image_url";
+  field: "title" | "brand" | "category" | "image_url" | `attributes.${string}`;
   was: string | null;
   now: string | null;
   userId?: string | null;
@@ -296,4 +297,27 @@ export async function reportLabelConfirm(opts: {
   } catch {
     /* fire-and-forget: a filing is never held up by the network */
   }
+}
+
+/** What a filed barcode item is, beyond its name (#3769): the shared table it
+ *  went into (a bundle's id) and its product fields, each as a scan-commit
+ *  vote, so the next workspace holding the same table files it with no AI.
+ *  Only what shareableProductFields lets out (the owner's decision of
+ *  2026-10-11: never a lot, serial, price, seller, place, note or free text),
+ *  and only alongside a table: a field with nowhere to go teaches nothing. */
+export async function reportLearnedRoute(opts: {
+  upc: string;
+  bundle: string | null;
+  fields: Readonly<Record<string, string | number | boolean>>;
+  userId?: string | null;
+  lots: readonly string[];
+  send?: typeof reportBarcodeCorrection;
+}): Promise<number> {
+  if (!opts.bundle || !/^[a-z0-9][a-z0-9-]{0,80}$/.test(opts.bundle)) return 0;
+  const send = opts.send ?? reportBarcodeCorrection;
+  const votes: Array<[string, string]> = [[LEARNED_BUNDLE_KEY, opts.bundle], ...Object.entries(opts.fields).map(([k, v]) => [k, String(v)] as [string, string])];
+  for (const [key, value] of votes) {
+    await send({ upc: opts.upc, field: `attributes.${key}`, was: null, now: value, userId: opts.userId ?? null, commitSignal: true, origin: "person", lots: opts.lots });
+  }
+  return votes.length;
 }

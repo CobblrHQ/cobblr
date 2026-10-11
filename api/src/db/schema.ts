@@ -693,7 +693,7 @@ export type AuthMethod = "session" | "api_token" | "system";
  *  trail (that's activity_log). ~180-day self-pruning retention. */
 /** A workspace's count of one metric on one UTC day (migration 176). */
 export interface ProductDailyCountsTable {
-  day: Date | string;
+  day: string;
   org_id: string;
   metric: string;
   n: Generated<number>;
@@ -707,7 +707,7 @@ export interface ProductEventsTable {
   detail: unknown | null;
   /** UTC day, set only on DAILY events (one row per org+user+event+day,
    *  migration 117); occurrence events leave it NULL. */
-  day: Date | string | null;
+  day: string | null;
   created_at: Generated<Date>;
 }
 
@@ -1013,6 +1013,10 @@ export interface EntityActionsTable {
   record_optional: Generated<boolean>;
   /** What it does to a due, dated thing (manifest `finishes`), or null. */
   finishes: string | null;
+  /** The station stock move it is (manifest `stockMove`), or null (#5710). */
+  stock_move: string | null;
+  /** It edits the record's fields from typed values (manifest `editor`). */
+  editor: Generated<boolean>;
   /** Machine-readable arg shape { name: { label, type } } from the action
    *  manifest; null = none. Drives the wire composer's per-arg fields. */
   args_schema: unknown | null;
@@ -1778,7 +1782,68 @@ export interface TidyRouteCacheTable {
 export interface RecordActionLayoutsTable { org_id: string; entity_kind: string; state: Generated<unknown>; revision: Generated<number> }
 export interface RecordActionPinsTable { org_id: string; user_id: string; entity_kind: string; state: Generated<unknown> }
 
+/** The Vault (#5242, migration 20261011-215): folders of personal documents
+ *  readable only by their access list, files encrypted at rest. */
+export interface VaultFoldersTable {
+  id: Generated<string>;
+  org_id: string;
+  name: string;
+  owner_id: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+export interface VaultFolderMembersTable {
+  id: Generated<string>;
+  org_id: string;
+  folder_id: string;
+  user_id: string | null;
+  added_by: string | null;
+  added_at: Generated<Date>;
+}
+export interface VaultFilesTable {
+  id: Generated<string>;
+  org_id: string;
+  folder_id: string;
+  name: string;
+  mime_type: Generated<string>;
+  size_bytes: number;
+  key_id: string;
+  ciphertext: string;
+  record_kind: string | null;
+  record_id: string | null;
+  created_by: string | null;
+  created_at: Generated<Date>;
+}
+export interface VaultEventsTable {
+  id: Generated<string>;
+  org_id: string;
+  folder_id: string | null;
+  file_id: string | null;
+  file_name: string | null;
+  user_id: string | null;
+  action: string;
+  detail: Generated<unknown>;
+  at: Generated<Date>;
+}
+
+/** One kind of Content-Security-Policy refusal on one day (#3300): the policy's
+ *  report-uri posts each refusal, and api/src/platform/csp-reports.ts folds it
+ *  into (day, directive, blocked source, page) with a count. */
+export interface CspViolationsTable {
+  day: string;
+  directive: string;
+  blocked: string;
+  page: string;
+  count: Generated<number>;
+  last_seen: Generated<Date>;
+}
+
 export interface MetaDB {
+  vault_folders: VaultFoldersTable;
+  vault_folder_members: VaultFolderMembersTable;
+  vault_files: VaultFilesTable;
+  vault_events: VaultEventsTable;
+  csp_violations: CspViolationsTable;
   record_action_layouts: RecordActionLayoutsTable;
   record_action_pins: RecordActionPinsTable;
   tidy_suggestions: TidySuggestionsTable;

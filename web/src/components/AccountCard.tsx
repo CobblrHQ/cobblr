@@ -92,6 +92,7 @@ export function AccountCard({
     }
   }
 
+  // STATUS-ROW-OK: "Details" belongs to the sign-up form's note on what a hosted workspace shares, not to "Check your email".
   if (sentTo) {
     return (
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 text-center space-y-3" data-testid="account-card" data-mode="sent">

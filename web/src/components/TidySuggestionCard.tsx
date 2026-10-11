@@ -28,15 +28,15 @@ export function TidySuggestionCard({ slug, suggestion }: { slug: string; suggest
     try {
       const steps = c.action.steps ?? [{ action_id: c.action.action_id!, args: c.action.args ?? {} }];
       for (const step of steps) {
-        const result = await run({ actionId: step.action_id, args: step.args });
+        const result = await run({ actionId: step.action_id, args: step.args }, { undo: "shown-here" });
         undo.unshift(...((Array.isArray(result.undo) ? result.undo : result.undo ? [result.undo] : []) as typeof undo));
       }
       await api.decideTidySuggestion(slug, id, "done");
       await refresh();
-      if (undo.length) toast.action("Moved the things you reviewed.", { actionLabel: "Undo", duration: 8000, onAction: async () => { for (const step of undo) await run({ actionId: step.action_id, args: step.args ?? {} }); await refresh(); } });
+      if (undo.length) toast.action("Moved the things you reviewed.", { actionLabel: "Undo", duration: 8000, onAction: async () => { for (const step of undo) await run({ actionId: step.action_id, args: step.args ?? {} }, { undo: "is-undo" }); await refresh(); } });
       else toast.success("Done.");
     } catch (err) {
-      try { for (const step of undo) await run({ actionId: step.action_id, args: step.args ?? {} }); }
+      try { for (const step of undo) await run({ actionId: step.action_id, args: step.args ?? {} }, { undo: "is-undo" }); }
       catch (rollback) { toast.error(`Some moves could not be undone: ${(rollback as Error).message}`); }
       toast.error((err as Error).message);
     }

@@ -17,7 +17,7 @@ import { openRecordPath } from "@cobblr/platform-contract/instance-detail";
 import { HOLDING_OF } from "@cobblr/platform-contract/holdings";
 import { instanceOf, sessionUser, tenantContext, tenantDb, type InventoryDB } from "../db.js";
 import { isLowStock } from "../on-hand.js";
-import { batchesFrom, sortBatches, type Batch } from "../batches.js";
+import { batchesFrom, servedLots, sortBatches, type Batch } from "../batches.js";
 import { asyncHandler, badBody } from "./util.js";
 
 const LOCATION = "core-locations:location";
@@ -134,7 +134,7 @@ async function readRows(orgId: string, db: Kysely<InventoryDB>, scope: Scope, lo
       min_qty: minQty,
       low: isLowStock({ onHand: qty, assigned: Number(r.assigned_qty ?? 0), minQty, approximate: r.approximate_qty == null ? null : Number(r.approximate_qty) }),
       expires_on: expires,
-      lots: batchesFrom(md, qty, expires),
+      lots: servedLots(md, qty, expires),
     };
   });
 }

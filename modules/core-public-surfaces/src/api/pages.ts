@@ -16,6 +16,7 @@ import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { createSurface, metaDb } from "./surfaces.js";
 import { platform } from "@cobblr/platform-contract";
+import { instantFromInput } from "@cobblr/platform-contract/day";
 
 export const pagesRouter = Router({ mergeParams: true });
 
@@ -179,7 +180,7 @@ pagesRouter.patch(
     if (parsed.data.visibility !== undefined) set.visibility = sql`${JSON.stringify(readVisibility(parsed.data.visibility))}::jsonb`;
     if (parsed.data.layout !== undefined) set.layout = parsed.data.layout;
     if (parsed.data.label_door !== undefined) set.label_door = parsed.data.label_door;
-    if (parsed.data.public_until !== undefined) set.public_until = parsed.data.public_until ? new Date(parsed.data.public_until) : null;
+    if (parsed.data.public_until !== undefined) set.public_until = instantFromInput(parsed.data.public_until, null, "end");
     if (parsed.data.contact !== undefined) set.contact = parsed.data.contact || null;
     if (parsed.data.footer !== undefined) set.footer = parsed.data.footer;
     if (parsed.data.show_fields !== undefined) set.show_fields = parsed.data.show_fields === null ? null : sql`${JSON.stringify(parsed.data.show_fields)}::jsonb`;

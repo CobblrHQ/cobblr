@@ -27,7 +27,7 @@ export interface LabelFacts {
   pack_code?: string;
 }
 
-const LOT = /\b(?:dye\s*)?lot\s*(?:no\.?|number|#)?\s*[:.]?\s*([A-Z0-9][A-Z0-9-]{1,11})\b/gi;
+const LOT = /\b(?:dye\s*)?(?:lot|batch)\s*(?:no\.?|number|#)?\s*[:.]?\s*([A-Z0-9][A-Z0-9-]{1,11})\b/gi;
 const COLOUR = /\b(?:colou?r(?:way)?|shade)\s*(?:code|name)?\s*[:.]?\s*([A-Z0-9][A-Za-z0-9 ]{1,28}?)(?=\s*(?:\/|,|\.|;|\n|$|\band\b|\blot\b|\bsku\b|\bqty\b|\bquantity\b|\d{4,}))/i;
 const SKU = /\bSKU\s*(?:no\.?|#)?\s*[:.]?\s*([A-Z0-9][A-Z0-9-]{3,19})\b/i;
 const CODE14 = /\b(\d{14})\b/g;

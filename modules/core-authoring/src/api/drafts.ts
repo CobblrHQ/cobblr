@@ -1,3 +1,4 @@
+import { DESIGN_OUTPUT_SCHEMA } from "@cobblr/platform-contract/ai-output-schemas";
 import { readListPage, pagedAnswer, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 // Authoring routes — the copy-paste value loop (Phase 1, zero inference).
 //
@@ -351,7 +352,7 @@ async function runBuild(
           // schema-constrained decoding, and Gemini conformed so strictly to a
           // permissive schema that it emitted null list items. It comes back
           // when the FULL bundle schema is what gets sent, not a wrapper.
-          input: { messages: [{ role: "user", content: prompt }] },
+          input: { output_schema: DESIGN_OUTPUT_SCHEMA, messages: [{ role: "user", content: prompt }] },
           source: { kind: "core-authoring:build", id: draftId },
           userId,
         });

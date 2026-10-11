@@ -14,7 +14,7 @@ import { PART_FIELD_LABELS } from "./part-field-labels.js";
 
 export default defineModule({
   name: "inventory",
-  version: "0.20.3",
+  version: "0.21.3",
   displayName: "Inventory",
   description:
     "Parts and supplies: how many you have, where they are kept, and what is running low.",
@@ -288,6 +288,7 @@ export default defineModule({
       {
         group: "stock", primary: true,
         id: "inventory:use-one",
+        stockMove: "use",
         examples: ["used one", "I just took one out"],
         undoable: true,
         label: "Use one",
@@ -386,6 +387,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:restock-one",
+        stockMove: "add",
         grantedAs: "inventory:count-stock",
         examples: ["another one arrived", "got one more", "add one to the fridge"],
         undoable: true,
@@ -426,6 +428,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:set-status",
+        editor: true,
         grantedAs: "inventory:update-part",
         examples: ["mark it as built", "set that to missing pieces"],
         undoable: true,
@@ -734,7 +737,7 @@ export default defineModule({
         undoable: true,
         label: "Adjust part stock",
         description:
-          "Add or subtract from a part's on-hand qty. Wire it to purchases.order_item.received for auto-bump-on-arrival, or fire it from any other event source. Args: { partId, delta, reason?, restock? }. With restock: true a positive delta is stock that arrived: a lot dated today, good until today plus the item's shelf life, and the record's bought-on date moves to today. Anything arriving on an empty record is dated the same way.",
+          "Add or subtract from a part's on-hand qty. Wire it to purchases.order_item.received for auto-bump-on-arrival, or fire it from any other event source. Args: { partId, delta, reason?, restock?, lots? }. lots: [{ lot, qty }], how many of the arriving units carry which batch number; each becomes a lot of its own. With restock: true a positive delta is stock that arrived: a lot dated today, good until today plus the item's shelf life, and the record's bought-on date moves to today. Anything arriving on an empty record is dated the same way.",
         // Tightened from { any: true } to inventory:part-only — wire
         // can still hit it for any source via target traversal, but
         // the manual-button surface stays scoped.
@@ -756,6 +759,7 @@ export default defineModule({
           partId: { label: "Part id", type: "text" },
           delta: { label: "Change in qty (+ adds, − subtracts)", type: "number" },
           restock: { label: "This is stock that arrived: date it today (optional)", type: "boolean" },
+          lots: { label: "Of the units arriving, how many carry which lot or batch number, as their boxes printed it: [{ lot, qty }] (optional)", type: "json" },
           timezone: { label: "Timezone to date arriving stock in (optional)", type: "text" },
           reason: { label: "Reason (optional)", type: "text" },
           correction: { label: "This sets the count to what is actually there, a recount: filed as a correction, never as use or a purchase (optional)", type: "boolean" },
@@ -766,6 +770,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:set-stock",
+        stockMove: "total",
         grantedAs: "inventory:count-stock",
         examples: ["there are 40 left", "set the count to 12"],
         undoable: true,
@@ -1032,6 +1037,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:update-item",
+        editor: true,
         grantedAs: "inventory:update-part",
         examples: ["rename that part", "change its brand"],
         undoable: true,
@@ -1093,6 +1099,9 @@ export default defineModule({
         target: "core-locations:location",
         title: "Stock here",
       },
+      // On every saved view of this module's records (a Groceries "What's on
+      // hand"): a stocktake of exactly the records the view shows.
+      { id: "inventory:stocktake-view", surface: "view-toolbar" as const, target: "inventory", title: "What's still here?" },
     ],
     wires: [
       {

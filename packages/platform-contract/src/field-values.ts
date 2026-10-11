@@ -24,6 +24,7 @@
 import { fieldDay } from "@cobblr/platform-contract/field-day";
 import { asMeasure } from "@cobblr/platform-contract/measure";
 import { readMoney, isCurrency, parseMoneyAmount, amountOf, parseMoney } from "@cobblr/platform-contract/money";
+import { asAddress } from "@cobblr/platform-contract/address";
 
 /** One field's declared shape, as `fieldsFor` reports it. */
 export interface TypedField {
@@ -55,6 +56,9 @@ export function castFieldValue(type: string, value: unknown, unit?: string | nul
     const c = parseMoney(value);
     return c === null ? value : amountOf(c);
   }
+  // An address is stored with its parts and its joined line: an address typed
+  // on one line ("8 Mill St, Lodi") is kept as that line.
+  if (type === "address") return asAddress(value) ?? value;
   if (type === "date") return fieldDay(value) ?? value;
   if (type === "number") {
     if (typeof value === "number") return value;

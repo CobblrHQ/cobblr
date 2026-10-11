@@ -24,6 +24,7 @@
 
 import { sql, type Kysely } from "kysely";
 import { dateFieldDirection, directionOfRole, dateEventTitle, fieldDay, type CalendarEvent, type DateFieldCalendarSpec } from "@cobblr/platform-contract";
+import { addressWhere } from "@cobblr/platform-contract/address";
 import { meta } from "../db/meta.js";
 import { getTenantDb } from "../db/tenant.js";
 import * as calendar from "./calendar-registry.js";
@@ -44,6 +45,9 @@ interface DateRow {
   /** Present when the spec declares `onHand`. */
   on_hand?: string | number | null;
   instance?: string | null;
+  /** The record's first address that is filled in, when its kind has an
+   *  address field: where the dated thing happens. */
+  address?: unknown;
 }
 
 /** A dated row read through the one rule: `day` is what the value names. */
@@ -65,11 +69,15 @@ async function readDatedRows(
   tdb: Kysely<unknown>,
   spec: Spec,
   field: string,
+  addressFields: readonly string[] = [],
 ): Promise<{ read: ReadDateRow[]; unreadable: UnreadableDateRow[] }> {
   // spec.table is module-declared (never user input) → sql.raw is safe; the
-  // field name is bound as a parameter.
+  // field names are bound as parameters.
+  const address = addressFields.length
+    ? sql`, coalesce(${sql.join(addressFields.map((a) => sql`metadata->${a}`))}) as address`
+    : sql``;
   const compiled = sql<DateRow>`
-    select id::text as id, name, (metadata->>${field}) as dt${onHandColumns(spec)}
+    select id::text as id, name, (metadata->>${field}) as dt${onHandColumns(spec)}${address}
     from ${sql.raw(spec.table)}
     where metadata->>${field} is not null and metadata->>${field} <> ''
   `.compile(tdb);
@@ -212,6 +220,7 @@ export function registerDateFieldSource(spec: Spec): void {
       // a Wardrobe / Warranties / Medications / Outfits instance lands on the
       // calendar just like one on the base kind.
       let defs: { name: string; display_label: string; field_role: string | null }[];
+      let addressFields: string[];
       try {
         const instances = await meta
           .selectFrom("workspace_module_instances")
@@ -223,15 +232,20 @@ export function registerDateFieldSource(spec: Spec): void {
         const kinds = [spec.kind, ...instances.map((i) => `${i.instance_name}:item`)];
         const rawDefs = await meta
           .selectFrom("module_field_defs")
-          .select(["name", "display_label", "field_role"])
+          .select(["name", "display_label", "field_role", "type"])
           .where("org_id", "=", orgId)
           .where("entity_kind", "in", kinds)
-          .where("type", "=", "date")
+          .where("type", "in", ["date", "address"])
+          .orderBy("position")
+          .orderBy("name")
           .execute();
+        // A dated record's address is where the dated thing happens: its
+        // event's "Where" and the feed's LOCATION (#5317).
+        addressFields = [...new Set(rawDefs.filter((d) => d.type === "address").map((d) => d.name))];
         // Dedupe by field name (two instances may share a date field name; the
         // data query reads by metadata key, so once per name is enough).
         const seen = new Set<string>();
-        defs = rawDefs.filter((d) => (seen.has(d.name) ? false : (seen.add(d.name), true)));
+        defs = rawDefs.filter((d) => d.type === "date" && (seen.has(d.name) ? false : (seen.add(d.name), true)));
       } catch {
         return [];
       }
@@ -248,7 +262,7 @@ export function registerDateFieldSource(spec: Spec): void {
       const events: CalendarEvent[] = [];
       for (const d of defs) {
         try {
-          const { read } = await readDatedRows(tdb, spec, d.name);
+          const { read } = await readDatedRows(tdb, spec, d.name, addressFields);
           const rows = await withSomethingOnHand(orgId, spec, read.filter((r) => r.day >= from && r.day <= to));
           for (const r of rows) {
             events.push({
@@ -269,6 +283,7 @@ export function registerDateFieldSource(spec: Spec): void {
               entityModule: spec.entityModule,
               entityType: spec.entityType,
               entityId: r.id,
+              ...addressWhere(r.address),
             });
           }
         } catch (err) {

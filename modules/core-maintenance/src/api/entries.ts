@@ -15,8 +15,30 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 import { completeEntry, rollForward, reconcileSchedules } from "../schedules-store.js";
 import { present } from "./schedules.js";
 import { calendarDue } from "../schedule.js";
+import { asAddress } from "@cobblr/platform-contract/address";
+import { instantFromInput } from "@cobblr/platform-contract/day";
 
 export const entriesRouter = Router({ mergeParams: true });
+
+/** An address as the picker sends it, or text on one line; null clears it.
+ *  Read through asAddress, so what is stored is always the one shape. */
+const AddressBody = z
+  .union([z.string().max(500), z.record(z.unknown())])
+  .nullable()
+  .optional()
+  .transform((v, ctx) => {
+    if (v === undefined || v === null) return v;
+    const a = asAddress(v);
+    if (!a) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "address takes a street address, like 8 Mill St, Lodi, NJ" });
+    return a;
+  });
+
+/** A day (`YYYY-MM-DD`, kept as that day) or a date and time. */
+const When = z
+  .string()
+  .nullable()
+  .optional()
+  .refine((v) => !v || instantFromInput(v) !== null, { message: "Give a day (YYYY-MM-DD) or a date and time." });
 
 const EntryCreate = z
   .object({
@@ -25,14 +47,15 @@ const EntryCreate = z
     entity_id: z.string().uuid(),
     name: z.string().min(1).max(200),
     description: z.string().max(2_000).nullable().optional(),
-    /** ISO date or datetime. */
-    performed_at: z.string().nullable().optional(),
-    scheduled_at: z.string().nullable().optional(),
+    performed_at: When,
+    scheduled_at: When,
     cost_cents: z.number().int().nonnegative().nullable().optional(),
     notes: z.string().max(4_000).nullable().optional(),
     recurrence_rule: z.string().max(500).nullable().optional(),
     /** The schedule this service belongs to; matched by name when absent. */
     schedule_id: z.string().uuid().nullable().optional(),
+    /** Where the visit happens: an address object or one typed line. */
+    address: AddressBody,
   })
   .refine(
     (d) => Boolean(d.performed_at) || Boolean(d.scheduled_at),
@@ -45,11 +68,12 @@ const EntryCreate = z
 const EntryUpdate = z.object({
   name: z.string().min(1).max(200).optional(),
   description: z.string().max(2_000).nullable().optional(),
-  performed_at: z.string().nullable().optional(),
-  scheduled_at: z.string().nullable().optional(),
+  performed_at: When,
+  scheduled_at: When,
   cost_cents: z.number().int().nonnegative().nullable().optional(),
   notes: z.string().max(4_000).nullable().optional(),
   recurrence_rule: z.string().max(500).nullable().optional(),
+  address: AddressBody,
 });
 
 const ListQuery = z.object({
@@ -176,14 +200,15 @@ entriesRouter.post(
         entity_id: parsed.data.entity_id,
         name: parsed.data.name,
         description: parsed.data.description ?? null,
-        performed_at: parsed.data.performed_at ? new Date(parsed.data.performed_at) : null,
-        scheduled_at: parsed.data.scheduled_at ? new Date(parsed.data.scheduled_at) : null,
+        performed_at: instantFromInput(parsed.data.performed_at),
+        scheduled_at: instantFromInput(parsed.data.scheduled_at),
         cost_cents: parsed.data.cost_cents ?? null,
         performed_by: parsed.data.performed_at ? session.id : null,
         notes: parsed.data.notes ?? null,
         recurrence_rule: parsed.data.recurrence_rule ?? null,
         schedule_id: parsed.data.schedule_id ?? null,
-      })
+        address: parsed.data.address ?? null,
+      } as never)
       .returningAll()
       .executeTakeFirstOrThrow();
     // A service that belongs to a schedule rolls it forward (#3876).
@@ -219,16 +244,17 @@ entriesRouter.patch(
     if (parsed.data.name !== undefined) patch.name = parsed.data.name;
     if (parsed.data.description !== undefined) patch.description = parsed.data.description;
     if (parsed.data.performed_at !== undefined) {
-      patch.performed_at = parsed.data.performed_at ? new Date(parsed.data.performed_at) : null;
+      patch.performed_at = instantFromInput(parsed.data.performed_at);
     }
     if (parsed.data.scheduled_at !== undefined) {
-      patch.scheduled_at = parsed.data.scheduled_at ? new Date(parsed.data.scheduled_at) : null;
+      patch.scheduled_at = instantFromInput(parsed.data.scheduled_at);
     }
     if (parsed.data.cost_cents !== undefined) patch.cost_cents = parsed.data.cost_cents;
     if (parsed.data.notes !== undefined) patch.notes = parsed.data.notes;
     if (parsed.data.recurrence_rule !== undefined) {
       patch.recurrence_rule = parsed.data.recurrence_rule;
     }
+    if (parsed.data.address !== undefined) patch.address = parsed.data.address;
 
     const row = await db
       .updateTable("core_maintenance_entries")
@@ -296,9 +322,7 @@ entriesRouter.post(
     const session = sessionUser(req);
     const ctx = tenantContext(req);
     const db = tenantDb(req);
-    const completedAt = typeof req.body?.performed_at === "string"
-      ? new Date(req.body.performed_at)
-      : new Date();
+    const completedAt = instantFromInput(req.body?.performed_at) ?? new Date();
     const completed = await completeEntry(db, ctx.org.id, id, session.id, completedAt);
     if (!completed) {
       res.status(404).json({ error: { code: "not_found", message: "entry not found" } });

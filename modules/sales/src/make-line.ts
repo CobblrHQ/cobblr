@@ -10,7 +10,7 @@ import { makeForOrder, startMakeFor } from "./work-orders.js";
 
 export type MakeLineResult =
   | { ok: true; plannedId: string; buildName: string; qty: number; reused: boolean; makeId: string | null }
-  | { ok: false; code: string; message: string; doors?: Array<{ kind: "add_build"; label: string; href: string }> };
+  | { ok: false; code: string; message: string; module?: string; doors?: Array<{ kind: "add_build"; label: string; href: string }> };
 
 export async function makeLine(
   db: Kysely<SalesDB>,
@@ -37,6 +37,7 @@ export async function makeLine(
       ok: false,
       code: r.code,
       message: r.message,
+      ...(r.code === "module_not_enabled" ? { module: r.module } : {}),
       ...(r.code === "no_build" ? { doors: [{ kind: "add_build" as const, label: "Add a build", href: "/builds" }] } : {}),
     };
   }

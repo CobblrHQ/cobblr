@@ -1,4 +1,4 @@
-import { noteWorkspaceWrite } from "@cobblr/platform-web";
+import { noteWorkspaceWrite, workspaceFetch } from "@cobblr/platform-web";
 
 export type ProjectStatus = "planning" | "active" | "blocked" | "done" | "abandoned";
 export type Priority = "low" | "med" | "high" | "urgent";
@@ -93,7 +93,7 @@ export class ProjectsApi {
     if (body !== undefined) headers["Content-Type"] = "application/json";
     const token = this.opts.getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
-    const res = await fetch(url, {
+    const res = await workspaceFetch(url, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),

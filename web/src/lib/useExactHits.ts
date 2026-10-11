@@ -6,18 +6,20 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "./api";
+import { mayRead } from "./acting-role";
 import { useKindLabels } from "./useKindLabels";
 
 export function useExactHits(slug: string | null | undefined, value: string, surface: "palette" | "search", enabled = true) {
   const v = value.trim();
+  const canResolve = !!slug && mayRead(`/orgs/${slug}/resolve`);
   const q = useQuery({
     queryKey: ["resolve", surface, slug, v],
     queryFn: () => api.resolveOnSurface(slug!, v, surface),
-    enabled: enabled && !!slug && v.length >= 2,
+    enabled: enabled && canResolve && v.length >= 2,
     staleTime: 15_000,
   });
   const labels = useKindLabels(slug);
-  const d = q.data;
+  const d = canResolve ? q.data : undefined;
   // Stable between renders, so a list built from it is not rebuilt each time.
   // `where` is what a person reads under the name: the provider's own line,
   // or the collection's name, never the raw kind id ("inventory:part").

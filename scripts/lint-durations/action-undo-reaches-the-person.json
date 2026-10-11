@@ -1,0 +1,10 @@
+{
+  "lint": "lint:action-undo-reaches-the-person",
+  "run": "node scripts/lint-action-undo-reaches-the-person.ts",
+  "rows": [
+    "generic-web-component"
+  ],
+  "ms": 626,
+  "recorded": "2026-10-12",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

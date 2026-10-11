@@ -18,6 +18,11 @@ export interface TokenScopeDef {
   description: string;
   /** Allow rules: [HTTP method, regex tested against the /api/v1-relative path]. */
   allow: Array<[string, RegExp]>;
+  /** Where a person makes a token with this scope (#5842): the personal Mint
+   *  token form (Configuration > API tokens), the operator's scoped fleet, or
+   *  somewhere else that says why it is not on either form. A scope the API
+   *  accepts and no screen offers is a scope nobody can get. */
+  offeredIn: "personal" | "operator" | { elsewhere: string };
 }
 
 export const TOKEN_SCOPES: TokenScopeDef[] = [
@@ -28,6 +33,7 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
       "Let an on-site edge bridge dial in and relay machine commands for this " +
       "workspace (register / poll / respond / status) and self-update its own code " +
       "(release). No other access — safe to hand to a bridge running on a Pi/NAS/mini-PC.",
+    offeredIn: { elsewhere: "the bridge setup on Configuration > Devices > Bridges mints it for the one bridge being set up" },
     allow: [
       // The generic kernel wire (canonical since the edge surface moved out of
       // digifab) AND the historic digifab alias — field bridges installed
@@ -46,10 +52,26 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
     ],
   },
   {
+    key: "vault",
+    label: "Vault",
+    description:
+      "List your Vault folders and put in or take out documents in the ones whose list names you. " +
+      "The Vault opens to a token only with this scope; a token without it, scoped or not, is refused there.",
+    offeredIn: "personal",
+    allow: [
+      ["GET", /^\/orgs\/[^/]+\/vault\/(folders|record-documents)$/],
+      ["POST", /^\/orgs\/[^/]+\/vault\/folders$/],
+      ["GET", /^\/orgs\/[^/]+\/vault\/folders\/[0-9a-f-]{36}(\/history)?$/],
+      ["POST", /^\/orgs\/[^/]+\/vault\/folders\/[0-9a-f-]{36}\/files$/],
+      ["GET", /^\/orgs\/[^/]+\/vault\/files\/[0-9a-f-]{36}\/download$/],
+    ],
+  },
+  {
     key: "feedback:triage",
     label: "Feedback triage",
     description:
       "Read the platform feedback queue and resolve / notify reporters. Nothing else.",
+    offeredIn: "operator",
     allow: [
       ["GET", /^\/super-admin\/feedback(\/.*)?$/],
       ["PATCH", /^\/super-admin\/feedback\/[^/]+$/],
@@ -70,6 +92,7 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
     // /users or /activity: a token that leaves one deployment to be read by another
     // process should carry as little of other people's data as the job allows, and the
     // job is counts and trends.
+    offeredIn: "operator",
     allow: [
       ["GET", /^\/super-admin\/overview$/],
       ["GET", /^\/super-admin\/product-metrics$/],
@@ -86,6 +109,7 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
     description:
       "Run the matchmaker prompt-eval endpoint + read/prune captured eval cases " +
       "(scan-eval, scan-eval-cases). No other admin surface.",
+    offeredIn: "operator",
     allow: [
       ["POST", /^\/super-admin\/scan-eval$/],
       ["GET", /^\/super-admin\/scan-eval-cases$/],
@@ -98,6 +122,7 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
     description:
       "Run the bundle-authoring prompt-eval endpoint (POST /super-admin/authoring-eval). " +
       "No DB writes, no other admin surface.",
+    offeredIn: "operator",
     allow: [["POST", /^\/super-admin\/authoring-eval$/]],
   },
   {
@@ -108,6 +133,7 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
       "resolve it. Carries no authority of its own: the API reads the action " +
       "from the stored notification and checks the presser owns it, so this " +
       "scope cannot act on anything the token holder chooses.",
+    offeredIn: "operator",
     allow: [["POST", /^\/discord\/interactions\/forwarded$/]],
   },
   {
@@ -118,6 +144,7 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
       "channel (the Discord support bot), and resolve a ticket when the reporter " +
       "clicks the bot's 'close' button. Can ONLY create/append/close-own — never " +
       "read or triage.",
+    offeredIn: "operator",
     allow: [
       ["POST", /^\/super-admin\/feedback\/ingest$/],
       ["POST", /^\/super-admin\/feedback\/append$/],
@@ -131,6 +158,7 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
     description:
       "Submit a waitlist signup from the marketing site's form (the cobblr.xyz " +
       "Pages Function). Can ONLY create signups — never read, approve, or dismiss.",
+    offeredIn: "operator",
     allow: [["POST", /^\/super-admin\/waitlist\/ingest$/]],
   },
   {
@@ -141,6 +169,7 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
       "button — minting the signup invite + welcome email exactly like the web " +
       "Approve. Can ONLY approve / dismiss an existing signup — never read tenant " +
       "data, mint tokens, or any other admin surface.",
+    offeredIn: "operator",
     allow: [
       ["POST", /^\/super-admin\/waitlist\/[^/]+\/approve$/],
       ["POST", /^\/super-admin\/waitlist\/[^/]+\/dismiss$/],
@@ -153,6 +182,7 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
       "Drive the user's own open Cobblr tab — open the driver stream, request a " +
       "window, and navigate it. Gated further by the user's per-workspace drive " +
       "grant (off by default). Never reads or writes workspace data.",
+    offeredIn: "operator",
     allow: [
       ["GET", /^\/orgs\/[^/]+\/drive\/driver\/stream$/],
       ["POST", /^\/orgs\/[^/]+\/drive\/driver\/request$/],
@@ -167,6 +197,7 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
     label: "Post announcements & notices",
     description:
       "Post bundle / feature updates to the public announcement channels, and send targeted breaking-change notices to affected workspace members. Read-only on the settings; can't reconfigure channels.",
+    offeredIn: "operator",
     allow: [
       ["GET", /^\/super-admin\/announce-settings$/],
       ["POST", /^\/super-admin\/announce$/],
@@ -182,6 +213,7 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
       "(ids preserved, attachments + tags follow, borrowed field values fold into the " +
       "record). ONLY that operation — cannot read tenant data, mint tokens, or touch " +
       "any other admin surface. The operation is itself idempotent and rolls back whole.",
+    offeredIn: "operator",
     allow: [["POST", /^\/super-admin\/rehome-instance$/]],
   },
 ];
@@ -302,8 +334,10 @@ function stationScopeAllows(key: string, method: string, rel: string): boolean {
 }
 
 /** Public, secret-free view for the mint UI. */
-export function listScopeChoices(): Array<{ key: string; label: string; description: string }> {
-  return TOKEN_SCOPES.map(({ key, label, description }) => ({ key, label, description }));
+export function listScopeChoices(): Array<{ key: string; label: string; description: string; offered_in: "personal" | "operator" | "elsewhere"; elsewhere?: string }> {
+  return TOKEN_SCOPES.map(({ key, label, description, offeredIn }) =>
+    typeof offeredIn === "string" ? { key, label, description, offered_in: offeredIn } : { key, label, description, offered_in: "elsewhere" as const, elsewhere: offeredIn.elsewhere },
+  );
 }
 
 /** Keep only keys we actually know about (drop typos / removed scopes). Static

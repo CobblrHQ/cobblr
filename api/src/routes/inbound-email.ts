@@ -58,6 +58,8 @@ const InboundEmail = z.object({
         filename: z.string().max(255).optional(),
         content_type: z.string().max(120).optional(),
         content_base64: z.string().min(1).max(40_000_000),
+        content_id: z.string().max(500).optional(),
+        disposition: z.string().max(40).optional(),
       }),
     )
     .max(20)

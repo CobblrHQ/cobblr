@@ -51,7 +51,13 @@ const LINE_WORDS = /(?:[$£€¥]\s?\d|\d[.,]\d{2}\b|(?:^|[^a-z])[×x]\s?\d+\b|\
 
 /** Each table row (or, with no table, each block) that prints exactly one
  *  picture beside the words of an order line: the picture and those words. */
-export function emailLineImages(html: string | null | undefined): EmailLineImage[] {
+export function emailLineImages(
+  html: string | null | undefined,
+  /** The email's own image parts by Content-ID ("cid:…" in the html), each
+   *  already stored and referenced as `file:<id>` (#5719). A forward from a
+   *  phone or a mail app carries the store's pictures this way, not as links. */
+  inline: Readonly<Record<string, string>> = {},
+): EmailLineImage[] {
   if (!html) return [];
   const clean = html.replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ");
   // The innermost rows: a row holding a table of rows is not a line itself.
@@ -62,8 +68,10 @@ export function emailLineImages(html: string | null | undefined): EmailLineImage
   for (const block of blocks) {
     const imgs = [...block.matchAll(/<img\b[^>]*>/gi)].map((m) => m[0]).filter((t) => !tiny(t));
     if (imgs.length !== 1) continue;
-    const url = attr(imgs[0]!, "src");
-    if (!url || !/^https?:\/\//i.test(url) || seen.has(url)) continue;
+    const src = attr(imgs[0]!, "src");
+    const cid = src?.match(/^cid:(.+)$/i)?.[1];
+    const url = cid ? (inline[cid.replace(/^<|>$/g, "")] ?? null) : src;
+    if (!url || !isLineImageRef(url) || seen.has(url)) continue;
     const text = textOf(block);
     if (!/[a-z]{3}/i.test(text) || !LINE_WORDS.test(text)) continue;
     seen.add(url);
@@ -71,6 +79,53 @@ export function emailLineImages(html: string | null | undefined): EmailLineImage
     if (out.length >= MAX_LINE_IMAGES) break;
   }
   return out;
+}
+
+/** A line picture's reference: a link the email printed, or one of the
+ *  email's own image parts, stored (`file:<uuid>`). */
+export function isLineImageRef(url: string): boolean {
+  return /^https?:\/\//i.test(url) || storedLineImageId(url) !== null;
+}
+
+/** The stored file a `file:<uuid>` reference names, else null. */
+export function storedLineImageId(url: string | null | undefined): string | null {
+  return url?.match(/^file:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i)?.[1] ?? null;
+}
+
+/** The html's "cid:" images, in the order it first names them. */
+export function emailImageCids(html: string | null | undefined): string[] {
+  const out: string[] = [];
+  for (const m of (html ?? "").matchAll(/<img\b[^>]*\bsrc\s*=\s*["']?cid:([^"'\s>]+)/gi)) {
+    const id = m[1]!.replace(/^<|>$/g, "");
+    if (!out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
+/** A plain-text forward's pictures (#5719): a mail app writes each inline
+ *  image into the text part as "[image: <its alt text>]" where it stood, and
+ *  sends the image itself as a part, in the same order. Each placeholder
+ *  takes the next stored part, and its words are the placeholder's and the
+ *  lines after it, up to the next one, so lineImagesFor pairs it with the
+ *  line it printed beside. */
+export function textLineImages(text: string | null | undefined, parts: readonly string[]): EmailLineImage[] {
+  if (!text || parts.length === 0) return [];
+  const marks = [...text.matchAll(/\[image:\s*([^\]]*)\]/gi)];
+  const out: EmailLineImage[] = [];
+  marks.forEach((m, i) => {
+    const url = parts[i];
+    if (!url || !isLineImageRef(url)) return;
+    const end = marks[i + 1]?.index ?? text.length;
+    // The placeholder's own row: the next few lines, and only one price. A
+    // logo's placeholder above the whole order holds every line's price,
+    // and is no line's picture.
+    const after = text.slice((m.index ?? 0) + m[0].length, end).split(/\n/).map((l) => l.trim()).filter(Boolean).slice(0, 4).join(" ");
+    if ((after.match(/[$£€¥]\s?\d/g) ?? []).length > 1) return;
+    const words = `${m[1] ?? ""} ${after}`.replace(/\s+/g, " ").trim();
+    if (!/[a-z]{3}/i.test(words) || !LINE_WORDS.test(words)) return;
+    out.push({ text: words.slice(0, 500), url });
+  });
+  return out.slice(0, MAX_LINE_IMAGES);
 }
 
 /** The words of a line, without what every row of an order says beside them
@@ -113,5 +168,44 @@ export function lineImagesFor(lines: readonly string[], images: readonly EmailLi
     out[p.line] = images[p.image]!.url;
     taken.add(p.image);
   }
+  return out;
+}
+
+/** One part of an inbound email, as the mail worker sends it. */
+export interface EmailPart {
+  content_type?: string;
+  filename?: string;
+  /** The part's Content-ID, without its angle brackets. */
+  content_id?: string;
+  /** "inline" for a picture the message shows in its body. */
+  disposition?: string;
+}
+
+/** Which of an email's parts are pictures it SHOWS (the store's product
+ *  photos, a logo), and the "cid:" each answers, in part order (#5719).
+ *  Such a part is never a receipt to read: sent to the receipt reader, a
+ *  forwarded order's four product photos were four failed reads and no
+ *  line got its picture. A part with no Content-ID (an older forwarder)
+ *  answers the html's next unanswered cid in order. An image the body never
+ *  shows, or one sent as an attachment (a photographed receipt), stays a
+ *  document. */
+export function emailPictureParts(parts: readonly EmailPart[], body: { html?: string | null; text?: string | null }): Array<{ index: number; cid: string | null }> {
+  const cids = emailImageCids(body.html);
+  const placeholders = /\[image:/i.test(body.text ?? "");
+  const shows = (p: EmailPart) => /^image\//i.test(p.content_type ?? "") || /\.(png|jpe?g|gif|webp)$/i.test(p.filename ?? "");
+  const out: Array<{ index: number; cid: string | null }> = [];
+  const answered = new Set<string>();
+  parts.forEach((p, index) => {
+    if (!shows(p)) return;
+    const own = p.content_id?.replace(/^<|>$/g, "") || null;
+    if (own && cids.includes(own)) {
+      answered.add(own);
+      out.push({ index, cid: own });
+    } else if (p.disposition?.toLowerCase() === "inline" || (!own && !p.disposition && (cids.length > 0 || placeholders))) {
+      out.push({ index, cid: own });
+    }
+  });
+  const open = cids.filter((c) => !answered.has(c));
+  for (const o of out) if (!o.cid || !cids.includes(o.cid)) o.cid = open.shift() ?? o.cid;
   return out;
 }

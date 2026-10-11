@@ -1,5 +1,6 @@
 // Tenant-side DB types for core-maintenance.
 
+import type { AddressValue } from "@cobblr/platform-contract/address";
 import type { Generated, Kysely } from "kysely";
 import type { Request } from "express";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
@@ -25,6 +26,8 @@ export interface CoreMaintenanceEntriesTable {
   performed_by: string | null;
   notes: string | null;
   recurrence_rule: string | null;
+  /** Where the visit happens (@cobblr/platform-contract/address), or null. */
+  address: Generated<AddressValue | null>;
   last_notified_at: Date | null;
   nag_snoozed_until: Date | null;
   nag_stopped_at: Date | null;

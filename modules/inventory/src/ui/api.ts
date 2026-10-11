@@ -1,3 +1,4 @@
+import type { StocktakeItem, StocktakeScope } from "../stocktake.js";
 import type { ReceiptDraftConfig, RenewalReceiptDraft } from "@cobblr/platform-contract/record-creation";
 import type { StockView, ConfigureStock, ConsumeStock, LoadStock } from "../api/stock-shapes";
 import type { z } from "zod";
@@ -25,7 +26,7 @@ export interface MaterialView extends MaterialNumbers {
 import type { NounChoiceDecl } from "@cobblr/platform-contract/kind-label";
 import type { CardRollup } from "@cobblr/platform-contract/holdings";
 import type { FieldRendererId, FieldType } from "@cobblr/platform-web";
-import { describeUnreadableBody, noteWorkspaceWrite } from "@cobblr/platform-web";
+import { describeUnreadableBody, noteWorkspaceWrite, workspaceFetch } from "@cobblr/platform-web";
 import { downloadBlob } from "@cobblr/platform-web";
 import { dayHere } from "@cobblr/platform-contract/day";
 import type { PartFacets } from "./list-filters";
@@ -324,6 +325,22 @@ export interface InventoryApiOptions {
 }
 
 export class InventoryApi {
+  /** Everything still listed where a stocktake looks: a place (and the places
+   *  inside it), the records picked in a table, or a collection's things with
+   *  no place. Newest first. */
+  stocktakeScope = (scope: StocktakeScope) => {
+    const q = "place_id" in scope ? `place_id=${encodeURIComponent(scope.place_id)}` : "ids" in scope ? `ids=${scope.ids.map(encodeURIComponent).join(",")}` : `unplaced=true&instance=${encodeURIComponent(scope.instance)}`;
+    return this.requestAbs<{ label: string; items: StocktakeItem[] }>("GET", `/api/v1/orgs/${this.slug}/modules/inventory/stocktake?${q}`);
+  };
+  /** A starting list from one photo of one shelf or door in a place: the
+   *  listed records it saw, and what it saw that is not listed. Writes nothing. */
+  stocktakePhoto = (placeId: string, fileId: string) =>
+    this.requestAbs<{ seen: number; matched: Array<{ id: string; seen: string }>; unmatched: Array<{ name: string; qty: number }> }>("POST", `/api/v1/orgs/${this.slug}/modules/inventory/stocktake/photo`, { place_id: placeId, file_id: fileId });
+  /** A photo taken for this workspace, kept in Files. */
+  uploadPhoto = (file: File) => {
+    const form = new FormData(); form.set("file", file);
+    return this.requestAbs<{ id: string }>("POST", `/api/v1/orgs/${this.slug}/modules/core-files/files`, form);
+  };
   uploadReceipt = (file: File) => {
     const form = new FormData(); form.set("file", file);
     return this.requestAbs<{ id: string }>("POST", `/api/v1/orgs/${this.slug}/modules/core-files/files`, form);
@@ -368,7 +385,7 @@ export class InventoryApi {
     const token = this.opts.getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
 
-    const res = await fetch(url, {
+    const res = await workspaceFetch(url, {
       method,
       headers,
       body: body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body),
@@ -623,7 +640,7 @@ export class InventoryApi {
   partsExportCsv = async (q: Parameters<typeof this.partsExportCsvUrl>[0] = {}) => {
     const url = this.partsExportCsvUrl(q);
     const token = this.opts.getToken();
-    const res = await fetch(url, {
+    const res = await workspaceFetch(url, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (!res.ok) {

@@ -72,6 +72,9 @@ export function buildICS(events: CalendarEvent[], opts: BuildOpts = {}): string 
     lines.push(`SUMMARY:${esc(ev.title)}`);
     if (ev.category) lines.push(`CATEGORIES:${esc(ev.category.toUpperCase())}`);
     if (ev.detailUrl) lines.push(`URL:${esc(ev.detailUrl)}`);
+    if (ev.location?.trim()) lines.push(`LOCATION:${esc(ev.location.trim())}`);
+    // GEO is two FLOATs separated by a semicolon, unescaped (RFC 5545 §3.8.1.6).
+    if (ev.geo && Number.isFinite(ev.geo.lat) && Number.isFinite(ev.geo.lon)) lines.push(`GEO:${ev.geo.lat};${ev.geo.lon}`);
     lines.push("END:VEVENT");
   }
 

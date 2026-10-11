@@ -12,6 +12,9 @@ import { customersRouter } from "./customers.js";
 import { registerSalesResolvers } from "./resolvers.js";
 import { registerSalesActionHandlers } from "./action-handlers.js";
 import { followParcelsRouter } from "./follow-parcels.js";
+import { asyncHandler } from "./util.js";
+import { sessionUser, tenantContext } from "../db.js";
+import { searchStock } from "../stock-search.js";
 import { registerDeliveryCloseHeal } from "../close-delivered.js";
 import { registerFollowSweep } from "../follow-parcels.js";
 
@@ -35,6 +38,14 @@ router.use("/intake", intakeRouter);
 router.use("/orders", ordersRouter);
 router.use("/customers", customersRouter);
 router.use("/follow-parcels", followParcelsRouter);
+
+// What a line can be sold from, across every collection that keeps stock.
+// AI-REACH: exempt (the line picker's search; the assistant finds records with its own search across kinds and adds a line with sales:add-line)
+router.get("/stock", asyncHandler(async (req, res) => {
+  const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+  const ctx = tenantContext(req);
+  res.json({ items: await searchStock(ctx.org.id, q, { userId: sessionUser(req)?.id, role: ctx.role }) });
+}));
 
 export default router;
 

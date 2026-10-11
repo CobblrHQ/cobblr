@@ -1,5 +1,5 @@
 import { toCsv } from "@cobblr/platform-contract/csv";
-import { fieldCurrency, formatStoredMoney, roundMoneyAmount } from "@cobblr/platform-contract/money";
+import { fieldCurrency, formatStoredMoney, roundMoneyAmount, totalOfLines, type LinesTotal } from "@cobblr/platform-contract/money";
 
 interface InvoiceOrder {
   id: string;
@@ -9,6 +9,12 @@ interface InvoiceOrder {
   paid?: boolean;
   metadata?: Record<string, unknown>;
   items: Array<{ description: string | null; qty: string | number; unit_price: string | number | null; metadata?: Record<string, unknown> }>;
+}
+
+/** What an order's lines add up to: the one sum the order page, the invoice
+ *  and the CSV all read, so none of them calls a partial total complete. */
+export function orderTotal(items: ReadonlyArray<{ qty: string | number; unit_price: string | number | null }>, currency: string): LinesTotal {
+  return totalOfLines(items.map((it) => ({ qty: it.qty, price: it.unit_price })), currency);
 }
 
 function invoice(order: InvoiceOrder, fallbackCurrency: string) {
@@ -22,8 +28,8 @@ function invoice(order: InvoiceOrder, fallbackCurrency: string) {
     if (!Number.isFinite(qty) || (price !== null && !Number.isFinite(price))) throw new Error("Check the quantities and prices before exporting.");
     return { description: it.description || "Item", qty, price, total: price === null ? null : roundMoneyAmount(qty * price, currency) };
   });
-  const total = lines.some((it) => it.total === null) ? null : roundMoneyAmount(lines.reduce((s, it) => s + (it.total ?? 0), 0), currency);
-  return { reference: order.order_number || order.id, customer: order.customer_name || "Not recorded", date: order.order_date?.slice(0, 10) || "Not recorded", currency, payment, lines, total };
+  const sum = orderTotal(order.items, currency);
+  return { unpriced: sum.unpriced, total: sum.complete ? sum.amount : null, reference: order.order_number || order.id, customer: order.customer_name || "Not recorded", date: order.order_date?.slice(0, 10) || "Not recorded", currency, payment, lines };
 }
 
 const escape = (value: unknown) => String(value).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
@@ -46,7 +52,7 @@ th:first-child { width: 45%; } thead { display: table-header-group; } tr { break
 <table><thead><tr><th>Description</th><th>Quantity</th><th>Unit price (${escape(d.currency)})</th><th>Line total (${escape(d.currency)})</th></tr></thead>
 <tbody>${d.lines.map((it) => `<tr><td>${escape(it.description)}</td><td>${escape(it.qty)}</td><td>${money(it.price)}</td><td>${money(it.total)}</td></tr>`).join("")}</tbody></table>
 <p class="total">Total (${escape(d.currency)}): ${money(d.total)}</p>
-${d.total === null ? "<p>Some prices have not been recorded. Add them to complete the invoice total.</p>" : ""}
+${d.total === null ? `<p>${d.unpriced === 1 ? "1 line has" : `${d.unpriced} lines have`} no price recorded. Add ${d.unpriced === 1 ? "it" : "them"} to complete the invoice total.</p>` : ""}
 </body></html>`;
 }
 

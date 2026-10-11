@@ -29,6 +29,7 @@ invokeRouter.post(
     if (!parsed.success) return badBody(res, parsed.error);
     const ctx = tenantContext(req);
     try {
+      // FREE-TEXT: the generic invoke route passes the caller's input through, output_schema included when the caller sends one
       const r = await platform().ai.invoke({
         orgId: ctx.org.id,
         capability: parsed.data.capability,

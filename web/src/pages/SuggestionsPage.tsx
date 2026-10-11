@@ -49,13 +49,13 @@ export function SuggestionsPage() {
     const on = { entityKind: first?.entity_kind ?? "", entityId: first?.entity_id ?? "" };
     setBusy(true);
     try {
-      const r = await runAction({ actionId, ...on, args: { ids } });
+      const r = await runAction({ actionId, ...on, args: { ids } }, { undo: "shown-here" });
       const res = r.result as { ok?: boolean; error?: string; summary?: string } | null;
       if (!res?.ok) throw new Error(res?.error ?? "That did not go through.");
       toast.success(res.summary ?? "Done.", {
         actionLabel: "Undo",
         onAction: async () => {
-          await runAction({ actionId: "platform:reopen-suggestions", ...on, args: { ids } });
+          await runAction({ actionId: "platform:reopen-suggestions", ...on, args: { ids } }, { undo: "is-undo" });
           await qc.invalidateQueries({ queryKey: key });
         },
       });

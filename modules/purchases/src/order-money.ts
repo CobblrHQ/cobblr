@@ -17,12 +17,14 @@ export async function orderFigures<T extends Order>(orgId: string, db: Kysely<Pu
   for (const r of refunds) refundedBy.set(r.order_id, (refundedBy.get(r.order_id) || 0) + Number(r.refund_amount));
   const byOrder = new Map<string, typeof lines>();
   for (const l of lines) byOrder.set(l.order_id, [...(byOrder.get(l.order_id) || []), l]);
-  const out: Array<T & { currency: string; total: number | null; money_total: MoneyTotal; computed_total: number; refunded: number }> = [];
+  const out: Array<T & { currency: string; total: number | null; money_total: MoneyTotal; computed_total: number; refunded: number; unpriced_lines: number }> = [];
   for (const o of orders) {
     const currency = fieldCurrency(o.metadata, "total_cost", main);
     const day = fieldDay(o.ordered_at) || fieldDay(o.created_at) || "";
     const stated = readMoney(o.total_cost, "amount", currency);
-    const lineEntries = (byOrder.get(o.id) || []).flatMap((l) => {
+    const ownLines = byOrder.get(o.id) || [];
+    const unpricedLines = stated ? 0 : ownLines.filter((l) => l.line_amount == null && l.unit_cost == null).length;
+    const lineEntries = ownLines.flatMap((l) => {
       const amount = l.line_amount != null ? Number(l.line_amount) : l.unit_cost != null ? Number(l.qty) * Number(l.unit_cost) : null;
       return amount === null ? [] : [{ value: { amount, currency: fieldCurrency(l.metadata, "unit_cost", currency) }, day }];
     });
@@ -36,7 +38,7 @@ export async function orderFigures<T extends Order>(orgId: string, db: Kysely<Pu
     const computed = await platform().money.total(orgId, lineEntries, currency);
     const own = stated || refunded ? await platform().money.total(orgId, entries, currency) : computed;
     const sum = currency === main ? own : await platform().money.total(orgId, entries, main);
-    out.push({ ...o, currency, total: entries.length > back.length ? own.amount : null, computed_total: computed.amount, money_total: sum, refunded });
+    out.push({ ...o, currency, total: entries.length > back.length ? own.amount : null, computed_total: computed.amount, money_total: sum, refunded, unpriced_lines: unpricedLines });
   }
   return out;
 }

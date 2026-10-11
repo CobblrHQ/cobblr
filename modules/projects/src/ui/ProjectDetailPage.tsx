@@ -9,13 +9,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react";
 import { ContributedDetailPanels, EntityActionsBar, CustomFieldsPanel, MutationError, PresentationGate, useConfirm, useFieldDraft, usePageTitle, useUnits } from "@cobblr/platform-web";
 import { describeInterval } from "@cobblr/platform-contract/interval";
-import { TaskSheet, checklistProgress, dueDay, dueState, localToday } from "./TaskSheet";
+import { TaskSheet, checklistProgress, dueState, localToday } from "./TaskSheet";
 import { useProjects } from "./context";
 import { DesignFiles } from "./DesignFiles";
 import { PatternNeedsPanel, patternNeedsKey } from "./PatternNeeds";
 import { useFieldPresentation } from "./useFieldPresentation";
 import type { InvPart, Priority, ProjectStatus, ProjectsApi, Task, TaskStatus } from "./api";
 import { PART_PICKER_KEY, PartPicker } from "./PartPicker";
+import { dayLabel } from "@cobblr/platform-contract/day";
 
 const PROJECT_STATUSES: ProjectStatus[] = ["planning", "active", "blocked", "done", "abandoned"];
 const PRIORITIES: Priority[] = ["low", "med", "high", "urgent"];
@@ -550,7 +551,7 @@ function TaskRow({
           className={"text-[10px] font-mono uppercase px-1.5 py-0.5 rounded " + (due === "late" ? "text-ember-600 bg-ember-50 dark:text-ember-300 dark:bg-ember-900/30" : due === "today" ? "text-accent" : "text-faint dark:text-slate-500")}
         >
           {due === "late" ? "late · " : due === "today" ? "today · " : ""}
-          {new Date(`${dueDay(task.due_date)}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+          {dayLabel(task.due_date, { month: "short", day: "numeric" })}
         </span>
       )}
       {task.repeat && (

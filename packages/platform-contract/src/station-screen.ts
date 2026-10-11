@@ -236,6 +236,23 @@ export type StationLookup =
   | { found: "outside"; title: string }
   | { found: "none" };
 
+/** The record as it stands after a station's own write, so the card shows
+ *  what the press did ("Used up" → none left), never what it showed before
+ *  (#5803). Null when the write took the record away. */
+export interface StationRecordNow {
+  record: StationRecord;
+  countable: boolean;
+}
+
+export interface StationActionRun {
+  request_id: string;
+  ok: boolean;
+  summary?: string | null;
+  undoable: boolean;
+  replayed?: boolean;
+  now: StationRecordNow | null;
+}
+
 export interface StationMove {
   request_id: string;
   op: StationStockOp;
@@ -243,4 +260,15 @@ export interface StationMove {
   qty: number | null;
   /** The door's own sentence when it clamped or refused. */
   note: string | null;
+}
+
+/** Whether a station's card offers a record's own action (#5710): never one
+ *  that IS a stock move the card already shows ("Use one" beside "Used one",
+ *  "Restock one" beside "+1"), and never an editor (a kiosk is pressed, not
+ *  typed into). A record with no count shows no stock buttons, so its stock
+ *  actions are the only way to use it and stay. */
+export function stationOffersAction(action: { stock_move?: string | null; editor?: boolean }, record: { countable: boolean }): boolean {
+  if (action.editor) return false;
+  if (action.stock_move && record.countable) return false;
+  return true;
 }

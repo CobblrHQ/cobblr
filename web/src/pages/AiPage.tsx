@@ -51,6 +51,7 @@ import { keyRefusedBy, refusalDialog, verificationToast } from "../lib/connectio
 import { useAiStatus } from "../components/AiStatusNotice";
 import { WhoAnswersSection } from "../components/WhoAnswersSection";
 import { modelWords } from "../lib/ai-chain";
+import { promptCacheWords } from "../lib/ai-prompt-cache";
 import { ModelChoiceOptions } from "../components/ModelChoiceOptions";
 import { PayloadView, usageLine } from "../components/PayloadView";
 import { FEED_SCROLL, FEED_SCROLL_INNER } from "../lib/feed";
@@ -245,6 +246,11 @@ export function AiPage() {
                         <span className="text-ember-500"> · {s.failed} failed</span>
                       )}
                     </div>
+                    {promptCacheWords(s.input_tokens, s.cache_read_tokens, s.cache_write_tokens) && (
+                      <div className="text-faint" data-prompt-cache>
+                        {promptCacheWords(s.input_tokens, s.cache_read_tokens, s.cache_write_tokens)}
+                      </div>
+                    )}
                     <div className="text-faint">
                       {formatStoredMoney(Number(s.total_cost_cents ?? 0), "cents")}
                     </div>
@@ -273,6 +279,9 @@ export function AiPage() {
               <span className="font-medium">{c.capability}</span>
               <span className="text-muted">{c.provider_id}</span>
               <span className="text-muted"><AiCallModel model={c.model} served={c.served_model} /></span>
+              {promptCacheWords(c.input_tokens, c.cache_read_tokens, c.cache_write_tokens) && (
+                <span className="text-faint" data-prompt-cache>{promptCacheWords(c.input_tokens, c.cache_read_tokens, c.cache_write_tokens)}</span>
+              )}
               <span className="text-faint">
                 {c.cost_cents !== null ? formatStoredMoney(c.cost_cents, "cents") : c.ok && !c.cached ? "price unknown" : "—"} ·{" "}
                 {c.duration_ms ?? "—"}ms

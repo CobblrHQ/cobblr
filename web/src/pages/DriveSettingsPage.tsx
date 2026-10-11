@@ -7,7 +7,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check } from "lucide-react";
-import { usePageTitle, useToast } from "@cobblr/platform-web";
+import { StatusRow, usePageTitle, useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, ApiError } from "../lib/api";
 import type { DriveMode } from "../hooks/useBrowserDrive";
@@ -110,40 +110,50 @@ function ConnectFromClaude({ slug }: { slug: string }) {
   return (
     <div className="rounded-lg border border-line dark:border-slate-700 p-3 space-y-2">
       <div className="text-sm font-medium text-content dark:text-mortar-100">Connect from Claude</div>
-      {!token ? (
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => mint.mutate()}
-            disabled={mint.isPending}
-            className="rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white text-xs px-2.5 py-1.5"
-          >
-            {mint.isPending ? "Generating…" : "Generate a Browser-driving token"}
-          </button>
-          <span className="text-xs text-faint">
-            or manage tokens in{" "}
-            <Link to="/configuration/tokens" className="text-accent hover:underline">API tokens</Link>
-          </span>
-        </div>
-      ) : (
-        <>
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-faint">Point the Cobblr MCP server at this workspace:</span>
+      <StatusRow
+        state={token ? "minted" : "none"}
+        className="space-y-2"
+        testId="drive-claude-token"
+        states={{
+          none: (
             <button
               type="button"
-              onClick={() => { void navigator.clipboard?.writeText(snippet); toast.success("Copied"); }}
-              className="text-[10px] text-accent hover:underline"
+              onClick={() => mint.mutate()}
+              disabled={mint.isPending}
+              className="rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white text-xs px-2.5 py-1.5"
             >
-              Copy
+              {mint.isPending ? "Generating…" : "Generate a Browser-driving token"}
             </button>
-          </div>
-          <pre className="text-[11px] leading-relaxed bg-subtle dark:bg-slate-950 border border-line dark:border-slate-700 rounded p-2 overflow-x-auto whitespace-pre text-content dark:text-mortar-200">{snippet}</pre>
-          <p className="text-[11px] text-amber-600 dark:text-amber-400">
-            Token shown once - it can <strong>only</strong> drive your own open tab (scope <code>drive:control</code>),
-            and only at the level you picked above.
+          ),
+          minted: (
+            <>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-faint">Point the Cobblr MCP server at this workspace:</span>
+                <button
+                  type="button"
+                  onClick={() => { void navigator.clipboard?.writeText(snippet); toast.success("Copied"); }}
+                  className="text-[10px] text-accent hover:underline"
+                >
+                  Copy
+                </button>
+              </div>
+              <pre className="text-[11px] leading-relaxed bg-subtle dark:bg-slate-950 border border-line dark:border-slate-700 rounded p-2 overflow-x-auto whitespace-pre text-content dark:text-mortar-200">{snippet}</pre>
+              <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                Token shown once - it can <strong>only</strong> drive your own open tab (scope <code>drive:control</code>),
+                and only at the level you picked above.
+              </p>
+            </>
+          ),
+        }}
+        // Before a token and just after making one, which is when someone
+        // may want to revoke it (#5774).
+        always={
+          <p className="text-xs text-faint">
+            Manage or revoke tokens in{" "}
+            <Link to="/configuration/tokens" className="text-accent hover:underline">API tokens</Link>
           </p>
-        </>
-      )}
+        }
+      />
       <p className="text-xs text-faint">Disconnect anytime from the green indicator on the driven window.</p>
     </div>
   );

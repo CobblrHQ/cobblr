@@ -2,6 +2,7 @@
 // the workspace calendar. Done / cancelled tasks are excluded — the
 // calendar shows what's still ahead of you.
 
+import { dayStoredAt } from "@cobblr/platform-contract/day";
 import { Kysely, sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { CalendarEvent } from "@cobblr/platform-contract";
@@ -34,7 +35,7 @@ export function registerProjectsCalendarSource(): void {
       return rows.map<CalendarEvent>((r) => ({
         id: `task:${r.id}`,
         title: r.title,
-        date: new Date(r.due_date).toISOString().slice(0, 10),
+        date: dayStoredAt(r.due_date, "UTC")!,
         allDay: true,
         source: "task",
         category: "task",

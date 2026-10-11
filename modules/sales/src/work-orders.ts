@@ -40,20 +40,26 @@ export async function workOrdersFor(orgId: string, orderId: string): Promise<Wor
 
 export type MakeResult =
   | { ok: true; plannedId: string; buildName: string; reused: boolean }
-  | { ok: false; code: "no_build" | "unavailable" | "refused"; message: string };
+  | { ok: false; code: "no_build" | "unavailable" | "refused"; message: string }
+  /** Builds is here and this workspace has it off: the platform hands the
+   *  person the switch, or the ask, from `module` (#5865). */
+  | { ok: false; code: "module_not_enabled"; module: string; message: string };
 
 /** Plan a work order for `qty` of a part, made for this order. */
 export async function makeForOrder(orgId: string, userId: string | null, orderId: string, partId: string, qty: number): Promise<MakeResult> {
-  let r: { ok?: boolean; code?: string; error?: string; plannedId?: string; buildName?: string; reused?: boolean } | null;
+  let r: { ok?: boolean; code?: string; module?: string; error?: string; plannedId?: string; buildName?: string; reused?: boolean } | null;
   try {
     r = (await platform().actions.invoke("builds:plan-for", {
       ...ctxFor(orgId, userId),
       args: { part_id: partId, qty, source_kind: "sales:order", source_id: orderId },
     })) as typeof r;
   } catch {
-    return { ok: false, code: "unavailable", message: "Making things needs the Builds module. Turn it on under Configuration → Modules." };
+    // Only an action this server does not have throws here; the door answers
+    // a Builds that is merely off (below), so there is no switch to point at.
+    return { ok: false, code: "unavailable", message: "Making things needs Builds, which this server does not have." };
   }
   if (r?.ok && r.plannedId) return { ok: true, plannedId: r.plannedId, buildName: r.buildName ?? "", reused: !!r.reused };
+  if (r?.code === "module_not_enabled" && typeof r.module === "string") return { ok: false, code: "module_not_enabled", module: r.module, message: r.error ?? "Builds is not turned on in this workspace." };
   return { ok: false, code: r?.code === "no_build" ? "no_build" : "refused", message: r?.error ?? "That could not be put in to be made." };
 }
 

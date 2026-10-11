@@ -1,12 +1,13 @@
 import { isDeepStrictEqual } from "node:util";
 import { sql, type Kysely, type Generated } from "kysely";
 import { z } from "zod";
-import { assertNoWirelessCredentialFields, validateProductionPlan, productionPlanHash, judgeProductionObservation, ProductionObservationSchema, type ProductionPlan, type ProductionTestResult } from "@cobblr/platform-contract/production-test";
+import { assertNoWirelessCredentialFields, validateProductionPlan, productionPlanHash, judgeProductionObservation, ProductionObservationSchema, productionOutputs, stepChangesHardware, planPins, jigPinProblem, type ProductionPlan, type ProductionTestResult } from "@cobblr/platform-contract/production-test";
+import type { JigPin } from "@cobblr/platform-contract/production-steps";
 import type { DigifabDB } from "./db.js";
 export interface TestPlanHead { id: Generated<string>; latest_version: Generated<number>; created_at: Generated<Date> }
 export interface TestPlanVersion { plan_id: string; version: number; name: string; plan: ProductionPlan; plan_hash: string; created_at: Generated<Date> }
 export interface TestUnit { unit_kind: string; unit_id: string; product_kind: string; product_id: string; serial: string; details: Generated<Record<string, unknown>>; created_at: Generated<Date> }
-export interface TestJig { asset_id: string; name: string; plans: Generated<unknown>; pin_map: Generated<string>; cycle_count: Generated<number>; maintenance_every: Generated<number>; created_at: Generated<Date> }
+export interface TestJig { asset_id: string; name: string; plans: Generated<unknown>; pin_map: Generated<string>; pins: Generated<JigPin[]>; cycle_count: Generated<number>; maintenance_every: Generated<number>; created_at: Generated<Date> }
 export interface TestRun { id: Generated<string>; unit_kind: string; unit_id: string; plan_id: string; plan_version: number; plan: ProductionPlan; plan_hash: string; attempt: number; operator_id: string; station: string; jig_id: string | null; bridge_connection_id: Generated<string | null>; jig_cycle: Generated<number | null>; unit_snapshot: Generated<Record<string, unknown>>; metadata: Generated<Record<string, unknown>>; result: Generated<ProductionTestResult | null>; prepared_at: Generated<Date>; finished_at: Generated<Date | null> }
 export interface TestNumbering { product_kind: string; product_id: string; next_number: Generated<number>; pattern: Generated<string>; customer_code: Generated<string>; product_code: Generated<string> }
 export interface TestDelivery { run_id: string; staged: Generated<boolean>; acknowledged: Generated<boolean>; projected: Generated<boolean>; last_error: Generated<string | null>; updated_at: Generated<Date> }
@@ -34,14 +35,19 @@ export async function prepareProductionAttempt(db: Kysely<DigifabDB>, raw: z.inf
   if (latest && !latest.finished_at) throw new Error("Finish or abort the pending attempt before retesting this unit.");
   const disposition = latest && await trx.selectFrom("digifab_test_dispositions").selectAll().where("run_id", "=", latest.id).orderBy("created_at", "desc").executeTakeFirst();
   if (disposition?.status === "scrapped") throw new Error("This unit is scrapped. Keep its test history.");
-  let jig_cycle: number | null = null;
+  let jig_cycle: number | null = null, metadata: Record<string, unknown> = {};
+  if (planPins(saved.plan.steps).length && !input.jig_id) throw new Error("Scan the jig whose fixture this plan drives.");
   if (input.jig_id) {
    const jig = await trx.selectFrom("digifab_test_jigs").selectAll().where("asset_id", "=", input.jig_id).forUpdate().executeTakeFirstOrThrow();
    if (!Array.isArray(jig.plans) || !jig.plans.includes(input.plan_id)) throw new Error("This jig is not approved for this plan.");
+   const problem = jigPinProblem(jig.pins, saved.plan.steps);
+   if (problem) throw new Error(problem);
+   // The run keeps the wiring it used, so a later edit to the jig never rewrites what this unit was tested with.
+   if (planPins(saved.plan.steps).length) metadata = { jig_pins: jig.pins };
    jig_cycle = jig.cycle_count + 1;
    await trx.updateTable("digifab_test_jigs").set({ cycle_count: jig_cycle }).where("asset_id", "=", input.jig_id).execute();
   }
-  const row = await trx.insertInto("digifab_test_runs").values({ unit_kind: input.unit.kind, unit_id: input.unit.id, plan_id: input.plan_id, plan_version: input.plan_version, plan: saved.plan, plan_hash: saved.plan_hash, operator_id: input.operator_id, station: input.station, jig_id: input.jig_id, bridge_connection_id: input.bridge_connection_id ?? null, unit_snapshot: input.unit_snapshot ?? {}, jig_cycle, attempt: (latest?.attempt ?? 0) + 1 }).returningAll().executeTakeFirstOrThrow();
+  const row = await trx.insertInto("digifab_test_runs").values({ unit_kind: input.unit.kind, unit_id: input.unit.id, plan_id: input.plan_id, plan_version: input.plan_version, plan: saved.plan, plan_hash: saved.plan_hash, operator_id: input.operator_id, station: input.station, jig_id: input.jig_id, bridge_connection_id: input.bridge_connection_id ?? null, unit_snapshot: input.unit_snapshot ?? {}, metadata, jig_cycle, attempt: (latest?.attempt ?? 0) + 1 }).returningAll().executeTakeFirstOrThrow();
   await trx.insertInto("digifab_test_delivery").values({ run_id: row.id }).execute();
   return { ...row, unit: input.unit };
  });
@@ -51,19 +57,25 @@ export function verifyProductionResult(plan: ProductionPlan, result: ProductionT
  assertNoWirelessCredentialFields(result);
  if (!isDeepStrictEqual(validateProductionPlan(result.plan), plan) || productionPlanHash(result.plan) !== result.plan_hash) throw new Error("Use this attempt's exact plan and limits.");
  if (!Array.isArray(result.steps) || result.steps.length !== plan.steps.length) throw new Error("Keep a result for every step, skipped steps included.");
- if (!Array.isArray(result.outputs_off) || result.outputs_off.length !== plan.controlled_instruments.length || new Set(result.outputs_off.map(o => o.instrument)).size !== result.outputs_off.length || result.outputs_off.some(o => !plan.controlled_instruments.includes(o.instrument))) throw new Error("Keep output-off confirmation for every controlled instrument.");
- let failed = false, stopped = false;
+ const outputs = productionOutputs(plan);
+ if (!Array.isArray(result.outputs_off) || result.outputs_off.length !== outputs.length || new Set(result.outputs_off.map(o => o.instrument)).size !== result.outputs_off.length || result.outputs_off.some(o => !outputs.includes(o.instrument))) throw new Error("Keep output-off confirmation for every controlled instrument and fixture.");
+ let failed = false, stopped = false, seated = !plan.seated_step, first = true;
  for (const [index, step] of plan.steps.entries()) {
   const recorded = result.steps[index]!;
   if (recorded.id !== step.id || recorded.kind !== step.kind || recorded.name !== step.name || !isDeepStrictEqual(recorded.limits, step.limits)) throw new Error("Keep this plan's ordered steps and limits.");
   if (!["pass", "fail", "skip"].includes(recorded.result)) throw new Error("Choose pass, fail or skip for every step.");
   z.string().datetime().parse(recorded.started_at); z.string().datetime().parse(recorded.finished_at);
-  if (recorded.result === "skip") { if (!stopped && !["aborted", "error"].includes(result.status)) throw new Error("An untested unit cannot pass."); continue; }
+  if (recorded.result === "skip") { if (!stopped && seated && !["aborted", "error"].includes(result.status)) throw new Error("An untested unit cannot pass."); continue; }
   if (stopped) throw new Error("A stopped plan cannot run a later step.");
+  if (!seated && stepChangesHardware(step)) throw new Error("A board that was not seated cannot be driven.");
+  const frames = (recorded.attachments ?? []).filter(a => a.role === "camera").length;
+  if (plan.camera && recorded.result === "pass" && frames < (first ? 2 : 1)) throw new Error("Keep the bench camera's frames for every passed step.");
+  first = false;
   const { id: _id, name: _name, kind: _kind, limits: _limits, result: _result, reason: _reason, started_at: _start, finished_at: _end, ...value } = recorded;
   const observation = ProductionObservationSchema.parse(value);
   if (recorded.result === "pass" && judgeProductionObservation(step, observation, unit).result !== "pass") throw new Error("The measurement does not pass its saved limits.");
   if (step.kind === "program" && recorded.result === "pass" && observation.firmware_hash !== step.firmware.sha256) throw new Error("The programmed firmware hash does not match this plan.");
+  if (step.id === plan.seated_step) seated = recorded.result === "pass";
   if (recorded.result === "fail") { failed = true; stopped = (step.on_fail ?? plan.on_fail) === "stop"; }
  }
  if (!result.outputs_off.every(o => o.confirmed === true) && result.status !== "error") throw new Error("Unconfirmed outputs cannot produce a passed unit.");

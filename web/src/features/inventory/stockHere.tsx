@@ -12,17 +12,17 @@
 // Renders nothing for a place that holds no stock: the page's "what's here"
 // already says so.
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { AlertTriangle } from "lucide-react";
 import { expiryPhrase, expiryState } from "@cobblr/platform-contract/expiry-grace";
 import type { Day } from "@cobblr/platform-contract/day";
-import { api, type StockPlaceRow } from "../../lib/api";
+import { api, getToken, type StockPlaceRow } from "../../lib/api";
 import { StockStepper } from "@cobblr/platform-web";
 import { useKindLabels } from "../../lib/useKindLabels";
 import type { EntityDetailPanelCtx } from "../../panels/types";
-import { WhatsStillHereButton } from "./WhatsStillHere";
+import { InventoryApi, WhatsStillHereButton } from "@cobblr/inventory/ui";
 
 import { countOf } from "@cobblr/platform-contract/plural";
 function fmt(n: number): string {
@@ -75,7 +75,17 @@ function Row({ r, today, slug, here }: { r: StockPlaceRow; today: string; slug: 
       {open && (
         <ul className="mt-1 space-y-0.5 pl-3 text-[11px] font-mono text-muted dark:text-slate-400">
           {r.lots.map((l, i) => (
-            <li key={i}>{[fmt(l.qty), l.lot ? `lot ${l.lot}` : null, offWords(l.expires_on, today) ?? "no date"].filter(Boolean).join(" · ")}</li>
+            // Among numbered lots one without says "batch unknown"; among
+            // lots none of which is dated (a spool's batches), none says "no date".
+            <li key={i}>
+              {[
+                fmt(l.qty),
+                l.lot ? `lot ${l.lot}` : r.lots.some((x) => x.lot) ? "batch unknown" : null,
+                offWords(l.expires_on, today) ?? (r.lots.some((x) => x.expires_on) || !r.lots.some((x) => x.lot) ? "no date" : null),
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </li>
           ))}
         </ul>
       )}
@@ -85,6 +95,7 @@ function Row({ r, today, slug, here }: { r: StockPlaceRow; today: string; slug: 
 
 export function StockHerePanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
   const labels = useKindLabels(ctx.slug);
+  const inventory = useMemo(() => new InventoryApi(ctx.slug, { getToken }), [ctx.slug]);
   const q = useQuery({
     queryKey: ["stock-at", ctx.slug, ctx.entityId],
     queryFn: () => api.stockAt(ctx.slug, ctx.entityId),
@@ -110,7 +121,7 @@ export function StockHerePanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
           {expiring ? ` · ${expiring} going off within 30 days` : ""}
         </span>
         <span className="ml-auto">
-          <WhatsStillHereButton slug={ctx.slug} placeId={ctx.entityId} placeName={ctx.entityTitle} />
+          <WhatsStillHereButton api={inventory} slug={ctx.slug} scope={{ place_id: ctx.entityId }} label={ctx.entityTitle} />
         </span>
       </div>
       {[...byCollection.entries()].map(([kind, rows]) => (

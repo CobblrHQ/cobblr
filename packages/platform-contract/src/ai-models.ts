@@ -100,15 +100,15 @@ export function isFloatingModel(model: string): boolean {
  *  owner 2026-10-10: "Identifying scans/ photos in the moment needs to be
  *  quick"). The fuller tier of each family: Claude's Sonnet and Opus,
  *  Gemini's Pro and full Flash (Lite is the quick one), OpenAI's models
- *  without mini or nano, and a local model of 30 billion parameters or more.
+ *  outside its light tiers (mini, nano, Luna), and a local model of 30 billion parameters or more.
  *  The picker lists these after the quick ones, with a note; it never
  *  refuses one. */
 export function slowForQuickLook(model: string): boolean {
   const m = model.trim().toLowerCase();
-  if (/\b(haiku|lite|mini|nano|flash-8b)\b/.test(m)) return false;
+  if (/\b(haiku|lite|mini|nano|luna|flash-8b)\b/.test(m)) return false;
   if (/\b(sonnet|opus)\b/.test(m)) return true;
   if (/gemini/.test(m) && /\b(pro|flash)\b/.test(m)) return true;
-  if (/^(gpt-[45]|o[134])\b/.test(m)) return true;
+  if (/^(gpt-(?!oss)|o[134]\b)/.test(m)) return true;
   const size = m.match(/(\d+(?:\.\d+)?)b\b/);
   return !!size && Number(size[1]) >= 30;
 }

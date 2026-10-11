@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "digifab",
-  version: "0.36.0",
+  version: "0.37.1",
   displayName: "Digital Fabrication",
   description:
     "Send a design to the software that runs your machine (FDM Monster, OctoPrint and others) and follow the job until it is done.",
@@ -257,7 +257,7 @@ export default defineModule({
         // UI-SCREEN: /digifab/production
         id: "digifab:production-test", label: "Manage production tests", scope: "workspace", group: "more", userInvokable: false, effect: "writes", undoable: false,
         runBy: "member",
-        description: "Save a new immutable test-plan version; register a native jig asset and maintenance interval; mint a quantity-one inventory unit without changing its model quantity; prepare an exact unit/plan_version/jig_id/station/bridge_connection_id attempt; sync offline evidence; record reworked or scrapped dispositions; export unit or filtered product/customer/lot PDF or JSON certificates through Files. Admin required for save_plan, save_jig and mint_unit. Other operations require a member. fields is the operation's JSON object.",
+        description: "Save a new immutable test-plan version; register a native jig asset with its fixture pins (pins: name, gpio, direction input or output, pull) and maintenance interval; mint a quantity-one inventory unit without changing its model quantity; prepare an exact unit/plan_version/jig_id/station/bridge_connection_id attempt; sync offline evidence; record reworked or scrapped dispositions; export unit or filtered product/customer/lot PDF or JSON certificates through Files. Admin required for save_plan, save_jig and mint_unit. Other operations require a member. fields is the operation's JSON object.",
         invokeHandler: "digifab.production-test", argsSchema: { operation: { label: "Operation", type: "text", required: true, choices: ["save_plan", "save_jig", "mint_unit", "prepare", "sync", "disposition", "export"].map(value => ({ value, label: value })) }, fields: { label: "Production fields", type: "json", required: true } },
       },
       {

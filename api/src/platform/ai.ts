@@ -33,6 +33,7 @@ import { meta } from "../db/meta.js";
 import * as integrationsImpl from "./integrations.js";
 import { resolvePersonalProvider, type ResolvedPersonalProvider } from "./user-credentials.js";
 import { myAiConnection, myAiJobSteps, type MyAiJobStep } from "./ai-job-defaults.js";
+import { wrongShape } from "./ai-output-shape.js";
 import { workspaceAiJobSteps, type WorkspaceAiJobStep } from "./workspace-ai-job-steps.js";
 import { personalDocumentsReader, type PersonalDocumentsReader } from "./personal-documents-reader-store.js";
 import { signMcpReadGrant } from "../auth/jwt.js";
@@ -171,6 +172,8 @@ interface InvokeResult {
   cached: boolean;
   input_tokens?: number;
   output_tokens?: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
   cost_cents?: number;
   duration_ms: number;
   served_model?: string | null;
@@ -1338,6 +1341,10 @@ const invokeRaw = async (
       // from.
       ...(req.onDelta ? { onDelta: req.onDelta } : {}),
     });
+    // An answer that ignores the call's output schema is a failure another
+    // provider may answer, never a success its caller then drops (#5790).
+    const miss = wrongShape(req.input, payload.result);
+    if (miss) throw providerError(row.provider_id, "wrong_shape", `${nameOf(row)} answered in another shape: ${miss}`);
     ok = true;
   } catch (err) {
     errMsg = (err as Error).message;
@@ -1365,6 +1372,8 @@ const invokeRaw = async (
     error: errMsg,
     input_tokens: payload.input_tokens ?? null,
     output_tokens: payload.output_tokens ?? null,
+    cache_read_tokens: payload.cache_read_tokens ?? null,
+    cache_write_tokens: payload.cache_write_tokens ?? null,
   });
   if (ok) {
     // A real answer of this job is what proves the model free again.
@@ -1465,6 +1474,8 @@ const invokeRaw = async (
     cached: false,
     input_tokens: payload.input_tokens,
     output_tokens: payload.output_tokens,
+    ...(payload.cache_read_tokens ? { cache_read_tokens: payload.cache_read_tokens } : {}),
+    ...(payload.cache_write_tokens ? { cache_write_tokens: payload.cache_write_tokens } : {}),
     cost_cents: payload.cost_cents,
     duration_ms,
     served_model: servedModelOf(payload.served_model),
@@ -1507,6 +1518,8 @@ async function writeAuditRow(
     error: string | null;
     input_tokens: number | null;
     output_tokens: number | null;
+    cache_read_tokens?: number | null;
+    cache_write_tokens?: number | null;
   },
 ): Promise<void> {
   try {

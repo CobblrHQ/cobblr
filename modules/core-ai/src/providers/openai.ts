@@ -102,6 +102,11 @@ export function register(): void {
           ) {
             body.response_format = { type: "json_object" };
           }
+          // The caller's own shape (#5790) holds the model to it exactly.
+          const outputSchema = (ctx.input as Record<string, unknown>).output_schema;
+          if (outputSchema && typeof outputSchema === "object" && !Array.isArray(outputSchema)) {
+            body.response_format = { type: "json_schema", json_schema: { name: "cobblr_output", schema: outputSchema } };
+          }
           // A model that refuses an optional knob (temperature on a reasoning
           // model) is sent again without it, and remembered (refused-params.ts).
           const res = await sendDroppingRefused("openai", ctx.model, body, (b) =>
@@ -187,9 +192,11 @@ export function buildMessages(
       const content: Array<Record<string, unknown>> = [
         {
           type: "text",
-          text:
-            `${prompt}\n\nAllowed labels: ${labels.join(", ")}\n` +
-            `Return JSON shaped as {"labels": [{"label": string, "confidence": number}]} ordered desc.`,
+          // A caller's own shape replaces the labels form (#5790).
+          text: input.output_schema
+            ? prompt
+            : `${prompt}\n\nAllowed labels: ${labels.join(", ")}\n` +
+              `Return JSON shaped as {"labels": [{"label": string, "confidence": number}]} ordered desc.`,
         },
       ];
       if (imageUrl) content.push({ type: "image_url", image_url: { url: imageUrl } });

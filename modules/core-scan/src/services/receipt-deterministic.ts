@@ -10,7 +10,7 @@
 //
 // Both go through one rows→items mapper so CSV and PDF behave identically.
 
-import { buildReceipt, isoDate, num, str, type ParsedReceipt } from "./receipt-shared.js";
+import { buildReceipt, forwardedSender, isMailTitle, isoDate, num, str, type ParsedReceipt } from "./receipt-shared.js";
 
 const SYMBOL_CURRENCY: Record<string, string> = { "$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY" };
 
@@ -19,7 +19,10 @@ const SYMBOL_CURRENCY: Record<string, string> = { "$": "USD", "€": "EUR", "£"
  *  header meta). Only fills fields the parse left null. */
 export function enrichReceiptMeta(receipt: ParsedReceipt, text: string): ParsedReceipt {
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  const firstLine = lines[0] && lines[0].length <= 60 ? lines[0] : null;
+  // An email's title ("Order #1001 confirmed") heads its text and is never
+  // the shop; the line under it is where the shop prints its name.
+  const head = lines.slice(0, 4).find((l) => !isMailTitle(l));
+  const firstLine = head && head.length <= 60 ? head : null;
   const dateMatch = text.match(/\b(\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4})\b/);
   // On its own line, and a real amount: a CSV's header says "Total" and the
   // row under it began "3,0.25", which this read as a total of 30.25 on a
@@ -33,7 +36,7 @@ export function enrichReceiptMeta(receipt: ParsedReceipt, text: string): ParsedR
     // A merchant is taken only from a line that names one. A CSV's first line
     // is its column header, and "description,qty,unit price,amount" became
     // the merchant of a hundred lines (#3706).
-    vendor: receipt.vendor ?? (firstLine && merchantShaped(firstLine) ? firstLine : null),
+    vendor: receipt.vendor ?? forwardedSender(text) ?? (firstLine && merchantShaped(firstLine) ? firstLine : null),
     date: receipt.date ?? (dateMatch ? isoDate(dateMatch[1]) : null),
     total: receipt.total ?? (totalMatch ? num(totalMatch[1]) : null),
     currency: receipt.currency ?? cur,
@@ -67,6 +70,7 @@ function cellsOf(line: string): string[] {
 /** Could this line of a receipt's text be the merchant's name? Not a
  *  column header, not a row of a table, and it has words in it. */
 export function merchantShaped(line: string): boolean {
+  if (isMailTitle(line)) return false;
   const cells = cellsOf(line);
   if (isHeaderRow(cells)) return false;
   if (/[,;\t|]/.test(line) && cells.length >= 3) return false;

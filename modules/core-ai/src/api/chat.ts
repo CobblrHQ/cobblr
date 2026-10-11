@@ -22,7 +22,7 @@ import { misreportedWrites } from "./reported-truthfully.js";
 import { chatModelMenu, type ReportedModels, type RoutedConnection } from "./chat-model-menu.js";
 import { describedInsteadOfActing } from "./act-dont-describe.js";
 import { escortCoveredByAction, resolveActionId, ESCORT_COVERAGE } from "./act-dont-escort.js";
-import { buildSystemPrompt, situationalSuffix, type PromptWorkspace, type PromptOptions } from "./system-prompt.js";
+import { buildSystemPromptBlocks, situationalSuffix, type PromptWorkspace, type PromptOptions, type SystemPrompt } from "./system-prompt.js";
 import { GROUNDING_RULES, PLAIN_ANSWER_RULES, TOOL_USE_RULES } from "./prompt-rules.js";
 import { z } from "zod";
 import { CHAT_HISTORY_MESSAGES, platform, type AiChainStep, countOf } from "@cobblr/platform-contract";
@@ -779,7 +779,7 @@ function failureDetailOf(err: unknown): ProviderFailureDetail | undefined {
 async function runTurn(
   req: Parameters<typeof tenantDb>[0],
   parsed: { data: z.infer<typeof ChatBody> },
-  system: string,
+  system: SystemPrompt | string,
   c: Ctx,
   orgId: string,
   onEvent?: AgentLoopDeps["onEvent"],
@@ -798,7 +798,7 @@ async function runTurn(
 async function answerTurn(
   req: Parameters<typeof tenantDb>[0],
   parsed: { data: z.infer<typeof ChatBody> },
-  system: string,
+  system: SystemPrompt | string,
   c: Ctx,
   orgId: string,
   reads: ChatMention[],
@@ -855,6 +855,7 @@ async function answerTurn(
   let kindsForWrites: Promise<KindRec[]> | null = null;
   const kindsOnce = () => (kindsForWrites ??= fetchKinds(wsApi).catch(() => [] as KindRec[]));
   const askModel = async (capability: "chat" | "plan-changes", turns: ChatTurn[]) => {
+    // FREE-TEXT: a chat turn: the answer is Cobb's own words or a tool call
     const r = await platform().ai.invoke({
       orgId,
       capability,
@@ -872,7 +873,14 @@ async function answerTurn(
       // system rides as a first-class field (Anthropic drops a
       // "system"-role message); tools are the neutral defs every adapter
       // translates to its native dialect (tool-wire.ts).
-      input: { system, messages: turns, ...(toolDefs.length ? { tools: toolDefs } : {}) },
+      // `system_blocks` (fixed rules, this workspace, this moment) lets a
+      // provider that caches by breakpoint keep the shared part warm (#5319).
+      input: {
+        system: typeof system === "string" ? system : system.text,
+        ...(typeof system === "string" ? {} : { system_blocks: system.blocks }),
+        messages: turns,
+        ...(toolDefs.length ? { tools: toolDefs } : {}),
+      },
       source: { kind: "core-ai:chat", id: orgId },
       userId: sessionUserId(req),
     });
@@ -1365,9 +1373,9 @@ chatRouter.post(
       ...(parsed.data.selection ? { selection: parsed.data.selection } : {}),
       ...(suggestion ? { suggestion } : {}),
     };
-    let system: string;
+    let system: SystemPrompt | string;
     try {
-      system = await buildSystemPrompt(promptWorkspace(c), promptPrefs.read_tools ? "brief" : "full", situational);
+      system = await buildSystemPromptBlocks(promptWorkspace(c), promptPrefs.read_tools ? "brief" : "full", situational);
     } catch {
       // The degraded prompt still says where the user is: situationalSuffix is
       // the one definition of those sentences.

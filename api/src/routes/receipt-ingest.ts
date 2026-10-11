@@ -31,7 +31,7 @@ import { bestReceiptBody, isReplyToCobblr, receiptReplyHeaders } from "../platfo
 import { ownAddressNameFor } from "../platform/own-address.js";
 import { sendAuthEmail } from "../platform/hosted-seams.js";
 import { namedAddress } from "@cobblr/platform-contract/address-name";
-import { emailLineImages } from "@cobblr/platform-contract/email-line-images";
+import { emailLineImages, emailPictureParts, textLineImages } from "@cobblr/platform-contract/email-line-images";
 import {
   extractReceiptToken,
   mintReceiptAddress,
@@ -57,6 +57,10 @@ const Attachment = z.object({
   filename: z.string().max(255).optional(),
   content_type: z.string().max(120).optional(),
   content_base64: z.string().min(1).max(40_000_000), // ~30 MB decoded ceiling
+  /** The part's Content-ID and disposition: a picture the body shows is a
+   *  line's photo, never a receipt to read (#5719). */
+  content_id: z.string().max(500).optional(),
+  disposition: z.string().max(40).optional(),
 });
 const IngestEmail = z.object({
   /** The receipts+<token> local-part, or the raw To header to parse it from. */
@@ -86,7 +90,7 @@ export interface ReceiptEmailInput {
   subject?: string;
   /** Original Message-ID — reserved for threading the reply (Phase 2). */
   message_id?: string;
-  attachments: Array<{ filename?: string; content_type?: string; content_base64: string }>;
+  attachments: Array<{ filename?: string; content_type?: string; content_base64: string; content_id?: string; disposition?: string }>;
   /** Who this is for, when the caller already knows: a message read from the
    *  person's own connected mailbox names its owner and the workspace it is
    *  routed to, and carries no receipt address to resolve. The membership
@@ -285,10 +289,33 @@ export async function ingestReceiptEmail(
   const pageHasLines = !!pageSummary && orderPageLines(pageSummary).length > 0;
   const withPage = pageHasLines ? { order_page: pageSummary } : {};
 
+  // 0. The pictures the email SHOWS (the store's product photos, inline or
+  //    named by "cid:"), stored as the lines' photos and never read as
+  //    receipts (#5719): a forwarded order's photos were each sent to the
+  //    receipt reader, failed, and no line got its own picture.
+  const pictures = emailPictureParts(attachments, { html, text });
+  const inline: Record<string, string> = {};
+  const pictureRefs: string[] = [];
+  for (const p of pictures) {
+    const a = attachments[p.index]!;
+    try {
+      const written = await platform().files.write(orgId, new Uint8Array(Buffer.from(a.content_base64, "base64")), {
+        filename: a.filename,
+        mimeType: a.content_type,
+      });
+      if (!written) continue;
+      pictureRefs.push(`file:${written.fileId}`);
+      if (p.cid) inline[p.cid] = `file:${written.fileId}`;
+    } catch {
+      /* a picture that cannot be stored costs its line the photo, never the read */
+    }
+  }
+  const pictureAt = new Set(pictures.map((p) => p.index));
+
   // 1. File attachments → core-files → core-scan's receipt parser (one row per
   //    line item). Written via the server-side seam (system capture, not a user
   //    upload).
-  for (const a of attachments.filter(isIngestable)) {
+  for (const a of attachments.filter((x, i) => !pictureAt.has(i) && isIngestable(x))) {
     try {
       const bytes = Buffer.from(a.content_base64, "base64");
       const written = await platform().files.write(orgId, new Uint8Array(bytes), {
@@ -406,7 +433,8 @@ export async function ingestReceiptEmail(
       if (written) {
         // The photo printed beside each line, which the text has lost: each
         // line's own picture, ahead of any web search (#5350).
-        const lineImages = emailLineImages(html);
+        const fromHtml = emailLineImages(html, inline);
+        const lineImages = fromHtml.length ? fromHtml : textLineImages(text, pictureRefs);
         const r = await post(`/modules/core-scan/scan/receipt`, {
           file_id: written.fileId,
           origin: "email",

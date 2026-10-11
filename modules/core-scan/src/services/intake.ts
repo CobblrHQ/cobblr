@@ -55,7 +55,10 @@ export type IntakePass =
   /** The matchmaker: routing, fields, the location suggestion. */
   | "match"
   /** A picture searched by the row's name (and its category, once matched). */
-  | "picture-search";
+  | "picture-search"
+  /** An order line read on its store's own page (pack-parts.ts, #5719): its
+   *  variant's photo, and a mixed pack split into one row per colour. */
+  | "store-product";
 
 /** The plan, per shape, in the order the passes run. Declarative, so the
  *  contract test can read it and a door's comment can point at a line. */
@@ -65,7 +68,7 @@ export const INTAKE_PLAN: Readonly<Record<RowShape, readonly IntakePass[]>> = {
   photo: ["identify-photo", "match"],
   identifier: ["identify-name", "match", "picture-search"],
   phrase: ["match", "picture-search"],
-  "receipt-line": ["match", "picture-search"],
+  "receipt-line": ["store-product", "match", "picture-search"],
   "split-child": ["picture-search", "match"],
   import: [],
 };
@@ -288,6 +291,9 @@ function stampShape(meta: unknown, shape: RowShape, addedBy: AddedBy | null): st
 interface PassContext extends IntakeOpts {
   row: IntakeResult["row"];
   shape: RowShape;
+  /** The row is gone from the inbox (a pack split into its parts): the
+   *  passes after this one have nothing to do. */
+  done?: boolean;
 }
 
 /** The passes in order, each awaited before the next, every one detached
@@ -295,6 +301,7 @@ interface PassContext extends IntakeOpts {
  *  a failed picture search must not cost the match. */
 async function runPasses(ctx: PassContext, passes: IntakePass[]): Promise<void> {
   for (const pass of passes) {
+    if (ctx.done) return;
     try {
       await runPass(ctx, pass);
     } catch (err) {
@@ -337,6 +344,22 @@ async function runPass(ctx: PassContext, pass: IntakePass): Promise<void> {
       if (ctx.settle && ctx.shape !== "photo") await r.match({ ...common, token: ctx.token, settle: true });
       else if (ctx.shape === "barcode" || ctx.shape === "url" || ctx.shape === "photo") r.matchWhenEnriched({ ...common, token: ctx.token });
       else await r.match({ ...common, token: ctx.token });
+      return;
+    }
+    case "store-product": {
+      const { storeProductPass } = await import("./pack-parts.js");
+      const outcome = await storeProductPass({
+        db: ctx.db as Kysely<CoreScanDB>,
+        orgId: ctx.orgId,
+        itemId: ctx.row.id,
+        userId: ctx.userId,
+        purchase: ctx.token ? { baseUrl: ctx.baseUrl, slug: ctx.orgSlug, headers: { Authorization: `Bearer ${ctx.token}`, "Content-Type": "application/json" } } : null,
+        // Each part comes in by the same door the line did, and runs the
+        // line's plan: its own match and its own picture.
+        admit: async (values) =>
+          (await intakeRow({ db: ctx.db, orgId: ctx.orgId, orgSlug: ctx.orgSlug, userId: ctx.userId, token: ctx.token, baseUrl: ctx.baseUrl, door: "receipt", values: values as InsertValues })).row as { id: string },
+      });
+      if (outcome === "split") ctx.done = true;
       return;
     }
     case "picture-search": {

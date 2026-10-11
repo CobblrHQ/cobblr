@@ -14,6 +14,7 @@ import { ApiError, api, type MaintenanceEntry } from "../lib/api";
 import { ReminderControls } from "../features/core-maintenance/renewals";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
+import { dayLabel, dayStoredHere } from "@cobblr/platform-contract/day";
 
 type Kind = "scheduled" | "history" | "all";
 
@@ -132,7 +133,6 @@ export function MaintenancePage() {
           <MaintenanceCard
             key={e.id}
             entry={e}
-            slug={activeSlug}
             refresh={() => { invalidate(); }}
             onComplete={() => complete.mutate(e.id)}
             onEdit={() => setEditFor(e)}
@@ -166,14 +166,12 @@ export function MaintenancePage() {
 
 function MaintenanceCard({
   entry,
-  slug,
   refresh,
   onComplete,
   onEdit,
   onDelete,
 }: {
   entry: MaintenanceEntry;
-  slug: string;
   refresh: () => void;
   onComplete: () => void;
   onEdit: () => void;
@@ -209,7 +207,7 @@ function MaintenanceCard({
               </span>
             )}
           </div>
-          {!done && entry.due?.state === "overdue" && <ReminderControls slug={slug} occurrence={entry} refresh={refresh} />}
+          {!done && entry.due?.state === "overdue" && <ReminderControls occurrence={entry} refresh={refresh} />}
           {entry.description && (
             <div className="text-xs text-content dark:text-mortar-200 mt-0.5">
               {entry.description}
@@ -218,12 +216,12 @@ function MaintenanceCard({
           <div className="text-[11px] font-mono text-faint dark:text-slate-500 mt-1 flex flex-wrap gap-x-3">
             {entry.scheduled_at && (
               <span>
-                due {new Date(entry.scheduled_at).toLocaleDateString()}
+                due {dayLabel(dayStoredHere(entry.scheduled_at))}
               </span>
             )}
             {entry.performed_at && (
               <span>
-                done {new Date(entry.performed_at).toLocaleDateString()}
+                done {dayLabel(dayStoredHere(entry.performed_at))}
               </span>
             )}
             {entry.cost_cents != null && (
@@ -308,9 +306,9 @@ function EditEntryModal({
 }) {
   const toast = useToast();
   const [name, setName] = useState(entry.name);
-  const [scheduledAt, setScheduledAt] = useState(
-    isoToLocalInput(entry.scheduled_at),
-  );
+  // When it is due is a day, not a moment (#5759): the day it names here.
+  const scheduledDay = entry.scheduled_at ? dayStoredHere(entry.scheduled_at) ?? "" : "";
+  const [scheduledAt, setScheduledAt] = useState(scheduledDay);
   const [performedAt, setPerformedAt] = useState(
     isoToLocalInput(entry.performed_at),
   );
@@ -321,9 +319,9 @@ function EditEntryModal({
     mutationFn: () => {
       return api.updateMaintenance(slug, entry.id, {
         name: name.trim(),
-        scheduled_at: scheduledAt
-          ? new Date(scheduledAt).toISOString()
-          : null,
+        // Unchanged, the stored instant stays as it was; a day picked here is
+        // sent as the day and kept as that day.
+        ...(scheduledAt === scheduledDay ? {} : { scheduled_at: scheduledAt || null }),
         performed_at: performedAt
           ? new Date(performedAt).toISOString()
           : null,
@@ -368,7 +366,7 @@ function EditEntryModal({
               <label className="block">
                 <div className="text-xs text-muted mb-1">Scheduled</div>
                 <input
-                  type="datetime-local"
+                  type="date"
                   value={scheduledAt}
                   onChange={(e) => setScheduledAt(e.target.value)}
                   className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"

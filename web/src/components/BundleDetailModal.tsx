@@ -38,6 +38,7 @@ import { releasesBetween } from "@cobblr/platform-contract/bundle-update-tier";
 import { BundleUpdateConflicts, resolutionsFor, type ConflictChoice } from "./BundleUpdateConflicts";
 import { doorLeadsSomewhere } from "../lib/discord-connect";
 import { useDiscordStatus } from "../lib/useDiscordStatus";
+import { dayLabel } from "@cobblr/platform-contract/day";
 
 interface InstalledMode {
   mode: "installed";
@@ -85,8 +86,7 @@ type InstallResult = Awaited<ReturnType<typeof api.installBundle>>;
  *  parsed as-is it is UTC midnight, which is the day before everywhere west
  *  of Greenwich. */
 function releaseDay(d: string): string {
-  const day = /^\d{4}-\d{2}-\d{2}$/.test(d) ? new Date(`${d}T00:00:00`) : new Date(d);
-  return Number.isNaN(day.getTime()) ? d : day.toLocaleDateString();
+  return dayLabel(d);
 }
 
 type Props = {

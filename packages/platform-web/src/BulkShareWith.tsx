@@ -10,7 +10,7 @@ import { countOf } from "@cobblr/platform-contract/plural";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { useFlowHost, usePlatformWeb } from "./context";
 import { FooterActionPopover } from "./FooterActionPopover";
-import { useRunAction } from "./run-action";
+import { undoStepsOf, useRunAction } from "./run-action";
 import { useToast } from "./ToastContext";
 
 export function BulkShareWith({ kind, ids, noun = "thing", onDone }: { kind: string; ids: string[]; noun?: string; onDone?: () => void }) {
@@ -60,7 +60,8 @@ export function BulkShareWith({ kind, ids, noun = "thing", onDone }: { kind: str
                 const r = await runAction({ actionId: "platform:share-with", entityKind: kind, entityId: ids[0] ?? "", args: { entity_kind: kind, ids, with: chosen } });
                 const res = r.result as { ok?: boolean; error?: string; summary?: string } | null;
                 if (!res?.ok) throw new Error(res?.error ?? "That did not go through.");
-                toast.success(res.summary ?? "Shared.");
+                // The door said it, with its Undo, when the action gave one.
+                if (!undoStepsOf(r.undo).length) toast.success(res.summary ?? "Shared.");
                 close();
                 onDone?.();
               } catch (e) {

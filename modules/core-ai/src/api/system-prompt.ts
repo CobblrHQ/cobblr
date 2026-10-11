@@ -128,11 +128,32 @@ export function servicesBlock(items: readonly ServiceLine[], cap = 1500): string
   return `\nSERVICES you can start with invoke_service (list_services gives each one's input). Pick the one whose summary fits the request; a Cobblr action or record write is still the way for anything inside the workspace:\n${lines.join("\n")}\n`;
 }
 
+/** The prompt in the three parts a provider's prompt cache can keep apart
+ *  (#5319), static to volatile: the rules every workspace and person share,
+ *  then this workspace, then this person and this moment. `text` is the
+ *  three joined, the prompt every provider is sent; a provider that caches
+ *  by breakpoint (Anthropic) marks the end of the first two. The first part
+ *  must be byte-identical for everyone, or no two people share a cache:
+ *  nothing about the workspace or the person goes in it
+ *  (a-prompt-prefix-is-the-same-for-everyone.test.ts). */
+export interface SystemPrompt {
+  text: string;
+  blocks: readonly [fixed: string, workspace: string, moment: string];
+}
+
 export async function buildSystemPrompt(
   w: PromptWorkspace,
   railMode: RailMode = "full",
   opts: PromptOptions = {},
 ): Promise<string> {
+  return (await buildSystemPromptBlocks(w, railMode, opts)).text;
+}
+
+export async function buildSystemPromptBlocks(
+  w: PromptWorkspace,
+  railMode: RailMode = "full",
+  opts: PromptOptions = {},
+): Promise<SystemPrompt> {
   const jsonShapes = (opts.jsonFallback ?? true) ? JSON_MOVE_SHAPES : "";
   // include=custom_fields → the workspace's user-defined fields ride along, so
   // the hints below cover the WHOLE settable shape, not just native fields.
@@ -231,9 +252,7 @@ export async function buildSystemPrompt(
     ? `You are talking to ${w.userName}.`
     : `You do not know the user's name — greet them without one, and do not guess.`;
 
-  return `You are Cobb, the helpful assistant inside the "${w.orgName}" Cobblr workspace. Be genuinely useful and warm — you are NOT limited to workspace chores.
-
-${whoLine}
+  const fixed = `You are Cobb, the helpful assistant inside a Cobblr workspace. Be genuinely useful and warm — you are NOT limited to workspace chores.
 
 Your name is Cobb. When the user asks who or what you are, introduce yourself as "Cobb, your assistant" — never as a generic "Cobblr workspace assistant" or "AI assistant". Cobb is who you are; Cobblr is the app you live in.
 
@@ -245,9 +264,13 @@ ${GROUNDING_RULES}
 
 ${PLAIN_ANSWER_RULES}
 
-${appSurfacePrompt(enabledModules)}
-
 After a helpful answer, if it's natural, OFFER to save it (e.g. "want me to add this to your list / save it as a knowledge entry?") — but never force it, and never refuse the answer itself.
+
+${TOOL_USE_RULES}`;
+
+  const workspace = `THIS WORKSPACE is called "${w.orgName}".
+
+${appSurfacePrompt(enabledModules)}
 
 ENTITY KINDS in this workspace:
 ${kindLines}
@@ -265,7 +288,8 @@ ACTIONS that run on the WORKSPACE (no record — omit entity_kind/entity_query):
 ${workspaceActionLines.join("\n") || "(none)"}
 ${railMode === "full" ? "" : RAIL_LOOKUP_NOTE}
 ${serviceLines}
-${TOOL_USE_RULES}
+${jsonShapes}`;
 
-${jsonShapes}${situationalSuffix(opts)}`;
+  const moment = `${whoLine}${situationalSuffix(opts)}`;
+  return { text: [fixed, workspace, moment].join("\n\n"), blocks: [fixed, workspace, moment] };
 }

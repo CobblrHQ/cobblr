@@ -6,6 +6,9 @@ export interface InboundAttachment {
   filename?: string;
   content_type?: string;
   content_base64: string;
+  /** Content-ID and disposition: which pictures the body shows (#5719). */
+  content_id?: string;
+  disposition?: string;
 }
 
 export interface InboundPayload {
@@ -32,7 +35,7 @@ export function trimForArchive(attachments: InboundAttachment[]): InboundAttachm
   for (const a of attachments) {
     const size = a.content_base64?.length ?? 0;
     if (size === 0 || total + size > MAX_ARCHIVE_BYTES) {
-      kept.push({ filename: a.filename, content_type: a.content_type, content_base64: "" });
+      kept.push({ filename: a.filename, content_type: a.content_type, content_base64: "", ...(a.content_id ? { content_id: a.content_id } : {}), ...(a.disposition ? { disposition: a.disposition } : {}) });
       continue;
     }
     total += size;

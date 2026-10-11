@@ -32,6 +32,7 @@ termsRouter.get("/:id", asyncHandler(async (req, res) => {
   res.json((await platform().entities.withFieldLabels(orgId, "core-maintenance:term", await presentTerms(orgId, [row])))[0]);
 }));
 // AI-ACTION: core-maintenance:update-term
+// UI-SCREEN: /instances/:name, Edit term saves through core-maintenance:update-term so the correction carries its Undo
 termsRouter.patch("/:id", asyncHandler(async (req, res) => {
   if (!(await requireCapability(req, res, "core-maintenance:update-term"))) return;
   const d = TermBody.safeParse(req.body); if (!d.success) return badBody(res, d.error);

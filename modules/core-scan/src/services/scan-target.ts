@@ -120,6 +120,10 @@ export async function moveQuantity(
     userId: string | null;
     reason: string;
     restock?: boolean;
+    /** Of the units arriving, how many carry which lot number (row-lots.ts):
+     *  the record keeps a lot per number. Only the record's own action can
+     *  keep lots; a bare count route takes the count alone. */
+    lots?: ReadonlyArray<{ lot: string; qty: number }>;
     /** The move sets the count to what is actually there (a recount), so the
      *  ledger files it as a correction, never as use or a purchase. */
     correction?: boolean;
@@ -148,6 +152,7 @@ export async function moveQuantity(
         delta,
         reason: opts.reason,
         ...(opts.restock ? { restock: true } : {}),
+        ...(opts.lots?.length ? { lots: opts.lots } : {}),
         ...(opts.correction ? { correction: true } : {}),
         sourceKind: opts.source.kind,
         sourceId: opts.source.id,
@@ -184,6 +189,10 @@ export async function moveQuantity(
  *  field: the one quantity write a create may carry. Every move of an
  *  existing record's count goes through moveQuantity above; a scan route
  *  spells neither key itself (capability row scan:quantity-through-the-door). */
-export function startingCount(scannable: ScannableInfo, qty: number | null | undefined): Record<string, number> {
+export function startingCount(scannable: ScannableInfo, qty: number | null | undefined, setAside = 0): Record<string, number> {
+  // Units set aside arrive right after the create through moveQuantity, as
+  // the lots their boxes printed (row-lots.ts): the create starts with the
+  // rest, which may be none.
+  if (setAside > 0 && scannable.qtyField && typeof qty === "number" && qty >= setAside) return { [scannable.qtyField]: qty - setAside };
   return scannable.qtyField && typeof qty === "number" && qty > 0 ? { [scannable.qtyField]: qty } : {};
 }

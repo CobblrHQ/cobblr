@@ -7,15 +7,16 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, CalendarDays, Link2, RefreshCw, Copy } from "lucide-react";
+import { ChevronLeft, ChevronRight, CalendarDays, Link2, RefreshCw, Copy, MapPin } from "lucide-react";
 import { api, type CalendarEvent } from "../lib/api";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { usePersistedState } from "../lib/use-persisted-state";
 import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { usePageTitle, useToast } from "@cobblr/platform-web";
+import { AddressView, usePageTitle, useToast } from "@cobblr/platform-web";
 import { WEEKDAYS, MONTHS, isoLocal as iso, buildMonthGrid, shiftMonth } from "../lib/month-grid";
 import { openRecordPath } from "@cobblr/platform-contract/instance-detail";
+import { dayLabel } from "@cobblr/platform-contract/day";
 
 // Coarse colour per source/category.
 const CAT_STYLE: Record<string, string> = {
@@ -136,9 +137,10 @@ export function CalendarPage() {
                     <button
                       key={ev.id}
                       onClick={() => openEvent(ev)}
-                      title={ev.title}
+                      title={ev.location ? `${ev.title}\nWhere: ${ev.location}` : ev.title}
                       className={"block w-full text-left truncate rounded px-1 py-0.5 text-[10px] leading-tight " + catStyle(ev.category)}
                     >
+                      {ev.location && <MapPin size={9} className="mr-0.5 inline-block align-[-1px]" aria-label="Has an address" />}
                       {ev.title}
                     </button>
                   ))}
@@ -152,9 +154,32 @@ export function CalendarPage() {
         </div>
       </div>
 
+      <WhereToBe events={(events.data?.items ?? []).filter((ev) => !hiddenSources.includes(ev.source) && ev.date.slice(0, 7) === `${cursor.y}-${String(cursor.m + 1).padStart(2, "0")}`)} onOpen={openEvent} />
+
       <WarrantyReminders slug={slug} />
       <SubscribeBar slug={slug} />
     </div>
+  );
+}
+
+/** The month's events that happen somewhere: when, what, and where, with
+ *  directions. A day square has no room for an address; this list does. */
+function WhereToBe({ events, onOpen }: { events: CalendarEvent[]; onOpen: (ev: CalendarEvent) => void }) {
+  const placed = events.filter((ev) => ev.location);
+  if (placed.length === 0) return null;
+  return (
+    <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3" data-testid="calendar-where">
+      <h2 className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-2">Where to be this month</h2>
+      <ul className="divide-y divide-line dark:divide-slate-700">
+        {placed.map((ev) => (
+          <li key={ev.id} className="flex flex-col gap-0.5 py-2 sm:flex-row sm:items-baseline sm:gap-3" data-testid="calendar-where-row">
+            <span className="shrink-0 font-mono text-xs text-muted dark:text-slate-400 sm:w-24">{dayLabel(ev.date, { weekday: "short", month: "short", day: "numeric" })}</span>
+            <button type="button" onClick={() => onOpen(ev)} className="min-w-0 truncate text-left text-sm font-medium text-content dark:text-mortar-100 hover:text-accent sm:w-56">{ev.title}</button>
+            <span className="min-w-0 flex-1 text-sm"><span className="text-faint">Where: </span><AddressView value={{ line: ev.location, source: "used", ...ev.geo }} inline /></span>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

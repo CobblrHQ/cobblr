@@ -156,3 +156,27 @@ export async function unreceiveOrderLines(db: Kysely<PurchasesDB>, orgId: string
   }
   return rows.rows.length;
 }
+
+/** How many of a line's units are in hand, counted one by one (#5734): a
+ *  scan of each spool of ten. The tenth receives the line, through the one
+ *  receive above, so it is received exactly once. A count that drops below
+ *  full again takes the receive back only when the count made it and it
+ *  added no stock (no thing claimed the line yet); otherwise the receive
+ *  stands and the count says what is in hand. */
+export async function setReceivedCount(db: Kysely<PurchasesDB>, orgId: string, lineId: string, received: number, receivedOn: string): Promise<{ received: number; qty: number; receivedAt: string | null } | null> {
+  const line = await db.selectFrom("purchases_order_items").select(["id", "qty", "part_id", "received_at", "metadata"]).where("id", "=", lineId).executeTakeFirst();
+  if (!line) return null;
+  const qty = Math.max(0, Number(line.qty ?? 0));
+  const count = Math.max(0, Math.min(Math.round(received), qty));
+  await db.updateTable("purchases_order_items").set({ received_qty: count, updated_at: new Date() } as never).where("id", "=", lineId).execute();
+  const byCount = (line.metadata as { received_by_count?: unknown } | null)?.received_by_count === true;
+  if (count >= qty && qty > 0 && !line.received_at) {
+    if (await receiveOrderLine(db, orgId, lineId, receivedOn, null)) {
+      await sql`update purchases_order_items set metadata = coalesce(metadata, '{}'::jsonb) || '{"received_by_count": true}'::jsonb where id = ${lineId}`.execute(db);
+    }
+  } else if (count < qty && line.received_at && byCount && !line.part_id) {
+    await sql`update purchases_order_items set received_at = null, metadata = coalesce(metadata, '{}'::jsonb) - 'received_by_count' where id = ${lineId} and part_id is null`.execute(db);
+  }
+  const after = await db.selectFrom("purchases_order_items").select(["received_at"]).where("id", "=", lineId).executeTakeFirst();
+  return { received: count, qty, receivedAt: after?.received_at ? new Date(after.received_at as unknown as string).toISOString() : null };
+}

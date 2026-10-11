@@ -9,11 +9,13 @@
 
 import { useEffect, useId, useState } from "react";
 import { useLater } from "./use-later";
-import Ajv from "ajv";
+import { Validator } from "@cfworker/json-schema";
 
-// One shared, lenient compiler. strict:false so a feature's schema can carry
-// extra keywords without throwing; allErrors so we can list every violation.
-const ajv = new Ajv({ allErrors: true, strict: false });
+// An INTERPRETING validator, never a compiling one. Ajv builds each schema into
+// code with new Function, which the app's Content-Security-Policy refuses once
+// script-src is enforced (#3300): compile threw, the catch below swallowed it,
+// and every schema field silently stopped validating. This one walks the schema
+// and evaluates nothing.
 
 export interface JsonEval {
   /** Parsed value when valid (undefined when empty or invalid). */
@@ -39,15 +41,15 @@ export function evaluateJson(
     return { value: undefined, valid: false, errors: [`Invalid JSON: ${(e as Error).message}`] };
   }
   if (opts.schema) {
-    let validate;
+    let result: { valid: boolean; errors: Array<{ instanceLocation: string; error: string }> } | null;
     try {
-      validate = ajv.compile(opts.schema);
+      result = new Validator(opts.schema as object, "2020-12", false).validate(parsed);
     } catch {
-      validate = null; // a malformed schema shouldn't block the input
+      result = null; // a malformed schema shouldn't block the input
     }
-    if (validate && !validate(parsed)) {
-      const errors = (validate.errors ?? [])
-        .map((er) => `${er.instancePath || "(root)"} ${er.message ?? "is invalid"}`)
+    if (result && !result.valid) {
+      const errors = result.errors
+        .map((er) => `${er.instanceLocation.replace(/^#/, "") || "(root)"} ${er.error}`)
         .slice(0, 6);
       return { value: undefined, valid: false, errors };
     }

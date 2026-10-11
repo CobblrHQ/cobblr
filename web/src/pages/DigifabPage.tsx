@@ -21,6 +21,7 @@ import { PrintUpdatesPanel } from "./PrintUpdatesPanel";
 import { Combobox } from "../components/Combobox";
 import { CreateConnectionModal, FleetView, PrintDetailModal, LIBRARY_DRAG_MIME, fetchAllMachines } from "../features/digifab/fleet";
 import { useReprint } from "../features/digifab/useReprint";
+import { dayLabel } from "@cobblr/platform-contract/day";
 
 export function DigifabPage({
   setupOnly = false,
@@ -744,7 +745,7 @@ function PrintTrendChart({ series }: { series: NonNullable<DigifabHistory["serie
   const max = Math.max(1, ...series.map((d) => d.completed + d.failed));
   const total = series.reduce((s, d) => s + d.completed + d.failed, 0);
   const H = 64; // plot height in px
-  const fmtDay = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const fmtDay = (iso: string) => dayLabel(iso, { month: "short", day: "numeric" });
   const h = hover != null ? series[hover] : null;
   if (total === 0) return <div className="text-xs text-muted italic">No prints in this window.</div>;
   return (

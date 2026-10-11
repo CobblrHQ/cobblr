@@ -8,6 +8,7 @@
 // becomes `Cents` at the edge (toCents for a cents column, centsFromAmount for
 // an amount) and the only way to show `Cents` is formatMoney. Nothing stored
 // changes.
+import { daysUntil } from "@cobblr/platform-contract/day";
 
 declare const centsBrand: unique symbol;
 
@@ -286,7 +287,7 @@ export function convertMoney(value: Money, currency: string, day: string, rates:
   if (!Number.isFinite(value.amount)) return null;
   if (value.currency === currency) return { ...value, original: value, rateDate: null };
   const date = Object.keys(rates).filter((d) => d <= day).sort().at(-1);
-  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(day) || Date.parse(day) - Date.parse(date) > 7 * 86400000) return null;
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(day) || daysUntil(day, date) > 7) return null;
   const from = rates[date]?.[value.currency];
   const to = rates[date]?.[currency];
   if (!from || !to || !Number.isFinite(from) || !Number.isFinite(to) || from <= 0 || to <= 0) return null;
@@ -317,6 +318,42 @@ export function moneyTotalNote(total: Pick<MoneyTotal, "excluded" | "conversions
     ...Object.entries(total.excluded).map(([currency, count]) => `excludes ${count} ${count === 1 ? "item" : "items"} in ${currency}`),
     ...total.conversions.filter((v) => v.rateDate).map((v) => `${formatStoredMoney(v.original, "amount")} ≈ ${formatStoredMoney(v, "amount")} at the ${v.rateDate} rate`),
   ].join("; ");
+}
+
+/** What priced lines add up to, and how many lines have no price. A total
+ *  with an unpriced line is a total so far, never the total. */
+export interface LinesTotal { amount: number; currency: string; lines: number; unpriced: number; complete: boolean }
+
+export function totalOfLines(lines: readonly { qty: unknown; price: unknown }[], currency: string): LinesTotal {
+  let amount = 0;
+  let unpriced = 0;
+  for (const line of lines) {
+    const price = parseMoneyAmount(line.price);
+    const qty = Number(line.qty);
+    if (price === null || !Number.isFinite(qty)) unpriced++;
+    else amount += roundMoneyAmount(qty * price, currency);
+  }
+  return { amount: roundMoneyAmount(amount, currency), currency, lines: lines.length, unpriced, complete: unpriced === 0 };
+}
+
+/** The label beside a lines total: "Total", "Total so far, 1 line unpriced",
+ *  or "Total not recorded, 2 lines unpriced" when no line has a price. */
+export function linesTotalLabel(total: Pick<LinesTotal, "lines" | "unpriced">, label = "Total"): string {
+  if (total.unpriced === 0) return label;
+  const unpriced = `${total.unpriced} ${total.unpriced === 1 ? "line" : "lines"} unpriced`;
+  return total.unpriced >= total.lines ? `${label} not recorded, ${unpriced}` : `${label} so far, ${unpriced}`;
+}
+
+/** The amount a lines total may show: null when no line has a price. */
+export function linesTotalAmount(total: LinesTotal, opts: { locale?: string } = {}): string | null {
+  return total.lines > 0 && total.unpriced >= total.lines ? null : formatStoredMoney(total.amount, "amount", { currency: total.currency, locale: opts.locale });
+}
+
+/** "Total $8.20", "Total so far, 1 line unpriced: $8.20", or "Total not recorded, 2 lines unpriced". */
+export function linesTotalWords(total: LinesTotal, label = "Total", opts: { locale?: string } = {}): string {
+  const money = linesTotalAmount(total, opts);
+  if (total.complete) return `${label} ${money}`;
+  return money === null ? linesTotalLabel(total, label) : `${linesTotalLabel(total, label)}: ${money}`;
 }
 
 /** The legacy currency locations, in their established precedence. SQL

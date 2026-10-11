@@ -38,7 +38,7 @@ const ROOT = process.env.COBBLR_LINT_ROOT ?? ".";
 const DOCKERFILE = "docker/web.Dockerfile";
 const WEB = "web";
 
-interface Violation {
+export interface Violation {
   file: string;
   line: number;
   what: string;
@@ -204,7 +204,9 @@ export function inContext(path: string, context: string[]): boolean {
   return context.some((c) => path === c || path.startsWith(`${c}/`));
 }
 
-function main(): void {
+/** Every file the web build compiles (the walk below), and the imports it cannot resolve in the image.
+ *  scripts/ci/web-build-affected.ts reads the same walk to tell a pull request it cannot reach the build. */
+export function walkWebBuild(): { seen: Set<string>; violations: Violation[]; context: string[] } {
   const context = buildContext(readFileSync(abs(DOCKERFILE), "utf8"));
   const pkgs = workspacePackages();
   const violations: Violation[] = [];
@@ -246,7 +248,11 @@ function main(): void {
       if (!/\.d\.m?ts$/.test(target) && !/(^|\/)dist\//.test(target)) queue.push(target);
     }
   }
+  return { seen, violations, context };
+}
 
+function main(): void {
+  const { seen, violations, context } = walkWebBuild();
   if (violations.length) {
     console.error(`lint:web-image-reads-what-it-copies - ${violations.length} import(s) the web image's build cannot resolve:`);
     for (const v of violations) console.error(`  ${v.file}:${v.line}  ${v.what}`);

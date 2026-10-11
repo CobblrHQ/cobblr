@@ -1,4 +1,5 @@
 import { PersonalDocumentReader } from "../components/PersonalDocumentReader";
+import { ScanningInBanner } from "../components/OrderLineUnits";
 import { useScanOrigins } from "../lib/useScanOrigins";
 // /scan — the inbox review queue, photo-inbox-grade.
 import { createPortal } from "react-dom";
@@ -49,14 +50,13 @@ import { DocumentSessionCard, SessionAddedByChip, SessionDocumentChip, sessionFi
 import {
   addedByHow,
   addedByWords,
-  documentChipWords,
   documentKindWords,
   documentNeedsPerson,
   sessionAddedBy,
   sessionDocumentName,
   type AddedBy,
 } from "@cobblr/platform-contract/scan-source";
-import { documentStateWords } from "../lib/documentState";
+import { documentChipLine, documentStateWords, readAgainWords } from "../lib/documentState";
 import { } from "../lib/scanRerun";
 import { } from "../lib/identifySentence";
 import { } from "../lib/namelessCard";
@@ -1088,7 +1088,7 @@ export function ScanPage() {
       ? sessionDocumentName({ origin: g.origin, vendor, from: g.originFrom, date: documentDateOf(g.items) ?? (g.latest ? new Date(g.latest) : null), filename: sourceFileNames.get(g.sourceFileId) ?? null })
       : null;
     const kind = documentKindWords({ origin: g.origin, vendor, billOfSale: isBillOfSaleSession(g.items), source: receiptSourceOf(g.items) });
-    return { addedBy, docName, chipWords: documentChipWords(kind, g.items.length), needsPerson: documentNeedsPerson(g.verdict, g.items) };
+    return { addedBy, docName, chipWords: documentChipLine(kind, g.items), needsPerson: documentNeedsPerson(g.verdict, g.items) };
   };
   const sessionSourceByItem = new Map<string, { addedBy: AddedBy | null; emailed: boolean }>();
   const documentNames = new Map<string, string>();
@@ -1980,7 +1980,7 @@ export function ScanPage() {
     },
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
-      toast.success(`Read again: ${r.receipt.item_count} item${r.receipt.item_count === 1 ? "" : "s"}`);
+      toast.success(readAgainWords(r));
     },
     onError: (e) => {
       // Failed again: the session's state carries the new reason; refetch so
@@ -2340,6 +2340,8 @@ export function ScanPage() {
     <ScanTwinsContext.Provider value={twins}>
     <div className="space-y-3 max-w-4xl mx-auto">
       <PersonalDocumentReader />
+      {/* A session opened from an order line ("Scan the items", #5734). */}
+      {batchId && <ScanningInBanner batchId={batchId} />}
       {/* ── ONE header row ───────────────────────────────────────────────────
           It never WRAPS; it yields, in a declared order (the field collapses to
           a magnifier, labels drop to icons, the title goes, informational

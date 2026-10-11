@@ -5,7 +5,7 @@
 // seam, never an inventory import. Works standalone; the picker is just empty
 // when inventory isn't enabled.
 
-import { describeUnreadableBody, noteWorkspaceWrite, uploadJson } from "@cobblr/platform-web";
+import { describeUnreadableBody, noteWorkspaceWrite, uploadJson, workspaceFetch } from "@cobblr/platform-web";
 
 export interface BuildSummary {
   id: string;
@@ -162,13 +162,13 @@ export class BuildsApi {
   placementResources() { return this.req<Awaited<ReturnType<typeof import("../api/placement.js").placementResources>>>("GET", "/placement-resources"); }
   placementProgram(id: string) { return this.req<Awaited<ReturnType<typeof import("../api/placement.js").placementProgram>>>("GET", `/assembly-orders/${id}/program`); }
   async authorizeMachineStation(machineKind: string, machineId: string, purpose: "placement" | "reflow" | "inspection") {
-    const response = await fetch(`/api/v1/orgs/${this.slug}/modules/digifab/stations/machines`, { method: "POST", headers: this.headers(true), body: JSON.stringify({ machine_kind: machineKind, machine_id: machineId, purpose }) });
+    const response = await workspaceFetch(`/api/v1/orgs/${this.slug}/modules/digifab/stations/machines`, { method: "POST", headers: this.headers(true), body: JSON.stringify({ machine_kind: machineKind, machine_id: machineId, purpose }) });
     const result = await this.parse<{ id: string; label: string; token: string }>(response);
     noteWorkspaceWrite(`/api/v1/orgs/${this.slug}/modules/digifab/stations`, response);
     return result;
   }
   async revokeMachineStation(id: string) {
-    const response = await fetch(`/api/v1/orgs/${this.slug}/modules/digifab/stations/${id}`, { method: "DELETE", headers: this.headers() });
+    const response = await workspaceFetch(`/api/v1/orgs/${this.slug}/modules/digifab/stations/${id}`, { method: "DELETE", headers: this.headers() });
     const result = await this.parse<{ ok: boolean }>(response);
     noteWorkspaceWrite(`/api/v1/orgs/${this.slug}/modules/digifab/stations`, response);
     return result;
@@ -205,7 +205,7 @@ export class BuildsApi {
 
   private async req<T>(method: string, path: string, body?: unknown): Promise<T> {
     const url = `/api/v1/orgs/${this.slug}/modules/builds${path}`;
-    const res = await fetch(url, {
+    const res = await workspaceFetch(url, {
       method,
       headers: this.headers(body !== undefined),
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -311,7 +311,7 @@ export class BuildsApi {
   }
   private async searchEntities(kind: string, q: string): Promise<PartOption[]> {
     const url = `/api/v1/orgs/${this.slug}/entities/${kind}?limit=20${q ? `&q=${encodeURIComponent(q)}` : ""}`;
-    const res = await fetch(url, { headers: this.headers() });
+    const res = await workspaceFetch(url, { headers: this.headers() });
     const data = await this.parse<{ items: Array<{ id: string; title: string; subtitle?: string }> }>(res);
     return data.items.map((i) => ({ id: i.id, title: i.title, subtitle: i.subtitle }));
   }

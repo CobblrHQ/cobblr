@@ -17,6 +17,7 @@
 // retail/craft coverage but can return junk or wrong listings) > Open Products
 // Facts (food/household-leaning, almost no craft coverage).
 
+import { learnedAttributesOf } from "@cobblr/platform-contract/learned-route";
 import { gtinChecksumOk, isbn10ChecksumOk } from "@cobblr/platform-contract/identifier-check";
 import { STORE_CODE_NOTE } from "@cobblr/platform-contract/scan-copy";
 import { preferredFactsName, primaryBrand } from "./catalog-normalize.js";
@@ -458,9 +459,13 @@ async function tryResolver(upc: string): Promise<ProviderResult> {
         category: string | null;
         image_url: string | null;
         raw?: unknown;
+        attributes?: unknown;
       } | null;
     };
     if (d.found && d.product?.title) {
+      // What people filed it as (its table, its product fields), kept apart
+      // from a provider's own attribute list (learned-route.ts, #3769).
+      const learned = learnedAttributesOf(d.product.attributes);
       return {
         kind: "hit",
         hit: {
@@ -476,6 +481,7 @@ async function tryResolver(upc: string): Promise<ProviderResult> {
           raw: {
             ...(typeof d.product.raw === "object" && d.product.raw ? (d.product.raw as object) : {}),
             resolver: { cache: d.cache, took_ms: d.took_ms, resolved_at: d.resolved_at, confidence: (d as { confidence?: unknown }).confidence },
+            ...(learned ? { learned } : {}),
           } as Record<string, unknown>,
         },
       };

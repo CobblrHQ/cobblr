@@ -190,6 +190,7 @@ export function registerCobbWorker(): void {
       // Context is the RECORD and the CONVERSATION. Never the asker's private
       // Cobb-tab history: that tab may contain anything, and a shared thread is
       // the last place it should surface.
+      // FREE-TEXT: Cobb's reply in a discussion thread is prose
       const answer = await platform().ai.invoke({
         orgId: job.orgId,
         ...(p.requested_by ? { userId: p.requested_by } : {}),

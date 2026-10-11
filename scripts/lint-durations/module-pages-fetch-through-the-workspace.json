@@ -1,0 +1,10 @@
+{
+  "lint": "lint:module-pages-fetch-through-the-workspace",
+  "run": "node scripts/lint-module-pages-fetch-through-the-workspace.ts",
+  "rows": [
+    "module-ui"
+  ],
+  "ms": 1486,
+  "recorded": "2026-10-11",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

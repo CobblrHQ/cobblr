@@ -2,7 +2,9 @@ export type DocumentPrivacy = "personal" | "normal";
 export type PersonalDocumentField = "vin" | "plate" | "expires" | "amount" | "reference" | "make" | "model" | "year";
 export interface PersonalDocumentRead {
   privacy: DocumentPrivacy;
-  kind: "registration" | "personal" | "ordinary";
+  /** "bill-of-sale": a vehicle's bill of sale, which the card offers to
+   *  file as the vehicle's purchase (#5331). */
+  kind: "registration" | "bill-of-sale" | "personal" | "ordinary";
   fields: Partial<Record<PersonalDocumentField, string>>;
   /** Who read each field: code, a local model, or the cloud connection the
    *  workspace's owner consented to (#5621). */

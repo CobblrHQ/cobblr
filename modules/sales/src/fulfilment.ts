@@ -52,6 +52,10 @@ export type FulfilResult =
 
 const DONE: SalesOrderStatus[] = ["fulfilled", "shipped", "closed"];
 
+/** The stock door a fulfilment draws through. A record whose kind keeps its
+ *  count behind this action can be sold from; stock-search.ts reads it. */
+export const DRAW_ACTION = "inventory:adjust-stock";
+
 function remaining(l: FulfilLine): number {
   return Math.max(0, l.qty - l.qty_fulfilled);
 }
@@ -179,7 +183,7 @@ export async function fulfilOrder(
   for (const l of lines) {
     const n = take.get(l.id) ?? 0;
     if (!l.part_id || n <= 0) continue;
-    const res = (await platform().actions.invoke("inventory:adjust-stock", {
+    const res = (await platform().actions.invoke(DRAW_ACTION, {
       orgId,
       userId,
       entity: { kind: "inventory:part", id: l.part_id },

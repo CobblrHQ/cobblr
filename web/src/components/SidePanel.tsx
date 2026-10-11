@@ -82,12 +82,14 @@ export function SidePanel({
       {...(escapeExempt ? { "data-modal-escape-exempt": true } : {})}
       {...(cobbPanel ? { "data-cobb-panel": true } : {})}
       className={
-        "fixed inset-x-0 bottom-0 top-[var(--app-header-bottom,3.5rem)] z-[60] flex flex-col " +
+        "fixed inset-x-0 bottom-[var(--overlay-bottom,0px)] top-[var(--app-header-bottom,3.5rem)] z-[60] flex flex-col " +
         "border-t border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-2xl " +
         // Desktop: back to the familiar full-height drawer on the right edge.
         // top/bottom are overridden by NAME (not sm:inset-y-0) so the win over
         // top-[var(…)] doesn't depend on how Tailwind orders inset-* vs top-*.
-        "sm:top-0 sm:bottom-0 sm:left-auto sm:right-0 sm:border-t-0 sm:border-l " +
+        // The foot stops above the toasts at every width (--overlay-bottom,
+        // floating-chrome.css), so one never sits on the composer (#5801).
+        "sm:top-0 sm:bottom-[var(--overlay-bottom,0px)] sm:left-auto sm:right-0 sm:border-t-0 sm:border-l " +
         width
       }
       // The home indicator sits over the panel's last few points; pad the

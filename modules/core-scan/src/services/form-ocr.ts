@@ -272,7 +272,6 @@ function isMoneyLabel(label: string): boolean {
   if (!t || t.length > 40 || !/[A-Za-z]{2,}/.test(t)) return false;
   return UNIT_LINE.test(t) || lineKind(t) === "charge" || NOT_A_LINE.test(t) || FORM_SUM.test(t);
 }
-const AMOUNT = /^\$?\d{1,3}(?:,\d{3})*\.\d{2}$|^\$?\d+\.\d{2}$/;
 
 /** Read one cut of the page with a whitelist, line by line. A box's cut can
  *  catch the next box's caption under its value, so it is read as a block

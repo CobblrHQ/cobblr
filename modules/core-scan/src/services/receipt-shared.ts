@@ -90,7 +90,9 @@ export function weightUnit(v: unknown): ReceiptLine["weight_unit"] {
 
 /** What a line actually cost: rung-up price less anything taken off it. */
 export function lineNet(l: ReceiptLine): number {
-  return (l.line_total ?? 0) - (l.discount ?? 0) - (l.order_discount ?? 0);
+  // In cents: 87.99 - 8.79 in floats is 79.19999999999999, and that is what a
+  // line's stored net and the order's line amount read (#5350, staging).
+  return amountOf((centsFromAmount(l.line_total ?? 0) - centsFromAmount(l.discount ?? 0) - centsFromAmount(l.order_discount ?? 0)) as Cents);
 }
 
 /** Money came off this line, under it or as its share of the order's. */
@@ -442,6 +444,35 @@ export function enrichReceiptFromText(receipt: ParsedReceipt, text: string | nul
     totals: receipt.totals ?? totals,
     expected_arrival: receipt.expected_arrival ?? parseEstimatedDelivery(text),
   };
+}
+
+/** A line an email puts above the receipt that names no shop: its title
+ *  ("Order #1001 confirmed", "Thank you for your order"), a reply or forward
+ *  prefix, or a header ("From: ..."). The inbound capture puts the subject on
+ *  the first line, where a till receipt prints its shop. */
+export function isMailTitle(line: string): boolean {
+  const s = line.trim();
+  return (
+    /^(?:re|fwd?|fw)\s*:/i.test(s) ||
+    /^-{2,}\s*(?:forwarded|original)\s+message\b/i.test(s) ||
+    /^begin\s+forwarded\s+message\b/i.test(s) ||
+    /^\*?(?:from|to|cc|subject|date|sent)\*?\s*:/i.test(s) ||
+    /^(?:your\s+)?order\s+(?:#\s*)?[a-z0-9-]*\d[a-z0-9-]*\s+(?:is\s+|has\s+been\s+)?(?:confirmed|received|placed|shipped|on its way|delivered|cancell?ed)\b/i.test(s) ||
+    /^(?:thank\s+you|thanks)\s+for\s+(?:your\s+)?(?:order|purchase)/i.test(s) ||
+    /^order\s+confirm(?:ation|ed)\b/i.test(s)
+  );
+}
+
+/** The shop a forwarded email came from: the name on the "From:" line under
+ *  the forward's separator ("From: Example Shop <orders@example.org>"). Only
+ *  inside a forward, where that line names the original sender; the envelope's
+ *  sender of a forward is the person who forwarded it. */
+export function forwardedSender(text: string): string | null {
+  const at = text.search(/^\s*(?:-{2,}\s*(?:forwarded|original)\s+message|begin\s+forwarded\s+message)\b/im);
+  if (at < 0) return null;
+  const m = text.slice(at).match(/^\s*\*?From:\*?\s*"?([^"<\n]*?)"?\s*<[^>\s]+@[^>\s]+>/im);
+  const name = m?.[1]?.trim() ?? "";
+  return name && /\p{L}/u.test(name) && !name.includes("@") ? name : null;
 }
 
 /** Normalize a stated order/invoice number to a bare identifier: drop a leading

@@ -45,7 +45,7 @@ export function FieldMeaningNotices({ slug, kinds }: { slug: string; kinds: Plat
   };
 
   const press = async (actionId: string, args: Record<string, unknown>) => {
-    const out = await run({ actionId, entityKind: "", entityId: "", args });
+    const out = await run({ actionId, entityKind: "", entityId: "", args }, { undo: "shown-here" });
     const r = out.result as { ok?: boolean; summary?: string; error?: string } | null;
     refresh();
     if (!r?.ok) {
@@ -60,7 +60,7 @@ export function FieldMeaningNotices({ slug, kinds }: { slug: string; kinds: Plat
     toast.action(r.summary ?? "Done.", {
       actionLabel: "Undo",
       onAction: async () => {
-        for (const st of steps) await run({ actionId: st.action_id, entityKind: "", entityId: "", args: st.args ?? {} });
+        for (const st of steps) await run({ actionId: st.action_id, entityKind: "", entityId: "", args: st.args ?? {} }, { undo: "is-undo" });
         refresh();
       },
     });

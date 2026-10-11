@@ -4,6 +4,8 @@
 
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
+import { fieldCurrency } from "@cobblr/platform-contract/money";
+import { orderTotal } from "../invoice.js";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
@@ -145,12 +147,12 @@ ordersRouter.get(
       return;
     }
     const items = await loadOrderLines(db, order.id);
-    const total = items.reduce((s, it) => s + (Number(it.unit_price) || 0) * (Number(it.qty) || 0), 0);
+    const sum = orderTotal(items, fieldCurrency(order.metadata, "total", await platform().money.currency(tenantContext(req).org.id)));
     // What is being made for it, and how many of each are made so far.
     const makes = await makeIdsByWorkOrder(db, order.id);
     const work_orders = (await workOrdersFor(tenantContext(req).org.id, order.id)).map((w) => ({ ...w, make_id: makes.get(w.id) ?? null }));
     const availability = await orderAvailability(tenantContext(req).org.id, items.map((it) => ({ ...it, qty: Number(it.qty), qty_fulfilled: Number(it.qty_fulfilled) })), work_orders);
-    res.json({ ...order, items, total, work_orders, availability });
+    res.json({ ...order, items, total: sum.amount, unpriced_lines: sum.unpriced, work_orders, availability });
   }),
 );
 
@@ -419,7 +421,9 @@ ordersRouter.post(
     const r = await makeLine(db, ctx.org.id, session?.id ?? null, req.params.id!, req.params.itemId!, body.data.qty, instanceOf(req));
     if (!r.ok) {
       const status = r.code === "not_found" ? 404 : 409;
-      return void res.status(status).json({ error: { code: r.code, message: r.message }, doors: r.doors ?? [] });
+      // A Builds that is off goes out with its app's name: the platform adds
+      // the switch or the ask, and keeps this request to finish after.
+      return void res.status(status).json({ error: { code: r.code, message: r.message, ...(r.module ? { module: r.module } : {}) }, doors: r.doors ?? [] });
     }
     res.status(201).json(r);
   }),

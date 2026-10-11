@@ -1,3 +1,4 @@
+import { objectWith } from "@cobblr/platform-contract/ai-output-schemas";
 // VOCAB-ENUMERATION OK: a menu entry carries one slot per field role the scan
 // fills from evidence (the category axis, the pack count, the lot), because each
 // is filled by its own rule; a role with no scan rule needs no slot here.
@@ -13,6 +14,7 @@
 // targets, and the instance's noun/name is the routing signal — so a new bundle
 // becomes scannable just by shipping its fields, no scanner code changes.
 
+import { learnedAttributesOf, learnedRouteFor } from "@cobblr/platform-contract/learned-route";
 import type { ProviderReason } from "@cobblr/platform-contract/provider-reason";
 import { platform, extractJsonObject, repairJson, parseJsonReply, type CategoryAxisSlot } from "@cobblr/platform-contract";
 import { routingNoteBare, routingNoteWithCategory } from "./routing-note.js";
@@ -85,6 +87,9 @@ export interface ScanMenuEntry extends FitTable {
    *  the bundle to install on materialize. Absent for the user's live instances.
    *  This is the "link" — a capture knows which bundle would hold it. */
   bundle_external_id?: string;
+  /** The bundles that made this live table: its name in every workspace,
+   *  which the scan learning loop routes by (learned-route.ts, #3769). */
+  from_bundles?: string[];
   /** This table's GROUPING AXIS: the field declaring `field_role: "category"`,
    *  plus the values it already holds. It is what lets the model say "this is an
    *  ELECTRICAL part" without reaching for a different TABLE to say it. Absent
@@ -233,6 +238,13 @@ export interface MatchCandidate {
   /** Capture-first: copied from the chosen menu entry when this candidate routes
    *  to a not-yet-installed flagship bundle — the bundle to materialize. */
   bundle_external_id?: string;
+  /** The bundle that made the live table this routes to (its name in every
+   *  workspace), reported with the filing so the next workspace learns it
+   *  (learned-route.ts, #3769). */
+  from_bundle?: string;
+  /** Routed from what people filed this barcode as on the barcode network,
+   *  with no model: one person's word, or several agreeing (#3769). */
+  learned?: "single" | "confident";
   /** Set on candidates produced WITHOUT a model call (the keyword floor), so the
    *  UI can say so — a lexical guess must not wear an AI match's face. */
   heuristic?: true;
@@ -394,7 +406,7 @@ export async function assembleScanMenu(
     scanByModule.set(s.kind.split(":")[0]!, { kind: s.kind, noun: s.noun });
   }
 
-  let instances: Array<{ module_name: string; instance_name: string; display_name: string; is_default: boolean; is_scan_fallback?: boolean; item_count?: number | null; config?: Record<string, unknown> }> = [];
+  let instances: Array<{ module_name: string; instance_name: string; display_name: string; is_default: boolean; is_scan_fallback?: boolean; item_count?: number | null; config?: Record<string, unknown>; from_bundles?: string[] }> = [];
   try {
     const res = await apiFetch(`${baseUrl}/api/v1/orgs/${slug}/instances`, { headers: auth });
     if (res.ok) instances = ((await res.json()) as { items?: typeof instances }).items ?? [];
@@ -578,6 +590,7 @@ export async function assembleScanMenu(
       ...(lotField ? { lot_field: lotField } : {}),
       ...(yearField ? { year_field: yearField } : {}),
       ...(fallbackByModule.get(inst.module_name) === inst.instance_name ? { is_fallback: true } : {}),
+      ...(inst.from_bundles?.length ? { from_bundles: inst.from_bundles } : {}),
     });
   }
   return entries;
@@ -947,6 +960,7 @@ export function heuristicMatch(
         ...(Number.isInteger(quantity) && quantity! > 0 && quantity! <= 10_000 ? { quantity } : {}),
         ...(cat ? { category: cat.value, ...(cat.isNew ? { category_is_new: true } : {}) } : {}),
         ...(fallback.bundle_external_id ? { bundle_external_id: fallback.bundle_external_id } : {}),
+        ...(fallback.from_bundles?.[0] ? { from_bundle: fallback.from_bundles[0] } : {}),
         notes: cat ? routingNoteWithCategory(fallback.label, cat.value, why, reason) : routingNoteBare(why, reason),
       },
     ];
@@ -975,11 +989,41 @@ export function heuristicMatch(
       ...(Number.isInteger(quantity) && quantity! > 0 && quantity! <= 10_000 ? { quantity } : {}),
       ...(cat ? { category: cat.value, ...(cat.isNew ? { category_is_new: true } : {}) } : {}),
       ...(entry.bundle_external_id ? { bundle_external_id: entry.bundle_external_id } : {}),
+      ...(entry.from_bundles?.[0] ? { from_bundle: entry.from_bundles[0] } : {}),
       // The hint already says "matched by keywords" where that is the case;
       // the no-provider sentence does not, and keeps its lead.
       ...(i === 0 ? { notes: /^Matched by keywords/.test(fallbackHint(why, reason)) ? fallbackHint(why, reason) : `Matched by keywords. ${fallbackHint(why, reason)}` } : {}),
     };
   });
+}
+
+/** The route the barcode network's answer names (learned-route.ts), as a
+ *  candidate: the table this workspace holds that the same bundle made, and
+ *  the product fields people filed, with no model. Null when the answer names
+ *  no table here. */
+export function learnedCandidate(item: PerceivedItem, menu: ScanMenuEntry[]): MatchCandidate | null {
+  const raw = (item.metadata as { raw?: { learned?: unknown; bidb?: { attributes?: unknown; confidence?: unknown }; resolver?: { confidence?: unknown } } } | null | undefined)?.raw;
+  const route = learnedRouteFor(raw?.learned ?? learnedAttributesOf(raw?.bidb?.attributes), menu);
+  if (!route) return null;
+  const { entry } = route;
+  const fields: Record<string, string | number | boolean> = { ...route.fields };
+  seedPackSize(entry, item, fields);
+  const cat = resolveCategoryInto(entry, item.category, fields);
+  const confident = (raw?.resolver?.confidence ?? raw?.bidb?.confidence) !== "single";
+  return {
+    module: entry.module,
+    instance: entry.instance,
+    kind: entry.kind,
+    label: entry.label,
+    confidence: confident ? 0.9 : 0.7,
+    name: cleanCaptureName(item.name ?? ""),
+    fields,
+    learned: confident ? "confident" : "single",
+    ...(cat ? { category: cat.value, ...(cat.isNew ? { category_is_new: true } : {}) } : {}),
+    ...(entry.bundle_external_id ? { bundle_external_id: entry.bundle_external_id } : {}),
+    ...(entry.from_bundles?.[0] ? { from_bundle: entry.from_bundles[0] } : {}),
+    notes: confident ? `Filed into ${entry.label} the way people on the barcode network filed it.` : `Filed into ${entry.label} the way one person on the barcode network filed it. Check it, or correct it.`,
+  };
 }
 
 /** The user half of the matchmaker prompt. Exported for the same reason as the
@@ -1172,6 +1216,12 @@ export async function runMatchmaker(
   // No table to route to. A first match legitimately has nothing to say; a REPLAY
   // must still not empty a row that already had candidates.
   if (menu.length === 0) return replay ? (replay.storedCandidates as MatchCandidate[]) : [];
+  // What people filed this barcode as, on the barcode network: its table and
+  // its product fields, with no model (#3769).
+  if (!replay) {
+    const learned = learnedCandidate(item, menu);
+    if (learned) return [learned];
+  }
 
   const system = MATCHMAKER_SYSTEM;
 
@@ -1265,7 +1315,7 @@ export async function runMatchmaker(
         orgId,
         userId: userId ?? undefined,
         capability: "organise",
-        input: { messages: [{ role: "system", content: system }, { role: "user", content: user }] },
+        input: { output_schema: objectWith(["candidates"], { candidates: { type: "array" } }), messages: [{ role: "system", content: system }, { role: "user", content: user }] },
         // A 2-candidate reply with reconciliation notes never fit the 1024
         // default — the notes-truncation salvage in parseMatchmakerCandidates
         // exists because of that cap. Root-caused here; the salvage stays as
@@ -1383,6 +1433,7 @@ export async function runMatchmaker(
       // Carry the bundle pointer through from the chosen menu entry so a
       // capture against a not-yet-installed bundle remembers what to install.
       ...(entry.bundle_external_id ? { bundle_external_id: entry.bundle_external_id } : {}),
+      ...(entry.from_bundles?.[0] ? { from_bundle: entry.from_bundles[0] } : {}),
       ...(Object.keys(placeFields).length ? { place_fields: placeFields } : {}),
     };
     const dedupeKey = `${entry.module}::${entry.instance ?? ""}`;
@@ -1496,6 +1547,7 @@ export function applyNounPlan(out: MatchCandidate[], item: PerceivedItem, menu: 
     ...(primary.quantity != null ? { quantity: primary.quantity } : {}),
     ...(cat ? { category: cat.value, ...(cat.isNew ? { category_is_new: true } : {}) } : {}),
     ...(entry.bundle_external_id ? { bundle_external_id: entry.bundle_external_id } : {}),
+    ...(entry.from_bundles?.[0] ? { from_bundle: entry.from_bundles[0] } : {}),
     ...(primary.place_fields ? { place_fields: primary.place_fields } : {}),
     notes: [`Routed to ${entry.label} by its name; the model had put it in ${primary.label}.`, primary.notes ?? ""].filter(Boolean).join(" "),
   };

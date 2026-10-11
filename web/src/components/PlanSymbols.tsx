@@ -125,17 +125,17 @@ export function GapReadout({ room, walls, box, others }: { room: { w_mm: number;
   );
 }
 
-const FLAG_WORD: Record<PlanFlag["kind"], string> = { door: "Door", window: "Window", aisle: "Aisle" };
+const FLAG_WORD: Record<PlanFlag["kind"], string> = { room: "Room", door: "Door", window: "Window", aisle: "Aisle" };
 
 /** What the plan says is in the way, in words under the drawing: a door's
  *  swing first, then windows, then narrow aisles. Never a refusal. */
 export function PlanFlagList({ flags }: { flags: readonly PlanFlag[] }) {
   if (flags.length === 0) return null;
-  const order = { door: 0, window: 1, aisle: 2 } as const;
+  const order = { room: 0, door: 1, window: 2, aisle: 3 } as const;
   return (
     <ul data-testid="plan-flags" className="mt-2 space-y-0.5 text-xs">
       {[...flags].sort((a, b) => order[a.kind] - order[b.kind]).map((f, i) => (
-        <li key={i} data-plan-flag={f.kind} className={f.kind === "door" ? "font-medium text-ember-700 dark:text-ember-300" : "text-amber-800 dark:text-amber-300"}>
+        <li key={i} data-plan-flag={f.kind} className={f.kind === "door" || f.kind === "room" ? "font-medium text-ember-700 dark:text-ember-300" : "text-amber-800 dark:text-amber-300"}>
           <span className="text-content dark:text-slate-200">{FLAG_WORD[f.kind]}:</span> {f.text}
         </li>
       ))}

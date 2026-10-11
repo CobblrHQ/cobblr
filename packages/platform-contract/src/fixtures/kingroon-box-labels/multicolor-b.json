@@ -1,0 +1,36 @@
+{
+ "photo": "multi-b",
+ "engine": "core-scan ocrLabelReadings (tesseract, no model)",
+ "labels": [
+  {
+   "box": 1,
+   "expected_colour": "White",
+   "frame": "",
+   "fine": "Dr\nKS 0O20C batch tie\n"
+  },
+  {
+   "box": 2,
+   "expected_colour": "Red",
+   "frame": "",
+   "fine": "rake\n( 5asic\n‘ { WV) ty\n+b Ay on\n: PF\n"
+  },
+  {
+   "box": 3,
+   "expected_colour": "Metallic Silver",
+   "frame": "PETG Basic\n\nMetallic Silver (jmsay\nSKU: NPETGOOg\nTemp: Diameter; 175mm\n\nBatch No. :833061602\n",
+   "fine": "PETG Basic\nMetallic Silver (S/m4R)\n___ SKU: NPET@008\n4) Prin ing Temp: Diameter: L.75mrn\ndi Bed Temp: Batch No, 833061601\n"
+  },
+  {
+   "box": 4,
+   "expected_colour": "Orange",
+   "frame": "PETG Basic\n\nOrange (#8)\nSKU: KR-PETGO21Y-1CH\n\n& Printing Temp: Diameter: 1.7mm\n230-260°C\n\nlly ie Temp: Batch No, :831011301\n90°C\n",
+   "fine": "PETG Basic\nOrange (#8 £&)\nSKU: KR-PETG021Y-1CH\n+ Printing Temp: Diameter: 175mm\n230-260°C\nlll foto: : Batch No, :831011301\n"
+  },
+  {
+   "box": 5,
+   "expected_colour": "Yellow",
+   "frame": "PETG Basic\n\nYe! low (SR)\nSKU: KR-PETGO26Y-10H\n\n& Printing Temp: Diameter: 175mm\n230-260°C\n\nBed Temp ; Batch No, -832010402\n& 10-90°¢\n",
+   "fine": ". PETG Basic\nYo! low (J@ 4%)\n; SKU: KR-PETGQO26Y~1 CH\n4 Printing Temp: Diameter: 175mm\n230-260'C\nity reed: ; Batch No, -837010402\nsi\n"
+  }
+ ]
+}

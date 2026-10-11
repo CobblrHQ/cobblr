@@ -116,6 +116,7 @@ export function WorkspacePlatformWeb({ orgSlug, role, appMode, children }: { org
               .orgModules(slug)
               .then((r) => [...KERNEL_PANELS, ...r.items.filter((m) => m.enabled).flatMap((m) => m.panels ?? [])]),
           fieldValues: (slug, kind, field, opts) => api.fieldValues(slug, kind, field, opts),
+          addresses: (slug, q) => api.addresses(slug, q),
           sellerOffer: (slug, kind) => api.sellerOffer(slug, kind),
           listUnits: (slug) => api.listUnits(slug),
           addUnit: (slug, unit) => api.addUnit(slug, unit),

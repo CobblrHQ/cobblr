@@ -1,3 +1,4 @@
+import { objectWith } from "@cobblr/platform-contract/ai-output-schemas";
 // Floor plan — the third lens on the locations hierarchy: the same records
 // drawn where they physically stand. See docs/design-decisions/location-floor-plan.md.
 //
@@ -179,7 +180,7 @@ export async function runFloorplanSeed(opts: {
     const r = await platform().ai.invoke({
       orgId: opts.orgId,
       capability: "organise",
-      input: { messages: [{ role: "user", content: prompt }] },
+      input: { output_schema: objectWith([], { zones: { type: ["array", "null"] }, placements: { type: ["array", "null"] } }), messages: [{ role: "user", content: prompt }] },
       source: { kind: "core-locations:floorplan-seed", id: opts.roomId },
       userId: opts.userId,
     });

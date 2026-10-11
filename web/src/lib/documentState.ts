@@ -5,6 +5,7 @@
 // lines came from a photo of the page rather than from text in the file, and
 // a person deciding whether to trust them should know that (#4523).
 import type { SessionVerdict } from "@cobblr/platform-contract/scan-session";
+import { documentChipWords } from "@cobblr/platform-contract/scan-source";
 
 function fromScan(v: SessionVerdict, items: ReadonlyArray<{ suggested_metadata?: unknown }>): boolean {
   if (v.kind === "failed") return v.failure.source === "scanned-pdf";
@@ -48,4 +49,20 @@ export function documentStateWords(v: SessionVerdict, items: ReadonlyArray<{ sug
     default:
       return null;
   }
+}
+
+/** The header chip of a session that needs nothing ("Email · 3 lines"). A
+ *  read with no model says so here too: the card that says it is only shown
+ *  when the document needs the person, so a good read never said it. */
+export function documentChipLine(kind: string, items: ReadonlyArray<{ suggested_metadata?: unknown }>): string {
+  return `${documentChipWords(kind, items.length)}${readWithNoModel(items) ? ", no AI" : ""}`;
+}
+
+/** What a Read again says when it is done: how many lines, and the purchase
+ *  they are on, so filing them is known to file that order. */
+export function readAgainWords(r: { receipt: { item_count: number }; purchase?: { recorded: boolean; order_number?: string | null } | null }): string {
+  const n = r.receipt.item_count;
+  const lines = `Read again: ${n} item${n === 1 ? "" : "s"}`;
+  if (!r.purchase?.recorded) return lines;
+  return r.purchase.order_number ? `${lines}, on purchase #${r.purchase.order_number}` : `${lines}, on its purchase`;
 }

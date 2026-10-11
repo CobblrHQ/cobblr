@@ -50,7 +50,7 @@ function SetFieldForm({ records, fields, close, onDone }: { records: Ref[]; fiel
       if (!clear && value === null) { setError("Enter a value, or choose Clear this field."); return; }
       setBusy(true); setError(null); setFailed([]);
       try {
-        const out = await run({ actionId: "platform:set-field-on-records", entityKind: "", entityId: "", args: { records, field: name, value: clear ? null : value } });
+        const out = await run({ actionId: "platform:set-field-on-records", entityKind: "", entityId: "", args: { records, field: name, value: clear ? null : value } }, { undo: "shown-here" });
         const result = out.result as Result;
         if (!result?.ok) throw new Error(result?.error ?? "That did not go through.");
         const skipped = result.data?.failed ?? [];
@@ -58,7 +58,7 @@ function SetFieldForm({ records, fields, close, onDone }: { records: Ref[]; fiel
         const steps = (Array.isArray(out.undo) ? out.undo : out.undo ? [out.undo] : []) as Array<{ action_id: string; args: Record<string, unknown> }>;
         if (steps.length) toast.action(result.summary ?? "Fields changed.", { actionLabel: "Undo", onAction: async () => {
           for (const step of steps) {
-            const back = await run({ actionId: step.action_id, entityKind: "", entityId: "", args: step.args });
+            const back = await run({ actionId: step.action_id, entityKind: "", entityId: "", args: step.args }, { undo: "is-undo" });
             const restored = back.result as Result;
             if (!restored?.ok) { toast.error(restored?.error ?? "The batch could not be undone."); return; }
             const failures = restored.data?.failed ?? [];

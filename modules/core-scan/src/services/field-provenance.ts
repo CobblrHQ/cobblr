@@ -112,11 +112,6 @@ function candidateList(raw: unknown): Array<{ fields?: Record<string, unknown> }
   return [];
 }
 
-/** The top candidate's fields of a stored candidate list, or {}. */
-function topFields(candidates: unknown): Record<string, unknown> {
-  return candidateList(candidates)[0]?.fields ?? {};
-}
-
 /** Fields each piece reads off its own crop, not off the product: two balls
  *  of one yarn are two colourways, two dye lots. The twin rule leaves these
  *  alone; everything else on a product is one fact for both twins. */

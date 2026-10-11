@@ -13,6 +13,8 @@
 // (a governance gate, an owner-only act) says so honestly with
 // `requestable: false` and never grows an Ask button.
 
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+
 /** One thing a request asks for. `key` is the id the remedy is keyed on: an
  *  action id for a capability, a bundle's external id for an install, a
  *  module's name for a module to turn on. */
@@ -43,6 +45,18 @@ export interface BlockedAction {
   approvers: { count: number; names: string[] };
   /** A request already waiting on the same remedies, if one exists. */
   pending: { id: string; created_at: string } | null;
+  /** The person may apply every remedy themselves: an owner or admin who met
+   *  an app that is off. The sheet offers to turn it on and carry on with
+   *  what was refused, never an ask to somebody else (#5865). */
+  selfApply?: boolean;
+}
+
+/** Remedies the caller's own role may apply without asking anyone: turning
+ *  on an app is what an owner or admin does on the Modules screen. A
+ *  capability or a bundle install stays an ask, so a refusal never quietly
+ *  widens what this person can do. */
+export function selfApplicable(role: string, remedies: readonly { kind: ApprovalRemedyKind }[]): boolean {
+  return roleSatisfies(role, ["owner", "admin"]) && remedies.length > 0 && remedies.every((r) => r.kind === "module");
 }
 
 /** The dedupe handle: the sorted remedy keys, so the same ask from two

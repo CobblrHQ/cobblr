@@ -14,15 +14,19 @@
     "./json-field": {
       "types": "./src/JsonField.tsx",
       "import": "./src/JsonField.tsx"
+    },
+    "./blocked-action": {
+      "types": "./src/blocked-action.ts",
+      "import": "./src/blocked-action.ts"
     }
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@cfworker/json-schema": "4.1.1",
     "@cobblr/platform-contract": "workspace:*",
     "@cobblr/thermal-print": "workspace:*",
-    "ajv": "^8.17.1",
     "qrcode": "^1.5.4"
   },
   "peerDependencies": {

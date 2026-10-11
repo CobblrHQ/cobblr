@@ -2,6 +2,50 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-10-11
+
+### Features
+- A barcode someone has filed is filed the next time into the same kind of table, with its product details filled in, without asking the AI.
+- A vehicle's bill of sale read under Personal documents can be filed again: File this vehicle purchase puts the car in the scan inbox, offered against the car you already have by its VIN, and records its purchase with the fees and tax kept as charges. The page is read by code first and is never stored.
+- A photo of a filament box's label now names the spool and counts it toward its order with no AI, and a mixed pack whose contents are known splits into them with no AI.
+- A forwarded order is read on the store's own page: each line takes its variant's photo, and a mixed pack like "10KG / Multicolor" becomes its ten spools, one per colour, each matched on its own against what you already have.
+- A mixed pack someone has filed is known to the next person who orders it, so their order splits into its spools with no AI.
+- A service visit can say where it is. Pick a place you used before or type the address, and the visit's calendar event carries it, with directions on your phone.
+- The batch numbers printed on a spool's box are kept on its record, counted per batch, even though a spool has no use-by date.
+- A Vault for personal documents: folders whose documents are encrypted and opened only by the people you choose, never by search, Cobb, shares or anyone else in the workspace, its admins included.
+- Records can carry an address. The picker offers the places your workspace already used as you type, and the address becomes the calendar event's Where, with directions on your phone.
+- An order line of several now says whether it is several of the same thing or a pack of different things, and you can scan its units in one by one.
+- Connect your other Cobblr to copy or move selected items into an existing workspace, with a field preview and separate source restore.
+- Upload a registration renewal to update the right car, keep its original in your Vault and undo the change in one step.
+
+### Improvements
+- A bill of sale filed from Personal documents now keeps its original in your Vault, encrypted and visible only to the people its folder lists, and the car's page lists it once the car is known.
+- Cobb's instructions are now sent in the same order for everyone, so a Claude key reads them from its prompt cache instead of paying for them on every message: a cached chat message costs about a sixth as much. The AI page shows how much of each call came from the cache.
+- What's still here? now starts from a table too: tick the rows to check and press it in the bar along the bottom, or take stock of everything in the table that has no place. Scanning a jar's barcode in the sheet ticks its row.
+- What's still here? is on What's on hand now: press it in the view's header to take stock of exactly the things the view shows.
+
+### Fixes
+- What's still here? works on any place in a workspace of more than 2000 records. It refused every place there, saying to take stock one place at a time, even for a shelf of two.
+- Cards no longer lose a link when their state changes. The bell's notifications row keeps Settings after you turn notifications on, and adds Send a test. A token you just made still links to API tokens, where you can revoke it. A turned-off action label can still be renamed. A connected Discord can send a test DM at any time, and a connected bridge has About this bridge, with what it can and cannot do and how to remove it. On a phone, the bell no longer shows a collapse arrow that did nothing.
+- Correcting a renewal term, changing a renewal or a service schedule, or pausing its reminders now says what changed with an Undo, and Undo puts the term, its cost and the registration's expiry back.
+- A day you pick now stays that day wherever you are. A service visit booked for the 16th no longer reads "due 10/15" west of Greenwich, and its countdown, reminders and calendar entry count from the 16th. Project dates, task due dates, warranty and expiry dates, and link expiries keep the day you gave them, and a date the api sends back is the plain day (2026-10-16) rather than a midnight timestamp.
+- A forwarded order keeps its variants, its pack counts and its own pictures. Three lines of one product in different colours no longer all say you already have the white one. A 10-pack line adds ten, on the button and in the count, and a forwarded order's own product pictures go on its lines instead of a web search.
+- Using some of a roll or a spool from its record now moves Workshop stock's remaining amount straight away, instead of showing the old amount until you reload.
+- Searching for a number finds the things with that number in their name (a barcode, a model), not only the item with that asset number. Type `#` before it to ask for the asset number alone.
+- Turning on notifications says what went wrong when it does not finish. When the browser allowed notifications but would not sign the device up, pressing Turn on used to bring the same button back with nothing said. The notifications row and the settings card now say what failed, in the browser's own words where it gave some, and what to do next, with Try again. A page whose background worker never started now says so after a few seconds instead of showing "Turning on…" forever.
+- A station card shows each action once, and a scanner works beside the camera. A grocery's card at a station no longer repeats Use one beside Used one or Restock one beside +1, and no longer offers forms like Update an item at a kiosk. A station with its camera on also stopped missing reads from a plugged-in barcode scanner.
+- A station's card shows what a press did: after Used up it says None left, and Undo puts the count back, instead of still saying how many you had before.
+- A licence or subscription with a renewal date shows its renewal on its page again, with Renewed, the cancel-by date and its paid terms, instead of only offering to add another renewal.
+- Mint token can now make a token that opens only your Vault: choose Only your Vault under Opens. It was possible through the API but no screen offered it.
+- Anything you do that can be taken back now offers Undo. Pressing Use one on a counted record took one with no way to take it back on screen, though Cobblr knew how. Now every action that can be undone shows Undo in the message that says it happened: a record's own buttons, its rows and chips, adding to a list from a scan, a new choice typed into a field, and the others. Sharing a record, deciding on suggestions and saying a thing is no longer yours had an Undo that was never drawn; it shows now. Marking a whole batch of late things as tossed offers one Undo for all of them.
+- Guest searches stopped requesting private identifier matches and showing cached matches from another role.
+- A copy brought in from a library opens from its record, including the same document copied into a second record
+- Reconnecting a library brings back every link made through it, and Reconnect opens on that same library
+- A local AI, such as Gemma 4 through Ollama, now reads receipts, documents and scans in the shape Cobblr keeps: each reading tells the AI the exact layout to answer in, and an answer in any other layout goes to your next AI instead of being quietly dropped. Suggesting the kinds in a photo of an assortment, and the vision check for a failing print, now work too.
+- An OpenAI connection now offers and answers with OpenAI's newest models, GPT-6 Luna, Sol and Astra among them, by tier: each picker shows "GPT Luna · latest (6)" first and the versions to pin underneath, and everyday jobs default to Luna's latest while plans and documents get Sol's. It used to offer GPT-4o at best. When a provider's model list cannot be read, the offline list now holds every family's newest model too, Claude's Fable included.
+- Notifications in the account menu now always opens your notification settings. While Discord was offered but not connected, it went straight to Discord sign-in instead, even if you only wanted your push or email settings. Connecting Discord stays an offer on that page.
+- A message at the foot of the screen no longer sits on the buttons you need. On a phone, a confirmation with Undo (after installing an app, importing a plan) or the "new version available" notice used to cover a form's Create and Cancel, or a link in the phone menu, until you dismissed it. Dialogs, the phone menu and side panels now end above the messages, so you can carry on with Undo still there to press.
+
 ## 2026-10-10
 
 ### Features

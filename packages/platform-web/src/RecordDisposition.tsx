@@ -28,7 +28,7 @@ import { usePlatformWeb } from "./context";
 import { Modal } from "./Modal";
 import { MoneyInput } from "./MoneyInput";
 import { useToast } from "./ToastContext";
-import { useRunAction } from "./run-action";
+import { undoStepsOf, useRunAction, type RunOptions } from "./run-action";
 
 const money = (n: number) => formatMoney(centsFromAmount(n));
 const PRICED: ReadonlySet<Disposition> = new Set(["sold", "traded"]);
@@ -71,11 +71,13 @@ export function RecordDisposition({
   // every query, which is right here, since the record leaves (or rejoins)
   // every list, total and count on screen.
   const changed = () => onChanged?.();
-  const run = async (actionId: string, args: Record<string, unknown>) => {
-    const r = await runAction({ actionId, entityKind: kind, entityId: id, args: { entity_kind: kind, ids: [id], ...args } });
+  // The door offers a returned Undo itself; `offered` says it did, so the
+  // surface does not say the same thing twice.
+  const run = async (actionId: string, args: Record<string, unknown>, opts?: RunOptions) => {
+    const r = await runAction({ actionId, entityKind: kind, entityId: id, args: { entity_kind: kind, ids: [id], ...args } }, opts);
     const res = r.result as { ok?: boolean; error?: string; summary?: string } | null;
     if (!res?.ok) throw Object.assign(new Error(res?.error ?? "That did not go through."), { blocked: (res as { blocked?: unknown } | null)?.blocked });
-    return res.summary ?? "Done.";
+    return { said: res.summary ?? "Done.", offered: !opts?.undo && undoStepsOf(r.undo).length > 0 };
   };
 
   if (gone) {
@@ -96,7 +98,8 @@ export function RecordDisposition({
           onClick={async () => {
             setBusy(true);
             try {
-              toast.success(await run("platform:bring-back", {}));
+              const { said, offered } = await run("platform:bring-back", {});
+              if (!offered) toast.success(said);
               changed();
             } catch (e) {
               // Refused with a reason (a thing someone else has now, #4736):
@@ -169,9 +172,9 @@ export function RecordDisposition({
             targets={targets}
             onCancel={() => setGiving(false)}
             onGive={async (to) => {
-              const said = await run("platform:offer-to", { to });
+              const { said, offered } = await run("platform:offer-to", { to });
               setGiving(false);
-              toast.success(said);
+              if (!offered) toast.success(said);
               changed();
             }}
           />
@@ -191,12 +194,12 @@ export function RecordDisposition({
           <GoneForm
             onCancel={() => setAsking(false)}
             onSave={async (args) => {
-              const said = await run("platform:mark-gone", args);
+              const { said } = await run("platform:mark-gone", args, { undo: "shown-here" });
               setAsking(false);
               toast.success(said, {
                 actionLabel: "Undo",
                 onAction: async () => {
-                  await run("platform:bring-back", {});
+                  await run("platform:bring-back", {}, { undo: "is-undo" });
                   changed();
                 },
               });

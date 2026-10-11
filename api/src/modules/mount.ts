@@ -168,30 +168,49 @@ function requireModuleEnabled(moduleName: string) {
     if (!row) {
       const shown = listEntries().find((e) => e.manifest.name === moduleName)?.manifest.displayName ?? moduleName;
       const role = req.tenant?.role ?? "member";
-      // An owner or admin can reach the switch, so they are told where it
-      // is. Anyone else is told what to ask for, with the ask attached
-      // (blocked-action.ts), never sent to a screen they cannot open: a
-      // member pressing Add on a scan routed to an app that is off met
-      // "Enable it in Configuration → Modules" and nothing else (#3610).
-      if (roleSatisfies(role as "owner", ["owner", "admin"])) {
-        res.status(409).json({
-          error: { code: "module_not_enabled", message: `${shown} is not turned on in this workspace. Turn it on in Configuration → Modules.` },
-        });
-        return;
-      }
+      // Every role gets the remedy with the refusal (blocked-action.ts): an
+      // owner or admin is offered the switch and the thing they were doing,
+      // anyone else the ask with that thing attached, never sent to a screen
+      // they cannot open (#3610) or told to go and find one (#5865).
       const blocked = await describeBlock({
         orgId,
         userId: req.session?.id ?? "",
         role,
         remedies: [{ kind: "module", key: moduleName }],
       });
-      res.status(409).json({
-        error: { code: "module_not_enabled", message: `${shown} is not turned on in this workspace. Ask a workspace admin to turn it on.`, blocked },
-      });
+      const message = roleSatisfies(role as "owner", ["owner", "admin"])
+        ? `${shown} is not turned on in this workspace. Turn it on in Configuration → Modules.`
+        : `${shown} is not turned on in this workspace. Ask a workspace admin to turn it on.`;
+      res.status(409).json({ error: { code: "module_not_enabled", message, blocked } });
       return;
     }
     next();
   };
+}
+
+/** A module route that relays another app being off (the action door's
+ *  `{ code: "module_not_enabled", module }`, passed on as its own error) gets
+ *  the same remedy the gate above gives: the switch for an owner or admin, the
+ *  ask for anyone else, and the refused request kept so it carries on after.
+ *  Sales' Make met "Builds is not turned on" and offered only Close (#5865);
+ *  this way no module writes its own dead end for it. */
+function explainModuleOff(req: Request, res: Response, next: NextFunction): void {
+  const send = res.json.bind(res);
+  res.json = ((body: unknown) => {
+    const err = (body as { error?: { code?: unknown; module?: unknown; blocked?: unknown } } | null)?.error;
+    const orgId = req.tenant?.org.id;
+    if (!orgId || res.statusCode < 400 || err?.code !== "module_not_enabled" || typeof err.module !== "string" || err.blocked) return send(body);
+    void describeBlock({
+      orgId,
+      userId: req.session?.id ?? "",
+      role: req.tenant?.role ?? "member",
+      remedies: [{ kind: "module", key: err.module }],
+    })
+      .then((blocked) => send({ ...(body as object), error: { ...err, blocked } }))
+      .catch(() => send(body));
+    return res;
+  }) as Response["json"];
+  next();
 }
 
 export async function mountModules(app: Application): Promise<{
@@ -230,7 +249,7 @@ async function mountSingleEntry(app: Application, entry: ReturnType<typeof listE
   // answer (platform/entity-saved.ts): one signal for a record, whatever door.
   // projectFieldScopes: a field scoped to a capability never leaves in a
   // module's answer to someone without it (platform/field-scope-projection.ts).
-  app.use(mountPath, requireAuth, withTenant, projectFieldScopes, requireModuleEnabled(manifest.name), observeModuleSaves(manifest.name), observeModuleHistory(manifest.name), router);
+  app.use(mountPath, requireAuth, withTenant, projectFieldScopes, requireModuleEnabled(manifest.name), explainModuleOff, observeModuleSaves(manifest.name), observeModuleHistory(manifest.name), router);
   // Capture the module's primary-entity router (if exposed) so the
   // instance-items dispatcher can route /instances/:name/items to it.
   const primary = (imported as ModuleApiModule | undefined)?.primaryRouter;

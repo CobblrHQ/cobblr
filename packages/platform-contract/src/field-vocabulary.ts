@@ -45,13 +45,21 @@ export const FIELD_TYPE_VALUES = [
   // ("$4,300", "4,300"). A number field whose role or unit says money reads
   // the same way; this is the type a person picks for a price.
   "money",
+  // Where something happens: { name, street, city, region, postal, country,
+  // line, lat?, lon?, source }, read and written through
+  // @cobblr/platform-contract/address. Shown as the name over the street
+  // address with a Directions link; a dated record's calendar event takes it
+  // as its "Where" (#5317). Called an address, never a location: a Location is
+  // where a thing is kept.
+  "address",
 ] as const;
 export type FieldDefType = (typeof FIELD_TYPE_VALUES)[number];
 /** The types a field can change between after it is made. Each holds a plain
  *  value in the record's metadata, so a change of type moves nothing; a
  *  computed, relation, member or person field holds a template or a reference
- *  and is made again rather than retyped. */
-export const NOT_RETYPEABLE_FIELD_TYPES = ["computed", "relation", "member", "person", "secret"] as const;
+ *  and is made again rather than retyped, and an address holds parts that no
+ *  other type reads. */
+export const NOT_RETYPEABLE_FIELD_TYPES = ["computed", "relation", "member", "person", "secret", "address"] as const;
 export const RETYPEABLE_FIELD_TYPES: readonly FieldDefType[] = FIELD_TYPE_VALUES.filter(
   (t) => !(NOT_RETYPEABLE_FIELD_TYPES as readonly string[]).includes(t),
 );

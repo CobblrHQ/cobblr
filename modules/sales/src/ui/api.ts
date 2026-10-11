@@ -3,7 +3,7 @@
 
 import type { IntakeSetting } from "../intake.js";
 import type { LineAvailability } from "../availability.js";
-import { describeUnreadableBody, noteWorkspaceWrite } from "@cobblr/platform-web";
+import { describeUnreadableBody, noteWorkspaceWrite, workspaceFetch } from "@cobblr/platform-web";
 
 export type SalesOrderStatus = "draft" | "confirmed" | "fulfilled" | "shipped" | "closed" | "cancelled";
 
@@ -75,14 +75,20 @@ export interface WorkOrderView {
 export interface SalesOrderDetail extends SalesOrder {
   items: SalesOrderItem[];
   total: number;
+  /** Lines with no price; the total covers only the priced ones. */
+  unpriced_lines?: number;
   work_orders?: WorkOrderView[];
   availability?: LineAvailability[];
 }
 
 export interface PartOption {
   id: string;
+  /** The kind it lives under: inventory's own or a named collection's. */
+  kind?: string;
   title: string;
   subtitle?: string;
+  /** The collection it is in, shown so two of the same name can be told apart. */
+  collection?: string;
 }
 
 /** A way on from a refused fulfilment: make the missing parts, or ship what
@@ -160,6 +166,9 @@ export class SalesApiError extends Error {
     message: string,
     /** What a refusal offers instead, when it offers anything. */
     public doors: FulfilDoor[] = [],
+    /** The platform's blocked-action sheet already offers the remedy (an app
+     *  to turn on, a permission to ask for), so this page adds no dialog. */
+    public remedied = false,
   ) {
     super(message);
   }
@@ -169,9 +178,9 @@ export interface IntakeView { setting: IntakeSetting | null; connections: Array<
 
 export class SalesApi {
   get workspace() { return this.slug; }
-  async orderEmailAddress() { return this.parse<{ order_address: string | null; order_name?: string | null }>(await fetch(`/api/v1/orgs/${this.slug}/receipt-address`, { headers: this.headers() })); }
+  async orderEmailAddress() { return this.parse<{ order_address: string | null; order_name?: string | null }>(await workspaceFetch(`/api/v1/orgs/${this.slug}/receipt-address`, { headers: this.headers() })); }
   /** Mail the person their orders address, from it, so their mail client learns "Cobblr Orders" (#5462). */
-  async emailMyOrderAddress() { return this.parse<{ sent: boolean; to: string; name: string }>(await fetch(`/api/v1/orgs/${this.slug}/receipt-address/email-me`, { method: "POST", headers: this.headers(true), body: JSON.stringify({ which: "orders" }) })); }
+  async emailMyOrderAddress() { return this.parse<{ sent: boolean; to: string; name: string }>(await workspaceFetch(`/api/v1/orgs/${this.slug}/receipt-address/email-me`, { method: "POST", headers: this.headers(true), body: JSON.stringify({ which: "orders" }) })); }
   intake() { return this.req<IntakeView>("GET", "/intake"); }
   setIntake(config: { on: boolean; connection: string; mapping: Record<string, string> }) { return this.req<IntakeSetting>("PUT", "/intake", config); }
   checkIntake() { return this.req<IntakeSetting | null>("POST", "/intake/check", {}); }
@@ -197,16 +206,16 @@ export class SalesApi {
       throw new SalesApiError(res.status, "non_json", describeUnreadableBody(res.status, raw));
     }
     if (!res.ok) {
-      const body = parsed as { error?: { code?: string; message?: string }; doors?: FulfilDoor[] };
+      const body = parsed as { error?: { code?: string; message?: string; blocked?: unknown }; doors?: FulfilDoor[] };
       const e = body.error;
-      throw new SalesApiError(res.status, e?.code ?? "error", e?.message ?? `Request failed (${res.status})`, Array.isArray(body.doors) ? body.doors : []);
+      throw new SalesApiError(res.status, e?.code ?? "error", e?.message ?? `Request failed (${res.status})`, Array.isArray(body.doors) ? body.doors : [], !!e?.blocked);
     }
     return parsed as T;
   }
 
   private async req<T>(method: string, path: string, body?: unknown): Promise<T> {
     const url = `/api/v1/orgs/${this.slug}/modules/sales${path}`;
-    const res = await fetch(url, {
+    const res = await workspaceFetch(url, {
       method,
       headers: this.headers(body !== undefined),
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -282,9 +291,9 @@ export class SalesApi {
 
   /** Generic kernel entity search — inventory parts for the line-item picker. */
   async searchParts(q: string): Promise<PartOption[]> {
-    const url = `/api/v1/orgs/${this.slug}/entities/inventory:part?limit=20${q ? `&q=${encodeURIComponent(q)}` : ""}`;
-    const res = await fetch(url, { headers: this.headers() });
-    const data = await this.parse<{ items: Array<{ id: string; title: string; subtitle?: string }> }>(res);
-    return data.items.map((i) => ({ id: i.id, title: i.title, subtitle: i.subtitle }));
+    const url = `/api/v1/orgs/${this.slug}/modules/sales/stock?q=${encodeURIComponent(q)}`;
+    const res = await workspaceFetch(url, { headers: this.headers() });
+    const data = await this.parse<{ items: Array<{ id: string; kind: string; title: string; subtitle?: string; collection: string }> }>(res);
+    return data.items.map((i) => ({ id: i.id, kind: i.kind, title: i.title, subtitle: i.subtitle, collection: i.collection }));
   }
 }

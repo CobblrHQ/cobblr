@@ -302,6 +302,9 @@ function MintModal({
   const { orgs } = useAuth();
   const [workspace, setWorkspace] = useState<string | null>(null);
   const [access, setAccess] = useState<TokenAccess>("change");
+  // What a personal token opens: a workspace at an access level, or one of
+  // the narrow scopes the catalogue offers on this form (the Vault, #5842).
+  const [purpose, setPurpose] = useState<string>("workspace");
   // Prefill from the token being replaced when the dialog opens. Keyed on
   // open+id so re-opening for a DIFFERENT token refills, while typing inside an
   // open dialog is never clobbered.
@@ -309,6 +312,7 @@ function MintModal({
     if (!open) return;
     setName(rotating?.name ?? "");
     setScopes(new Set(rotating?.scopes ?? []));
+    setPurpose("workspace");
     setExpiresInDays("never");
     const g = initialGrant(activeOrgId, rotating);
     setWorkspace(g.workspace);
@@ -323,8 +327,11 @@ function MintModal({
     queryKey: ["api-token-scopes"],
     queryFn: () => api.apiTokenScopes(),
     staleTime: Infinity,
-    enabled: variant === "operator",
   });
+  // Each form offers the scopes the catalogue gives it, and only those: one
+  // made somewhere else (a bridge's, at its setup) is on neither.
+  const offered = (scopeChoices.data?.items ?? []).filter((s) => s.offered_in === variant);
+  const narrow = personalGrant ? offered.find((s) => s.key === purpose) ?? null : null;
 
   const mint = useMutation({
     mutationFn: () => {
@@ -341,8 +348,8 @@ function MintModal({
         // daemon token from /configuration/tokens silently minted a FULL-ACCESS
         // replacement with the same name. Widening is the one thing a rotation
         // must never do.
-        scopes: scopes.size > 0 && (variant === "operator" || rotating) ? [...scopes] : undefined,
-        ...(personalGrant ? { access, ...(workspace ? { workspace } : {}) } : {}),
+        scopes: narrow ? [narrow.key] : scopes.size > 0 && (variant === "operator" || rotating) ? [...scopes] : undefined,
+        ...(personalGrant && !narrow ? { access, ...(workspace ? { workspace } : {}) } : {}),
       });
     },
     onSuccess: (r) => {
@@ -432,7 +439,7 @@ function MintModal({
             {/* Two columns from sm up, and a cap so a short viewport scrolls the
                 LIST rather than pushing the mint button off the dialog. */}
             <div className="grid sm:grid-cols-2 gap-x-5 gap-y-2 max-h-[26rem] overflow-y-auto pr-1">
-              {(scopeChoices.data?.items ?? []).map((s) => (
+              {offered.map((s) => (
                 <label
                   key={s.key}
                   className={
@@ -470,6 +477,23 @@ function MintModal({
           </div>
         ) : personalGrant ? (
           <>
+            {offered.length > 0 && (
+              <div className="space-y-1.5">
+                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Opens</span>
+                <SegmentedChoice
+                  stack
+                  label="Opens"
+                  value={purpose}
+                  onChange={setPurpose}
+                  options={[
+                    { value: "workspace", label: "A workspace", hint: "Look, change or do anything in one workspace or all of yours." },
+                    ...offered.map((o) => ({ value: o.key, label: `Only your ${o.label}`, hint: o.description })),
+                  ]}
+                />
+              </div>
+            )}
+            {!narrow && (
+            <>
             <label className="block">
               <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                 Workspace
@@ -501,6 +525,8 @@ function MintModal({
               <p className="text-xs text-ember-500">
                 This token will be able to do anything you can, in every workspace. Treat it like a password.
               </p>
+            )}
+            </>
             )}
           </>
         ) : null}

@@ -259,6 +259,8 @@ export function PlanLayoutPage() {
     });
     if (ok) apply.mutate(draft.id);
   };
+  // What cannot stand in the room keeps the layout from being applied (#5809).
+  const notInRoom = board?.flags.filter((f) => f.kind === "room") ?? [];
   const [naming, setNaming] = useState<string | null>(null);
   const [addingRack, setAddingRack] = useState(false);
   const fits = board?.racks.flatMap((r) => r.shelves.filter((s) => s.line).map((s) => ({ rack: r.name, s }))) ?? [];
@@ -364,9 +366,20 @@ export function PlanLayoutPage() {
                 >
                   <Trash2 size={13} /> Discard
                 </button>
-                <button type="button" onClick={() => void askApply()} disabled={apply.isPending} className="rounded bg-cobble-600 px-3 py-1 text-sm font-medium text-white disabled:opacity-50">
+                <button
+                  type="button"
+                  onClick={() => void askApply()}
+                  disabled={apply.isPending || notInRoom.length > 0}
+                  title={notInRoom.length ? "Something in this layout does not fit the room" : undefined}
+                  className="rounded bg-cobble-600 px-3 py-1 text-sm font-medium text-white disabled:opacity-50"
+                >
                   Apply {draft.name}
                 </button>
+                {notInRoom.length > 0 && (
+                  <span data-testid="apply-blocked" className="basis-full text-sm font-medium text-ember-700 dark:text-ember-300">
+                    {notInRoom.map((f) => f.text).join(". ")}. Make it smaller, turn it or take it out of {draft.name} to apply it.
+                  </span>
+                )}
               </>
             )}
           </div>

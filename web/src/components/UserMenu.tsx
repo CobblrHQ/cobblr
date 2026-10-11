@@ -10,28 +10,9 @@ import { InstallThisPhoneItem } from "../tips/install-tip";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, NavLink } from "react-router-dom";
-import { CONNECT_DISCORD_PATH, discordConnectable } from "../lib/discord-connect";
+import { discordConnectable } from "../lib/discord-connect";
 import { useDiscordStatus } from "../lib/useDiscordStatus";
-import {
-  ArrowRight,
-  Bell,
-  Cable,
-  CalendarDays,
-  ChevronDown,
-  ChevronRight,
-  Settings,
-  LogOut,
-  MessageSquare,
-  Rocket,
-  Sparkles,
-  Moon,
-  Server,
-  ShieldCheck,
-  SlidersHorizontal,
-  Sun,
-  UserCog,
-  Compass,
-  DoorOpen, Package } from "lucide-react";
+import { ArrowRight, Bell, Cable, CalendarDays, ChevronDown, ChevronRight, Settings, LogOut, MessageSquare, Rocket, Sparkles, Moon, Server, ShieldCheck, SlidersHorizontal, Sun, UserCog, Compass, DoorOpen, Package, Lock } from "lucide-react";
 import { startTour } from "../tour/useTour";
 import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -48,15 +29,16 @@ import { useMyEdgeBridge } from "../lib/useMyEdgeBridge";
 import { PopoverLayer, useEscapeToClose } from "@cobblr/platform-web";
 
 /** Account-menu row for how Cobblr reaches you, with Discord's state beside
- *  it: the connection that sends "this is about to go off" had no door from
- *  the menu at all (the owner, 2026-09-29). Not connected goes straight to
- *  connecting. */
-function NotificationsMenuRow({ itemCls, onNavigate }: { itemCls: string; onNavigate: () => void }) {
+ *  it (the owner, 2026-09-29). It always opens the notifications page, where
+ *  connecting Discord is one offer among the rest: it used to start Discord
+ *  sign-in whenever Discord was not connected, so someone who came for their
+ *  push or email settings landed on a Discord consent screen (#5774). */
+export function NotificationsMenuRow({ itemCls, onNavigate }: { itemCls: string; onNavigate: () => void }) {
   const q = useDiscordStatus();
   const offered = discordConnectable(q.data);
   const verified = !!q.data?.verified;
   return (
-    <Link to={offered && !verified ? CONNECT_DISCORD_PATH : "/me/communication"} onClick={onNavigate} className={itemCls} role="menuitem">
+    <Link to="/me/communication" onClick={onNavigate} className={itemCls} role="menuitem">
       <Bell size={14} className="text-faint dark:text-slate-400" /> Notifications
       {offered && (
         <span className="ml-auto flex items-center gap-1.5 whitespace-nowrap text-[11px] text-faint">
@@ -247,6 +229,9 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
               )}
               <Link to="/people/me" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
                 <Package size={14} className="text-faint dark:text-slate-400" /> My things
+              </Link>
+              <Link to="/vault" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
+                <Lock size={14} className="text-faint dark:text-slate-400" /> Vault
               </Link>
               <Link to="/changelog" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
                 <Sparkles size={14} className="text-faint dark:text-slate-400" /> What's new
@@ -492,6 +477,9 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
               )}
               <Link to="/people/me" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
                 <Package size={14} className="text-faint dark:text-slate-400" /> My things
+              </Link>
+              <Link to="/vault" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
+                <Lock size={14} className="text-faint dark:text-slate-400" /> Vault
               </Link>
               <Link to="/changelog" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
                 <Sparkles size={14} className="text-faint dark:text-slate-400" /> What's new

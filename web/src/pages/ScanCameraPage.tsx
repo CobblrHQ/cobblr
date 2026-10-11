@@ -2474,8 +2474,15 @@ export function ScanCameraPage() {
           phase after a result was dealt with; never over a result sheet or a
           review sheet, which a camera-less browser reaches through the typed
           field, the wedge and the image door. */}
+      {/* It sits between the top and bottom chrome, never over them: the
+          place, the mode, the typed field and the image door all still work
+          when the camera does not (#5818). */}
       {(!running || (cameraDead && !sheetBlocking)) && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-900/90 text-white p-6 text-center">
+        <div
+          data-testid="camera-unavailable"
+          className="absolute inset-x-0 flex flex-col items-center justify-center gap-3 overflow-y-auto bg-slate-900/90 text-white p-6 text-center"
+          style={{ top: chrome.top, bottom: chrome.bottom }}
+        >
           <Camera size={28} className="opacity-80" />
           <div className="text-sm font-medium">Camera unavailable</div>
           {error && (

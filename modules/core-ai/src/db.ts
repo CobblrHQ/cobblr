@@ -66,6 +66,10 @@ export interface CoreAiCallsTable {
   input_full: string | null;
   output_full: string | null;
   input_tokens: number | null;
+  /** Prompt tokens read from and written to the provider's prompt cache
+   *  (0020, #5319). Null for a call before them or a provider without one. */
+  cache_read_tokens: number | null;
+  cache_write_tokens: number | null;
   output_tokens: number | null;
   cost_cents: number | null;
   duration_ms: number | null;

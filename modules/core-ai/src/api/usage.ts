@@ -33,6 +33,11 @@ interface SummaryRow {
   total_cost_cents: string | number | null;
   total_duration_ms: string | number | null;
   failed: string | number;
+  /** Prompt tokens sent fresh, read from the prompt cache and written to it
+   *  (#5319): what the page turns into "N% of the prompt from the cache". */
+  input_tokens: string | number | null;
+  cache_read_tokens: string | number | null;
+  cache_write_tokens: string | number | null;
 }
 
 usageRouter.get(
@@ -52,6 +57,9 @@ usageRouter.get(
         sql<number>`sum(cost_cents)`.as("total_cost_cents"),
         sql<number>`sum(duration_ms)`.as("total_duration_ms"),
         sql<number>`count(*) filter (where ok = false)`.as("failed"),
+        sql<number>`sum(input_tokens)`.as("input_tokens"),
+        sql<number>`sum(cache_read_tokens)`.as("cache_read_tokens"),
+        sql<number>`sum(cache_write_tokens)`.as("cache_write_tokens"),
       ])
       .where("invoked_at", ">=", since)
       .groupBy(["capability", "provider_id"])

@@ -16,7 +16,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Check, Loader2, QrCode, RotateCcw, ShoppingCart } from "lucide-react";
-import { usePageTitle, useRunAction, useToast, type ActionRun } from "@cobblr/platform-web";
+import { undoStepsOf, usePageTitle, useRunAction, useToast, type ActionRun } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, ApiError, type ActionLabelPreview } from "../lib/api";
 
@@ -136,7 +136,7 @@ function LabelButton({ slug, code, button }: { slug: string; code: string; butto
         ...(button.binding_id ? { bindingId: button.binding_id } : {}),
         ...(button.args ? { args: button.args } : {}),
         label: code,
-      })) as ActionRun & { undo?: UndoStep[] };
+      }, { undo: "shown-here" })) as ActionRun & { undo?: UndoStep[] };
       const result = (out.result ?? {}) as { newQty?: number; low?: boolean; summary?: string };
       setPressed({
         words: typeof result.newQty === "number" ? `Done. ${button.record_title ?? "It"} is at ${result.newQty} now.` : result.summary ?? "Done.",
@@ -163,7 +163,7 @@ function LabelButton({ slug, code, button }: { slug: string; code: string; butto
           entityId: step.entity_id ?? "",
           args: step.args,
           label: code,
-        });
+        }, { undo: "is-undo" });
       }
       setPressed(null);
       toast.success("Undone.");
@@ -178,14 +178,15 @@ function LabelButton({ slug, code, button }: { slug: string; code: string; butto
   const addToList = async () => {
     setBusy(true);
     try {
-      await runAction({
+      const added = await runAction({
         actionId: "lists:add-item",
         entityKind: "",
         entityId: "",
         args: { title: pressed?.recordTitle ?? button.record_title ?? "", listTitle: "Shopping list" },
         label: code,
       });
-      toast.success(`${pressed?.recordTitle ?? "It"} is on the shopping list.`);
+      // The door says it, with the add's own Undo, when the action gives one.
+      if (!undoStepsOf(added.undo).length) toast.success(`${pressed?.recordTitle ?? "It"} is on the shopping list.`);
       setPressed((p) => (p ? { ...p, low: false } : p));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't add it to the list.");

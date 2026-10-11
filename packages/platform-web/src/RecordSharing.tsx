@@ -39,14 +39,14 @@ export function RecordSharing({ kind, id, className }: { kind: string; id: strin
   const run = async (actionId: "platform:share-with" | "platform:stop-sharing", linkId: string) => {
     setBusy(true);
     try {
-      const r = await runAction({ actionId, entityKind: kind, entityId: id, args: { entity_kind: kind, ids: [id], with: linkId } });
+      const r = await runAction({ actionId, entityKind: kind, entityId: id, args: { entity_kind: kind, ids: [id], with: linkId } }, { undo: "shown-here" });
       const res = r.result as { ok?: boolean; error?: string; summary?: string } | null;
       if (!res?.ok) throw new Error(res?.error ?? "That did not go through.");
       const back = actionId === "platform:share-with" ? "platform:stop-sharing" : "platform:share-with";
       toast.success(res.summary ?? "Done.", {
         actionLabel: "Undo",
         onAction: async () => {
-          await runAction({ actionId: back, entityKind: kind, entityId: id, args: { entity_kind: kind, ids: [id], with: linkId } });
+          await runAction({ actionId: back, entityKind: kind, entityId: id, args: { entity_kind: kind, ids: [id], with: linkId } }, { undo: "is-undo" });
           await q.refetch();
         },
       });

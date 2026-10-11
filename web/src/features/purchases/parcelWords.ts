@@ -5,6 +5,7 @@
 //   "Out for delivery: Amazon Logistics TBA335321582286"
 //   "Not shipped yet"
 //   "On its way, no date yet"            (an online order nobody has a day for)
+import { dayLabel } from "@cobblr/platform-contract/day";
 
 const STATE_WORDS: Record<string, string> = {
   pre_transit: "Label made",
@@ -23,8 +24,7 @@ export interface ParcelFacts {
 
 /** "Oct 11" for an ISO day; the day as written when it is not one. */
 export function shortDay(iso: string): string {
-  const d = new Date(`${String(iso).slice(0, 10)}T12:00:00Z`);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  return dayLabel(iso, { month: "short", day: "numeric" }, "en-US");
 }
 
 export function parcelWords(p: ParcelFacts | null): string {

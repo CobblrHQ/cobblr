@@ -17,7 +17,7 @@
 // invisible, not a crash).
 
 import { lazy, Suspense, type ComponentType, type LazyExoticComponent } from "react";
-import { ContributedDetailPanels, registerDetailPanel, hasDetailPanel } from "@cobblr/platform-web";
+import { ContributedDetailPanels, registerDetailPanel, registerViewToolbar, hasDetailPanel } from "@cobblr/platform-web";
 import type { ConfigSectionCtx, ModulePageTabCtx } from "./types";
 
 registerDetailPanel(
@@ -49,6 +49,10 @@ registerDetailPanel(
 registerDetailPanel(
   "inventory:material-cost",
   lazy(() => import("../features/inventory/materialCost").then((m) => ({ default: m.MaterialCostPanel }))),
+);
+registerViewToolbar(
+  "inventory:stocktake-view",
+  lazy(() => import("../features/inventory/stocktakeView").then((m) => ({ default: m.StocktakeViewControl }))),
 );
 registerDetailPanel(
   "inventory:stock-here",
@@ -98,6 +102,10 @@ registerDetailPanel(
 registerDetailPanel(
   "platform:links",
   lazy(() => import("../features/links/panel").then((m) => ({ default: m.LinksPanel }))),
+);
+registerDetailPanel(
+  "platform:vault-documents",
+  lazy(() => import("../features/vault/RecordVaultDocuments").then((m) => ({ default: m.RecordVaultDocuments }))),
 );
 registerDetailPanel(
   "core-activity-log:history",

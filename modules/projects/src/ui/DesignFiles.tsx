@@ -13,7 +13,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, Images, Trash2, Upload } from "lucide-react";
-import { canPreviewFile, FilePreview, Lightbox, Modal, SelectableTile, usePasteImage, openAuthedFile, useConfirm, useFilePreviewRegistry, useToast, EntityPhoto, noteWorkspaceWrite, uploadJson } from "@cobblr/platform-web";
+import { canPreviewFile, FilePreview, Lightbox, Modal, SelectableTile, usePasteImage, openAuthedFile, useConfirm, useFilePreviewRegistry, useToast, EntityPhoto, noteWorkspaceWrite, uploadJson, workspaceFetch } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import type { PatternPhotoState } from "./api";
 import { patternNeedsKey } from "./PatternNeeds";
@@ -63,7 +63,7 @@ export function DesignFiles({ designId }: { designId: string }) {
   const list = useQuery({
     queryKey: filesKey,
     queryFn: async () => {
-      const res = await fetch(
+      const res = await workspaceFetch(
         `${base}/attachments?source_module=projects&source_type=project&source_id=${encodeURIComponent(designId)}`,
         { headers: auth() },
       );
@@ -99,7 +99,7 @@ export function DesignFiles({ designId }: { designId: string }) {
       fd.append("file", file);
       const f = await uploadJson<{ id: string }>(`${base}/files`, fd, { token: getToken(), file });
       const role = file.type === "application/pdf" ? "pattern" : "gallery";
-      const ares = await fetch(`${base}/attachments`, {
+      const ares = await workspaceFetch(`${base}/attachments`, {
         method: "POST",
         headers: { ...auth(), "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -129,7 +129,7 @@ export function DesignFiles({ designId }: { designId: string }) {
 
   const detach = useMutation({
     mutationFn: async (id: string) => {
-      const res = await fetch(`${base}/attachments/${id}`, { method: "DELETE", headers: auth() });
+      const res = await workspaceFetch(`${base}/attachments/${id}`, { method: "DELETE", headers: auth() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       noteWorkspaceWrite(`${base}/attachments/${id}`);
     },

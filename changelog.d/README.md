@@ -12,6 +12,22 @@ has no repo write, no PR, no merge.
 **Why files, not a shared `CHANGELOG.md`:** one file per PR = no merge conflicts
 when multiple agents/people land changes in parallel. (The `changesets` model.)
 
+## Write it with the command
+
+```
+pnpm run new:changelog "<what changed for the person, one line>" [--docs <file>]
+```
+
+It works out what the lints check: `type:` from the branch (only CI, scripts
+and docs: `internal`; compose or image only: `selfhost`; a `feat:` commit:
+`feature`; `fix:`: `fix`), `scope:` from the module changed most, `date:`
+today, and for a feature a `docs_target` heading that exists (where this
+scope's features went, else the guide heading nearest the line). It runs the
+prose rules before writing and `lint:changelog`, `changelog-names-ui`,
+`staged-docs-reachable` and `lint:docs` (a feature changes `docs/`) after. `--type`, `--scope` and `--target` override.
+A feature needs its user docs in a file (`--docs`). (#5761: these checks failed
+more pushes than any other family.)
+
 ## Format
 
 ```

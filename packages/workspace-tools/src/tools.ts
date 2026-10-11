@@ -27,6 +27,7 @@ import {
 } from "./kinds.js";
 import { explainRecords } from "./field-meanings.js";
 import { asMeasure, measureMatches, measureTokens, type Measure } from "@cobblr/platform-contract/measure";
+import { addressText } from "@cobblr/platform-contract/address";
 import { CURSOR_PARAM, decodeCursor, pageEnd, type Paging } from "./paging.js";
 import { pairingResultPresentation } from "@cobblr/platform-contract/pairing-presentation";
 
@@ -434,6 +435,7 @@ interface MaintenanceRow {
   performed_at?: string | null;
   recurrence_rule?: string | null;
   notes?: string | null;
+  address?: unknown;
 }
 
 interface CalendarRow {
@@ -441,6 +443,7 @@ interface CalendarRow {
   title: string;
   source: string;
   category?: string;
+  location?: string;
   entityModule?: string;
   entityType?: string;
   entityId?: string;
@@ -1730,6 +1733,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         ...((e as MaintenanceRow & { nag_stopped_at?: unknown }).nag_stopped_at ? { reminders_off: true } : {}),
         ...((e as MaintenanceRow & { nag_snoozed_until?: unknown }).nag_snoozed_until ? { snoozed_until: (e as MaintenanceRow & { nag_snoozed_until?: unknown }).nag_snoozed_until } : {}),
         ...(e.notes ? { notes: e.notes } : {}),
+        ...(addressText(e.address) ? { where: addressText(e.address) } : {}),
       }));
       const { cursor: _c, ...filters } = args;
       return toolOk({
@@ -1767,9 +1771,31 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         title: e.title,
         from: e.source,
         ...(e.category ? { category: e.category } : {}),
+        ...(e.location ? { where: e.location } : {}),
         ...(e.entityType ? { about: `${e.entityModule}:${e.entityType}`, entity_id: e.entityId } : {}),
       }));
       return toolOk({ window: { from, to }, items });
+    },
+  },
+  {
+    name: "find_addresses",
+    description:
+      "Find addresses this workspace already used (on any record's address field), by a place's name or street: \"mvc\" finds MVC Lodi Agency. Use it before writing an address field, so a place used before is written the same way; with no match, write the address as the person said it.",
+    mode: "read",
+    paging: { by: "one-call", why: "the few best matches; ask with more of the name or street to narrow" },
+    params: {
+      q: z.string().min(1).describe("Part of the place's name or street, as the person said it"),
+    },
+    execute: async (api, args) => {
+      const res = await api.request("GET", `/addresses?q=${encodeURIComponent(String(args.q))}`);
+      if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't read the addresses"));
+      const body = res.body as { used?: Array<{ address: Record<string, unknown>; usedOn: { kind: string; id: string; name: string }; uses: number }>; found?: Array<Record<string, unknown>> };
+      return toolOk({
+        items: [
+          ...(body.used ?? []).map((u) => ({ address: u.address, used_on: u.usedOn, uses: u.uses })),
+          ...(body.found ?? []).map((f) => ({ address: f, from: "map search" })),
+        ],
+      });
     },
   },
   {

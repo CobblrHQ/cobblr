@@ -422,4 +422,5 @@ const TYPE_WORDS: Record<string, string> = {
   date: "date",
   url: "link",
   richtext: "rich text",
+  address: "address",
 };

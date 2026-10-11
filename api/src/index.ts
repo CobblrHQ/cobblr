@@ -110,6 +110,7 @@ import * as health from "./platform/health.js";
 import * as recurrenceRegistry from "./platform/recurrence-registry.js";
 import * as calendarRegistry from "./platform/calendar-registry.js";
 import { registerDateFieldSource, queryDateField, unreadableDateField } from "./platform/date-field-calendar.js";
+import { registerUsedAddressSource } from "./platform/addresses-used.js";
 import { dayForPerson } from "./platform/person-day.js";
 import { registerDefaultRequestGuard } from "./platform/default-request-guard.js";
 import { registerTrialMode } from "./platform/trial.js";
@@ -612,6 +613,7 @@ async function boot() {
       queryDateField,
       unreadableDateField,
     },
+    addresses: { registerUsedSource: registerUsedAddressSource },
     queue: {
       enqueue: queue.enqueue,
       registerWorker: queue.registerWorker,
@@ -751,6 +753,8 @@ async function boot() {
       attach: files.attach,
       registerDetacher: files.registerDetacher,
       detach: files.detach,
+      registerRemover: files.registerRemover,
+      removeForGood: files.removeForGood,
       registerAttachmentLister: files.registerAttachmentLister,
       registerDescriber: files.registerDescriber,
       describe: files.describe,
@@ -824,6 +828,21 @@ async function boot() {
       track: trackProductEvent,
       trackDaily: trackDailyProductEvent,
       count: countProductMetric,
+    },
+    vault: {
+      file: async (orgId, userId, doc) => {
+        const { fileIntoVault } = await import("./platform/vault.js");
+        const got = await fileIntoVault(orgId, userId, doc);
+        return { fileId: got.file.id, folderId: got.folder.id, folderName: got.folder.name };
+      },
+      link: async (orgId, userId, fileId, record) => {
+        const { linkVaultFile } = await import("./platform/vault.js");
+        await linkVaultFile(orgId, userId, fileId, record);
+      },
+      countFor: async (orgId, userId, record) => {
+        const { vaultDocumentsFor } = await import("./platform/vault.js");
+        return (await vaultDocumentsFor(orgId, userId, record.kind, record.id)).length;
+      },
     },
     accounts: {
       registerLifecycleHooks: hostedSeams.registerLifecycleHooks,
@@ -1666,13 +1685,22 @@ async function boot() {
             id: string;
             name: string;
             schema: Record<string, unknown>;
+            source: string | null;
+            created_at: Date;
           };
         };
         const tdb = (await getTenantDb(orgId)) as unknown as Kysely<CatalogsXReadDB>;
+        // Two catalogs can declare one type (the Lego bundle's empty
+        // Rebrickable parts, and the parts a person imported themselves): the
+        // one holding entries answers, never whichever row came first (#5434).
+        // A hosted catalog holds its entries on the reference service.
         const row = await tdb
-          .selectFrom("core_catalogs_catalogs")
-          .select(["id", "name", "schema"])
-          .where(sql<boolean>`schema->>'semantic_type' = ${semanticType}`)
+          .selectFrom("core_catalogs_catalogs as c")
+          .select(["c.id", "c.name", "c.schema"])
+          .where(sql<boolean>`c.schema->>'semantic_type' = ${semanticType}`)
+          .orderBy(sql`(c.source = 'hosted' or exists (select 1 from core_catalogs_entries e where e.catalog_id = c.id))`, "desc")
+          .orderBy("c.created_at", "asc")
+          .orderBy("c.id", "asc")
           .limit(1)
           .executeTakeFirst();
         return row ? { id: row.id, name: row.name, schema: row.schema ?? {} } : null;

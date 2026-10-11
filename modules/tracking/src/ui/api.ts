@@ -1,7 +1,7 @@
 // Thin fetch wrapper for the tracking REST surface. Auth via getToken().
 // Routes mounted at /api/v1/orgs/:slug/modules/tracking/...
 
-import { describeUnreadableBody, noteWorkspaceWrite } from "@cobblr/platform-web";
+import { describeUnreadableBody, noteWorkspaceWrite, workspaceFetch } from "@cobblr/platform-web";
 
 export type GoalDirection = "up" | "down" | "hit";
 
@@ -45,7 +45,7 @@ export class TrackingApi {
     const token = this.getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
     const url = `/api/v1/orgs/${this.slug}/modules/tracking${path}`;
-    const res = await fetch(url, {
+    const res = await workspaceFetch(url, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),

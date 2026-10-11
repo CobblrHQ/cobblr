@@ -1,0 +1,10 @@
+{
+  "lint": "lint:date-only-is-a-day",
+  "run": "node scripts/lint-date-only-is-a-day.ts",
+  "rows": [
+    "contract-resolver"
+  ],
+  "ms": 800,
+  "recorded": "2026-10-11",
+  "source": "scaffolded at twice a local run (a shared box); replaced from its first CI measurement"
+}

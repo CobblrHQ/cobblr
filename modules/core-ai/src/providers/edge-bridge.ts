@@ -244,6 +244,9 @@ export function register(): void {
             messages: system ? [{ role: "system", content: system }, ...messages] : messages,
           };
           if (toolDefs) req.tools = openAiToolsOf(toolDefs);
+          // The caller's shape (#5790), for the Ollama behind the bridge.
+          const chatSchema = (ctx.input as Record<string, unknown>).output_schema;
+          if (chatSchema && typeof chatSchema === "object") req.format = chatSchema;
           // MCP tool relay: forward the per-request grant so the local claude
           // bridge (behind the edge agent) can read this workspace via MCP. A
           // real local Ollama ignores this unknown field. Rides verbatim through
@@ -336,7 +339,8 @@ export function register(): void {
           const body = await edgePost(channelKey, "/api/chat", {
             model: ctx.model,
             stream: false,
-            format: ctx.capability === "extract-text" ? undefined : "json",
+            // The caller's shape when it gave one (#5790), else as before.
+            format: ((ctx.input as Record<string, unknown>).output_schema as Record<string, unknown> | undefined) ?? (ctx.capability === "extract-text" ? undefined : "json"),
             messages: [msg],
           });
           const content = (body as { message?: { content?: string } }).message?.content ?? "";

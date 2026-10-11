@@ -28,6 +28,10 @@
 // (17.3 MB against 7, 2026-10-08). tsc lists what it read; a file over
 // BIG_BYTES outside node_modules is named, with the remedy.
 //
+// WITH tsgo, the compiler CI already gates on (2026-10-11, #5761): tsc took 35 to 63 s here and was the
+// slowest lint by far; tsgo reads the same project in about 9 s and reports the same errors (0 in scripts/,
+// the same 57 outside it, which this lint does not judge, on the day it switched).
+//
 // Placement row: dev-script + lint (scripts/placement-registry.ts).
 
 import { execFileSync } from "node:child_process";
@@ -36,7 +40,7 @@ import { statSync } from "node:fs";
 const BIG_BYTES = 1_500_000;
 let out = "";
 try {
-  out = execFileSync("npx", ["tsc", "-p", "tsconfig.scripts.json", "--listFiles"], {
+  out = execFileSync("npx", ["tsgo", "-p", "tsconfig.scripts.json", "--noEmit", "--listFiles"], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     maxBuffer: 64 * 1024 * 1024,
@@ -62,7 +66,7 @@ if (big.length > 0) {
   console.error("scripts/ typechecks a file too big to parse on every run:");
   for (const b of big) console.error(`  ${b}`);
   console.error("  A script or test imports it statically. Load it when the test runs instead, through a");
-  console.error("  specifier tsc does not follow (see scripts/lib/a-downloaded-bridge-can-serve-several-instruments.test.ts).");
+  console.error("  specifier the compiler does not follow (see scripts/lib/a-downloaded-bridge-can-serve-several-instruments.test.ts).");
   process.exit(1);
 }
 

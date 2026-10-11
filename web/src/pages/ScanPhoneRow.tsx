@@ -49,6 +49,9 @@ export interface ScanPhoneRowProps {
   subtitle: string;
   /** Amber, one line: the pipeline's warning or the review reason. */
   warning: string | null;
+  /** What the row's own kind adds under it, on the closed card: an order
+   *  line's units and the "Part of …?" offer (#5734), a pack's note. */
+  extra?: ReactNode;
   /** The one question the row asks, with the answers a tap can give
    *  (contract: scanReviewQuestions); shown instead of the warning. */
   question?: {
@@ -258,6 +261,7 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
           </div>
         )}
         {p.warning && !p.receipt && <div className="line-clamp-2 text-[11px] text-amber-600 dark:text-amber-400">{p.warning}</div>}
+        {p.extra}
         {p.failure && !p.receipt && (
           <div className="flex items-center gap-2 text-[11px] text-amber-700 dark:text-amber-400" onClick={stop}>
             <span className="line-clamp-2 min-w-0">{p.failure.text}</span>

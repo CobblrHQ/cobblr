@@ -32,7 +32,7 @@ function newPlaceOf(item: Parameters<typeof scanRowState>[0]) {
   const m = scanRowState(item).merge;
   return m?.new_place ? m : null;
 }
-import type { ScanCountMode, ScanCountSessionMode } from "@cobblr/platform-contract/scan-count";
+import { scanAddCount, type ScanCountMode, type ScanCountSessionMode } from "@cobblr/platform-contract/scan-count";
 import { EntityThumb } from "@cobblr/platform-web";
 import { useHandheld } from "../lib/useHandheld";
 import { TrackedMatchNudges } from "./TrackedMatchNudges";
@@ -132,7 +132,7 @@ export function TrackedMatchLine({
         // would add to the place it is kept already.
         null
       ) : (
-        counted && !possible && <ScanCountBlock itemId={item.id} match={counted} where={where} />
+        counted && !possible && <ScanCountBlock itemId={item.id} match={counted} where={where} scanned={scanAddCount(item.quantity)} />
       )}
       <div className="flex flex-wrap items-center gap-1.5">
         {possible ? (
@@ -447,6 +447,7 @@ export function TrackedMatchBanner({
         <ScanCountBlock
           itemId={item.id}
           match={best}
+          scanned={scanAddCount(item.quantity)}
           where={where}
           initialMode={countMode}
           sessionMode={sessionMode}

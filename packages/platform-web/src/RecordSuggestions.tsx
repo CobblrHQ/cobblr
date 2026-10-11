@@ -38,13 +38,13 @@ export function RecordSuggestions({ kind, id, onChanged }: { kind: string; id: s
   const decide = async (actionId: "platform:accept-suggestions" | "platform:reject-suggestions", ids: string[]) => {
     setBusy(true);
     try {
-      const r = await runAction({ actionId, entityKind: kind, entityId: id, args: { ids } });
+      const r = await runAction({ actionId, entityKind: kind, entityId: id, args: { ids } }, { undo: "shown-here" });
       const res = r.result as { ok?: boolean; error?: string; summary?: string } | null;
       if (!res?.ok) throw new Error(res?.error ?? "That did not go through.");
       toast.success(res.summary ?? "Done.", {
         actionLabel: "Undo",
         onAction: async () => {
-          await runAction({ actionId: "platform:reopen-suggestions", entityKind: kind, entityId: id, args: { ids } });
+          await runAction({ actionId: "platform:reopen-suggestions", entityKind: kind, entityId: id, args: { ids } }, { undo: "is-undo" });
           await q.refetch();
           onChanged?.();
         },

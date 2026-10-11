@@ -1,3 +1,4 @@
+import { ITEMS_OUTPUT_SCHEMA } from "@cobblr/platform-contract/ai-output-schemas";
 // A starting list for "What's still here?" from one photo of a shelf or door.
 //
 // A vision model can list what it sees on one fridge door well enough to save
@@ -111,7 +112,7 @@ export async function seenInPhoto(orgId: string, userId: string | null, fileId: 
     const r = await platform().ai.invoke({
       orgId,
       capability: "split-image",
-      input: { image_b64: Buffer.from(file.bytes).toString("base64"), image_media_type: file.mimeType, prompt: SHELF_PROMPT },
+      input: { output_schema: ITEMS_OUTPUT_SCHEMA, image_b64: Buffer.from(file.bytes).toString("base64"), image_media_type: file.mimeType, prompt: SHELF_PROMPT },
       source: { kind: "inventory:stocktake-photo", id: fileId },
       userId,
     });

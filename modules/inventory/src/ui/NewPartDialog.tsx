@@ -1,6 +1,6 @@
 import type { RenewalReceiptDraft } from "@cobblr/platform-contract/record-creation";
 import { moneyStorageOf } from "@cobblr/platform-contract/money";
-import { EntityThumb, useNewRecordBarcode, RecordFormModal, useToast, useMoneyCurrency, ColourInput, MoneyInput, fieldInputText, missingRequired, usePasteImage } from "@cobblr/platform-web";
+import { EntityThumb, useNewRecordBarcode, RecordFormModal, useToast, useMoneyCurrency, ColourInput, MoneyInput, AddressPicker, fieldInputText, missingRequired, usePasteImage } from "@cobblr/platform-web";
 // Modal to create a new part. Minimum fields only — name + qty +
 // optional category/location.
 //
@@ -633,6 +633,9 @@ export function CustomFieldInput({
   if (control === "member" || control === "person") {
     const Picker = control === "member" ? MemberSelect : PersonSelect;
     return <Field label={label}><Picker value={value} onChange={onChange} />{help}</Field>;
+  }
+  if (control === "address") {
+    return <Field label={label}><AddressPicker label={def.display_label} value={value} startEditing onCommit={onChange} />{help}</Field>;
   }
   if (control === "money") {
     return <Field label={label}><MoneyValueInput value={value} storage={moneyStorageOf(def) ?? "amount"} live onCommit={onChange} ariaLabel={def.display_label} />{help}</Field>;

@@ -93,5 +93,10 @@
     "file": "api/src/platform/services.ts",
     "name": "setServiceGate",
     "reason": "baselined 2026-09-29: the consent rule's seam; Services S2 (the gate) registers through it at boot. Remove this row when S2 lands."
+  },
+  {
+    "file": "api/src/platform/address-lookup.ts",
+    "name": "setAddressLookup",
+    "reason": "baselined 2026-10-11 - the address picker's map lookup seam (#5317): the owner punted our own geocoder, so nothing sets one yet and the picker offers no map search; the first lookup wired at boot calls it."
   }
 ]

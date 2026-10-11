@@ -88,6 +88,13 @@ export function orderEmailPicture(meta: unknown): boolean {
   return typeof m.order_line_image === "string" && m.order_line_image !== "" && m.catalog_image_from === m.order_line_image;
 }
 
+/** The row's stored catalog picture is its variant's own photo on the
+ *  store's page (store_line_image, #5719). */
+export function storePagePicture(meta: unknown): boolean {
+  const m = (meta ?? {}) as { store_line_image?: unknown; catalog_image_from?: unknown };
+  return typeof m.store_line_image === "string" && m.store_line_image !== "" && m.catalog_image_from === m.store_line_image;
+}
+
 export function rowPictures(row: PictureRow, ctx: PicturesContext = {}): RowPicture[] {
   const meta = (row.suggested_metadata ?? {}) as {
     split_from?: unknown;
@@ -147,10 +154,14 @@ export function rowPictures(row: PictureRow, ctx: PicturesContext = {}): RowPict
   if (!current && catalogFile && catalogUrl) current = webTiles.find((t) => t.url === catalogUrl) ?? null;
   if (!current && catalogFile) {
     // The photo the order email printed beside this line (#5350) says so.
+    // The variant's own photo on the store's page (#5719) says so too.
     const printed = orderEmailPicture(row.suggested_metadata);
+    const store = !printed && storePagePicture(row.suggested_metadata);
     const pane: RowPicture = printed
       ? { key: `catalog:${catalogFile}`, role: "catalog", fileId: catalogFile, url: catalogUrl, thumbUrl: null, caption: "From the order email", current: false, source: "the order email" }
-      : { key: `catalog:${catalogFile}`, role: "catalog", fileId: catalogFile, url: catalogUrl, thumbUrl: null, caption: "Catalog image", current: false };
+      : store
+        ? { key: `catalog:${catalogFile}`, role: "catalog", fileId: catalogFile, url: catalogUrl, thumbUrl: null, caption: "From the store's page", current: false, source: "the store's page" }
+        : { key: `catalog:${catalogFile}`, role: "catalog", fileId: catalogFile, url: catalogUrl, thumbUrl: null, caption: "Catalog image", current: false };
     out.push(pane);
     current = pane;
   }

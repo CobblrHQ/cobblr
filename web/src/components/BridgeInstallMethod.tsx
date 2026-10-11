@@ -162,11 +162,17 @@ export function BridgeInstallMethod({
         {lightBurn && <div className="mt-2"><LightBurnPairing method={method} /></div>}
         {(method === "mac" || method === "windows" || method === "code") && <div className="mt-2 text-[11px] text-muted">
           <p>To remove the bridge:</p>
-          <pre className="overflow-x-auto whitespace-pre rounded bg-subtle p-2">{method === "windows" ? `& ([scriptblock]::Create((Invoke-RestMethod "${window.location.origin}/api/v1/edge/install-windows.ps1"))) -Uninstall` : `curl -fsSL ${window.location.origin}/api/v1/edge/${method === "mac" ? "install-mac.sh" : "install.sh"} | sh -s -- uninstall`}</pre>
+          <pre className="overflow-x-auto whitespace-pre rounded bg-subtle p-2">{uninstallCommand(method === "windows" ? "windows" : method === "mac" ? "mac" : "linux")}</pre>
         </div>}
         <BridgeTrust />
       </div>
   );
+}
+
+/** The command that removes the bridge from the computer it runs on. */
+export function uninstallCommand(os: "linux" | "mac" | "windows"): string {
+  if (os === "windows") return `& ([scriptblock]::Create((Invoke-RestMethod "${window.location.origin}/api/v1/edge/install-windows.ps1"))) -Uninstall`;
+  return `curl -fsSL ${window.location.origin}/api/v1/edge/${os === "mac" ? "install-mac.sh" : "install.sh"} | sh -s -- uninstall`;
 }
 
 /** What a bridge can and cannot do, said before anyone installs one. Every
@@ -177,6 +183,31 @@ export function BridgeTrust() {
   return (
     <details data-testid="bridge-trust" className="mt-2 rounded border border-line dark:border-slate-700 px-2 py-1.5 text-[11px] text-muted dark:text-slate-400">
       <summary className="cursor-pointer text-content dark:text-mortar-200">What a bridge can and cannot do</summary>
+      <BridgeTrustList />
+    </details>
+  );
+}
+
+/** The same promises and how to remove it, once a bridge is running: they
+ *  used to go with the install steps, so a connected bridge lost them (#5774). */
+export function BridgeAbout() {
+  return (
+    <details data-testid="bridge-about" className="rounded border border-line dark:border-slate-700 px-2 py-1.5 text-[11px] text-muted dark:text-slate-400">
+      <summary className="cursor-pointer text-content dark:text-mortar-200">About this bridge</summary>
+      <BridgeTrustList />
+      <p className="mt-2">To remove the bridge, run this on the computer it is on:</p>
+      {(["linux", "mac", "windows"] as const).map((os) => (
+        <div key={os} className="mt-1">
+          <span className="text-faint">{os === "linux" ? "Linux" : os === "mac" ? "Mac" : "Windows (PowerShell)"}</span>
+          <pre className="overflow-x-auto whitespace-pre rounded bg-subtle dark:bg-slate-950 p-2">{uninstallCommand(os)}</pre>
+        </div>
+      ))}
+    </details>
+  );
+}
+
+function BridgeTrustList() {
+  return (
       <ul className="mt-1.5 ml-4 list-disc space-y-1">
         <li>
           It only calls out to this Cobblr. It opens no port on your network, and nothing outside can connect to it.
@@ -194,7 +225,6 @@ export function BridgeTrust() {
           <strong>Disconnect</strong> on the bridges page stops it at once: its key stops working and it is removed.
         </li>
       </ul>
-    </details>
   );
 }
 

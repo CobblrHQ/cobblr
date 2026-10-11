@@ -189,8 +189,16 @@ export function matchQuery(row: MatchInput, fields: Record<string, unknown> | nu
     name: personNameOf(row.suggested_metadata) ?? modelName ?? row.suggested_name,
     fields: fields ?? {},
     brand: row.suggested_manufacturer,
+    seller: sellerOf(row.suggested_metadata),
     category: category ?? null,
   };
+}
+
+/** The shop a receipt line came from, when it says. */
+function sellerOf(meta: unknown): string | null {
+  const m = (meta ?? {}) as { receipt_vendor?: unknown; receipt_seller?: unknown };
+  const v = [m.receipt_vendor, m.receipt_seller].filter((x): x is string => typeof x === "string" && !!x.trim());
+  return v.length ? v.join(" ") : null;
 }
 
 /** Re-derive a row's match and store it. Throws when the matcher fails, so

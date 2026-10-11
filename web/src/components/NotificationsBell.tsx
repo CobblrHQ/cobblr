@@ -229,14 +229,20 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
             </button>
           ) : (
             <>
-              <button
-                onClick={() => chooseMode("dropdown")}
-                title="Collapse to a dropdown"
-                aria-label="Collapse notifications to a dropdown"
-                className="text-faint hover:text-accent dark:text-slate-500 dark:hover:text-cobble-300 transition"
-              >
-                <PanelRightClose size={16} />
-              </button>
+              {/* Only where the choice takes effect: at the sidebar's foot
+                  (how a phone opens it) the panel is the only shape, and a
+                  collapse that stored a preference and changed nothing was
+                  the owner's "this arrow button does nothing" (#5774). */}
+              {!panelOnly && (
+                <button
+                  onClick={() => chooseMode("dropdown")}
+                  title="Collapse to a dropdown"
+                  aria-label="Collapse notifications to a dropdown"
+                  className="text-faint hover:text-accent dark:text-slate-500 dark:hover:text-cobble-300 transition"
+                >
+                  <PanelRightClose size={16} />
+                </button>
+              )}
               <button
                 onClick={() => setOpen(false)}
                 title="Close"

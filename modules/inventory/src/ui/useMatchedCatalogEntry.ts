@@ -10,6 +10,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useInventory } from "./context";
+import { workspaceFetch } from "@cobblr/platform-web";
 
 export interface MatchedCatalogEntry {
   kind: string; // "core-catalogs:entry"
@@ -28,7 +29,7 @@ export function useMatchedCatalogEntry(partId: string | undefined) {
     staleTime: 60_000,
     queryFn: async (): Promise<MatchedCatalogEntry | null> => {
       const token = getToken();
-      const res = await fetch(
+      const res = await workspaceFetch(
         `/api/v1/orgs/${orgSlug}/entities/inventory:part/${partId}/pairings?rel=matches&dir=out&kind=core-catalogs:entry`,
         { headers: token ? { Authorization: `Bearer ${token}` } : {} },
       );

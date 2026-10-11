@@ -45,6 +45,7 @@
 import {
   approvalDedupeKey,
   blockedSentence,
+  selfApplicable,
   type ApprovalRemedy,
   type BlockedAction,
 } from "@cobblr/platform-contract/blocked-action";
@@ -304,6 +305,21 @@ export async function describeBlock(args: {
       reason: "There is nothing an admin could give you for this.",
       approvers: { count: approvers.length, names: approvers.map((a) => a.name) },
       pending: null,
+    };
+  }
+  // An owner or admin who met an app that is off is the person who turns it
+  // on. Asking would go to nobody (an owner alone has no other approver) or
+  // to a peer with the same switch, so the sheet offers the switch itself and
+  // carries on with what was refused (#5865).
+  if (selfApplicable(args.role, named.remedies)) {
+    return {
+      sentence,
+      remedies: named.remedies,
+      requestable: false,
+      reason: null,
+      approvers: { count: approvers.length, names: approvers.map((a) => a.name) },
+      pending: null,
+      selfApply: true,
     };
   }
   // A guest is read-only by invariant, and a grant cannot change that

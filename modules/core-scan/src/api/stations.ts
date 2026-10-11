@@ -31,12 +31,15 @@ import {
   DEFAULT_STATION_SETTINGS,
   isStationAddress,
   stationLabelOf,
+  stationOffersAction,
   stationQrMay,
   stationReaches,
   stationSettingsOf,
   type StationLookup,
   type StationMove,
   type StationRecord,
+  type StationRecordNow,
+  type StationActionRun,
   type StationSettings,
 } from "@cobblr/platform-contract/station-screen";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
@@ -217,6 +220,12 @@ async function stationRecord(orgId: string, e: { kind: string; id: string; title
     },
     countable: !!field,
   };
+}
+
+/** The record as it stands now, for the card to show after a write. */
+async function recordNow(orgId: string, kind: string, id: string): Promise<StationRecordNow | null> {
+  const e = await platform().entities.lookup(orgId, kind, id);
+  return e ? stationRecord(orgId, e) : null;
 }
 
 const LookupBody = z.union([
@@ -452,7 +461,12 @@ type StationAction = { id: string; label: string; icon: string | null; descripti
 /** The actions a station offers on a record of this kind. */
 export async function stationActionsFor(orgId: string, kind: string) {
   const all = await platform().actions.listApplicable(kind, orgId);
-  return all.filter((a) => a.scope === "entity" && a.user_invokable && !a.internal && !a.wire_only && a.undoable === true && !!a.invoke_handler);
+  // One clear set per card (#5710): not a stock move the card already shows,
+  // never an editor. The same rule answers the list and the run.
+  const countable = !!(await scanTargetOf(orgId, kind))?.scannable.qtyField;
+  return all.filter(
+    (a) => a.scope === "entity" && a.user_invokable && !a.internal && !a.wire_only && a.undoable === true && !!a.invoke_handler && stationOffersAction(a, { countable }),
+  );
 }
 
 // AI-REACH: exempt, the tablet's list of a record's buttons; the assistant lists a record's actions through list_actions.
@@ -530,7 +544,8 @@ stationsRouter.post(
       .executeTakeFirst();
     if (!claimed) {
       const prior = await db.selectFrom("core_scan_station_actions").selectAll().where("address", "=", address).where("request_id", "=", b.request_id).executeTakeFirstOrThrow();
-      return void res.json({ request_id: b.request_id, ok: prior.ok === true, undoable: Array.isArray(prior.undo) && prior.undo.length > 0, replayed: true });
+      const replay: StationActionRun = { request_id: b.request_id, ok: prior.ok === true, undoable: Array.isArray(prior.undo) && prior.undo.length > 0, replayed: true, now: await recordNow(org.id, b.kind, b.entity_id) };
+      return void res.json(replay);
     }
     const forget = () => db.deleteFrom("core_scan_station_actions").where("address", "=", address).where("request_id", "=", b.request_id).execute();
     const e = await platform().entities.lookup(org.id, b.kind, b.entity_id);
@@ -567,7 +582,8 @@ stationsRouter.post(
       .where("address", "=", address)
       .where("request_id", "=", b.request_id)
       .execute();
-    res.json({ request_id: b.request_id, ok: true, summary: typeof r.summary === "string" ? r.summary : null, undoable: undo.length > 0 });
+    const ran: StationActionRun = { request_id: b.request_id, ok: true, summary: typeof r.summary === "string" ? r.summary : null, undoable: undo.length > 0, now: await recordNow(org.id, b.kind, b.entity_id) };
+    res.json(ran);
   }),
 );
 
@@ -615,7 +631,7 @@ stationsRouter.post(
         return void res.status(409).json({ error: { code: "undo_refused", message: r?.error ?? `${run.label} could not be undone.` } });
       }
     }
-    res.json({ ok: true });
+    res.json({ ok: true, now: await recordNow(org.id, run.kind, run.entity_id) });
   }),
 );
 

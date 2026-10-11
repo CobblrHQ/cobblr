@@ -57,6 +57,8 @@ export interface SessionUser {
   token_access?: TokenAccess | null;
   /** The one workspace a personal token is held to; null = every workspace. */
   token_org_id?: string | null;
+  /** When the token that signed this request stops working (ISO); null = never, or not a token. */
+  token_expires_at?: string | null;
   /** Set while the request is a View as through a share: the grant, the one
    *  workspace it is held to, and who is looking. Read-only, enforced above. */
   share_view?: { session_id: string; org_id: string; slug: string; viewer_name: string | null; expires_at: string } | null;
@@ -190,6 +192,8 @@ const MCP_READ_PATHS: Array<string | RegExp> = [
   // list_notifications reports the true unread total, not the page's
   "/notifications/unread-count",
   "/calendar/events",
+  // the places this workspace already used on an address field (find_addresses)
+  "/addresses",
   // how the workspace is set up
   "/instances",
   // who answers each AI job here and who reads personal documents
@@ -341,7 +345,7 @@ export async function requireAuth(
     let shareViewSid: string | null = null;
     let tokenScopes: string[] | null = null;
     let tokenName: string | null = null;
-    let tokenGrant: { access: TokenAccess | null; orgId: string | null; orgSlug: string | null } | null = null;
+    let tokenGrant: { access: TokenAccess | null; orgId: string | null; orgSlug: string | null; expiresAt: string | null } | null = null;
     let tokenIssuedAt: number | null = null; // JWT iat (seconds), session/app only
     if (token.startsWith("cbt_")) {
       const resolved = await resolveApiToken(token);
@@ -360,7 +364,7 @@ export async function requireAuth(
           return;
         }
         if (resolved.access || resolved.orgId) {
-          tokenGrant = { access: resolved.access, orgId: resolved.orgId, orgSlug: resolved.orgSlug };
+          tokenGrant = { access: resolved.access, orgId: resolved.orgId, orgSlug: resolved.orgSlug, expiresAt: resolved.expiresAt };
         }
       }
     } else {
@@ -522,6 +526,7 @@ export async function requireAuth(
       token_scopes: tokenScopes,
       token_access: tokenGrant?.access ?? null,
       token_org_id: tokenGrant?.orgId ?? null,
+      token_expires_at: tokenGrant?.expiresAt ?? null,
       must_reset_password: user.must_reset_password,
       issued_at: tokenIssuedAt,
       // How a titled work's title reads for this person: served rows are

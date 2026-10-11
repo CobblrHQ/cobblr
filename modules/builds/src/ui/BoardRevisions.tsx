@@ -2,7 +2,7 @@ import { AssemblyOrdersCard } from "./AssemblyOrders.js";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FieldPack, QueryError, fieldNeed, RecordFormModal, usePlatformWeb, runAction, downloadBlob, type EntityDetailPanelCtx, NumberField } from "@cobblr/platform-web";
+import { FieldPack, QueryError, fieldNeed, RecordFormModal, usePlatformWeb, runAction, offerUndo, useToast, downloadBlob, type EntityDetailPanelCtx, NumberField } from "@cobblr/platform-web";
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import type { BoardRevision } from "../api/board-revisions.js";
 import type { checkBoardStock } from "../board-revision.js";
@@ -14,11 +14,15 @@ const primary = `${button} bg-cobble-600 text-white`;
 export function useBoardAction(slug: string) {
   const { api } = usePlatformWeb();
   const qc = useQueryClient();
+  const toast = useToast();
   return async <T,>(action: string, args: Record<string, unknown>): Promise<T> => {
     // PRESS-ARGS: each board form supplies its record, quantity and required file or revision fields before the press.
     const out = await runAction(api, qc, slug, { actionId: action, args });
     const result = normaliseActionResult(out.result, action);
     if (!out.ok || !result.ok) throw new Error(typeof result.error === "string" ? result.error : "The request did not complete.");
+    // A board action that hands back an Undo offers it (#5812).
+    // PRESS-ARGS: Undo runs the action's own steps, each carrying its arguments.
+    offerUndo(toast, (b) => runAction(api, qc, slug, b), out, {});
     return result.data as T;
   };
 }

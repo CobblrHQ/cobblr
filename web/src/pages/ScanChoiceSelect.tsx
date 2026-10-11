@@ -24,7 +24,7 @@
 // same bar as the record page's picker); in `createByName` mode it is simply
 // the value, and the confirm files the item under it.
 import { useQueryClient } from "@tanstack/react-query";
-import { ChoiceCombobox, matchChoice, runAction } from "@cobblr/platform-web";
+import { ChoiceCombobox, matchChoice, offerUndo, runAction, useToast } from "@cobblr/platform-web";
 import { api } from "../lib/api";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 
@@ -69,6 +69,7 @@ export function ScanChoiceSelect({
   createByName?: boolean;
 }) {
   const qc = useQueryClient();
+  const toast = useToast();
   const options = choices.map((c) => ({ value: c }));
   const learn = async (name: string) => {
     let kind = entityKind;
@@ -78,7 +79,10 @@ export function ScanChoiceSelect({
     }
     if (!kind) return;
     // PRESS-ARGS: entity_kind, field and value come from the card's field and the name just typed.
-    await runAction(api, qc, slug, { actionId: "platform:learn-choice", entityKind: "", entityId: "", args: { entity_kind: kind, field: fieldName, value: name } });
+    const learned = await runAction(api, qc, slug, { actionId: "platform:learn-choice", entityKind: "", entityId: "", args: { entity_kind: kind, field: fieldName, value: name } });
+    // Its Undo takes the new choice back off the list (#5812).
+    // PRESS-ARGS: Undo runs the action's own steps, each carrying its arguments.
+    offerUndo(toast, (b) => runAction(api, qc, slug, b), learned, {}, `Added "${name}" to the ${label} choices.`);
     void qc.invalidateQueries({ queryKey: ["scan-menu", slug] });
     void qc.invalidateQueries({ queryKey: ["platform-field-defs", slug] });
     onAdded?.();

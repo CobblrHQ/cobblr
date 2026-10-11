@@ -1,3 +1,4 @@
+import { DESIGN_OUTPUT_SCHEMA } from "@cobblr/platform-contract/ai-output-schemas";
 // Super-admin surface — cross-workspace dashboards for the person
 // hosting Cobblr. Gated by SUPERADMIN_EMAILS env var (see
 // auth/middleware.ts → isPlatformAdmin). Workspace owners/admins
@@ -73,6 +74,8 @@ import { kindFieldsOf, modulesOf, shapeCandidate } from "@cobblr/core-authoring/
 import { validateBundle } from "./bundles.js";
 import { operatorEmail } from "@cobblr/platform-contract/outbound-identity";
 import { signupsBySource } from "../platform/signups-by-source.js";
+import { recentViolations } from "../platform/csp-reports.js";
+import { instantFromInput } from "@cobblr/platform-contract/day";
 
 export const superAdminRouter = Router();
 
@@ -86,6 +89,18 @@ superAdminRouter.use("/scan-url-resolvers", scanResolversRouter);
 
 // GET /super-admin/overview — the dashboard landing. Counts +
 // at-a-glance numbers. Cheap; safe to poll.
+// GET /super-admin/csp-violations: the Content-Security-Policy refusals browsers
+// reported in the last week (#3300), most frequent first, for the operator who
+// wants to know whether the enforced policy is refusing something real.
+// AI-REACH: exempt (operator-only instance health, like the rest of this router)
+superAdminRouter.get("/csp-violations", async (_req, res, next) => {
+  try {
+    res.json({ items: await recentViolations(7) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 superAdminRouter.get("/overview", async (_req, res, next) => {
   try {
     const [orgsCount, usersCount, activeUsers, activityToday, totalGrants, totalBundles, feedbackNew, waitlistPending, barcodeUpcs] =
@@ -1175,7 +1190,7 @@ superAdminRouter.post("/waitlist/ingest", async (req, res, next) => {
         kind,
         source: parsed.data.source ?? "marketing-site",
         user_agent: parsed.data.user_agent ?? null,
-        signed_up_at: parsed.data.signed_up_at ? new Date(parsed.data.signed_up_at) : new Date(),
+        signed_up_at: instantFromInput(parsed.data.signed_up_at) ?? new Date(),
       })
       .returning(["id", "created_at"])
       .executeTakeFirstOrThrow();
@@ -1227,7 +1242,7 @@ superAdminRouter.post("/waitlist/ingest", async (req, res, next) => {
       waitlist_id: row.id,
       email,
       source: parsed.data.source ?? "marketing-site",
-      signed_up_at: (parsed.data.signed_up_at ? new Date(parsed.data.signed_up_at) : row.created_at).toISOString(),
+      signed_up_at: (instantFromInput(parsed.data.signed_up_at) ?? row.created_at).toISOString(),
       user_agent: parsed.data.user_agent ?? null,
     });
     res.status(201).json({ id: row.id, status: "pending", duplicate: false });
@@ -3272,6 +3287,7 @@ const ScanEvalMenuEntry = z.object({
   fields: z.array(ScanEvalMenuField).default([]),
   scan_keywords: z.array(z.string()).optional(),
   bundle_external_id: z.string().optional(),
+  from_bundles: z.array(z.string()).optional(),
   category_field: z
     .object({ name: z.string(), label: z.string(), values: z.array(z.string()) })
     .optional(),
@@ -3612,7 +3628,7 @@ superAdminRouter.post("/authoring-eval", async (req, res, next) => {
           capability: "design-workspace",
           // Same request the interactive build sends (and, like it, NOT schema-
           // constrained - see drafts.ts for the measured reason).
-          input: { messages: [{ role: "user", content: prompt }] },
+          input: { output_schema: DESIGN_OUTPUT_SCHEMA, messages: [{ role: "user", content: prompt }] },
           source: { kind: "core-authoring:eval", id: parsed.data.intent.slice(0, 60) },
           userId,
         });

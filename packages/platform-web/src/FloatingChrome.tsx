@@ -91,9 +91,9 @@ export const FloatingChrome = forwardRef<HTMLElement, FloatingChromeProps>(funct
   useEffect(() => {
     if (!inner.current) return;
     if (anchor === "bottom") return registerBottomChrome(inner.current);
-    if (anchor === "corner") return registerCornerChrome(inner.current, stack);
+    if (anchor === "corner") return registerCornerChrome(inner.current, stack, { overOverlays: yields === false });
     return;
-  }, [anchor, stack]);
+  }, [anchor, stack, yields]);
 
   const cls =
     "fc-fixed " +

@@ -238,6 +238,10 @@ export async function applyDraft(orgId: string, id: string, userId: string | nul
   const room = await db.selectFrom("core_locations_locations").select(["id", "name"]).where("id", "=", draft.location_id).executeTakeFirst();
   if (!room) throw new DraftRefused("The place this layout is for is not there any more.");
   const body = draft.body;
+  // A rack that cannot fit the room cannot stand there: applying it would
+  // make a real place drawn outside its room (#5809). Say what does not fit.
+  const notInRoom = floorOf(await db.selectFrom("core_locations_locations").select(["id", "name", "parent_id", "metadata", "kind"]).execute(), draft).flags.filter((f) => f.kind === "room");
+  if (notInRoom.length) throw new DraftRefused(`${notInRoom.map((f) => f.text).join(". ")}. Make it smaller, turn it or take it out of ${draft.name}, then apply.`);
 
   // Every real place it names must still be there, before anything moves.
   const planned = new Map(body.planned.map((p) => [p.key, p]));

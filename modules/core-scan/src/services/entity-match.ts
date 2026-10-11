@@ -108,7 +108,7 @@ const STOP = new Set([
   "set", "kit", "new", "oem", "genuine", "original", "assorted",
 ]);
 
-function tokens(s: string | null | undefined): string[] {
+export function tokens(s: string | null | undefined): string[] {
   return (s ?? "")
     .toLowerCase()
     .match(/[a-z0-9]{3,}/g)
@@ -197,7 +197,12 @@ export function nameOverlap(
   const wanted = want.filter((w) => !known.has(stem(w)));
   const stored = tokens(storedTitle);
   const have = stored.filter((h) => !known.has(stem(h)));
-  const stripped = wanted.length < want.length || have.length < stored.length;
+  // The lower bar is earned by the SCAN's name: its maker and kind set aside,
+  // the words left are the ones that name the thing. A record that lost its
+  // own category word ("Domain") earns nothing: the scan still names itself
+  // with all its words, and one generic word left in common is not a name
+  // ("Review 10mm socket" is not "Review EUR domain", #5813).
+  const stripped = wanted.length < want.length;
   // A scan that is nothing but the maker and the kind cannot name a record.
   if (wanted.length === 0) return { shared: 0, pass: false };
   const spent = new Set<number>();
@@ -221,11 +226,14 @@ export function nameOverlap(
 /** The words a scan and a record share by declaration: the maker and the
  *  kind, from the scan's brand and category and the record's own fields. */
 function knownWords(
-  opts: { brand?: string | null; category?: string | null; fields?: Record<string, unknown> | null },
+  opts: { brand?: string | null; seller?: string | null; category?: string | null; fields?: Record<string, unknown> | null },
   stored: Record<string, unknown>,
 ): { brand: string | null; category: string | null } {
   const text = (v: unknown): string => (typeof v === "string" ? v : "");
-  const brand = [opts.brand, stored.manufacturer, stored.brand, stored.maker].map(text).filter(Boolean).join(" ");
+  // Who sold it says nothing about what it is: every line of one receipt
+  // carries the shop's words, and a shop's name in two records' titles makes
+  // them neighbours, never one thing (#5813).
+  const brand = [opts.brand, opts.seller, stored.manufacturer, stored.brand, stored.maker].map(text).filter(Boolean).join(" ");
   const category = [opts.category, opts.fields?.category, stored.category, stored.category_name, stored.kind, stored.type]
     .map(text)
     .filter(Boolean)
@@ -367,6 +375,9 @@ export async function findTracked(
      *  (the candidate's category): what two records share by declaration,
      *  never evidence they are one record (#3065). */
     brand?: string | null;
+    /** The shop the row was bought from (its receipt's seller): set aside
+     *  like the maker, never evidence of identity (#5813). */
+    seller?: string | null;
     category?: string | null;
     /** A model or part number a person gave for the scan ("S-12415"). As
      *  exact as a barcode: a record whose part number, or identifier-role

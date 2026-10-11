@@ -341,7 +341,9 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
           // one case where the shape matters more than the widest server set,
           // and a server that rejects the field is retried without it below.
           const outputSchema = (ctx.input as Record<string, unknown>).output_schema;
-          const constrained = isChatTurn(ctx.capability) && outputSchema && typeof outputSchema === "object";
+          // Every job, not only a chat turn (#5790): a local server reading a
+          // receipt is held to its shape as the builder is.
+          const constrained = outputSchema && typeof outputSchema === "object" && !Array.isArray(outputSchema);
           if (constrained) {
             body.response_format = { type: "json_schema", json_schema: { name: "cobblr_output", schema: outputSchema } };
           }

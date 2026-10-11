@@ -14,6 +14,7 @@
 // model's sentence about them.
 
 import type { KindRec } from "@cobblr/workspace-tools";
+import { addressText } from "@cobblr/platform-contract/address";
 import { amountOf, formatMoney, formatStoredMoney, moneyStorageOf, parseMoney, storedCents, type MoneyStorage } from "@cobblr/platform-contract/money";
 
 export interface WriteValue {
@@ -129,9 +130,11 @@ export async function writeValues(opts: {
   const said = new Map<WriteValue, string>();
   for (const [field, raw] of entries) {
     if (TITLE_KEYS.has(field) && !opts.update) continue;
-    let value = words(raw);
+    // An address reads as the place and its street on the card, never JSON.
+    const isAddress = kind?.custom_fields?.find((f) => f.name === field)?.type === "address";
+    let value = isAddress ? addressText(raw) || null : words(raw);
     if (value === null) continue;
-    let from = opts.update ? words(cur(field)) : null;
+    let from = opts.update ? (isAddress ? addressText(cur(field)) || null : words(cur(field))) : null;
     const money = moneyOf(kind, field);
     if (money) {
       const shown = formatStoredMoney(raw, money);
@@ -192,7 +195,7 @@ export function cardLabel(label: string): string {
 
 export async function actionArgValues(opts: {
   args: Record<string, unknown>;
-  schema?: Record<string, { label?: string; money?: boolean }> | null;
+  schema?: Record<string, { label?: string; money?: boolean; address?: boolean }> | null;
   said: string;
   titleOf?: TitleOf;
 }): Promise<WriteValue[]> {
@@ -200,7 +203,8 @@ export async function actionArgValues(opts: {
   const amounts = new Map<WriteValue, string>();
   for (const [field, raw] of Object.entries(opts.args)) {
     if (/_kind$/.test(field)) continue;
-    let value = words(raw);
+    // An address reads as the place and its street on the card, never JSON.
+    let value = opts.schema?.[field]?.address ? addressText(raw) || null : words(raw);
     if (value === null) continue;
     const ref = field.match(/^(.+)_id$/)?.[1];
     const refKind = ref ? words(opts.args[`${ref}_kind`]) : null;

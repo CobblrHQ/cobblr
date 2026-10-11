@@ -1,4 +1,6 @@
+import { IDENTIFY_OUTPUT_SCHEMA } from "@cobblr/platform-contract/ai-output-schemas";
 import { registerRenewalDraftHandler } from "./renewal-draft.js";
+import { registerLineUnitActions } from "./line-unit-actions.js";
 // Action handlers, registered at module load via api/index.ts's
 // side-effect call.
 //
@@ -27,6 +29,7 @@ import { landedFills, planKnownFill, sayFilled, writeKnownFill, type KnownFill }
 let registered = false;
 
 export function registerScanHandlers(): void {
+  registerLineUnitActions();
   registerRenewalDraftHandler();
   if (registered) return;
   registered = true;
@@ -250,7 +253,7 @@ export function registerScanHandlers(): void {
         orgId: ctx.orgId,
         userId: ctx.userId,
         capability: "identify-image",
-        input,
+        input: { ...input, output_schema: IDENTIFY_OUTPUT_SCHEMA },
         source: { kind: "core-scan:identify", id: fileId ?? "args" },
       });
       const raw = r.text;

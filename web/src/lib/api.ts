@@ -12,7 +12,7 @@ import type { MoneyTotal } from "@cobblr/platform-contract/money";
 // Everything goes through `request<T>` so error shape stays uniform.
 
 import type { ScopeDef, VisibilityDef } from "@cobblr/platform-contract/share-scope";
-import type { FieldValuesUsedBody, TipState } from "@cobblr/platform-web";
+import type { AddressSuggestionsBody, FieldValuesUsedBody, TipState } from "@cobblr/platform-web";
 import { downloadBlob } from "@cobblr/platform-web";
 import { noteWorkspaceWrite } from "@cobblr/platform-web";
 import type { CancelResult } from "./digifab-cancel";
@@ -47,7 +47,7 @@ import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 import { walkPages } from "./list-pages";
 import { getShareViewToken, setShareViewToken } from "./share-view";
 import { getStationTokenOverride } from "./station-token";
-import type { StationLookup, StationMove, StationSettings, StationStockOp } from "@cobblr/platform-contract/station-screen";
+import type { StationActionRun, StationLookup, StationMove, StationRecordNow, StationSettings, StationStockOp } from "@cobblr/platform-contract/station-screen";
 
 const TOKEN_KEY = "cobblr.token";
 
@@ -1055,7 +1055,7 @@ export interface OrderSummary {
   in_transit: number;
   from_receipts: number;
   spend: number;
-  /** How many orders have a total (stated, or from their lines). */
+  /** How many orders have a whole total: stated, or from lines that all have a price. */
   priced: number;
   by_month: Array<{ month: string; spend: number }>;
   top_vendors: Array<{ vendor: string | null; spend: number }>;
@@ -1118,6 +1118,8 @@ export interface OrderItem {
   description: string | null;
   qty: string;
   unit_cost: string | null;
+  /** How many of its units are in hand, counted one by one (#5734). */
+  received_qty?: string | number | null;
   received_at: string | null;
   /** The parcel this line travels in, when the order ships in several. */
   shipment_id?: string | null;
@@ -2159,6 +2161,41 @@ export const api = {
       { resolved },
     ),
 
+  // ─── the Vault (#5242): folders a person's list decides ───────────
+  vaultFolders: (slug: string) => request<{ items: VaultFolder[] }>("GET", `/orgs/${slug}/vault/folders`),
+  vaultCreateFolder: (slug: string, name: string) => request<VaultFolder>("POST", `/orgs/${slug}/vault/folders`, { name }),
+  vaultFolder: (slug: string, id: string) => request<VaultFolder & { files: VaultFile[] }>("GET", `/orgs/${slug}/vault/folders/${id}`),
+  vaultUpdateFolder: (slug: string, id: string, change: { name?: string; people?: string[] }) =>
+    request<VaultFolder & { files: VaultFile[] }>("PATCH", `/orgs/${slug}/vault/folders/${id}`, change),
+  vaultDeleteFolder: (slug: string, id: string) => request<{ files: number }>("DELETE", `/orgs/${slug}/vault/folders/${id}`),
+  vaultHistory: (slug: string, id: string) => request<{ items: VaultEvent[] }>("GET", `/orgs/${slug}/vault/folders/${id}/history`),
+  vaultUpload: (slug: string, folderId: string, file: File, record?: { kind: string; id: string } | null) => {
+    const form = new FormData();
+    form.set("file", file);
+    if (record) {
+      form.set("record_kind", record.kind);
+      form.set("record_id", record.id);
+    }
+    return upload<VaultFile>(`/api/v1/orgs/${slug}/vault/folders/${folderId}/files`, form, file);
+  },
+  vaultUpdateFile: (slug: string, id: string, change: { name?: string; folder_id?: string; record?: { kind: string; id: string } | null }) =>
+    request<VaultFile>("PATCH", `/orgs/${slug}/vault/files/${id}`, change),
+  vaultDeleteFile: (slug: string, id: string) => request<void>("DELETE", `/orgs/${slug}/vault/files/${id}`),
+  vaultRecordDocuments: (slug: string, kind: string, id: string) =>
+    request<{ items: Array<Pick<VaultFile, "id" | "folder_id" | "name" | "mime_type" | "size_bytes">> }>(
+      "GET",
+      `/orgs/${slug}/vault/record-documents?kind=${encodeURIComponent(kind)}&id=${encodeURIComponent(id)}`,
+    ),
+  /** A Vault document's bytes, fetched with the session (and so audited). */
+  vaultFileBlob: async (slug: string, id: string, how: "open" | "download"): Promise<Blob> => {
+    const token = getToken();
+    const res = await fetch(`/api/v1/orgs/${slug}/vault/files/${id}/download${how === "open" ? "?inline=1" : ""}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null;
+      throw new ApiError(res.status, body?.error?.code ?? "vault_failed", body?.error?.message ?? "This document could not be opened.");
+    }
+    return res.blob();
+  },
   listMembers: (slug: string) =>
     request<{ items: WorkspaceMember[]; self: { user_id: string; role: OrgMembership["role"] } }>(
       "GET",
@@ -2277,7 +2314,7 @@ export const api = {
   listApiTokens: () =>
     request<{ items: ApiTokenListItem[] }>("GET", "/me/api-tokens"),
   apiTokenScopes: () =>
-    request<{ items: { key: string; label: string; description: string }[] }>(
+    request<{ items: { key: string; label: string; description: string; offered_in: "personal" | "operator" | "elsewhere"; elsewhere?: string }[] }>(
       "GET",
       "/me/api-token-scopes",
     ),
@@ -2835,6 +2872,10 @@ export const api = {
   /** What a field already holds across a kind's records, for the choice
    *  picker (GET /field-values). Growing a field's choices is
    *  platform:learn-choice, never a client-side read-modify-write. */
+  /** The addresses this workspace already used, matching `q`, for the address
+   *  picker (GET /addresses); `lookup` is null when no map lookup is set. */
+  addresses: (slug: string, q: string) =>
+    request<AddressSuggestionsBody>("GET", `/orgs/${slug}/addresses?${new URLSearchParams({ q }).toString()}`),
   fieldValues: (slug: string, kind: string, field: string, opts: { detail?: string | null; note?: boolean } = {}) => {
     const q = new URLSearchParams({ kind, field, ...(opts.detail ? { detail: opts.detail } : {}), ...(opts.note ? { note: "1" } : {}) });
     return request<FieldValuesUsedBody>("GET", `/orgs/${slug}/field-values?${q.toString()}`);
@@ -3317,18 +3358,6 @@ export const api = {
       { delta, ...(reason ? { reason } : {}) },
     ),
   materialCost: (slug: string, kind: string, id: string) => request<{ items: Array<{ id: string; name: string; instance: string; grams: number; cost: { amount: number; currency: string } | null }> }>("GET", `/orgs/${slug}/modules/inventory/material-cost/${encodeURIComponent(kind)}/${id}`),
-  /** What a stocktake would look through: everything still listed in a place
-   *  (and the places inside it), newest first. */
-  stocktakeScope: (slug: string, placeId: string) =>
-    request<{ label: string; items: StocktakeItem[] }>("GET", `/orgs/${slug}/modules/inventory/stocktake?place_id=${encodeURIComponent(placeId)}`),
-  /** A starting list from one photo of a shelf or door: the listed records it
-   *  saw, and what it saw that is not listed. Writes nothing. */
-  stocktakePhoto: (slug: string, placeId: string, fileId: string) =>
-    request<{ seen: number; matched: Array<{ id: string; seen: string }>; unmatched: Array<{ name: string; qty: number }> }>(
-      "POST",
-      `/orgs/${slug}/modules/inventory/stocktake/photo`,
-      { place_id: placeId, file_id: fileId },
-    ),
   /** One stocktake: what it kept, marked gone and counted, and whether it was undone. */
   stocktake: (slug: string, id: string) => request<Stocktake>("GET", `/orgs/${slug}/modules/inventory/stocktakes/${encodeURIComponent(id)}`),
   stockAt: (slug: string, locationId: string) =>
@@ -3351,6 +3380,14 @@ export const api = {
   readPersonalDocument: (slug: string, file: File) => {
     const form = new FormData(); form.set("file", file);
     return upload<PersonalDocumentRead>(`/api/v1/orgs/${slug}/modules/core-scan/personal-documents/read`, form, file);
+  },
+  /** File a bill of sale's vehicle purchase from the personal path (#5331):
+   *  read again on the server, filed, never stored. With `record`, it fills
+   *  that vehicle instead of making an inbox item. */
+  fileBillOfSale: (slug: string, file: File, record?: { kind: string; id: string }) => {
+    const form = new FormData(); form.set("file", file);
+    if (record) { form.set("kind", record.kind); form.set("id", record.id); }
+    return upload<BillOfSaleFiled>(`/api/v1/orgs/${slug}/modules/core-scan/personal-documents/bill-of-sale`, form, file);
   },
   uploadFile: async (slug: string, file: File, opts: { folderId?: string | null; onDuplicate?: "skip"; camera?: boolean } = {}): Promise<FileRecord> => {
     const form = new FormData();
@@ -4265,30 +4302,12 @@ export const api = {
   ) => request<MaintenanceSchedule>("POST", `/orgs/${slug}/modules/core-maintenance/schedules`, body),
   maintenanceReminderPreferences: (slug: string) => request<{ overdue_every: OverdueCadence }>("GET", `/orgs/${slug}/modules/core-maintenance/reminders/preferences`),
   setMaintenanceReminderPreferences: (slug: string, overdue_every: OverdueCadence) => request<{ overdue_every: OverdueCadence }>("PUT", `/orgs/${slug}/modules/core-maintenance/reminders/preferences`, { overdue_every }),
-  maintenanceReminders: (slug: string, id: string, body: { mode: "snooze" | "stop" | "resume"; duration?: "week" | "month"; until?: string }) => request<{ entry: MaintenanceEntry }>("PATCH", `/orgs/${slug}/modules/core-maintenance/reminders/${id}`, body),
   maintenanceRenewalFields: (slug: string, kind: string, entityId: string) => request<{ fields: Array<{ key: string; label: string; value: string | null }> }>("GET", `/orgs/${slug}/modules/core-maintenance/schedules/renewal-fields?kind=${encodeURIComponent(kind)}&entity_id=${encodeURIComponent(entityId)}`),
   renewMaintenanceSchedule: (slug: string, id: string, body: MaintenanceTermPatch & { new_expiry: string; file_id?: string; notes?: string | null }) => request<{ entry: { id: string }; schedule: MaintenanceSchedule }>("POST", `/orgs/${slug}/modules/core-maintenance/schedules/${id}/renew`, body),
   listMaintenanceTerms: (slug: string, entityId: string, offset = 0) => request<{ items: MaintenanceTerm[]; has_more: boolean; totals: MaintenanceTermTotals }>("GET", `/orgs/${slug}/modules/core-maintenance/terms?entity_id=${encodeURIComponent(entityId)}&offset=${offset}`),
-  updateMaintenanceTerm: (slug: string, id: string, body: MaintenanceTermPatch) => request<MaintenanceTerm>("PATCH", `/orgs/${slug}/modules/core-maintenance/terms/${id}`, body),
   endMaintenanceRenewal: (slug: string, id: string) => request<MaintenanceSchedule>("POST", `/orgs/${slug}/modules/core-maintenance/schedules/${id}/end`, {}),
   deleteMaintenanceSchedule: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/modules/core-maintenance/schedules/${id}`),
-  updateMaintenanceSchedule: (
-    slug: string,
-    id: string,
-    body: Partial<{
-      name: string;
-      every_n: number | null;
-      every_unit: MaintenanceIntervalUnit | null;
-      counter_field: string | null;
-      counter_every: number | null;
-      last_done_at: string | null;
-      anchor: RenewalAnchor | null;
-      remind: MaintenanceReminder | null;
-      overdue_every: OverdueCadence | null;
-      current_expiry: string | null;
-    }>,
-  ) => request<MaintenanceSchedule>("PATCH", `/orgs/${slug}/modules/core-maintenance/schedules/${id}`, body),
   /** Log a service. With a schedule_id it is that schedule's, which rolls it
    *  forward to the next time. */
   logMaintenance: (
@@ -5007,9 +5026,9 @@ export const api = {
   stationActions: (slug: string, address: string, kind: string) =>
     request<{ items: StationRecordAction[] }>("GET", `/orgs/${slug}/modules/core-scan/stations/screens/${address}/actions?kind=${encodeURIComponent(kind)}`),
   stationActionRun: (slug: string, address: string, body: { request_id: string; action_id: string; kind: string; entity_id: string; args?: Record<string, unknown> }) =>
-    request<{ request_id: string; ok: boolean; summary?: string | null; undoable: boolean; replayed?: boolean }>("POST", `/orgs/${slug}/modules/core-scan/stations/screens/${address}/actions/run`, body),
+    request<StationActionRun>("POST", `/orgs/${slug}/modules/core-scan/stations/screens/${address}/actions/run`, body),
   stationActionUndo: (slug: string, address: string, requestId: string) =>
-    request<{ ok: true }>("POST", `/orgs/${slug}/modules/core-scan/stations/screens/${address}/actions/undo`, { request_id: requestId }),
+    request<{ ok: true; now: StationRecordNow | null }>("POST", `/orgs/${slug}/modules/core-scan/stations/screens/${address}/actions/undo`, { request_id: requestId }),
   stationMove: (slug: string, address: string, body: { kind: string; entity_id: string; location_id: string }) =>
     request<{ ok: true }>("POST", `/orgs/${slug}/modules/core-scan/stations/screens/${address}/move`, body),
   stationNextScan: (slug: string, address: string) =>
@@ -5019,7 +5038,12 @@ export const api = {
   /** Re-run the receipt parser on a session's stored original, replacing its
    *  still-pending lines with a fresh parse. */
   reparseReceipt: (slug: string, batchId: string) =>
-    request<{ receipt: { item_count: number; vendor: string | null }; items: Array<{ id: string }> }>(
+    request<{
+      receipt: { item_count: number; vendor: string | null };
+      items: Array<{ id: string }>;
+      /** The purchase its lines are on, when there is one. */
+      purchase: { recorded: boolean; purchases_off: boolean; order_number?: string | null } | null;
+    }>(
       "POST",
       `/orgs/${slug}/modules/core-scan/scan/receipt/reparse`,
       { batch_id: batchId },
@@ -5911,6 +5935,24 @@ export const api = {
     request<{ children: ScanInboxItem[] }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/split`),
   /** Undo a split: the group photo comes back as it was, its pieces are
    *  discarded. Works from the parent or from any of its pieces. */
+  // An order line's units (#5734): same or different, split off, rejoin,
+  // a scan counted as one of them, and the line's slots.
+  setLineUnits: (slug: string, id: string, mode: "same" | "different") =>
+    request<{ items: ScanInboxItem[] }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/units`, { mode }),
+  splitOffUnits: (slug: string, id: string, count: number, name?: string) =>
+    request<{ items: ScanInboxItem[] }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/split-off`, { count, ...(name ? { name } : {}) }),
+  rejoinOrderLine: (slug: string, id: string) => request<{ items: ScanInboxItem[] }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/rejoin`),
+  fillOrderLine: (slug: string, id: string, lineId: string) =>
+    request<{ received: number; count: number; items: ScanInboxItem[] }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/fill-line`, { line_id: lineId }),
+  unfillOrderLine: (slug: string, id: string) => request<{ received: number; items: ScanInboxItem[] }>("DELETE", `/orgs/${slug}/modules/core-scan/inbox/${id}/fill-line`),
+  declineLineOffer: (slug: string, id: string) => request<{ items: ScanInboxItem[] }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/line-offer/decline`),
+  scanTheItems: (slug: string, lineId: string) =>
+    request<{ batch_id: string }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${lineId}/scan-session`),
+  orderLineSlots: (slug: string, by: { line_id: string } | { order_item_id: string } | { batch_id: string }) =>
+    request<{ line_id: string; name: string | null; count: number; mode: "same" | "different"; received: number; sentence: string; units: Array<{ id: string; name: string | null; image_file_id: string | null }> }>(
+      "GET",
+      `/orgs/${slug}/modules/core-scan/inbox/line-slots?${"line_id" in by ? `line_id=${encodeURIComponent(by.line_id)}` : "batch_id" in by ? `batch_id=${encodeURIComponent(by.batch_id)}` : `order_item_id=${encodeURIComponent(by.order_item_id)}`}`,
+    ),
   unsplitScanItem: (slug: string, id: string) =>
     request<{ parent: ScanInboxItem; discarded: number }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/unsplit`),
   /** Undo a combine from either row: the kept one or one it absorbed (#3639). */
@@ -7410,6 +7452,18 @@ export interface MyAiDefaults {
   model_labels: Record<string, Record<string, string>>;
 }
 
+/** A bill of sale filed from the personal path (#5331). */
+export interface BillOfSaleFiled {
+  /** Who read it: code, a local model, or the cloud connection the workspace's owner chose. */
+  read_by: "code" | "local-ai" | "cloud-ai";
+  sent_to?: string;
+  batch_id?: string | null;
+  items?: Array<{ id: string }>;
+  purchase?: { recorded: boolean; purchases_off: boolean } | null;
+  /** Where the original went: the Vault folder of whoever filed it, or why not. */
+  vault?: { kept: true; folder: string } | { kept: false; why: string };
+}
+
 export interface PersonalDocumentsReaderView {
   reader: { kind: "local" } | { kind: "cloud"; connection: string; label: string; company: string; consented_by: string | null; consented_at: string; consent: string };
   local_ai: boolean;
@@ -7528,6 +7582,9 @@ export interface AiCall {
   output_summary: string | null;
   input_tokens: number | null;
   output_tokens: number | null;
+  /** Prompt tokens read from / written to the provider's prompt cache (#5319). */
+  cache_read_tokens?: number | null;
+  cache_write_tokens?: number | null;
   cost_cents: number | null;
   duration_ms: number | null;
   ok: boolean;
@@ -7544,6 +7601,9 @@ export interface AiUsageSummaryRow {
   total_cost_cents: number | null;
   total_duration_ms: number | null;
   failed: number;
+  input_tokens?: number | string | null;
+  cache_read_tokens?: number | string | null;
+  cache_write_tokens?: number | string | null;
 }
 
 export interface IntegrationConnector {
@@ -9865,6 +9925,28 @@ export interface CrossOrgActivityEntry {
   org_slug: string;
 }
 
+export interface VaultPerson { id: string; name: string }
+export interface VaultFolder {
+  id: string;
+  name: string;
+  owner: VaultPerson | null;
+  mine: boolean;
+  people: VaultPerson[];
+  file_count: number;
+  created_at: string;
+}
+export interface VaultFile {
+  id: string;
+  folder_id: string;
+  name: string;
+  mime_type: string;
+  size_bytes: number;
+  record: { kind: string; id: string } | null;
+  added_by: VaultPerson | null;
+  created_at: string;
+}
+export interface VaultEvent { at: string; who: VaultPerson | null; action: string; file: string | null; detail: Record<string, unknown> }
+
 export interface WorkspaceMember {
   user_id: string;
   email: string;
@@ -10818,16 +10900,6 @@ export interface ApprovalRequestView {
 }
 
 /** One record at a place, as the place's own view reads it. */
-export interface StocktakeItem {
-  id: string;
-  kind: string;
-  title: string;
-  qty: number;
-  unit: string;
-  image_path: string | null;
-  created_at: string;
-}
-
 export interface Stocktake {
   id: string;
   label: string;

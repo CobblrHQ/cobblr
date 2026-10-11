@@ -108,6 +108,7 @@ export const ANTHROPIC_FALLBACK_MODELS: readonly AiListedModel[] = [
   { id: "claude-haiku-5-5", label: "Haiku 5.5", vision: true },
   { id: "claude-sonnet-5-5", label: "Sonnet 5.5", vision: true },
   { id: "claude-opus-5-5", label: "Opus 5.5", vision: true },
+  { id: "claude-fable-5-1", label: "Fable 5.1", vision: true },
   { id: "claude-haiku-4-5", label: "Haiku 4.5", vision: true },
   { id: "claude-sonnet-4-5", label: "Sonnet 4.5", vision: true },
   { id: "claude-opus-4-5", label: "Opus 4.5", vision: true },
@@ -146,14 +147,20 @@ export interface AnthropicUsage {
 /** What a call cost, in cents, rounded up; null when the model's price is
  *  unknown, so the ledger never records a guess as $0. */
 export function anthropicCostCents(model: string, usage: AnthropicUsage): number | null {
+  const micro = anthropicCostMicroCents(model, usage);
+  return micro === null ? null : Math.ceil(micro / 1_000_000);
+}
+
+/** The same cost unrounded, in millionths of a cent: what one cheap call's
+ *  cache saving is measured in, since a whole cent hides it. */
+export function anthropicCostMicroCents(model: string, usage: AnthropicUsage): number | null {
   const price = ANTHROPIC_PRICES[anthropicAlias(model)];
   if (!price || price === "unknown") return null;
   const read = usage.cache_read_input_tokens ?? 0;
   const write = usage.cache_creation_input_tokens ?? 0;
   const prompt = usage.input_tokens + read + write;
   const rate = price.over && prompt > price.over.above ? price.over : price;
-  const microCents = usage.input_tokens * rate.input + read * rate.input * 0.1 + write * rate.input * 1.25 + usage.output_tokens * rate.output;
-  return Math.ceil(microCents / 1_000_000);
+  return usage.input_tokens * rate.input + read * rate.input * 0.1 + write * rate.input * 1.25 + usage.output_tokens * rate.output;
 }
 
 interface ListedPage {

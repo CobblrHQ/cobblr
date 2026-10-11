@@ -1,14 +1,15 @@
 import { dayHere } from "@cobblr/platform-contract/day";
 import { SpoolmanModal } from "./SpoolmanModal";
 import { FilamentCatalog } from "./FilamentCatalog";
-import { NewItemMenu } from "@cobblr/platform-web";
+import { NewItemMenu, workspaceFetch } from "@cobblr/platform-web";
 // Parts list — filterable table. Search, category, location, state,
 // low-stock toggle. Clicking a row opens the part detail page.
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Archive, ArrowRightLeft, Download, ExternalLink, FileDown, FileUp, Plus, Printer, ScanLine, ShieldCheck, MoreHorizontal } from "lucide-react";
+import { WhatsStillHereButton, WhatsStillHereSheet } from "./WhatsStillHere";
+import { AlertTriangle, Archive, ArrowRightLeft, ClipboardCheck, Download, ExternalLink, FileDown, FileUp, Plus, Printer, ScanLine, ShieldCheck, MoreHorizontal } from "lucide-react";
 import { BulkActionBar, BulkSetField, BulkGiveTo, BulkTagAction, EditableCell, EntityThumb, EntityTile, suggestedSrcFor, usePhotoSuggestions, MoveToInstanceModal, ViewModeToggle, useToast, useConfirm, usePageTitle, usePageWidth, useViewMode, usePlatformWeb, usePublishChatContext, makeAreaResolver, LOCATION_GROUP_KEY, type EditableCellDef, useAskCobbAboutSelection, useTickedRows, useUnits, TILE_GRID, InboxWaitingStrip, SearchInput, QueryError, noteWorkspaceWrite } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { LowStockAlerts } from "./LowStockAlerts.js";
@@ -109,6 +110,8 @@ export function PartsListPage() {
   // spreadsheet view). Remembered per collection.
   const [byPlace, setByPlace] = useByPlace(entityKind);
   const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
+  // A stocktake of this table's things that sit in no place: there is no place page to start it from.
+  const [unplacedStocktake, setUnplacedStocktake] = useState(false);
   const toast = useToast();
   const confirm = useConfirm();
 
@@ -143,7 +146,7 @@ export function PartsListPage() {
     queryKey: ["inv-saved-views", orgSlug, entityKind],
     queryFn: async (): Promise<{ items: SavedViewLite[] }> => {
       const token = getToken();
-      const res = await fetch(
+      const res = await workspaceFetch(
         `/api/v1/orgs/${orgSlug}/modules/core-views/views?kind=${encodeURIComponent(entityKind)}`,
         { headers: token ? { Authorization: `Bearer ${token}` } : {} },
       );
@@ -316,7 +319,7 @@ export function PartsListPage() {
     staleTime: 60_000,
     queryFn: async (): Promise<{ items: SiblingList[] }> => {
       const token = getToken();
-      const res = await fetch(`/api/v1/orgs/${orgSlug}/instances?module=inventory`, {
+      const res = await workspaceFetch(`/api/v1/orgs/${orgSlug}/instances?module=inventory`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) return { items: [] };
@@ -452,7 +455,7 @@ export function PartsListPage() {
   async function bulkTag(tagName: string) {
     const token = getToken();
     for (const id of Array.from(selected)) {
-      const res = await fetch(
+      const res = await workspaceFetch(
         `/api/v1/orgs/${orgSlug}/modules/core-tags/attachments`,
         {
           method: "POST",
@@ -680,6 +683,13 @@ export function PartsListPage() {
                 className="absolute right-0 z-20 mt-1 flex min-w-[200px] flex-col gap-1 rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-1 shadow-lg"
                 onClick={() => setToolsOpen(false)}
               >
+            <button
+              type="button"
+              onClick={() => setUnplacedStocktake(true)}
+              className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
+            >
+              <ClipboardCheck size={14} /> What's still here? (no place)
+            </button>
             <button
               onClick={() => void exportCsv()}
               disabled={exporting}
@@ -979,6 +989,9 @@ export function PartsListPage() {
           onSynced={() => void qc.invalidateQueries({ queryKey: ["inventory-parts"] })}
         />
       )}
+      {unplacedStocktake && instance && (
+        <WhatsStillHereSheet api={api} slug={orgSlug} scope={{ unplaced: true, instance }} label="the things with no place" onClose={() => setUnplacedStocktake(false)} />
+      )}
       <BulkActionBar
         records={{ kind: instance && instance !== "inventory" ? `${instance}:item` : "inventory:part", ids: Array.from(selected) }}
         onAskCobb={askCobb}
@@ -987,6 +1000,9 @@ export function PartsListPage() {
         actions={
           <>
             <BulkSetField records={Array.from(selected).map((id) => ({ kind: instance && instance !== "inventory" ? `${instance}:item` : "inventory:part", id }))} onDone={() => setSelected(new Set())} />
+            <WhatsStillHereButton api={api} slug={orgSlug} scope={{ ids: Array.from(selected) }} label="the things you picked" className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-accent hover:text-accent">
+              <ClipboardCheck size={12} /> What's still here?
+            </WhatsStillHereButton>
             <button
               type="button"
               disabled={bulkLabelBusy}

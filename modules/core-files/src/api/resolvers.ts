@@ -244,6 +244,17 @@ export function registerFileResolvers(): void {
     return true;
   });
 
+  // The REMOVE seam: a file gone for good now, not kept in Recently deleted,
+  // for the plain copy of a document just put in the Vault (#5242). Deleted
+  // as DELETE /files/:id deletes, then purged as the sweep purges; a live copy
+  // that still names it keeps it, and the caller hears false.
+  platform().files.registerRemover(async (orgId, fileId) => {
+    const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreFilesDB>;
+    const deleted = await db.updateTable("core_files_files").set({ deleted_at: new Date() }).where("id", "=", fileId).where("deleted_at", "is", null).returning("id").executeTakeFirst();
+    if (deleted) await platform().events.emit("core-files.file.deleted", { orgId, fileId });
+    return purgeFile(db, orgId, fileId);
+  });
+
   // The DESCRIBE seam: what a file is, for a person reading about it (a
   // record's history names a photo by this, never by its storage path).
   platform().files.registerDescriber(async (orgId, fileIds) => {

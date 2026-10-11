@@ -1,5 +1,5 @@
-import { Client, Pool } from "pg";
-import type { ClientConfig, PoolConfig } from "pg";
+import { Client, Pool, types } from "pg";
+import type { ClientConfig, CustomTypesConfig, PoolConfig } from "pg";
 import { currentRequestScope, noteMetaStatement } from "../lib/request-context.js";
 
 /**
@@ -55,6 +55,25 @@ import { currentRequestScope, noteMetaStatement } from "../lib/request-context.j
 export const POOL_CONNECT_TIMEOUT_MS = Number(process.env.COBBLR_POOL_CONNECT_TIMEOUT_MS) || 10_000;
 
 type ClientClass = new (config?: ClientConfig) => Client;
+
+/** Postgres's `date`: a calendar day with no hour and no zone. */
+export const PG_DATE_OID = 1082;
+
+/**
+ * A `date` column arrives as its `YYYY-MM-DD` text, never a Date (#5759).
+ * pg's default turns it into a Date at the SERVER's local midnight, which is
+ * an instant: on a box east of Greenwich `.toISOString().slice(0, 10)` reads
+ * it as the day before, and every module typed the same column its own way
+ * (`Date` in one db.ts, `string` in the next) and repaired it its own way.
+ * A day stays a day from the database to the person; `@cobblr/platform-contract/day`
+ * reads it, shows it and counts to it. Applied here because every client is
+ * born here, and per client rather than on pg's global table so a second copy
+ * of pg in the tree cannot miss it.
+ */
+export const DAYS_STAY_DAYS: CustomTypesConfig = {
+  getTypeParser: ((oid: number, format?: "text" | "binary") =>
+    oid === PG_DATE_OID && format !== "binary" ? (value: string) => value : types.getTypeParser(oid, format)) as CustomTypesConfig["getTypeParser"],
+};
 
 function onClientError(label: string): (err: Error) => void {
   return (err) => {
@@ -225,7 +244,10 @@ export function poolHolders(pool: Pool, now = Date.now()): string[] {
 /** The one way to open a pool. `label` names it in the log line. */
 export function createPool(config: PoolConfig, label: string): Pool {
   const Base = (config.Client as ClientClass | undefined) ?? Client;
-  const pool = new Pool({ connectionTimeoutMillis: POOL_CONNECT_TIMEOUT_MS, ...config, Client: bornGuarded(label, Base) });
+  // `types` on the pool, which hands its options to every client it makes:
+  // never re-spread there, because pg-pool keeps the password on them as a
+  // hidden property and a copy would arrive without it.
+  const pool = new Pool({ connectionTimeoutMillis: POOL_CONNECT_TIMEOUT_MS, types: DAYS_STAY_DAYS, ...config, Client: bornGuarded(label, Base) });
   traceCheckouts(pool);
   // pg-pool re-emits an idle client's error on the pool and, being an
   // EventEmitter, throws if nobody listens there either. The client's own
@@ -236,7 +258,17 @@ export function createPool(config: PoolConfig, label: string): Pool {
 
 /** The one way to open a bare client (superuser work, a maintenance DB). */
 export function createClient(config: ClientConfig | string, label: string): Client {
-  const client = new Client(config);
+  const base: ClientConfig = typeof config === "string" ? { connectionString: config } : config;
+  const client = new Client({ ...base, types: base.types ?? DAYS_STAY_DAYS });
   client.on("error", onClientError(label));
+  // A connection opened for one request (a handshake, a password exchange, a
+  // disconnect) is counted against it like a statement, so a per-operation
+  // bound sees it: opening one per record deleted was most of that delete's
+  // time (#5286).
+  const connect = client.connect.bind(client) as unknown as (...a: unknown[]) => unknown;
+  (client as unknown as { connect: unknown }).connect = (...a: unknown[]) => {
+    noteMetaStatement(`(new connection: ${label.split(" ")[0]})`);
+    return connect(...a);
+  };
   return client;
 }

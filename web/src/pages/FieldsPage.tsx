@@ -34,6 +34,8 @@ const RENDERERS_BY_TYPE: Record<PlatformFieldDef["type"], CatalogFieldRenderer[]
   measure: ["text"],
   // Money shows as "$4,300" through the one formatter; nothing to pick.
   money: ["text"],
+  // An address shows as the place over its street, with Directions.
+  address: ["text"],
   secret: ["text"],
   // A person renders as their name; nothing else would mean anything.
   member: ["text"],
@@ -479,7 +481,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
             >
               {TYPES.map((t) => (
                 <option key={t} value={t}>
-                  {t === "measure" ? "measure (4k7, 100 nF, 16 V)" : t === "money" ? "money ($4,300)" : t}
+                  {t === "measure" ? "measure (4k7, 100 nF, 16 V)" : t === "money" ? "money ($4,300)" : t === "address" ? "address (where it happens)" : t}
                 </option>
               ))}
             </select>

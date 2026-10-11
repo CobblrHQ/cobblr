@@ -1,3 +1,4 @@
+import { ITEMS_OUTPUT_SCHEMA } from "@cobblr/platform-contract/ai-output-schemas";
 // Image operations on a scan item's own photo — rotate + split-a-group-photo
 // (scan-parity-final-mile.md, Epic B). sharp is the same version core-files
 // ships, so no new native binary lands in the api image.
@@ -245,7 +246,7 @@ export async function detectSplitItems(
     const r = await platform().ai.invoke({
       orgId,
       capability: "split-image",
-      input: {
+      input: { output_schema: ITEMS_OUTPUT_SCHEMA,
         image_b64: shown.toString("base64"),
         image_media_type: src.mime,
         prompt: SPLIT_PROMPT,

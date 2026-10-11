@@ -1,0 +1,36 @@
+{
+ "photo": "white",
+ "engine": "core-scan ocrLabelReadings (tesseract, no model)",
+ "labels": [
+  {
+   "box": 1,
+   "expected_colour": "White",
+   "frame": "PETG Basic\n\nWhite (Gf)\nSKU: KR-PETGO1 6Y-1 CH\n3 Printing Temp: Diameter: 1 75mm\n230-260C\n\nBed Temp : Batch No. :837061 16\n2 30-20\n\n",
+   "fine": "PETG Basic\nWhite (8 &)\nSKU: KR-PETGO1 6Y-1CH\ng Printing Temp: Diameter: 1 75en\n230-260°C\nBed Temp : Batch No. :827061 16\n2D 79-20\" 3\n"
+  },
+  {
+   "box": 2,
+   "expected_colour": "White",
+   "frame": "PETG Basic\n\nWhite (Ai &)\nSKU: KR-PETGO1 6Y-1CH\n\n3 Printing Temp: Diameter: 175mm\n230-260°C\nBed T ¥\n\nA Sore ea\n\n70-90°C\n",
+   "fine": "PETG Basic\nWhite (A &)\nSKU: KR-PETGO16Y-1CH\n4 Printing Temp: Diameter: 175mm\n230-260\nFan Bed Temp: Batch No. :832051101\n70-90°C P\n"
+  },
+  {
+   "box": 3,
+   "expected_colour": "White",
+   "frame": "PETG Basic\n\nWhite (if)\nSKU: KR-PETGO16Y-1CH\nPrinting Temp: Diameter: 1.75mm\n230-260°C\n\naily Bee tenes Batch No. :B31060501\n0-90\"\n\n",
+   "fine": "PETG Basic\nWhite (A &)\nSKU: KR-PETGO16Y-1CH\n“ Printing Temp: Diameter: 1.75mm\n230-260°C\nfly BedTemp: __ Batch No. :831060501\n70-90°C\neee Rot SO el a Oe\n"
+  },
+  {
+   "box": 4,
+   "expected_colour": "White",
+   "frame": "PETG Basic\n\nWhite (Af)\nSKU: KR-PETGO16Y-1CH\nng Temp: Diameter: 175mm\n\nBatch No. :831060501\n",
+   "fine": "PETG Basic\na White (Bf)\n_BKU: KR-PETGO1 6Y-10H\nB Printing Temp: Diameter. 175mm\n23\nBed Temp: Batch No, :831060501\n"
+  },
+  {
+   "box": 5,
+   "expected_colour": "White",
+   "frame": "PETG Basie\n\nWhite (Fi)\nSKU: KR-PETGO1 6Y-16H\n\nPrinting Temp; Diameter: 175\n230-260°C\n\nih, Bed Temp Batch No. :B32051101\n70-90°C\n\n",
+   "fine": "PETG Basic\nWhite (Af)\nSKU: KR-PETGO16Y-10H\n§ Printing Temp: Diameter: 175mm\n230-260°C ;\niy Bed Temp Batch No. :B32051101\n70-90°C 3g\n"
+  }
+ ]
+}

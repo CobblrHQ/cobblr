@@ -2,6 +2,7 @@ import { z } from "zod";
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
+import { ProductionJigPins, jigPinProblem } from "@cobblr/platform-contract/production-test";
 import type { DigifabDB } from "./db.js";
 import { ProductionUnitRef } from "./production-store.js";
 export const NewProductionUnit = z.object({ product: ProductionUnitRef, serial: z.string().trim().min(1).max(160).optional(), pattern: z.string().min(1).max(120).optional(), customer_code: z.string().max(30).optional(), product_code: z.string().max(30).optional(), details: z.object({ revision: z.string().max(200).optional(), customer: ProductionUnitRef.optional(), lot: z.string().max(160).optional(), panel: z.string().max(160).optional(), bom_revision: z.string().max(200).optional(), firmware_hash: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict().default({}) }).strict();
@@ -47,14 +48,19 @@ export async function mintProductionUnit(db: Kysely<DigifabDB>, orgId: string, u
   return trx.insertInto("digifab_test_units").values({ unit_kind: input.product.kind, unit_id: unitId, product_kind: input.product.kind, product_id: input.product.id, serial, details: input.details }).returningAll().executeTakeFirstOrThrow();
  });
 }
-export const NewProductionJig = z.object({ asset_id: z.string().uuid().optional(), name: z.string().trim().min(1).max(200), plans: z.array(z.string().uuid()).min(1).max(100), pin_map: z.string().max(16_000).default(""), maintenance_every: z.number().int().positive().max(10_000_000).default(1000) }).strict();
+export const NewProductionJig = z.object({ asset_id: z.string().uuid().optional(), name: z.string().trim().min(1).max(200), plans: z.array(z.string().uuid()).min(1).max(100), pin_map: z.string().max(16_000).default(""), pins: ProductionJigPins.default([]), maintenance_every: z.number().int().positive().max(10_000_000).default(1000) }).strict();
 export async function saveProductionJig(db: Kysely<DigifabDB>, orgId: string, raw: unknown) {
  const input = NewProductionJig.parse(raw), writer = await platform().entities.getWriter(orgId, "assets:asset");
  if (!writer) throw new Error("Enable Assets before adding a test jig.");
  for (const id of input.plans) if (!await db.selectFrom("digifab_test_plans").select("id").where("id", "=", id).executeTakeFirst()) throw new Error("Choose an existing test plan for this jig.");
+ for (const id of input.plans) {
+  const latest = await db.selectFrom("digifab_test_plan_versions").select(["name", "plan"]).where("plan_id", "=", id).orderBy("version", "desc").executeTakeFirstOrThrow();
+  const problem = jigPinProblem(input.pins, latest.plan.steps);
+  if (problem) throw new Error(`${latest.name}: ${problem}`);
+ }
  const asset_id = input.asset_id ?? await writer.create(orgId, { name: input.name, type: "Test jig", notes: input.pin_map });
  if (!await platform().entities.lookup(orgId, "assets:asset", asset_id)) throw new Error("Choose this workspace's jig asset.");
- const row = await db.insertInto("digifab_test_jigs").values({ ...input, asset_id, plans: sql`${JSON.stringify(input.plans)}::jsonb` }).onConflict(c => c.column("asset_id").doUpdateSet({ name: input.name, plans: sql`${JSON.stringify(input.plans)}::jsonb`, pin_map: input.pin_map, maintenance_every: input.maintenance_every })).returningAll().executeTakeFirstOrThrow();
+ const row = await db.insertInto("digifab_test_jigs").values({ ...input, asset_id, plans: sql`${JSON.stringify(input.plans)}::jsonb`, pins: sql`${JSON.stringify(input.pins)}::jsonb` }).onConflict(c => c.column("asset_id").doUpdateSet({ name: input.name, plans: sql`${JSON.stringify(input.plans)}::jsonb`, pin_map: input.pin_map, pins: sql`${JSON.stringify(input.pins)}::jsonb`, maintenance_every: input.maintenance_every })).returningAll().executeTakeFirstOrThrow();
  await reconcileProductionJig(db, orgId, asset_id);
  return row;
 }

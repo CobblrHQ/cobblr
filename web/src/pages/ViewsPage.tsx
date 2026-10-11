@@ -10,7 +10,7 @@ import { centsFromAmount, formatMoney, formatStoredMoney, fieldCurrency, type Mo
 
 import { useState, useMemo, useEffect, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { useKindLabels } from "../lib/useKindLabels";
-import { dayHere, daysUntilField } from "@cobblr/platform-contract/day";
+import { dayHere, dayLabel, daysUntilField } from "@cobblr/platform-contract/day";
 import { expiryPhrase, expiryState } from "@cobblr/platform-contract/expiry-grace";
 import { tallyCadence, CADENCE_PRESETS } from "../lib/cadence";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
@@ -22,7 +22,7 @@ import { WEEKDAYS, MONTHS, isoLocal, buildMonthGrid, shiftMonth } from "../lib/m
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type SavedView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useTickedRows, useAskCobbAboutSelection, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, BulkSetField, useFlowHost, EntityPhoto, useRunAction, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle } from "@cobblr/platform-web";
+import { ContributedViewToolbar, Modal, useTickedRows, useAskCobbAboutSelection, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, BulkSetField, useFlowHost, EntityPhoto, useRunAction, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle } from "@cobblr/platform-web";
 import { groupRows, fieldVal, orderedGroups, NO_GROUP, NO_GROUP_LABEL } from "../lib/view-group-key";
 import { RowStockProvider, useRowStock } from "../components/ViewRowStock";
 import { useAreaResolver } from "../lib/useAreaResolver";
@@ -287,6 +287,15 @@ function groupingWords(raw: unknown): string {
   return names.length ? names.map((n) => `“${humanize(n)}”`).join(", then ") : "its saved column";
 }
 
+/** The controls the module owning this view's records contributes to its
+ *  header, handed the rows the view shows. Mounted only over rows, so an empty
+ *  view never asks whose records it would hold. */
+function ViewToolbar({ slug, view, ids }: { slug: string; view: SavedView; ids: string[] }) {
+  const kinds = useQuery({ queryKey: ["entity-kinds", slug], queryFn: () => api.listEntityKinds(slug), staleTime: 5 * 60_000 });
+  const owner = kinds.data?.items.find((k) => k.id === view.entity_kind)?.module_name ?? null;
+  return <ContributedViewToolbar module={owner} ctx={{ slug, kind: view.entity_kind, ids, viewName: view.name }} />;
+}
+
 /** The type-switched render of one saved view's rows — shared by the config
  *  page's preview modal, the full-page /views/:viewId surface and the
  *  instance page's view tabs. `collectionEmpty` is the server's word on
@@ -312,6 +321,7 @@ export function SavedViewBody({
   // The kind's own list page carries its create form (`?new=1` opens it) and
   // shows everything (`?view=table` on an instance page, this once).
   const listRoute = useListRoute(activeSlug)(view.entity_kind);
+  // Which module owns the view's records: its toolbar controls come with them.
   // Bulk select (table view): pick rows → open the organize planner over them.
   // Generic — the planner files whatever the kind's writer accepts a location on;
   // a non-locatable kind just yields nothing to file.
@@ -341,6 +351,9 @@ export function SavedViewBody({
           {total === null ? `${items.length}+` : total} {(total ?? items.length) === 1 ? noun : plural}
         </span>
         {items.length > 0 && <ViewExportButton slug={activeSlug} viewId={view.id} grouped={!!data.groups} />}
+        {/* What the module that owns these records puts on its views (inventory's
+            What's still here?); this page names no contributor. */}
+        {items.length > 0 && <ViewToolbar slug={activeSlug} view={view} ids={items.map((r) => r.id)} />}
       </div>
       {/* A filter the collection could not run used to vanish, so the rows
           below read as the filtered set when they were everything. */}
@@ -765,8 +778,7 @@ export function CalendarRenderer({ slug, kind, items, cfg }: { slug: string; kin
 
 /** "Tue 29 Sep" for a day key. */
 function dayWords(key: string): string {
-  const d = new Date(`${key}T00:00:00`);
-  return Number.isNaN(d.getTime()) ? key : d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+  return dayLabel(key, { weekday: "short", day: "numeric", month: "short" });
 }
 
 function CalendarDay({ day, droppable, inMonth, children }: { day: string; droppable: boolean; inMonth: boolean; children: ReactNode }) {
@@ -1080,12 +1092,12 @@ function VendingRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) 
     // calendar day from a UTC clock (a 9pm tap would date tomorrow).
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     try {
-      await runAction({ actionId, entityKind: row.kind, entityId: row.id, args: { timezone } });
+      await runAction({ actionId, entityKind: row.kind, entityId: row.id, args: { timezone } }, { undo: "shown-here" });
       setLastAction({
         id: key,
         title: row.title ?? "that",
         undo: async () => {
-          await runAction({ actionId: inverse, entityKind: row.kind, entityId: row.id, args: { timezone } });
+          await runAction({ actionId: inverse, entityKind: row.kind, entityId: row.id, args: { timezone } }, { undo: "is-undo" });
           setLastAction(null);
         },
       });

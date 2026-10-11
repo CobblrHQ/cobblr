@@ -19,6 +19,7 @@ import { PickToLight } from "@cobblr/platform-web";
 import { BoardInspection } from "./Inspection.js";
 import { useRunAction } from "@cobblr/platform-web";
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
+import { dayLabel } from "@cobblr/platform-contract/day";
 
 export const navItems = [{ label: "Builds", path: "/builds", icon: Hammer }];
 
@@ -1004,7 +1005,7 @@ function SchedulePanel({ api, builds }: { api: BuildsApi; builds: BuildSummary[]
                           <span className="ml-2 text-[11px] text-muted" data-testid="planned-for">for {it.for_title}</span>
                         )
                       )}
-                      {it.due_date && <span className={`ml-2 text-[10px] ${it.late ? "text-red-600 font-medium" : "text-muted"}`}>due {new Date(`${it.due_date.slice(0, 10)}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>}
+                      {it.due_date && <span className={`ml-2 text-[10px] ${it.late ? "text-red-600 font-medium" : "text-muted"}`}>due {dayLabel(it.due_date, { month: "short", day: "numeric" })}</span>}
                     </span>
                     <span className="text-[11px] text-muted tabular-nums">
                       {it.est_minutes_total > 0 ? `${fmtMins(it.est_minutes_total)} · Estimated finish ${fmtWhen(it.projected_finish)}` : "Finish time needs step estimates"}

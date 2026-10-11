@@ -17,6 +17,7 @@ import { driverForRoute } from "../drivers/index.js";
 import { isPollDue, nextPollAt } from "../cadence.js";
 import { etaSourceOfState, mergeEta, type EtaSource } from "../eta-confidence.js";
 import { CarrierError, type ShipmentState } from "../status.js";
+import { instantFromInput } from "@cobblr/platform-contract/day";
 
 let registered = false;
 
@@ -80,7 +81,7 @@ export function registerShipmentsActionHandlers(): void {
       return { ok: true, followed: false, reason: "unrecognised", eta: current, nextPollAt: null };
     }
 
-    const lastChecked = args.lastCheckedAt ? new Date(args.lastCheckedAt) : null;
+    const lastChecked = instantFromInput(args.lastCheckedAt);
     const lastState = args.lastState ?? null;
     const watchDays = Number(args.watchDaysAfterDelivery);
     const poll = {

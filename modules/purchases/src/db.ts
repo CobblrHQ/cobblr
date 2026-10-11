@@ -27,9 +27,9 @@ export interface PurchasesOrdersTable {
   vendor_id: string | null;
   order_number: string | null;
   url: string | null;
-  ordered_at: ColumnType<Date | null, string | null | undefined, string | null | undefined>;
-  expected_arrival: ColumnType<Date | null, string | null | undefined, string | null | undefined>;
-  arrived_at: ColumnType<Date | null, string | null | undefined, string | null | undefined>;
+  ordered_at: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  expected_arrival: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  arrived_at: ColumnType<string | null, string | null | undefined, string | null | undefined>;
   status: OrderStatus;
   total_cost: ColumnType<string | null, number | null | undefined, number | null | undefined>;
   shipping_cost: ColumnType<string | null, number | null | undefined, number | null | undefined>;
@@ -60,6 +60,8 @@ export interface PurchasesOrderItemsTable {
   consumed_by_entity_type: string | null;
   consumed_by_entity_id: string | null;
   received_at: ColumnType<Date | null, string | null | undefined, string | null | undefined>;
+  /** How many of its units are in hand, counted one by one (0015). */
+  received_qty: ColumnType<string | null, number | null | undefined, number | null | undefined>;
   /** Received before a line's stock was reliably added; a person settles it
    *  (0010, heal-unreceived-arrivals.ts). */
   receipt_unconfirmed: Generated<boolean>;
@@ -105,7 +107,7 @@ export interface PurchasesOrderShipmentsTable {
   shipment_state: string | null;
   shipment_checked_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null | undefined>;
   shipment_next_poll_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null | undefined>;
-  expected_arrival: ColumnType<Date | string | null, string | null | undefined, string | null | undefined>;
+  expected_arrival: ColumnType<string | null, string | null | undefined, string | null | undefined>;
   eta_source: string | null;
   description: string | null;
   asked_state: string | null;

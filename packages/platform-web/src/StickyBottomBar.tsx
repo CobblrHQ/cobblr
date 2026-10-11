@@ -7,6 +7,9 @@
 // own height as the page's scroll padding while it is on screen: the browser
 // then scrolls a focused field, or one brought into view, clear of the bar.
 // Every bottom-pinned bar is this one (capabilities: layout:sticky-bottom-bar).
+// On the page it also pins above the toasts (--overlay-bottom, the room they
+// take at the foot, bottom-dock.ts), so an Undo toast never sits on Delete
+// (#5801); in a sheet the overlay already ends above them.
 
 import { useEffect, useRef, type ReactNode } from "react";
 
@@ -26,9 +29,12 @@ export function StickyBottomBar({ children, className = "", testId = "sticky-bot
     const el = ref.current;
     if (!el) return;
     const scroller = scrollerOf(el);
+    const onPage = scroller === document.scrollingElement || scroller === document.documentElement;
+    if (onPage) el.style.bottom = "var(--overlay-bottom, 0px)";
     const before = scroller.style.scrollPaddingBottom;
     const reserve = () => {
-      scroller.style.scrollPaddingBottom = `${Math.ceil(el.getBoundingClientRect().height) + 8}px`;
+      const bar = Math.ceil(el.getBoundingClientRect().height) + 8;
+      scroller.style.scrollPaddingBottom = onPage ? `calc(${bar}px + var(--overlay-bottom, 0px))` : `${bar}px`;
     };
     reserve();
     const watch = typeof ResizeObserver === "function" ? new ResizeObserver(reserve) : null;

@@ -1,7 +1,7 @@
 // Thin fetch wrapper for the knowledge REST surface. Auth via getToken().
 // Routes are mounted at /api/v1/orgs/:slug/modules/knowledge/...
 
-import { describeUnreadableBody, noteWorkspaceWrite, uploadJson, UploadError, walkPages } from "@cobblr/platform-web";
+import { describeUnreadableBody, noteWorkspaceWrite, uploadJson, UploadError, walkPages, workspaceFetch } from "@cobblr/platform-web";
 
 export interface Entry {
   id: string;
@@ -42,7 +42,7 @@ export class KnowledgeApi {
     const token = this.getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
     const url = `/api/v1/orgs/${this.slug}/modules/knowledge${path}`;
-    const res = await fetch(url, {
+    const res = await workspaceFetch(url, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),

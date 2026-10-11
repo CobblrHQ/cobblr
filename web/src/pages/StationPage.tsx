@@ -30,6 +30,7 @@ import {
   type StationLens,
   type StationLookup,
   type StationRecord,
+  type StationRecordNow,
   type StationSettings,
   type StationStockOp,
 } from "@cobblr/platform-contract/station-screen";
@@ -471,12 +472,19 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
     enabled: !!recordKind,
     staleTime: 5 * 60_000,
   });
+  // What a press did, on the card: the record as the server has it after the
+  // write, never the count it showed before (#5803: "Used up" then "You have 1").
+  const showNow = useCallback((id: string, now: StationRecordNow | null) => {
+    if (!now) return;
+    setView((v) => (v.kind === "record" && v.record.id === id ? { ...v, record: now.record, countable: now.countable } : v));
+  }, []);
   const runRecordAction = useCallback(
     (record: StationRecord, a: StationRecordAction) => {
       const go = async (args: Record<string, unknown>) => {
         const request_id = newRequestId();
         try {
           const r = await api.stationActionRun(slug, address, { request_id, action_id: a.id, kind: record.kind, entity_id: record.id, args });
+          showNow(record.id, r.now);
           setLast({ request_id, words: r.summary || `${a.label}: ${record.title}`, queued: false, at: Date.now(), action: true, undoable: r.undoable });
           signal(true);
         } catch (e) {
@@ -497,14 +505,15 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
         cancel: () => setAsking(null),
       });
     },
-    [slug, address, signal],
+    [slug, address, signal, showNow],
   );
 
   const undo = useCallback(async () => {
     if (!last) return;
     if (last.action) {
       try {
-        await api.stationActionUndo(slug, address, last.request_id);
+        const r = await api.stationActionUndo(slug, address, last.request_id);
+        if (view.kind === "record") showNow(view.record.id, r.now);
         setLast(null);
       } catch (e) {
         setView({ kind: "error", message: errText(e) });
@@ -523,7 +532,7 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
     } catch (e) {
       setView({ kind: "error", message: errText(e) });
     }
-  }, [last, slug, address, persistQueue]);
+  }, [last, slug, address, persistQueue, view, showNow]);
 
   // ── One scan ────────────────────────────────────────────────────────────
   const onScan = useCallback(
@@ -840,7 +849,7 @@ function RecordCard(props: {
           )}
           {props.countable && (
             <div className="text-4xl font-bold" data-testid="station-qty">
-              You have {r.qty ?? 0}
+              {(r.qty ?? 0) > 0 ? `You have ${r.qty}` : "None left"}
             </div>
           )}
         </div>

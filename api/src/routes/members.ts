@@ -25,6 +25,7 @@ import { ORG_ROLES, INVITABLE_ORG_ROLES } from "@cobblr/platform-contract/org-ro
 import { REFUSAL, claimJoinUse, inviteStatus, joinThroughInvite } from "../platform/join-invite.js";
 import { clearPeopleCache, linkPersonToUser, listPeople, personForUser } from "../platform/people.js";
 import { handOffThings, type HandOffResult } from "../platform/person-things.js";
+import { instantFromInput } from "@cobblr/platform-contract/day";
 
 export const membersRouter = Router({ mergeParams: true });
 // /accept-invite/:token doesn't have a tenant slug in the path so it
@@ -390,7 +391,7 @@ membersRouter.post("/invites", requireAuth, withTenant, async (req, res, next) =
     // A join link runs until it is revoked: the pace, not a date, is what
     // stops one that got out. An ordinary invite still lasts two weeks.
     const expiresAt = parsed.data.expires_at
-      ? new Date(parsed.data.expires_at)
+      ? instantFromInput(parsed.data.expires_at, null, "end")
       : parsed.data.reusable
         ? null
         : new Date(Date.now() + 14 * 24 * 3600_000);

@@ -35,6 +35,8 @@ export interface StocktakeItem {
   qty: number;
   unit: string;
   image_path: string | null;
+  /** What a scanner reads off it, so a scan in the sheet ticks this row. */
+  barcode: string | null;
   created_at: string;
 }
 
@@ -74,7 +76,7 @@ export async function scopeOf(orgId: string, rawScope: unknown): Promise<{ scope
   const t = await db(orgId);
   let q = t
     .selectFrom("inventory_parts")
-    .select(["id", "name", "qty", "unit", "image_path", "instance", "created_at"])
+    .select(["id", "name", "qty", "unit", "image_path", "instance", "created_at", "metadata"])
     .where("archived", "=", false)
     .orderBy("created_at", "desc")
     .limit(MAX_SCOPE + 1);
@@ -86,7 +88,7 @@ export async function scopeOf(orgId: string, rawScope: unknown): Promise<{ scope
   let label: string;
   let inScope = rows;
   if ("ids" in scope) {
-    label = countOf(rows.length, "picked record");
+    label = `the ${countOf(rows.length, "thing")} you picked`;
   } else {
     const paths = await platform().placement.pathsOf({ orgId, containees: rows.map((r) => ({ kind: PART, id: r.id })) });
     const pathOf = (id: string) => paths.get(`${PART}:${id}`) ?? [];
@@ -96,7 +98,7 @@ export async function scopeOf(orgId: string, rawScope: unknown): Promise<{ scope
       label = place.title;
       inScope = rows.filter((r) => pathOf(r.id).some((step) => step.id === scope.place_id));
     } else {
-      label = "things with no place";
+      label = "the things with no place";
       inScope = rows.filter((r) => pathOf(r.id).length === 0);
     }
   }
@@ -110,9 +112,21 @@ export async function scopeOf(orgId: string, rawScope: unknown): Promise<{ scope
       qty: Number(r.qty),
       unit: r.unit,
       image_path: r.image_path,
+      barcode: barcodeOf(r.metadata),
       created_at: new Date(r.created_at).toISOString(),
     })),
   };
+}
+
+/** The code a scanner reads off a record: its barcode, else its UPC or EAN. */
+function barcodeOf(metadata: unknown): string | null {
+  const m = (metadata && typeof metadata === "object" ? metadata : {}) as Record<string, unknown>;
+  for (const key of ["barcode", "upc", "ean"]) {
+    const v = m[key];
+    if (typeof v === "string" && v.trim()) return v.trim();
+    if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  }
+  return null;
 }
 
 export interface StocktakeInput {

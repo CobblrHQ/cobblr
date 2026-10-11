@@ -292,8 +292,8 @@ export function register(): void {
           // non-JSON reply or a wrapper missing its parts becomes impossible to
           // emit, rather than something a prompt asks nicely for and a parser
           // then salvages. Structure stops being the model's job.
-          const outputSchema = (ctx.input as Record<string, unknown>).output_schema;
-          if (outputSchema && typeof outputSchema === "object") reqBody.format = outputSchema;
+          const outputSchema = outputSchemaOf(ctx.input);
+          if (outputSchema) reqBody.format = outputSchema;
           // Ask for a window big enough to hold what we are sending. Without
           // this, ollama's small default truncates the tool schemas out of the
           // prompt and cuts the answer off mid-sentence — see contextWindowFor.
@@ -389,7 +389,10 @@ export function register(): void {
           const visionBody: Record<string, unknown> = {
             model: ctx.model,
             stream: false,
-            format: ctx.capability === "extract-text" ? undefined : "json",
+            // The caller's shape when it gave one (#5790): Ollama then cannot
+            // answer in any other. Plain text where the prompt asks for text
+            // or labelled lines (an OCR read, a personal document's fields).
+            format: outputSchemaOf(ctx.input) ?? (ctx.capability === "extract-text" || ctx.capability === "personal-document-read" ? undefined : "json"),
             messages: [msg],
           };
           const res = await chatCall(visionBody);
@@ -440,4 +443,10 @@ export function register(): void {
       }
     },
   });
+}
+
+/** A caller's output schema (#5790), when it gave one. */
+function outputSchemaOf(input: Record<string, unknown>): Record<string, unknown> | null {
+  const s = input.output_schema;
+  return s && typeof s === "object" && !Array.isArray(s) ? (s as Record<string, unknown>) : null;
 }

@@ -59,7 +59,7 @@ export async function stageProductionAttempt(db: Kysely<DigifabDB>, orgId: strin
  }
  const jig = attempt.jig_id ? await db.selectFrom("digifab_test_jigs").selectAll().where("asset_id", "=", attempt.jig_id).executeTakeFirst() : null;
  const unit_labels = await platform().entities.labelValuesFor(orgId, input.unit.kind, input.unit.id), jig_labels = attempt.jig_id ? await platform().entities.labelValuesFor(orgId, "assets:asset", attempt.jig_id) : [];
- await call("prepare", { attempt: { id: attempt.id, serial: registered.serial, unit: input.unit, unit_labels, plan: attempt.plan, plan_hash: attempt.plan_hash, jig_id: attempt.jig_id, jig_labels, jig_name: jig?.name, jig_cycle: attempt.jig_cycle, operator_id: attempt.operator_id, station: input.station }, artifacts });
+ await call("prepare", { attempt: { id: attempt.id, serial: registered.serial, unit: input.unit, unit_labels, plan: attempt.plan, plan_hash: attempt.plan_hash, jig_id: attempt.jig_id, jig_labels, jig_name: jig?.name, jig_cycle: attempt.jig_cycle, ...(attempt.metadata?.jig_pins ? { jig_pins: attempt.metadata.jig_pins } : {}), operator_id: attempt.operator_id, station: input.station }, artifacts });
  await platform().pairings.create({ orgId, sourceKind: input.unit.kind, sourceId: input.unit.id, targetKind: "digifab:test-run", targetId: attempt.id, relationshipKind: "test-run", createdBy: attempt.operator_id });
  await db.updateTable("digifab_test_delivery").set({ staged: true, last_error: null, updated_at: new Date() }).where("run_id", "=", id).execute();
  return attempt;

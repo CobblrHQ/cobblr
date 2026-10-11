@@ -53,14 +53,14 @@ function LayoutEditor({ kind }: { kind: string }) {
   const save = async () => {
     setBusy(true);
     try {
-      const response = await run({ actionId: "platform:edit-record-actions", args: { kind, layout: draft, expected_revision: revision } });
+      const response = await run({ actionId: "platform:edit-record-actions", args: { kind, layout: draft, expected_revision: revision } }, { undo: "shown-here" });
       const result = response.result as { ok?: boolean; error?: string; data?: { revision: number; before: RecordActionLayout } };
       if (!result.ok) throw new Error(result.error ?? "The arrangement could not be saved.");
       setRevision(result.data!.revision);
       await qc.invalidateQueries({ queryKey: ["platform-actions", activeSlug, kind] });
       await qc.invalidateQueries({ queryKey: ["record-action-layout", activeSlug, kind] });
       toast.action("Record actions saved.", { actionLabel: "Undo", onAction: async () => {
-        const undone = await run({ actionId: "platform:edit-record-actions", args: { kind, layout: result.data!.before, expected_revision: result.data!.revision } });
+        const undone = await run({ actionId: "platform:edit-record-actions", args: { kind, layout: result.data!.before, expected_revision: result.data!.revision } }, { undo: "is-undo" });
         const back = undone.result as { ok?: boolean; error?: string; data?: { revision: number } };
         if (!back.ok) { toast.error(back.error ?? "The arrangement could not be restored."); return; }
         setDraft(result.data!.before); setRevision(back.data!.revision);

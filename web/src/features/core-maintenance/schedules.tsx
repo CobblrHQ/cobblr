@@ -15,10 +15,11 @@ import { ReminderControls, ReminderPicker, CadencePicker } from "./renewals";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, Check, History, Loader2, Pencil, Trash2 } from "lucide-react";
-import { ChoiceCombobox, useToast, type ChoiceOption } from "@cobblr/platform-web";
+import { ChoiceCombobox, useRunWithUndo, useToast, type ChoiceOption } from "@cobblr/platform-web";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
 import { api, type MaintenanceIntervalUnit, type MaintenanceSchedule, type MaintenanceReminder, type OverdueCadence } from "../../lib/api";
 import type { EntityDetailPanelCtx } from "../../panels/types";
+import { instantOnDay } from "@cobblr/platform-contract/day";
 
 const UNITS: Array<{ value: MaintenanceIntervalUnit; one: string; many: string }> = [
   { value: "day", one: "day", many: "days" },
@@ -41,6 +42,7 @@ function lastDone(s: MaintenanceSchedule): string | null {
 export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const runWithUndo = useRunWithUndo();
   const kind = ctx.kind ?? "";
   const [entityModule, entityType] = kind.includes(":") ? kind.split(":") : [kind, kind];
   const key = ["maintenance-schedules", ctx.slug, ctx.entityId];
@@ -94,7 +96,7 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
         name: name.trim(),
         remind, overdue_every: cadence,
         ...(counter ? { counter_field: counter.key, counter_every: n } : { every_n: Math.round(n), every_unit: unit as MaintenanceIntervalUnit }),
-        ...(lastText ? { last_done_at: new Date(`${lastText}T12:00:00`).toISOString() } : {}),
+        ...(lastText ? { last_done_at: instantOnDay(lastText)?.toISOString() } : {}),
       });
     },
     onSuccess: (s) => {
@@ -137,15 +139,15 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
   const edit = useMutation({
     mutationFn: (v: { id: string; name: string; n: number; unit: string; remind: MaintenanceReminder; overdue_every: OverdueCadence | null }) => {
       const counter = counters.find((c) => c.key === v.unit);
-      return api.updateMaintenanceSchedule(ctx.slug, v.id, {
-        name: v.name, remind: v.remind, overdue_every: v.overdue_every,
+      // Through the action, so the change carries its Undo (#5808).
+      return runWithUndo({ actionId: "core-maintenance:update-schedule", args: {
+        schedule_id: v.id, name: v.name, remind: v.remind, overdue_every: v.overdue_every,
         ...(counter
           ? { counter_field: counter.key, counter_every: v.n, every_n: null, every_unit: null }
           : { every_n: Math.round(v.n), every_unit: v.unit as MaintenanceIntervalUnit, counter_field: null, counter_every: null }),
-      });
+      } }, `${v.name} changed.`);
     },
-    onSuccess: (s) => {
-      toast.success(`${s.name}: ${s.rule}.`);
+    onSuccess: () => {
       setEditing(null);
       refresh();
     },
@@ -192,7 +194,7 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
                   {lastDone(s) ? ` · ${lastDone(s)}` : ""}
                 </div>
                 <div className={`text-xs ${STATE_STYLE[s.due.state]}`}>{s.due.reason}</div>
-                {s.occurrence && s.due.state === "overdue" && <ReminderControls slug={ctx.slug} occurrence={s.occurrence} refresh={refresh} />}
+                {s.occurrence && s.due.state === "overdue" && <ReminderControls occurrence={s.occurrence} refresh={refresh} />}
               </div>
               <button
                 type="button"

@@ -12,7 +12,13 @@ import { suiteForks } from "../scripts/lib/job-budget.mjs";
 // memory budget, while the suite's one api queued its callers on a 10-wide
 // meta pool (ci.yml's Boot api now sets 40): a full run sat at 0.25 load per
 // core on a 16-core box, its 1,384 s of tests packed into six (2026-10-01).
-const budget = suiteForks({ max: 12 });
+// The nightly attribution run (#5761 A1) maps each file to the api code it runs, so its files run one at
+// a time against the job's one api: two at once would share its counts (tests/attribution-setup.ts). It is
+// sharded across jobs instead (ci-impact.yml).
+const ATTRIBUTION = Boolean(process.env.COBBLR_TEST_ATTRIBUTION_OUT);
+// One fork is the point there, and fits: suiteForks refuses one because one fork runs the WHOLE suite
+// past the job's time limit, and an attribution job runs a sixth of it.
+const budget = ATTRIBUTION ? { ok: true as const, forks: 1, message: "" } : suiteForks({ max: 12 });
 if (!budget.ok) throw new Error(budget.message);
 const VITEST_FORKS = budget.forks;
 // check-test-balance.mjs reads this line for the packing floor.
@@ -73,7 +79,8 @@ export default defineConfig({
     // registerOrgForTeardown is deleted at end-of-file. Stops the
     // tenant-DB leak that used to accumulate hundreds of orphan
     // databases per CI/dev cycle and exhaust connection slots + disk.
-    setupFiles: ["./tests/setup-teardown.ts"],
+    // The attribution setup first: it points this fork at its own api before anything reads the address.
+    setupFiles: [...(ATTRIBUTION ? ["./tests/attribution-setup.ts"] : []), "./tests/setup-teardown.ts"],
     // Scaled by the box's load at start (scripts/lib/load-factor.mjs, #3150):
     // a wall-clock budget measures the runner as much as the test, and five
     // files timed out on one contended evening with nothing wrong in them.

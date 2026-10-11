@@ -77,7 +77,7 @@ export function MeActivityPage() {
         <select
           value={orgFilter ?? ""}
           onChange={(e) => setOrgFilter(e.target.value || null)}
-          className="px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+          className="min-w-0 max-w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
         >
           <option value="">all workspaces</option>
           {orgs.map((o) => (

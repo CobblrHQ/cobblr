@@ -377,7 +377,7 @@ importRouter.post(
         null,
       serial_number: row.serial_number,
       model_number: row.model_number,
-      warranty_expires: row.warranty_expires ? new Date(row.warranty_expires) : null,
+      warranty_expires: row.warranty_expires,
       lifetime_warranty: row.lifetime_warranty,
       warranty_details: row.warranty_details,
       insured: row.insured,

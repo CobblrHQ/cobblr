@@ -1,3 +1,4 @@
+import { objectWith } from "@cobblr/platform-contract/ai-output-schemas";
 import {readSewingPattern,type SewingPattern} from "./sewing-pattern.js";
 // What a pattern needs, read from its PDF and kept on the pattern.
 //
@@ -170,7 +171,7 @@ export async function aiReadMaterials(
       orgId,
       userId: userId ?? undefined,
       capability: "read-document-text",
-      input: {
+      input: { output_schema: objectWith([], { yarns: { type: ["array", "null"] }, tools: { type: ["array", "null"] }, notions: { type: ["array", "null"] } }),
         messages: [
           { role: "system", content: AI_SYSTEM },
           { role: "user", content: text.slice(0, 20_000) },

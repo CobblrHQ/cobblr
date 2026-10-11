@@ -1,0 +1,36 @@
+{
+ "photo": "multi-a",
+ "engine": "core-scan ocrLabelReadings (tesseract, no model)",
+ "labels": [
+  {
+   "box": 1,
+   "expected_colour": "Black",
+   "frame": "PETG Basic\n\nBlack (M&)\nSKU: NPETGO87\n\n",
+   "fine": "PETG Basic\nBlack ( R&)\nSKU: NPETG087\npr, Bed Temp Batch No 8280801114D\naaa 70-90°C\n"
+  },
+  {
+   "box": 2,
+   "expected_colour": "Transparent",
+   "frame": "PETG Basic\n\nTransparent (i992)\nSKU: KR-PETG023Y-1CH\n\n8 Paiating Temp Diameter} 75mm\n230-260'C\n\nah Bed Temp Batch No.:B32023302\n70-90°C\n\na AS a |\n",
+   "fine": "4\nPETG Basic\nTransparent (i992)\nSKU: KR-PETG023Y-1CH\n8 Printing Temp Diameter 175mm\n230-260'C\nlil, Bed Temp Batch No..B32023302\nC“ 10-90°¢ !\na\n"
+  },
+  {
+   "box": 3,
+   "expected_colour": "Gray",
+   "frame": "PETG Basic\nGray (Rf)\nSKU:KR-PETGO17Y-10H\n\n& Printing Temp: Diameter 175mm\n230-260°C\n\nBed Temp: Batch No. 2B32040302\nO 70.907\n",
+   "fine": "| PETG Basic\nGray (Kf)\nSKU: KR-PETGO17Y-10H\n& Printing Temp: Diameter. 175mm\n230°260°C\n1, Bed Temp: Batch No. 7832040302\nCO’ 70.806\n"
+  },
+  {
+   "box": 4,
+   "expected_colour": "Dark Blue",
+   "frame": "",
+   "fine": "Ch\n. :\n0\n"
+  },
+  {
+   "box": 5,
+   "expected_colour": "Green",
+   "frame": "Batch Mo. :643040302\n",
+   "fine": "5 Py : »\n\nDy PEIS™RAsic\noy Green (\"7 7) ’\nee ae SKU KR-PE yy 4 oH\n\nf ; a i Printing Temp, Beas ‘er: 175mm\n(fi Bed Temp: batch pio. 7853040302\n"
+  }
+ ]
+}

@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/platform-contract",
-  "version": "0.5.87",
+  "version": "0.5.97",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
@@ -23,6 +23,11 @@
     "./services": "./src/services.ts",
     "./email-body": "./src/email-body.ts",
     "./email-line-images": "./src/email-line-images.ts",
+    "./store-product": "./src/store-product.ts",
+    "./line-units": "./src/line-units.ts",
+    "./box-label": "./src/box-label.ts",
+    "./known-packs": "./src/known-packs.ts",
+    "./learned-route": "./src/learned-route.ts",
     "./receipt-pack": "./src/receipt-pack.ts",
     "./order-intake": "./src/order-intake.ts",
     "./service-auth": "./src/service-auth.ts",
@@ -145,6 +150,7 @@
     "./entity-saved": "./src/entity-saved.ts",
     "./library": "./src/library.ts",
     "./money": "./src/money.ts",
+    "./address": "./src/address.ts",
     "./tracking-text": "./src/tracking-text.ts",
     "./field-meaning": "./src/field-meaning.ts",
     "./seller-upgrade": "./src/seller-upgrade.ts",
@@ -161,7 +167,6 @@
     "./outer-size": "./src/outer-size.ts",
     "./floorplan-format": "./src/floorplan-format.ts",
     "./laser-setup": "./src/laser-setup.ts",
-    "./grouped-list": "./src/grouped-list.ts",
     "./bridge-discovery": "./src/bridge-discovery.ts",
     "./cnc": "./src/cnc.ts",
     "./action-gate": "./src/action-gate.ts",
@@ -181,7 +186,8 @@
     "./record-creation": "./src/record-creation.ts",
     "./link-date-summary": "./src/link-date-summary.ts",
     "./order-page-link": "./src/order-page-link.ts",
-    "./address-name": "./src/address-name.ts"
+    "./address-name": "./src/address-name.ts",
+    "./ai-output-schemas": "./src/ai-output-schemas.ts"
   },
   "types": "src/index.ts",
   "scripts": {

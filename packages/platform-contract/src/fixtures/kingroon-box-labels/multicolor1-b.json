@@ -1,0 +1,36 @@
+{
+ "photo": "multi1-b",
+ "engine": "core-scan ocrLabelReadings (tesseract, no model)",
+ "labels": [
+  {
+   "box": 1,
+   "expected_colour": "Red",
+   "frame": "",
+   "fine": "4 bal .\nOSes Se!\n_& eainting Teme: Diameter. 1 7S\n[ 230-260°C\n: fm SedTemp: Batch Wo. 2233050602\n-\n"
+  },
+  {
+   "box": 2,
+   "expected_colour": "Dark Blue",
+   "frame": "PETG Basic\n\nDark Blue(REE)\nSKU-KR-PETGO191-1CH\n\n",
+   "fine": "SSNS SST GLa ak a We ee ia\nPETG Basic\nDark Blue (REE)\nSKU -KR-PETGO19Y-1CH\n~ Printing Temp: Diameter. 175mm\n230-260°C\niby Bed Temp : Batch No. :331071502\n"
+  },
+  {
+   "box": 3,
+   "expected_colour": "Gray",
+   "frame": "PETG Basic\n\nGray (K&)\nSKU: KR-PETG017Y-1CH\n\n3 Printing Temp: Diameter: 1\n230-260°C\n\nBatch No.\n\n",
+   "fine": "PETG Basic\nGray (R&)\nSKU: KR-PETGO17Y-1CH\n§ Printing Temp: Diameter: 175mm\n\" 230-260°C\nw, BedTemp: Batch No. -832040302\nAA 0-90 >\n"
+  },
+  {
+   "box": 4,
+   "expected_colour": "Grass Green",
+   "frame": "PETG Basic\n\nGrass Green @& 225)\nSME SEES 1CH\n\nB% 230-2\nTat Bed Temp Batch\n\n10-90\"C\n\nDiameter. 1.7Smm\n\n",
+   "fine": "PETG Basic\nGrass Green (ARB)\nSKU: KR-PETGOO2Y-1CH\nL“ 70-90°C\n"
+  },
+  {
+   "box": 5,
+   "expected_colour": "Light Apricot",
+   "frame": "i | faut patloend Batch No li2207 1602\n",
+   "fine": "4 . im\n\n; = PETG Basic \\\n*) Prnting Trry net S\na] od 230-260°¢ oe tiger 3\nFaun’ Bed Tears Batch Neo i2207 1602 hy )\nA 20 90E hg |\nSeas TSO OA tg See See Rae a Ee 8\n"
+  }
+ ]
+}

@@ -535,6 +535,34 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     version: "0.1.0",
   },
   {
+    // UI-SCREEN: /vault
+    // The assistant's one door into the Vault (#5242): IN only. It files a
+    // document the person gave it into a folder they own and removes the
+    // plain copy; no tool reads a vault document out or lists a folder, so a
+    // personal document never reaches a model through the assistant.
+    group: "more",
+    id: "platform:file-into-vault", run_by: "member",
+    min_role: "member",
+    label: "File a document in your Vault",
+    description:
+      "Put a document the person gave you (file_id, an uploaded file) into their Vault, encrypted, readable only by the people its folder names, and remove the plain copy from Files. folder names one of the person's own Vault folders by name or id; without it, their \"Personal documents\" folder, made the first time. record_kind and record_id say which record it belongs to (a car's registration renewal). You can never read a Vault document or list a folder.",
+    icon: "lock",
+    scope: "workspace",
+    invoke_handler: "platform.file-into-vault",
+    user_invokable: true,
+    // Not undoable: undoing would put a personal document back in Files as
+    // a plain copy, the thing filing it removed. Remove it in the Vault.
+    undoable: false,
+    examples: ["put this registration in my Vault", "file this passport scan in my Vault folder Family"],
+    args_schema: {
+      file_id: { label: "The document: the id of the file the person gave you", type: "text", required: true },
+      folder: { label: "Which of your Vault folders, by name or id (default: Personal documents)", type: "text" },
+      record_kind: { label: "The record it belongs to: its kind", type: "text" },
+      record_id: { label: "The record it belongs to: its id", type: "text" },
+    },
+    version: "0.1.0",
+  },
+  {
     // UI-SCREEN: / (the dashboard's offer to move records into the collection they belong in)
     group: "more",
     id: "platform:move-records",

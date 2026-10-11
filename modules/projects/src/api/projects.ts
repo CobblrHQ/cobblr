@@ -2,6 +2,7 @@
 
 import { Router } from "express";
 import { sql } from "kysely";
+import { fieldDay } from "@cobblr/platform-contract/field-day";
 import { z } from "zod";
 import { PRIORITIES, PROJECT_STATUSES } from "../vocab.js";
 import { platform, textSearchWhere } from "@cobblr/platform-contract";
@@ -31,6 +32,9 @@ projectsRouter.use((req, res, next) => {
   next();
 });
 
+/** A project's dates are days: kept as the day given, refused when none (#5759). */
+const Day = z.string().nullable().optional().refine((v) => !v || fieldDay(v) !== null, { message: "Give a day (YYYY-MM-DD)." });
+
 const ProjectCreate = z.object({
   name: z.string().min(1).max(160),
   description: z.string().max(8_000).nullable().optional(),
@@ -38,9 +42,9 @@ const ProjectCreate = z.object({
     .enum(PROJECT_STATUSES)
     .optional(),
   priority: z.enum(PRIORITIES).nullable().optional(),
-  start_date: z.string().nullable().optional(),
-  target_date: z.string().nullable().optional(),
-  completion_date: z.string().nullable().optional(),
+  start_date: Day,
+  target_date: Day,
+  completion_date: Day,
   color: z.string().nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
 });
@@ -122,9 +126,9 @@ projectsRouter.post(
         description: parsed.data.description ?? null,
         status: parsed.data.status ?? "active",
         priority: parsed.data.priority ?? "med",
-        start_date: parsed.data.start_date ? new Date(parsed.data.start_date) : null,
-        target_date: parsed.data.target_date ? new Date(parsed.data.target_date) : null,
-        completion_date: parsed.data.completion_date ? new Date(parsed.data.completion_date) : null,
+        start_date: fieldDay(parsed.data.start_date),
+        target_date: fieldDay(parsed.data.target_date),
+        completion_date: fieldDay(parsed.data.completion_date),
         color: parsed.data.color ?? null,
         metadata: parsed.data.metadata ?? {},
       } as never)
@@ -179,7 +183,7 @@ projectsRouter.patch(
         v != null &&
         typeof v === "string"
       ) {
-        patch[k] = new Date(v);
+        patch[k] = fieldDay(v);
       } else {
         patch[k] = v;
       }

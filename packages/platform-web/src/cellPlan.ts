@@ -73,6 +73,9 @@ export function cellPlan(def: EditableCellDef): CellPlan {
     // rather than offering a box that can't do the job.
     case "secret":
     case "markdown":
+    // The picker's suggestions and its street, city and postal boxes need the
+    // record's room, not a cell's.
+    case "address":
       return {
         kind: "locked",
         reason: `Open the record to edit ${def.display_label.toLowerCase()}`,

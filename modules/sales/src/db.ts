@@ -36,7 +36,7 @@ export interface SalesOrdersTable {
   paid: Generated<boolean>;
   auto_closed_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
   auto_close_undone: Generated<boolean>;
-  order_date: ColumnType<Date | null, string | null | undefined, string | null | undefined>;
+  order_date: ColumnType<string | null, string | null | undefined, string | null | undefined>;
   fulfilled_at: ColumnType<Date | null, string | null | undefined, string | null | undefined>;
   carrier: string | null;
   tracking_number: string | null;

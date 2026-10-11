@@ -1,7 +1,7 @@
 // Labels module client. Exposed alongside the UI so other modules
 // (inventory's web UI) can import + call it directly.
 
-import { noteWorkspaceWrite, walkPages } from "@cobblr/platform-web";
+import { noteWorkspaceWrite, walkPages, workspaceFetch } from "@cobblr/platform-web";
 import type { StationTagClient } from "@cobblr/platform-web";
 import type { ScanStation, StationCommand } from "@cobblr/platform-contract/scan-station";
 
@@ -187,7 +187,7 @@ export class LabelsApi {
     const token = this.opts.getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
     const url = `${this.base()}${path}`;
-    const res = await fetch(url, {
+    const res = await workspaceFetch(url, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -342,7 +342,7 @@ export class LabelsApi {
     if (body !== undefined) headers["Content-Type"] = "application/json";
     const token = this.opts.getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
-    const res = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    const res = await workspaceFetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
     const wrote = method.toUpperCase() !== "GET";
     if (res.status === 204) {
       if (wrote) noteWorkspaceWrite(url, res);

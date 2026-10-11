@@ -1,14 +1,15 @@
 import { useState } from "react";
 import { useInfiniteQuery, useMutation } from "@tanstack/react-query";
-import { MoneyInput, RecordFormModal, useMoneyCurrency, usePhotoPick, useToast, NumberField } from "@cobblr/platform-web";
+import { MoneyInput, RecordFormModal, useMoneyCurrency, usePhotoPick, useRunWithUndo, useToast, NumberField } from "@cobblr/platform-web";
 import { dayHere } from "@cobblr/platform-contract/day";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
 import { api, type MaintenanceTerm, type MaintenanceTermPatch } from "../../lib/api";
 import { openAuthedFile } from "../../lib/authed-file";
 
 import { countOf } from "@cobblr/platform-contract/plural";
+import { dayLabel } from "@cobblr/platform-contract/day";
 const input = "w-full rounded-md border border-line bg-surface px-3 py-2 text-base";
-const date = (v: string | null) => v ? new Date(v.slice(0, 10) + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "Date unknown";
+const date = (v: string | null) => v ? dayLabel(v) : "Date unknown";
 export function TermHistory({ slug, entityId, refresh }: { slug: string; entityId: string; refresh: () => void }) {
   const [editing, setEditing] = useState<MaintenanceTerm | null>(null);
   const query = useInfiniteQuery({ queryKey: ["maintenance-terms", slug, entityId], initialPageParam: 0,
@@ -38,7 +39,7 @@ export function TermHistory({ slug, entityId, refresh }: { slug: string; entityI
   </section>;
 }
 function TermEditor({ slug, term, close, refresh }: { slug: string; term: MaintenanceTerm; close: () => void; refresh: () => void }) {
-  const main = useMoneyCurrency(); const toast = useToast();
+  const main = useMoneyCurrency(); const toast = useToast(); const runWithUndo = useRunWithUndo();
   const [file, setFile] = useState<File | null>(null);
   const photo = usePhotoPick((files) => setFile(files[0] ?? null), { title: "Term document", label: "Choose document photo" });
   const moneyHidden = !Object.hasOwn(term, "cost_cents") || !Object.hasOwn(term, "currency");
@@ -46,7 +47,8 @@ function TermEditor({ slug, term, close, refresh }: { slug: string; term: Mainte
     cost_cents: moneyHidden ? undefined : term.cost_cents, currency: Object.hasOwn(term, "currency") ? term.currency ?? main : undefined, reference: term.reference, quantity: term.quantity });
   const save = useMutation({ mutationFn: async () => {
     const uploaded = file ? await api.uploadFile(slug, file) : null;
-    return api.updateMaintenanceTerm(slug, term.id, { ...draft, ...(uploaded ? { file_id: uploaded.id } : {}) });
+    // Through the action, so the correction carries its Undo (#5808).
+    return runWithUndo({ actionId: "core-maintenance:update-term", args: { term_id: term.id, ...draft, ...(uploaded ? { file_id: uploaded.id } : {}) } }, `${term.name} updated.`);
   }, onSuccess: () => { refresh(); close(); }, onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't save term") });
   return <RecordFormModal open onClose={close} title="Edit term"><form className="space-y-3" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
     <label className="block text-sm">Term start<input aria-label="Term start" className={input} type="date" value={draft.term_start ?? ""} onChange={(e) => setDraft({ ...draft, term_start: e.target.value || undefined })} /></label>

@@ -43,7 +43,7 @@ export interface EntityDetailPanelCtx {
 /** A manifest-declared UI contribution, as the API reports it. */
 export interface ContributedPanelSpec {
   id: string;
-  surface: "module-page-tab" | "entity-detail-panel" | "configuration-section";
+  surface: "module-page-tab" | "entity-detail-panel" | "configuration-section" | "view-toolbar";
   target: string;
   title: string;
   /** The panel's own predicate, when it declared one. Only `traits` is read
@@ -58,6 +58,20 @@ export interface ContributedPanelSpec {
 
 export type DetailPanelComponent = ComponentType<{ ctx: EntityDetailPanelCtx }>;
 
+/** Context for `surface: "view-toolbar"`: a control in a saved view's header,
+ *  on every view whose records the contributing module owns. */
+export interface ViewToolbarCtx {
+  slug: string;
+  /** The view's record kind, e.g. "groceries:item". */
+  kind: string;
+  /** The records the view is showing now, in its order. */
+  ids: string[];
+  /** The view's own name, for the control's words ("What's on hand"). */
+  viewName: string;
+}
+
+export type ViewToolbarComponent = ComponentType<{ ctx: ViewToolbarCtx }>;
+
 /** A panel that belongs on EVERY entity detail view, whatever the kind. */
 export const UNIVERSAL = "*";
 
@@ -67,6 +81,9 @@ export const UNIVERSAL = "*";
  *  beside the manifests. */
 export const KERNEL_PANELS: ContributedPanelSpec[] = [
   { id: "platform:links", surface: "entity-detail-panel", target: UNIVERSAL, title: "Links" },
+  // A record's documents in the Vault, for the people who may open them; it
+  // draws nothing for anyone else (#5242).
+  { id: "platform:vault-documents", surface: "entity-detail-panel", target: UNIVERSAL, title: "In the Vault" },
 ];
 
 const REGISTRY = new Map<string, DetailPanelComponent>();
@@ -84,6 +101,13 @@ function notify(): void {
  *  host app at load. Re-registering an id replaces it. */
 export function registerDetailPanel(id: string, component: DetailPanelComponent): void {
   REGISTRY.set(id, component);
+  notify();
+}
+
+/** Map a declared view-toolbar id to its component (the same id space as
+ *  panels, so lint:panel-registry reads both). */
+export function registerViewToolbar(id: string, component: ViewToolbarComponent): void {
+  REGISTRY.set(id, component as unknown as DetailPanelComponent);
   notify();
 }
 
@@ -164,7 +188,12 @@ export function ContributedDetailPanels({
   placement?: "summary" | "details";
 }) {
   const all = useContributedDetailPanels(target, universal, baseTarget);
-  const { worn, on } = useFaces(ctx.kind ?? target);
+  // What the record wears is its collection's, when the host names one: a
+  // Licences & subscriptions record is an inventory part whose collection is
+  // unique and kept, and reading the base kind's faces (fungible stock) kept
+  // the Renewals panel off it (#5807).
+  const collection = typeof ctx.hints?.collection === "string" && ctx.hints.collection ? ctx.hints.collection : null;
+  const { worn, on } = useFaces(ctx.kind ?? collection ?? target);
   // A panel that belongs to traits the collection does not wear stays off
   // the record; "Price history" is `traits: ["fungible"]` and has nothing to
   // say on a catalog. Absent traits = the old rule, target alone. Every listed
@@ -185,6 +214,35 @@ export function ContributedDetailPanels({
         return (
           <Suspense key={p.id} fallback={spinner}>
             <C ctx={{ ...ctx, kind: ctx.kind ?? target }} />
+          </Suspense>
+        );
+      })}
+    </>
+  );
+}
+
+/** Render what enabled modules put in a saved view's header: the toolbar
+ *  controls declared for the module that owns the view's records. The view
+ *  names no contributor; `module` is the owner of its kind. */
+export function ContributedViewToolbar({ module, ctx }: { module: string | null | undefined; ctx: ViewToolbarCtx }) {
+  const { api, orgSlug } = usePlatformWeb();
+  const registered = useRegisteredIds();
+  const q = useQuery({
+    queryKey: ["contributed-panels", orgSlug],
+    queryFn: () => api.listContributedPanels!(orgSlug),
+    enabled: !!api.listContributedPanels && !!module,
+    staleTime: 5 * 60_000,
+  });
+  const controls = (q.data ?? []).filter((p) => p.surface === "view-toolbar" && p.target === module && registered.includes(p.id));
+  if (!controls.length || !ctx.ids.length) return null;
+  return (
+    <>
+      {controls.map((p) => {
+        const C = REGISTRY.get(p.id) as unknown as ViewToolbarComponent | undefined;
+        if (!C) return null;
+        return (
+          <Suspense key={p.id} fallback={null}>
+            <C ctx={ctx} />
           </Suspense>
         );
       })}

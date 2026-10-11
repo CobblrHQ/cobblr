@@ -54,7 +54,7 @@ export interface PageRead {
 
 /** Bumped when the reader learns a new way through a store's pages: a page
  *  kept by an older reader is read once more instead of trusting its outcome. */
-export const ORDER_PAGE_READER = 2;
+export const ORDER_PAGE_READER = 3;
 
 /** One hop as the trail keeps it: "302 shop.example.org/_t/c/v3/…". The query
  *  and fragment are dropped and every path segment that is not a plain word
@@ -201,13 +201,34 @@ export function orderHeaders(pathToken: string, html: string): { access: string;
   };
 }
 
-/** Follow the link and read the order. Never throws; never names the link. */
-export async function readShopifyOrderPage(link: string, fetchHop: FetchHop): Promise<PageRead> {
+/** How long the second pass waits after the first. */
+const SECOND_PASS_MS = 1500;
+
+/** Follow the link and read the order. Never throws; never names the link.
+ *
+ *  A store's link can answer "expired" the first time and sign in the next:
+ *  the first pass leaves the state the second needs in the cookies (a person
+ *  saw it in a browser: expired, then signed in on a reload). So a pass that
+ *  ends expired with no order is followed once more, with the same cookies,
+ *  after a short pause, and the trail keeps both. */
+export async function readShopifyOrderPage(
+  link: string,
+  fetchHop: FetchHop,
+  opts: { pause?: (ms: number) => Promise<void> } = {},
+): Promise<PageRead> {
   const jar = new CookieJar();
   const trail: string[] = [];
+  const first = await onePass(link, fetchHop, jar, trail);
+  if (first.outcome !== "expired" || first.order?.lines.length) return first;
+  await (opts.pause ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms))))(SECOND_PASS_MS);
+  trail.push("second pass");
+  return onePass(link, fetchHop, jar, trail);
+}
+
+async function onePass(link: string, fetchHop: FetchHop, jar: CookieJar, trail: string[]): Promise<PageRead> {
   const none = (outcome: ReadOutcome): PageRead => ({ outcome, parcels: [], trail });
   const step = (to: URL, r: Response) => {
-    if (trail.length < 24) trail.push(hopOf(r.status, to));
+    if (trail.length < 48) trail.push(hopOf(r.status, to));
   };
   try {
     let url = new URL(link);
@@ -232,6 +253,7 @@ export async function readShopifyOrderPage(link: string, fetchHop: FetchHop): Pr
     const html = await res.text();
     const base = `https://shopify.com/${shopId}/account`;
     const tokenRes = await fetchHop(`${base}/oauth/token`, { headers: { "user-agent": UA, accept: "application/json", cookie: jar.header(new URL(base)), referer: url.href } });
+    jar.take(new URL(base), tokenRes);
     step(new URL(`${base}/oauth/token`), tokenRes);
     if (tokenRes.status === 429 || tokenRes.status === 403) return none("throttled");
     if (tokenRes.status === 401 || (tokenRes.status >= 300 && tokenRes.status < 400)) return none("expired");

@@ -1,4 +1,4 @@
-import { RecordFormModal, NewItemMenu, SnippetText } from "@cobblr/platform-web";
+import { RecordFormModal, NewItemMenu, SnippetText, workspaceFetch } from "@cobblr/platform-web";
 // Projects index. Status-grouped list + search + new-project form.
 
 import { useDeferredValue, useMemo, useState, type FormEvent } from "react";
@@ -17,6 +17,7 @@ import { useProjects } from "./context";
 import type { Project } from "./api";
 import { countOf } from "@cobblr/platform-contract";
 import { withArticle } from "@cobblr/platform-contract/plural";
+import { dayLabel } from "@cobblr/platform-contract/day";
 
 type SavedViewLite = {
   id: string;
@@ -71,7 +72,7 @@ export function ProjectsListPage() {
     queryKey: ["proj-saved-views", orgSlug, entityKind],
     queryFn: async (): Promise<{ items: SavedViewLite[] }> => {
       const token = getToken();
-      const res = await fetch(
+      const res = await workspaceFetch(
         `/api/v1/orgs/${orgSlug}/modules/core-views/views?kind=${encodeURIComponent(entityKind)}`,
         { headers: token ? { Authorization: `Bearer ${token}` } : {} },
       );
@@ -83,7 +84,7 @@ export function ProjectsListPage() {
     queryKey: ["proj-field-defs", orgSlug, entityKind],
     queryFn: async (): Promise<{ items: FieldDefLite[] }> => {
       const token = getToken();
-      const res = await fetch(
+      const res = await workspaceFetch(
         `/api/v1/orgs/${orgSlug}/field-defs?kind=${encodeURIComponent(entityKind)}`,
         { headers: token ? { Authorization: `Bearer ${token}` } : {} },
       );
@@ -356,7 +357,7 @@ export function ProjectsListPage() {
                       <span className="flex-1" />
                       {p.target_date && (
                         <span className="text-[11px] font-mono text-faint dark:text-slate-500 shrink-0">
-                          target {new Date(p.target_date).toLocaleDateString()}
+                          target {dayLabel(p.target_date)}
                         </span>
                       )}
                     </div>

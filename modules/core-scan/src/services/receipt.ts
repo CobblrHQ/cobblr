@@ -65,7 +65,7 @@ import { parseOrderEmail } from "./receipt-order-email.js";
 import { asBillOfSale, looksLikeBillOfSale, looksLikeTransaction, markCharges, readBillOfSale } from "./bill-of-sale.js";
 import { ocrImageText } from "./ocr.js";
 import { looksLikeFullPage, ocrFormText } from "./form-ocr.js";
-import { readCheckedDocument, withTextChecks } from "./document-read.js";
+import { checkedByCode, readCheckedDocument, withTextChecks } from "./document-read.js";
 import sharp from "sharp";
 import { documentImages } from "@cobblr/platform-contract/document-images";
 import { readReceiptDate, workspaceConventionFrom, type DateConvention, type ReceiptDateReading } from "./receipt-date.js";
@@ -151,11 +151,50 @@ async function chatExtract(orgId: string, text: string, sourceId: string, userId
         },
         { role: "user", content: text.slice(0, 12_000) },
       ],
+      output_schema: RECEIPT_OUTPUT_SCHEMA,
     },
     source: { kind: "core-scan:receipt", id: sourceId },
   });
   return r.text;
 }
+
+const numOrNull = { type: ["number", "null"] };
+const textOrNull = { type: ["string", "null"] };
+/** The shape `shapeReceipt` reads, sent with every receipt read so a model
+ *  answering in a layout of its own is caught, never quietly dropped (#5790):
+ *  an object with `items`, each with its description and its money. */
+export const RECEIPT_OUTPUT_SCHEMA = {
+  type: "object",
+  required: ["items"],
+  properties: {
+    vendor: textOrNull,
+    order_ref: textOrNull,
+    date: textOrNull,
+    currency: textOrNull,
+    total: numOrNull,
+    items: {
+      type: "array",
+      items: {
+        type: "object",
+        // The money keys too: held to a schema, a model leaves out what it
+        // may (Gemma 4 gave unit_price alone), and a line with no line_total
+        // counts as nothing on the purchase. Each may still be null.
+        required: ["description", "qty", "unit_price", "line_total"],
+        properties: {
+          description: { type: "string" },
+          qty: numOrNull,
+          unit_price: numOrNull,
+          line_total: numOrNull,
+          discount: numOrNull,
+          code: textOrNull,
+          model: textOrNull,
+          weight: numOrNull,
+          weight_unit: textOrNull,
+        },
+      },
+    },
+  },
+} as const;
 
 /** The exact instruction the image tier sends to the model.
  *
@@ -215,6 +254,7 @@ async function tenantVisionExtract(orgId: string, imageB64: string, mediaType: s
       image_b64: imageB64,
       image_media_type: mediaType,
       prompt: RECEIPT_VISION_PROMPT,
+      output_schema: RECEIPT_OUTPUT_SCHEMA,
     },
     source: { kind: "core-scan:receipt", id: sourceId },
   });
@@ -330,7 +370,6 @@ export async function parseReceipt(
    *  a receipt they cannot read fails with no model asked. */
   opts: { requireTransaction?: boolean; noModel?: boolean } & HostedReadOpts = {},
 ): Promise<ReceiptResult> {
-  const mayAsk = (text: string | null | undefined): boolean => !opts.noModel && (!opts.requireTransaction || (!!text && looksLikeTransaction(text)));
   const file = await platform().files.read(orgId, fileId, "original");
   if (!file) return { ok: false, reason: "Couldn't read that file.", code: "unreadable" };
   const bytes = Buffer.from(file.bytes);
@@ -338,6 +377,32 @@ export async function parseReceipt(
   if ((await readPersonalDocumentLocally({ bytes, mime })).privacy === "personal") {
     return { ok: false, code: "unreadable", reason: "This is a personal document. Read it with Personal documents in the scan inbox." };
   }
+  return readReceiptBytes(orgId, bytes, mime, fileId, userId, visitorIp, opts);
+}
+
+/** A personal document's sale, read by the receipt reader's code alone
+ *  (#5331): the same tiers (a PDF's text and table, form OCR of a scanned
+ *  page, OCR and the line parser for a photo), the same checks and date
+ *  rules, and no model at all. The page is in hand and never stored; what
+ *  code could not read is the personal path's to ask (personal-bill-of-sale.ts). */
+export async function readPersonalReceiptByCode(orgId: string, bytes: Buffer, mime: string): Promise<ReceiptResult> {
+  return readReceiptBytes(orgId, bytes, mime, null, null, null, { noModel: true });
+}
+
+async function readReceiptBytes(
+  orgId: string,
+  bytes: Buffer,
+  mime: string,
+  /** The stored original, for a model's call to cite; null when none was kept. */
+  fileId: string | null,
+  userId: string | null | undefined,
+  visitorIp: string | null | undefined,
+  opts: { requireTransaction?: boolean; noModel?: boolean } & HostedReadOpts,
+): Promise<ReceiptResult> {
+  // A model is asked only about a stored original (it cites it); a page in
+  // hand and not kept is read by code alone.
+  const mayAsk = (text: string | null | undefined): boolean => !opts.noModel && !!fileId && (!opts.requireTransaction || (!!text && looksLikeTransaction(text)));
+  const sourceId = fileId ?? "";
   const isPdf = mime === "application/pdf" || bytes.subarray(0, 5).toString("latin1").startsWith("%PDF");
   const isImage = mime.startsWith("image/");
   const looksCsv = /csv|excel|spreadsheet/.test(mime) || (!isPdf && !isImage);
@@ -374,7 +439,9 @@ export async function parseReceipt(
   // models mean the engine's read is filed with its doubts marked and the
   // page waits for one; nothing at all to file is "the AI is busy".
   const readDocument = async (img: Buffer, ocr: { receipt: ParsedReceipt; text: string } | null, method: ParseMethod, source: ReceiptSource): Promise<ReceiptResult | null> => {
-    if (opts.noModel) return ocr ? done(ocr.receipt, method, ocr.text, source) : null;
+    // No model to ask: the code checks still run, and the VIN still makes
+    // the vehicle right (the page's misread model line, #4571).
+    if (opts.noModel || !fileId) return ocr ? done(await checkedByCode(orgId, ocr), method, ocr.text, source) : null;
     const checked = await readCheckedDocument({ orgId, page: img, sourceId: fileId, userId, ocr });
     if (!checked) return null;
     if ("busy" in checked) {
@@ -418,7 +485,7 @@ export async function parseReceipt(
     }
     if (!mayAsk(read?.text)) return failed({ ok: false, reason: "It does not read as a sale.", code: "no_line_items" }, source);
     try {
-      const receipt = shapeReceipt(await visionExtract(orgId, img.toString("base64"), imgMime, fileId, userId, visitorIp, { hostedJobId: opts.hostedJobId, queueIfBusy: opts.queueIfBusy }));
+      const receipt = shapeReceipt(await visionExtract(orgId, img.toString("base64"), imgMime, sourceId, userId, visitorIp, { hostedJobId: opts.hostedJobId, queueIfBusy: opts.queueIfBusy }));
       if (!receipt) return failed({ ok: false, reason: "Couldn't find any line items on that receipt.", code: "no_line_items" }, source);
       // The engine's text, when it read any, is the evidence for the date
       // even though the lines came from the model.
@@ -465,7 +532,7 @@ export async function parseReceipt(
     if (byLine) return done(byLine.receipt, "text-lines", pdf.text, "pdf");
     if (!mayAsk(pdf.text)) return failed({ ok: false, reason: "It does not read as a sale.", code: "no_line_items" }, "pdf");
     try {
-      const receipt = shapeReceipt(await chatExtract(orgId, pdf.text, fileId, userId));
+      const receipt = shapeReceipt(await chatExtract(orgId, pdf.text, sourceId, userId));
       if (!receipt) return failed({ ok: false, reason: "Couldn't find any line items on that receipt.", code: "no_line_items" }, "pdf");
       // The model is asked for line items; the totals, the seller, the ETA
       // and the order reference are read from the same text at the door.
@@ -490,7 +557,7 @@ export async function parseReceipt(
   if (byLine) return done(byLine.receipt, "text-lines", asText, "text");
   if (!mayAsk(asText)) return failed({ ok: false, reason: "It does not read as a sale.", code: "no_line_items" }, "text");
   try {
-    const receipt = shapeReceipt(await chatExtract(orgId, asText, fileId, userId));
+    const receipt = shapeReceipt(await chatExtract(orgId, asText, sourceId, userId));
     if (!receipt) return failed({ ok: false, reason: "Couldn't find any line items on that receipt.", code: "no_line_items" }, "text");
     return done(receipt, "ai-chat", asText, "text");
   } catch (e) {

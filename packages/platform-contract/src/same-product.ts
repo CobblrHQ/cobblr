@@ -189,6 +189,43 @@ export function versionsAgree(a: string | null | undefined, b: string | null | u
   return [...va].some((v) => vb.has(v));
 }
 
+/** A store's name for one variant: "TITLE - US / 10KG / white", the shape
+ *  Shopify and most carts print on an order line (the product's title, a
+ *  dash, then the chosen options). Null when the name has no such tail. */
+export function storeVariantOf(s: string | null | undefined): { base: string; options: string[] } | null {
+  const t = (s ?? "").replace(/\s+/g, " ").trim();
+  const m = t.match(/^(.*\S)\s+[-\u2013\u2014]\s+(\S.*)$/);
+  if (!m) return null;
+  const options = m[2]!.split("/").map((o) => o.trim().toLowerCase()).filter(Boolean);
+  return options.length ? { base: m[1]!.toLowerCase(), options } : null;
+}
+
+const wordsOf = (s: string): string[] => s.toLowerCase().match(/[a-z0-9][a-z0-9.-]*/g) ?? [];
+
+/** Two names for different variants of one product (#5719): the same title
+ *  with different options ("… / Multicolor" and "… / white"), or one name's
+ *  options and the other's extra word disagreeing ("… - US / 10KG /
+ *  Multicolor" and "… 1.75mm White"). The words they share are the
+ *  product's, so a word-overlap rule calls them one thing; the options are
+ *  what was bought. Unknown (false) when either name says nothing about it. */
+export function variantsDisagree(a: string | null | undefined, b: string | null | undefined): boolean {
+  const va = storeVariantOf(a);
+  const vb = storeVariantOf(b);
+  if (va && vb) return va.base === vb.base && va.options.join("/") !== vb.options.join("/");
+  const one = va ?? vb;
+  const other = (va ? b : a) ?? "";
+  if (!one) return false;
+  const base = new Set(wordsOf(one.base));
+  const extra = wordsOf(other).filter((w) => !base.has(w));
+  // Only a name that carries the whole title (three words or more, so a
+  // short one like "WD-40" proves nothing) plus words of its own; the title
+  // alone names no variant.
+  const has = new Set(wordsOf(other));
+  if (base.size < 3 || extra.length === 0 || ![...base].every((w) => has.has(w))) return false;
+  const options = new Set(one.options.flatMap(wordsOf));
+  return !extra.some((w) => options.has(w));
+}
+
 export interface ProductSide {
   name?: string | null;
   fields?: Record<string, unknown> | null;
@@ -198,7 +235,7 @@ export type SameProductVerdict =
   /** An identifier field agrees: one product, whatever the names say. */
   | { verdict: "same"; by: "identifier" }
   /** An identifier field disagrees, or the names' model numbers do. */
-  | { verdict: "different"; by: "identifier" | "model-number" | "version" }
+  | { verdict: "different"; by: "identifier" | "model-number" | "version" | "variant" }
   /** Nothing decisive: the caller's name rule decides. */
   | { verdict: "unknown" };
 
@@ -213,5 +250,6 @@ export function sameProduct(a: ProductSide, b: ProductSide, roles?: Record<strin
   if (ids === "same") return { verdict: "same", by: "identifier" };
   if (modelNumbersDisagree(a.name, b.name)) return { verdict: "different", by: "model-number" };
   if (versionsDisagree(a.name, b.name)) return { verdict: "different", by: "version" };
+  if (variantsDisagree(a.name, b.name)) return { verdict: "different", by: "variant" };
   return { verdict: "unknown" };
 }

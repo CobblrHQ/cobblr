@@ -30,6 +30,7 @@ import { useQuery } from "@tanstack/react-query";
 export { NewPartDialog } from "./NewPartDialog";
 export { InventoryProvider } from "./context";
 export { InventoryApi } from "./api";
+export { WhatsStillHereButton, WhatsStillHereSheet } from "./WhatsStillHere";
 export type { StockDetail } from "./api";
 export { formatStockAmount } from "../stock-shapes";
 export type { StockView } from "../api/stock-shapes";

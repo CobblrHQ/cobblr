@@ -48,6 +48,8 @@ export async function resolveApiToken(
   audience: string | null;
   /** The token's own name ("Pantry station"). */
   name: string;
+  /** When the token stops working (ISO), or null when it never does. */
+  expiresAt: string | null;
 } | null> {
   if (!plaintext.startsWith(PREFIX)) return null;
   const hash = hashToken(plaintext);
@@ -88,6 +90,7 @@ export async function resolveApiToken(
     access: isTokenAccess(row.access) ? row.access : null,
     orgId: row.org_id ?? null,
     orgSlug: row.org_slug ?? null,
+    expiresAt: row.expires_at ? new Date(row.expires_at).toISOString() : null,
     audience:
       row.source === "oauth" && row.meta && typeof row.meta === "object" && typeof (row.meta as { resource?: unknown }).resource === "string"
         ? (row.meta as { resource: string }).resource

@@ -1,0 +1,10 @@
+{
+  "lint": "lint:ai-calls-name-their-shape",
+  "run": "node scripts/lint-ai-calls-name-their-shape.ts",
+  "rows": [
+    "kernel-platform-service"
+  ],
+  "ms": 500,
+  "recorded": "2026-10-11",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

@@ -52,6 +52,7 @@ import {
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { putPart, type PartPlace } from "./move-part";
 import { PART_FIELD_LABELS } from "../part-field-labels";
+import { fieldDay } from "@cobblr/platform-contract/field-day";
 
 // The part-detail body. Rendered inside PartDetailModal (below) — the
 // detail view is a modal over the list now (consistent with machines),
@@ -520,7 +521,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
         />
       )}
 
-      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 sm:p-5 space-y-3">
+      <div data-testid="record-header" className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 sm:p-5 space-y-3">
         <div className="flex flex-col sm:flex-row sm:flex-wrap items-start gap-4">
           <RecordPhoto
             kind={entityKind}
@@ -763,6 +764,15 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
         </div>
       )}
 
+      {/* A summary panel (a subscription's renewal, with Renewed and its
+          cancel-by date) is what the record is for, so it sits under the
+          identity card, before the fields, as it does on Assets (#5807). */}
+      <ContributedDetailPanels
+        target="inventory:part"
+        placement="summary"
+        ctx={{ slug: orgSlug, entityId: p.id, entityTitle: p.name, hints: { collection: instance ? entityKind : undefined } }}
+      />
+
       {/* The instance's own fields, promoted to the top (right under the
           identity card) — the point of a skinned instance is that THESE are
           the fields that matter, not the generic inventory ones below. */}
@@ -789,7 +799,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           items={[
             editFieldItem("warranty_expires", {
               label: "Warranty expires",
-              value: p.warranty_expires ? new Date(p.warranty_expires).toISOString().slice(0, 10) : "",
+              value: fieldDay(p.warranty_expires) ?? "",
               placeholder: "YYYY-MM-DD",
               onCommit: (v) => update.mutate({ warranty_expires: v.trim() === "" ? null : v.trim() }),
             }),
@@ -898,6 +908,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           This page names no contributor and imports nothing from one. */}
       <ContributedDetailPanels
         target="inventory:part"
+        placement="details"
         ctx={{ slug: orgSlug, entityId: p.id, entityTitle: p.name, hints: { collection: instance ? entityKind : undefined } }}
       />
 

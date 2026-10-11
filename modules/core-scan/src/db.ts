@@ -62,6 +62,9 @@ export interface CoreScanBatchesTable {
    *  Null for an ordinary in-app scan session. */
   /** The address an emailed receipt came from (origin "email"). */
   origin_from: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  /** "Scan the items": the order line this session's scans are units of
+   *  (0041, #5734). */
+  fills_line: ColumnType<string | null, string | null | undefined, string | null | undefined>;
   /** The order email's line photos with their rows' words (#5350). */
   line_images: ColumnType<unknown | null, string | null | undefined, string | null | undefined>;
   origin: ColumnType<string | null, string | null | undefined, string | null | undefined>;
@@ -74,6 +77,12 @@ export interface CoreScanBatchesTable {
    *  original" (rendered in an iframe, any type) + "Re-parse". Null for a plain
    *  scan session. */
   source_file_id: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  /** What code read from a personal document that was not kept (0040,
+   *  #5331): the values, never the document. Null when the original was kept. */
+  read_receipt: ColumnType<unknown | null, string | null | undefined, string | null | undefined>;
+  /** A personal document's original, in the Vault of whoever brought it
+   *  (0042): linked to the record on "It's this one". */
+  vault_file_id: ColumnType<string | null, string | null | undefined, string | null | undefined>;
   /** The receipt read as a STATE on the session (never an inbox item):
    *  in_flight | read | failed, with the last failure and its history in
    *  `read_failure` (platform-contract scan-session.ts). Null on a plain scan
@@ -271,7 +280,7 @@ export interface CoreScanPhotoRankConfigTable {
  *  shared across api processes on purpose: the in-memory counter it replaces
  *  reset on restart and doubled under two processes (see migration 0025). */
 export interface CoreScanIdentifyUsageTable {
-  day: ColumnType<Date, string, never>;
+  day: ColumnType<string, string, never>;
   n: ColumnType<number, number | undefined, number>;
 }
 

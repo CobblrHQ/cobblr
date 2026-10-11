@@ -16,9 +16,9 @@ export interface ProjectsProjectsTable {
   description: string | null;
   status: Generated<ProjectStatus>;
   priority: Priority | null;
-  start_date: Date | null;
-  target_date: Date | null;
-  completion_date: Date | null;
+  start_date: string | null;
+  target_date: string | null;
+  completion_date: string | null;
   color: string | null;
   metadata: Generated<Record<string, unknown>>;
   instance: Generated<string>;

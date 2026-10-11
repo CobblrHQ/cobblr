@@ -240,11 +240,11 @@ export async function orderLines(args: {
   slug: string;
   headers: Record<string, string>;
   orderId: string;
-}): Promise<Array<{ id: string; part_id: string | null }> | null> {
+}): Promise<Array<{ id: string; part_id: string | null; description?: string | null }> | null> {
   try {
     const res = await apiFetch(`${args.baseUrl}/api/v1/orgs/${args.slug}/modules/purchases/orders/${args.orderId}/items`, { headers: args.headers });
     if (!res.ok) return null;
-    const body = (await res.json()) as { items?: Array<{ id: string; part_id: string | null }> };
+    const body = (await res.json()) as { items?: Array<{ id: string; part_id: string | null; description?: string | null }> };
     return body.items ?? [];
   } catch {
     return null;
@@ -273,6 +273,38 @@ export async function deleteReceiptOrder(args: {
     return res.ok;
   } catch (err) {
     console.warn("[core-scan] receipt order delete threw:", (err as Error).message);
+    return false;
+  }
+}
+
+/** Remove one unclaimed line from an order: a pack's line, once its parts
+ *  each have their own (pack-parts.ts, #5719). */
+export async function deleteOrderLine(args: { baseUrl: string; slug: string; headers: Record<string, string>; orderId: string; itemId: string }): Promise<boolean> {
+  try {
+    const res = await apiFetch(`${args.baseUrl}/api/v1/orgs/${args.slug}/modules/purchases/orders/${args.orderId}/items/${args.itemId}`, {
+      method: "DELETE",
+      headers: args.headers,
+    });
+    if (!res.ok) console.warn(`[core-scan] receipt order line delete skipped (${res.status})`);
+    return res.ok;
+  } catch (err) {
+    console.warn("[core-scan] receipt order line delete threw:", (err as Error).message);
+    return false;
+  }
+}
+
+/** Tell the purchase how many of one line's units are in hand (#5734). */
+export async function reportReceived(args: { baseUrl: string; slug: string; headers: Record<string, string>; orderId: string; itemId: string; received: number }): Promise<boolean> {
+  try {
+    const res = await apiFetch(`${args.baseUrl}/api/v1/orgs/${args.slug}/modules/purchases/orders/${args.orderId}/items/${args.itemId}/received`, {
+      method: "POST",
+      headers: args.headers,
+      body: JSON.stringify({ received: args.received }),
+    });
+    if (!res.ok) console.warn(`[core-scan] received count skipped (${res.status})`);
+    return res.ok;
+  } catch (err) {
+    console.warn("[core-scan] received count threw:", (err as Error).message);
     return false;
   }
 }

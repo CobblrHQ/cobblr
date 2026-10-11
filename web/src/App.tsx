@@ -12,6 +12,7 @@ import { installRoutePrefetch } from "./lib/route-prefetch";
 import { OfflineScreen } from "./components/OfflineScreen";
 import { OPEN_RECORD_ROUTE } from "@cobblr/platform-contract/instance-detail";
 import { lazy, Suspense, useEffect, useState } from "react";
+const VaultPage = lazy(() => import("./pages/VaultPage").then((m) => ({ default: m.VaultPage })));
 const RecentlyDeletedPage = lazy(() => import("./pages/RecentlyDeletedPage").then((m) => ({ default: m.RecentlyDeletedPage })));
 import { ScanFiledRefresh } from "./lib/scanFiled";
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useParams } from "react-router-dom";
@@ -954,6 +955,8 @@ function ActiveOrgScopedRoutes() {
           <Route path="/calendar" element={<CalendarPage />} />
           <Route path="/apps" element={<AllAppsPage />} />
           <Route path="/people/:who" element={<PersonThingsPage />} />
+          <Route path="/vault" element={<VaultPage />} />
+          <Route path="/vault/:folderId" element={<VaultPage />} />
           {/* Nav alias — the synthetic "Locations" top routes here (useNavModules). */}
           <Route path="/locations" element={<LocationsPage />} />
           <Route path="/locations/place" element={<PlaceItemsPage />} />

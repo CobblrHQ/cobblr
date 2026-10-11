@@ -1,3 +1,4 @@
+import { TEXT_OR_NULL } from "@cobblr/platform-contract/ai-output-schemas";
 // Bring your spreadsheet: read an uploaded workbook or a Google Sheets link
 // and say what it holds, before anything is written.
 //
@@ -186,7 +187,7 @@ async function buildPlans(input: z.infer<typeof PlanBody>, ctx: PlanCtx) {
       const r = await platform().ai.invoke({
         orgId: ctx.orgId,
         capability: "organise",
-        input: { messages: [{ role: "user", content: prompt }] },
+        input: { output_schema: { type: "object", additionalProperties: TEXT_OR_NULL }, messages: [{ role: "user", content: prompt }] },
         source: { kind: "core-import:sheet-columns", id: filename },
         userId: ctx.userId ?? null,
       });

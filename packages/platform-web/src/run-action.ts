@@ -23,11 +23,15 @@
 // old quantity (#3615).
 //
 // No surface calls `api.invokeAction` itself: lint:actions-run-through-one-door.
+// And an Undo the action hands back always reaches the person: the hook
+// offers it unless the surface draws it itself (offerUndo, #5812).
 
 import { useCallback } from "react";
 import { useQueryClient, type Query, type QueryClient } from "@tanstack/react-query";
 import { usePlatformWeb } from "./context";
+import { useToast } from "./ToastContext";
 import type { PlatformWebApi } from "./types";
+import { verdictOf } from "./action-outcome-compose";
 
 export interface ActionBody {
   actionId: string;
@@ -101,9 +105,88 @@ export async function runAction(
   return outcome;
 }
 
-/** The door as a hook: bound to the workspace and the query cache. */
-export function useRunAction(): (body: ActionBody) => Promise<ActionRun> {
+/** One way back, as the action's own undoer said it: an action and its args. */
+export interface UndoStep {
+  action_id: string;
+  args?: Record<string, unknown>;
+}
+
+/** An outcome's undo, one step or several, as a list. */
+export function undoStepsOf(undo: unknown): UndoStep[] {
+  return (Array.isArray(undo) ? undo : undo ? [undo] : []).filter((s): s is UndoStep => !!s && typeof (s as UndoStep).action_id === "string");
+}
+
+/** How a surface runs an action through the hook. */
+export interface RunOptions {
+  /** "shown-here": this surface draws the outcome's Undo itself (a row that
+   *  ticks off with its own Undo, a card's Undo button). Left out, the door
+   *  offers it in a toast, so a returned Undo is never dropped. "is-undo":
+   *  this run IS a way back, and is not offered an undo of its own. */
+  undo?: "shown-here" | "is-undo";
+  /** What the toast says was done; else the action's own summary, else "Done.". */
+  done?: string;
+}
+
+/** Offer an outcome's Undo: a toast saying what was done, whose Undo runs the
+ *  action's own way back through the door. Nothing to undo, nothing offered.
+ *  Returns whether it offered one. */
+export function offerUndo(
+  toast: Pick<ReturnType<typeof useToast>, "action" | "success" | "error">,
+  runBack: (body: ActionBody) => Promise<ActionRun>,
+  outcome: Pick<ActionRun, "undo" | "result"> | null | undefined,
+  body: Pick<ActionBody, "entityKind" | "entityId">,
+  done?: string,
+): boolean {
+  const steps = undoStepsOf(outcome?.undo);
+  if (!steps.length) return false;
+  toast.action(done ?? verdictOf(outcome?.result, "Done."), {
+    actionLabel: "Undo",
+    duration: 8000,
+    onAction: async () => {
+      try {
+        for (const step of steps) await runBack({ actionId: step.action_id, entityKind: body.entityKind, entityId: body.entityId, args: step.args ?? {} });
+        toast.success("Undone.");
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Couldn't undo that.");
+      }
+    },
+  });
+  return true;
+}
+
+/** The door as a hook: bound to the workspace and the query cache, and the
+ *  Undo every action that hands one back is owed. Use one on a counted record
+ *  took one and its Undo came back in the response, but no surface showed it
+ *  (#5812; #5808 the same for a renewal correction). So the door offers it,
+ *  unless the surface says it draws the Undo itself (`undo: "shown-here"`,
+ *  held by lint:action-undo-reaches-the-person). */
+export function useRunAction(): (body: ActionBody, opts?: RunOptions) => Promise<ActionRun> {
   const { api, orgSlug } = usePlatformWeb();
   const qc = useQueryClient();
-  return useCallback((body: ActionBody) => runAction(api, qc, orgSlug, body), [api, qc, orgSlug]);
+  const toast = useToast();
+  return useCallback(
+    async (body: ActionBody, opts?: RunOptions) => {
+      const outcome = await runAction(api, qc, orgSlug, body);
+      if (!opts?.undo) offerUndo(toast, (b) => runAction(api, qc, orgSlug, b), outcome, body, opts?.done);
+      return outcome;
+    },
+    [api, qc, orgSlug, toast],
+  );
+}
+
+/** The door with a sentence for what was done: Undo when the action hands
+ *  one back, else a plain success toast (#5808: a renewal term corrected with
+ *  no Undo). */
+export function useRunWithUndo(): (body: ActionBody, done: string) => Promise<ActionRun> {
+  const { api, orgSlug } = usePlatformWeb();
+  const qc = useQueryClient();
+  const toast = useToast();
+  return useCallback(
+    async (body: ActionBody, done: string) => {
+      const outcome = await runAction(api, qc, orgSlug, body);
+      if (!offerUndo(toast, (b) => runAction(api, qc, orgSlug, b), outcome, body, done)) toast.success(done);
+      return outcome;
+    },
+    [api, qc, orgSlug, toast],
+  );
 }

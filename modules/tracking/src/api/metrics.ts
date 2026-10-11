@@ -16,6 +16,7 @@ import { z } from "zod";
 import { tenantContext, tenantDb, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { logMeasurement } from "./record.js";
+import { instantFromInput } from "@cobblr/platform-contract/day";
 
 export const metricsRouter = Router({ mergeParams: true });
 
@@ -212,7 +213,7 @@ metricsRouter.post(
       metric,
       value: parsed.data.value,
       note: parsed.data.note ?? null,
-      measuredAt: parsed.data.measured_at ? new Date(parsed.data.measured_at) : undefined,
+      measuredAt: instantFromInput(parsed.data.measured_at) ?? undefined,
     });
     res.status(201).json({ ...row, value: Number(row.value) });
   }),

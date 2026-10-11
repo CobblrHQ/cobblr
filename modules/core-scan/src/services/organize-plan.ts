@@ -1,3 +1,4 @@
+import { objectWith } from "@cobblr/platform-contract/ai-output-schemas";
 // Guided Organize — the batch put-away planner (docs/product/guided-organize.md).
 //
 // Given a pile of identified-but-unfiled inbox items, produce a PLAN: how the
@@ -450,7 +451,7 @@ async function aiPlan(
       // managed provider (and its entitlement gate), landing on the heuristic.
       userId: userId ?? undefined,
       capability: "organise",
-      input: {
+      input: { output_schema: objectWith(["groups"], { groups: { type: "array" } }),
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: user },

@@ -105,7 +105,7 @@ export function registerSalesActionHandlers(): void {
     if (!orderId || !args.line_id || !(qty > 0)) return { ok: false, error: "Name the order, the line and how many to make." };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<SalesDB>;
     const r = await makeLine(db, ctx.orgId, ctx.userId, orderId, args.line_id, qty);
-    return r.ok ? r : { ok: false, error: r.message, code: r.code };
+    return r.ok ? r : { ok: false, error: r.message, code: r.code, ...(r.module ? { module: r.module } : {}) };
   });
 
   platform().actions.registerHandler("sales.read-order-email", async (ctx) => {

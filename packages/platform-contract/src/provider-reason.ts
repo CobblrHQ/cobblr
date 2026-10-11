@@ -28,6 +28,10 @@ export const PROVIDER_REASONS = [
    *  "high demand", a 5xx of its own. Transient by nature, so it is retried,
    *  and never told as "could not be reached": it was reached (#3819). */
   "busy",
+  /** The provider answered, but not in the shape the call asked for (its
+   *  output schema): a local model ignoring a JSON layout (#5790). Another
+   *  model may well keep to it, so the call moves on. */
+  "wrong_shape",
   /** The provider failed for a reason none of the above names. */
   "unknown",
 ] as const;
@@ -56,7 +60,7 @@ export function providerError(provider: string, reason: ProviderReason, message:
 /** Reasons that say nothing about the request itself, only about this
  *  provider right now: another provider may well answer. A refusal of the
  *  content ("unknown" covers a malformed or refused request) is not one. */
-export const REASONS_ANOTHER_PROVIDER_MAY_ANSWER: readonly ProviderReason[] = ["busy", "unreachable", "quota", "invalid_key", "model_unavailable"];
+export const REASONS_ANOTHER_PROVIDER_MAY_ANSWER: readonly ProviderReason[] = ["busy", "unreachable", "quota", "invalid_key", "model_unavailable", "wrong_shape"];
 
 /** The reason on an error, or null for one that carries none (a ProviderError,
  *  or a refusal the router built from one). */
@@ -139,6 +143,8 @@ export function providerSentence(
       return `${who} could not be reached. Try again shortly. Nothing was changed.`;
     case "busy":
       return `${who} is busy right now: it answered, and is turning calls away for the moment. Try again in a minute. Nothing was changed.`;
+    case "wrong_shape":
+      return `${who} answered, but not in the shape this job needs${opts.model ? ` (${opts.model})` : ""}, so nothing it said was kept. A stronger model, or another connection, may keep to it. Nothing was changed.`;
     case "unknown":
       return `${who} could not answer. Try again, or check the connection under ${whereToFix(opts.door)}. Nothing was changed.`;
   }
@@ -159,6 +165,8 @@ export function whyItDidNotAnswer(reason: string): string {
       return "refused its key";
     case "model_unavailable":
       return "no longer serves its model";
+    case "wrong_shape":
+      return "answered in the wrong shape";
     default:
       return "failed";
   }

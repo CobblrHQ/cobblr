@@ -11,6 +11,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, X } from "lucide-react";
 import { useProjects } from "./context";
 import type { ChecklistItem, Energy, Priority, Task, TaskDependency, TaskStatus } from "./api";
+import { dayHere } from "@cobblr/platform-contract/day";
+import { fieldDay } from "@cobblr/platform-contract/field-day";
 
 const STATUSES: { v: TaskStatus; label: string }[] = [
   { v: "todo", label: "To do" },
@@ -35,7 +37,7 @@ export const taskKey = (id: string) => ["project-task", id] as const;
 
 /** The calendar day a stored due date means, for a date input. */
 export function dueDay(due: string | null): string {
-  return due ? due.slice(0, 10) : "";
+  return fieldDay(due) ?? "";
 }
 
 /** A due day read against the person's own today: past it is late. */
@@ -46,8 +48,7 @@ export function dueState(due: string | null, status: TaskStatus, today: string):
 }
 
 export function localToday(): string {
-  const n = new Date();
-  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+  return dayHere();
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {

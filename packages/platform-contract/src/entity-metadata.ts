@@ -16,6 +16,7 @@ import { isMaskedSecret, omitSecretValues } from "@cobblr/platform-contract/secr
 import { fieldKindOf } from "@cobblr/platform-contract/kind-label";
 import { asMeasure } from "@cobblr/platform-contract/measure";
 import { readMoney, parseMoney } from "@cobblr/platform-contract/money";
+import { asAddress } from "@cobblr/platform-contract/address";
 import { isListedChoice } from "@cobblr/platform-contract/field-vocabulary";
 import { platform } from "@cobblr/platform-contract/platform-runtime";
 
@@ -255,7 +256,7 @@ export interface FieldValueProblem {
   value: unknown;
   /** What the field takes, in words: "one of: small, large", "a number". */
   expected: string;
-  code: "not_a_choice" | "not_a_number" | "not_a_yes_no" | "not_a_date" | "not_a_measure" | "required_field" | "not_a_secret" | "full_card_number";
+  code: "not_a_choice" | "not_a_number" | "not_a_yes_no" | "not_a_date" | "not_a_measure" | "not_an_address" | "required_field" | "not_a_secret" | "full_card_number";
   choices?: string[];
 }
 
@@ -341,6 +342,9 @@ function problemWith(def: JudgedField, value: unknown): FieldValueProblem | null
   if (def.type === "measure") {
     // A measured value as stored, or text that still reads as one ("4k7").
     return asMeasure(value) ? null : { field: def.name, value, expected: "a measured value, like 4k7 or 100 nF", code: "not_a_measure" };
+  }
+  if (def.type === "address") {
+    return asAddress(value) ? null : { field: def.name, value, expected: "an address, like 8 Mill St, Lodi, NJ", code: "not_an_address" };
   }
   if (def.type === "date") {
     // A day, or a month or a year as printed (the write doors store a month

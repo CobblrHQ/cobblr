@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Minus, Plus } from "lucide-react";
-import { runAction, TypeableNumber, useFaces, useToast } from "@cobblr/platform-web";
+import { offerUndo, runAction, TypeableNumber, useFaces, useToast } from "@cobblr/platform-web";
 import {
   SCAN_COUNT_REASON_LABEL,
   SHOPPING_LIST_DOOR,
@@ -71,9 +71,12 @@ export function useScanCountSave(itemId: string, match: TrackedMatch, onDone?: (
     try {
       // The one action door, in its hook-free form: every inbox card calls this
       // hook, and a card must not need the platform provider to render.
+      const body = { actionId: SHOPPING_LIST_DOOR.action, entityKind: match.kind, entityId: match.id, args: {} };
       // PRESS-ARGS: add-item takes its title from the record and its list defaults to the shopping list.
-      await runAction(api, qc, activeSlug, { actionId: SHOPPING_LIST_DOOR.action, entityKind: match.kind, entityId: match.id, args: {} });
-      toast.success(`${title} is on the shopping list`);
+      const outcome = await runAction(api, qc, activeSlug, body);
+      // Its Undo, when add-item hands one back (#5812).
+      // PRESS-ARGS: Undo runs the action's own steps, each carrying its arguments.
+      if (!offerUndo(toast, (b) => runAction(api, qc, activeSlug, b), outcome, body, `${title} is on the shopping list`)) toast.success(`${title} is on the shopping list`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     }
@@ -138,9 +141,12 @@ export function ScanCountBlock({
   where,
   initialMode = "change",
   sessionMode,
+  scanned = 1,
   onDone,
 }: {
   itemId: string;
+  /** How many the scan's line holds (a 10-pack is 10): what a re-buy adds. */
+  scanned?: number;
   /** The record the scan matched; `qty` is what it says it has. */
   match: TrackedMatch;
   where?: string | null;
@@ -154,19 +160,19 @@ export function ScanCountBlock({
   const stock = worn.on.has("stock");
   const have = Math.max(0, match.qty ?? 0);
   const [mode, setMode] = useState<ScanCountMode>(initialMode);
-  const [value, setValue] = useState(() => scanCountStart(initialMode, have, sessionMode));
-  const [text, setText] = useState(() => shown(initialMode, scanCountStart(initialMode, have, sessionMode)));
+  const [value, setValue] = useState(() => scanCountStart(initialMode, have, sessionMode, scanned));
+  const [text, setText] = useState(() => shown(initialMode, scanCountStart(initialMode, have, sessionMode, scanned)));
   const [reason, setReason] = useState<ScanCountReason | null>(null);
   // A new scan is a new card: it starts back in Change by (or Count mode's
   // Set total), whatever the last one was left on.
   useEffect(() => {
-    const start = scanCountStart(initialMode, have, sessionMode);
+    const start = scanCountStart(initialMode, have, sessionMode, scanned);
     setMode(initialMode);
     setValue(start);
     setText(shown(initialMode, start));
     setReason(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [itemId, initialMode, sessionMode, match.id]);
+  }, [itemId, initialMode, sessionMode, match.id, scanned]);
 
   // Taking can go down to nothing, never past it: the floor would take what
   // is there anyway, and a stepper that lets you ask for more reads as a lie.
@@ -180,7 +186,7 @@ export function ScanCountBlock({
   };
   const switchTo = (m: ScanCountMode) => {
     if (m === mode) return;
-    const start = scanCountStart(m, have, sessionMode);
+    const start = scanCountStart(m, have, sessionMode, scanned);
     setMode(m);
     setValue(start);
     setText(shown(m, start));

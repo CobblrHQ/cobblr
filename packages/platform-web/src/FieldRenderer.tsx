@@ -1,4 +1,5 @@
 import { SecretField } from "./SecretField";
+import { AddressView } from "./AddressPicker";
 import { isMaskedSecret, isStoredSecret } from "@cobblr/platform-contract/secret-field";
 import { useMoneyCurrency } from "./MoneyCurrency";
 // FieldRenderer — renders an arbitrary field value using one of a
@@ -141,6 +142,9 @@ export function FieldRenderer({
       );
     }
   }
+  // An address shows as the place's name over its street address, with
+  // Directions; on one line where a row has no room for two.
+  if (type === "address") return <AddressView value={value} inline={size === "inline"} />;
   // A number with a declared unit renders as a quantity ("12 mm"). Its own
   // component so the units hook mounts only when a consumer passed a unit.
   if (unit && Number.isFinite(Number(value))) {

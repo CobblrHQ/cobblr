@@ -6,11 +6,12 @@ import {
   DashboardTile,
   registerDashboardWidget,
   type DashboardWidgetProps,
+  workspaceFetch,
 } from "@cobblr/platform-web";
 
 async function getJson<T>(url: string, getToken: () => string | null): Promise<T> {
   const token = getToken();
-  const r = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  const r = await workspaceFetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json() as Promise<T>;
 }

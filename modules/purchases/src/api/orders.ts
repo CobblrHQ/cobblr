@@ -6,7 +6,7 @@ import { orderFigures, combineOrderTotals } from "../order-money.js";
 // so downstream wires (e.g. bump inventory stock) can react.
 
 import { arrivedEverywhere } from "@cobblr/platform-contract";
-import { receiveIfArrived, receiveOrderLines } from "../receive.js";
+import { receiveIfArrived, receiveOrderLines, setReceivedCount } from "../receive.js";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
@@ -253,7 +253,7 @@ ordersRouter.get(
       in_transit: rows.filter((o) => o.status === "in-transit").length,
       from_receipts: rows.filter((o) => "receipt_file_id" in o.metadata).length,
       spend: sum.amount, money_total: sum, currency,
-      priced: rows.filter((o) => o.total !== null).length,
+      priced: rows.filter((o) => o.total !== null && o.unpriced_lines === 0).length,
       by_month: [...byMonth].map(([month, spend]) => ({ month, spend })),
       top_vendors: [...byVendor].filter(([, spend]) => spend > 0).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([vendor, spend]) => ({ vendor: vendor || null, spend })),
     });
@@ -612,6 +612,28 @@ ordersRouter.patch(
       diff: { order_id: orderId, subject_kind: subject?.kind ?? null, subject_id: subject?.id ?? null },
     });
     res.json(updated);
+  }),
+);
+
+// How many of a line's units are in hand, counted one by one (#5734): each
+// scan of a spool of ten that fills one of its line's slots in the scan
+// inbox. The tenth receives the line (setReceivedCount).
+// AI-REACH: exempt — the scan inbox's slot count reports here; the assistant counts a unit through fill_order_line, which calls this
+// UI-REACH: the scan inbox reports each unit a person scans in on the line (OrderLineUnits); no screen sets a count by hand
+ordersRouter.post(
+  "/:id/items/:itemId/received",
+  asyncHandler(async (req, res) => {
+    const body = z.object({ received: z.number().int().min(0).max(100_000) }).safeParse(req.body ?? {});
+    if (!body.success) return badBody(res, body.error);
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const line = await db.selectFrom("purchases_order_items").select("id").where("id", "=", req.params.itemId ?? "").where("order_id", "=", req.params.id ?? "").executeTakeFirst();
+    if (!line) {
+      res.status(404).json({ error: { code: "not_found", message: "order line not found" } });
+      return;
+    }
+    const r = await setReceivedCount(db, ctx.org.id, line.id, body.data.received, arrivedEverywhere(new Date()));
+    res.json(r);
   }),
 );
 

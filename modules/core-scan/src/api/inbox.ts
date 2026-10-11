@@ -1,4 +1,6 @@
+import { TEXT_OR_NULL, objectWith } from "@cobblr/platform-contract/ai-output-schemas";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
+import { linkInVault } from "../services/vault-original.js";
 import { trackingNumberFromText } from "@cobblr/platform-contract/tracking-text";
 import { finishOwnSend } from "../services/offer-intake.js";
 import { mapOfferedFields, type OfferedThing } from "@cobblr/platform-contract/share-offer";
@@ -38,6 +40,10 @@ import { pictureHash, recentTwin } from "../services/same-picture.js";
 import { applyLabelFacts } from "../services/label-quantity.js";
 import { locationForPlaces, stripPlaceFields } from "../services/place-fields.js";
 import { lotFieldOf, lotPatchFor, yearMadeFieldOf, yearMadePatchFor } from "../services/lot-field.js";
+import { reportPackIfFiled } from "../services/pack-network.js";
+import { regroupPack } from "../services/pack-groups.js";
+import { shareableProductFields } from "@cobblr/platform-contract/learned-route";
+import { rowLots } from "../services/row-lots.js";
 import { RESTOCK_CHOICES } from "@cobblr/platform-contract/kind-label";
 import { SCAN_COUNT_REASONS, scanCountLedgerReason, scanCountLeftLow } from "@cobblr/platform-contract/scan-count";
 import { LOOKUP_GAVE_UP, retryHasRunOut } from "../services/retry-lookup.js";
@@ -71,9 +77,8 @@ import { attachPaperwork, type AttachPaperworkResult } from "../services/attach-
 import { takePaperworkValue, undoPaperworkFill } from "../services/record-paperwork.js";
 import { amountOf, centsFromAmount } from "@cobblr/platform-contract/money";
 import { z } from "zod";
-import { fileReceiptAs, type KnownShipment } from "../services/receipt-arrival.js";
-import { claimOrderLine, orderLines, deleteReceiptOrder, lineUnitCost } from "../services/receipt-order.js";
-import { pendingPurchaseOf, recordReceiptPurchase, type PendingPurchase } from "../services/receipt-purchase.js";
+import { claimOrderLine, orderLines, deleteReceiptOrder, lineUnitCost, reportReceived } from "../services/receipt-order.js";
+import { pendingPurchaseOf, recordReceiptPurchase, relinkReceiptPurchase, type PendingPurchase } from "../services/receipt-purchase.js";
 import {
   mapRoledFacts,
   planDecodeFill,
@@ -96,7 +101,6 @@ import {
   scanHeldForReview,
   scanRowState,
   scanReviewReason,
-  scanReceiptReadFailed,
   scanWaitingDays,
   SCAN_TRIAGE_FACETS,
   SCAN_TRIAGE_COLUMNS,
@@ -122,7 +126,7 @@ import {
   observeScanPhoto,
   refreshCatalogImageByName,
 } from "../services/enrich-photo.js";
-import { dropMeta, mergeMeta, standingHint, standingHints } from "../services/metadata.js";
+import { dropMeta, mergeMeta, standingHints } from "../services/metadata.js";
 import { hintWithoutCount, parseHintFacts } from "../services/hint-facts.js";
 import { enqueueDocumentRead } from "../services/document-read-worker.js";
 import { newPlaceAt } from "../services/tracked-stamp.js";
@@ -134,9 +138,9 @@ import {
   pushStep,
   seedHistory,
 } from "../services/catalog-history.js";
-import { pickPrimaryId, unionCandidateFields, traitsHaveUnique, combinedQuantity,
+import { pickPrimaryId, unionCandidateFields, traitsHaveUnique,
   combinedQuantityOf, type CombineItem, type CombineCandidate } from "../services/combine-merge.js";
-import { selectTopCandidates, deriveImageQuery, isFreshCategory } from "../services/ddg-images.js";
+import { selectTopCandidates, isFreshCategory } from "../services/ddg-images.js";
 import { pictureOptions } from "../services/picture-options.js";
 import { rankPhotoWithAi, isRankFailure, rankFailureSentence } from "../services/rank-photo.js";
 import { looksOfRow, picturesThatAgree } from "../services/picture-agrees.js";
@@ -147,7 +151,6 @@ import { inboxCounts, type CountRow } from "../services/inbox-counts.js";
 import { matchQuery, restampTrackedMatch, scanPlaceOf, trackedMatchFor, trackedMatchStampAt, type TrackedMatchStamp } from "../services/tracked-stamp.js";
 import { candidateTableOf, destinationTables, filingDestination, type DestinationRow } from "../services/destination.js";
 import {
-  candidateFieldValue,
   deriveRankContext,
   IMAGE_BUDGET,
   readPhotoRankEnabled,
@@ -172,8 +175,11 @@ import { uncombinePlan, type CombineUndo } from "../services/uncombine.js";
 import { resolvePaintColorFromText } from "../services/paint-code.js";
 import { resolvePaintCodeViaWeb } from "../services/paint-code-websearch.js";
 import { parseReceipt } from "../services/receipt.js";
-import { lineDiscounted, lineNet, shareOrderDiscount } from "../services/receipt-shared.js";
-import { lineImagesFor, type EmailLineImage } from "@cobblr/platform-contract/email-line-images";
+import { lineDiscounted, lineNet, shareOrderDiscount, type ReceiptResult } from "../services/receipt-shared.js";
+import { isLineImageRef, lineImagesFor, type EmailLineImage } from "@cobblr/platform-contract/email-line-images";
+import { storeHostForReceipt } from "../services/store-product.js";
+import { undoSplit } from "../services/undo-split.js";
+import { orderLinePass } from "../services/order-line-offer.js";
 import { readOrderPacks } from "@cobblr/platform-contract/receipt-pack";
 import { orderPageForReceipt, readWithOrderPage } from "../services/receipt-order-page.js";
 import type { OrderPageSummary } from "@cobblr/platform-contract/order-page-link";
@@ -181,7 +187,7 @@ import { looksLikeReceiptPhoto, routeScannedReceiptPhoto } from "../services/rec
 import { readFailureFrom, readFailureHistory, readHistoryAfterSuccess } from "../services/receipt-read-state.js";
 import { cleanOrderRef, receiptDedupKey,
   receiptContentKey, receiptSessionLabel, vendorFromLabel, type ParsedReceipt, type ParseMethod, type ReceiptSource } from "../services/receipt-shared.js";
-import { reportBarcodeCorrection, reportLabelConfirm, meaningfullyChanged, originOfValue, unitLotsOf } from "../services/barcode-corrections.js";
+import { reportBarcodeCorrection, reportLearnedRoute, reportLabelConfirm, meaningfullyChanged, originOfValue, unitLotsOf } from "../services/barcode-corrections.js";
 import { claimGlanceAnswer, readContextFor, readGlanceEnabled, writeGlanceEnabled } from "../services/glance.js";
 import { normalizeBarcode, barcodeFromHint } from "../services/barcode-correction.js";
 import { findBinContents, findTracked, placesOfCard } from "../services/entity-match.js";
@@ -198,7 +204,6 @@ import {
   isAcquiredFromField,
   purchaseEvidenceOf,
   scanSourceConflict,
-  type FieldProvenance,
   type FieldProvenanceMap,
   type SourceConflict,
 } from "@cobblr/platform-contract/acquisition-source";
@@ -208,7 +213,6 @@ import { headedFor, rowMatchesText } from "../services/inbox-search.js";
 import { displayName, filingName, isBareCodeName, rejectedNamesOf, USER_NAME_KEY } from "@cobblr/platform-contract/display-identity";
 import { extractLocation, type LocationLite } from "../services/note-location.js";
 import { suggestLocationForItem } from "../services/suggest-location.js";
-import { normaliseCategory } from "@cobblr/platform-contract/category-reconcile";
 import { doubtedChecks, priceDoubted, receiptFacts, sellerDoubted, type ReceiptMeta } from "../services/receipt-facts.js";
 import { receiptRecord, type ReceiptLineMeta } from "../services/receipt-record.js";
 import { runReceiptBackfill } from "../services/receipt-backfill.js";
@@ -1348,6 +1352,9 @@ async function materializeReceiptLines(opts: {
   /** The receipt came by email: what it states reads "from the order
    *  email" on the card. */
   emailed?: boolean;
+  /** The store's own web host (a forward's original sender, #5719): each
+   *  line is read on its page by the store-product pass. */
+  storeHost?: string | null;
 }): Promise<{ rows: Array<{ id: string }>; lineRows: Array<string | null> }> {
   const groupId = opts.groupId ?? randomUUID();
   // Read together, so siblings agree: one product's lines that differ only
@@ -1366,6 +1373,7 @@ async function materializeReceiptLines(opts: {
     parse_method: opts.method,
     ...(opts.source ? { receipt_source: opts.source } : {}),
     ...(opts.emailed ? { receipt_origin: "email" } : {}),
+    ...(opts.storeHost ? { store_host: opts.storeHost } : {}),
     // Provenance: what this purchase WAS, beyond the line's own description.
     // Kept as components rather than one "price", because a receipt carries
     // several numbers that all look like the price and picking one is how the
@@ -1445,6 +1453,9 @@ async function materializeReceiptLines(opts: {
         suggested_metadata: JSON.stringify({
           ...baseMeta,
           description: line.description,
+          // Its place among the order's things, as the receipt printed them:
+          // "Part of …, line 1?" names it by this (#5734).
+          receipt_line: rows.length + 1,
           ...(packs[lineAt] ? { line_pack: packs[lineAt] } : {}),
           ...(photos[lineAt] ? { order_line_image: photos[lineAt] } : {}),
           unit_price: line.unit_price,
@@ -1678,9 +1689,9 @@ async function putPaperworkOn(req: Request, itemId: string, record: { kind: stri
     .executeTakeFirst();
   if (!row) return { status: 404, error: { code: "not_found", message: "inbox item not found" } };
   const batch = row.scan_batch_id
-    ? await db.selectFrom("core_scan_batches").select(["source_file_id"]).where("id", "=", row.scan_batch_id).executeTakeFirst()
+    ? await db.selectFrom("core_scan_batches").select(["source_file_id", "read_receipt", "vault_file_id"]).where("id", "=", row.scan_batch_id).executeTakeFirst()
     : null;
-  if (!batch?.source_file_id) return { status: 409, error: { code: "no_document", message: "This card did not come from a document." } };
+  if (!batch?.source_file_id && !batch?.read_receipt) return { status: 409, error: { code: "no_document", message: "This card did not come from a document." } };
   const meta = (row.suggested_metadata ?? {}) as { receipt_order_id?: unknown; receipt_order_item_id?: unknown; check_fields?: unknown };
   const existingLine =
     typeof meta.receipt_order_id === "string" && typeof meta.receipt_order_item_id === "string"
@@ -1690,6 +1701,8 @@ async function putPaperworkOn(req: Request, itemId: string, record: { kind: stri
     orgId: ctx.org.id,
     userId: session.id,
     fileId: batch.source_file_id,
+    // A personal document's values, read when it came in; it was never kept.
+    ...(batch.source_file_id ? {} : { receipt: batch.read_receipt as ParsedReceipt }),
     kind: record.kind,
     id: record.id,
     http: paperworkHttp(req, ctx.org.slug),
@@ -1697,6 +1710,12 @@ async function putPaperworkOn(req: Request, itemId: string, record: { kind: stri
     // What the card already doubted stays doubted, whatever this read says.
     doubted: [...doubtedChecks(meta)],
   });
+  // The original, kept in the Vault when it was read, now listed on the
+  // record it is the paper for (#5331).
+  if (result.read && batch.vault_file_id) {
+    const linked = await linkInVault(ctx.org.id, session.id, batch.vault_file_id, record);
+    Object.assign(result, { vault: { kept: true, linked } });
+  }
   if (result.read) {
     const [module, kindName] = record.kind.split(":");
     await db
@@ -1782,7 +1801,7 @@ function receiptPurchasePlan(
     awaiting: { tracking_number: string | null; shipment_state: string | null; shipment_checked_at: Date | null; shipment_next_poll_at: Date | null; shipment_location: string | null; expected_arrival: string | null } | null;
     groupId: string;
     ships: boolean;
-    sourceFileId: string;
+    sourceFileId: string | null;
     rowIds: Array<string | null>;
     targetItemId: string | null;
   },
@@ -1854,7 +1873,8 @@ const ReceiptBody = z.object({
   /** The photo the email printed in each line's row, with that row's words
    *  (emailLineImages, #5350). Kept on the session so a re-read keeps them. */
   line_images: z
-    .array(z.object({ text: z.string().max(500), url: z.string().url().max(2000) }))
+    // A link the email printed, or one of its own image parts, stored (`file:<id>`).
+    .array(z.object({ text: z.string().max(500), url: z.string().max(2000).refine(isLineImageRef, "a link or a stored file:<id>") }))
     .max(30)
     .optional(),
   /** Skip the "you already imported this receipt" guard and import it anyway
@@ -1885,6 +1905,294 @@ const ReceiptBody = z.object({
    *  alone (services/receipt-order-page.ts). */
   order_page: OrderPageSummaryBody.optional(),
 });
+
+/** What a read receipt is filed with: the receipt route's body, the stored
+ *  original optional. A personal document (a bill of sale, #5331) is read
+ *  transiently and filed with no original kept: `file_id` null. */
+type ReceiptFiling = Omit<z.infer<typeof ReceiptBody>, "file_id"> & {
+  file_id: string | null;
+  /** A personal document's original, kept in the Vault instead (#5331). */
+  vault_file_id?: string | null;
+};
+
+/** File a read receipt: its session, one inbox row per line (none when it is
+ *  put on an item that exists), and its purchase. Shared by the receipt route
+ *  and the personal bill-of-sale route. */
+export async function fileReceiptRead(
+  req: Parameters<typeof tenantDb>[0] & { ip?: string; headers: Record<string, string | string[] | undefined> },
+  res: { status: (code: number) => { json: (body: unknown) => void } },
+  data: ReceiptFiling,
+  result: Extract<ReceiptResult, { ok: true }>,
+): Promise<void> {
+  const parsed = { data };
+  const db = tenantDb(req);
+  const ctx = tenantContext(req);
+  const session = sessionUser(req);
+  // A code taken off the whole order is shared across its lines, so each
+  // line's cost is what it cost (shareOrderDiscount, #5350).
+  const { method } = result;
+  const receipt = shareOrderDiscount(result.receipt);
+  noteScanCaptured(ctx.org.id, session.id, "receipt");
+  const orderRef = cleanOrderRef(receipt.order_ref);
+
+  // Already imported? A store's order number is unique per vendor, so the same
+  // (vendor, order #) means this receipt is already here — re-forwarding it (a
+  // NEW email) shouldn't silently duplicate every line. Only LIVE prior imports
+  // count (a batch with at least one non-discarded item); a receipt you threw
+  // away re-imports. `force` (user chose "import anyway") skips the guard.
+  const dupKey = receiptDedupKey(receipt.vendor, orderRef);
+  const contentKey = receiptContentKey(receipt);
+  // No order number on the receipt -> fall back to the content fingerprint.
+  // Same duplicate flow as below: tell the user, let force override.
+  if (!dupKey && contentKey && !parsed.data.force) {
+    const prior = await db
+      .selectFrom("core_scan_batches as b")
+      .select(["b.id", "b.label"])
+      .where("b.content_key", "=", contentKey)
+      .where((eb) =>
+        eb.exists(
+          eb
+            .selectFrom("core_scan_inbox_items as i")
+            .select("i.id")
+            .whereRef("i.scan_batch_id", "=", "b.id")
+            .where("i.status", "!=", "discarded"),
+        ),
+      )
+      .orderBy("b.created_at", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    if (prior) {
+      const live = await db
+        .selectFrom("core_scan_inbox_items")
+        .select((eb) => eb.fn.countAll<number>().as("n"))
+        .where("scan_batch_id", "=", prior.id)
+        .where("status", "!=", "discarded")
+        .executeTakeFirst();
+      // Same contract as the order-ref guard below, so the client's one
+      // "already imported - import anyway?" flow covers both.
+      res.status(200).json({
+        duplicate: true,
+        existing: {
+          batch_id: prior.id,
+          label: prior.label,
+          vendor: receipt.vendor,
+          order_ref: null,
+          item_count: Number(live?.n ?? 0),
+        },
+      });
+      return;
+    }
+  }
+  if (dupKey && !parsed.data.force) {
+    const prior = await db
+      .selectFrom("core_scan_batches as b")
+      .select(["b.id", "b.label", "b.vendor", "b.order_ref"])
+      .where(sql<boolean>`lower(regexp_replace(coalesce(b.vendor, ''), '[^a-zA-Z0-9]', '', 'g')) = ${dupKey.vendor}`)
+      .where("b.order_ref", "=", dupKey.orderRef)
+      .where((eb) =>
+        eb.exists(
+          eb
+            .selectFrom("core_scan_inbox_items as i")
+            .select("i.id")
+            .whereRef("i.scan_batch_id", "=", "b.id")
+            .where("i.status", "!=", "discarded"),
+        ),
+      )
+      .orderBy("b.created_at", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    if (prior) {
+      const live = await db
+        .selectFrom("core_scan_inbox_items")
+        .select((eb) => eb.fn.countAll<number>().as("n"))
+        .where("scan_batch_id", "=", prior.id)
+        .where("status", "!=", "discarded")
+        .executeTakeFirst();
+      res.status(200).json({
+        duplicate: true,
+        existing: {
+          batch_id: prior.id,
+          label: prior.label,
+          vendor: prior.vendor,
+          order_ref: prior.order_ref,
+          item_count: Number(live?.n ?? 0),
+        },
+      });
+      return;
+    }
+  }
+
+  // A receipt is its OWN inbox session: one batch holds all its lines, so the
+  // header reads "Receipt · <vendor>" (or "Receipt" when the vendor is unknown)
+  // instead of a bare timestamp, and the lines can't time-cluster with unrelated
+  // items. origin="email" makes the inbox add "emailed <when>". (Falls back to a
+  // batch-less group only if the batch insert somehow fails.)
+  const batchLabel = receiptSessionLabel(receipt.vendor, orderRef);
+  // A shipping notice may have arrived BEFORE this receipt and left a
+  // row-less session in read_state 'awaiting' for the same store + order
+  // (api/shipment-event.ts). The receipt reads INTO that session — its
+  // parcel state, tracking number and ownership carry over — rather than
+  // opening a second session for one order. The duplicate guard above never
+  // sees it: an awaiting session has no lines, and the guard keys on lines.
+  // Matched on the order number, with the store as the tiebreak
+  // (sameOrder): the notice said "Amazon", the receipt says "Amazon.com".
+  const awaiting = dupKey
+    ? sameOrder(
+        await db
+          .selectFrom("core_scan_batches")
+          .select(["id", "vendor", "tracking_number", "shipment_state", "shipment_checked_at", "shipment_next_poll_at", "shipment_location", "expected_arrival"])
+          .where("read_state", "=", "awaiting")
+          .where("order_ref", "=", dupKey.orderRef)
+          .orderBy("created_at", "desc")
+          .limit(10)
+          .execute(),
+        receipt.vendor,
+        dupKey.orderRef,
+      )
+    : undefined;
+  const sessionFields = {
+    label: batchLabel,
+    origin: parsed.data.origin ?? null,
+    // Only an email's own read says who sent it; a re-read keeps it.
+    ...(parsed.data.origin === "email" && parsed.data.from ? { origin_from: parsed.data.from } : {}),
+    // The email's line photos, so a re-read gives each line its own again.
+    ...(parsed.data.line_images?.length ? { line_images: JSON.stringify(parsed.data.line_images) } : {}),
+    // Remember the original so the session can offer "View original" + "Re-parse".
+    source_file_id: parsed.data.file_id,
+    // A personal document keeps no original: what code read is kept instead,
+    // so "It's this one" can fill the car from it (#5331).
+    ...(parsed.data.file_id ? {} : { read_receipt: JSON.stringify(receipt) }),
+    ...(parsed.data.vault_file_id ? { vault_file_id: parsed.data.vault_file_id } : {}),
+    // Vendor + order # as their own fields so the order # is editable later.
+    vendor: receipt.vendor,
+    order_ref: orderRef,
+    content_key: contentKey,
+    // "in_flight" until its lines exist, "read" after (#4890, torn status
+    // writes): written "read" first, a poll between this and the lines saw
+    // a read session with nothing in it, and the inbox dropped it.
+    read_state: "in_flight",
+    read_started_at: new Date(),
+    // Which way round the numeric date was read, and by what (#2917).
+    date_convention: result.date_reading?.convention ?? null,
+    date_decided_by: result.date_reading?.decided_by ?? null,
+    date_printed: result.date_reading?.printed ?? null,
+  };
+  const batch = awaiting
+    ? await db
+        .updateTable("core_scan_batches")
+        .set(sessionFields as never)
+        .where("id", "=", awaiting.id)
+        .returning("id")
+        .executeTakeFirst()
+    : await db
+        .insertInto("core_scan_batches")
+        .values({ created_by_user_id: session.id, ...sessionFields } as never)
+        .returning("id")
+        .executeTakeFirst();
+  const batchId = batch?.id ?? null;
+
+  // One inbox row per line item (shared receipt_group_id, attached to the
+  // batch), then matched against the menu — a receipt becomes N parts.
+  const receiptBaseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+  const receiptGroupId = randomUUID();
+  // Attaching paperwork to an item that already exists: the order is still
+  // recorded in full, but nothing is put in the inbox, because nothing needs
+  // triaging. See the target_item_id comment on the body above.
+  const targetItemId = parsed.data.target_item_id ?? null;
+  const markRead = () =>
+    batchId // state-flips-last: defined here, run in the finally below, after the lines are made
+      ? db.updateTable("core_scan_batches").set({ read_state: "read", read_at: new Date() } as never).where("id", "=", batchId).execute()
+      : Promise.resolve();
+  let made: Awaited<ReturnType<typeof materializeReceiptLines>> | { rows: never[]; lineRows: never[] };
+  try {
+    made = targetItemId
+    ? { rows: [], lineRows: [] }
+    : await materializeReceiptLines({
+    db,
+    orgId: ctx.org.id,
+    orgSlug: ctx.org.slug,
+    userId: session.id,
+    batchId,
+    receipt,
+    method,
+    source: result.source,
+    token: bearer(req),
+    baseUrl: receiptBaseUrl,
+    groupId: receiptGroupId,
+    lineImages: parsed.data.line_images ?? null,
+    emailed: parsed.data.origin === "email",
+    storeHost: parsed.data.origin === "email" ? await storeHostForReceipt(ctx.org.id, parsed.data.file_id, parsed.data.from ?? null) : null,
+      });
+  } finally {
+    // Read once the lines are in (or the attempt to make them is over).
+    await markRead();
+  }
+  const rows = made.rows;
+
+  // THE ORDER IS BORN HERE, not at confirm. A receipt is a document and
+  // documents live in Purchases, which was only true after somebody triaged
+  // for as long as the order was created by receipt-group confirm: a receipt
+  // nobody got to never reached Purchases at all, and one attached to an
+  // already-triaged item had no moment at which its order could appear. See
+  // docs/design-decisions/order-at-parse.md.
+  //
+  // Every line is recorded on the order with part_id NULL, because a line on a
+  // receipt is not a thing you own — most of a grocery order is eaten. Confirm
+  // is what claims one, by setting part_id.
+  //
+  // Best-effort throughout: a workspace without purchases still uploads,
+  // triages and commits its receipts, it simply has no order.
+  // When Purchases is off the order is not lost: the session keeps it and
+  // offers to turn Purchases on (services/receipt-purchase.ts, #3869).
+  let purchase: { recorded: boolean; purchases_off: boolean } | null = null;
+  if (batchId) {
+    const outcome = await recordReceiptPurchase(
+      db,
+      batchId,
+      receiptPurchasePlan(receipt, {
+        orderRef,
+        awaiting: awaiting ?? null,
+        groupId: receiptGroupId,
+        // An online order is on its way, not in hand: the email said it was
+        // an order confirmation, the store's own page read it, or the
+        // receipt charged for shipping.
+        ships: parsed.data.order_confirmation === true || method === "order-page" || method === "order-email",
+        sourceFileId: parsed.data.file_id,
+        rowIds: made.lineRows,
+        targetItemId,
+      }),
+      { baseUrl: receiptBaseUrl, slug: ctx.org.slug, headers: { Authorization: `Bearer ${bearer(req)}`, "Content-Type": "application/json" } },
+    );
+    purchase = outcome.recorded ? { recorded: true, purchases_off: false } : { recorded: false, purchases_off: outcome.purchasesOff };
+  }
+
+  res.status(201).json({
+    // The session the lines went into, so a caller can read the session's
+    // own record (how its date was read, its state) without a list scan.
+    batch_id: batchId,
+    // Whether the receipt was kept as a purchase, and when not, whether
+    // Purchases being off is why (the card offers to turn it on).
+    purchase,
+    receipt: {
+      vendor: receipt.vendor,
+      date: receipt.date,
+      // Which way round a numeric date was read, and by what (#2917).
+      date_convention: result.date_reading?.convention ?? null,
+      date_decided_by: result.date_reading?.decided_by ?? null,
+      date_printed: result.date_reading?.printed ?? null,
+      currency: receipt.currency,
+      total: receipt.total,
+      item_count: rows.length,
+      // Travels with the result so the importer can SAY the lines do not add
+      // up. A parse that is 95% right is the dangerous kind: every field looks
+      // reasonable and the purchase it records is quietly wrong.
+      lines_total: receipt.lines_total,
+      lines_reconcile: receipt.lines_reconcile,
+      method,
+    },
+    items: rows,
+  });
+}
 
 // AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
@@ -1961,265 +2269,7 @@ inboxRouter.post(
         });
       return;
     }
-    // A code taken off the whole order is shared across its lines, so each
-    // line's cost is what it cost (shareOrderDiscount, #5350).
-    const { method } = result;
-    const receipt = shareOrderDiscount(result.receipt);
-    noteScanCaptured(ctx.org.id, session.id, "receipt");
-    const orderRef = cleanOrderRef(receipt.order_ref);
-
-    // Already imported? A store's order number is unique per vendor, so the same
-    // (vendor, order #) means this receipt is already here — re-forwarding it (a
-    // NEW email) shouldn't silently duplicate every line. Only LIVE prior imports
-    // count (a batch with at least one non-discarded item); a receipt you threw
-    // away re-imports. `force` (user chose "import anyway") skips the guard.
-    const dupKey = receiptDedupKey(receipt.vendor, orderRef);
-    const contentKey = receiptContentKey(receipt);
-    // No order number on the receipt -> fall back to the content fingerprint.
-    // Same duplicate flow as below: tell the user, let force override.
-    if (!dupKey && contentKey && !parsed.data.force) {
-      const prior = await db
-        .selectFrom("core_scan_batches as b")
-        .select(["b.id", "b.label"])
-        .where("b.content_key", "=", contentKey)
-        .where((eb) =>
-          eb.exists(
-            eb
-              .selectFrom("core_scan_inbox_items as i")
-              .select("i.id")
-              .whereRef("i.scan_batch_id", "=", "b.id")
-              .where("i.status", "!=", "discarded"),
-          ),
-        )
-        .orderBy("b.created_at", "desc")
-        .limit(1)
-        .executeTakeFirst();
-      if (prior) {
-        const live = await db
-          .selectFrom("core_scan_inbox_items")
-          .select((eb) => eb.fn.countAll<number>().as("n"))
-          .where("scan_batch_id", "=", prior.id)
-          .where("status", "!=", "discarded")
-          .executeTakeFirst();
-        // Same contract as the order-ref guard below, so the client's one
-        // "already imported - import anyway?" flow covers both.
-        res.status(200).json({
-          duplicate: true,
-          existing: {
-            batch_id: prior.id,
-            label: prior.label,
-            vendor: receipt.vendor,
-            order_ref: null,
-            item_count: Number(live?.n ?? 0),
-          },
-        });
-        return;
-      }
-    }
-    if (dupKey && !parsed.data.force) {
-      const prior = await db
-        .selectFrom("core_scan_batches as b")
-        .select(["b.id", "b.label", "b.vendor", "b.order_ref"])
-        .where(sql<boolean>`lower(regexp_replace(coalesce(b.vendor, ''), '[^a-zA-Z0-9]', '', 'g')) = ${dupKey.vendor}`)
-        .where("b.order_ref", "=", dupKey.orderRef)
-        .where((eb) =>
-          eb.exists(
-            eb
-              .selectFrom("core_scan_inbox_items as i")
-              .select("i.id")
-              .whereRef("i.scan_batch_id", "=", "b.id")
-              .where("i.status", "!=", "discarded"),
-          ),
-        )
-        .orderBy("b.created_at", "desc")
-        .limit(1)
-        .executeTakeFirst();
-      if (prior) {
-        const live = await db
-          .selectFrom("core_scan_inbox_items")
-          .select((eb) => eb.fn.countAll<number>().as("n"))
-          .where("scan_batch_id", "=", prior.id)
-          .where("status", "!=", "discarded")
-          .executeTakeFirst();
-        res.status(200).json({
-          duplicate: true,
-          existing: {
-            batch_id: prior.id,
-            label: prior.label,
-            vendor: prior.vendor,
-            order_ref: prior.order_ref,
-            item_count: Number(live?.n ?? 0),
-          },
-        });
-        return;
-      }
-    }
-
-    // A receipt is its OWN inbox session: one batch holds all its lines, so the
-    // header reads "Receipt · <vendor>" (or "Receipt" when the vendor is unknown)
-    // instead of a bare timestamp, and the lines can't time-cluster with unrelated
-    // items. origin="email" makes the inbox add "emailed <when>". (Falls back to a
-    // batch-less group only if the batch insert somehow fails.)
-    const batchLabel = receiptSessionLabel(receipt.vendor, orderRef);
-    // A shipping notice may have arrived BEFORE this receipt and left a
-    // row-less session in read_state 'awaiting' for the same store + order
-    // (api/shipment-event.ts). The receipt reads INTO that session — its
-    // parcel state, tracking number and ownership carry over — rather than
-    // opening a second session for one order. The duplicate guard above never
-    // sees it: an awaiting session has no lines, and the guard keys on lines.
-    // Matched on the order number, with the store as the tiebreak
-    // (sameOrder): the notice said "Amazon", the receipt says "Amazon.com".
-    const awaiting = dupKey
-      ? sameOrder(
-          await db
-            .selectFrom("core_scan_batches")
-            .select(["id", "vendor", "tracking_number", "shipment_state", "shipment_checked_at", "shipment_next_poll_at", "shipment_location", "expected_arrival"])
-            .where("read_state", "=", "awaiting")
-            .where("order_ref", "=", dupKey.orderRef)
-            .orderBy("created_at", "desc")
-            .limit(10)
-            .execute(),
-          receipt.vendor,
-          dupKey.orderRef,
-        )
-      : undefined;
-    const sessionFields = {
-      label: batchLabel,
-      origin: parsed.data.origin ?? null,
-      // Only an email's own read says who sent it; a re-read keeps it.
-      ...(parsed.data.origin === "email" && parsed.data.from ? { origin_from: parsed.data.from } : {}),
-      // The email's line photos, so a re-read gives each line its own again.
-      ...(parsed.data.line_images?.length ? { line_images: JSON.stringify(parsed.data.line_images) } : {}),
-      // Remember the original so the session can offer "View original" + "Re-parse".
-      source_file_id: parsed.data.file_id,
-      // Vendor + order # as their own fields so the order # is editable later.
-      vendor: receipt.vendor,
-      order_ref: orderRef,
-      content_key: contentKey,
-      // "in_flight" until its lines exist, "read" after (#4890, torn status
-      // writes): written "read" first, a poll between this and the lines saw
-      // a read session with nothing in it, and the inbox dropped it.
-      read_state: "in_flight",
-      read_started_at: new Date(),
-      // Which way round the numeric date was read, and by what (#2917).
-      date_convention: result.date_reading?.convention ?? null,
-      date_decided_by: result.date_reading?.decided_by ?? null,
-      date_printed: result.date_reading?.printed ?? null,
-    };
-    const batch = awaiting
-      ? await db
-          .updateTable("core_scan_batches")
-          .set(sessionFields as never)
-          .where("id", "=", awaiting.id)
-          .returning("id")
-          .executeTakeFirst()
-      : await db
-          .insertInto("core_scan_batches")
-          .values({ created_by_user_id: session.id, ...sessionFields } as never)
-          .returning("id")
-          .executeTakeFirst();
-    const batchId = batch?.id ?? null;
-
-    // One inbox row per line item (shared receipt_group_id, attached to the
-    // batch), then matched against the menu — a receipt becomes N parts.
-    const receiptBaseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
-    const receiptGroupId = randomUUID();
-    // Attaching paperwork to an item that already exists: the order is still
-    // recorded in full, but nothing is put in the inbox, because nothing needs
-    // triaging. See the target_item_id comment on the body above.
-    const targetItemId = parsed.data.target_item_id ?? null;
-    const markRead = () =>
-      batchId // state-flips-last: defined here, run in the finally below, after the lines are made
-        ? db.updateTable("core_scan_batches").set({ read_state: "read", read_at: new Date() } as never).where("id", "=", batchId).execute()
-        : Promise.resolve();
-    let made: Awaited<ReturnType<typeof materializeReceiptLines>> | { rows: never[]; lineRows: never[] };
-    try {
-      made = targetItemId
-      ? { rows: [], lineRows: [] }
-      : await materializeReceiptLines({
-      db,
-      orgId: ctx.org.id,
-      orgSlug: ctx.org.slug,
-      userId: session.id,
-      batchId,
-      receipt,
-      method,
-      source: result.source,
-      token: bearer(req),
-      baseUrl: receiptBaseUrl,
-      groupId: receiptGroupId,
-      lineImages: parsed.data.line_images ?? null,
-      emailed: parsed.data.origin === "email",
-        });
-    } finally {
-      // Read once the lines are in (or the attempt to make them is over).
-      await markRead();
-    }
-    const rows = made.rows;
-
-    // THE ORDER IS BORN HERE, not at confirm. A receipt is a document and
-    // documents live in Purchases, which was only true after somebody triaged
-    // for as long as the order was created by receipt-group confirm: a receipt
-    // nobody got to never reached Purchases at all, and one attached to an
-    // already-triaged item had no moment at which its order could appear. See
-    // docs/design-decisions/order-at-parse.md.
-    //
-    // Every line is recorded on the order with part_id NULL, because a line on a
-    // receipt is not a thing you own — most of a grocery order is eaten. Confirm
-    // is what claims one, by setting part_id.
-    //
-    // Best-effort throughout: a workspace without purchases still uploads,
-    // triages and commits its receipts, it simply has no order.
-    // When Purchases is off the order is not lost: the session keeps it and
-    // offers to turn Purchases on (services/receipt-purchase.ts, #3869).
-    let purchase: { recorded: boolean; purchases_off: boolean } | null = null;
-    if (batchId) {
-      const outcome = await recordReceiptPurchase(
-        db,
-        batchId,
-        receiptPurchasePlan(receipt, {
-          orderRef,
-          awaiting: awaiting ?? null,
-          groupId: receiptGroupId,
-          // An online order is on its way, not in hand: the email said it was
-          // an order confirmation, the store's own page read it, or the
-          // receipt charged for shipping.
-          ships: parsed.data.order_confirmation === true || method === "order-page" || method === "order-email",
-          sourceFileId: parsed.data.file_id,
-          rowIds: made.lineRows,
-          targetItemId,
-        }),
-        { baseUrl: receiptBaseUrl, slug: ctx.org.slug, headers: { Authorization: `Bearer ${bearer(req)}`, "Content-Type": "application/json" } },
-      );
-      purchase = outcome.recorded ? { recorded: true, purchases_off: false } : { recorded: false, purchases_off: outcome.purchasesOff };
-    }
-
-    res.status(201).json({
-      // The session the lines went into, so a caller can read the session's
-      // own record (how its date was read, its state) without a list scan.
-      batch_id: batchId,
-      // Whether the receipt was kept as a purchase, and when not, whether
-      // Purchases being off is why (the card offers to turn it on).
-      purchase,
-      receipt: {
-        vendor: receipt.vendor,
-        date: receipt.date,
-        // Which way round a numeric date was read, and by what (#2917).
-        date_convention: result.date_reading?.convention ?? null,
-        date_decided_by: result.date_reading?.decided_by ?? null,
-        date_printed: result.date_reading?.printed ?? null,
-        currency: receipt.currency,
-        total: receipt.total,
-        item_count: rows.length,
-        // Travels with the result so the importer can SAY the lines do not add
-        // up. A parse that is 95% right is the dangerous kind: every field looks
-        // reasonable and the purchase it records is quietly wrong.
-        lines_total: receipt.lines_total,
-        lines_reconcile: receipt.lines_reconcile,
-        method,
-      },
-      items: rows,
-    });
+    await fileReceiptRead(req, res, parsed.data, result);
   }),
 );
 
@@ -2245,7 +2295,7 @@ inboxRouter.post(
 
     const batch = await db
       .selectFrom("core_scan_batches")
-      .select(["id", "source_file_id", "read_failure", "origin", "order_ref", "purchases_order_id", "line_images"])
+      .select(["id", "source_file_id", "read_failure", "origin", "origin_from", "order_ref", "purchases_order_id", "line_images"])
       .where("id", "=", parsed.data.batch_id)
       .executeTakeFirst();
     if (!batch?.source_file_id) {
@@ -2302,6 +2352,17 @@ inboxRouter.post(
       .where("source_kind", "=", "receipt")
       .where("status", "in", ["pending", "enriching"])
       .execute();
+    // A pack split into its colours (pack-parts.ts) left its line resolved
+    // behind the parts just cleared: it goes too, or a re-read would show
+    // the old line as filed beside the new one.
+    await db
+      .deleteFrom("core_scan_inbox_items")
+      .where("scan_batch_id", "=", batch.id)
+      .where("source_kind", "=", "receipt")
+      .where("status", "=", "resolved")
+      .where(sql<boolean>`(suggested_metadata->>'pack_split')::boolean is true`)
+      .where(sql<boolean>`not exists (select 1 from core_scan_inbox_items c where c.suggested_metadata->>'split_from' = core_scan_inbox_items.id::text and c.status = 'resolved')`)
+      .execute();
     // A session from before the read state carried its failure as a note row;
     // a successful read retires it here too, so the boot reconcile is not the
     // only thing that does (#2898).
@@ -2334,6 +2395,7 @@ inboxRouter.post(
       groupId,
       lineImages: Array.isArray(batch.line_images) ? (batch.line_images as EmailLineImage[]) : null,
       emailed: batch.origin === "email",
+      storeHost: batch.origin === "email" ? await storeHostForReceipt(ctx.org.id, sourceFileId, batch.origin_from ?? null) : null,
       }));
     } finally {
       await db
@@ -2356,23 +2418,26 @@ inboxRouter.post(
 
     // The order a first read would have made, when the first read failed and
     // made none: a receipt read again is in Purchases like any other.
-    let purchase: { recorded: boolean; purchases_off: boolean } | null = null;
-    if (!batch.purchases_order_id) {
-      const outcome = await recordReceiptPurchase(
-        db,
-        batch.id,
-        receiptPurchasePlan(receipt, {
-          orderRef: cleanOrderRef(receipt.order_ref),
-          awaiting: null,
-          groupId,
-          ships: method === "order-page" || method === "order-email",
-          sourceFileId,
-          rowIds: lineRows,
-          targetItemId: null,
-        }),
-        { baseUrl, slug: ctx.org.slug, headers: { Authorization: `Bearer ${bearer(req)}`, "Content-Type": "application/json" } },
-      );
-      purchase = outcome.recorded ? { recorded: true, purchases_off: false } : { recorded: false, purchases_off: outcome.purchasesOff };
+    // A session that already has its order: the new rows claim its lines,
+    // so filing them files the purchase (relinkReceiptPurchase).
+    let purchase: { recorded: boolean; purchases_off: boolean; order_number?: string | null } | null = null;
+    {
+      const plan = receiptPurchasePlan(receipt, {
+        orderRef: cleanOrderRef(receipt.order_ref),
+        awaiting: null,
+        groupId,
+        ships: method === "order-page" || method === "order-email",
+        sourceFileId,
+        rowIds: lineRows,
+        targetItemId: null,
+      });
+      const http = { baseUrl, slug: ctx.org.slug, headers: { Authorization: `Bearer ${bearer(req)}`, "Content-Type": "application/json" } };
+      const outcome = batch.purchases_order_id
+        ? await relinkReceiptPurchase(db, batch.id, batch.purchases_order_id, plan, http)
+        : await recordReceiptPurchase(db, batch.id, plan, http);
+      purchase = outcome.recorded
+        ? { recorded: true, purchases_off: false, order_number: plan.orderRef }
+        : { recorded: false, purchases_off: outcome.purchasesOff };
     }
 
     res.json({
@@ -2881,7 +2946,7 @@ async function sessionTheme(req: Request, res: Response, batchId: string, asked:
       const r = await platform().ai.invoke({
         orgId: ctx.org.id,
         capability: "organise",
-        input: { messages: [{ role: "system", content: system }, { role: "user", content: `The ${countOf(items.length, "pending item")}:\n${list}` }] },
+        input: { output_schema: objectWith(["tag"], { tag: TEXT_OR_NULL, category: TEXT_OR_NULL, category_item_numbers: { type: ["array", "null"] } }), messages: [{ role: "system", content: system }, { role: "user", content: `The ${countOf(items.length, "pending item")}:\n${list}` }] },
         source: { kind: "core-scan:session-theme", id: ctx.org.id },
         userId: sessionUser(req).id,
       });
@@ -3205,6 +3270,17 @@ inboxRouter.patch(
       } catch (err) {
         console.error("[core-scan] re-deriving the match after rename failed; the old one stands:", (err as Error).message);
       }
+    }
+    // A pack's part renamed to what another part of the pack already is:
+    // the two are one row, units and money added (pack-groups.ts, #5764).
+    if (parsed.data.name !== undefined && row.status === "pending") {
+      const token = bearer(req);
+      const http = token ? { baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API, slug: tenantContext(req).org.slug, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } } : null;
+      const { merged } = await regroupPack(db, id, http).catch((err: Error) => {
+        console.error("[core-scan] regrouping the pack after a rename failed:", err.message);
+        return { merged: [] };
+      });
+      if (merged.length) out = (await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", id).executeTakeFirst()) ?? out;
     }
     // What the row says it looks like may have changed (a colour field, the
     // name): its catalog picture is judged again against it (#3729).
@@ -3561,9 +3637,8 @@ inboxRouter.post(
     // the instance routes the create (createUrl below) without a 400. (This
     // route had its own copy of that rule since a vehicle hit "assets:vehicles:item
     // is not a scan target"; attach and the bin adjust had none.)
-    let scanTarget = (
-      await scanTargetOf(ctx.org.id, kindKey, instance, target.module)
-    )?.scannable;
+    const resolvedTarget = await scanTargetOf(ctx.org.id, kindKey, instance, target.module);
+    let scanTarget = resolvedTarget?.scannable;
     if (!scanTarget && meta.send) {
       const resolved = await platform().entities.resolveKind(ctx.org.id, instance ? `${instance}:item` : kindKey);
       const k = (await platform().entities.listKindsForOrg(ctx.org.id)).find((k) => k.id === resolved.base);
@@ -3636,7 +3711,10 @@ inboxRouter.post(
     const qty =
       parsed.data.quantity ??
       (targetIsUnique && !(scannedQty > 1) ? undefined : scannedQty);
-    const qtyField = scanTarget.qtyField;
+    // The batches its boxes printed, filed as lots on the record (#5764).
+    const lots =
+      resolvedTarget && scanTarget.adjustAction && scanTarget.qtyField && typeof qty === "number" && qty > 0 ? await rowLots(db, row, qty).catch(() => []) : [];
+    const lotted = lots.reduce((n, l) => n + l.qty, 0);
     // `extras.metadata` (the instance's custom fields the user filled on the
     // confirm form — colorway, fibre, …) is DEEP-merged into the scan metadata
     // so it doesn't wipe the barcode/sku/source we stamp for catalog re-match.
@@ -3851,7 +3929,10 @@ inboxRouter.post(
         // Who put each of these there, kept on the record (#3008).
         ...(Object.keys(entityStamps).length ? { [FIELD_PROVENANCE_KEY]: entityStamps } : {}),
       },
-      ...startingCount(scanTarget, qty),
+      // Units whose boxes printed a lot arrive through the record's own
+      // action after the create, as those lots (row-lots.ts); the create
+      // carries the rest.
+      ...startingCount(scanTarget, qty, lotted),
       // Empty box → do NOT file the entity at the scan location: that's where
       // the BOX lives; the item itself is deployed elsewhere.
       // Container beats location: scanning INTO a bin/server is the more
@@ -4149,6 +4230,20 @@ inboxRouter.post(
       }
     }
 
+    if (lotted > 0 && resolvedTarget) {
+      const tok = bearer(req);
+      const arrived = await moveQuantity(ctx.org.id, resolvedTarget, { kind: kindKey, id: created.id }, lotted, {
+        userId: sessionUser(req)?.id ?? null,
+        reason: "received from a scan",
+        restock: true,
+        lots,
+        source: { kind: "core-scan:inbox", id: row.id },
+        door: { baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API, slug: ctx.org.slug, headers: tok ? { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" } : {} },
+        current: (qty as number) - lotted,
+      });
+      if (!arrived.ok) console.error(`[core-scan] the lots of ${row.id} did not reach ${created.id}:`, arrived.refused);
+    }
+
     // Scan-into-container: if the item was scanned into a CONTAINER bin (a
     // server/asset or machine — not a location), place the created entity inside
     // it. Parallel to the location_id stamping in the create body above; the
@@ -4411,6 +4506,11 @@ inboxRouter.post(
     // failure must never fail the commit. See docs/operations/ai-prompt-eval-harness.md.
     const sess = sessionUser(req);
 
+    // The last part of a split pack filed: what the pack held goes to the
+    // barcode network, once, when this instance is connected (pack-network.ts).
+    // DETACHED: a store fact sent to the shared network; this filing is complete without it
+    void reportPackIfFiled(db, row.suggested_metadata, sess?.id ?? null).catch((e: Error) => console.warn("[core-scan] pack report:", e.message));
+
     // A committed barcode item feeds the shared Barcode Intelligence DB. A rename
     // away from the resolver's answer is a real CORRECTION (the human's name is
     // the truth); an unchanged commit — and every other field the user filed
@@ -4428,6 +4528,22 @@ inboxRouter.post(
       yearFieldName ? typedMetadata[yearFieldName] : undefined,
     );
     if (row.barcode_text) {
+      // What it is beyond its name: the shared table and its product fields,
+      // for the next workspace to file with no AI (#3769).
+      const bundle = (matchedCandidate as { from_bundle?: unknown; bundle_external_id?: unknown } | undefined)?.from_bundle ?? (matchedCandidate as { bundle_external_id?: unknown } | undefined)?.bundle_external_id;
+      if (typeof bundle === "string" && bundle) {
+        // DETACHED: what the product is, sent to the shared barcode database; this filing is complete without it
+        void (async () => {
+          const defs = await platform().entities.fieldsFor(ctx.org.id, effectiveKindId);
+          await reportLearnedRoute({
+            upc: row.barcode_text!,
+            bundle,
+            fields: shareableProductFields(defs, { ...candidateFields, ...typedMetadata }),
+            userId: sess?.id ?? null,
+            lots: unitLots,
+          });
+        })().catch((e: Error) => console.warn("[core-scan] learned route report:", e.message));
+      }
       const committedName = String(body.name ?? filingName(row) ?? "").trim();
       const renamed = meaningfullyChanged(row.suggested_name, committedName);
       // Where each value came from (#3769): the person's if they changed it,
@@ -7551,6 +7667,10 @@ inboxRouter.post(
         .executeTakeFirstOrThrow();
       await appendScanHistory(db, id ?? "", { action: "attached", note: `add-place → ${cardName ?? newPlace.card}` });
       void platform().events.emit("core-scan.scan.attached", { orgId: ctx.org.id, itemId: id, targetKind: parsed.data.kind, entityId: held.id, mode: "add-place" });
+      // The last part of a split pack filed: what the pack held goes to the
+      // barcode network, once, when this instance is connected (pack-network.ts).
+      // DETACHED: a store fact sent to the shared network; this filing is complete without it
+      void reportPackIfFiled(db, row.suggested_metadata, sessionUser(req)?.id ?? null).catch((e: Error) => console.warn("[core-scan] pack report:", e.message));
       const placeName = await platform()
         .entities.lookup(ctx.org.id, "core-locations:location", placeAt)
         .then((l) => l?.title ?? null)
@@ -7764,6 +7884,8 @@ inboxRouter.post(
         userId: who,
         reason: parsed.data.mode === "replace" ? "replaced, the new one arrived (scan)" : "restocked from a scan",
         restock: true,
+        // The batches its boxes printed, kept as lots on the record (#5764).
+        lots: await rowLots(db, row, qtyAdded).catch(() => []),
         source,
         door: doorCtx,
         current,
@@ -7844,7 +7966,6 @@ inboxRouter.post(
     }
 
     // Resolve the inbox item as "attached" (history + metadata carry the ref).
-    const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
     // The owning MODULE, from the module's kind: an instance kind's prefix is
     // the instance, not a module.
     const [module] = baseKind.split(":");
@@ -7896,6 +8017,10 @@ inboxRouter.post(
       entityId: parsed.data.entity_id,
       mode: parsed.data.mode,
     });
+    // The last part of a split pack filed: what the pack held goes to the
+    // barcode network, once, when this instance is connected (pack-network.ts).
+    // DETACHED: a store fact sent to the shared network; this filing is complete without it
+    void reportPackIfFiled(db, row.suggested_metadata, sessionUser(req)?.id ?? null).catch((e: Error) => console.warn("[core-scan] pack report:", e.message));
 
     // File the purchase in the consumption ledger by ANNOUNCING it. core-scan
     // does not know who keeps the ledger, or whether anyone does: the ledger
@@ -8505,89 +8630,14 @@ inboxRouter.post(
     const id = String(req.params.id);
     const db = tenantDb(req);
     const ctx = tenantContext(req);
-    const start = await db
-      .selectFrom("core_scan_inbox_items")
-      .select(["id", "suggested_metadata"])
-      .where("id", "=", id)
-      .executeTakeFirst();
-    if (!start) {
-      res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
+    const tok = bearer(req);
+    const r = await undoSplit(db, ctx.org.id, id, tok ? { baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API, slug: ctx.org.slug, headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" } } : null);
+    if (!r.ok) {
+      res.status(r.status).json({ error: r.error });
       return;
     }
-    const startMeta = (start.suggested_metadata ?? {}) as { split_from?: string; split_into?: string[] };
-    const parentId = typeof startMeta.split_from === "string" && startMeta.split_from ? startMeta.split_from : start.id;
-    const parent = await db
-      .selectFrom("core_scan_inbox_items")
-      .selectAll()
-      .where("id", "=", parentId)
-      .executeTakeFirst();
-    const parentMeta = (parent?.suggested_metadata ?? {}) as { split_into?: unknown; split_prior_notes?: unknown };
-    if (!parent || !Array.isArray(parentMeta.split_into)) {
-      res.status(409).json({
-        error: { code: "not_split", message: "This scan was not split, so there is no split to undo." },
-      });
-      return;
-    }
-    const children = await db
-      .selectFrom("core_scan_inbox_items")
-      .select(["id", "status", "suggested_name", "suggested_metadata"])
-      .where(sql`suggested_metadata->>'split_from'`, "=", parent.id)
-      .execute();
-    const filed = children.find((c) => c.status === "resolved");
-    if (filed) {
-      res.status(409).json({
-        error: {
-          code: "child_filed",
-          message: `"${filed.suggested_name ?? "One of the split items"}" was already filed from this split. Press ${SCAN_UNDO_ACTIONS.sendBack} on it in Recently committed first, then ${SCAN_UNDO_ACTIONS.undoSplit}.`,
-          item_id: filed.id,
-        },
-      });
-      return;
-    }
-    const combined = children.find(
-      (c) => c.status === "discarded" && !!((c.suggested_metadata as { combined_into?: string } | null) ?? {}).combined_into,
-    );
-    if (combined) {
-      res.status(409).json({
-        error: {
-          code: "child_combined",
-          message: `"${combined.suggested_name ?? "One of the split items"}" was combined into another scan, and its quantity lives there now. Press ${SCAN_UNDO_ACTIONS.undoCombine} on it first if you want the group photo back.`,
-          item_id: combined.id,
-        },
-      });
-      return;
-    }
-    const now = new Date();
-    const live = children.filter((c) => c.status !== "discarded").map((c) => c.id);
-    if (live.length) {
-      await db
-        .updateTable("core_scan_inbox_items")
-        // The marker keeps Recently deleted from restoring a child on its
-        // own: the group it came from is back, and the two would double.
-        .set({ status: "discarded", suggested_metadata: mergeMeta({ split_undone_at: now.toISOString() }) as never, updated_at: now })
-        .where("id", "in", live)
-        .execute();
-    }
-    const priorNotes = typeof parentMeta.split_prior_notes === "string" ? parentMeta.split_prior_notes : null;
-    const restored = await db
-      .updateTable("core_scan_inbox_items")
-      .set({
-        status: "pending",
-        // created_at stays: an undo puts the scan back where it was, the
-        // same contract as restore and un-confirm.
-        resolved_at: null,
-        ai_notes: priorNotes,
-        suggested_metadata: mergeMeta({}, ["split_into", "split_prior_notes"]) as never,
-        updated_at: now,
-      })
-      .where("id", "=", parent.id)
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    await appendScanHistory(db, parent.id, { action: "unsplit", note: `${live.length} split item${live.length === 1 ? "" : "s"} discarded` });
-    for (const childId of live) {
-      void platform().events.emit("core-scan.scan.discarded", { orgId: ctx.org.id, itemId: childId });
-    }
-    res.json({ parent: await served(req, restored), discarded: live.length });
+    await appendScanHistory(db, r.parent.id, { action: "unsplit", note: `${r.live.length} split item${r.live.length === 1 ? "" : "s"} discarded` });
+    res.json({ parent: await served(req, r.parent), discarded: r.live.length });
   }),
 );
 
@@ -9146,7 +9196,6 @@ inboxRouter.post(
         !isMachineReadCode((o.suggested_metadata as { barcode_source?: string } | null)?.barcode_source),
     )?.barcode_text;
     const adoptBarcode = (primaryAiBarcode || !primary.barcode_text) && scannedBarcode ? scannedBarcode : null;
-    const { barcode_source: _bs, ...metaNoSource } = meta as { barcode_source?: string };
     // Never lose the user's real photo on a merge: if the kept item has no photo
     // of its own but a merged one does, carry it over (e.g. "keep the scanned
     // listing" still keeps the picture you took).
@@ -10206,6 +10255,15 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
       ).catch((e) => console.error(`[core-scan] finalize image refresh for ${opts.itemId} failed:`, (e as Error).message));
       if (adoptName || opts.settle) await refresh;
     }
+    // The scan's order line, now its name is known (#5734): filled when it
+    // was scanned from the line, offered when it looks like one.
+    await orderLinePass(db, opts.itemId, async (lineId, received) => {
+      const line = await db.selectFrom("core_scan_inbox_items").select("suggested_metadata").where("id", "=", lineId).executeTakeFirst();
+      const lm = (line?.suggested_metadata ?? {}) as { receipt_order_id?: unknown; receipt_order_item_id?: unknown };
+      if (typeof lm.receipt_order_id === "string" && typeof lm.receipt_order_item_id === "string") {
+        await reportReceived({ baseUrl: opts.baseUrl, slug: opts.orgSlug, headers: { Authorization: `Bearer ${opts.token}`, "Content-Type": "application/json" }, orderId: lm.receipt_order_id, itemId: lm.receipt_order_item_id, received });
+      }
+    }).catch((e: Error) => console.warn(`[core-scan] order line for ${opts.itemId}:`, e.message));
     // The run has settled - record on ITS history entry whether a model
     // actually answered, so the timeline stops claiming an answer it never got.
     await stampScanHistoryOutcome(

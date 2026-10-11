@@ -107,7 +107,7 @@ export function ChoiceField({ def, kind, value, onCommit, note, onCommitNote, de
         entityKind: "",
         entityId: "",
         args: { entity_kind: recordKind, field: def.name, value: v },
-      });
+      }, { undo: "shown-here" });
       const learned = (outcome.result as { data?: { learned?: boolean } } | null)?.data?.learned === true;
       refreshAfterAction(qc, [recordKind, def.entity_kind]);
       void qc.invalidateQueries({ queryKey: ["platform-field-defs"] });
@@ -118,7 +118,7 @@ export function ChoiceField({ def, kind, value, onCommit, note, onCommitNote, de
         onAction: async () => {
           await onCommit(before);
           for (const s of steps) {
-            if (s.action_id) await run({ actionId: s.action_id, entityKind: "", entityId: "", args: s.args ?? {} });
+            if (s.action_id) await run({ actionId: s.action_id, entityKind: "", entityId: "", args: s.args ?? {} }, { undo: "is-undo" });
           }
           refreshAfterAction(qc, [recordKind, def.entity_kind]);
           void qc.invalidateQueries({ queryKey: ["platform-field-defs"] });

@@ -16,6 +16,16 @@ import { acquireScannerStream, NoCameraHere, SCAN_ATTEMPT_DELAY_MS } from "../li
 
 const LENS_KEY = (slug: string, address: string) => `cobblr.station.lens.${slug}/${address}`;
 
+/** How long the camera stops reading after a key, so a USB or Bluetooth
+ *  scanner's burst has the page to itself: a decode on the main thread
+ *  between its keys slowed them past the scanner detector's limit, and the
+ *  scan was lost (the #5353 kitchen walk, 2026-10-11). Longer than the
+ *  detector's 500 ms gap, so a whole burst fits. */
+export const CAMERA_QUIET_AFTER_KEY_MS = 800;
+/** The widest frame the camera decodes: a barcode held up to a tablet reads
+ *  at this size, and a 1920 px frame every 40 ms is what starved the page. */
+export const CAMERA_DECODE_MAX_WIDTH = 1280;
+
 /** This device's own pick of lens for a station, or null. */
 export function deviceLens(slug: string, address: string): StationLens | null {
   try {
@@ -47,6 +57,11 @@ export function StationCamera({ lens, onCode, onFlip }: { lens: StationLens; onC
     let timer: number | null = null;
     const frame = document.createElement("canvas");
     const rotated = document.createElement("canvas");
+    let quietUntil = 0;
+    const onKey = () => {
+      quietUntil = performance.now() + CAMERA_QUIET_AFTER_KEY_MS;
+    };
+    document.addEventListener("keydown", onKey, true);
     void (async () => {
       try {
         const [{ createBarcodeReader, decodeCanvasSmart }, acquired] = await Promise.all([import("../lib/barcodeDecode"), acquireScannerStream(null, lens)]);
@@ -61,12 +76,13 @@ export function StationCamera({ lens, onCode, onFlip }: { lens: StationLens; onC
         await v.play().catch(() => {});
         const tick = () => {
           if (stopped) return;
-          if (v.readyState >= 2 && v.videoWidth) {
-            frame.width = v.videoWidth;
-            frame.height = v.videoHeight;
+          if (performance.now() >= quietUntil && v.readyState >= 2 && v.videoWidth) {
+            const scale = Math.min(1, CAMERA_DECODE_MAX_WIDTH / v.videoWidth);
+            frame.width = Math.round(v.videoWidth * scale);
+            frame.height = Math.round(v.videoHeight * scale);
             const ctx = frame.getContext("2d", { willReadFrequently: true });
             if (ctx) {
-              ctx.drawImage(v, 0, 0);
+              ctx.drawImage(v, 0, 0, frame.width, frame.height);
               const text = decodeCanvasSmart(reader, frame, rotated).text;
               if (text) {
                 stopped = true;
@@ -91,6 +107,7 @@ export function StationCamera({ lens, onCode, onFlip }: { lens: StationLens; onC
     })();
     return () => {
       stopped = true;
+      document.removeEventListener("keydown", onKey, true);
       if (timer) window.clearTimeout(timer);
       stream?.getTracks().forEach((t) => t.stop());
     };

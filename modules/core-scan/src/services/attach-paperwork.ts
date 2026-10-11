@@ -176,7 +176,10 @@ export async function recordKindOf(orgId: string, kind: string, id: string): Pro
 export async function attachPaperwork(args: {
   orgId: string;
   userId: string | null;
-  fileId: string;
+  /** The stored original, or null for a personal document read on the
+   *  personal path (#5331): its values fill the record and its purchase, and
+   *  nothing is attached, because nothing was kept. */
+  fileId: string | null;
   kind: string;
   id: string;
   /** Only for claiming a purchase line an inbox read already made. */
@@ -192,6 +195,7 @@ export async function attachPaperwork(args: {
 }): Promise<AttachPaperworkResult> {
   let receipt = args.receipt;
   if (!receipt) {
+    if (!args.fileId) return { read: false, reason: "There is no document to read." };
     const r = await parseReceipt(args.orgId, args.fileId, args.userId, null, { requireTransaction: true });
     if (!r.ok) return { read: false, reason: r.reason };
     receipt = r.receipt;
@@ -204,7 +208,7 @@ export async function attachPaperwork(args: {
 
   // The file stays on the record, whichever door brought it.
   const [sourceModule, sourceType] = args.kind.split(":");
-  if (sourceModule && sourceType) {
+  if (sourceModule && sourceType && args.fileId) {
     await platform().files.attach(args.orgId, { fileId: args.fileId, source_module: sourceModule, source_type: sourceType, source_id: args.id, role: null }).catch(() => null);
   }
 
@@ -220,7 +224,8 @@ export async function attachPaperwork(args: {
     receipt,
     line: unit,
     fields,
-    ref: { kind: "core-files:file", id: args.fileId },
+    // A value read from a personal document points at no file: none was kept.
+    ref: args.fileId ? { kind: "core-files:file", id: args.fileId } : { kind: "core-scan:personal-document", id: args.id },
     doubted,
   });
   const waitingWhy = (receipt.checks as { waiting_for_ai?: unknown; waiting_reason?: unknown } | undefined) ?? undefined;

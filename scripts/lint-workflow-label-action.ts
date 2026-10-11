@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 // A workflow that tells a label change apart compares github.event.action with both labeled and label_updated, because Forgejo sends label_updated
 //
-// THE BUG THIS PREVENTS. 2026-10-09: ci.yml matched only 'labeled', so every label (train:queued, merge-machinery) re-ran a ready pull request's whole CI and cancelled the real run; Forgejo's payload says label_updated (run 40971)
+// THE BUG THIS PREVENTS. 2026-10-09: ci.yml matched only 'labeled', so every label (merge-machinery, a status label) re-ran a ready pull request's whole CI and cancelled the real run; Forgejo's payload says label_updated (run 40971)
 //
 // THE RULE. State it so the next reader can tell a violation from a false
 // positive without running the script. Say what passes, what fails, and how

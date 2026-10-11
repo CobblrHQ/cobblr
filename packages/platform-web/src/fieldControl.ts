@@ -13,6 +13,7 @@
 
 import type { FieldType, FieldRendererId } from "./types";
 import { asMeasure } from "@cobblr/platform-contract/measure";
+import { addressText, asAddress } from "@cobblr/platform-contract/address";
 import { moneyForStorage, moneyInputText, moneyStorageOf, type MoneyFieldLike } from "@cobblr/platform-contract/money";
 
 export type FieldControl =
@@ -30,6 +31,7 @@ export type FieldControl =
   | "date"
   | "url"
   | "markdown" // rich text — the Markdown editor (Write/Preview split)
+  | "address" // where something happens: AddressPicker, shown with Directions
   | "text";
 
 function assertNever(x: never): never {
@@ -78,6 +80,8 @@ export function fieldControl(def: {
       return "url";
     case "richtext":
       return "markdown";
+    case "address":
+      return "address";
     case "text":
       return "text";
     // Typed as text ("4k7", "100 nF"); the server reads it into its value.
@@ -104,6 +108,7 @@ export function fieldControl(def: {
 export function fieldInputText(def: FieldValueDef, value: unknown): string {
   if (value == null || def.type === "secret") return "";
   if (def.type === "measure") return asMeasure(value)?.text ?? (typeof value === "string" ? value : "");
+  if (def.type === "address") return addressText(value);
   const money = moneyStorageOf(def);
   if (money) return moneyInputText(value, money);
   return String(value);
@@ -125,5 +130,6 @@ export function valueFromInput(def: FieldValueDef, text: string): unknown {
     return Number.isFinite(n) ? n : null;
   }
   if (type === "boolean") return text === "true";
+  if (type === "address") return asAddress(text);
   return text;
 }

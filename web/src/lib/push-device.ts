@@ -91,21 +91,61 @@ const keyBytes = (b64url: string): Uint8Array => {
   return Uint8Array.from(s, (c) => c.charCodeAt(0));
 };
 
+/** Why turning push on here did not finish. Every one is said in the row
+ *  that offered it (pushTurnOnProblem): a refusal used to be a toast at most,
+ *  and a person pressed Turn on, saw the same button come back, and could
+ *  not tell a finished setup from a broken one (#5810). */
+export type PushTurnOnFailure =
+  /** The person said no at the browser's question. */
+  | "denied"
+  /** The question was closed without an answer. */
+  | "dismissed"
+  /** This browser has no Web Push. */
+  | "unsupported"
+  /** The server has not made its push key yet. */
+  | "no-key"
+  /** The page's service worker never started, so nothing can subscribe. */
+  | "no-worker"
+  /** The browser refused the subscription (Chrome: "Registration failed -
+   *  permission denied" when the computer's own settings block it). */
+  | "refused"
+  /** Subscribed, but the server would not save it. */
+  | "not-saved";
+
+export type PushTurnOnResult = { ok: true; id: string } | { ok: false; why: PushTurnOnFailure; message?: string };
+
+/** How long the page waits for its service worker before saying so. */
+export const WORKER_WAIT_MS = 10_000;
+
+const errorText = (err: unknown) => (err instanceof Error ? (err.name && err.name !== "Error" ? `${err.name}: ${err.message}` : err.message) : String(err));
+
 /** Ask (this must run from a tap: iOS refuses otherwise), subscribe this
  *  browser, and save it for this person. Returns the device's id, or why not. */
-export async function turnOnPushHere(publicKey: string, env: PushEnv): Promise<{ ok: true; id: string } | { ok: false; why: "denied" | "dismissed" | "unsupported" | "failed"; message?: string }> {
+export async function turnOnPushHere(publicKey: string | null | undefined, env: PushEnv, waitMs = WORKER_WAIT_MS): Promise<PushTurnOnResult> {
   if (!env.canPush) return { ok: false, why: "unsupported" };
+  if (!publicKey) return { ok: false, why: "no-key" };
   const answer = await Notification.requestPermission();
   if (answer === "denied") return { ok: false, why: "denied" };
   if (answer !== "granted") return { ok: false, why: "dismissed" };
+  // `ready` never settles on a page with no worker (a dev server, a worker
+  // that failed to install), which left the button on "Turning on…" for good.
+  const reg = await Promise.race([
+    navigator.serviceWorker.ready,
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), waitMs)),
+  ]).catch(() => null);
+  if (!reg) return { ok: false, why: "no-worker" };
+  let sub: PushSubscription;
   try {
-    const reg = await navigator.serviceWorker.ready;
     const existing = await reg.pushManager.getSubscription();
     // A subscription made under another server key cannot take this one's pushes.
     if (existing) await existing.unsubscribe().catch(() => undefined);
-    const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(publicKey) as BufferSource });
-    const json = sub.toJSON() as { endpoint?: string; keys?: { p256dh?: string; auth?: string } };
-    if (!json.endpoint || !json.keys?.p256dh || !json.keys.auth) return { ok: false, why: "failed", message: "The browser gave no subscription to save." };
+    sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(publicKey) as BufferSource });
+  } catch (err) {
+    return { ok: false, why: "refused", message: errorText(err) };
+  }
+  const json = sub.toJSON() as { endpoint?: string; keys?: { p256dh?: string; auth?: string } };
+  if (!json.endpoint || !json.keys?.p256dh || !json.keys.auth) return { ok: false, why: "refused", message: "The browser gave no subscription to save." };
+  try {
     const saved = await api.addMePushDevice({
       endpoint: json.endpoint,
       keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
@@ -119,8 +159,25 @@ export async function turnOnPushHere(publicKey: string, env: PushEnv): Promise<{
     }
     return { ok: true, id: saved.id };
   } catch (err) {
-    return { ok: false, why: "failed", message: err instanceof Error ? err.message : String(err) };
+    return { ok: false, why: "not-saved", message: errorText(err) };
   }
+}
+
+/** What a failed Turn on says where it was pressed: what went wrong, and the
+ *  next thing to do. A Record over every failure, so a new one cannot be
+ *  added without words. */
+export function pushTurnOnProblem(failure: { why: PushTurnOnFailure; message?: string }, env: Pick<PushEnv, "userAgent" | "platform" | "maxTouchPoints" | "route">): { says: string; next: string } {
+  const detail = failure.message ? ` The browser said: ${failure.message}` : "";
+  const words: Record<PushTurnOnFailure, { says: string; next: string }> = {
+    denied: { says: "Notifications were blocked when the browser asked.", next: howToAllowAgain(env) },
+    dismissed: { says: "The browser's question was closed without an answer, so nothing was turned on.", next: "Press Try again and choose Allow." },
+    unsupported: { says: "This browser can't show notifications from Cobblr.", next: "Open Cobblr in Chrome, Edge, Firefox or Safari, or from the Home Screen on an iPhone or iPad." },
+    "no-key": { says: "This server has not made its notification key yet, so nothing was turned on.", next: "Try again in a minute." },
+    "no-worker": { says: "This page's background worker did not start, and notifications need it.", next: "Reload the page and press Try again. If it keeps happening, open Cobblr in another browser." },
+    refused: { says: `The browser allowed notifications but would not sign this device up for them.${detail}`, next: "Check that your computer or phone lets this browser show notifications (its system notification settings), then press Try again. A private window can't take them." },
+    "not-saved": { says: `This device signed up, but Cobblr could not save it.${detail}`, next: "Press Try again." },
+  };
+  return words[failure.why];
 }
 
 /** Turn push off on this browser as well as removing it from the list. */

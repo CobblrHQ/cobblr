@@ -193,7 +193,9 @@ export function batchesFrom(
           ...(lot ? { lot } : {}),
         };
       })
-      .filter((b) => b.expires_on && b.qty > 0);
+      // A lot number is a fact even without a date: a spool's batch has no
+      // use-by, and dropping it lost every batch a box printed (#5764).
+      .filter((b) => (b.expires_on || b.lot) && b.qty > 0);
     if (parsed.length > 0) return sortBatches(parsed);
   }
   // No batches recorded. An item with stock and a date is one lot; an item with
@@ -288,4 +290,36 @@ export function reconcileToQty(batches: Batch[], visibleQty: number): Batch[] {
   // Deliberately dateless. Inventing an expiry for stock that appeared by an
   // unknown route would put a confident deadline on something nobody recorded.
   return sortBatches([...batches, { received_on: "", expires_on: "", qty: extra }]);
+}
+
+/** The lots a record serves: what was recorded, and, once any of it carries
+ *  a lot number, the rest of the count as one lot with none ("batch
+ *  unknown"), so the lots always add up to what is there. Stock that never
+ *  had a lot number serves what it always did. */
+export function servedLots(metadata: Record<string, unknown> | null | undefined, qty: number, expiresOn: string | null | undefined): Batch[] {
+  const lots = batchesFrom(metadata, qty, expiresOn);
+  return lots.some((b) => b.lot) ? reconcileToQty(lots, qty) : lots;
+}
+
+/** Arriving stock with the lot numbers its boxes printed: one lot per number,
+ *  received today, at most the delta between them. */
+export interface ArrivingLot {
+  lot: string;
+  qty: number;
+}
+
+/** What a caller sent as lots, kept only where it makes sense: a number and a
+ *  whole count above zero, never more between them than arrived. */
+export function arrivingLotsOf(raw: unknown, delta: number): ArrivingLot[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ArrivingLot[] = [];
+  let left = Math.trunc(delta);
+  for (const r of raw) {
+    const lot = typeof (r as ArrivingLot)?.lot === "string" ? (r as ArrivingLot).lot.trim() : "";
+    const qty = Math.trunc(Number((r as ArrivingLot)?.qty));
+    if (!lot || !(qty > 0) || qty > left) continue;
+    out.push({ lot, qty });
+    left -= qty;
+  }
+  return out;
 }

@@ -49,6 +49,7 @@ remindersRouter.put("/preferences", asyncHandler(async (req, res) => {
 }));
 
 // AI-REACH: action core-maintenance:reminders
+// UI-SCREEN: /instances/:name, Pause reminders saves through core-maintenance:reminders so it carries its Undo
 remindersRouter.patch("/:id", asyncHandler(async (req, res) => {
   if (!(await requireCapability(req, res, "core-maintenance:reminders"))) return;
   const parsed = NagBody.safeParse(req.body);

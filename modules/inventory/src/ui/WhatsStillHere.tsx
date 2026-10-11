@@ -1,61 +1,93 @@
-// "What's still here?": a stocktake of one place. Everything still listed in
-// it, newest first; the person ticks what is really there, sets what is left
-// of a part-used one, and the rest is marked gone in one batch with one Undo.
-// Nothing changes until the button that says how many will go is pressed.
+// "What's still here?": a stocktake. Everything still listed where it looks
+// (a place and the places inside it, the records picked in a table, or a
+// collection's things with no place), newest first. The person ticks what is
+// really there, by hand, by scanning its barcode or from one photo of a shelf,
+// sets what is left of a part-used one, and the rest is marked gone in one
+// batch with one Undo. Nothing changes until the button that says how many
+// will go is pressed.
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { EntityPhoto, Modal, NumberField, useConfirm, usePhotoPick, useRunAction, useToast } from "@cobblr/platform-web";
 import { countOf, quantityWithUnit } from "@cobblr/platform-contract/plural";
-import { ApiError, api, type StocktakeItem } from "../../lib/api";
+import type { StocktakeItem, StocktakeScope } from "../stocktake.js";
+import type { InventoryApi } from "./api";
 
 /** "Keep 6, mark 31 gone": what pressing the button will do. */
 export function stocktakeSentence(keep: number, gone: number): string {
   return `Keep ${keep}, mark ${gone} gone`;
 }
 
-export function WhatsStillHereButton({ slug, placeId, placeName }: { slug: string; placeId: string; placeName: string }) {
+/** Where a scanned code points among the listed rows: the row whose barcode
+ *  it is, digits compared without spaces or leading zeros, so a UPC-A read as
+ *  an EAN-13 (one leading zero more) still finds its jar. */
+export function rowForScan(items: readonly Pick<StocktakeItem, "id" | "barcode">[], scanned: string): string | null {
+  const norm = (code: string) => code.replace(/\s+/g, "").replace(/^0+(?=\d)/, "");
+  const want = norm(scanned);
+  if (!want) return null;
+  return items.find((i) => i.barcode && norm(i.barcode) === want)?.id ?? null;
+}
+
+const scopeKey = (scope: StocktakeScope) => ("place_id" in scope ? `place:${scope.place_id}` : "ids" in scope ? `ids:${scope.ids.join(",")}` : `unplaced:${scope.instance}`);
+
+export function WhatsStillHereButton({ api, slug, scope, label, fixedLabel, children, className }: {
+  api: InventoryApi;
+  slug: string;
+  scope: StocktakeScope;
+  /** What the sheet calls where it looks before the list arrives ("the Fridge"). */
+  label: string;
+  /** Keep `label` rather than the server's ("the 12 things in What's on hand",
+   *  where the server would only know they were picked). */
+  fixedLabel?: boolean;
+  children?: React.ReactNode;
+  className?: string;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} className="text-xs text-accent hover:underline" data-testid="whats-still-here">
-        What's still here?
+      <button type="button" onClick={() => setOpen(true)} className={className ?? "text-xs text-accent hover:underline"} data-testid="whats-still-here">
+        {children ?? "What's still here?"}
       </button>
-      {open && <WhatsStillHereSheet slug={slug} placeId={placeId} placeName={placeName} onClose={() => setOpen(false)} />}
+      {open && <WhatsStillHereSheet api={api} slug={slug} scope={scope} label={label} fixedLabel={fixedLabel} onClose={() => setOpen(false)} />}
     </>
   );
 }
 
-function WhatsStillHereSheet({ slug, placeId, placeName, onClose }: { slug: string; placeId: string; placeName: string; onClose: () => void }) {
+export function WhatsStillHereSheet({ api, slug, scope, label: initialLabel, fixedLabel, onClose }: { api: InventoryApi; slug: string; scope: StocktakeScope; label: string; fixedLabel?: boolean; onClose: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
-  // PRESS-ARGS: the sheet passes the place, the ticked ids, the counts and, when everything goes, the count said back; Undo passes the stocktake it made.
+  // PRESS-ARGS: the sheet passes its scope, the ticked ids, the counts and, when everything goes, the count said back; Undo passes the stocktake it made; Add passes the name, collection and place the photo saw.
   const runAction = useRunAction();
-  const q = useQuery({ queryKey: ["stocktake-scope", slug, placeId], queryFn: () => api.stocktakeScope(slug, placeId) });
+  const q = useQuery({ queryKey: ["stocktake-scope", slug, scopeKey(scope)], queryFn: () => api.stocktakeScope(scope) });
   // Ticked = still here; the number is what is left when it is less than recorded.
   const [here, setHere] = useState<Map<string, number | null>>(new Map());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const items = q.data?.items ?? [];
-  const label = q.data?.label ?? placeName;
+  const [scan, setScan] = useState("");
+  const [scanned, setScanned] = useState<string | null>(null);
+  const items = useMemo(() => q.data?.items ?? [], [q.data]);
+  const label = fixedLabel ? initialLabel : (q.data?.label ?? initialLabel);
+  const placeId = "place_id" in scope ? scope.place_id : null;
   // A starting list from one photo: what it ticked, and what it saw that is
   // not on record here, offered to add, never added on its own.
   const [reading, setReading] = useState(false);
   const [fromPhoto, setFromPhoto] = useState<{ seen: number; ticked: number; unmatched: Array<{ name: string; qty: number }> } | null>(null);
-  // The collection most of this place's things are in: where something new seen here goes.
+  // The collection most of these things are in: where something new seen here goes.
   const instance = useMemo(() => {
     const counts = new Map<string, number>();
     for (const i of items) counts.set(i.kind, (counts.get(i.kind) ?? 0) + 1);
     const kind = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
     return kind ? (kind === "inventory:part" ? "inventory" : kind.split(":")[0]!) : null;
   }, [items]);
+  const say = (e: unknown) => setError(e instanceof Error ? e.message : String(e));
 
   const readPhoto = async (file: File) => {
+    if (!placeId) return;
     setError(null);
     setReading(true);
     try {
-      const uploaded = await api.uploadFile(slug, file, { camera: true });
-      const r = await api.stocktakePhoto(slug, placeId, uploaded.id);
+      const uploaded = await api.uploadPhoto(file);
+      const r = await api.stocktakePhoto(placeId, uploaded.id);
       setHere((m) => {
         const next = new Map(m);
         for (const hit of r.matched) if (!next.has(hit.id)) next.set(hit.id, null);
@@ -63,7 +95,7 @@ function WhatsStillHereSheet({ slug, placeId, placeName, onClose }: { slug: stri
       });
       setFromPhoto({ seen: r.seen, ticked: r.matched.length, unmatched: r.unmatched });
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
+      say(e);
     } finally {
       setReading(false);
     }
@@ -74,19 +106,27 @@ function WhatsStillHereSheet({ slug, placeId, placeName, onClose }: { slug: stri
   }, { title: "One shelf or one door", label: "Photo of one shelf or door" });
 
   const addSeen = async (seen: { name: string; qty: number }) => {
-    if (!instance) return;
+    if (!instance || !placeId) return;
     setError(null);
     try {
-      // Every argument a new thing here needs: its collection, its name, this
-      // place and how many the photo saw.
       const res = await runAction({ actionId: "inventory:create-item", args: { instance, name: seen.name, location_id: placeId, qty: seen.qty } });
       const id = (res.result as { item_id?: string } | null)?.item_id;
       await q.refetch();
       if (id) setHere((m) => new Map(m).set(id, null));
       setFromPhoto((f) => (f ? { ...f, unmatched: f.unmatched.filter((u) => u !== seen) } : f));
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
+      say(e);
     }
+  };
+
+  /** A scanner types the code and Enter: tick that row, or say it is not listed here. */
+  const onScan = () => {
+    const code = scan.trim();
+    if (!code) return;
+    const id = rowForScan(items, code);
+    if (id) setHere((m) => (m.has(id) ? m : new Map(m).set(id, null)));
+    setScanned(id ? `Ticked ${items.find((i) => i.id === id)!.title}.` : `${code} is not listed in ${label}.`);
+    setScan("");
   };
 
   const { keep, counted, gone } = useMemo(() => {
@@ -117,11 +157,13 @@ function WhatsStillHereSheet({ slug, placeId, placeName, onClose }: { slug: stri
   const run = async () => {
     setError(null);
     let confirmCount: number | undefined;
-    if (kept === 0) {
+    // The server asks for the count said back when everything listed goes, or
+    // when what goes is a collection's things with no place (no one place to look in).
+    if (gone.length && (kept === 0 || "unplaced" in scope)) {
       const ok = await confirm({
-        title: `Nothing left in ${label}?`,
-        message: `This marks all ${countOf(gone.length, "thing")} in ${label} gone. You can undo it straight after.`,
-        confirmLabel: `Mark all ${gone.length} gone`,
+        title: kept === 0 ? `Nothing left in ${label}?` : `Mark ${countOf(gone.length, "thing")} gone?`,
+        message: `This marks ${kept === 0 ? "all " : ""}${countOf(gone.length, "thing")} in ${label} gone. You can undo it straight after.`,
+        confirmLabel: `Mark ${gone.length} gone`,
         destructive: true,
       });
       if (!ok) return;
@@ -129,12 +171,10 @@ function WhatsStillHereSheet({ slug, placeId, placeName, onClose }: { slug: stri
     }
     setBusy(true);
     try {
-      // Every argument the action needs is here: the place, the ticked ids,
-      // the counts, and the number said back when everything goes.
       const res = await runAction({
         actionId: "inventory:stocktake",
-        args: { scope: { place_id: placeId }, keep, counted, ...(confirmCount !== undefined ? { confirm_count: confirmCount } : {}) },
-      });
+        args: { scope, keep, counted, ...(confirmCount !== undefined ? { confirm_count: confirmCount } : {}) },
+      }, { undo: "shown-here" });
       const data = (res.result as { data?: { stocktake_id?: string } } | null)?.data;
       const refresh = () => {
         void qc.invalidateQueries({ queryKey: ["stock-at", slug] });
@@ -148,37 +188,53 @@ function WhatsStillHereSheet({ slug, placeId, placeName, onClose }: { slug: stri
         onAction: async () => {
           if (!data?.stocktake_id) return;
           try {
-            // The one argument the undo needs is the stocktake this run made.
-            await runAction({ actionId: "inventory:undo-stocktake", args: { stocktake_id: data.stocktake_id } });
+            await runAction({ actionId: "inventory:undo-stocktake", args: { stocktake_id: data.stocktake_id } }, { undo: "is-undo" });
             refresh();
             toast.success(`Put ${label} back as it was.`);
           } catch (e) {
-            toast.error(e instanceof ApiError ? e.message : String(e));
+            toast.error(e instanceof Error ? e.message : String(e));
           }
         },
       });
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
+      say(e);
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <Modal open onClose={busy ? () => {} : onClose} title={`What's still in ${label}?`} size="md">
+    <Modal open onClose={busy ? () => {} : onClose} title={placeId ? `What's still in ${label}?` : `Which of ${label} are still here?`} size="md">
       <div className="space-y-3" data-testid="whats-still-here-sheet">
         <p className="text-sm text-muted dark:text-slate-400">
           Tick what is really there. Everything you leave unticked is marked gone, not finished or thrown out, so nothing is learned from it.
         </p>
         {items.length > 0 && (
           <div className="flex flex-wrap items-center gap-2">
-            {photo.input}
-            <button type="button" disabled={reading || busy} onClick={photo.pick} className="rounded-md border border-line dark:border-slate-600 px-3 py-1.5 text-sm disabled:opacity-50">
-              {reading ? "Reading the photo…" : "Start from a photo"}
-            </button>
-            <span className="text-xs text-muted dark:text-slate-400">One shelf or one door at a time works best.</span>
+            <form className="flex min-w-0 flex-1 basis-56 items-center gap-2" onSubmit={(e) => { e.preventDefault(); onScan(); }}>
+              <input
+                value={scan}
+                onChange={(e) => setScan(e.target.value)}
+                inputMode="numeric"
+                autoComplete="off"
+                aria-label="Scan or type a barcode"
+                placeholder="Scan or type a barcode"
+                className="min-w-0 flex-1 rounded-md border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-1.5 text-sm text-content dark:text-mortar-100"
+              />
+              <button type="submit" className="rounded-md border border-line dark:border-slate-600 px-3 py-1.5 text-sm">Tick</button>
+            </form>
+            {placeId && (
+              <>
+                {photo.input}
+                <button type="button" disabled={reading || busy} onClick={photo.pick} className="rounded-md border border-line dark:border-slate-600 px-3 py-1.5 text-sm disabled:opacity-50">
+                  {reading ? "Reading the photo…" : "Start from a photo"}
+                </button>
+              </>
+            )}
           </div>
         )}
+        {scanned && <p className="text-sm text-content dark:text-slate-200" role="status" data-testid="stocktake-scanned">{scanned}</p>}
+        {placeId && items.length > 0 && !fromPhoto && <p className="text-xs text-muted dark:text-slate-400">A photo works best of one shelf or one door at a time.</p>}
         {fromPhoto && (
           <div className="rounded-md border border-line dark:border-slate-700 px-3 py-2 text-sm space-y-1" data-testid="stocktake-from-photo">
             <p className="text-content dark:text-slate-200">
@@ -193,9 +249,7 @@ function WhatsStillHereSheet({ slug, placeId, placeName, onClose }: { slug: stri
                       Add {u.name}
                     </button>
                   ) : (
-                    <span key={u.name} className="text-xs">
-                      {u.name}
-                    </span>
+                    <span key={u.name} className="text-xs">{u.name}</span>
                   ),
                 )}
               </div>
@@ -233,9 +287,7 @@ function WhatsStillHereSheet({ slug, placeId, placeName, onClose }: { slug: stri
                       {i.unit && i.unit !== "each" ? `${i.unit} left` : "left"}
                     </span>
                   ) : (
-                    <span className="font-mono text-xs text-faint">
-                      {quantityWithUnit(i.qty, i.unit)}
-                    </span>
+                    <span className="font-mono text-xs text-faint">{quantityWithUnit(i.qty, i.unit)}</span>
                   )}
                 </li>
               );

@@ -29,7 +29,7 @@ export function SellerOfferNotice({ kind }: { kind: string }) {
   if (!offer) return null;
 
   const answer = async (actionId: string) => {
-    const out = await run({ actionId, entityKind: "", entityId: "", args: { entity_kind: kind } });
+    const out = await run({ actionId, entityKind: "", entityId: "", args: { entity_kind: kind } }, { undo: "shown-here" });
     const r = out.result as { ok?: boolean; summary?: string; error?: string } | null;
     void qc.invalidateQueries({ queryKey: ["seller-offer", orgSlug] });
     void qc.invalidateQueries({ queryKey: ["platform-field-defs", orgSlug] });
@@ -39,7 +39,7 @@ export function SellerOfferNotice({ kind }: { kind: string }) {
     toast.action(r.summary ?? "Done.", {
       actionLabel: "Undo",
       onAction: async () => {
-        for (const st of steps) await run({ actionId: st.action_id, entityKind: "", entityId: "", args: st.args ?? {} });
+        for (const st of steps) await run({ actionId: st.action_id, entityKind: "", entityId: "", args: st.args ?? {} }, { undo: "is-undo" });
         void qc.invalidateQueries({ queryKey: ["platform-field-defs", orgSlug] });
         void qc.invalidateQueries({ queryKey: ["seller-offer", orgSlug] });
       },

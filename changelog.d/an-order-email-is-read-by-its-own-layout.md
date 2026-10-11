@@ -4,6 +4,7 @@ scope: core-scan
 date: 2026-10-10
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
 ui: the scan inbox card says "Read from the order email, no AI" (web/src/lib/documentState.ts)
+docs_published: 2026-10-11
 ---
 A store's order confirmation email is now read by code, with no AI: the order number, every line named the store's way with its price, and the order's discount, checked against the email's own subtotal. A forwarded email reads the same, and an order email that said "Couldn't be read" is filed by Read again.
 

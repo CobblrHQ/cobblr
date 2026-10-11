@@ -24,7 +24,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultConcurrency, runParallel } from "./lib/parallel.mjs";
 import { lintCommand } from "./lib/lint-command.mjs";
-import { fetchManifests, latestPasses, lintClosure, lintContext, lintVerdictKey, mergeManifest } from "./lib/lint-verdicts.mjs";
+import { fetchManifests, latestPasses, lintRoots, lintRootsKey, lintSalt, mergeManifest, rootIds, rootsUnchanged } from "./lib/lint-verdicts.mjs";
 import { record as recordVerdicts, recordShadow } from "./lib/verdict-cache.mjs";
 import { CEILING_MS, quietFor, judgeRun, ioPressure, IO_CONTENDED_AT, cpuPressure, CPU_CONTENDED_AT, overReadBudget } from "./lib/lint-budget.mjs";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -83,6 +83,9 @@ async function main() {
   // --record: write this run's per-lint times as the quiet baseline the budget
   // judges against. Refused for a partial run or a contended one (below).
   const record = process.argv.includes("--record");
+  // --reuse-ci (the pre-push hook, #5761): a lint whose every root has the very object id it had when it
+  // last passed in CI is not run here; CI runs every lint anyway. Fails open: no store, no ids, any error.
+  const reuseCi = process.argv.includes("--reuse-ci") && !record && !only;
   // One file per lint (scripts/lint-durations/), read through the one module
   // so the shape cannot drift: a shared map let a merge drop an entry in
   // silence, and its pressure valve is what hid it (#3447).
@@ -97,51 +100,73 @@ async function main() {
     return;
   }
 
-  // THE VERDICT CACHE (#4303, lib/lint-verdicts.mjs): a lint whose every observation (what it read,
-  // listed, globbed, probed, asked git, read from the environment) is as it was when it last passed is
-  // not run again; the log names the run. CI only, never --record or --only. A scheduled or dispatched
-  // run (the release's) runs every lint (COBBLR_VERDICT_CACHE=off) and reports any it would have reused
-  // that failed: a shadow miss. Fails open: no store, a dirty tree, any error, and every lint runs.
-  // OFF unless COBBLR_LINT_VERDICTS=on (2026-10-10): on main's lane its keying took 644 s, fetching
-  // hundreds of megabytes of manifests, and reused 10 of 475, making the typecheck job 31 minutes.
-  // The unit suite's cache is unaffected.
-  const cacheOn = (process.env.CI || process.env.COBBLR_VERDICT_FORCE) && process.env.COBBLR_LINT_VERDICTS === "on" && !record && !only;
-  const shadow = process.env.COBBLR_VERDICT_CACHE === "off";
+  // THE VERDICT CACHE (#4303, lib/lint-verdicts.mjs v2, #5761): a lint whose every root (each file it
+  // read, loaded or probed, each directory it listed, globbed or asked git about) has the object id it had
+  // when the lint last passed, and whose variables are as they were, is not run again. One
+  // `git cat-file --batch-check` keys the suite (v1 replayed every observation: 644 s, 2026-10-10).
+  // COBBLR_LINT_VERDICTS: "on" reuses; "shadow" (CI's default until a day of shadow runs shows no miss)
+  // keys every lint, says what it would reuse, runs them all and reports any would-be reuse that failed;
+  // "off" does nothing. A scheduled or dispatched run (COBBLR_VERDICT_CACHE=off, the release's) is shadow
+  // whatever is set. Never --record or --only. Fails open: no store, a dirty tree, any error: every lint runs.
+  const mode = process.env.COBBLR_LINT_VERDICTS || (process.env.CI ? "shadow" : "off");
+  const cacheOn = (process.env.CI || process.env.COBBLR_VERDICT_FORCE) && (mode === "on" || mode === "shadow") && !record && !only;
+  const shadow = mode === "shadow" || process.env.COBBLR_VERDICT_CACHE === "off";
   let vctx = null;
-  const closures = new Map();
   /** @type {Map<string, string>} lint -> the run its reusable pass came from */
   const reusable = new Map();
   let reusedNames = [];
   if (cacheOn) {
-    vctx = lintContext(ROOT);
-    if (!vctx) console.log("[verdicts] off: the working tree's tracked files differ from HEAD");
-    else {
+    try {
+      execFileSync("git", ["diff", "--quiet", "HEAD", "--"], { cwd: ROOT, stdio: "ignore" });
+      vctx = { root: ROOT, salt: lintSalt(ROOT), sources: new Map() };
+    } catch {
+      console.log("[verdicts] off: the working tree's tracked files differ from HEAD");
+    }
+    if (vctx) {
       const t0 = Date.now();
-      for (const n of names) closures.set(n, lintClosure(scripts[n], vctx));
       const latest = await latestPasses(names);
-      const manifests = await fetchManifests(Object.values(latest).flat().map((p) => p.manifest), { dir: process.env.COBBLR_VERDICT_MANIFESTS || (existsSync("/ts-cache") ? "/ts-cache/lint-manifests" : undefined) });
-      for (const n of names) {
-        const c = closures.get(n);
-        if (!c) continue;
-        for (const pass of latest[n] ?? []) {
-          const m = manifests.get(pass.manifest);
-          if (!m) continue;
-          const { key } = lintVerdictKey({ name: n, cmd: scripts[n], manifest: m, ctx: vctx, closure: c });
-          if (key && key === pass.key) {
-            reusable.set(n, pass.run);
-            break;
-          }
-        }
+      const manifests = await fetchManifests(Object.values(latest).flat().map((p) => p.manifest), { dir: process.env.COBBLR_VERDICT_MANIFESTS || (existsSync("/ts-cache") ? "/ts-cache/lint-manifests-v2" : undefined) });
+      const candidates = [];
+      for (const n of names) for (const pass of latest[n] ?? []) {
+        const m = manifests.get(pass.manifest);
+        if (m?.v === 2) candidates.push({ n, pass, roots: m });
+      }
+      const ids = rootIds(ROOT, candidates.flatMap((c) => [...c.roots.dirs, ...c.roots.files, ...(c.roots.probes ?? [])]));
+      for (const { n, pass, roots } of candidates) {
+        if (reusable.has(n)) continue;
+        const { key } = lintRootsKey({ name: n, cmd: scripts[n], roots, salt: vctx.salt, ids, root: ROOT, sources: vctx.sources });
+        if (key && key === pass.key) reusable.set(n, pass.run);
       }
       const ms = Date.now() - t0;
-      if (shadow) console.log(`[verdicts] uncached run: every lint runs; ${reusable.size} of ${names.length} would have been reused (keyed in ${(ms / 1000).toFixed(1)}s), and any of those that fails is a shadow miss`);
+      if (shadow) console.log(`[verdicts] shadow: every lint runs; ${reusable.size} of ${names.length} would have been reused (keyed in ${(ms / 1000).toFixed(1)}s), and any of those that fails is a shadow miss`);
       else {
         reusedNames = [...reusable.keys()];
         const byRun = new Map();
         for (const r of reusable.values()) byRun.set(r, (byRun.get(r) ?? 0) + 1);
-        console.log(`[verdicts] reused ${reusedNames.length} of ${names.length} lints: everything each observed is as it was when it passed (from run${byRun.size === 1 ? "" : "s"} ${[...byRun].map(([r, n]) => `${r || "?"} (${n})`).join(", ") || "-"}; keyed in ${(ms / 1000).toFixed(1)}s)`);
+        console.log(`[verdicts] reused ${reusedNames.length} of ${names.length} lints: every root each observed is as it was when it passed (from run${byRun.size === 1 ? "" : "s"} ${[...byRun].map(([r, n]) => `${r || "?"} (${n})`).join(", ") || "-"}; keyed in ${(ms / 1000).toFixed(1)}s)`);
         if (reusedNames.length) console.log(`[verdicts]   reused: ${reusedNames.sort().join(", ")}`);
       }
+    }
+  }
+  if (reuseCi && !cacheOn) {
+    try {
+      const t0 = Date.now();
+      const latest = await latestPasses(names);
+      const manifests = await fetchManifests(Object.values(latest).flat().map((p) => p.manifest), {});
+      const candidates = [];
+      for (const n of names) for (const pass of latest[n] ?? []) {
+        const m = manifests.get(pass.manifest);
+        if (m?.v === 2 && m.ids && !m.hidden?.length) candidates.push({ n, pass, m });
+      }
+      const now = rootIds(ROOT, candidates.flatMap((c) => Object.keys(c.m.ids)));
+      for (const { n, pass, m } of candidates) {
+        if (reusable.has(n)) continue;
+        if (rootsUnchanged(m, now)) reusable.set(n, pass.run);
+      }
+      reusedNames = [...reusable.keys()];
+      console.log(`[lints] ${reusedNames.length} of ${names.length} lints reused: every root each read is as it was when it passed in CI (checked in ${((Date.now() - t0) / 1000).toFixed(1)}s); CI runs them all anyway`);
+    } catch (e) {
+      console.log(`[lints] could not compare with CI's passes (${e.message}); every lint runs`);
     }
   }
   const toRun = reusedNames.length ? names.filter((n) => !reusable.has(n)) : names;
@@ -231,22 +256,32 @@ async function main() {
       const entries = [];
       let hiddenCount = 0;
       const hiddenWhy = new Map();
+      const rootsOf = new Map();
       for (const r of results) {
         if (r.code !== 0) continue;
-        const c = closures.get(r.name);
         let m;
         try {
           m = mergeManifest(readFileSync(inputsFile(r.name), "utf8"));
         } catch {
           m = mergeManifest("");
         }
-        const { key, hidden } = c ? lintVerdictKey({ name: r.name, cmd: scripts[r.name], manifest: m, ctx: vctx, closure: c }) : { key: null, hidden: "no closure" };
+        rootsOf.set(r.name, lintRoots(m));
+      }
+      const tk = Date.now();
+      const ids = rootIds(ROOT, [...rootsOf.values()].flatMap((x) => [...x.dirs, ...x.files, ...(x.probes ?? [])]));
+      const sizes = [...rootsOf].map(([n, x]) => [n, x.dirs.length + x.files.length + (x.probes ?? []).length]).sort((a, b) => a[1] - b[1]);
+      const wholeTree = [...rootsOf.values()].filter((x) => x.dirs.includes(".")).length;
+      if (sizes.length) console.log(`[verdicts] roots per lint: median ${sizes[Math.floor(sizes.length / 2)][1]}, max ${sizes.at(-1)[1]} (${sizes.at(-1)[0]}); ${wholeTree} read the whole tree; ${ids.size} ids in ${Date.now() - tk} ms`);
+      for (const [name, roots] of rootsOf) {
+        const { key, hidden } = lintRootsKey({ name, cmd: scripts[name], roots, salt: vctx.salt, ids, root: ROOT, sources: vctx.sources });
         if (!key) {
           hiddenCount++;
           hiddenWhy.set(hidden, (hiddenWhy.get(hidden) ?? 0) + 1);
           continue;
         }
-        entries.push({ name: r.name, key, manifest: m });
+        // The ids each root had: what the pre-push hook compares (--reuse-ci), since its salt is not CI's.
+        const seen = Object.fromEntries([...roots.dirs, ...roots.files, ...(roots.probes ?? [])].map((r) => [r, ids.get(r)]));
+        entries.push({ name, key, manifest: { v: 2, ...roots, ids: seen } });
       }
       const kept = await recordVerdicts("lint", entries);
       console.log(`[verdicts] ${kept ? "stored" : "could not store"} ${entries.length} lint pass(es) for the next run; ${hiddenCount} never reused`);

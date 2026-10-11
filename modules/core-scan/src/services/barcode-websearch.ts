@@ -1,3 +1,4 @@
+import { TEXT_OR_NULL, objectWith } from "@cobblr/platform-contract/ai-output-schemas";
 // Identify a product from its barcode by web search — the fallback for
 // when the catalog DBs (upcitemdb / Open Products Facts) have no entry.
 // It mirrors what a person does: search the UPC, read the product name
@@ -353,7 +354,7 @@ export async function llmIdentify(
       orgId,
       userId: userId ?? undefined,
       capability: "identify-from-text",
-      input: { messages: [{ role: "system", content: system }, { role: "user", content: user }] },
+      input: { output_schema: objectWith(["name"], { name: TEXT_OR_NULL }), messages: [{ role: "system", content: system }, { role: "user", content: user }] },
       source: { kind: "core-scan:barcode", id: upc },
     })
     .then((r) => ({ content: r.text }))

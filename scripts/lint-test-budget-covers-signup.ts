@@ -23,6 +23,14 @@
 // (30000) and undo-at-once-voids-the-purchase.test.ts (20_000) as they were;
 // green once each closed with the constant.
 //
+// AND A RESTORE IS A SECOND WORKSPACE (#5539). A test whose own body signs up
+// a workspace and restores a backup into it does two workspaces' worth of
+// work: the signup, then every table recreated and refilled. Closed with one
+// signup's FRESH_ORG_BUDGET_MS, the secret-backup test timed out at 60 s on a
+// loaded runner three days running. Such a body closes with at least
+// FRESH_ORG_BUDGET_MS * 2 (worn() on top is fine), as the vault restore test
+// already did. Proven red on that test as it was.
+//
 //   npx tsx scripts/lint-test-budget-covers-signup.ts   (pnpm run lint test-budget-covers-signup)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -62,10 +70,49 @@ function* walk(dir: string): Generator<string> {
 }
 
 /** The check. Return every violation in one file; an empty array is a pass. */
-function check(file: string, src: string): Violation[] {
-  if (!/\bsignupFreshOrg\b/.test(src)) return [];
+/** The opening of an it()/test() body. */
+const OPEN_TEST = /^\s*(?:it|test)(?:\.\w+)?\(/;
+/** The closing of an it()/test() body, whatever its budget expression. */
+const CLOSE_ANY = /^\s*\}\s*,\s*(.+?)\s*\)\s*;/;
+const SIGNS_UP = /\bsignup(?:FreshOrg|BlankOrg)\s*\(/;
+const RESTORES = /\/backup\/restore\b/;
+
+/** A budget expression that covers two workspaces: FRESH_ORG_BUDGET_MS times
+ *  2 or more, or a number at least twice the budget. */
+function coversTwo(expr: string): boolean {
+  const times = expr.match(/FRESH_ORG_BUDGET_MS\s*\*\s*([0-9.]+)/);
+  if (times) return Number(times[1]) >= 2;
+  const n = expr.match(/^(?:worn\()?([0-9][0-9_]*)\)?$/);
+  return !!n && Number(n[1]!.replace(/_/g, "")) >= 2 * BUDGET;
+}
+
+/** Bodies that sign up a workspace and restore into it close with two
+ *  workspaces' budget. */
+function checkRestores(file: string, lines: string[]): Violation[] {
   const out: Violation[] = [];
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    if (OPEN_TEST.test(line)) start = i;
+    const close = start >= 0 ? line.match(CLOSE_ANY) : null;
+    if (!close) continue;
+    const body = lines.slice(start, i + 1).join("\n");
+    start = -1;
+    if (!SIGNS_UP.test(body) || !RESTORES.test(body)) continue;
+    if (coversTwo(close[1]!) || /\/\/ budget: \S/.test(line)) continue;
+    out.push({
+      file,
+      line: i + 1,
+      what: `a test that signs up a workspace and restores a backup into it closes with ${close[1]}, one workspace's budget for two workspaces' work; close with worn(FRESH_ORG_BUDGET_MS * 2), or say why: // budget: <reason>`,
+    });
+  }
+  return out;
+}
+
+function check(file: string, src: string): Violation[] {
   const lines = src.split("\n");
+  const out: Violation[] = checkRestores(file, lines);
+  if (!/\bsignupFreshOrg\b/.test(src)) return out;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
     const m = line.match(CLOSE_WITH_BUDGET);

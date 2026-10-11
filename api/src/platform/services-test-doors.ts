@@ -24,6 +24,7 @@ import { withTenant } from "../middleware/tenant.js";
 import { adapterFetchFor } from "./service-connections.js";
 import { supervise } from "./service-supervisor.js";
 import { listBuiltIns, RETENTION_PASS, setServiceConnectionPort, type ServiceConnectionPort, type ServiceConnectionRef, type ServiceHopResponse } from "./services.js";
+import { instantFromInput } from "@cobblr/platform-contract/day";
 
 interface TestConnection {
   ref: ServiceConnectionRef;
@@ -154,7 +155,7 @@ servicesTestRouter.post("/:slug/services/test-connections", requireAuth, withTen
 // AI-REACH: exempt (a test door: closed on production and canary)
 servicesTestRouter.post("/:slug/services/test-retention", requireAuth, withTenant, async (req, res) => {
   if (!requireRole(req, res, "owner", "admin")) return;
-  const now = typeof req.body?.now === "string" ? new Date(req.body.now) : new Date();
+  const now = instantFromInput(req.body?.now) ?? new Date();
   const result = await platform().sweeps.run(RETENTION_PASS, { orgIds: [req.tenant!.org.id], now });
   // A pass that never ran must not answer as if it had.
   if (result.skipped) {
@@ -187,7 +188,7 @@ servicesTestRouter.post("/:slug/services/test-module-jobs", requireAuth, withTen
 // AI-REACH: exempt (a test door: closed on production and canary)
 servicesTestRouter.post("/:slug/services/test-supervise", requireAuth, withTenant, async (req, res) => {
   if (!requireRole(req, res, "owner", "admin")) return;
-  const now = typeof req.body?.now === "string" ? new Date(req.body.now) : new Date();
+  const now = instantFromInput(req.body?.now) ?? new Date();
   res.json(await supervise(req.tenant!.org.id, now));
 });
 

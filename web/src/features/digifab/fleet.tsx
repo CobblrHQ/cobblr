@@ -19,7 +19,7 @@ import { LightBurnReadiness } from "./lightburn-readiness";
 import { cancelOutcome } from "../../lib/digifab-cancel";
 import { LightBurnPairing } from "../../components/LightBurnPairing";
 import { bridgeDisplayName } from "../../lib/bridge-choice";
-import { BridgeInstallMethod } from "../../components/BridgeInstallMethod";
+import { BridgeAbout, BridgeInstallMethod } from "../../components/BridgeInstallMethod";
 import { ToolTemperatures } from "./ToolTemperatures";
 import { SnapmakerPairing } from "./SnapmakerPairing";
 import { ESPHomeBenchDiscovery } from "./ESPHomeBenchDiscovery";
@@ -358,12 +358,13 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName, 
         <BridgePicker slug={activeSlug} value={bridgeId || null} onChange={v => setBridgeId(v || "")} />
         <button type="button" onClick={() => { setInstallationId(null); setInstallNew(true); }} className="text-xs text-accent hover:underline">Set up another bridge</button>
       </div>}
-      {connected ? (
+      {connected ? (<div className="space-y-2" data-testid="bridge-connected">
         <div className="flex items-center gap-2 text-sm rounded border border-moss-500/40 bg-moss-50 dark:bg-moss-950/30 p-2">
           <span className="w-2 h-2 rounded-full bg-moss-500 shrink-0" />
           <span className="text-moss-700 dark:text-moss-300">{bridgeLabel} is online. Add a machine below.</span>
         </div>
-      ) : (<>
+        <BridgeAbout />
+      </div>) : (<>
       <p className="text-[13px] text-muted dark:text-slate-400">
         {lightBurn ? "Install the bridge on the computer with LightBurn. Pairing happens on that computer. To use a bridge elsewhere, enable LightBurn’s network API first." : "A hosted Cobblr reaches your machines through a bridge on your network. Install it on an always-on computer, then add your machines below."}
       </p>
